@@ -10,7 +10,8 @@ from decompnet.network import NetworkError
 from decompnet.rom import Picked, split
 
 
-def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, monkeypatch):
+@pytest.mark.parametrize("legacy_reset",[False,True])
+def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, monkeypatch, legacy_reset):
     root = tmp_path / "game"
     root.mkdir()
     (root / "old.z64").write_bytes(b"old")
@@ -52,6 +53,16 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
                    (pid, removed_id, "note on removed function", 2))
         db.execute("INSERT INTO context_versions(project_id,version,header,message,created_at,unit) "
                    "VALUES(?,?,?,?,?,?)", (pid, 1, "user header", "custom", 1, ""))
+
+    with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,version,header,message,created_at,unit) VALUES(?,2,'private types','source',2,'local_source_test')",(pid,))
+        db.execute("UPDATE functions SET unit='local_source_test' WHERE id=?",(unchanged_id,))
+        if legacy_reset:
+            db.execute("UPDATE functions SET unit='original_segment' WHERE id=?",(unchanged_id,))
+            db.execute("INSERT INTO attempts(function_id,score,compiled,context_version,source,created_at) VALUES(?,0,1,2,?,2)",
+                       (unchanged_id,"void clamp_s32(void) {}"))
+        db.execute('UPDATE functions SET meta=? WHERE id=?',
+                   (json.dumps({'naming':{'method':'operator'},'reopened':True}),unchanged_id))
 
     game = tmp_path / "selected.z64"
     game.write_bytes(b"new rom")
@@ -109,7 +120,9 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     assert (root / "new.z64").read_bytes() == b"new rom"
     assert (root / "new.yaml").read_text(encoding="utf-8") == "new split"
     assert not (root / "old.yaml").exists()
+    assert net.store.one('SELECT unit FROM functions WHERE id=?',unchanged_id)['unit']=='local_source_test'
     unchanged = net.store.one("SELECT status, matched_source FROM functions WHERE id=?", unchanged_id)
+    assert json.loads(net.store.one("SELECT meta FROM functions WHERE id=?",unchanged_id)["meta"])["naming"]=={"method":"operator"}
     assert unchanged["status"] == "matched"
     assert unchanged["matched_source"] == "void clamp_s32(void) {}"
     assert net.store.one("SELECT name FROM functions WHERE id=?", unchanged_id)["name"] == "clamp_s32"
@@ -133,7 +146,7 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     assert saved["compiler"] == cfg["compiler"] and saved["auto_compiler"] is True
     assert net.project_row("game")["name"] == "old game"
     assert "export" not in saved and "autopilot" not in saved
-    assert net.store.one("SELECT header FROM context_versions WHERE project_id=? ORDER BY version DESC LIMIT 1",
+    assert net.store.one("SELECT header FROM context_versions WHERE project_id=? AND unit='' ORDER BY version DESC LIMIT 1",
                          pid)["header"] == "user header"
     assert net.store.one("SELECT kind FROM events WHERE project_id=? ORDER BY id DESC LIMIT 1",
                          pid)["kind"] == "reimport"
@@ -160,22 +173,41 @@ def test_reimport_still_blocks_projects_with_an_active_room(tmp_path):
         net.import_split(console, Picked("n64", b"rom", "game.z64", {}, True), reimport_slug="game")
 
 
-def test_reimport_pairs_the_two_functions_an_overlay_puts_at_one_address():
-    """A game's overlay loads at the same address as main code, so two functions can share one. Paired by address
-    alone, the second was left unpaired and its name (held by the old twin) was inserted again."""
-    from types import SimpleNamespace
+def test_reimport_pairs_saved_matches_by_overlay_and_address(tmp_path, monkeypatch):
+    from decompnet import consoles
 
-    from decompnet.app.engine.importing import pair_old_functions
+    root = tmp_path / 'banks'
+    root.mkdir()
+    net = RomNetwork(tmp_path / 'banks.db', tmp_path)
+    cfg = {'kind': 'rom', 'platform': 'n64', 'big_endian': True,
+           'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']},
+           'rom': {'file': 'rom.z64', 'sha1': 'same'}, 'segments': []}
+    originals = {}
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,root,arch,config) VALUES(?,?,?,?,?)',
+                         ('banks', 'Banks', str(root), 'mips', json.dumps(cfg))).lastrowid
+        for index in [1, 2]:
+            name = f'renamed_bank_{index}'
+            body = bytes.fromhex(f'2402000{index}')
+            fid = db.execute('INSERT INTO functions(project_id,name,unit,vram,size,n_insns,target,relocs,status,matched_source) '
+                             'VALUES(?,?,?,?,?,?,?,?,?,?)', (pid, name, f'overlay_{index:03d}', 0x80300000,
+                              4, 1, body, '[]', 'matched', f'int {name}(void) {{ return {index}; }}')).lastrowid
+            originals[fid] = (name, body)
 
-    old = [{"id": 1, "name": "func_00100000", "vram": 0x100000},
-           {"id": 2, "name": "ovl_ntgui2_func_00100000", "vram": 0x100000},
-           {"id": 3, "name": "agents_name", "vram": 0x200000}]
-    new = [SimpleNamespace(name="ovl_ntgui2_func_00100000", vram=0x100000),
-           SimpleNamespace(name="func_00100000", vram=0x100000),
-           SimpleNamespace(name="func_00200000", vram=0x200000),
-           SimpleNamespace(name="func_00300000", vram=0x300000)]
-    paired = pair_old_functions(old, new)
-    assert paired["func_00100000"]["id"] == 1 and paired["ovl_ntgui2_func_00100000"]["id"] == 2
-    assert paired["func_00200000"]["id"] == 3  # renamed since: still paired by its address
-    assert "func_00300000" not in paired  # new in this split
-    assert len({o["id"] for o in paired.values()}) == len(paired)  # each old function pairs once
+    def replacement(work, *a, **kw):
+        functions = []
+        # Reverse order to catch accidental address-only pairing and stolen match identities.
+        for index in [2, 1]:
+            unit = f'overlay_{index:03d}'
+            line = split.AsmLine(index * 4, 0x80300000, 0x24020000 + index, 'addiu', f'v0, zero, {index}')
+            functions.append(split.RomFunction(f'func_80300000_{unit}', 0x80300000, index * 4, unit,
+                                                [line], work / (unit + '.s')))
+        return split.SplitResult(functions, [], [], {}, work / 'splat.yaml', 'KMC', '')
+    monkeypatch.setattr(split, 'split_rom', replacement)
+    picked = Picked('n64', bytes(16), 'rom.z64', {'title': 'Banks', 'size': 16, 'sha1': 'same',
+                    'game_code': 'DEMO', 'region': 'Test', 'compiler_guess': 'KMC'}, True)
+    net.import_split(consoles.get('n64'), picked, reimport_slug='banks', log=lambda *_: None)
+    for fid, (name, body) in originals.items():
+        row = net.store.one('SELECT * FROM functions WHERE id=?', fid)
+        assert row['name'] == name and row['target'] == body and row['status'] == 'matched'
+    assert len(net.store.all('SELECT * FROM functions WHERE project_id=?', pid)) == 2

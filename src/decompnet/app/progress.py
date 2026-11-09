@@ -7,14 +7,16 @@ and the manifest, while a claim, an event or an attempt that didn't improve the 
 validated before its files or database state are changed.
 
 Change detection guarantee: a non-forced check compares the manifest's and the three folders' stats and may skip an
-in-place file edit until the one-second autosave; a forced check (judging, tools, routes, saves, the autosave) compares
+in-place file edit until the next periodic deep autosave check (at most 15 seconds); a forced check (judging, tools, routes, explicit saves, periodic deep autosave) compares
 every file's name, size and mtime, so an editor's in-place write (which leaves its directory's mtime alone) is seen
-before code is judged or a write is acknowledged. A file hash in the baseline is always compared for every file a
+before code is judged or a write is acknowledged. Read-only UI views use the current database and show when
+verification is running. A file hash in the baseline is always compared for every file a
 sync is about to write or remove.
 """
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -23,11 +25,17 @@ import stat
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import toolchains
+from .. import compiler, toolchains
 from ..network import NetworkError
+from ..request_timing import phase
+from ..rom.symbols import ASM_LOCAL, IDENT
+from ..store import in_transaction
+
+# spimdisasm can name a function piece by the numeric label at its first instruction.
+LOCAL_PIECE = re.compile(r"\.L[0-9A-F]+")
 from . import saves
 
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
@@ -50,8 +58,8 @@ def _config_key(proj, cfg: dict) -> str:
     compiler, instructions, claim order, priority, layout source or fingerprint does."""
     rom = cfg.get("rom") or {}
     settings = [proj["name"], cfg.get("platform"), rom.get("sha1"), rom.get("file"), cfg.get("compiler"),
-                cfg.get("compiler_ranges") or [], cfg.get("instructions") or "", cfg.get("claim_order") or "",
-                cfg.get("priority") or [], cfg.get("auto_compiler"), bool(cfg.get("knowledge_auto"))]
+                cfg.get("compiler_ranges") or [], cfg.get('function_compilers') or {}, cfg.get("instructions") or "", cfg.get("claim_order") or "", cfg.get("priority") or [],
+                cfg.get("auto_compiler"), bool(cfg.get("knowledge_auto"))]
     return hashlib.sha1(json.dumps(settings, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
@@ -105,19 +113,40 @@ class _StillFailing(NetworkError):
     """The last sync's failure again, nothing it reads having changed since (RETRY_FAILED_SECONDS)."""
 
 
-def _read(folder: Path) -> dict[str, str]:
+@phase('progress_files')
+def _read(folder: Path, *, cache=None) -> dict[str, str]:
+    if cache is not None:cache=cache.scan()
+    # A git/editor update can remove a file between glob, lstat and read. Retry
+    # only this read-only capture; never apply a partial snapshot or replay writes.
+    for attempt in range(3):
+        try:
+            return _read_once(folder, cache=cache)
+        except FileNotFoundError:
+            if attempt == 2:
+                raise
+
+
+def _read_once(folder: Path, *, cache=None) -> dict[str, str]:
     files = {}
     for directory in ("src", "best", "include"):
         path = folder / directory
         if path.is_symlink():
-            raise NetworkError("Progress folders must be regular directories. Replace the symbolic link and try again.")
+            raise NetworkError(f"Progress folder {directory!r} is a symbolic link. Replace it with a regular directory and try again.")
     for pattern in (saves.MANIFEST, "src/*.c", "best/*.c", "include/*.h"):
         for path in folder.glob(pattern):
-            if path.is_symlink() or not path.is_file():
-                raise NetworkError("Progress files must be regular files. Replace the symbolic link and try again.")
-            text = path.read_text(encoding="utf-8")
-            if any(line.startswith(("<<<<<<<", "=======", ">>>>>>>")) for line in text.splitlines()):
-                raise NetworkError("Resolve the git conflicts in progress before continuing this project.")
+            relative = path.relative_to(folder).as_posix()
+            info = path.lstat()
+            mode = info.st_mode
+            if stat.S_ISLNK(mode):
+                raise NetworkError(f"Progress file {relative!r} is a symbolic link. Replace it with a regular file and try again.")
+            if not stat.S_ISREG(mode):
+                raise NetworkError(f"Progress path {relative!r} is not a regular file. Move the conflicting path and try again.")
+            text = cache.get(path,info) if cache is not None else None
+            if text is None:
+                text = path.read_text(encoding="utf-8")
+                if any(line.startswith(("<<<<<<<", "=======", ">>>>>>>")) for line in text.splitlines()):
+                    raise NetworkError("Resolve the git conflicts in progress before continuing this project.")
+                if cache is not None and info == path.lstat():cache.put(path,info,text)
             files[path.relative_to(folder).as_posix()] = text
     return files
 
@@ -130,6 +159,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
       no longer has) moves to unlisted/, kept as it is and not judged, so it stops the project no more. One the
       project still has (a layout edit renamed it) is left: `_manifest` refuses that edit.
     A manifest it can't read, or one with no layout, is left to `_manifest` to say what's wrong."""
+    store = net.project_store(pid) if hasattr(net, "project_store") else net.store
     try:
         manifest = json.loads(disk[saves.MANIFEST])
         headers = dict(manifest.get("headers") or {})
@@ -149,9 +179,8 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
             report(f"{name} was missing: written again from the project")
     left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).name not in layout)
     if left:
-        known = {row["name"] for row in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
-        known_files = {saves._source_file(function) for function in known}
-        left = [name for name in left if Path(name).name not in known_files]
+        known = {row["name"] for row in store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+        left = [name for name in left if Path(name).name not in {saves._source_file(function) for function in known}]
     for name in left:
         (folder / "unlisted" / name).parent.mkdir(parents=True, exist_ok=True)
         os.replace(folder / name, folder / "unlisted" / name)
@@ -162,10 +191,11 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     return disk
 
 
-# #158: spimdisasm names a piece that starts at a jump target by its label, `.L80129B10`, and the app saves it so.
+# #158: preserve assembly-local names in progress manifests.
 NAME = re.compile(r"[A-Za-z_]\w*|\.L[0-9A-F]+")
 
 
+@phase('progress_manifest')
 def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
     try:
         manifest = json.loads(files[saves.MANIFEST])
@@ -178,12 +208,10 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
         if len(layout) != len(manifest.get("layout", [])):
             raise ValueError("a function is listed twice in layout")
         for name, entry in layout.items():
-            if not NAME.fullmatch(name):
-                raise ValueError(f"layout entry {name!r} is not a function name")
-            if (not isinstance(entry["vram"], int)
+            if (not (IDENT.fullmatch(name) or LOCAL_PIECE.fullmatch(name)) or not isinstance(entry["vram"], int)
                     or not isinstance(entry["size"], int) or entry["size"] <= 0
                     or entry.get("status", "open") not in ("open", "asm")):
-                raise ValueError(f"layout entry {name!r} needs an integer vram and a size above 0")
+                raise ValueError(f"layout entry {name!r} needs a name, an integer vram and a size above 0")
         compiler = manifest.get("compiler")
         if compiler is not None and not isinstance(compiler, dict):
             raise ValueError("compiler is not an object")
@@ -192,7 +220,7 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
                 or not isinstance(manifest.get("set_aside", []), list):
             raise ValueError("symbols, notes, knowledge and set_aside must be lists")
         for symbol in manifest.get("symbols", []):
-            if (not isinstance(symbol, dict) or not NAME.fullmatch(symbol.get("name", ""))
+            if (not isinstance(symbol, dict) or not (IDENT.fullmatch(symbol.get("name", "")) or ASM_LOCAL.fullmatch(symbol.get("name", "")))
                     or not isinstance(symbol.get("address"), int) or not isinstance(symbol.get("size", 0), int)
                     or symbol.get("kind", "data") not in ("func", "data", "string", "jtbl", "bss")):
                 raise ValueError(f"symbol {symbol.get('name')!r} has an invalid name, address, size or kind")
@@ -204,7 +232,7 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
         if any(not isinstance(item, str) for item in manifest.get("knowledge", [])):
             raise ValueError("knowledge must be a list of text")
         for item in manifest.get("set_aside", []):
-            if (not isinstance(item, dict) or not NAME.fullmatch(item.get("name", ""))
+            if (not isinstance(item, dict) or not (IDENT.fullmatch(item.get("name", "")) or LOCAL_PIECE.fullmatch(item.get("name", "")))
                     or not isinstance(item.get("vram"), int)
                     or any(key in item and not isinstance(item[key], str) for key in ("asm_code", "asm_twin"))
                     or "not_c" in item and (not isinstance(item["not_c"], dict)
@@ -261,7 +289,7 @@ def _merge_manifest(old, new, current, key: str = ""):
             if key == "notes" and isinstance(item, dict):
                 return (item.get("function"), item.get("text"), item.get("by", ""))
             if isinstance(item, dict):
-                return item.get("vram") if key == "set_aside" else item.get("name")
+                return (item.get("name"),item.get("vram")) if key == "set_aside" else item.get("name")
             return None
 
         old_items = {identity(item): item for item in old if identity(item) is not None}
@@ -293,7 +321,7 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
 
     identities = {"layout": lambda item: item.get("name"), "symbols": lambda item: item.get("name"),
                   "notes": lambda item: (item.get("function"), item.get("text"), item.get("by", "")),
-                  "knowledge": lambda item: item, "set_aside": lambda item: item.get("vram")}
+                  "knowledge": lambda item: item, "set_aside": lambda item: (item.get("name"),item.get("vram"))}
     for key, identity in identities.items():
         current = manifest.get(key) or []
         known = {identity(item) for item in current}
@@ -313,6 +341,7 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
             if name in projected:
                 pending[name] = projected[name]
     manifest["headers"] = headers
+    manifest["function_headers"] = (manifest.get("function_headers") or {}) | (local.get("function_headers") or {})
     for name, text in projected.items():
         if name.startswith(("src/", "best/")) and name not in disk:
             pending[name] = text
@@ -326,7 +355,8 @@ def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]
     save means the folder predates that save. A manifest without a revision is from before revisions: use its
     `saved_at`. With neither, the folder can't be shown to be newer, so the database's matches win: a same-name stale
     file must not overwrite a match made after the folder was saved (#101 review)."""
-    rows = net.store.all("SELECT name, matched_at FROM functions WHERE project_id=? AND status='matched'", proj["id"])
+    store = net.project_store(proj['id'])
+    rows = store.all("SELECT name, matched_at FROM functions WHERE project_id=? AND status='matched'", proj["id"])
     revision = manifest.get("revision")
     if (isinstance(revision, int) and not isinstance(revision, bool) and revision > 0
             and revision < stored_revision):
@@ -338,17 +368,79 @@ def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]
     return {row["name"] for row in rows}
 
 
+def source_name(path: str, known_names) -> str:
+    file = Path(path).name
+    return next((name for name in known_names if saves._source_file(name) == file), file.removesuffix('.c'))
+
+
+def affected_functions(old, new, changed, rows):
+    """Scope known per-function build inputs; unknown shared linking/layout changes require a full check."""
+    from ..project import compiler_for
+
+    # Symbol order and verdict notes do not alter linked bytes. Only actual symbol
+    # changes are shared inputs; an assembly decision belongs to its own function.
+    def symbols(data):
+        return sorted(json.dumps(entry,sort_keys=True) for entry in data.get('symbols', []))
+    if symbols(old) != symbols(new):
+        return None
+    def layout(data):
+        return {f['name']: (f['vram'], f['size']) for f in data.get('layout', [])}
+    if layout(old) != layout(new):
+        return None
+    old_headers, new_headers = old.get('headers') or {}, new.get('headers') or {}
+    known_headers = {'include/'+file for mapping in (old_headers, new_headers) for file in mapping.values()}
+    if any(path.startswith('include/') and path not in known_headers for path in changed):
+        return None
+    if bool(old.get('compiler')) != bool(new.get('compiler')):
+        return None
+    def assembly(data):
+        return {(entry['name'],entry['vram']): entry.get('asm_code')
+                for entry in data.get('set_aside', [])}
+    previous_assembly, current_assembly = assembly(old), assembly(new)
+    affected = {name for name,address in previous_assembly.keys() | current_assembly.keys()
+                if ((name,address) in previous_assembly) != ((name,address) in current_assembly)
+                or previous_assembly.get((name,address)) != current_assembly.get((name,address))}
+    for row in rows:
+        name, unit = row['name'], row['unit'] or ''
+        previous = old_headers.get(unit, old_headers.get(''))
+        current = new_headers.get(unit, new_headers.get(''))
+        compiler_changed = bool(old.get('compiler')) and compiler_for(old, row['vram'], row) != compiler_for(new, row['vram'], row)
+        if (compiler_changed or
+            previous != current or (current and 'include/'+current in changed) or
+            f'src/{saves._source_file(name)}' in changed or f'best/{saves._source_file(name)}' in changed):
+            affected.add(name)
+    return affected
+
+
+@dataclass
+class _Recheck:
+    folder: Path
+    signature: tuple
+    functions: set[str] = field(default_factory=set)
+    foreground: bool = False
+    ready: bool = False
+
+
 class Progress:
     def __init__(self, net):
         self.net = net
         self.lock = threading.RLock()
         self.local = threading.local()
+        self.activity_lock = threading.Lock()
+        self.activity: dict[str, dict] = {}
+        self.paused: set[str] = set()
+        self.batches: dict[str, int] = {}
+        self.verification_slot = threading.Semaphore(1)
+        self.verification_owner: tuple[str, float] | None = None
+        from .progress_file_cache import FileCache
+        self.file_cache = FileCache()
         self.disk: dict[str, dict[str, str]] = {}
         self.projected: dict[str, dict[str, str]] = {}
         self.checked: dict[str, float] = {}
         self.results: dict[str, dict] = {}
         self.revisions: dict[str, int] = {}
         self.project_locks: dict[str, threading.RLock] = {}
+        self.rechecking: dict[str, _Recheck] = {}
         self.errors: dict[str, str] = {}
         self.signatures: dict[str, tuple] = {}  # slug -> every file's stat after the last acknowledged sync
         self.stamps: dict[str, tuple] = {}  # slug -> the cheap directory/manifest stat a non-forced check compares
@@ -361,6 +453,7 @@ class Progress:
         self.failed: dict[str, tuple] = {}  # slug -> ((dirty token, settings, folder), when) of the last failed sync
 
     @staticmethod
+    @phase('progress_stat')
     def _signature(folder: Path, *, deep: bool = True) -> tuple:
         """What a check compares: the manifest and three folders always, and with `deep` every file too.
 
@@ -372,13 +465,13 @@ class Progress:
             path = folder / name
             try:
                 info = os.stat(path, follow_symlinks=False)
-                items.append((name, info.st_mtime_ns, info.st_size, info.st_mode))
+                items.append((name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
                 if deep and stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
                     with os.scandir(path) as entries:
                         children = sorted(entries, key=lambda entry: entry.name)
                     for child in children:
                         info = child.stat(follow_symlinks=False)
-                        items.append((f"{name}/{child.name}", info.st_mtime_ns, info.st_size, info.st_mode))
+                        items.append((f"{name}/{child.name}", info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
             except OSError:
                 items.append((name, None))
         return tuple(items)
@@ -402,7 +495,7 @@ class Progress:
             except OSError:
                 items.append((name, None))
                 continue
-            items.append((name, info.st_mtime_ns, info.st_size, info.st_mode))
+            items.append((name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
             if name == saves.MANIFEST or not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
                 continue
             with os.scandir(path) as entries_in_dir:
@@ -418,7 +511,7 @@ class Progress:
                 key = prefix + child.name
                 if key in touched or key not in entries:
                     child_info = child.stat(follow_symlinks=False)
-                    items.append((key, child_info.st_mtime_ns, child_info.st_size, child_info.st_mode))
+                    items.append((key, child_info.st_mtime_ns, child_info.st_size, child_info.st_mode, child_info.st_ctime_ns, child_info.st_ino))
                 else:
                     items.append(entries[key])
         return tuple(items)
@@ -440,14 +533,16 @@ class Progress:
 
     def _state(self, project_id: int) -> _State | None:
         """The baseline's small bookkeeping, without loading 18,000 file hashes for a no-op check."""
+        store = self.net.project_store(project_id)
         if project_id not in self.states:
-            row = self.net.store.one("SELECT dirty_token,config_key FROM progress_state WHERE project_id=?",
+            row = store.one("SELECT dirty_token,config_key FROM progress_state WHERE project_id=?",
                                      project_id)
             self.states[project_id] = None if row is None else _State(row["dirty_token"], row["config_key"])
         return self.states[project_id]
 
     def _dirty(self, project_id: int) -> _Dirty:
-        row = self.net.store.one("SELECT token,functions,headers,metadata FROM progress_dirty WHERE project_id=?",
+        store = self.net.project_store(project_id)
+        row = store.one("SELECT token,functions,headers,metadata FROM progress_dirty WHERE project_id=?",
                                  project_id)
         if row is None:
             return _Dirty()
@@ -455,7 +550,8 @@ class Progress:
 
     def _dirty_files(self, project_id: int) -> list:
         """The function files changed since the last publish: (name, the token their last write had)."""
-        return self.net.store.all("SELECT name,token FROM progress_dirty_file WHERE project_id=? ORDER BY name",
+        store = self.net.project_store(project_id)
+        return store.all("SELECT name,token FROM progress_dirty_file WHERE project_id=? ORDER BY name",
                                   project_id)
 
     def _project_lock(self, slug: str):
@@ -463,9 +559,10 @@ class Progress:
             return self.project_locks.setdefault(slug, threading.RLock())
 
     def _baseline(self, project_id: int) -> _Baseline | None:
+        store = self.net.project_store(project_id)
         if project_id in self.baselines:
             return self.baselines[project_id]
-        row = self.net.store.one(
+        row = store.one(
             "SELECT format,disk,projected,disk_manifest,projected_manifest,config_key,dirty_token "
             "FROM progress_state WHERE project_id=?", project_id)
         if row is None:
@@ -477,7 +574,7 @@ class Progress:
             disk = _Snapshot.of(json.loads(row["disk"]))
             projected = _Snapshot.of(json.loads(row["projected"]))
             baseline = _Baseline(disk, projected, row["dirty_token"], row["config_key"])
-            with self.net.store.tx() as db:
+            with store.tx() as db:
                 db.execute("DELETE FROM progress_files WHERE project_id=?", (project_id,))
                 self._write_side(db, project_id, "disk", None, disk)
                 self._write_side(db, project_id, "projected", None, projected)
@@ -486,7 +583,7 @@ class Progress:
                            (disk.manifest, projected.manifest, project_id))
         else:
             files: dict[str, dict[str, str]] = {"disk": {}, "projected": {}}
-            for r in self.net.store.all("SELECT side,name,hash FROM progress_files WHERE project_id=?", project_id):
+            for r in store.all("SELECT side,name,hash FROM progress_files WHERE project_id=?", project_id):
                 files.setdefault(r["side"], {})[r["name"]] = r["hash"]
             baseline = _Baseline(_Snapshot(files["disk"], row["disk_manifest"]),
                                  _Snapshot(files["projected"], row["projected_manifest"]),
@@ -551,11 +648,12 @@ class Progress:
     def _remember(self, project_id: int, disk: dict[str, str], projected: dict[str, str],
                   config_key: str, dirty_token: str | None, dirty_tokens: list[str]) -> None:
         """Record a full sync as per-file hashes, writing only the hashes that changed."""
+        store = self.net.project_store(project_id)
         baseline = _Baseline(_Snapshot.of(disk), _Snapshot.of(projected), dirty_token, config_key)
         old = self.baselines.get(project_id)
         if old is None:
             old = self._baseline(project_id)
-        with self.net.store.tx() as db:
+        with store.tx() as db:
             self._write_side(db, project_id, "disk", old.disk if old else None, baseline.disk)
             self._write_side(db, project_id, "projected", old.projected if old else None, baseline.projected)
             self._write_state(db, project_id, baseline)
@@ -566,18 +664,73 @@ class Progress:
     def _remember_changes(self, project_id: int, changes: dict[str, str | None], manifest: str,
                           config_key: str, dirty_token: str | None, dirty_tokens: list[str]) -> None:
         """Record what an incremental publish wrote, touching only those files' baseline rows."""
+        store = self.net.project_store(project_id)
         old = self._baseline(project_id)
         if old is None:
             return
         baseline = _Baseline(old.disk.changed(changes, manifest), old.projected.changed(changes, manifest),
                              dirty_token, config_key)
-        with self.net.store.tx() as db:
+        with store.tx() as db:
             self._write_side_changes(db, project_id, "disk", changes, old.disk)
             self._write_side_changes(db, project_id, "projected", changes, old.projected)
             self._write_state(db, project_id, baseline)
             self._ack_dirty(db, project_id, dirty_token, dirty_tokens)
         self.baselines[project_id] = baseline
         self.states[project_id] = _State(dirty_token, config_key)
+
+    def prune_matched_drafts(self, slug: str) -> int:
+        """Remove acknowledged drafts only while their verified selected C is still present unchanged."""
+        store = self.net.project_store(slug)
+        with self._project_lock(slug):
+            proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
+            if not self.net.is_rom(proj):
+                return 0  # PROJECT mode's selected sources belong to its own build tree.
+            baseline = self._baseline(proj['id'])
+            if baseline is None:
+                return 0
+            names = [row['name'] for row in store.all("SELECT name FROM functions WHERE project_id=? "
+                     "AND status='matched'", proj['id'])
+                     if f"best/{saves._source_file(row['name'])}" in baseline.disk.files]
+            if not names:
+                return 0  # Normal autosaves must not inflate every matched source or scan the tree.
+            folder = saves.default_folder(self.net, slug)
+            saves._check_save_paths(folder, chosen=True)
+            removed = 0
+            for name in names:
+                row = store.one('SELECT name,status,matched_source FROM functions WHERE project_id=? AND name=?',
+                                         proj['id'], name)
+                if row['status'] != 'matched' or not row['matched_source']:
+                    continue
+                source, draft = f"src/{saves._source_file(name)}", f"best/{saves._source_file(name)}"
+                src, best = folder/source, folder/draft
+                if not src.is_file() or not best.is_file():
+                    continue
+                selected, text = src.read_text(encoding='utf-8'), best.read_text(encoding='utf-8')
+                if (selected != saves._source_text(row['matched_source'])
+                        or _hash(selected) != baseline.disk.files.get(source)
+                        or _hash(text) != baseline.disk.files[draft]):
+                    continue
+                current = store.one('SELECT status,matched_source FROM functions WHERE project_id=? AND name=?',
+                                             proj['id'], row['name'])
+                if current['status'] != 'matched' or current['matched_source'] != row['matched_source']:
+                    continue
+                if not saves._publish(folder, {source: selected}, {draft: text},
+                                      expected={source: selected, draft: text}, chosen=True):
+                    continue
+                changes = {draft: None}
+                with store.tx() as db:
+                    self._write_side_changes(db, proj['id'], 'disk', changes, baseline.disk)
+                    self._write_side_changes(db, proj['id'], 'projected', changes, baseline.projected)
+                baseline.disk.files.pop(draft, None)
+                baseline.projected.files.pop(draft, None)
+                self.disk.get(slug, {}).pop(draft, None)
+                self.projected.get(slug, {}).pop(draft, None)
+                self.published.setdefault(slug, set()).add(draft)
+                removed += 1
+            if removed:
+                self.signatures.pop(slug, None)
+                self.stamps.pop(slug, None)
+            return removed
 
     def forget(self, slug: str, project_id: int) -> None:
         """Drop in-memory state with the database row so a later project can safely reuse its slug or ID."""
@@ -617,53 +770,305 @@ class Progress:
                 self.local.busy = False
 
     @contextmanager
-    def judging(self, slug: str):
-        """Compiles may run together, but a result from before a pull must never replace its contribution."""
+    def batch(self, slug: str, logger=None):
+        """Read external contributions once, then synchronize a group of exact publications once.
+        Other threads defer this project's autosave without blocking its UI or skipping byte judgments."""
+        with self._project_lock(slug):
+            self.sync(slug, force=True, logger=logger)
+            with self.activity_lock:
+                self.batches[slug] = self.batches.get(slug, 0) + 1
+            try:
+                yield
+            finally:
+                with self.activity_lock:
+                    depth = self.batches[slug] - 1
+                    if depth:
+                        self.batches[slug] = depth
+                    else:
+                        self.batches.pop(slug)
+                if not depth:
+                    self.sync(slug, force=True, logger=logger)
+
+    def _batching(self, slug: str) -> bool:
+        with self.activity_lock:
+            return bool(self.batches.get(slug))
+
+    @contextmanager
+    def foreground(self):
+        """Explicit judges, candidate/target reads and notes may use already-imported recheck inputs."""
+        previous = getattr(self.local, 'foreground', False)
+        self.local.foreground = True
+        try:
+            yield
+        finally:
+            self.local.foreground = previous
+
+    def foreground_changed(self, slug, name=''):
+        if self.applying:
+            return
+        with self._project_lock(slug):
+            active = self.rechecking.get(slug)
+            if active is not None:
+                active.foreground = True
+                if name:active.functions.add(name)
+
+    def _check_rechecking_files(self, slug):
+        pending = self.rechecking.get(slug)
+        if pending and self._signature(pending.folder) != pending.signature:
+            raise NetworkError('Saved files changed during the recheck. Wait for synchronization, then read the function and retry.')
+
+    @phase('progress_saved_judge')
+    def _judge_saved(self, slug, *args, **kwargs):
+        """Wait without owning the project lock while saved functions compile and publish one at a time.
+
+        Context/layout imports have committed before this phase. Other imports still wait;
+        foreground attempts use those new inputs, and every saved verdict re-reads its function.
+        Condition.wait releases every recursive acquisition, including a caller's batch lock.
+        """
+        if not kwargs.get('judge_code', True):
+            return saves._judge_saved(self.net, slug, *args, **kwargs), None
+        lock = self._project_lock(slug)
+        condition = threading.Condition(lock)
+        outcome = []
+        folder = args[0]
+        active = _Recheck(folder, self._signature(folder))
+        self.rechecking[slug] = active
+
+        def run():
+            self.local.busy = True
+            try:
+                from .workers import lower_priority
+                lower_priority()
+                outcome.append((True, saves._judge_saved(self.net, slug, *args, **kwargs)))
+            except BaseException as error:
+                outcome.append((False, error))
+            finally:
+                self.local.busy = False
+                with condition:
+                    condition.notify_all()
+
+        worker = threading.Thread(target=run, name='saved-judge-'+slug, daemon=True)
+        try:
+            worker.start()
+            while not outcome:
+                condition.wait(timeout=0.1)
+        finally:
+            self.rechecking.pop(slug, None)
+        ok, result = outcome[0]
+        if not ok:
+            raise result
+        return result, active
+
+    @contextmanager
+    def judging(self, slug: str, *, synchronize: bool = True):
+        """Compiles may run together, but a result from before a pull must never replace its contribution.
+
+        Scoped DB publishers can leave file imports/exports to the watcher with synchronize=False;
+        revision and active saved-file recheck guards still apply to their ordinary recorder.
+        """
         if self.applying:
             yield
             return
-        self.sync(slug, force=True)
+        if synchronize:
+            self.sync(slug, force=True)
         previous = getattr(self.local, "judging", None)
         self.local.judging = (slug, self.revisions.get(slug, 0))
         try:
             yield
         finally:
             self.local.judging = previous
-        self.sync(slug, force=True)
+        if synchronize:
+            self.sync(slug, force=True)
 
     def check_result(self) -> None:
         pending = getattr(self.local, "judging", None)
+        if pending and not self.applying:
+            self._check_rechecking_files(pending[0])
         if not self.applying and pending and self.revisions.get(pending[0], 0) != pending[1]:
             raise NetworkError("Progress changed while this attempt compiled. Read the function again and retry with the updated project.")
 
-    def flush(self) -> dict[str, str]:
-        """Synchronize every ROM project's final database work before the process exits."""
+    def flush(self, *, notify=None) -> dict[str, str]:
+        """Publish pending ROM changes without rereading untouched projects on shutdown."""
         failures = {}
-        for row in self.net.store.all("SELECT slug FROM projects"):
+        stores = {}
+        for row in self.net.store.all('SELECT slug FROM projects'):
+            stores.setdefault(self.net.project_store(row['slug']), []).append(row['slug'])
+        pending = set(self.failed) | set(self.blocked)
+        for store, slugs in stores.items():
+            rows = store.all(
+                "SELECT p.slug FROM projects p JOIN progress_dirty d ON d.project_id=p.id "
+                "LEFT JOIN progress_state s ON s.project_id=p.id "
+                "WHERE p.slug IN (SELECT value FROM json_each(?)) AND "
+                "(d.functions OR d.headers OR d.metadata OR d.token IS NOT s.dirty_token)", json.dumps(slugs))
+            pending.update(row['slug'] for row in rows)
+        for slug in sorted(pending):
+            if notify:notify(slug)
             try:
-                self.sync(row["slug"], force=True)
+                self.sync(slug, force=True)
             except NetworkError as error:
-                failures[row["slug"]] = str(error)
+                failures[slug] = str(error)
         return failures
 
     @property
     def applying(self) -> bool:
         return getattr(self.local, "busy", False)
 
+    @property
+    def viewing(self) -> bool:
+        return getattr(self.local, "viewing", False)
+
+    @contextmanager
+    def view(self):
+        """Read the current database for the UI while background synchronization continues."""
+        previous = self.viewing
+        self.local.viewing = True
+        try:
+            yield
+        finally:
+            self.local.viewing = previous
+
+    def _activity(self, slug: str, **fields):
+        with self.activity_lock:
+            now = time.monotonic()
+            current = self.activity.setdefault(slug, {"started": now})
+            if fields.get("phase", current.get("phase")) != current.get("phase") and "done" in fields:
+                current.update(rate_started=now, rate_done=fields["done"])
+            current.update(fields, updated=now)
+
+    def status(self, slug: str) -> dict | None:
+        with self.activity_lock:
+            current = self.activity.get(slug)
+            if current is None:
+                return None
+            now = time.monotonic()
+            completed = current.get("done", 0) - current.get("rate_done", 0)
+            duration = now - current.get("rate_started", now)
+            total = current.get("total")
+            remaining = (max(0, int((total-current["done"])*duration/completed))
+                         if total and completed >= 3 and duration > 0 and not current.get("paused") else None)
+            return {k: v for k, v in current.items() if k not in {"started", "updated", "rate_started", "rate_done"}} | {
+                "remaining_seconds": remaining,
+                "elapsed_seconds": int(now - current["started"]),
+                "idle_seconds": int(now - current["updated"])}
+
+    def pause(self, slug: str):
+        with self.activity_lock:
+            self.paused.add(slug)
+        self._activity(slug, phase="Verification paused", paused=True)
+
+    def resume(self, slug: str):
+        with self.activity_lock:
+            self.paused.discard(slug)
+            self.activity.pop(slug, None)
+        self.errors.pop(slug, None)
+
+    def _check_paused(self, slug: str):
+        if slug in self.paused:
+            raise NetworkError("Saved-progress verification is paused. Resume it before changing this project.")
+
+    def syncing(self, slug: str) -> bool:
+        # Judging and edits also hold the project lock; they are not a saved-progress check.
+        return self.status(slug) is not None
+
+    @contextmanager
+    def _verification(self, slug: str, logger=None):
+        """Wait for the shared compiler lane without monopolizing this project's lock.
+
+        Condition.wait releases every recursive acquisition, including an outer batch.
+        The caller reloads project and disk inputs once the lane is acquired; another
+        sync may have completed while we waited. No import or judgment runs here.
+        """
+        from ..request_timing import span
+        began = time.monotonic()
+        next_report = began + 5
+        with span('progress_verification_wait'):
+            while True:
+                if logger is not None:getattr(logger, 'check_cancel', lambda: None)()
+                self._check_paused(slug)
+                active = self.rechecking.get(slug)
+                if getattr(self.local, 'foreground', False) and active is not None and active.ready:
+                    self._check_rechecking_files(slug)
+                    acquired = False
+                    break
+                if self.verification_slot.acquire(blocking=False):
+                    acquired = True
+                    break
+                now = time.monotonic()
+                if now >= next_report:
+                    with self.activity_lock:
+                        owner = self.verification_owner
+                        phase = self.activity.get(owner[0], {}).get('phase', 'unknown') if owner else 'unknown'
+                    saves.log.warning('Saved verification admission wait project=%s wait=%.3fs owner=%s owner_elapsed=%.3fs phase=%s',
+                                      slug, now-began, owner[0] if owner else 'unknown',
+                                      now-owner[1] if owner else 0., phase)
+                    next_report = now + 30
+                threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
+        if not acquired:
+            # An importer that overtook this waiter has now committed its inputs.
+            # Use the ordinary foreground guards without borrowing its compiler lane.
+            yield False
+            return
+        with self.activity_lock:
+            self.verification_owner = (slug, time.monotonic())
+        released = False
+        def release():
+            nonlocal released
+            if released:return
+            released = True
+            with self.activity_lock:
+                self.verification_owner = None
+            self.verification_slot.release()
+        previous = getattr(self.local, 'verification', None)
+        self.local.verification = (slug, release)
+        try:
+            yield True
+        finally:
+            release()
+            self.local.verification = previous
+
+    def _release_verification(self, slug):
+        lease = getattr(self.local, 'verification', None)
+        if lease is not None and lease[0] == slug:
+            lease[1]()
+
     def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
         """Read contributions first, then publish only work changed locally since the last synchronization.
 
         A no-op non-forced check stats the manifest and the three folders; a forced check stats every file too, so an
         in-place edit an editor made (which leaves a directory's mtime alone) is never missed by judging, a tool call,
-        the routes or the autosave. Nothing is rendered or written unless the folder or a column the render reads
+        the routes or a periodic deep autosave check. Nothing is rendered or written unless the folder or a column the render reads
         changed. `retry` (forced syncs by default): try again after a failure even when nothing it reads changed."""
-        if self.applying or getattr(self.net.store._local, "in_tx", False):
+        if self._batching(slug) or self.applying or in_transaction():
             return False
-        with self._project_lock(slug):
+        store = self.net.project_store(slug)
+        if getattr(store._local, "in_tx", False):
+            return False
+        if logger is not None:getattr(logger, "check_cancel", lambda: None)()
+        self._check_paused(slug)
+        from ..request_timing import span, timed_lock
+        with (span('progress_sync'),
+              timed_lock(self._project_lock(slug), 'progress_project_lock_wait')):
+            while slug in self.rechecking:
+                if getattr(self.local, 'foreground', False) and self.rechecking[slug].ready:
+                    self._check_rechecking_files(slug)
+                    return False
+                if logger is not None:getattr(logger, 'check_cancel', lambda: None)()
+                self._check_paused(slug)
+                # Public Condition.wait also releases an outer batch's recursive lock.
+                threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
+            if self._batching(slug):
+                return False
+            if logger is not None:getattr(logger, "check_cancel", lambda: None)()
+            self._check_paused(slug)
+            self._activity(slug, phase="Reading saved files", done=0, total=None, function=None, full_recheck=False)
             self.local.busy = True
             try:
                 proj = self.net._project(slug)
                 rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
+                # PROJECT mode owns its build files, and incomplete ROM imports have
+                # nothing for _sync to judge. Neither needs another project's lane.
+                if not rom or self.net._context(proj['id']) is None:
+                    return False
                 if rom:
                     pid = proj["id"]
                     folder = saves.default_folder(self.net, slug)
@@ -691,16 +1096,54 @@ class Progress:
                                 self.stamps[slug] = self._stamp(folder)
                                 return False
                 cached_signature = self.signatures.get(slug)
-                result = self._sync(slug, logger)
+                result = None
+                verified_signature = None
+                if rom and state is not None and self.net._context(pid) is not None:
+                    baseline = self._baseline(pid)
+                    if baseline is not None:
+                        saves._check_progress_folder(folder, chosen=bool(self.net.cfg(proj).get("progress_folder")))
+                        # A restart has no in-memory signature. Compare all saved bytes
+                        # with the durable baseline before queueing behind another game's
+                        # bulk verification. Changed files still need the import lane.
+                        signature = self._signature(folder)
+                        unchanged = cached_signature is not None and signature == cached_signature
+                        if not unchanged:
+                            unchanged = (_Snapshot.of(_read(folder, cache=self.file_cache)).files == baseline.disk.files
+                                         and signature == self._signature(folder))
+                        if unchanged:
+                            verified_signature = cached_signature = signature
+                            if logger is not None:getattr(logger, "check_cancel", lambda: None)()
+                            self._check_paused(slug)
+                            result = (self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
+                                      if changed_db else False)
+                            if result is not None:self.blocked.pop(slug, None)
+                if result is None:
+                    with self._verification(slug, logger) as acquired:
+                        if not acquired:
+                            return False
+                        if logger is not None:getattr(logger, "check_cancel", lambda: None)()
+                        self._check_paused(slug)
+                        if self._batching(slug):
+                            return False
+                        # Our project lock was released while waiting too: refresh the
+                        # acknowledgement baseline as well as the project's inputs.
+                        cached_signature = self.signatures.get(slug)
+                        # _sync reloads its inputs too; post-sync acknowledgement uses fresh metadata.
+                        proj = self.net._project(slug)
+                        rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
+                        self._activity(slug, phase="Comparing saved files")
+                        result = self._sync(slug, logger)
+                if rom and result:
+                    self.prune_matched_drafts(slug)
                 self.checked[slug] = time.monotonic()
-                self.sync_changes[slug] = self.net.store.conn.total_changes
+                self.sync_changes[slug] = store.conn.total_changes
                 if rom:
                     folder = saves.default_folder(self.net, slug)
                     # After a real write, make sure the folder is exactly what this sync rendered and wrote. An edit
                     # that arrived meanwhile must not be acknowledged (and so missed forever) by the cache.
                     signature = self._signature(folder)
                     touched = self.published.pop(slug, None)
-                    acknowledged = True
+                    acknowledged = verified_signature is None or signature == verified_signature
                     if result:
                         baseline = self._baseline(proj["id"])
                         if cached_signature is not None and touched is not None:
@@ -724,7 +1167,14 @@ class Progress:
             except _StillFailing:
                 raise  # (when it failed stays when it first did: a read every second mustn't put the next try off)
             except (OSError, UnicodeError, json.JSONDecodeError) as e:
-                message = "Could not read or write progress. Finish the git operation and check the folder's permissions."
+                from ..storage_errors import message as storage_error
+                message = storage_error(e) or "Could not read or write progress. Finish the git operation and check the folder's permissions."
+                if isinstance(e, OSError):
+                    # Do not stringify arbitrary exception arguments: they may contain source text.
+                    code = errno.errorcode.get(e.errno, type(e).__name__)
+                    filename = os.fsdecode(e.filename) if e.filename is not None else None
+                    location = f" at {filename[:400]!r}" if filename else ""
+                    message += f"\nFilesystem failure: {code}{location}."
                 self.errors[slug] = message
                 self._failed(slug)
                 raise NetworkError(message) from e
@@ -734,6 +1184,9 @@ class Progress:
                 raise
             finally:
                 self.local.busy = False
+                with self.activity_lock:
+                    if slug not in self.paused and slug not in self.rechecking:
+                        self.activity.pop(slug, None)
 
     def _failed(self, slug: str) -> None:
         """Remember what a failed sync read (after its own writes), so the next one waits for a change."""
@@ -797,12 +1250,14 @@ class Progress:
                    if baseline.projected.files.get(name) != _hash(text)}
         if full:
             removed = {name: None for name in baseline.projected.files if name not in files}
+            redundant = {"best/"+name[4:] for name in files if name.startswith("src/")}
+            removed.update({name: None for name in redundant if name in baseline.disk.files and name not in files})
         else:
             possible = {f"src/{saves._source_file(name)}" for name in names} | {f"best/{saves._source_file(name)}" for name in names}
             if flags.headers:
                 possible |= {name for name in baseline.projected.files if name.startswith("include/")}
             removed = {name: None for name in possible
-                       if name in baseline.projected.files and name not in files}
+                       if name in baseline.disk.files and name not in files}
         expected = {}
         for name in set(changes) | set(removed):
             path = folder / name
@@ -830,6 +1285,7 @@ class Progress:
 
     def _sync(self, slug: str, logger=None) -> bool:
         net = self.net
+        store = net.project_store(slug)
         proj = net._project(slug)
         if not net.is_rom(proj):
             return False  # PROJECT mode's source files already belong to its build and git repository.
@@ -854,7 +1310,7 @@ class Progress:
             result = self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
             if result is not None:
                 return result
-        disk = _read(folder)
+        disk = _read(folder,cache=self.file_cache)
         snapshot = _Snapshot.of(disk)
         if baseline is not None and snapshot.files == baseline.disk.files:
             if not db_changed and not config_changed:
@@ -869,17 +1325,30 @@ class Progress:
                                            or disk or (folder / ".git").exists()):
             raise NetworkError("Restore progress/decompdecomp.json before continuing this project.")
         if saves.MANIFEST in disk and (before is None or snapshot.files != before.files):
-            report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
+            destination = logger or (lambda line: saves.log.info("%s: %s", slug, line))
+            def report(line):
+                self._activity(slug, message=line)
+                destination(line)
             disk = _repair(net, pid, folder, disk, report)
-            known_names = {row["name"] for row in net.store.all(
+            known_names = {row["name"] for row in store.all(
                 "SELECT name FROM functions WHERE project_id=?", pid)}
             manifest = _manifest(disk, cfg, known_names)
+            def check_cancel():
+                self._check_paused(slug)
+                getattr(destination, "check_cancel", lambda: None)()
+            report.check_cancel = check_cancel
+            def progress(**fields):
+                self._activity(slug, **fields)
+                # Import jobs need the same measured counters as the project activity indicator.
+                publish = getattr(destination, "progress", None)
+                if publish is not None:
+                    publish(self.status(slug))
+            report.progress = progress
             getattr(report, "check_cancel", lambda: None)()
             # Captured before any render: the folder's revision is compared with what the database wrote last.
             stored_revision = saves._stored_revision(cfg)
             # Preserve work on unrelated functions even if a helper finished while a contribution was pulled.
             comparison = None if before is not None else saves._render(net, slug)[0]
-            comparison_manifest = before.manifest if before is not None else comparison[saves.MANIFEST]
             if before is None:
                 changed = {name for name in set(disk) | set(comparison) if disk.get(name) != comparison.get(name)}
             else:
@@ -899,12 +1368,16 @@ class Progress:
             # A helper can finish another function just before a pull. Publish that independent work before
             # loading the pull; the contributor wins if both changed the same file.
             all_code = False
+            affected = None
+            judging_change = True  # Unknown import shapes conservatively invalidate in-flight results.
             pending = {}
             if projected is not None:
                 rendered = comparison if comparison is not None else saves._render(net, slug)[0]
                 previous = projected
                 pending = {name: text for name, text in rendered.items()
                            if name not in changed and previous.files.get(name) != _hash(text)
+                           and not (name.startswith("src/") and "best/"+name[4:] in changed)
+                           and not (name.startswith("best/") and "src/"+name[5:] in changed)
                            and name != "README.md"}
                 pending.update(initial_pending)
                 if before is None:
@@ -926,15 +1399,35 @@ class Progress:
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, cfg, known_names)
-                all_code = any(name.startswith("include/") for name in changed)
-                if saves.MANIFEST in changed:
-                    old = json.loads(comparison_manifest)
-                    all_code |= any(old.get(key) != merged_manifest.get(key) for key in
-                                    ("compiler", "compiler_ranges", "symbols", "headers", "set_aside"))
-                    if old.get("layout") != merged_manifest.get("layout"):
-                        old_layout = {f["name"]: (f["vram"], f["size"]) for f in old.get("layout", [])}
-                        new_layout = {f["name"]: (f["vram"], f["size"]) for f in merged_manifest.get("layout", [])}
-                        all_code |= old_layout != new_layout
+                function_rows = store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
+                # Judge the merged files against today's database inputs, not the
+                # previous disk snapshot. Local searches may already have verified
+                # new sources/profiles since that snapshot was published.
+                def input_text(files, name):
+                    text = files.get(name)
+                    return saves._source_text(text) if text is not None and name.startswith(('src/', 'best/')) else text
+                input_changes = {name for name in set(candidate) | set(rendered)
+                                 if input_text(candidate, name) != input_text(rendered, name)}
+                affected = affected_functions(json.loads(rendered[saves.MANIFEST]), merged_manifest,
+                                              input_changes, function_rows)
+                if before is None:
+                    applied_changed = {name for name in set(candidate) | set(comparison)
+                                       if candidate.get(name) != comparison.get(name)}
+                else:
+                    applied_changed = {name for name in set(candidate) | set(before.files)
+                                       if _hash(candidate.get(name)) != before.files.get(name)}
+                if affected is not None:
+                    matched_names = {row['name'] for row in store.all(
+                        "SELECT name FROM functions WHERE project_id=? AND status='matched'", pid)}
+                    # Unpublished drafts still need judging. An already verified
+                    # match being exported is not an external source change.
+                    affected.update(source_name(path, matched_names | known_names) for path in applied_changed
+                                    if path.startswith(('src/', 'best/')) and path.endswith('.c')
+                                    and source_name(path, matched_names | known_names) not in matched_names)
+                    applied_changed = {path for path in applied_changed
+                                       if path in input_changes or not path.startswith(('src/', 'best/'))
+                                       or source_name(path, matched_names | known_names) not in matched_names}
+                all_code = affected is None
                 toolchain = (merged_manifest.get("compiler") or {}).get("toolchain")
                 if toolchain and not toolchains.known(toolchain):
                     # A folder from another tool can name a compiler this app doesn't have. The project's own
@@ -948,13 +1441,18 @@ class Progress:
                         merged_manifest["revision"] = saves._next_revision(net, proj, folder)
                         pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
                         toolchain = local_toolchain
-                code_files = any(name.startswith(("src/", "best/")) for name in disk)
-                database_code = not code_files and net.store.one(
+                code_files = any(name.startswith(("src/", "best/")) for name in candidate)
+                database_code = not code_files and store.one(
                     "SELECT 1 FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL "
                     "LIMIT 1", pid) is not None
-                judging_change = all_code or any(name.startswith(("src/", "best/", "include/"))
+                judging_change = all_code or bool(affected) or any(name.startswith(("src/", "best/", "include/"))
                                                  for name in changed)
                 needs_judging = judging_change and (code_files or database_code)
+                if needs_judging:
+                    reason = ("Shared linking inputs or function layout changed. Saved functions must be rebuilt to confirm their original bytes."
+                              if all_code else f"Build inputs changed for {len(affected or [])} functions. Only their saved sources are being rechecked; other matches are retained.")
+                    self._activity(slug, reason=reason, full_recheck=all_code or bool(function_rows) and
+                                   all(row["name"] in (affected or set()) for row in function_rows))
                 if toolchain and needs_judging:
                     if not toolchains.known(toolchain):
                         # #118: no Setup can install a compiler decompdecomp doesn't know. Open the project and
@@ -976,28 +1474,29 @@ class Progress:
                     pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
                 applied_files = candidate
                 applied_manifest = merged_manifest
-                if before is None:
-                    applied_changed = {name for name in set(applied_files) | set(comparison)
-                                       if applied_files.get(name) != comparison.get(name)}
-                else:
-                    applied_changed = {name for name in set(applied_files) | set(before.files)
-                                       if _hash(applied_files.get(name)) != before.files.get(name)}
             layout_by_name = {f["name"]: f for f in applied_manifest.get("layout", [])}
             layout_by_vram: dict[int, list] = {}
             for entry in applied_manifest.get("layout", []):
                 layout_by_vram.setdefault(entry["vram"], []).append(entry)
+            restore_notes = applied_manifest.get('notes', []) != json.loads(rendered[saves.MANIFEST]).get('notes', [])
+            # The legacy file keeps credits in the same atomic rollback as the
+            # restore. Separate stores resolve shared identities before locking
+            # project state, never by opening a nested catalog transaction.
+            agents = (None if store is net.store else saves._context_agents(
+                net, store, applied_manifest, report.check_cancel, restore_notes=restore_notes))
             try:
                 # The layout, the database resets and every applied change are one transaction. An error rolls all
                 # of them back; the folder is written inside it, so a failed apply publishes nothing.
-                with net.store.tx() as db:
+                with store.tx() as db:
                     rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?",
                                       (pid,)).fetchall()
                     for row in rows:
+                        impacted = all_code or row["name"] in (affected or set())
                         changed_source = f"src/{saves._source_file(row['name'])}" in applied_changed
                         changed_best = f"best/{saves._source_file(row['name'])}" in applied_changed
                         keep_backup = False
                         keep_best = False
-                        if changed_source or all_code:
+                        if changed_source or impacted:
                             old = db.execute("SELECT status,matched_source,matched_agent_id,best_source,best_score,"
                                              "best_agent_id FROM functions WHERE id=?", (row["id"],)).fetchone()
                             if old["status"] == "matched" and old["matched_source"]:
@@ -1008,11 +1507,11 @@ class Progress:
                                 db.execute("UPDATE functions SET best_source=?,best_score=?,best_agent_id=? WHERE id=?",
                                            (old["matched_source"], max(1, row["n_insns"] or 1) * 100,
                                             old["matched_agent_id"], row["id"]))
-                            elif all_code and not changed_best and old["best_source"] is not None:
+                            elif impacted and not changed_best and old["best_source"] is not None:
                                 # Nothing about this function's own code changed: rejudging can only replace or lose
                                 # the attempt already recorded, so keep it.
                                 keep_best = True
-                        if all_code or changed_source or changed_best:
+                        if impacted or changed_source or changed_best:
                             entry = layout_by_name.get(row["name"])
                             if entry is None or entry["vram"] != row["vram"]:
                                 candidates = layout_by_vram.get(row["vram"], [])
@@ -1026,7 +1525,10 @@ class Progress:
                                        "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
                                        (status, keep, keep, keep, row["id"]))
                             db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
-                    db.execute("DELETE FROM notes WHERE project_id=?", (pid,))
+                    # A source-only edit must not replay the whole note history. Compare
+                    # with the fresh database render, retaining concurrent new notes too.
+                    if restore_notes:
+                        db.execute("DELETE FROM notes WHERE project_id=?", (pid,))
                     db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted'", (pid,))
                     units = set(applied_manifest.get("headers") or {})
                     for row in db.execute("SELECT DISTINCT unit FROM context_versions WHERE project_id=?",
@@ -1034,23 +1536,36 @@ class Progress:
                         if row["unit"] and row["unit"] not in units:
                             db.execute("DELETE FROM context_versions WHERE project_id=? AND unit=?",
                                        (pid, row["unit"]))
-                    by_name, _ = saves._apply_context(net, slug, folder, applied_manifest, report,
-                                                     files=applied_files)
+                    with compiler.cancellable(report.check_cancel):
+                        by_name, _ = saves._apply_context(net, slug, folder, applied_manifest, report,
+                                                         files=applied_files, restore_notes=restore_notes, agents=agents)
+                    report.check_cancel()
                     if not saves._publish(folder, pending, removed, expected=disk,
                                           chosen=bool(cfg.get("progress_folder"))):
                         raise _FolderChanged
             except _FolderChanged:
                 return False
-            self.revisions[slug] = self.revisions.get(slug, 0) + 1
+            # Notes/instructions do not change the bytes being judged. Invalidating on every
+            # metadata import discarded concurrent compiles even though their inputs survived.
+            if judging_change:
+                self.revisions[slug] = self.revisions.get(slug, 0) + 1
             self.published[slug] = set(pending) | set(removed)
             disk = _read(folder)
-            known_names = {row["name"] for row in net.store.all(
+            known_names = {row["name"] for row in store.all(
                 "SELECT name FROM functions WHERE project_id=?", pid)}
             manifest = _manifest(disk, cfg, known_names)
             saves._remember_revision(net, slug, manifest)
-            self.results[slug] = saves._judge_saved(net, slug, folder, manifest, by_name,
-                                                    manifest.get("functions") or {}, report,
+            saved = manifest.get("functions") or {}
+            if affected is not None and needs_judging:
+                saved = {name: info for name, info in saved.items() if name in affected}
+            self.results[slug], recheck = self._judge_saved(slug, folder, manifest, by_name,
+                                                    saved, report,
                                                     files=disk, judge_code=needs_judging)
+            # The saved judge has finished (including its worker's publications).
+            # Rendering/export still holds this project's lock and file guards, but
+            # must not occupy another project's compiler admission lane.
+            self._release_verification(slug)
+            self._activity(slug, phase="Saving verified progress", function=None)
             net.bump_generation(pid)
             proj = net._project(slug)
             # `_apply_context` and the judge write matches and notes of their own: acknowledge the writes this
@@ -1058,10 +1573,57 @@ class Progress:
             applied_dirty = self._dirty(pid)
             applied_tokens = [r["token"] for r in self._dirty_files(pid)]
             rendered, _ = saves._render(net, slug)
+            # The import judge can promote a draft or reject a former match. Publish both
+            # path transitions before acknowledging its dirty tokens, so the saved verdict
+            # and source location agree with the judge. Move only the unchanged input C.
+            promoted = {name: text for name, text in rendered.items()
+                        if name.startswith("src/") and name not in disk
+                        and "best/"+name[4:] in disk
+                        and saves._source_text(disk["best/"+name[4:]]) == text}
+            demoted = {name: text for name, text in rendered.items()
+                       if name.startswith("best/") and name not in disk
+                       and "src/"+name[5:] in disk
+                       and saves._source_text(disk["src/"+name[5:]]) == text}
+            # Foreground work may replace an existing saved C while this recheck compiles.
+            # Publish only its affected files, guarded against an editor's newer disk contents.
+            foreground_names = recheck.functions if recheck is not None else set()
+            foreground_files = {name: text for name, text in rendered.items()
+                                if ((name.startswith(('src/', 'best/')) and name.split('/', 1)[1][:-2] in foreground_names)
+                                    or (name.startswith('include/') and recheck is not None and recheck.foreground))
+                                and text != disk.get(name)}
+            if promoted or demoted or (recheck is not None and recheck.foreground):
+                obsolete = {"best/"+name[4:]: disk["best/"+name[4:]] for name in promoted}
+                obsolete.update({"src/"+name[5:]: disk["src/"+name[5:]] for name in demoted})
+                obsolete.update({name: text for name, text in disk.items()
+                                 if name.startswith(("src/", "best/")) and name.split("/", 1)[1][:-2] in foreground_names
+                                 and name not in rendered})
+                transitions = promoted | demoted | foreground_files
+                transitions[saves.MANIFEST] = rendered[saves.MANIFEST]
+                if not saves._publish(folder, transitions, obsolete, expected=disk,
+                                      chosen=bool(cfg.get("progress_folder"))):
+                    return False  # an editor wrote meanwhile; leave dirty tokens for the retry
+                disk = _read(folder)
+                saves._remember_revision(net, slug, json.loads(rendered[saves.MANIFEST]))
+                proj = net._project(slug)
+                self.published[slug].update(transitions.keys() | obsolete.keys())
+                self.results[slug] = self.results[slug] | {
+                    "matched": sum(name.startswith("src/") for name in rendered),
+                    "best": sum(name.startswith("best/") for name in rendered)}
             self.projected[slug] = rendered
             self.disk[slug] = disk
             self._remember(pid, disk, rendered, _config_key(proj, net.cfg(proj)),
                            applied_dirty.token, applied_tokens)
+            if baseline is not None and net.cfg(proj).get('auto_commit_matches'):
+                # The restore judge temporarily reopens existing matches. Queue only genuine
+                # promotions, after attribution is restored to the contributing agent.
+                from . import match_commits
+                old = json.loads(baseline.projected.manifest or '{}').get('functions', {})
+                new = json.loads(rendered[saves.MANIFEST]).get('functions', {})
+                promoted_names = [name for name, info in new.items()
+                                  if 'matched_by' in info and 'matched_by' not in old.get(name, {})]
+                for name in promoted_names:
+                    row = store.one('SELECT id FROM functions WHERE project_id=? AND name=?', pid, name)
+                    if row:match_commits.enqueue(net, proj, row['id'], restored=True)
             return True
         if baseline is None:
             return self._publish_initial(slug, proj, folder, disk, dirty, config_key)

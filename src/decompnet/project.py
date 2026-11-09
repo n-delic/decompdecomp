@@ -10,9 +10,25 @@ from . import kits, linuxvm, toolchains, wsl
 from .compiler import CompilerConfig
 
 
-def compiler_for(cfg: dict, vram: int | None) -> dict:
-    """The compiler a function at `vram` is built with: its address range's, for a game built by more than one (GTA
-    San Andreas: EE-GCC 2.95.3, and CodeWarrior 3.0.1 -O3 for some of its code), else the project's."""
+def function_compiler_key(function):
+    """Portable identity for an entry, including images mapped at more than one RAM address."""
+    row=dict(function)
+    offset=row.get('rom_offset',row.get('rom'))
+    return f"{offset}:{row['vram']}" if offset is not None else None
+
+
+def compiler_for(cfg: dict, vram: int | None, function=None) -> dict:
+    """The original entry's verified profile, else its address range's or the project's default.
+    `function` distinguishes overlays sharing RAM addresses; exported entries spell rom_offset as rom."""
+    if function is not None:
+        row=dict(function)
+        row.setdefault('vram',vram)
+        offset=row.get('rom_offset',row.get('rom'))
+        profiles=cfg.get('function_compilers') or {}
+        own=(profiles.get(function_compiler_key(row)) or profiles.get(str(offset))) if offset is not None else next(
+            (p for p in profiles.values() if p.get('function')==row.get('name') and p.get('vram')==vram),None)
+        if own and own.get('vram')==vram:
+            return {**cfg['compiler'],'toolchain':own['toolchain'],'flags':own['flags']}
     for r in cfg.get("compiler_ranges") or []:
         if vram is not None and r["start"] <= vram < r["end"]:
             return {**cfg["compiler"], "toolchain": r["toolchain"], "flags": r["flags"]}
@@ -38,28 +54,32 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         return _own_config(root, c, own)
     ro_paths = [str((root / p).resolve()) for p in c.get("ro_paths", [])]
     runtime32 = None
+    assembly_preprocess, assembly_compile = (), ()
     linux = False
     vm = False
-    prelude, cplusplus = "", False
+    prelude, cplusplus, intrinsics = "", False, ""
     if "toolchain" in c:
         try:
             tc = toolchains.get(own.like if own else c["toolchain"])  # (a copy of the user's runs as its pack does)
         except toolchains.ToolchainError:
             raise toolchains.ToolchainError(unknown_compiler_message(c["toolchain"])) from None
-        prelude, cplusplus = tc.prelude, tc.cplusplus
+        prelude, cplusplus, intrinsics = tc.prelude, tc.cplusplus, tc.intrinsics
         vm = tc.via_vm
         linux = tc.via_wsl  # Windows: a Linux toolchain, run inside WSL 2
-        if own and vm:
-            raise toolchains.ToolchainError(
-                f"{tc.name} needs the Linux runner, which cannot read your own compiler kit in place. "
-                "Choose a locally supported compiler or use this kit on Linux.")
         if linux and not (ok := wsl.status())[0]:
             raise toolchains.ToolchainError(f"{tc.name} is a Linux program: on Windows it runs in WSL 2. {ok[1]}")
         dirs = ((own.root, *(toolchains.require(d, linux) for d in tc.requires)) if own
                 else toolchains.runtime_dirs(tc.id))
+        driver = Path(__file__).parent / tc.driver if tc.driver else None
+        if driver:
+            dirs = (*dirs, driver.parent)
         try:
-            where_tools = (linuxvm.prepare_tools(dirs) if vm else
-                           wsl.prepare_tools(dirs) if linux else tuple(str(directory) for directory in dirs))
+            if vm:
+                where_tools = linuxvm.prepare_tools(dirs)
+            elif linux:
+                where_tools = wsl.prepare_tools(dirs)
+            else:
+                where_tools = tuple(str(directory) for directory in dirs)
         except (OSError, subprocess.SubprocessError, linuxvm.VMError) as error:
             raise toolchains.ToolchainError(f"{tc.name} couldn't prepare its compiler runtime: {error}") from None
         tc_dir = where_tools[0]
@@ -76,13 +96,20 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         # The bundled Mac app owns a supported Python; /usr/bin/python3 may still be 3.9 and cannot run maspsx.
         # Linux sandboxes and WSL use their own python3, not a host interpreter outside their mounts.
         python = sys.executable if sys.platform == "darwin" and not vm else "python3"
-        cmd = [a.replace("{tc}", tc_dir).replace("{python}", python) for a in base]
-        for dep, where in zip(tc.requires, where_tools[1:]):  # {tc:<id>} is another toolchain this one needs
-            cmd = [a.replace(f"{{tc:{dep}}}", where) for a in cmd]
+        def resolve(template):
+            expanded=[x for a in template for x in (flags if a=="{flags}" else [a])]
+            result=[a.replace("{tc}",tc_dir).replace("{python}",python) for a in expanded]
+            if driver:result=[a.replace("{driver}",where_tools[-1]+"/"+driver.name) for a in result]
+            for dep,where in zip(tc.requires,where_tools[1:]):
+                result=[a.replace(f"{{tc:{dep}}}",where) for a in result]
+            return result
+        cmd=resolve(base)
+        assembly_preprocess=tuple(resolve(tc.assembly_preprocess))
+        assembly_compile=tuple(resolve(tc.assembly_compile))
     else:
         cmd = list(c["cmd"])
     return CompilerConfig(
-        cmd=cmd,
+        cmd=cmd, assembly_preprocess=assembly_preprocess, assembly_compile=assembly_compile,
         timeout=float(c.get("timeout", 15)),
         sandbox=c.get("sandbox", "auto"),
 
@@ -92,6 +119,7 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         wsl=linux,
         linux_vm=vm,
         prelude=prelude,
+        intrinsics=intrinsics,
         cplusplus=cplusplus,
     )
 

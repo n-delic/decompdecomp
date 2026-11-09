@@ -136,12 +136,13 @@ def test_accounts_survive_restart_without_reassigning_helpers_or_old_usage(tmp_p
     manager._session_end(second_session, row, agent, began, "limit")
     manager.stop(second)
     restored = agents.Manager(net, tmp_path, URL)
-    assert restored.sessions[first].options == options | {"model": "opus"}
+    assert restored.sessions[first].options == options | {"model": "opus", "selection": {"strategy": "", "match_below": None}}
     assert restored.sessions[second].options["account_id"] == "a2"
     assert restored.sessions[second].snapshot()["account_name"] == "Work"
-    assert manager.start("claude", "game", options=options | {"account_id": "a2", "account_name": "Work"}) == [second]
-    manager.sessions[second].thread.join()
-    manager.stop(second)
+    (third,) = manager.start("claude", "game", options=options | {"account_id": "a2", "account_name": "Work"})
+    assert manager.sessions[third].options["account_id"] == "a2"
+    manager.sessions[third].thread.join()
+    manager.stop(third)
     manager.remove(first)
     usage = {r["account_id"]: r for r in restored.account_usage()}
     assert (usage["a1"]["tokens"], usage["a2"]["tokens"]) == (100, 200)
@@ -218,6 +219,7 @@ def test_a_limited_account_restarts_on_itself_and_leaves_another_account_running
         return True
 
     monkeypatch.setattr(manager, "_run_cli", run)
+    monkeypatch.setattr(manager, "_wait", lambda *args, **kwargs: None)
     manager._run(session)
     assert runs == ["a1", "a1"] and session.restarts == 1
     assert all(r["account_id"] == "a1" for r in net.store.all("SELECT account_id FROM helper_sessions"))

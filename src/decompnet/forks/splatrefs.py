@@ -57,7 +57,170 @@ def run(command: list[str], root: Path, log) -> None:
         log(result.stdout[-1000:])
 
 
-def plan(root: Path, config: dict) -> list[dict]:
+def binary_span(path: Path) -> int | None:
+    """Bound objcopy's flat output using section load addresses, including gaps.
+
+    Default MIPS linker scripts can put ABI metadata far from .text. Filling that
+    gap can take minutes and gigabytes even for a tiny input ELF.
+    """
+    try:
+        with path.open('rb') as stream:
+            elf = ELFFile(stream)
+            loads = [segment for segment in elf.iter_segments() if segment['p_type'] == 'PT_LOAD']
+            ranges = []
+            for section in elf.iter_sections():
+                if not section['sh_flags'] & 2 or section['sh_type'] == 'SHT_NOBITS' or not section['sh_size']:
+                    continue
+                address = section['sh_addr']
+                for segment in loads:
+                    if segment.section_in_segment(section):
+                        address += segment['p_paddr'] - segment['p_vaddr']
+                        break
+                ranges.append((address, address + section['sh_size']))
+            return max(end for _, end in ranges) - min(start for start, _ in ranges) if ranges else 0
+    except (OSError, ELFError, ValueError):
+        return None
+
+
+def verified_rebuild(project, config_path: Path, config: dict, image_path: Path, sha1: str, log) -> bool:
+    """Freeze linked code objects only when objcopy of the ELF reproduces the complete original image.
+
+    This covers overlay layouts that cannot be split into independent ROM-derived objects. The linker map
+    must locate each included object's nonempty text; unused or data-only objects are left out.
+    Assembly stays target-only, and binary program blobs get a coverage warning.
+    """
+    root = project.root.resolve()
+    if digest(image_path) != sha1:
+        raise ForkError("the decompressed image no longer matches the splat config's SHA-1")
+    options = config['options']
+    build_dir = inside(root, options.get('build_path', 'build'))
+    source_dir = inside(root, options.get('src_path', 'src'))
+    if not build_dir.is_dir():
+        raise ForkError("a verified overlay import needs the project's built objects")
+    directory = toolchains.require('binutils-mips')
+    objcopy = next((p for p in (directory / 'mips-ps2-decompals-objcopy',
+                                directory / 'bin' / 'mips-ps2-decompals-objcopy') if p.is_file()), None)
+    if objcopy is None:
+        raise ForkError("the installed MIPS reference tools are missing objcopy")
+    matches = []
+    parent = inside(root, STATE)
+    parent.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='verified-rebuild-', dir=parent) as temp:
+        binary = Path(temp) / 'rebuilt.z64'
+        configured = inside(root, options.get('elf_path', str(build_dir.relative_to(root) / 'project.elf')))
+        elves = set(build_dir.glob('*.elf')) | ({configured} if configured.is_file() else set())
+        for elf in sorted(elves):
+            span = binary_span(elf)
+            if span is None or span > image_path.stat().st_size:
+                continue  # No gap-fill choice can shrink a flat ELF into the original image.
+            # Cartridge link scripts commonly leave FF-filled gaps. Both layouts must satisfy the same
+            # complete original-image hash; no payload bytes are supplied from the original here.
+            for fill in ([], ['--gap-fill', '0xff'],
+                         ['--gap-fill', '0xff', f'--pad-to={image_path.stat().st_size:#x}']):
+                try:
+                    run([str(objcopy), '-O', 'binary', *fill, str(elf), str(binary)], root, log=lambda *_: None)
+                except (ForkError, subprocess.TimeoutExpired):
+                    continue  # Not every linked ELF has a flat cartridge layout.
+                if digest(binary) == sha1:
+                    matches.append(elf)
+                    break
+        if len(matches) != 1:
+            raise ForkError("overlay references need exactly one ELF whose complete binary matches the original "
+                            "image's SHA-1")
+    elf = matches[0]
+    paired = elf.with_suffix('.map')
+    root_map = root / (elf.stem + '.map')
+    maps = ([paired] if paired.is_file() else [root_map] if root_map.is_file()
+            else list(elf.parent.glob('*.map')))
+    if len(maps) != 1:
+        raise ForkError("overlay references need one linker map paired with the matching ELF")
+    mapped = maps[0].read_text(errors='replace', encoding='utf-8')
+    mapped_text = set(re.findall(r'^\s*\.text\s+0x[0-9A-Fa-f]+\s+0x[1-9A-Fa-f][0-9A-Fa-f]*\s+(\S+\.o)\s*$',
+                                 mapped, re.M))
+    units, binary_assembly = [], []
+    assembly_dir = inside(root, options.get('asm_path', 'asm'))
+    sources = set(source_dir.rglob('*.c')) | set(source_dir.rglob('*.s')) | set(assembly_dir.rglob('*.s'))
+    # Versioned builds can link shared sources outside Splat's selected src_path. Follow the verified map,
+    # rather than assuming that directory contains every compiled unit.
+    for name in mapped_text:
+        object_path = inside(root, name)
+        try:
+            relative = object_path.relative_to(build_dir)
+        except ValueError:
+            continue
+        stem = relative.with_suffix('')
+        candidates = [stem] if stem.suffix in ('.c', '.s') else [stem.with_suffix('.c'), stem.with_suffix('.s')]
+        sources.update(root / candidate for candidate in candidates if (root / candidate).is_file())
+    sources = sorted(sources, key=lambda path: (path.suffix != '.c', path.as_posix()))
+    claimed = set()
+    for source in sources:
+        relative = source.relative_to(root)
+        candidates = [build_dir / (str(relative) + '.o'), build_dir / relative.with_suffix('.o')]
+        linked = [p for p in candidates if p.is_file() and p.relative_to(root).as_posix() in mapped_text]
+        if len(linked) > 1:
+            raise ForkError(f'ambiguous linked objects for {relative}; configure objdiff manually')
+        if linked:
+            if source.suffix == '.s' and re.search(r'^\s*\.incbin\b', source.read_text(encoding='utf-8'), re.M):
+                binary_assembly.append(relative.as_posix())
+                continue  # A program blob is not one known function; retain an explicit coverage warning.
+            base = linked[0]
+            if base in claimed:
+                continue  # Some projects keep both C and assembly sources for the same linked object.
+            claimed.add(base)
+            object_name = base.relative_to(root).as_posix()
+            if base.stat().st_mtime_ns > elf.stat().st_mtime_ns:
+                raise ForkError(f'{object_name} changed after the verified ELF was linked; rebuild the project')
+            units.append((source, base))
+    if not units or len(units) > MAX_UNITS:
+        raise ForkError(f"the verified overlay rebuild has {len(units)} linked code objects; supported range is "
+                        f"1–{MAX_UNITS}")
+    destination = inside(root, STATE + '/objdiff-references')
+    if destination.exists():
+        raise ForkError("existing automatic reference files were retained; restore their objdiff.json or set up manually")
+    version = config_path.name.removeprefix('decompressed.').removesuffix('.yaml')
+    make_args = [f'VERSION={version}'] if version != config_path.stem else []
+    selected = next((v for v, path in project._splat_version_configs().items()
+                     if path.resolve() == config_path.resolve()), None)
+    if selected:
+        make_args = [f'VERSION={selected}']
+    with tempfile.TemporaryDirectory(prefix='reference-stage-', dir=parent) as temporary:
+        work = Path(temporary)
+        entries = []
+        for source, base in units:
+            target = work / 'targets' / base.relative_to(build_dir)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(base, target)
+            # Keep objdiff unit identities and exported paths stable across Windows and POSIX hosts.
+            entry = {'name': source.relative_to(root).with_suffix('').as_posix(),
+                     'target_path': (destination / target.relative_to(work)).relative_to(root).as_posix()}
+            if source.suffix == '.c':
+                entry.update(base_path=base.relative_to(root).as_posix(),
+                             metadata={'source_path': source.relative_to(root).as_posix()})
+            else:
+                entry['metadata'] = {'assembly_source': source.relative_to(root).as_posix()}
+            entries.append(entry)
+        pending = work / 'objdiff.json'
+        pending.write_text(json.dumps({'custom_make': 'make', 'custom_args': make_args,
+                                       'build_target': False, 'build_base': True, 'units': entries,
+                                       'coverage_notes': ([f'{len(binary_assembly)} linked binary assembly images '
+                                           'are not split into functions and are excluded from function progress.']
+                                           if binary_assembly else [])}, indent=2) + '\n',
+                           encoding='utf-8')
+        if (root / 'objdiff.json').exists():
+            raise ForkError("objdiff.json appeared during setup; the existing configuration was retained")
+        try:
+            shutil.move(str(work), destination)
+            os.link(destination / 'objdiff.json', root / 'objdiff.json')
+        except OSError:
+            shutil.rmtree(destination, ignore_errors=True)
+            raise
+    log(f'Generated objdiff.json with {len(entries)} objects from a byte-exact rebuilt image; '
+        f'{sum(1 for source, _ in units if source.suffix == ".s")} assembly units have no C candidate. '
+        f'{len(binary_assembly)} binary assembly images are excluded from function progress.')
+    return True
+
+
+def plan(root: Path, config: dict, *, independent: bool = False) -> list[dict]:
     """Accept linear code mappings; C units have candidates, assembly units remain source-less targets."""
     options = config.get('options', {})
     source_root = options.get('src_path', 'src')
@@ -66,6 +229,11 @@ def plan(root: Path, config: dict) -> list[dict]:
     segments = config.get('segments', [])
     if not isinstance(segments, list):
         raise ForkError("automatic objdiff setup needs a list of explicit splat segments")
+    # Prefer a verified whole rebuild for overlays; independent mode verifies original sections instead.
+    if not independent and any(isinstance(segment, dict) and segment.get('type') == 'code'
+           and any(key in segment for key in ('exclusive_ram_id', 'compressed', 'decompressor'))
+           for segment in segments):
+        raise ForkError("automatic objdiff setup cannot yet verify compressed or overlay code segments")
     for segment in segments:
         if not isinstance(segment, dict):
             if isinstance(segment, list) and segment and isinstance(segment[0], int) and (
@@ -76,7 +244,7 @@ def plan(root: Path, config: dict) -> list[dict]:
             continue
         if not isinstance(segment.get('start'), int) or not isinstance(segment.get('vram'), int):
             raise ForkError("automatic objdiff setup needs a numeric start and vram for each code segment")
-        if any(key in segment for key in ('compressed', 'decompressor', 'exclusive_ram_id')):
+        if any(key in segment for key in ('compressed', 'decompressor')) or (not independent and 'exclusive_ram_id' in segment):
             raise ForkError("automatic objdiff setup cannot yet verify compressed or overlay code segments")
         entries = segment.get('subsegments', [])
         if not isinstance(entries, list):
@@ -89,6 +257,8 @@ def plan(root: Path, config: dict) -> list[dict]:
             offset, kind = entry[:2]
             if not isinstance(offset, int) or not isinstance(kind, str):
                 raise ForkError("automatic objdiff setup needs explicit numeric subsegment offsets")
+            if independent and kind == 'pad':
+                continue
             if kind not in ('c', 'asm', 'hasm', 'data', 'rodata', 'bss', '.data', '.rodata', '.bss', 'bin'):
                 raise ForkError(f"automatic objdiff setup does not support splat subsegment {kind!r} yet")
             if kind not in ('c', 'asm', 'hasm'):
@@ -260,7 +430,7 @@ def reference_symbols(work: Path) -> dict[str, int]:
     return definitions
 
 
-def generate(project, config_path: Path, config: dict, console, version: str | None = None, log=print) -> bool:
+def generate(project, config_path: Path, config: dict, console, log=print) -> bool:
     """Publish references and objdiff.json only after the complete set passes verification."""
     root = project.root.resolve()
     if (root / 'objdiff.json').exists():
@@ -275,7 +445,20 @@ def generate(project, config_path: Path, config: dict, console, version: str | N
     original_base = inside(root, str(config_path.parent / options.get('base_path', '.')))
     if original_base != root:
         raise ForkError("automatic objdiff setup needs the splat base_path to identify this checkout's root")
-    units = plan(root, config)
+    try:
+        units = plan(root, config)
+    except ForkError as error:
+        if ("compressed or overlay code segments" not in str(error)
+                and "subsegment 'pad'" not in str(error)
+                and "relative unit names without parent paths" not in str(error)
+                and "numeric start and vram" not in str(error)):
+            raise
+        try:
+            return verified_rebuild(project, config_path, config, image_path, sha1.lower(), log)
+        except ForkError as rebuilt:
+            if 'numeric start and vram' in str(error) or 'exactly one ELF' not in str(rebuilt):
+                raise
+            units = plan(root, config, independent=True)
     configured_elf = inside(root, options.get('elf_path', 'build/project.elf'))
     candidates = [configured_elf] if configured_elf.is_file() else list(inside(root, 'build').rglob('*.elf'))
     # Prefer a complete matching image; original disassembly addresses override an incomplete build below.
@@ -363,10 +546,8 @@ def generate(project, config_path: Path, config: dict, console, version: str | N
                 if mappings:
                     entry['symbol_mappings'] = mappings
             entries.append(entry)
-        build = project.setup_commands(version)[-1]
         pending = work / 'objdiff.json'
-        pending.write_text(json.dumps({'custom_make': build[0], 'custom_args': build[1:],
-                                       'build_target': False, 'build_base': True,
+        pending.write_text(json.dumps({'custom_make': 'make', 'build_target': False, 'build_base': True,
                                        'units': entries,
                                        'coverage_notes': ([] if matching else [
                                            'The source rebuild has not passed the whole-image checksum. Function '

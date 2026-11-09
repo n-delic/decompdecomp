@@ -4,6 +4,7 @@ a dtk-template project (decomp-toolkit splits the game) built with Metrowerks Co
 - scratch.py: a dtk-template project for the user's game, from a disc image (ISO, GCM, RVZ, WIA, WBFS, CISO, GCZ)
   or a program (DOL): the game's id, its modules (RELs), the first build that must rebuild it byte for byte. It also
   reads and writes configure.py for each source file's own CodeWarrior version (issue #26).
+- sdk.py: whole-function SDK fingerprints from the pinned decomp-toolkit corpus, with target-bound evidence.
 - guides/mwcc.md: what agents read about matching CodeWarrior's code.
 
 dtk projects someone published are forked like any public decomp: forks/ reads their layout (forks/dtksplits.py).
@@ -13,6 +14,7 @@ Its demo game is projects/demo-gc (the Demo Quest game built with CodeWarrior GC
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
@@ -42,6 +44,7 @@ class GameCube(Console):
     big_endian = True
     mode = PROJECT
     layout = "dtk-template"
+    sdk_corpus = "decomp-toolkit v1.8.4 (GameCube/Wii)"
     compilers = tuple(Compiler(v, f"CodeWarrior {v}") for v in GC_VERSIONS)
     packs = (("mwcc", "CodeWarrior, the compilers of GameCube and Wii games (proprietary)"),)
     guides = ("ppc", "mwcc", "cpp")
@@ -55,6 +58,24 @@ class GameCube(Console):
     usual = "GC/1.3.2"  # what most of its games were built with: the default until the game says otherwise
     compiler_config = (".decomp.wtf.json", "configure.py", "config/**/*")  # Object(...) versions, splits.txt
     disc_kinds = ("gc", "packed")  # what scratch.disc_kind says its discs are (a compressed one can be either's)
+
+    def scan_sdk(self, net, proj, job=None) -> None:
+        from . import sdk
+
+        sdk.scan(net, proj, job)
+
+    def recognizes_objdiff(self, config: dict) -> bool:
+        units = config.get('units', [])
+        platforms = {unit['scratch'].get('platform') for unit in units
+                     if isinstance(unit, dict) and isinstance(unit.get('scratch'), dict)
+                     and isinstance(unit['scratch'].get('platform'), str)}
+        if 'gc_wii' not in platforms or not platforms <= {'gc_wii', self.id}:
+            return False
+        versions = {part for unit in units if isinstance(unit, dict)
+                    for key in ('target_path', 'base_path') for part in str(unit.get(key, '')).replace('\\', '/').split('/')
+                    if re.fullmatch(r'[GRS][A-Z0-9]{5}', part)}
+        kinds = {'gc' if version.startswith('G') else 'wii' for version in versions}
+        return kinds == {self.id}
 
     def sniff(self, head: bytes, file) -> bool:
         from . import scratch

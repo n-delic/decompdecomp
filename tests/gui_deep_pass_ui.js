@@ -1,0 +1,313 @@
+"use strict";
+const fs = require("fs"), vm = require("vm"), assert = require("assert");
+const elements = new Map();
+function element(id) {
+  if (!elements.has(id)) {
+    let html = "", tables = [], sorts = [], attention = [], metricFunctions = [], resultFunctions = [];
+    elements.set(id, {classList:{add(){},remove(){}},dataset:{}, textContent:"", value:0, hidden:false, disabled:false,
+      get innerHTML() { return html; }, set innerHTML(value) {
+        html = value; resultFunctions = Array.from(value.matchAll(/data-deep-result="(\d+)"/g), m => ({dataset:{deepResult:m[1]}})); metricFunctions = Array.from(value.matchAll(/data-deep-metric-function="(\d+)">([^<]+)/g), m => ({dataset:{deepMetricFunction:m[1]},textContent:m[2],focus(){}})); attention = Array.from(value.matchAll(/data-deep-attention="(\d+)"/g), m => ({dataset:{deepAttention:m[1]}})); sorts = Array.from(value.matchAll(/data-deep-sort="([^"]+)"/g), m => ({dataset:{deepSort:m[1]}})); tables = Array.from(value.matchAll(/class="compiler-table"/g), () => ({scrollTop:0, scrollLeft:0}));
+      },
+      querySelector:()=>null, querySelectorAll(selector) { return selector === "[data-deep-result]" ? resultFunctions : selector === "[data-deep-metric-function]" ? metricFunctions : selector === "[data-deep-attention]" ? attention : selector === ".compiler-table" ? tables : selector === "[data-deep-sort]" ? sorts : []; },
+      replaceChildren() { this.innerHTML = ""; this.textContent = ""; },
+      append() {},
+    });
+  }
+  return elements.get(id);
+}
+let follower, finished = 0;
+const opened = [];
+const ctx = {AbortController,setTimeout,clearTimeout,renderDeepActivity:()=>{}, $:element, S:{slug:"game-a"}, esc:String, openFn:name=>opened.push(name),
+  document:{createElement:()=>({})},
+  beginWork:()=>()=>finished++, showJobError:()=>{},
+  followJob:(job, log, callback, active)=>new Promise((resolve,reject)=>{follower={job,callback,active,resolve,reject};}),
+  api:async url=>({state:url.includes("game-a")?"running":"idle",job:7,minutes:5,max_variants:100,
+    errors:0,completed:0,improvements:[{function:"one",starting_score:10,starting_percent_text:"90%",new_score:5,new_percent_text:"95%"}]}),
+};
+ctx.dialog = (title, html, kind) => {element("dialogTitle").textContent=title; element("dialogBody").innerHTML=html; element("dialog").hidden=false; ctx.S.dialogKind=kind; return element("dialogBody");};
+ctx.closeDialog = () => {element("dialog").hidden=true; ctx.S.dialogKind="";};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync("src/decompnet/app/static/js/rewrite-performance.js","utf8"),ctx);
+const source = fs.readFileSync("src/decompnet/app/static/js/steering.js", "utf8");
+vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.indexOf('$("deepSweepStart").onclick')), ctx);
+(async()=>{
+  ctx.renderDeepSweepResults({has_activity:false, completed:12, queue_done:12, improvements:[]});
+  for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,true);
+  assert.equal(element("deepSweepAttention").hidden,true);
+  ctx.renderDeepSweepResults({has_activity:true,attention:[{function:"broken",error:"Compile failed",action:"Fix declarations"}]});
+  assert.equal(element("deepSweepAttention").hidden,false);
+  assert.equal(element("deepSweepAttentionTitle").textContent,"1 function could not be searched — view reasons");
+  assert.match(element("deepSweepAttentionList").innerHTML,/Compile failed/);
+  assert.match(element("deepSweepAttentionList").innerHTML,/Fix declarations/);
+  element("deepSweepAttentionList").querySelectorAll("[data-deep-attention]")[0].onclick();
+  assert.deepEqual(opened,["broken"]);
+  ctx.renderDeepSweepResults({has_activity:true,attention:[
+    {function:"first",error:"first is already matched",action:"Inspect saved C"},
+    {function:"second",error:"second is already matched",action:"Inspect saved C"},
+    {function:"third",error:"host answered 502",action:"Check connection"}]});
+  const grouped = element("deepSweepAttentionList").innerHTML;
+  assert.equal((grouped.match(/class="deep-issue-group"/g)||[]).length,2);
+  assert.equal((grouped.match(/Inspect saved C/g)||[]).length,1);
+  assert.match(grouped,/2 functions/);
+  assert.match(grouped,/This function is already matched/);
+  element("deepSweepAttentionList").querySelectorAll("[data-deep-attention]")[1].onclick();
+  assert.equal(opened.at(-1),"second");
+  ctx.renderDeepSweepResults({has_activity:true,attention:[{function:"f",error:"Compile failed",action:"Fix declarations"}]});
+  assert.match(element("deepSweepAttentionList").innerHTML,/Compile failed/);
+
+
+  ctx.renderDeepSweepResults({has_activity:false,attention:[]});
+  assert.equal(element("deepSweepAttention").hidden,true);
+  assert.equal(element("deepSweepAttentionList").innerHTML,"");
+  ctx.renderDeepQueueState({state:"done", has_activity:true, queue_left:19, queue_rotated:19, queue_blocked:2, awaiting_source:1});
+  assert.match(element("deepSweepQueueTitle").textContent, /Paused/);
+  assert.match(element("deepSweepQueueReason").textContent, /19 paused early/);
+  assert.equal(element("deepSweepActive").textContent, "0");
+  assert.equal(element("deepSweepStart").textContent, "Continue search");
+  assert.equal(element("deepSweepStop").hidden, true);
+  assert.equal(element("deepSweepSettings").hidden,false);
+  assert.equal(element("deepActivitySection").hidden,true);
+  assert.equal(element("deepSweepLogSection").hidden,true);
+  assert.equal(element("deepSweepBlocked").textContent, "2");
+  const lookupIssue={function:'missing',error:"no function 'missing' in 'game-a'. Did you mean: other?",action:'Inspect saved C'};
+  ctx.renderDeepQueueState({state:'idle',attention:[lookupIssue],queue_blocked:1});
+  element('deepSweepPanel').dataset.slug=ctx.S.slug;
+  element('deepSweepBlockedGroup').onclick();
+  assert.equal(element('dialogTitle').textContent,'Functions needing attention');
+  assert.match(element('dialogBody').innerHTML,/Function lookup failed during search/);
+  assert.match(element('dialogBody').innerHTML,/lookup hints/);
+  assert.match(element('dialogBody').innerHTML,/no function 'missing'/);
+  assert.doesNotMatch(element('dialogBody').innerHTML,/no function 'This function'/);
+  element('dialogBody').querySelectorAll('[data-deep-metric-function]')[0].onclick();
+  assert.equal(opened.at(-1),'missing');
+  ctx.renderDeepSweepResults({has_activity:true,attention:[lookupIssue]});
+  assert.match(element('deepSweepAttentionList').innerHTML,/Function lookup failed during search/);
+  assert.doesNotMatch(element('deepSweepAttentionList').innerHTML,/>no function 'This function'/);
+
+  assert.equal(element("deepSweepStart").hidden, false);
+  ctx.renderDeepQueueState({state:"running",progress:{preparation:{checked:250,total:2000,eligible:125,done:false}}});
+  assert.match(element("deepSweepQueueTitle").textContent,/checking candidates/);
+  assert.match(element("deepSweepPreparationText").textContent,/250 \/ 2,000 · 12%/);
+  assert.equal(element("deepSweepPreparationBar").value,250);
+  assert.equal(element("deepSweepPreparation").hidden,false);
+  ctx.renderDeepQueueState({state:"running",progress:{phase:"waiting for host claims or scored C"}});
+  assert.match(element("deepSweepQueueReason").textContent, /Waiting for available functions/);
+  assert.equal(element("deepSweepStart").hidden, true);
+  assert.equal(element("deepSweepSettings").hidden,true);
+  assert.equal(element("deepActivitySection").hidden,false);
+  assert.equal(element("deepSweepLogSection").hidden,false);
+  element("deepSweepStatus").textContent = "Deep pass stopped: Deep pass stopped.";
+  ctx.renderDeepQueueState({state:"running",error:"Deep pass stopped.",progress:{workers:[{}]}});
+  assert.match(element("deepSweepQueueTitle").textContent,/Running/);
+  assert.doesNotMatch(element("deepSweepQueueReason").textContent,/stopped/);
+  assert.equal(element("deepSweepStatus").hidden,true);
+  assert.equal(element("deepSweepStatus").textContent,"");
+  ctx.renderDeepQueueState({state:"cancelled",error:"Deep pass stopped. Verified improvements and completed passes are saved."});
+  assert.equal(element("deepSweepQueueTitle").textContent,"Search stopped");
+  assert.equal(element("deepSweepQueueReason").textContent,"Your improvements and completed searches are saved.");
+  ctx.renderDeepQueueState({state:"error",error:"Compiler failed"});
+  assert.equal(element("deepSweepQueueTitle").textContent,"Search needs attention");
+  assert.equal(element("deepSweepQueueReason").textContent,"Compiler failed");
+  ctx.renderDeepQueueState({state:"done",has_activity:true,queue_done:34,queue_left:12,queue_blocked:1});
+  assert.equal(element("deepSweepBar").max,47);
+  assert.equal(element("deepSweepProgressText").textContent,"34 of 47 functions completed · 72%");
+  await ctx.renderDeepSweep();
+  for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,false);
+
+  assert.equal(element("deepSweepStop").hidden, false);
+  assert.equal(element("deepSweepStart").hidden, true);
+  const oldFollower=follower;
+  ctx.openDeepMetric("improved");
+  const table=element("dialogBody").querySelectorAll(".compiler-table")[0];
+  table.scrollTop=177; table.scrollLeft=23;
+  ctx.renderDeepSweepResults({improvements:[{function:"one",starting_score:10,starting_percent_text:"90%",new_score:5,new_percent_text:"95%"}]});
+  const rebuilt=element("dialogBody").querySelectorAll(".compiler-table")[0];
+  assert.equal(rebuilt.scrollTop,177); assert.equal(rebuilt.scrollLeft,23);
+  const status={improved:3,improvements:[
+    {function:"a",starting_score:10,new_score:0,starting_percent_text:"90%",new_percent_text:"100%"},
+    {function:"b",starting_score:100,new_score:50,starting_percent_text:"40%",new_percent_text:"70%"},
+    {function:"c",starting_score:20,new_score:15,starting_percent_text:"80%",new_percent_text:"85%"}]};
+  ctx.renderDeepSweepResults(status);
+  assert.equal(element("deepSweepMatched").textContent,"1");
+  assert.equal(element("deepSweepImproved").textContent,"3");
+  const order=()=>Array.from(element("dialogBody").innerHTML.matchAll(/data-deep-result="\d+">([^<]+)/g),m=>m[1]);
+  assert.deepEqual(order(),["b","a","c"]);
+  const sort=key=>element("dialogBody").querySelectorAll("[data-deep-sort]").find(b=>b.dataset.deepSort===key).onclick();
+  sort("new_percent_text"); assert.deepEqual(order(),["a","c","b"]);
+  sort("new_percent_text"); assert.deepEqual(order(),["b","c","a"]);
+  ctx.renderDeepSweepResults(status); assert.deepEqual(order(),["b","c","a"]);
+  sort("function"); assert.deepEqual(order(),["a","b","c"]);
+  assert.match(element("dialogBody").innerHTML,/Improvement/);
+  assert.match(element("dialogBody").innerHTML,/class="table-sort"/);
+  assert.doesNotMatch(element("dialogBody").innerHTML,/class="link-btn"[^>]*data-deep-sort/);
+  assert.match(element("dialogBody").innerHTML, /<details class="deep-result-detail" data-result-detail="a"><summary>Scores & rewrites/);
+  assert.match(element("dialogBody").innerHTML, /\+30 points/);
+  element("deepSweepMetricImproved").onclick();
+  assert.equal(element("dialogTitle").textContent,"Improved by deep permuter");
+  assert.match(element("dialogBody").innerHTML,/3 functions improved/);
+  assert.match(element("dialogBody").innerHTML,/Score: 100 → <b>50/);
+  assert.equal(element("dialogBody").querySelectorAll("[data-deep-result]").length,3);
+  ctx.closeDialog();
+  ctx.openDeepMetric("improved");
+  assert.match(element("dialogBody").innerHTML,/3 functions/,"reopening must repopulate the drawer");
+  element("dialogBody").scrollTop=177;
+  ctx.renderDeepSweepResults({improvements:[status.improvements[0]]});
+  assert.match(element("dialogBody").innerHTML,/1 function/);
+  assert.equal(element("dialogBody").scrollTop,177);
+  ctx.renderDeepSweepResults(status);
+  element("deepSweepMetricMatched").onclick();
+  assert.equal(element("dialogBody").querySelectorAll("[data-deep-metric-function]").length,1);
+  assert.match(element("dialogBody").innerHTML,/Byte-for-byte match/);
+  element("dialogBody").querySelectorAll("[data-deep-metric-function]")[0].onclick();
+  assert.equal(opened.at(-1),"a");
+  assert.equal(element("dialog").hidden,true);
+  ctx.renderDeepQueueState({state:"running",progress:{workers:[{function:"working",starting_percent:90,best_percent:95,tested:42,phase:"Local repairs"}]}});
+  element("deepSweepMetricActive").onclick();
+  assert.match(element("dialogBody").innerHTML,/working/);
+  assert.match(element("dialogBody").innerHTML,/42 candidates tested/);
+  ctx.renderDeepQueueState({state:"done",progress:{workers:[{function:"stale"}]}});
+  assert.match(element("dialogBody").innerHTML,/No functions are being searched right now/);
+  ctx.closeDialog();
+  ctx.renderDeepSweepResults({improvements:[]});
+  ctx.openDeepMetric("matched");
+  assert.match(element("dialogBody").innerHTML,/No matches from the deep permuter yet/);
+  ctx.S.slug="other"; ctx.renderDeepMetricDrawer();
+  assert.equal(element("dialog").hidden,true,"close results when navigating to a different project");
+  ctx.S.slug="game-a";
+  ctx.renderDeepSweepResults(status);
+  ctx.renderDeepQueueState({state:"running",progress:{workers:[]}});
+  status.recipe_wins = [
+    {function:"a",created_at:20,previous_score:5,new_score:0,family:"last_fix",provenance:{lineage:["first", "last"]}},
+    {function:"a",created_at:10,previous_score:10,new_score:5,family:"first_fix",provenance:{}},
+    {function:"b",created_at:30,previous_score:100,new_score:50,family:"other_fix",provenance:{}}];
+  ctx.renderDeepSweepResults(status);
+  assert.doesNotMatch(element("deepSweepRecipes").innerHTML,/Recent verified rewrite improvements|data-deep-win/);
+  ctx.openDeepMetric("improved");
+  assert.deepEqual(order(),["a","b","c"]);
+  assert.match(element("dialogBody").innerHTML,/2 verified improvements/);
+  assert.match(element("dialogBody").innerHTML,/first → last/);
+  assert.match(element("dialogBody").innerHTML,/10 → 5/);
+  assert.match(element("dialogBody").innerHTML,/Latest improvement/);
+  sort("match_gain"); assert.deepEqual(order(),["b","a","c"]);
+  sort("match_gain"); assert.deepEqual(order(),["c","a","b"]);
+  oldFollower.callback([], {progress:{workers:[{},{}],functions_tested:156,matches:0}});
+  assert.equal(element("deepSweepActive").textContent,"2");
+  assert.doesNotMatch(element("deepSweepStatus").textContent,/functions active|functions tested/);
+  assert.match(element("deepSweepQueueTitle").textContent,/Running — searching 2 functions/);
+  assert.equal(element("deepSweepRunChecked").textContent,"This run: 156 functions checked");
+  ctx.renderDeepQueueState({state:"done",has_activity:true,queue_done:4,queue_left:0,progress:{workers:[{},{}],functions_tested:9}});
+  assert.equal(element("deepSweepActive").textContent,"0");
+  assert.equal(element("deepSweepStop").hidden,true);
+  assert.equal(element("deepSweepStart").textContent,"Run again");
+  assert.equal(element("deepSweepPausedGroup").hidden,true);
+  assert.equal(element("deepSweepBlockedGroup").hidden,true);
+  assert.equal(element("deepSweepWaitingGroup").hidden,true);
+  assert.match(element("deepSweepRunChecked").textContent,/Last run: 9/);
+  oldFollower.callback([], {progress:{workers:[{},{}],functions_tested:156}});
+  assert.equal(element("deepSweepActive").textContent,"0", "late progress cannot revive a finished search");
+  ctx.S.slug="game-b";
+  const pending=ctx.renderDeepSweep();
+  assert.equal(element("deepSweepStop").hidden,true);
+  assert.equal(oldFollower.active(),false);
+  assert.equal(finished,1);
+  await pending;
+  assert.equal(element("deepSweepStart").disabled,false);
+  assert.equal(element("deepSweepStart").hidden,false);
+  assert.equal(element("deepSweepStop").hidden,true);
+  oldFollower.callback([], {progress:{function:"wrong-game"}});
+  assert.doesNotMatch(element("deepSweepStatus").textContent,/wrong-game/);
+  oldFollower.resolve(null);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(finished,1);
+  const timers=[];
+  ctx.setTimeout=(fn,ms)=>{const timer={fn,ms,cancelled:false};timers.push(timer);return timer;};
+  ctx.clearTimeout=timer=>{if(timer)timer.cancelled=true;};
+  ctx.S.slug="status-error";
+  ctx.api=async()=>{throw new Error('Server unavailable');};
+  await ctx.renderDeepSweep();
+  assert.equal(element('deepSweepStart').disabled,false);
+  assert.match(element('deepSweepQueueTitle').textContent,/Reconnecting/);
+  assert.match(element('deepSweepQueueReason').textContent,/automatically/);
+  assert.equal(element('deepSweepMatched').textContent,'—');
+  assert.equal(element('deepSweepLoadingBar').hidden,false);
+  assert.equal(element('deepSweepImproved').textContent,'—');
+  const retry=timers.findLast(t=>t.ms===5000&&!t.cancelled);
+  assert.ok(retry,'retry is scheduled automatically');
+  ctx.api=async()=>({state:'idle',minutes:5,max_variants:100});
+  await retry.fn();
+  assert.match(element('deepSweepQueueTitle').textContent,/Ready/);
+  assert.equal(element('deepSweepLoadingBar').hidden,true);
+  ctx.S.slug='slow-status';
+  let calls=0;
+  ctx.api=(url,options)=>{calls++;return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new Error('aborted'))));};
+  const slow=ctx.renderDeepSweep();
+  assert.equal(element('deepSweepStart').disabled,false,'loading progress must not gate Start');
+  await ctx.renderDeepSweep();assert.equal(calls,1,'polls coalesce a pending control request');
+  const timeout=timers.findLast(t=>t.ms===15000&&!t.cancelled);
+  timeout.fn();await slow;
+  assert.match(element('deepSweepQueueReason').textContent,/automatically/);
+  assert.doesNotMatch(element('deepSweepQueueReason').textContent,/15 seconds|Retry status/);
+  // A slow statistics request cannot hide a discovered running job or its Stop action.
+  ctx.S.slug='slow-totals';
+  let rejectTotals, reads=0;
+  ctx.api=(url,options)=>{
+    reads++;
+    if(url.includes('view=control'))return Promise.resolve({job:'fast-live',state:'running',control_only:true,minutes:5,max_variants:100,has_activity:true,progress:{workers:[{}]}});
+    return new Promise((resolve,reject)=>{rejectTotals=reject;});
+  };
+  const totalsPending=ctx.renderDeepSweep();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(follower.job,'fast-live','attach before loading saved statistics');
+  assert.equal(element('deepSweepStop').hidden,false);
+  assert.equal(element('deepSweepStart').hidden,true);
+  follower.callback([], {state:'running',progress:{workers:[{},{}],functions_tested:4}});
+  rejectTotals(Error('Statistics are slow'));
+  await totalsPending;
+  assert.match(element('deepSweepQueueTitle').textContent,/Running/);
+  assert.equal(element('deepSweepStop').hidden,false);
+  assert.equal(element('deepSweepMatched').textContent,'—');
+  assert.match(element('deepSweepQueueReason').textContent,/automatically/);
+  // Keep known totals and active controls through a later connection failure.
+  ctx.renderDeepSweepResults({has_activity:true,improved:2,improvements:[{function:'f',new_score:0}]});
+  ctx.renderDeepQueueState({job:'fast-live',state:'running',statistics_pending:false,queue_left:9,progress:{workers:[{},{}]}});
+  ctx.api=async()=>{throw Error('Temporary connection failure');};
+  await ctx.renderDeepSweep();
+  assert.equal(element('deepSweepMatched').textContent,'1');
+  assert.equal(element('deepSweepLeft').textContent,'9');
+  assert.equal(element('deepSweepStop').hidden,false);
+  follower.reject(Error('Temporary job connection failure'));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(element('deepSweepQueueReason').textContent,/automatically/);
+  assert.equal(element('deepSweepStop').hidden,false,'losing progress transport must not hide Stop');
+  const oldRetry=timers.findLast(t=>t.ms===5000&&!t.cancelled);
+  const beforeSwitch=reads;
+  ctx.S.slug='different-project';
+  await oldRetry.fn();
+  assert.equal(reads,beforeSwitch,'old project retries cannot query or update another project');
+  ctx.renderDeepQueueState({state:'running',loop:true,progress:{cycle:3,functions_tested:8}});
+  assert.match(element('deepSweepRunChecked').textContent,/Pass 3 · looping/);
+  element('deepSweepLoop').checked=true;
+  element('deepSweepThreads').value='2';
+  element('deepSweepFunctionThreads').value='4';
+  ctx.api=async(url, options)=>{assert.equal(element('deepSweepSettings').hidden,true,'hide settings before starting request resolves'); assert.equal(options.body.loop,true);assert.equal(options.body.threads,2);assert.equal(options.body.threads_per_function,4);throw new Error('A deep pass is already running');};
+  vm.runInContext(source.slice(source.indexOf('$("deepSweepStart").onclick'),source.indexOf('$("deepSweepStop").onclick')),ctx);
+  await element('deepSweepStart').onclick();
+  assert.equal(element('deepSweepSettings').hidden,false);
+  assert.equal(element('deepSweepLogSection').hidden,true);
+  assert.match(element('deepSweepQueueTitle').textContent,/could not start/);
+  assert.match(element('deepSweepQueueReason').textContent,/already running/);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+
+// Integration with the match-ranked profile controls: one field in the compact Advanced disclosure.
+const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
+const panel=html.slice(html.indexOf('id="deepSweepPanel"'),html.indexOf('id="deepSweepAttention"'));
+for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','deepSweepThreads','deepSweepFunctionThreads','deepSweepRepeat','deepSweepLoop']) {
+  assert.equal((panel.match(new RegExp('id="'+id+'"','g')) || []).length,1,`${id} must occur exactly once`);
+}
+assert.match(panel,/<details class="deep-advanced">[\s\S]*?id="deepSweepProfiles"[^>]*min="1"[^>]*max="16"[\s\S]*?<\/details>/);
+assert.match(panel,/<div class="deep-dashboard">/);
+
+assert.ok(panel.indexOf('id="deepSweepSettings"') < panel.indexOf('id="deepSweepStart"'));
+assert.doesNotMatch(html,/id="deepSweepResults"/);
+
+assert.doesNotMatch(panel, /deepSweepStatusRetry|Retry status/);

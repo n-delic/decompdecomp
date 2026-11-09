@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
+# RetroReversing fork installer — 1.0.9-rr.2
 # decompdecomp installer for Linux and macOS (Intel and Apple Silicon).
 #
-#   curl -fsSL https://decomp.ndelic.com/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/RetroReversing/decompdecomp/main/site/public/install.sh | bash -s -- --source branch:main
 #
 # decompdecomp installs on this computer, with uv:
 #   1. installs uv, Astral's Python tool manager, if you don't have it (asks first)
@@ -10,19 +11,19 @@
 #   4. downloads the free compilers and the m2c draft decompiler (pinned and checksum-verified)
 #   5. adds decompdecomp to your apps menu (replacing an older .deb or .rpm of it) and opens it
 #
-# Your projects go to ~/Decomp. Nothing is sent anywhere.
+# Your projects go to ~/Decomp-RetroReversing. Nothing is sent anywhere.
 # Uninstall: uv tool uninstall decompnet
 #
 # Options:
 #   --no-start          install only
-#   --source <what>     where decompdecomp comes from: "release" (default), "branch:<name>" (a branch on GitHub, for
+#   --source <what>     where decompdecomp comes from: "release" (a tagged release), "branch:main" (default), "branch:<name>" (a branch on GitHub, for
 #                       testing; its updates follow that branch) or a folder with decompdecomp's source. Run from a
 #                       git checkout, the checkout is used (and updates follow its branch; main's are releases).
 # The same through the environment: DECOMP_SOURCE=..., DECOMP_BRANCH=<name>.
 set -euo pipefail
 
-VERSION="1.0.9-alpha.5"
-REPO="n-delic/decompdecomp"
+VERSION="1.0.9-rr.2"
+REPO="RetroReversing/decompdecomp"
 START=1
 SOURCE="${DECOMP_SOURCE:-}"
 [ -z "$SOURCE" ] && [ -n "${DECOMP_BRANCH:-}" ] && SOURCE="branch:${DECOMP_BRANCH}"
@@ -57,6 +58,8 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     CHECKOUT="$(cd "$SCRIPT_DIR/../.." && pwd)"
   fi
 fi
+[ -n "$SOURCE" ] || SOURCE="${CHECKOUT:-branch:main}"
+
 bold "decompdecomp setup"
 OS="$(uname -s)"
 case "$OS" in

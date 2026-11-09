@@ -1,0 +1,14 @@
+"use strict";
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
+let copied, message;
+const ctx = {copyText: async text => { copied = text; return true; }, toast: text => { message = text; }};
+vm.createContext(ctx);
+const source = fs.readFileSync('src/decompnet/app/static/js/function.js', 'utf8');
+vm.runInContext(source.slice(source.indexOf('function assemblyForClipboard'), source.indexOf('function highlightAsm')), ctx);
+const asm = 'glabel func_80001000\n/* 001000 80001000 27BDFFE8 */  addiu $sp, $sp, -0x18\n.L80001004:\n/* 001004 80001004 1000FFFF */ b .L80001004\n    .word 0x80001000\nendlabel func_80001000';
+const expected = 'glabel func_80001000\naddiu $sp, $sp, -0x18\n.L80001004:\nb .L80001004\n    .word 0x80001000\nendlabel func_80001000';
+assert.equal(ctx.assemblyForClipboard(asm), expected);
+assert.equal(ctx.assemblyForClipboard('80001000  jr $ra\nlabel: nop'), '    jr $ra\nlabel: nop');
+(async () => { await ctx.copyTargetAssembly(asm); assert.equal(copied, expected); assert.equal(message, 'Assembly copied.');
+ctx.copyText = async () => false; await ctx.copyTargetAssembly(asm); assert.match(message, /Could not copy/);
+})().catch(e => { console.error(e); process.exitCode = 1; });

@@ -36,6 +36,7 @@ def matched(built, tmp_path):  # noqa: F811
 
 def test_a_readable_rewrite_that_still_matches_is_kept(matched):
     net, slug, agent = matched
+    original = net._function("clamp_s32", slug)["matched_source"]
     brief = net.readability.claim(agent, slug)
     assert "clamp_s32" in brief and "must still match byte for byte" in brief
     assert net.readability.submit(agent, slug, "clamp_s32", BROKEN).startswith("❌ It no longer matches")
@@ -43,10 +44,14 @@ def test_a_readable_rewrite_that_still_matches_is_kept(matched):
                           "WHERE f.name='clamp_s32' AND a.score > 0")["n"]
     assert tries == 1  # a polishing helper's compiles count, as a decompiling one's
     assert net.overview(slug)["readable"] == 0
+    assert net._function("clamp_s32", slug)["unpolished_source"] is None
     assert net.readability.submit(agent, slug, "clamp_s32", READABLE).startswith("✅ clamp_s32 is readable now")
     fn = net._function("clamp_s32", slug)
     assert fn["status"] == "matched" and "Keeps value between" in fn["matched_source"] and fn["readable"] == 1
     assert net.overview(slug)["readable"] == 1
+    for detail in (net.function_preview(slug,"clamp_s32"), net.function_detail(slug,"clamp_s32",include_hints=False)):
+        assert detail["polished"] and detail["unpolished_source"] == original
+        assert detail["source"] == READABLE
     # its own kinds, so the feed says polishing (not a computer's colour) and routing counts decompiling claims only
     kinds = [r["kind"] for r in net.store.all("SELECT kind FROM events WHERE detail='clamp_s32' ORDER BY id")]
     assert kinds[-2:] == ["polish", "readable"]
@@ -117,6 +122,9 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
     said = net.readability.submit(agent, "p", "func_02001000", "/* triple it */\nint func_02001000(int n) { return n * 3; }")
     assert "readable now" in said and net.store.one("SELECT readable FROM functions")["readable"] == 1
     assert len(tried) == 2
+    preview = net.function_preview('p','func_02001000')
+    assert preview['polished']
+    assert preview['unpolished_source'] == "int func_02001000(int a) { return a * 3; }"
     assert "claim_readable" in tools.tool_names(fork=True) and "make_readable" in tools.tool_names(fork=True)
     assert "edit_file" in tools.READABLE_PROMPT.format(title="T", count=1, names=tools.READABLE_FORK)
 
@@ -137,8 +145,27 @@ def test_the_function_list_tells_polished_functions_and_helpers_say_they_polish(
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,readable) VALUES(1,?,8,2,'matched','u',?)",
                        (name, readable))
     assert {r["name"]: r["polished"] for r in net.function_map("g")} == {"a": True, "b": False}
-    s = agents.Session.__new__(agents.Session)
-    s.__dict__.update(id="1", kind="api", label="x", slug="g", agent_name="api-m-1", model="m", state="working",
-                      why="", todo="", until=None, stopped_by=None, last_message="", runs=0, restarts=0, error="",
-                      started_at=0, usd=0, tokens=0, feed=[], options={"task": "readable"})
+    s = agents.Session(id="1", kind="api", label="x", slug="g", agent_name="api-m-1",
+                       options={"task": "readable"}, state="working")
     assert s.snapshot()["task"] == "readable"
+
+
+def test_polishing_stats_count_only_accepted_functions_per_agent_and_project(tmp_path):
+    import json
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    polisher, _ = net.local_agent("polisher")
+    matcher, _ = net.local_agent("matcher")
+    with net.store.tx() as db:
+        for slug in ("first", "second"):
+            db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) "
+                       "VALUES(?,?,'','mips',1,?,?)", (slug, slug, str(tmp_path), json.dumps({"kind": "rom"})))
+        for agent, kind, detail, project in ((polisher, "polish", "pending", 1),
+                                            (polisher, "readable", "accepted", 1),
+                                            (polisher, "readable", "accepted", 1),
+                                            (polisher, "readable", "other", 2),
+                                            (matcher, "claim", "pending", 1)):
+            net._event(db, project, agent.id, kind, detail)
+    board = net.stats("first")["agents"]
+    assert board == [{"agent": "polisher", "compiles": 0, "matched": 0, "polished": 1, "last": None, "improved": 0}]
+    assert net.stats("second")["agents"][0]["polished"] == 1

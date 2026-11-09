@@ -26,34 +26,42 @@ const cases = [
   ["project", 'box.querySelector("#startShare").onclick = async () => {', '\n    };', "shareLog", "startShare"],
   ["project", 'body.querySelector("#rGo").onclick = async () => {', '\n  };', "rLog", "rGo"],
   ["project", 'body.querySelector("#jGo").onclick = async () => {', '\n  };', "jLog", "jGo"],
-  ["project", 'async function installToolchain(id, proprietary) {', '\n}\n', "toolLog", null],
-  ["project", '$("fsFind").onclick = async () => {', '\n    };', "fsFindLog", "fsFind"],
+  ["project", 'async function installToolchain(id, proprietary, force = false) {', '\n}\n', "toolLog", null],
   ["steering", '$("romCheck").onclick = async () => {', '\n    };', "sourceCheckLog", "romCheck"],
   ["steering", '$("forkMeasure").onclick = async () => {', '\n    };', "sourceCheckLog", "forkMeasure"],
   ["steering", 'async function exportNow() {', '\n}\n', "expLog", "srcExport"],
   ["steering", '$("setTcSave").onclick = async () => {', '\n};', "setTcLog", "setTcSave"],
   ["agents", 'if (inst) inst.onclick = async () => {', '\n  };', "log", "inst"],
   ["pages", 'b.onclick = async () => {', '\n    };', "log", "b"],
+  ["project", '$("localScan").onclick = async () => {', '\n};', "localScanLog", "localScan"],
+  ["project", 'go.onclick = async () => {', '\n  };', "localImportLog", "localImport"],
+  ["steering", '$("sourcePrepRun").onclick = async () => {', '\n};', "sourcePrepLog", "sourcePrepRun"],
+  ["function", 'async function followFunctionDeep(job = null) {', '\n}\n$("fnDeepRun")', "fnDeepLog", "fnDeepRun"],
 ];
 function setup(file, marker, end, logId, buttonId, ranges = "") {
   const elements = new Map();
   const get = (id) => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   const log = get(logId), button = get(buttonId || "unused");
+  get("localFolder").value = "/synthetic/collection";
   get("agList").querySelector = () => log; const input = element();
-  const box = { querySelector: (selector) => selector === "[data-log]" ? log : get(selector.replace(/^#/, "")), querySelectorAll: () => [input] };
+  const box = { querySelector: (selector) => ["[data-log]", "[data-local-log]"].includes(selector) ? log : get(selector.replace(/^#/, "")), querySelectorAll: (selector) => selector === "input, button, select" ? [input, button] : [input] };
   get("srcState").querySelectorAll = () => [button];
+  get("fnDeepMinutes").value = "30"; get("fnDeepVariants").value = "100";
   get("setRanges").value = ranges;
   get("rLink").value = "https://room.test"; get("jPath").value = "game";
   const start = deferred(), poll = deferred();
   let polls = 0;
   const ctx = {
     $: get, document: { createElement: element },
-    S: { slug: "test", ov: { kind: "fork" } }, info: {}, box, body: box, n: get("compilerNotice"), log, inst: button,
+    followDeepSweep: () => {}, renderDeepQueueState: () => {}, deepSweepSnapshot: null, deepSweepProjectVersion:0, deepSweepRetryTimer:null, clearTimeout, setTimeout, deepPermuterBusy: false, deepPermuterJob: null, refreshFn: async () => {},
+    S: { slug: "test", fn: "f", ov: { kind: "fork" } }, info: {}, box, body: box, n: get("compilerNotice"), log, inst: button,
     b: Object.assign(button, { dataset: { inst: "test" } }), a: { id: "test", name: "Test" }, ROOM_PORT: 6481,
-    dialog: () => box, id: "test", proprietary: false, confirm: () => true, Blob, location: {},
-    esc: String, plural: () => "files", clock: () => "12:00", toast() {}, loadNav() {}, closeDialog() {}, rerender() {}, check() {},
+    results: get("localResults"), scan: { folder: "/synthetic/collection", projects: [] }, picked: new Set(), renderList() {},
+    selected: () => [{ path: "/synthetic/collection/project" }], renderLocalProjects() {}, update() {},
+    dialog: () => box, id: "test", proprietary: false, force: false, confirm: () => true, Blob, location: {},
+    esc: String, plural: () => "files", toast() {}, loadNav() {}, closeDialog() {}, rerender() {}, check() {},
     fields: () => ({}), joinProblem: () => "", exportOpen: () => true, cmdBox: () => "", wireCopies() {},
-    renderHost() {}, renderTools() {}, renderStats() {}, renderSource() {}, renderProjectSettings() {},
+    renderSdkSelection: async () => {}, renderHost() {}, renderTools() {}, renderStats() {}, renderSource() {}, renderProjectSettings() {},
     showAgentsPage() {}, loadState: async () => {}, refreshMap: async () => {},
     sleep: async () => {},
     api(url) {
@@ -67,6 +75,7 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   ctx.box._romSearch = ctx.searchToken;
   ctx.usingGame = false;
   vm.createContext(ctx);
+  vm.runInContext(read("deep-progress"), ctx);
   const base = read("base");
   vm.runInContext(base.slice(base.indexOf("const JOB_POLL_MS"), base.indexOf("/* The map's still")), ctx);
   // The page error box is independent of the bar; keep its text to check that cleanup preserves it.
@@ -74,41 +83,10 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   ctx.showJobError = (el, message) => { el.error = message; showError(el, message); };
   const source = read(file), offset = source.indexOf(marker) + marker.length;
   assert.ok(offset >= marker.length, marker);
-  vm.runInContext('async function run() {' + source.slice(offset, source.indexOf(end, offset)) + '\n}', ctx);
+  vm.runInContext('async function run(' + (marker.startsWith('async function followFunctionDeep') ? 'job = null' : '') + ') {' + source.slice(offset, source.indexOf(end, offset)) + '\n}', ctx);
   return { ctx, get, log, button, start, poll, polls: () => polls };
 }
 async function main() {
-  for (const outcome of ["done", "error", "switched"]) {
-    const test = setup("steering", '$("saveGo").onclick = async () => {', '\n};', "saveLog", "saveGo");
-    const { ctx, get, log, button, start } = test;
-    const source = read("steering"), marker = "function renderSaveLocation(ov) {";
-    const offset = source.indexOf(marker);
-    vm.runInContext(source.slice(offset, source.indexOf("\n}", offset) + 2), ctx);
-    ctx.renderSaveLocation({ slug: "first", save_folder: "/saves/first" });
-    assert.equal(get("saveFolder").value, "/saves/first");
-    get("saveFolder").value = "/unsaved-edit";
-    ctx.renderSaveLocation({ slug: "first", save_folder: "/saves/first" });
-    assert.equal(get("saveFolder").value, "/unsaved-edit");
-    ctx.renderSaveLocation({ slug: "test", save_folder: "/saves/test" });
-    assert.equal(get("saveFolder").value, "/saves/test");
-    const running = ctx.run();
-    assert.equal(button.disabled, true);
-    assert.ok(log.bar);
-    if (outcome === "error") start.reject(new Error("Save failed"));
-    else {
-      if (outcome === "switched") {
-        ctx.S.slug = "other";
-        ctx.renderSaveLocation({ slug: "other", save_folder: "/saves/other" });
-      }
-      start.resolve({ folder: "/saved", best: 1 });
-    }
-    await running;
-    assert.equal(button.disabled, false);
-    assert.equal(log.bar.removed, true);
-    if (outcome === "error") assert.match(log.error, /Save failed/);
-    if (outcome === "done") assert.equal(get("saveFolder").value, "/saved");
-    if (outcome === "switched") assert.equal(get("saveFolder").value, "/saves/other");
-  }
   for (const [file, marker, end, logId, buttonId] of cases) {
     for (const outcome of ["start-error", "job-error", "cancelled", "done"]) {
       const test = setup(file, marker, end, logId, buttonId);
@@ -130,23 +108,100 @@ async function main() {
         assert.equal(log.bar.removed, undefined, marker);
         poll.resolve({ state: outcome === "done" ? "done" : outcome === "cancelled" ? "cancelled" : "error",
           log: ["Building"], error: outcome === "cancelled" ? "Cancelled." : "Build failed",
-          result: { slug: "test", identical: true, switched: 1, stayed: [], functions: 1 } });
+          result: {reason: "Time limit reached", tested: 2,  slug: "test", identical: true, switched: 1, stayed: [], functions: 1, imported: [], errors: [] } });
       }
       await running;
       assert.equal(log.bar.removed, true, marker);
       if (buttonId) assert.equal(button.disabled, false, marker);
-      if (outcome !== "done") assert.equal(log.error, outcome === "start-error" ? "Cannot start" : outcome === "cancelled" ? "Cancelled." : "Build failed", marker);
-      if (outcome === "job-error" || outcome === "cancelled") assert.equal(log.textContent, "Building", marker);
+      const deepCancelled = file === "function" && outcome === "cancelled";
+      if (deepCancelled) assert.ok(test.get("fnDeepStatus").textContent.includes("Stopped"));
+      if (outcome !== "done" && !deepCancelled) assert.equal(log.error, outcome === "start-error" ? "Cannot start" : outcome === "cancelled" ? "Cancelled." : "Build failed", marker);
+      if (outcome === "job-error" || (outcome === "cancelled" && !deepCancelled)) assert.equal(log.textContent, (outcome === "cancelled" ? "Cancelled." : "Build failed") + "\n\nBuilding", marker);
       if (outcome === "done") {
         assert.equal(log.error || "", "", marker);
         assert.equal(log._workStatus.dataset.state, "done");
         assert.ok(log._workStatus.textContent.endsWith("."), marker);
         assert.notEqual(log._workStatus.textContent, "Finished.", marker);
       } else {
-        assert.equal(log._workStatus.dataset.state, "error");
+        assert.equal(log._workStatus.dataset.state, deepCancelled ? "cancelled" : "error");
         assert.equal(log._workStatus.textContent, "Stopped");
       }
     }
+  }
+  // A project sweep has separate start and long-running follow phases, including page navigation.
+  for (const failed of [false, true]) {
+    const test = setup("steering", '$("deepSweepStart").onclick = async () => {', '\n};', "deepSweepLog", "deepSweepStart");
+    const followed = [];
+    test.ctx.setDeepRunVisibility = () => {};
+    test.ctx.followDeepSweep = (...args) => followed.push(args);
+    const running = test.ctx.run();
+    assert.equal(test.button.disabled, true);
+    assert.ok(test.log.bar && !test.log.bar.removed);
+    if (failed) test.start.reject(new Error("Cannot start"));
+    else test.start.resolve({job:"sweep"});
+    await running;
+    assert.equal(test.log.bar.removed, true);
+    assert.equal(test.button.disabled, false);
+    assert.equal(followed.length, failed ? 0 : 1);
+  }
+  // Run again explicitly repeats saved completed turns, even with Advanced unchecked.
+  {
+    const test = setup("steering", '$("deepSweepStart").onclick = async () => {', '\n};', "deepSweepLog", "deepSweepStart");
+    test.ctx.setDeepRunVisibility = () => {};
+    test.ctx.deepSweepSnapshot = {has_activity:true, queue_left:0, queue_done:12};
+    test.ctx.$("deepSweepRepeat").checked = false;
+    let request;
+    test.ctx.api = async (url, options) => {request = options.body; return {};};
+    await test.ctx.run();
+    assert.equal(request.repeat, true);
+  }
+  for (const outcome of ["done", "error", "cancelled", "detached"]) {
+    const test = setup("steering", 'async function followDeepSweep(slug, job) {', '\n}\n', "deepSweepLog", "deepSweepStart");
+    Object.assign(test.ctx, {slug:"test", job:"sweep", deepSweepFollowing:null, setDeepRunVisibility:()=>{}, renderDeepSweep:()=>{}, renderDeepActivity:()=>{}});
+    const running = test.ctx.run();
+    await tick();
+    const log = test.log.children[0];
+    assert.ok(log.bar && !log.bar.removed);
+    if (outcome === "detached") test.ctx.S.slug = "other";
+    test.poll.resolve({state:outcome === "detached" ? "done" : outcome, log:["Working"], error:"Stopped", progress:{function:"f", phase:"local repairs"}, result:{}});
+    await running;
+    assert.equal(log.bar.removed, true);
+    if (outcome === "detached") assert.equal(log.textContent, "");
+    else if (outcome !== "done") assert.equal(log.error, "Stopped");
+  }
+  // SDK indexing includes optional local C and always clears its foreground progress bar.
+  for (const fail of [false, true]) {
+    const test = setup("steering", '$("sdkImport").onclick = async () => {', '\n};', "sdkLog", "sdkImport");
+    const running = test.ctx.run();
+    assert.equal(test.button.disabled, true);
+    assert.equal(test.log.bar.removed, undefined);
+    if (fail) test.start.reject(new Error("Invalid source folder"));
+    else test.start.resolve({ signatures: 12, sources: 4, corpus: "local" });
+    await running;
+    assert.equal(test.button.disabled, false);
+    assert.equal(test.log.bar.removed, true);
+    if (fail) assert.equal(test.log.error, "Invalid source folder");
+    else assert.match(test.log.textContent, /12 signatures and 4 C definitions/);
+  }
+  // Stopping a deep search cancels its existing job, rather than launching another search.
+  for (const fail of [false, true]) {
+    const test = setup(...cases[cases.length - 1]);
+    test.ctx.deepPermuterJob = "deep-job";
+    const request = deferred(); let called;
+    test.ctx.api = (url, options) => { called = { url, options }; return request.promise; };
+    const source = read("function"), marker = '$("fnDeepStop").onclick = async () => {';
+    const offset = source.indexOf(marker) + marker.length;
+    vm.runInContext('async function stopDeep() {' + source.slice(offset, source.indexOf('\n};', offset)) + '\n}', test.ctx);
+    const stopping = test.ctx.stopDeep();
+    assert.equal(test.get("fnDeepStop").disabled, true);
+    assert.equal(called.url, "/api/job/cancel");
+    assert.equal(called.options.body.id, "deep-job");
+    if (fail) request.reject(new Error("Could not stop")); else request.resolve({ cancelled: true });
+    await stopping;
+    if (fail) {
+      assert.equal(test.log.error, "Could not stop");
+      assert.equal(test.get("fnDeepStop").disabled, false);
+    } else assert.ok(test.get("fnDeepStatus").textContent.includes("Stopping"));
   }
   // Passive overview refreshes keep a pending check's panel and indicator intact.
   for (const caseIndex of [0, 7]) {
@@ -209,21 +264,45 @@ async function main() {
   const copyTest = setup(...cases[0]);
   const raw = "mips-linux-gnu-cpp: missing\nmake: *** Error 127";
   copyTest.log.textContent = raw;
+  const collapsedDetails={open:false};copyTest.log.closest=()=>collapsedDetails;
   let copied = null;
   copyTest.ctx.copyText = async (text) => { copied = text; return true; };
   copyTest.ctx.showJobError(copyTest.log, "setup step failed: make\nMissing preprocessor.\n\nBuild output:\n" + raw);
+  assert.equal(collapsedDetails.open,true);
+  assert.match(copyTest.log.className,/joblog/);
   assert.equal(copyTest.log._errorBox.textContent, "setup step failed: make");
   assert.equal(copyTest.log.textContent.split("mips-linux-gnu-cpp: missing").length - 1, 1);
-  assert.equal(copyTest.log._copyToolbar.children[0].textContent, "Job log");
   const toolbar = copyTest.log._copyToolbar;
+  assert.equal(toolbar.children[0].textContent,"Job log");
+  assert.equal(copyTest.log.scrollTop,copyTest.log.scrollHeight);
   await toolbar.children[1].onclick();
   assert.equal(copied, copyTest.log.textContent);
   assert.ok(copied.includes("Missing preprocessor."));
   copyTest.ctx.showJobError(copyTest.log, "");
   assert.equal(toolbar.hidden, true);
   assert.equal(copyTest.log.textContent, "");
+  // Deep-search scores remain visible independently of the collapsed technical log.
+  {
+    const test = setup(...cases[cases.length - 1]);
+    const running = test.ctx.run();
+    assert.ok(test.get("fnDeepWork").children.includes(test.log.bar));
+    assert.equal(test.log._followTail, false);
+    test.start.resolve({job:"deep"}); await tick();
+    const metrics = {starting_score:14639,starting_percent:76.3,best_score:0,best_percent:100,
+      improvements:4,tested:268,skipped:1,reason:"Matched",seconds_left:165,phase:"random rewrites",
+      current_family:"perm_cast",last_outcome:"improved",last_score:0,visited:269,rejected:2};
+    test.poll.resolve({state:"done",log:[],progress:metrics,result:metrics}); await running;
+    assert.equal(test.get("fnDeepStartPercent").textContent,"76.3%");
+    assert.equal(test.get("fnDeepBestPercent").textContent,"100%");
+    assert.equal(test.get("fnDeepBestScore").textContent,"Score 0");
+    assert.equal(test.get("fnDeepImproved").textContent,"4");
+    assert.equal(test.get("fnDeepTime").textContent,"2m 45s left");
+    assert.equal(test.get("fnDeepMetrics").dataset.matched,"true");
+    assert.match(test.get("fnDeepNow").textContent, /random rewrites.*perm cast.*improved.*score 0.*269.*2 invalid/);
+    assert.equal(test.log.bar.removed,true);
+  }
   // A range-only compiler setting remains immediate and has no progress bar.
-  const range = setup(...cases[10], "0x1000-0x2000");
+  const range = setup(...cases[9], "0x1000-0x2000");
   const running = range.ctx.run();
   assert.equal(range.log.bar, undefined);
   range.start.resolve({}); await running;
@@ -237,3 +316,52 @@ async function main() {
   assert.equal(test.log.bar.removed, true);
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
+
+// Reuse searches have no known total: show the shared indeterminate bar until they finish or stop.
+{
+  const text = read("steering");
+  const snippet = text.slice(text.indexOf('  const running = ap &&'), text.indexOf('  const perm = pm &&'));
+  for (const state of ["running", "done", "stopped"]) {
+    const bar = { hidden: true, className: "upbar", firstElementChild: { style: { width: "80%" } } };
+    vm.runInNewContext(snippet, { ap: null, tw: { state }, box: { classList: { toggle() {} } }, $: () => bar });
+    assert.equal(bar.hidden, state !== "running");
+    assert.equal(bar.className, state === "running" ? "workbar" : "upbar");
+    if (state === "running") assert.equal(bar.firstElementChild.style.width, "");
+  }
+}
+
+// Durable deep-pass results show every improvement and keep the function link usable.
+{
+  const source = read("steering"), start = source.indexOf("function renderDeepImprovementTable(status, resultHost) {");
+  const end = source.indexOf("function setDeepRunVisibility", start);
+  const result = {dataset:{}, innerHTML:"", replaceChildren(){this.innerHTML="";}, querySelector:()=>null, querySelectorAll:selector=>selector === "[data-deep-result]" ? [button] : []}, button = {dataset:{deepResult:"0"}};
+  let opened;
+  const ctx = {closeDialog:()=>{}, renderDeepMetricDrawer:()=>{}, deepMetricRows:[], S:{slug:"game"}, $:()=>result, esc:s=>String(s).replaceAll("<", "&lt;"), openFn:name=>{opened=name;}};
+  vm.createContext(ctx); vm.runInContext(read("rewrite-performance"),ctx); vm.runInContext(source.slice(start,end), ctx);
+  ctx.resultHost=result;
+  ctx.renderDeepImprovementTable({improved:1, improvements:[{function:"f<0", starting_score:50,
+    new_score:25, starting_percent_text:"95.0%", new_percent_text:"97.5%"}]}, result);
+  for (const text of ["1 functions improved", "f&lt;0", "50", "25", "95.0%", "97.5%"])
+    assert.ok(result.innerHTML.includes(text));
+  button.onclick(); assert.equal(opened,"f<0");
+  ctx.renderDeepImprovementTable({improved:0, improvements:[]}, result);
+  assert.ok(!result.innerHTML.includes("<table>"));
+}
+
+{
+  const source = read('base');
+  const start = source.indexOf('function updateWorkProgress('), end = source.indexOf('async function followJob(', start);
+  const bar = element(); bar.style = {setProperty(key,value){this[key]=value;}}; bar.removeAttribute=key=>{delete bar.attrs[key];};
+  const log = {_workStatus:element(),_workBar:bar};
+  const ctx={};vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);
+  ctx.updateWorkProgress(log,{phase:'Finding shared machine code',game:'Demo',done:2,total:4});
+  assert.equal(bar.attrs['aria-valuenow'],'2');assert.equal(bar.style['--work-progress'],'50%');
+  ctx.updateWorkProgress(log,{phase:'Regenerating machine drafts',done:3,total:12,function:'draft_one, draft_two'});
+  assert.match(log._workStatus.textContent,/3 \/ 12 processed \(25%\).*draft_one, draft_two/);
+  assert.equal(bar.className,'workbar counted');
+  assert.equal(bar.attrs['aria-valuenow'],'3');
+  assert.equal(bar.style['--work-progress'],'25%');
+  ctx.updateWorkProgress(log,{phase:'Compiling candidate',game:'Demo',donor:'old<fn',function:'new',confirmed:1});
+  assert.match(log._workStatus.textContent,/Demo.*old<fn.*new.*1 matches confirmed/);
+  assert.equal(bar.className,'workbar');assert.equal(bar.attrs['aria-valuenow'],undefined);
+}

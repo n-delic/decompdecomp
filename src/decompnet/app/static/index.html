@@ -3,11 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <title>decompdecomp</title>
+<link rel="manifest" href="/assets/manifest.webmanifest">
+<meta name="theme-color" content="#1d1b14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="decompdecomp">
+<link rel="apple-touch-icon" href="/assets/pwa-192.png">
 <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/tokens.css">
 <link rel="stylesheet" href="/assets/app.css">
+<link rel="stylesheet" href="/assets/transcripts.css">
 </head>
 <body>
 <div class="app">
@@ -42,6 +48,7 @@
     <a class="nav-item" href="#/tools" data-route="tools"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.6 1.6a3.9 3.9 0 0 0-3.9 5.2L1.9 11.6a1.5 1.5 0 0 0 2.1 2.1l4.8-4.8a3.9 3.9 0 0 0 5.2-3.9l-2.2 2.2-2.1-.6-.6-2.1 2.2-2.2c-.3 0-.5-.7-.7-.7Z"/></svg>Compilers &amp; tools</a>
     <a class="nav-item" href="#/settings" data-route="settings"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.9 1h2.2l.4 1.9 1.3.6 1.7-1 1.5 1.5-1 1.7.6 1.3L15 6.9v2.2l-1.9.4-.6 1.3 1 1.7-1.5 1.5-1.7-1-1.3.6L9.1 15H6.9l-.4-1.9-1.3-.6-1.7 1-1.5-1.5 1-1.7-.6-1.3L1 9.1V6.9l1.9-.4.6-1.3-1-1.7 1.5-1.5 1.7 1 1.3-.6L6.9 1ZM8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></svg>Settings</a>
     <a class="nav-item" id="reportLink" href="https://github.com/n-delic/decompdecomp/issues/new" target="_blank" rel="noopener" title="Opens a new issue on GitHub in your browser, and copies a report to paste into it"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5h1.5v13H3zM5.5 2.25h7.25L11.1 5.5l1.65 3.25H5.5z"/></svg>Report a problem</a>
+    <a class="nav-item" href="#/background" data-route="background">Background work</a>
     <a class="nav-branch" id="navBranch" href="#/settings" hidden></a>
     <div class="nav-meta">
       <span class="muted small" id="navVersion"></span>
@@ -125,7 +132,8 @@
         <p class="err-msg" id="errMsg"></p>
         <details class="logbox"><summary>What happened</summary><pre class="joblog" id="errLog"></pre></details>
         <div class="row">
-          <button class="primary" id="errBack" type="button">Try another file</button>
+          <button class="primary" id="errRetry" type="button">Try again</button>
+          <button class="ghost" id="errBack" type="button">Try another file</button>
           <button class="ghost" id="errCopy" type="button">Copy for a bug report</button>
           <button class="ghost" id="errLogLink" type="button">Show the full log</button>
           <a class="ghost btn" href="https://github.com/n-delic/decompdecomp/issues/new" target="_blank" rel="noopener">Report it</a>
@@ -164,19 +172,26 @@
   <header class="page-head">
     <p class="eyebrow">Public decomps</p>
     <h1>Continue a public decomp</h1>
-    <p class="muted">Paste a community decomp's repository and add your own copy of its game. Before anything is cloned, decompdecomp shows what the project says about AI and contributions: every project decides that for itself. Your fork stays on this computer; decompdecomp never pushes it or opens pull requests.</p>
+    <p class="muted">Paste a community decomp's repository and add your own copy of its game. Before anything is cloned, decompdecomp shows what the project says about AI and contributions: every project decides that for itself. Your fork stays on this computer until you push it or enable automatic pushing in Settings. decompdecomp does not open pull requests.</p>
     <div class="row repo-row"><input id="repoUrl" class="mono" placeholder="https://github.com/owner/repo" aria-label="Repository address"><button class="primary" id="repoFork" type="button" disabled>Look at it</button></div>
     <p class="muted small" id="repoWhy" role="status"></p>
+    <h2>Import checked-out projects</h2>
+    <p class="muted">Choose a folder of repositories, including collections arranged by platform. Review the projects before adding them. Importing runs no builds or agents.</p>
+    <div class="pick-row"><input id="localFolder" class="mono" placeholder="/Volumes/Data/Decomps" aria-label="Folder of checked-out projects"><button class="ghost small-btn" type="button" data-pick="folder" data-for="localFolder" data-title="Folder of checked-out projects">Choose…</button><button class="primary" id="localScan" type="button">Scan folder</button></div>
+    <pre class="joblog" id="localScanLog" hidden></pre>
+    <div id="localResults"></div>
+
   </header>
 </main>
 
 <!-- ================================================================ a project -->
 <main id="project" class="view project" hidden>
+  <div id="projectLoading" class="navigation-loading" role="status" hidden><h2 id="projectLoadingText">Loading project…</h2><p id="projectLoadingDetail" class="small muted" aria-live="polite"></p><div id="projectLoadBar" class="workbar" role="progressbar" aria-label="Project loading steps" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0"><i id="projectLoadFill" style="animation:none;transform:none;width:0%"></i></div><div id="projectLoadError" hidden><p id="projectLoadRecovery"></p><details class="panel settings-disclosure"><summary class="panel-head"><h2>Error details</h2></summary><div class="pad"><pre id="projectLoadDiagnostic" class="small"></pre></div></details></div><button id="projectRetry" class="ghost" type="button" hidden>Retry</button></div>
   <header class="phead" id="phead">
     <div class="ph-row">
       <div class="ph-title">
         <div class="ph-chips" id="phChips"></div>
-        <div class="ph-name"><h1 id="phTitle"></h1><button class="ghost icon sm ph-rename" id="phRename" type="button" aria-label="Rename this project" title="Rename"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.3 1.9a1.6 1.6 0 0 1 2.3 0l.5.5a1.6 1.6 0 0 1 0 2.3L5.5 13.3 2 14l.7-3.5 8.6-8.6Zm-.6 2.4-6.6 6.6-.3 1.3 1.3-.3 6.6-6.6-1-1Z"/></svg></button></div>
+        <div class="ph-name"><h1 id="phTitle"></h1><button class="ghost icon sm ph-rename" id="phRename" type="button" aria-label="Rename this project" title="Rename"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.3 1.9a1.6 1.6 0 0 1 2.3 0l.5.5a1.6 1.6 0 0 1 0 2.3L5.5 13.3 2 14l.7-3.5 8.6-8.6Zm-.6 2.4-6.6 6.6-.3 1.3 1.3-.3 6.6-6.6-1-1Z"/></svg></button><button class="ghost icon sm progress-sync-indicator" id="progressSyncIndicator" type="button" hidden aria-label="Checking saved files. Show details" aria-haspopup="dialog"><span class="spinner" aria-hidden="true"></span></button></div>
       </div>
       <div class="ph-actions">
         <button class="pill-btn" id="phWorking" type="button" hidden title="See what your agents do"><span class="dot on"></span><span id="phWorkingText"></span></button>
@@ -195,6 +210,7 @@
       <span class="ph-pct"><b id="phPct">0</b>% of code</span>
       <span class="muted small" id="phSub"></span>
     </div>
+    <div id="projectDetailsPending" class="small muted" hidden>Loading additional project details…<div class="workbar" role="progressbar" aria-label="Loading project details"><i></i></div></div>
     <nav class="ptabs" id="ptabs" aria-label="This project">
       <a data-ptab="overview">Overview</a>
       <a data-ptab="functions">Functions <span class="count" id="fnTabCount"></span></a>
@@ -203,8 +219,22 @@
     </nav>
   </header>
 
+  <section class="notice verification-banner" id="progressSyncNotice" role="status" hidden>
+    <div class="row"><strong>Rechecking saved progress</strong><button id="progressSyncPause" class="ghost small-btn" type="button">Pause verification</button></div>
+    <p id="progressSyncReason"></p>
+    <div id="progressSyncText"></div>
+    <div class="workbar" id="progressSyncBar" role="progressbar" aria-label="Saved progress verification" aria-valuemin="0"><i></i></div>
+    <div class="small muted" id="progressSyncDetails"></div>
+    <p class="small muted">Saved source is retained while matches are checked. The matched percentage may temporarily fall, then rise as exact matches are confirmed.</p>
+  </section>
+  <div class="notice" id="coverageNotice" hidden></div>
+  <div class="panel" id="progressPopulations" hidden></div>
   <div class="notice" id="compilerNotice" hidden></div>
   <section class="fork-setup" id="forkSetup" hidden></section>
+  <section class="notice" id="roomSyncNotice" role="status" hidden>
+    <p id="roomSyncText"></p>
+    <div class="workbar" id="roomSyncBar" role="progressbar" aria-label="Receiving room updates"><i></i></div>
+  </section>
   <section class="room-cover" id="roomCover" aria-live="polite" hidden>
     <div class="spinner" id="roomCoverSpin"></div>
     <h2 id="roomCoverTitle"></h2>
@@ -219,7 +249,7 @@
         <h2 id="mapTitle">ROM map</h2>
         <div class="map-tools">
           <div class="seg small" id="mapView" role="radiogroup" aria-label="Colour the map by" hidden><button type="button" role="radio" aria-checked="true" data-view="progress" class="on">Progress</button><button type="button" role="radio" aria-checked="false" data-view="compiler">Compiler</button></div>
-          <div class="legend" id="mapLegend"><span><i class="sw open"></i>to do</span><span><i class="sw tried"></i>tried</span><span title="tried, and close to matching: the closer, the greener"><i class="sw close"></i>close</span><span><i class="sw work"></i>working</span><span><i class="sw match"></i>matched</span><span title="matched, and polished: real names, types and a comment, and it still matches"><i class="sw polished"></i>polished</span><span title="no C makes it, by its code's shape (hand-written assembly, a BIOS call, a piece of another function): agents aren't handed it, and it's out of the percentage"><i class="sw asm"></i>set aside</span><span title="agents of two models agreed no C makes it: set aside. Its page can give it back to the agents"><i class="sw not-c"></i>not C</span></div>
+          <div class="legend" id="mapLegend"><span><i class="sw open"></i>to do</span><span><i class="sw tried"></i>tried</span><span title="tried, and close to matching: the closer, the greener"><i class="sw close"></i>close</span><span><i class="sw work"></i>working</span><span title="Incomplete extent; inspect adjacent bytes before treating this entry as resolved"><i class="sw boundary"></i>boundary review</span><span><i class="sw match"></i>matched</span><span title="matched, and polished: real names, types and a comment, and it still matches"><i class="sw polished"></i>polished</span><span title="no C makes it, by its code's shape (hand-written assembly, a BIOS call, a piece of another function): agents aren't handed it, and it's out of the percentage"><i class="sw asm"></i>set aside</span><span title="Agent assessment, not verified assembly provenance. Its page can give it back to the agents"><i class="sw not-c"></i>agent set-aside</span></div>
           <button class="ghost small-btn" id="recheckBtn" type="button" title="Look at this game again with what this version of decompdecomp knows: functions it missed, pieces of functions to join, code no C makes to set aside. Nothing agents matched is lost. It also happens by itself when helpers start after an update." aria-describedby="recheckTip">Check again</button>
           <span class="sr-only" id="recheckTip">Look at this game again with what this version of decompdecomp knows: functions it missed, pieces of functions to join, code no C makes to set aside. Nothing agents matched is lost. It also happens by itself when helpers start after an update.</span>
         </div>
@@ -264,9 +294,40 @@
       <div class="answer-line" id="compilerLine" hidden></div>
       <div class="autopilot" id="autopilot" hidden>
         <span class="ap-icon" aria-hidden="true"></span>
-        <div class="ap-text"><b id="apTitle"></b><span class="muted small" id="apSub"></span><div class="upbar" id="apBar" hidden><i></i></div></div>
+        <div class="ap-text"><b id="apTitle"></b><span class="muted small" id="apSub"></span><div class="upbar" id="apBar" role="progressbar" aria-label="Automatic matching progress" hidden><i></i></div><details id="apTiming" class="small muted" hidden><summary>Timing totals</summary><p id="apTimingText"></p></details></div>
         <button class="ghost small-btn" id="apBtn" type="button"></button>
       </div>
+      <details class="panel settings-disclosure" id="machineDraftPanel">
+        <summary class="panel-head"><h2>Regenerate machine drafts <span class="disclosure-context">— Refresh starting C</span></h2></summary>
+        <div class="pad maintenance-body">
+          <p class="maintenance-intro">Generate fresh starting C and compile it once per function. No repair or variant search.</p>
+          <p class="muted small">Use after changing headers or compiler settings. Saved work stays safe; functions claimed by agents or needing boundary review are skipped.</p>
+          <label class="check"><input id="machineDraftIncludeAll" type="checkbox"><span>Include all unmatched functions, even those with compiling C</span></label>
+          <label>Parallel draft threads <input id="machineDraftThreads" type="number" min="0" max="64" value="0"><span class="muted small">0 = automatic, up to 8. Independent of the background worker limit.</span></label>
+          <p class="muted small">Room members generate and compile locally; the host confirms potential matches.</p>
+          <div class="maintenance-actions"><button id="regenerateMachineDrafts" class="primary" type="button">Regenerate drafts</button><button id="machineDraftStop" class="ghost" type="button" hidden>Stop</button><span class="muted small">Local CPU · No AI tokens</span></div>
+          <pre id="machineDraftLog" class="joblog" hidden></pre>
+        </div>
+      </details>
+      <details class="panel settings-disclosure" id="savedMatchRecoveryPanel">
+        <summary class="panel-head"><h2>Recover saved matches <span class="disclosure-context">— Recheck earlier successes</span></h2></summary>
+        <div class="pad maintenance-body">
+          <p class="maintenance-intro">Restore lost matches by testing previously successful C and headers against this project.</p>
+          <p class="muted small">Use after matches reopen following header, compiler or layout changes, or an interrupted restore. Only code that passes verification again counts as matched.</p>
+          <p class="muted small">Checks all available saved candidates unless you select Stop. Functions claimed by agents are skipped.</p>
+          <details class="transfer-advanced" id="savedMatchLimits"><summary>Optional recovery limits</summary>
+          <p class="muted small" id="savedMatchLimitsHelp">Leave either limit blank for no limit. A time limit can be 1–600 seconds; a compile limit can be 1–1,024.</p>
+          <div class="maintenance-limits">
+            <label class="field"><span>Time limit (seconds)</span><input id="savedMatchSeconds" type="number" min="1" max="600" placeholder="No limit" aria-describedby="savedMatchLimitsHelp"></label>
+            <label class="field"><span>Compile limit</span><input id="savedMatchAttempts" type="number" min="1" max="1024" placeholder="No limit" aria-describedby="savedMatchLimitsHelp"></label>
+          </div>
+          </details>
+          <div class="maintenance-actions"><button id="recoverSavedMatches" class="primary" type="button">Recover all saved matches</button><button id="savedMatchStop" class="ghost" type="button" hidden>Stop</button><span class="muted small">Local CPU · No AI tokens</span></div>
+          <p id="savedMatchSummary" class="small" role="status"></p>
+          <pre id="savedMatchLog" class="joblog" hidden></pre>
+        </div>
+      </details>
+
     </div>
 
     <div class="cols">
@@ -293,10 +354,7 @@
         <thead><tr>
           <th class="star-col" id="thStar" title="Agents take starred functions first"><span class="sr">Do first</span>★</th>
           <th data-sort="vram" id="thAddr">Address</th><th data-sort="name">Function</th><th data-sort="insns" class="r">Instructions</th>
-          <th data-sort="best" class="r">Best</th><th data-sort="attempts" class="r">Tries</th>
-          <th data-sort="last_improved" title="Time since the last candidate improved the best score">Last improved</th>
-          <th data-sort="last_checked" title="Time since the last candidate check, including compile errors">Last checked</th>
-          <th data-sort="status">Status</th>
+          <th data-sort="best" class="r">Best</th><th data-sort="attempts" class="r">Tries</th><th data-sort="last_improved" title="Time since the last recorded candidate beat the previous best">Last improved</th><th data-sort="last_checked" title="Time since the last recorded candidate check, including compile errors">Last checked</th><th data-sort="status">Status</th>
         </tr></thead>
         <tbody id="fnRows"></tbody>
       </table>
@@ -307,17 +365,15 @@
   <!-- agents: who works here and what happens, side by side; what they're told below; what waits for you last -->
   <section class="ptab" data-pane="agents">
     <div class="agents-grid">
-      <section class="panel">
-        <header class="panel-head"><h2>Your agents here <span class="muted small" id="spendLine"></span></h2><div class="row"><button class="ghost small-btn" id="removePaused" type="button" hidden>Remove paused</button><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></div></header>
-        <div class="notice" id="modelAdvice" role="status" hidden>
-          <div class="advice-text" id="modelAdviceText"></div>
-          <button class="ghost icon sm" id="modelAdviceClose" type="button" aria-label="Dismiss this advice" title="Dismiss">✕</button>
-        </div>
+      <section class="panel agents-panel">
+        <header class="panel-head"><h2>Your agents here <span class="muted small" id="spendLine"></span></h2><div class="agent-toolbar"><label for="agentSort">Sort by</label><span class="agent-sort-select"><select id="agentSort"><option value="state">Status</option><option value="matches">Most matches</option><option value="improved">Most improved</option><option value="recent_improvement">Most recently improved</option><option value="runtime">Longest running</option><option value="model">Model</option><option value="efficiency">Fewest tokens per match</option></select></span></div><button class="ghost small-btn" id="repairExamples" type="button">Repair examples</button><button class="ghost small-btn" id="removePaused" type="button" hidden>Remove paused</button><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></header>
+        <div class="notice" id="modelAdvice" role="status" hidden><div class="advice-text" id="modelAdviceText"></div><button class="ghost icon sm" id="modelAdviceClose" type="button" aria-label="Dismiss this advice" title="Dismiss">✕</button></div>
+
         <div id="sessions" class="sessions"></div>
         <div class="empty" id="noSessions"><p class="muted small">No agent works on this game yet. Press <b>Start agents</b> at the top: each agent picks functions by itself, and starts again by itself if it stops.</p></div>
       </section>
       <section class="panel feed-panel">
-        <header class="panel-head"><h2 id="feedTitle" tabindex="-1">What's happening</h2><span class="muted small" id="feedHint">every agent's work on this game, newest first</span><button class="ghost small-btn" id="helperLogClose" type="button" hidden>Back to everything</button></header>
+        <header class="panel-head"><h2 id="feedTitle" tabindex="-1">What's happening</h2><span class="muted small" id="feedHint">every agent's work on this game, newest first</span><button class="ghost small-btn" id="helperTranscript" type="button" hidden>Session transcript</button><button class="ghost small-btn" id="helperLogClose" type="button" hidden>Back to everything</button></header>
         <ol class="feed" id="activity" aria-live="off"></ol>
         <ol class="feed thoughts" id="thoughts" hidden></ol>
       </section>
@@ -355,9 +411,9 @@
       <section class="panel">
         <header class="panel-head"><h2>What agents learned</h2><span class="muted small" id="knowState"></span></header>
         <div class="pad">
-          <p class="muted small">Agents propose what every agent on this game should know. A proposal counts once two different AI models notice the same thing on their own, so run helpers of several models: they check each other.</p>
+          <p class="muted small">Reusable matching tips for this game and compiler, useful across functions. Function-specific notes belong on the function. You can accept a proposal immediately; automatic acceptance requires two different models to agree independently.</p>
           <label class="check"><input type="checkbox" id="knowAuto"><span>Give agents what two models agree on without asking me</span></label>
-          <div id="knowList"></div>
+          <div id="knowList"></div><div id="knowledgeVerifyWork" role="status"></div>
         </div>
       </section>
     </div>
@@ -369,14 +425,221 @@
 
   <!-- settings -->
   <section class="ptab" data-pane="settings">
+          <details class="panel settings-disclosure" id="dataRegionReviews"><summary class="panel-head"><h2>Data region review <span class="disclosure-context" id="dataRegionContext">— Loading</span></h2><button class="disclosure-action" type="button" id="dataRegionRefresh">↻ Refresh</button></summary><div class="pad"><p class="small muted">Agent reports of data mistaken for code. Regions belong to one unit and original image. Pausing prevents new claims; existing work and saved matches continue. No entry is classified as data automatically.</p><div id="dataRegionItems" class="profile-failure-cards"></div><div id="dataRegionWork" role="status"></div></div></details>
+    <details class="panel settings-disclosure" id="codeCoveragePanel" hidden>
+      <summary class="panel-head"><h2>Code coverage review</h2><span class="disclosure-context small muted" id="coverageReviewContext">Find missing code</span></summary>
+      <div class="pad coverage-review">
+        <p class="small muted coverage-intro">Look for code missing from the function list, then review the evidence before recovering it.</p>
+        <div id="codeCoverageSummary" aria-live="polite"></div>
+        <div class="coverage-actions">
+          <button class="primary small-btn" type="button" id="coverageAuditBtn">Scan for missing code</button>
+          <button class="ghost small-btn" type="button" id="boundaryReviewBtn">Review &amp; repair boundaries</button>
+          <button class="ghost small-btn" type="button" id="coverageReviewBtn" hidden>Review candidates</button>
+          <span class="small muted">CPU only · no AI tokens · does not change code</span>
+        </div>
+        <p class="small coverage-audit-status" id="coverageAuditStatus" role="status" hidden></p>
+        <details id="codeAuditPanel" class="coverage-findings" hidden>
+          <summary>Raw-region candidates <span class="muted small">— inspect evidence and save your review</span></summary>
+          <p class="small muted">These regions may contain code, data or microcode. Save a review and notes for each lead; confirming code does not import it.</p>
+          <button id="codeAuditBtn" type="button" hidden>Scan again</button><pre id="codeAuditLog" hidden></pre>
+          <div id="codeAuditResult" aria-live="polite"></div>
+        </details>
+        <details class="coverage-help"><summary>What these results mean</summary><p>Progress percentages cover detected functions. A clean scan, an empty queue or an identical rebuild does not prove every function has been found. Raw-byte totals are unclassified space, not confirmed missing code.</p></details>
+        <details id="coverageAuditTechnical" class="coverage-help"><summary>Technical output</summary><pre class="joblog" id="coverageAuditLog" hidden></pre></details>
+      </div>
+    </details>
+
+    <details class="panel settings-disclosure" id="sourcePrepPanel">
+      <summary class="panel-head"><h2>Local source preparation</h2><span class="muted small">optional · no AI tokens</span></summary>
+      <div class="pad">
+        <p class="small muted">Have reference source you want to use? Map its functions explicitly. The app reads it without changing it, preserves line breaks and tries the ordinary compiler/link judge. A mapping alone never counts as a match.</p>
+        <label class="check"><input id="sourcePrepEnabled" type="checkbox"><span>Use this local source before permuting unmatched functions</span></label>
+        <label class="check"><input id="sourcePrepAutoExact" type="checkbox"><span>Automatically recheck and save exact source/header/compiler bundles (local ROM projects only)</span></label>
+        <p class="small muted">CPU trials can test measured record gaps, retail constants, supported switch arms and actual call declarations. Exact bundles are compiled again before saving; approximate results never change compiler settings.</p>
+        <label>Reference source folder<input id="sourcePrepRoot" placeholder="/path/to/local/source"></label>
+        <label>Declarations header (optional, inside a selected folder)<input id="sourcePrepHeader" placeholder="/path/to/local/source/context.h"></label>
+        <label>Additional include folders (one per line)<textarea id="sourcePrepIncludes" rows="2"></textarea></label>
+        <label>Function mappings (destination = source symbol @ relative file)<textarea id="sourcePrepMappings" rows="4" placeholder="func_80001000 = update_objects @ objects.c"></textarea></label>
+        <label>Other symbol aliases (reference name = destination name)<textarea id="sourcePrepAliases" rows="2" placeholder="gObjects = D_80010000"></textarea></label>
+        <label>Original object definitions (optional: reference_symbol @ relative/file.c)<textarea id="sourcePrepDefinitions" rows="2" placeholder="gManager @ manager.c"></textarea></label>
+        <label>Coherent source/header alternatives (optional: destination = symbol @ file.c | header.h)<textarea id="sourcePrepContexts" rows="2"></textarea></label>
+        <p class="muted">Use complete matching SDK revisions. Up to sixteen alternatives per function share the pass budget; record gaps are bounded private hypotheses and are never written into your reference source.</p>
+        <label>Original static helpers (optional: helper_name @ relative/file.c)<textarea id="sourcePrepHelpers" rows="2"></textarea></label>
+        <p class="muted">Only referenced, explicitly selected static helpers are retained for inlining. Bounded real mapped caller/helper or predecessor units are also tried for supported ROM judges; every emitted body must independently match its known entry. Selected object definitions keep their original bit patterns and expression order.</p>
+
+        <p class="small muted">Only selected objects referenced by the candidate are included. The app tries preserved definitions before the version without them; exact judging and export data checks still apply. Split multiple object declarations into a prepared subset.</p>
+        <label>Retail macro values (numeric, one per line)<textarea id="sourcePrepOverrides" rows="2" placeholder="OBJECT_LIMIT=128"></textarea></label>
+        <p class="small muted">Reference paths and mappings stay on this machine; accepted C and declarations are included in saved/exported work. Use a declarations header with the retail layouts, not debug settings. Imported projects keep their existing build headers; the reference body must compile against those. Each preparation pass is limited to 8 compiles / 20 seconds; unchanged trials are skipped.</p>
+        <label>Exact functions blocked from export (up to 20 names, separated by spaces)<input id="sourcePrepExportNames" placeholder="func_80001000"></label>
+        <button id="sourcePrepExportRun" class="ghost" type="button">Repair export constant pools</button>
+        <details><summary>Verify supplied assembly before spending agent tokens</summary>
+          <p>Scan the selected source folder for assembly labels, then map the routines you want to verify. A label is only a candidate. Verification assembles the source and checks linked code and data; it adds no C coverage. Provenance stays local. A restored proof needs a fresh check.</p>
+          <label>Assembly prelude (optional header inside a selected folder)<input id="sourcePrepAssemblyHeader" placeholder="/path/to/source/assembly-context.h"></label>
+          <label>Assembly mappings<textarea id="sourcePrepAssemblyMappings" rows="3" placeholder="func_80001000 = OriginalRoutine @ routine.S"></textarea></label>
+          <div class="row"><button id="sourceAssemblyScan" class="ghost">Find source assembly</button><button id="sourceAssemblyRun" class="ghost">Verify mapped assembly</button></div>
+          <div id="sourceAssemblyLog"></div>
+        </details>
+        <div class="row"><button id="sourcePrepSave" class="ghost" type="button">Save source settings</button><button id="sourcePrepRun" class="primary" type="button">Try preparation pass</button></div>
+        <details><summary>Run a resumable CPU source queue</summary>
+          <p class="small muted">Try mapped source and coherent SDK alternatives, then freshly verify prepared source/header/profile bundles. Progress is saved after each function and resumes after an app restart. No model calls. Local ROM projects only; imported projects keep their own build workflow.</p>
+          <label class="check"><input id="sourceQueueAssembly" type="checkbox"><span>Also recheck mapped or prepared assembly candidates; keep them set aside unless exact C is verified</span></label>
+          <div class="row"><button id="sourceQueueStart" type="button">Start / resume CPU queue</button><button id="sourceQueueStop" class="ghost" type="button">Pause after current check</button><button id="sourceQueueRefresh" class="ghost" type="button">Refresh saved progress</button></div>
+          <p class="small muted">Resuming keeps the original assembly choice. Each function gets up to three bounded preparation rounds. Checked misses can be retried in a new queue. Exact function checks do not verify a complete cartridge: use repository sync and its full rebuild before committing.</p>
+          <div id="sourceQueueLog"></div><div id="sourceQueueResults"></div>
+        </details>
+        <details><summary>Try a source body and header directly</summary>
+          <p class="small muted">Keep these separate to preserve source line positions. Add a #line directive if needed. A match saves this function’s source, private header and profile together; a miss leaves the working candidate unchanged. Local ROM projects only.</p>
+          <label>Function<input id="sourcePairFunction" placeholder="func_80001000"></label>
+          <label>C source body<textarea id="sourcePairBody" rows="8" spellcheck="false"></textarea></label>
+          <label>Private declarations header<textarea id="sourcePairHeader" rows="6" spellcheck="false"></textarea></label>
+          <label>Complete compiler flags (optional)<input id="sourcePairFlags" placeholder="Empty: this function’s selected profile"></label>
+          <button id="sourcePairTry" type="button">Compile, compare & save if exact</button><div id="sourcePairLog"></div>
+        </details>
+        <div id="sourcePrepLog"></div><button id="sourcePrepReviewsRefresh" class="ghost" type="button">Review prepared profiles</button><div id="sourcePrepReviews"></div>
+        <button id="sourcePrepAnalysisRefresh" class="ghost" type="button">Source leads & experiment results</button><div id="sourcePrepAnalysisLog"></div><div id="sourcePrepAnalysis"></div>
+      </div>
+    </details>
+
+    <details class="panel settings-disclosure" id="deepSweepPanel">
+      <summary class="panel-head"><h2>Deep permuter</h2><span class="muted small">No AI tokens</span></summary>
+      <div class="pad">
+        <p class="deep-sweep-intro">Search saved C for better matches.</p>
+        <div class="deep-sweep-settings" id="deepSweepSettings">
+          <label class="field deep-main-budget"><span>Time limit</span><input id="deepSweepMinutes" type="number" min="1" max="120" value="5"><span class="deep-budget-unit">min / function</span></label>
+          <details class="deep-advanced"><summary>Advanced settings</summary><div class="deep-advanced-fields">
+            <label class="field"><span>Candidate limit per function</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"></label>
+            <label class="field"><span>Compiler profiles per candidate</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
+            <label class="deep-sweep-repeat"><input id="deepSweepMaximum" type="checkbox"><span>Maximum throughput<small>Use all detected CPU cores, dedicated candidate generators and a shared compiler pool.</small></span></label>
+            <label class="field"><span>Concurrent compiles</span><input id="deepSweepCompileSlots" type="number" min="1" max="256" placeholder="auto"><small>Blank uses all cores in maximum mode; balanced mode keeps its normal compiler allowance.</small></label>
+            <label class="field"><span>Functions at a time</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label>
+            <label class="field"><span>Threads per function</span><input id="deepSweepFunctionThreads" type="number" min="1" max="256" value="1"><small>Search independent candidate paths in parallel. The time and candidate limits apply to the whole function. Total workers = functions × threads per function.</small></label>
+            <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox"><span>Loop indefinitely<small>Repeat searches with these settings until stopped. Waiting functions go to the back of the queue.</small></span></label>
+            <label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
+          </div></details>
+        </div>
+        <div class="deep-dashboard">
+        <p class="hint" id="deepSweepThroughput" hidden></p>
+        <section class="deep-queue-state" id="deepSweepQueueState" role="status">
+          <div><h3 id="deepSweepQueueTitle">Ready to search</h3><p id="deepSweepQueueReason"></p></div>
+          <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary">Start search</button><button id="deepSweepStop" type="button" class="primary" hidden>Stop</button></div>
+        </section>
+        <div class="deep-sweep-counts" id="deepSweepCounts" aria-label="Deep permuter results">
+          <button type="button" class="deep-metric" id="deepSweepMetricMatched" aria-haspopup="dialog" title="View matched functions"><b id="deepSweepMatched">0</b><span>Matched<span aria-hidden="true">↗</span></span></button>
+          <button type="button" class="deep-metric" id="deepSweepMetricImproved" aria-haspopup="dialog" title="View improved functions"><b id="deepSweepImproved">0</b><span>Improved<span aria-hidden="true">↗</span></span></button>
+          <button type="button" class="deep-metric" id="deepSweepMetricActive" aria-haspopup="dialog" title="View searching now functions"><b id="deepSweepActive">0</b><span>Searching now<span aria-hidden="true">↗</span></span></button>
+        </div>
+        <div id="deepSweepPreparation" class="compiler-queue-count" hidden><span id="deepSweepPreparationText"></span><progress id="deepSweepPreparationBar" max="1" value="0" aria-label="Functions checked for search eligibility"></progress></div>
+        <div class="deep-progress-heading"><span>Saved search coverage</span><span class="small" id="deepSweepRunChecked"></span></div>
+        <div id="deepSweepLoadingBar" class="workbar" role="progressbar" aria-label="Loading saved search totals" hidden><i></i></div>
+        <progress class="deep-sweep-bar" id="deepSweepBar" hidden max="1" value="0" aria-label="Saved completed search turns"></progress>
+        <p class="deep-sweep-progress-text small muted" id="deepSweepProgressText"></p>
+        <div class="deep-queue-details small muted">
+          <span class="deep-queue-completed" hidden><b id="deepSweepDone">0</b> completed turns</span><span><b id="deepSweepLeft">0</b> remaining</span>
+          <span id="deepSweepPausedGroup" hidden><b id="deepSweepPaused">0</b> paused early</span>
+          <button type="button" id="deepSweepBlockedGroup" class="ghost small-btn" aria-haspopup="dialog" hidden><b id="deepSweepBlocked">0</b> need attention <span aria-hidden="true">↗</span></button>
+          <span id="deepSweepWaitingGroup" hidden><b id="deepSweepWaiting">0</b> waiting for saved C</span>
+        </div>
+        </div>
+        <div class="deep-sweep-tools">
+        <details class="deep-sweep-help"><summary>How it works</summary>
+          <p class="small muted">Completed passes are saved across restarts. Start the pass again after restarting the app to continue. Changes to source, headers or compiler inputs make a function eligible again.</p>
+          <p class="small muted">Each thread picks a different eligible function in random order. Turns start with half the time allowance and extend after improvements, up to your maximum. Repeated identical output can rotate sooner; rotated functions remain eligible next run, or the next pass with Loop indefinitely. Local searches can run alongside agents using saved, scored C; agents keep their claims. Compiler/header changes are deferred while claimed. Room guests still follow the host’s claims. Functions without scored C wait for a draft. Only the ordinary byte judge can save a match. A completed pass means its bounded turn finished, not that every possible rewrite was tried.</p>
+        </details>
+        <button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button>
+        </div>
+        <div class="small" id="deepSweepStatus" role="status" hidden></div>
+        <details id="deepSweepAttention" hidden><summary id="deepSweepAttentionTitle"></summary><p class="deep-issue-intro">Grouped by reason. Select a function to inspect its saved C and settings.</p><div id="deepSweepAttentionList"></div><p class="deep-issue-footer">After fixing an issue, start the pass again. To retry unchanged inputs, enable <b>Repeat completed passes</b>. This list covers errors for the current inputs; matched and set-aside functions are excluded.</p></details>
+        <div id="deepSweepRecipes"></div>
+        <details class="deep-activity-section" id="deepActivitySection" hidden>
+        <summary>Function activity <span class="muted small" id="deepActivityCount"></span></summary>
+        <p class="deep-activity-empty small muted" id="deepActivityEmpty" hidden></p>
+        <button id="deepActivityShowRecent" class="ghost small-btn" type="button" hidden>Show recent results</button>
+        <div class="deep-activity-controls">
+          <label><input id="deepActivityOnlyActive" type="checkbox" checked> Active only</label>
+          <label>Sort by <select id="deepActivitySort">
+            <option value="function">Function</option>
+            <option value="improvements">Most improvements</option>
+            <option value="best_percent">Best match</option>
+            <option value="elapsed_seconds">Longest running</option>
+            <option value="tested">Most candidates tested</option>
+          </select></label>
+        </div>
+        <div id="deepActivity" class="deep-activity"></div>
+        </details>
+        <details id="deepSweepLogSection" hidden><summary>Combined technical log</summary><div id="deepSweepLog"></div></details>
+      </div>
+    </details>
+
+      <section class="panel" id="crossGamePanel" hidden>
+        <header class="panel-head"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games <span class="disclosure-context" id="crossGameContext"></span></button></h2><span class="transfer-local-badge">Local CPU · no AI tokens</span></header>
+        <div id="crossGameBody">
+          <p class="transfer-intro">Check all eligible candidates from your other games and local SDKs. Runs until finished or stopped; verified results save automatically.</p>
+          <div class="transfer-dashboard">
+            <div class="transfer-run-heading"><h3 id="crossGameState" role="status">Ready to search</h3><div class="row"><button type="button" class="primary small-btn" id="crossGameRun">Start search</button><button type="button" id="crossGameStop" class="primary small-btn" hidden>Stop</button></div></div>
+            <div id="crossGameWork" hidden>
+              <p id="crossGamePhaseStatus" class="transfer-phase" role="status"></p>
+              <p id="crossGameLeadStatus" class="transfer-lead-status" role="status">Checking saved fingerprints before scanning donor projects.</p>
+              <div id="crossGameActivity" class="workbar" role="progressbar" aria-label="Preparing cross-game search" hidden><i></i></div>
+              <progress id="crossGamePhaseBar" class="transfer-phase-bar" max="1" aria-label="Current search stage progress" hidden></progress>
+              <p id="crossGameRunStatus" class="muted small" role="status"></p>
+
+              <details class="transfer-technical"><summary>Technical output</summary><pre class="joblog" id="crossGameLog"></pre></details>
+            </div>
+            <div class="transfer-summary" id="crossGameSummary"></div>
+          </div>
+        </div>
+      </section>
+
+    <details class="panel settings-disclosure" id="agentBlockerReviews">
+      <summary class="panel-head"><h2>Agent blocker review <span class="disclosure-context" id="agentBlockerContext">— Loading</span></h2><button class="disclosure-action" type="button" id="agentBlockerRefresh">↻ Refresh</button></summary>
+      <div class="pad blocker-review">
+        <p class="blocker-intro">Agents reported repeated blockers without a new compile. Read their notes, inspect the function, then mark the report reviewed.</p>
+        <div id="agentBlockerItems" class="blocker-review-items"></div>
+        <p class="small" id="agentBlockerStatus" role="status" hidden></p>
+        <details class="blocker-help"><summary>What does “Mark reviewed” do?</summary><p>It records that you reviewed these reports. It does not change the function’s matching status, prove it needs assembly, or resume paused work. To investigate, open the function and check its saved C, compiler settings and agent notes.</p></details>
+        <div id="agentBlockerWork"></div>
+      </div>
+    </details>
+
     <div class="cols">
       <section class="panel" id="compilerPanel" aria-labelledby="compilerH">
         <header class="panel-head"><h2 id="compilerH">Compiler</h2><span class="muted small" id="compilerState"></span></header>
         <div class="pad">
           <p class="answer" id="compilerAnswer"></p>
-          <div id="compilerParts"></div>
+          <div class="compiler-view-controls" id="compilerViewControls" hidden>
+            <label>Group by <select id="compilerGroup"><option value="settings">Compiler + arguments</option><option value="family">Compiler family</option><option value="range">Address ranges</option></select></label>
+            <label>Sort <select id="compilerSort"><option value="count">Most ranges</option><option value="address">Address ↑</option><option value="address-desc">Address ↓</option><option value="compiler">Compiler name</option></select></label>
+          </div><div id="compilerParts"></div>
+          <details id="compilerCleanup" class="compiler-cleanup more" hidden>
+            <summary>Reduce the number of compiler profiles</summary><div class="more-body">
+            <label>Rare profiles: at most <input id="compilerRareLimit" type="number" min="1" max="25" value="3"> functions</label>
+            <p class="small muted">Test matched C from rare profiles against up to three more-common installed profiles. Change settings only when the same source matches byte for byte. Busy functions, shared overlay addresses and unfinished drafts keep their settings. The final check protects every affected match.</p>
+            <button id="compilerCleanupGo" class="ghost" type="button">Clean up compiler settings</button>
+            <p id="compilerCleanupResult" class="small" role="status"></p>
+            <pre id="compilerCleanupLog" class="joblog" hidden></pre>
+          </div></details>
           <div id="compilerWaiting"></div>
-          <label class="check" id="autoAdjustRow"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label>
+          <details class="more"><summary>Automatic compiler changes</summary><div class="more-body"><label class="check" id="autoAdjustRow"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label></div></details>
+          <details class="more" id="installedCompilerTest">
+            <summary>Find better compiler settings</summary><div class="compiler-test-body">
+            <div><p class="small muted">Test saved C locally, then review and apply the results. No AI tokens are used.</p></div>
+            <div class="compiler-test-options"><label class="check"><input type="checkbox" id="compilerFlagsOnly"><span><b>Flag variations only</b><small>Faster: keep each function’s compiler and test different flags.</small></span></label>
+            <label class="check"><input type="checkbox" id="compilerUsedProfilesOnly"><span><b>Only profiles used in this project</b><small>Faster: test exact compiler and flag combinations already assigned to functions.</small></span></label>
+            <label class="check"><input type="checkbox" id="compilerRetest"><span><b>Retest completed functions</b><small>Leave off to continue with new or changed attempts.</small></span></label>
+            <label class="check"><input type="checkbox" id="compilerAutoApply"><span><b>Automatically apply better settings</b><small>Apply each function’s best settings when its comparison finishes. Each change is rechecked; busy or changed functions stay available for review.</small></span></label></div>
+            <p class="small muted" id="compilerTestScope">All installed compilers and supported flag variations · new or changed attempts only.</p>
+            <div class="row"><button class="primary" type="button" id="testInstalledCompilers">Find better settings</button></div>
+            <p class="small" id="compilerStopError" role="alert" hidden></p>
+
+            <div id="installedCompilerWork"></div>
+            <section class="compiler-progress" id="compilerProgress" aria-label="Compiler comparison progress" hidden></section>
+            <div id="compilerImprovements" tabindex="-1" aria-label="Compiler comparison function results"></div>
+            <details class="more"><summary>What gets tested?</summary><div class="more-body small muted">All eligible unmatched functions in one run. Stop at any time; finished comparisons are saved so the next run resumes remaining work. Unless retesting is enabled, unchanged completed comparisons are skipped. Tests optimization, small-data and debug variants, using no AI tokens or downloads. This is a bounded search, not every possible flag combination.</div></details>
+            <details class="more" id="compilerLogDetails" hidden><summary>Detailed output</summary><div class="more-body">
+              <label class="check"><input type="checkbox" id="compilerFollowLog"><span>Follow latest output</span></label>
+              <pre class="joblog" id="installedCompilerLog" aria-label="Compiler comparison results" aria-live="off"></pre>
+            </div></details>
+          </div></details>
           <details class="more" id="compilerHow">
             <summary>How the app checks</summary>
             <div class="more-body" id="compilerEvidence"></div>
@@ -410,9 +673,8 @@
             <dl class="facts one" id="projFacts"></dl>
             <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
             <div id="reimportGame">
-              <p class="muted small">Choose your copy of the game again and replace its analysis. Matched C is kept only for functions whose target bytes are unchanged; changed functions reopen. Notes, settings and saved progress are kept. Helpers stop while the game is reimported.</p>
-              <div class="row"><button class="ghost small-btn" id="reimportBtn" type="button">Choose game and reimport</button></div>
-              <div class="workbar" id="reimportWork" role="progressbar" aria-label="Reimporting game" hidden><i></i></div>
+              <p class="muted small">Reanalyse the game already saved in this project folder. You only need to choose a file if that copy is missing or cannot be verified. Matched C is kept only for functions whose target bytes are unchanged; changed functions reopen. Notes, settings and saved progress are kept. Helpers stop while the game is reimported.</p>
+              <div class="row"><button class="ghost small-btn" id="reimportBtn" type="button">Reimport game</button><button class="ghost small-btn" id="reimportStop" type="button" hidden>Stop</button><span class="muted small" id="reimportStatus" role="status"></span></div>
               <pre class="joblog" id="reimportLog" hidden></pre>
             </div>
           </div>
@@ -421,31 +683,162 @@
           <header class="panel-head"><h2 id="saveTitle">Save your progress</h2><span class="muted small" id="saveState"></span></header>
           <div class="pad">
             <p class="muted small" id="saveAboutFork" hidden>The matched functions are in this project's own source files and git. What's only in decompdecomp is each unmatched function's closest attempt so far (a near miss is often 97–99.9%): Save now writes those as <code>best/&lt;function&gt;.c</code>, each saying how close it is and which source file it belongs in. Handy for a port while matching goes on.</p>
-            <p class="muted small" id="saveAbout">Your <code>progress</code> folder is the source of truth: matched C, notes, names, compiler ranges and settings, never the game itself. Work is saved automatically. Edit files or pull contributions there; decompdecomp reads the changes and judges affected code again automatically. Open this folder on another computer with <b>New project → Open a saved project</b>.</p>
-            <label class="field"><span>Save now, to this folder (remembered for this project; empty: its progress folder)</span><span class="pick-row"><input id="saveFolder" class="mono" placeholder="/home/you/decomp-saves/my-game"><button class="ghost small-btn" type="button" data-pick="folder" data-for="saveFolder" data-title="Where to save this project">Choose…</button></span></label>
+            <p class="muted small" id="saveAbout">Choose where to keep your matches, drafts, notes and settings. Select a repository or a normal folder; the app detects the right place for progress files. Your game is never included.</p>
+            <label class="field"><span>Project folder</span><span class="pick-row"><input id="saveFolder" class="mono" aria-describedby="saveFolderHint" placeholder="/home/you/decomp-saves/my-game"><button class="ghost small-btn" type="button" data-pick="folder" data-for="saveFolder" data-title="Where to save this project">Choose…</button></span></label>
+            <p class="small muted" id="saveFolderHint">A build repository uses its progress subfolder automatically.</p>
             <div class="row"><button class="ghost small-btn" id="saveGo" type="button">Save now</button></div>
             <pre class="joblog" id="saveLog" hidden></pre>
+            <section id="repositorySync" class="repository-sync" aria-labelledby="repositorySyncTitle">
+              <header class="repository-sync-heading">
+                <h3 id="repositorySyncTitle">Version history and sharing</h3>
+                <p id="repositorySyncAbout">Keep a local history of your work. Connect a remote to share commits.</p>
+              </header>
+              <p class="small muted" id="repositorySetupState" role="status"></p>
+              <progress class="workbar" id="repositorySetupLoading" aria-label="Checking this project’s save repository" hidden></progress>
+              <button class="ghost small-btn" id="repositorySetupRetry" type="button" hidden>Check save repository again</button>
+              <div class="row"><button class="ghost small-btn" id="repositoryInit" type="button" hidden>Create rebuildable repository</button><button class="ghost small-btn" id="repositoryCheckpoint" type="button" hidden>Commit saved progress</button></div>
+              <div id="repositoryOriginGroup" class="repository-connect" hidden>
+                <div class="repository-connect-heading"><h4>Connect a remote</h4><p class="small muted">Choose where to share your commits. Your files stay local until you push.</p></div>
+                <label class="field"><span>Existing repository URL</span><span class="pick-row"><input id="repositoryOrigin" placeholder="https://github.com/you/project.git" autocomplete="off" spellcheck="false"><button class="ghost small-btn" id="repositoryOriginGo" type="button" aria-label="Connect existing repository">Connect</button></span></label>
+                <details id="repositoryGithubDetails" class="repository-github"><summary>Create a new repository on GitHub</summary>
+                  <div class="repository-github-form">
+                    <p class="small muted">Create an empty repository and connect it to this project.</p>
+                    <label class="field"><span>Account or organization</span><span class="pick-row"><input id="repositoryGithubOwner" list="repositoryGithubOwners" placeholder="Choose or enter an owner" autocomplete="off" spellcheck="false"><button class="ghost small-btn" id="repositoryGithubOwnersGo" type="button" aria-label="Refresh GitHub accounts">Refresh accounts</button></span><datalist id="repositoryGithubOwners"></datalist></label>
+                    <div class="small muted repository-owner-status" id="repositoryGithubOwnersState" role="status"></div>
+                    <div class="repository-github-fields">
+                      <label class="field"><span>Repository name</span><input id="repositoryGithubName" placeholder="my-game-progress" autocomplete="off" spellcheck="false" maxlength="100"></label>
+                      <label class="field"><span>Visibility</span><select id="repositoryGithubVisibility"><option value="private">Private</option><option value="public">Public</option></select></label>
+                    </div>
+                    <details class="repository-github-help"><summary>GitHub CLI setup</summary><p class="small muted">Install GitHub CLI from cli.github.com, then run <code>gh auth login --hostname github.com</code> in a terminal.</p></details>
+                    <div class="repository-github-submit"><button class="primary small-btn" id="repositoryGithubGo" type="button">Create repository</button><span class="small muted">No files are pushed.</span></div>
+                  </div>
+                </details>
+              </div>
+              <button class="ghost small-btn" id="repositorySetupStop" type="button" hidden>Stop</button>
+              <pre class="joblog" id="repositorySetupLog" hidden></pre>
+              <div class="repository-auto-commit" id="repositoryAutoCommitGroup" hidden>
+                <label class="check"><input type="checkbox" id="repositoryAutoCommit" aria-describedby="repositoryAutoCommitAbout repositoryAutoCommitState"><span>Automatically commit new matches</span></label>
+                <p class="small muted" id="repositoryAutoCommitAbout">Save each new match with its notes and author. Enabling this first creates a checkpoint; commits stay on this computer until pushed.</p>
+                <label class="check"><input type="checkbox" id="repositoryPolishedCommit" aria-describedby="repositoryPolishedCommitAbout"><span>Automatically commit polished functions</span></label>
+                <p class="small muted" id="repositoryPolishedCommitAbout">Commit future readability improvements after they pass byte verification, with the polishing author. Existing polished functions stay unchanged.</p>
+                <p class="small muted" id="repositoryAutoCommitState" role="status"></p>
+                <button class="ghost small-btn" type="button" id="repositoryAutoCommitDetails" hidden>Pending commits</button>
+                <pre class="joblog" id="repositoryAutoCommitLog" hidden></pre>
+              </div>
+              <div class="repository-auto-commit" id="repositoryScoreCommitGroup" hidden>
+                <label class="check"><input type="checkbox" id="repositoryScoreCommits" aria-describedby="repositoryScoreCommitsAbout repositoryScoreCommitState"><span>Commit improved drafts in batches</span></label>
+                <label class="field"><span>Functions per commit</span><input id="repositoryScoreThreshold" type="number" min="1" max="10000" step="1" value="10"></label>
+                <p class="small muted" id="repositoryScoreCommitsAbout">Commit the latest draft after this many different functions improve. Existing drafts form the baseline; exact matches use the setting above.</p>
+                <p class="small muted" id="repositoryScoreCommitState" role="status"></p>
+                <button class="ghost small-btn" id="repositoryScoreDetails" type="button" hidden>Pending improved functions</button>
+                <pre class="joblog" id="repositoryScoreCommitLog" hidden></pre>
+              </div>
+              <div class="repository-auto-commit" id="repositoryAutoPushGroup" hidden>
+                <label class="check"><input type="checkbox" id="repositoryAutoPush" aria-describedby="repositoryAutoPushAbout repositoryAutoPushState"><span>Automatically push commits to origin</span></label>
+                <label class="field"><span>Commits per push</span><input id="repositoryAutoPushThreshold" type="number" min="1" max="10000" step="1" value="10"></label>
+                <p class="small muted" id="repositoryAutoPushAbout">Push all unpushed commits, including existing ones, when this limit is reached. Pauses if the branch or remote changes or histories diverge. Uncommitted work stays local.</p>
+                <p class="small muted" id="repositoryAutoPushState" role="status"></p>
+                <pre class="joblog" id="repositoryAutoPushLog" hidden></pre>
+              </div>
+              <div class="repository-publish" id="repositoryPublish" hidden>
+                <p class="small muted" id="repositoryPushState" role="status">Choose a linked Git checkout to see unpushed commits.</p>
+                <button class="ghost small-btn" type="button" id="repositoryUnpushedDetails" hidden>Unpushed commits</button>
+                <p class="small muted" id="repositoryPushBasis"></p>
+                <div class="row"><button class="primary small-btn" type="button" id="repositoryPushGo" disabled>Push commits to origin</button><button class="ghost small-btn" type="button" id="repositoryPushStop" hidden>Stop</button></div>
+                <pre class="joblog" id="repositoryPushLog" hidden></pre>
+                <p><button class="ghost small-btn" type="button" id="repositoryForkGo" hidden>Set up a GitHub fork…</button> <button class="ghost small-btn" type="button" id="repositoryForkStop" hidden>Stop fork setup</button></p>
+                <pre class="joblog" id="repositoryForkLog" hidden></pre>
+              </div>
+              <section id="repositoryDestination" hidden><h3>Update build files</h3><p class="small muted">Automatic commits save progress. To update the standalone C sources and build-based trackers such as ByteMatch, run a verified build sync here.</p><p class="small mono" id="repositoryBuildPath"></p>
+              <input id="repositoryFolder" type="hidden">
+              <p class="small muted" id="repositorySyncHint">App-saved progress can be committed. Other checkout edits must be committed or moved first.</p>
+              <div class="repository-sync-actions" id="repositorySyncActions">
+                <div><button class="primary small-btn" id="repositorySyncGo" type="button">Verify and update build files</button><p>Leave changes ready to review.</p></div>
+                <div><button class="ghost small-btn" id="repositoryCommitGo" type="button">Verify, commit and push</button><p>Save progress and push the current branch.</p></div>
+                <button class="ghost small-btn" id="repositorySyncStop" type="button" hidden>Stop</button>
+              </div>
+              <details class="repository-sync-help" id="repositorySyncHelp"><summary>How syncing works</summary><ul>
+                <li>A linked progress checkout includes matches, drafts, notes and settings. Newer helper work stays uncommitted.</li>
+                <li>A rebuildable export checks the build in a private copy before updating your checkout.</li>
+                <li>Updates app-generated sources; keeps your build setup and hand-written C.</li>
+                <li>Commit and push also saves portable progress and uses your configured upstream and Git credentials.</li>
+              </ul></details>
+              </section>
+              <pre class="joblog" id="repositorySyncLog" hidden></pre>
+            </section>
           </div>
+        </section>
+        <section class="panel" id="sdkPanel">
+          <header class="panel-head"><h2>Libraries for this game</h2></header>
+          <div class="pad">
+            <p class="muted small">Libraries are indexed once in <a href="#/settings">Settings → Local SDK libraries</a> and detected from this game's function signatures. GameCube and Wii also detect public decomp-toolkit SDK patterns automatically after target objects are built. Shared code can match several releases; detection is evidence, not proof of one version.</p>
+            <label class="field"><span>Library selection</span><select id="sdkMode"><option value="auto">Automatic — use matching local libraries</option><option value="manual">Choose libraries for this game</option></select></label>
+            <div id="sdkDetected" class="muted small"></div><div id="sdkChoices"></div>
+            <button class="ghost small-btn" id="sdkSelectionSave" type="button">Save selection</button>
+            <pre class="joblog" id="sdkSelectionLog" hidden></pre>
+          </div>
+          <details class="pad"><summary>Advanced: import an individual archive or C source</summary>
+          <div class="pad"><p class="muted small">Choose a local SDK .a or .o file. The app indexes function signatures and names on this computer; it never uploads or bundles the file. A signature suggests a name, while C still needs a byte match.</p>
+            <label class="field"><span>SDK name and version</span><input id="sdkCorpus" placeholder="libultra 2.0L"></label>
+            <label class="field"><span>Object archive</span><span class="pick-row"><input id="sdkPath" class="mono" placeholder="/path/to/libultra.a"><button class="ghost small-btn" type="button" data-pick="file" data-for="sdkPath" data-title="Choose a local SDK object archive">Choose…</button></span></label>
+            <label class="field"><span>C source file or folder (optional, for matching)</span><input id="sdkSourcePath" placeholder="/path/to/sdk/src"></label>
+            <label class="field"><span>Declarations header (optional)</span><input id="sdkHeaderPath" placeholder="/path/to/declarations.h"></label>
+            <p class="muted small">Source definitions are tried with this project's compiler settings during Run again. Supply self-contained declarations for any SDK types they need. No SDK build scripts run.</p>
+            <div class="row"><button class="ghost small-btn" id="sdkImport" type="button">Index signatures</button></div>
+            <pre class="joblog" id="sdkLog" hidden></pre>
+          </div></details>
         </section>
       </div>
     </div>
     <section class="panel danger-zone">
-      <header class="panel-head"><h2>Remove project</h2></header>
-      <div class="pad row"><p class="muted small grow">Matched functions and notes are deleted from decompdecomp. You can keep or delete the project folder.</p><button class="ghost danger" id="deleteBtn" type="button">Remove project…</button></div>
+      <header class="panel-head"><h2>Close or remove project</h2></header>
+      <div class="pad row"><p class="muted small grow">Verified matches stay in your local match library for other games. Project notes are removed. You can keep or delete the project folder.</p><button class="ghost" id="closeProjectBtn" type="button">Close project…</button><button class="ghost danger" id="deleteBtn" type="button">Remove project…</button></div>
     </section>
   </section>
+</main>
+
+<main id="backgroundPage" class="view" hidden>
+  <header class="page-head"><p class="eyebrow">This computer</p><h1>Background work</h1><p class="muted">See active jobs, agents and project services. Stop requests preserve saved work; a running compile may need to finish first.</p></header>
+  <section class="panel"><header class="panel-head"><h2>Activity <span class="disclosure-context" id="backgroundCount"></span></h2><button id="backgroundRefresh" class="ghost small-btn" type="button">Refresh</button></header><div class="pad">
+    <div class="background-metrics"><div><span class="small muted">App CPU</span><strong id="backgroundCpu">Measuring…</strong></div><div><span class="small muted">Live threads</span><strong id="backgroundThreads">—</strong></div></div>
+    <p class="small muted" id="backgroundCpuNote"></p>
+    <div class="row"><label class="field"><span>Maintenance CPU limit · % of one core</span><input id="maintenanceCpuLimit" type="number" min="0" max="100" step="1" placeholder="Unlimited" aria-describedby="maintenanceCpuHelp"></label><button class="ghost small-btn" id="maintenanceCpuSave" type="button">Apply CPU limit</button></div>
+    <p class="small muted" id="maintenanceCpuHelp">0 = unlimited. 50% uses about half of one CPU core for indexing, SDK naming and identical-function reuse, shared across projects. Saved automatically and applied to running maintenance at safe checkpoints; brief spikes are possible. Agents, autosave, imports and compiler subprocesses have separate controls.</p>
+    <div class="row"><label class="field"><span>Default threads per background task</span><input id="backgroundLimit" type="number" min="0" step="1" placeholder="Automatic"></label><button class="ghost small-btn" id="backgroundLimitSave" type="button">Apply limit</button></div>
+    <p class="small muted">0 = automatic. Limits machine drafts and the background permuter across projects. Already queued work finishes at the old limit; new work uses the new limit. Agents, deep passes and imports have separate concurrency. Stopped automatic workers can start again when you open their project.</p>
+    <p class="small muted">Lists Python-managed threads. CPU measures the listed threads only, not a whole job’s subprocesses. Purpose-owned tasks list their active threads and offer Stop. Essential server and library threads remain read only. “Measuring…” needs a second sample; “Unavailable” means no supported counter. Thread purposes describe roles, not current call stacks.</p>
+    <div class="row"><label class="field background-thread-sort"><span>Sort activity</span><select id="backgroundThreadSort"><option value="cpu">Highest CPU first</option><option value="name">Name</option><option value="role">Purpose</option></select></label><label class="field background-thread-sort"><span>Group by</span><select id="backgroundGroupBy"><option value="none">None</option><option value="project">Project</option></select></label></div>
+    <details><summary>Recent UI delays</summary><p class="small muted">Requests and event-loop stalls over half a second, from this app session.</p><div class="small mono" id="backgroundLatency"></div></details><div class="background-feedback"><div id="backgroundWorkStatus" role="status" hidden></div></div><div id="backgroundRows"></div>
+
+  </div></section>
 </main>
 
 <!-- ================================================================ agents & models -->
 <main id="agentsPage" class="view" hidden>
   <header class="page-head"><p class="eyebrow">Agents &amp; models</p><h1>Your AI agents</h1>
     <p class="muted">Helper agents run in the background on a project. Install the ones you use, pick their models, or add any model with an API key.</p></header>
-  <section class="ag-apps" aria-labelledby="agAppsH">
-    <header class="ag-apps-head"><h2 id="agAppsH">Agent apps on this computer</h2><button class="ghost small-btn" id="agRefresh" type="button">Refresh</button></header>
-    <div class="ag-grid" id="agList"></div>
-  </section>
+  <details class="panel settings-disclosure ag-apps" aria-labelledby="agAppsH" open>
+    <summary class="panel-head"><h2 id="agAppsH">Agent apps on this computer <span class="disclosure-context" id="agAppsContext">— Checking installed apps…</span></h2><button class="disclosure-action" id="agRefresh" type="button" title="Refresh installed agent apps">↻ Refresh</button></summary><div class="pad">
+    <div class="ag-grid" id="agList"></div></div>
+  </details>
+  <details class="panel settings-disclosure"><summary class="panel-head"><h2>Agent prompts <span class="disclosure-context" id="agPromptsContext">— Global session defaults</span></h2></summary><div class="pad"><p class="small muted">Customize the prompts used for new agent sessions. Each agent can override these defaults; project context is added automatically.</p><div id="globalPromptSettings"></div><pre id="globalPromptLog" hidden></pre></div></details>
+  <details class="panel settings-disclosure"><summary class="panel-head"><h2>Agent tools &amp; usage <span class="disclosure-context" id="agToolsContext">— Optional tools and usage</span></h2><button id="agentToolsRefresh" class="disclosure-action" type="button" title="Refresh tools and usage counts">↻ Refresh</button></summary><div class="pad"><p class="small muted">Disable optional tools to reduce agent context. Global switches apply to every agent; per-agent tools can disable additional tools. Required core tools stay enabled. New tool lists take effect at the next session or MCP reconnect; cached calls to disabled tools are rejected immediately.</p><details class="tool-coverage more"><summary>About usage counts</summary><p id="agentToolCoverage" class="small muted"></p></details><div id="agentToolCatalog"></div><pre id="agentToolLog" hidden></pre></div></details>
+  <details class="panel settings-disclosure" id="pairPanel" hidden open><summary class="panel-head"><h2>Access requests <span class="disclosure-context" id="agPairContext">— Pending approval</span></h2></summary><div class="pad" id="pairBox"></div></details>
   <div class="cols ag-cols">
-    <section class="panel"><header class="panel-head"><h2>Models with an API key</h2></header><div class="pad" id="apiBox"></div></section>
+  <details class="panel manual-mcp settings-disclosure" aria-labelledby="mcpHeading">
+    <summary class="panel-head"><h2 id="mcpHeading">Connect another AI tool with MCP <span class="disclosure-context" id="agMcpContext">— Local connections</span></h2></summary>
+    <div class="pad">
+      <p>Use the local MCP server with an AI tool that supports Streamable HTTP and bearer authentication. Keep decompdecomp running on this computer.</p>
+      <div id="mcpStatus" role="status"></div>
+      <label class="field"><span>Project for this connection</span><select id="mcpProject"></select></label>
+      <div class="row"><button class="primary" id="mcpCreate" type="button">Create connection</button><button class="ghost" id="mcpRefresh" type="button">Refresh</button></div>
+      <pre class="joblog" id="mcpLog" hidden></pre>
+      <div id="mcpConfig"></div>
+      <details><summary>Available tools <span id="mcpToolCount"></span></summary><div id="mcpTools"></div></details>
+      <details><summary>Your manual connections</summary><div id="mcpConnections"></div></details>
+    </div>
+  </details>
+    <details class="panel settings-disclosure" open><summary class="panel-head"><h2>Models with an API key <span class="disclosure-context" id="agApiContext">— Checking saved endpoints…</span></h2></summary><div class="pad" id="apiBox"></div></details>
   </div>
 </main>
 
@@ -460,10 +853,70 @@
 <!-- ================================================================ settings -->
 <main id="settingsPage" class="view" hidden>
   <header class="page-head"><p class="eyebrow">Settings</p><h1>How decompdecomp works for you</h1></header>
+  <details class="panel settings-disclosure" id="databaseCleanupPanel">
+    <summary class="panel-head"><h2>Database cleanup <span class="disclosure-context" id="databaseCleanupContext">— Agent transcript history</span></h2></summary>
+    <div class="pad">
+      <p>Clear old agent transcripts while keeping saved matches, candidates, notes and usage totals.</p>
+      <div class="row">
+        <label class="check"><input id="databaseCleanupRemoved" type="checkbox" checked><span>Transcripts from removed agents</span></label>
+        <label class="field"><span>Also clear completed sessions older than</span><input id="databaseCleanupAge" type="number" min="1" max="36500" step="1" placeholder="Keep all ages"><small class="muted">Optional · ongoing sessions are kept.</small></label>
+        <label class="field"><span>Age unit</span><select id="databaseCleanupUnit"><option value="1">Days</option><option value="7">Weeks</option></select><small class="muted">Rolling age, recalculated each cleanup.</small></label>
+      </div>
+      <label class="check"><input id="databaseCleanupAutomatic" type="checkbox"><span>Automatically enforce the saved age limit<br><small class="muted">Checks every five minutes while the app is running.</small></span></label>
+      <p class="small muted" id="databaseCleanupEstimate" role="status">Preview cleanup to see eligible transcripts.</p>
+      <div class="row"><button id="databaseCleanupStart" class="primary" type="button">Clean up now</button><button id="databaseCleanupSave" class="ghost" type="button">Save cleanup rules</button><button id="databaseCleanupPreview" class="ghost" type="button">Preview cleanup</button><button id="databaseCleanupStop" class="ghost" type="button" hidden>Stop cleanup</button></div>
+      <div id="databaseCleanupLog"></div>
+      <details class="more"><summary>What gets removed?</summary><p class="small muted">The selected rules are combined: removed agents, plus completed sessions older than the selected age. Enable automatic cleanup and save your rules to enforce the rolling age limit in the background. Stopping a run keeps completed deletions; disable automatic cleanup to prevent future runs. Clearing transcripts is permanent; export any history you need first. Space becomes reusable inside SQLite, so the database file may stay the same size. Saved source and exact matches are kept.</p></details>
+    </div>
+  </details>
+  <details class="panel settings-disclosure" id="databaseStoragePanel">
+    <summary class="panel-head"><h2>Database storage <span class="disclosure-context" id="databaseStorageSize"></span></h2></summary>
+    <div class="pad">
+      <p>Store repeated source, assembly, reuse feedback, compiler evidence, agent messages and progress snapshots once, compressed. Exact text and history stay available on demand.</p>
+      <p id="databaseStorageEstimate" class="small muted" role="status"></p>
+      <label class="field"><span>Keep superseded unsuccessful C source for this many days</span><input id="databaseStorageDays" type="number" min="0" max="3650" value="0"><small>0 removes superseded unsuccessful source at the next cleanup. Latest candidates, improvements, exact matches and referenced source are kept. Older unsuccessful candidates retain their SHA-256 hash, score and metrics.</small></label>
+      <label class="check"><input id="databaseStorageAutomatic" type="checkbox"><span>Clean old unsuccessful source and oversized search diagnostics automatically, once a day</span></label>
+      <div class="row"><button id="databaseStoragePack" class="primary" type="button">Compress existing records</button><details class="agent-menu"><summary aria-label="More candidate storage actions">⋮</summary><div class="agent-menu-items"><button id="repairEvidenceExport" type="button">Export repair evidence database</button><button id="databaseStorageCompact" type="button">Compact database files…</button><button id="databaseStorageSave" type="button">Save retention rules</button><button id="databaseStoragePrune" type="button">Clean old unsuccessful source</button></div></details><button id="databaseStorageStop" type="button" hidden>Stop</button></div>
+      <div id="databaseStorageLog"></div>
+      <h3>Repair evidence</h3>
+      <p class="small muted">Keep representative successful repairs to review and improve automatic repair rules. Full cases are stored in a separate repair evidence database; existing cases move in a stoppable Background work task. Database exports contain archived source, headers and assembly; nothing is sent automatically.</p>
+      <label class="check"><input id="repairEvidenceEnabled" type="checkbox" checked><span>Limit repeated repair examples</span></label>
+      <label class="field"><span>Automatic repair examples per pattern</span><input id="repairEvidenceAutomatic" type="number" min="0" max="1000" value="1"></label>
+      <label class="field"><span>AI/manual repair examples per pattern</span><input id="repairEvidenceManual" type="number" min="0" max="1000" value="3"><small>0 keeps counts only for comparable patterns. Incomplete evidence is always retained. Disable limits to retain every new example. Changes apply to future captures; existing examples are kept.</small></label>
+      <button id="repairEvidenceSave" type="button">Save repair evidence settings</button>
+      <div id="repairEvidenceLog" role="status"></div>
+      <p class="small muted">Compression preserves exact text. Cleanup permanently removes only eligible source payloads. Use Compact database file under Saved C header history to return reusable space to disk when workers are idle.</p>
+    </div>
+  </details>
+  <details class="panel settings-disclosure" id="headerStoragePanel">
+    <summary class="panel-head"><h2>Saved C header history <span class="disclosure-context" id="headerStorageContext">— Compressed, shared content</span></h2></summary>
+    <div class="pad">
+      <p>Keep exact C headers for old attempts while storing identical content once. Compression is automatic; cleanup removes only unused history.</p>
+      <div class="background-metrics"><div><span class="small muted">Header text across versions</span><strong id="headerStorageLogical">—</strong></div><div><span class="small muted">Shared compressed content</span><strong id="headerStorageStored">—</strong></div></div>
+      <p class="small muted" id="headerStorageEstimate" role="status">Preview to check which old versions are safe to remove.</p>
+      <div class="row"><button id="headerStorageStart" class="primary" type="button">Clean unused headers</button><details class="agent-menu"><summary aria-label="More header maintenance actions">⋮</summary><div class="agent-menu-items"><button id="headerStoragePreview" class="ghost" type="button">Preview header cleanup</button><button id="headerStorageCompact" class="ghost" type="button">Compact all database files…</button><button id="headerStorageCatalogCompact" class="ghost" type="button">Reclaim catalog space after migration…</button></div></details><button id="headerStorageStop" class="ghost" type="button" hidden>Stop maintenance</button></div>
+      <div id="headerStorageLog"></div>
+      <details class="more"><summary>What is kept, and how is disk space reclaimed?</summary><p class="small muted">Current headers and versions referenced by attempts, repair evidence or recovery history are kept. Headers read during this app run are also kept for in-flight work. Cleanup is permanent and makes space reusable inside SQLite. Compaction is a separate manual step that shrinks the database file: writes wait while it runs, and the drive needs free space of at least twice the database size. Stop rolls back an interrupted compaction. These are C declarations, not AI conversations.</p></details>
+    </div>
+  </details>
+  <details class="panel settings-disclosure" id="matchLibraryPanel"><summary class="panel-head"><h2>Local match library <span class="disclosure-context" id="matchLibraryCount">— Loading</span></h2></summary><div class="pad"><p class="small muted">This compact index stores function fingerprints and project locations. C source and headers stay in their original projects, which must be available locally to reuse a match. Removed projects remain listed as references. New games must still pass their own byte or object verification.</p><div class="row"><label class="field grow"><span>Find a function or game</span><input id="matchLibrarySearch" type="search" placeholder="Function name or game"></label><button class="ghost small-btn" id="matchLibraryRefresh">Search</button><button class="ghost small-btn" id="matchLibraryIndex">Index existing matches</button></div><p class="small muted">Database size includes SQLite journal files. Showing up to 100 functions, most widely shared first. This library stays on this computer; no game data is uploaded.</p><div id="matchLibraryLog"></div><div id="matchLibraryItems"></div></div></details>
   <div class="cols">
+    <section class="panel"><header class="panel-head"><h2>Pair a browser worker</h2></header><div class="pad">
+      <p class="muted small">Authorize one browser origin for one KMC ROM project. The browser can read function tasks and submit source for this app to recheck; it cannot run commands or use private app APIs. Access expires after one hour and is lost when this app restarts.</p>
+      <label class="field"><span>Project</span><select id="browserBridgeProject"></select></label>
+      <label class="field"><span>Exact browser origin</span><input id="browserBridgeOrigin" value="http://127.0.0.1:4179"></label>
+      <div class="row"><button id="browserBridgeCode" class="primary" type="button">Create pairing code</button><button id="browserBridgeRevoke" class="ghost" type="button">Revoke project browser access</button></div>
+      <p id="browserBridgeStatus" role="status" class="small muted"></p>
+    </div></section>
     <section class="panel"><header class="panel-head"><h2>Agents</h2></header><div class="pad" id="setAgents"></div></section>
     <div class="stack-col">
       <section class="panel"><header class="panel-head"><h2>This computer</h2></header><div class="pad" id="setComputer"></div></section>
+      <section class="panel"><header class="panel-head"><h2>Local SDK libraries</h2></header><div class="pad">
+        <p class="muted small">Add folders containing SDK .a archives or .o objects. The app indexes them once for all games. Names and versions are read from folder and archive names; each game checks its own signatures. Files stay local and no SDK build scripts run.</p>
+        <label class="field"><span>Folders (one per line)</span><textarea id="sdkFolders" rows="4" class="mono" placeholder="/path/to/SDK/usr/lib"></textarea></label>
+        <div class="row"><button class="ghost" id="sdkFolderPick" type="button">Add folder…</button><button class="primary" id="sdkFolderScan" type="button">Save &amp; scan folders</button></div>
+        <p id="sdkInventory" class="muted small"></p><pre class="joblog" id="sdkFolderLog" hidden></pre>
+      </div></section>
       <section class="panel"><header class="panel-head"><h2>ROM library</h2></header><div class="pad">
         <p class="muted small">Imported projects search this folder and its subfolders for a game with the expected SHA-1. N64 byte orders are normalized for matching. Files stay on this computer; archives must be extracted first.</p>
         <label class="field"><span>Folder path (leave empty to disable)</span><input id="romLibrary" class="mono" placeholder="/Volumes/Data/ROMs"></label>
@@ -483,18 +936,88 @@
       <div class="dh-title">
         <p class="eyebrow" id="fnAddr"></p>
         <h2 id="fnName" class="mono"></h2>
+        <p class="muted small" id="fnNaming" hidden></p>
+        <details id="fnSdkEvidence" hidden><summary>SDK identification</summary><pre class="joblog" id="fnSdkEvidenceText"></pre><button type="button" class="ghost small-btn" id="fnSdkRename" hidden>Use SDK name in source…</button><pre class="joblog" id="fnSdkNameLog" hidden></pre></details>
       </div>
-      <div class="row">
-        <span class="badge" id="fnStatus"></span>
+      <div class="row fn-header-actions">
+        <span class="badge" id="fnStatus"></span><span class="badge polished" id="fnPolished" hidden title="Polished C that still matches">polished</span><button class="ghost small-btn" id="fnClaimHandover" type="button" hidden>Let agents work on this</button>
         <button class="ghost small-btn pin" id="fnPin" type="button" title="Agents take this function next">★ Next</button>
         <button class="ghost small-btn" id="fnSetAside" type="button" hidden title="You know no C makes this function (hand-written assembly, a piece of another function): set it aside now, without waiting for agents to agree. It turns red, leaves agents' work and the percentage, and Give it back to the agents undoes it.">Set aside: no C makes it</button>
+      </div>
+      <div class="row fn-header-navigation">
         <button class="ghost icon" id="fnPrev" type="button" aria-label="Previous function" title="Previous function (K)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.3 2.7 11.4 3.8 7.2 8l4.2 4.2-1.1 1.1L5 8z"/></svg></button>
         <button class="ghost icon" id="fnNext" type="button" aria-label="Next function" title="Next function (J)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 2.7 4.6 3.8 8.8 8l-4.2 4.2 1.1 1.1L11 8z"/></svg></button>
         <button class="ghost icon" data-close type="button" aria-label="Close" title="Close (Esc)">✕</button>
       </div>
     </header>
+    <div id="functionLoading" class="navigation-loading" role="status" hidden><p id="functionLoadingText">Loading function…</p><div class="workbar" role="progressbar" aria-label="Loading function"><i></i></div><button id="functionRetry" class="ghost" type="button" hidden>Retry</button></div>
     <div class="drawer-body">
+      <div id="functionDetailsLoading" role="status" hidden><p id="functionDetailsStatus" class="small muted">Loading history, calls and verification… Saved code is ready to view.</p><div class="workbar" aria-label="Loading function details"><i></i></div><button id="functionDetailsRetry" class="ghost small-btn" type="button" hidden>Retry details</button></div>
+      <p class="set-aside" id="fnBoundaryReview" hidden></p><button type="button" class="ghost small-btn" id="fnBoundaryRepair" hidden>Review &amp; repair boundary</button>
       <p class="set-aside" id="fnAside" hidden><span id="fnAsideWhy"></span> <button class="link-btn" id="fnReopen" type="button">Give it back to the agents</button></p>
+      <details id="fnCompilerTest" class="collapsible-box" hidden>
+        <summary>Compiler settings</summary><div class="collapsible-box-body"><div id="fnCurrentCompiler" class="small"></div><div id="fnCompilerMatches"></div>
+        <div class="fn-compiler-controls"><button class="primary small-btn" id="fnTestCompilers" type="button">Test installed compilers &amp; flags</button>
+        <label class="check"><input type="checkbox" id="fnCompilerFlagsOnly"><span>Current compiler only · test flag variations</span></label>
+        <label class="check"><input type="checkbox" id="fnCompilerUsedProfilesOnly"><span>Only profiles used in this project · exact flags</span></label></div>
+        <p class="small muted fn-compiler-explainer">Local compiler search · no AI tokens. Tests the saved C against supported compiler and flag combinations. Settings change only when you apply a result.</p>
+        <p class="small muted" id="fnCompilerHistory">Not tested yet.</p>
+        <section class="compiler-progress" id="fnCompilerProgress" data-mode="function" aria-label="Function compiler comparison progress" hidden></section>
+        <p class="compiler-result" id="fnCompilerSummary" role="status" hidden></p>
+        <button class="primary small-btn" id="fnApplyCompiler" type="button" hidden>Apply these settings to this function</button>
+        <details class="more"><summary>Comparison details</summary><pre class="joblog" id="fnCompilerLog" hidden></pre></details>
+      </div></details>
+      <details class="collapsible-box" id="fnProjectPeers">
+        <summary>Other projects and local SDKs</summary>
+        <div class="collapsible-box-body"><div id="fnProjectPeersContent"></div></div>
+      </details>
+      <details class="more" id="fnMachineDraft" hidden><summary>Starting C diagnostics</summary><pre class="small" id="fnMachineDraftReport"></pre></details>
+      <details class="more" id="fnVerification" hidden>
+        <summary>Last verified match</summary>
+        <p class="small muted" id="fnVerificationStatus"></p>
+        <button class="ghost small-btn" type="button" id="fnVerificationDownload">Download source, header and verification inputs</button>
+      </details>
+      <section class="function-work" id="fnWorkPanel" aria-labelledby="fnWorkTitle" hidden>
+        <header class="function-work-heading"><h3 id="fnWorkTitle">Work on this function</h3><p class="small muted">Choose an AI agent or a local compiler search.</p></header>
+        <details class="collapsible-box function-work-card" id="fnFocusPanel" hidden>
+          <summary><span class="function-work-cost">AI tokens</span>AI agent <span class="disclosure-context" id="fnFocusContext"></span></summary>
+          <div class="collapsible-box-body"><p class="small muted" id="fnFocusIntro">Keep one agent on this function until it matches or time runs out.</p>
+            <div id="fnFocusedSessions"></div>
+            <div class="row" id="fnFocusSetup"><button class="primary small-btn" type="button" id="fnFocusAgent">Set up focused agent</button></div><div id="fnFocusLog" hidden></div>
+          </div>
+        </details>
+        <details class="collapsible-box function-work-card deep-search" id="fnDeepPanel" hidden>
+          <summary><span class="function-work-cost">No AI tokens</span>Deep permuter</summary>
+          <div class="collapsible-box-body">
+          <p class="small muted" id="fnDeepHistory"></p>
+          <p class="small muted">Try local repairs and random rewrites with your installed compiler. Verified improvements save automatically.</p>
+          <div class="deep-controls">
+            <label class="field"><span>Time limit · minutes</span><input id="fnDeepMinutes" type="number" min="1" max="120" value="30"></label>
+            <label class="field"><span>Compile limit</span><input id="fnDeepVariants" type="number" min="1" max="1000000" value="100000"></label>
+            <label class="field"><span>Compiler profiles per candidate</span><input id="fnDeepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
+            <label class="deep-sweep-repeat"><input id="fnDeepMaximum" type="checkbox"><span>Maximum throughput<small>The default one-thread setting expands to one independent search path per detected core. Higher thread counts remain in effect.</small></span></label>
+            <label class="field"><span>Concurrent compiles</span><input id="fnDeepCompileSlots" type="number" min="1" max="256" placeholder="auto"></label>
+            <label class="field"><span>Threads per function</span><input id="fnDeepThreads" type="number" min="1" max="256" value="1"><small>Parallel candidate paths share this function’s time and candidate limits.</small></label>
+            <div class="deep-actions"><button class="primary small-btn" id="fnDeepRun" type="button">Run deep permuter</button>
+            <button class="ghost small-btn" id="fnDeepStop" type="button" hidden>Stop</button></div>
+          </div>
+          <p class="hint" id="fnDeepThroughput" hidden></p>
+          <div class="deep-dashboard" id="fnDeepMetrics" hidden>
+            <dl class="deep-scores">
+              <div><dt>Starting match</dt><dd id="fnDeepStartPercent">—</dd><span id="fnDeepStartScore">Score —</span></div>
+              <div class="deep-best"><dt>Current best</dt><dd id="fnDeepBestPercent">—</dd><span id="fnDeepBestScore">Score —</span></div>
+              <div><dt>Improvements</dt><dd id="fnDeepImproved">0</dd><span>Verified score reductions</span></div>
+            </dl>
+            <div class="deep-counters"><span><b id="fnDeepTested">0</b> tested</span><span><b id="fnDeepSkipped">0</b> cached skips</span><span id="fnDeepTime">—</span></div>
+          </div>
+          <p class="small muted" id="fnDeepStatus" role="status"></p>
+          <div id="fnDeepWork"></div>
+          <details class="deep-output" id="fnDeepOutput"><summary>Technical output</summary>
+            <p class="small muted" id="fnDeepNow" role="status">Waiting for the first candidate.</p><pre class="joblog" id="fnDeepLog" hidden></pre></details>
+          <p class="small muted deep-note">Search is bounded by these limits; it cannot try every possible C program.</p>
+          </div>
+        </details>
+      </section>
       <div class="fn-tabs">
         <div class="tabs" role="tablist" aria-label="Function view">
           <button role="tab" class="tab on" data-ftab="diff" type="button">Diff</button>
@@ -508,13 +1031,20 @@
         <ul class="problems" id="diffProblems"></ul>
       </div>
       <div class="code-cols" id="fnCodeView" hidden>
-        <div><p class="col-title">Target assembly (from your game)</p><pre class="code asm" id="fnAsm"></pre></div>
+        <div><p class="col-title">Target assembly (from your game)<button class="link-btn" id="copyAsm" type="button" title="Copy assembly without address annotations">Copy</button></p><pre class="code asm" id="fnAsm"></pre></div>
         <div>
           <p class="col-title"><span id="fnSrcKind">C</span><button class="link-btn" id="copySrc" type="button">Copy</button></p>
+          <div class="seg small polish-source-choice" id="fnPolishWhich" role="group" aria-label="Compare polishing" hidden>
+            <button type="button" data-polish="polished" class="on" aria-pressed="true">Polished</button>
+            <button type="button" data-polish="unpolished" aria-pressed="false">Unpolished</button>
+          </div>
+          <p class="small muted" id="fnPolishNote" role="status" hidden></p>
           <div class="editor" id="editor">
+            <div class="source-gutter" id="fnGutter" aria-label="Source line differences"></div>
             <pre class="code c" id="fnSrc" aria-hidden="true"></pre>
             <textarea id="fnEdit" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="The function's C"></textarea>
           </div>
+          <p class="small muted" id="fnSourceMapNote" aria-live="polite"></p>
           <div class="edit-bar">
             <button class="primary small-btn" id="tryBtn" type="button">Compile and compare</button>
             <span class="muted small" id="tryHint">Ctrl+Enter · edit it yourself: you're judged like an agent</span>
@@ -522,7 +1052,7 @@
           <p class="try-msg" id="tryMsg" hidden></p>
         </div>
       </div>
-      <div class="fn-chart" id="fnChartWrap"><svg id="fnChart" aria-label="Match per compile"></svg><div class="fn-chart-note" id="fnChartNote"></div></div>
+      <div class="fn-chart" id="fnChartWrap"><div class="fn-chart-plot"><svg id="fnChart" tabindex="0" role="img" aria-label="Match per compile. Move the pointer or use Left and Right arrows to inspect scores."></svg><div id="fnChartTooltip" class="fn-chart-tooltip" role="status" hidden></div></div><div class="fn-chart-note" id="fnChartNote"></div></div>
       <div class="xref" id="fnXref"></div>
       <div id="fnNotes"></div>
       <div class="note-box">
@@ -545,6 +1075,7 @@
 <!-- the notification centre: what happened in every project, newest first -->
 <section class="notif-panel" id="notifPanel" role="dialog" aria-labelledby="notifTitle" hidden>
   <header class="notif-head"><h2 id="notifTitle">What happened</h2><span class="muted small">in all your projects</span><span class="grow"></span><button class="ghost small-btn" id="notifClear" type="button" hidden>Clear all</button><button class="ghost icon sm" id="notifClose" type="button" aria-label="Close notifications">✕</button></header>
+  <div id="notifLoading" hidden></div>
   <ol class="notif-list" id="notifList"></ol>
 </section>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
@@ -553,9 +1084,46 @@
 <script src="/assets/js/home.js"></script>
 <script src="/assets/js/project.js"></script>
 <script src="/assets/js/map.js"></script>
+<script src="/assets/js/prompt-settings.js"></script>
+<script src="/assets/js/tool-catalog.js"></script>
+<script src="/assets/js/tool-settings.js"></script>
 <script src="/assets/js/agents.js"></script>
+<script src="/assets/js/focused-agents.js"></script>
+<script src="/assets/js/transcripts.js"></script>
+<script src="/assets/js/candidate-recovery.js"></script>
+<script src="/assets/js/repair-replay.js"></script>
+<script src="/assets/js/repair-feedback.js"></script>
+<script src="/assets/js/deep-progress.js"></script>
+<script src="/assets/js/deep-activity.js"></script>
+<script src="/assets/js/rewrite-performance.js"></script>
+<script src="/assets/js/source-mismatches.js"></script>
 <script src="/assets/js/function.js"></script>
+<template id="compilerProgressTemplate">
+              <div class="compiler-queue-count"><span data-queue>Preparing eligibility checks…</span><progress data-queue-bar max="1" value="0" aria-label="Functions completed in this run"></progress></div>
+              <div class="compiler-progress-heading"><span class="small muted compiler-current-label">Current function</span><b class="mono" data-current>Preparing…</b></div>
+              <div class="compiler-progress-count"><span data-tested>Waiting for the first result</span><progress data-bar max="1" value="0" aria-label="Settings tested for current function"></progress></div>
+              <dl class="compiler-progress-stats">
+                <div class="compiler-percent"><dt>Saved match</dt><dd data-before>—</dd></div>
+                <div class="compiler-percent"><dt>Best tested</dt><dd data-best>—</dd></div>
+                <div><dt>Functions finished</dt><dd><button class="compiler-stat" type="button" data-results-filter="completed" aria-label="View finished function results" aria-controls="compilerImprovements" aria-expanded="false" disabled><span data-completed>0</span><span class="compiler-stat-action">View functions</span></button></dd></div>
+                <div><dt>Better settings found</dt><dd><button class="compiler-stat" type="button" data-results-filter="improved" aria-label="View functions with better settings" aria-controls="compilerImprovements" aria-expanded="false" disabled><span data-improved>0</span><span class="compiler-stat-action">Review &amp; apply</span></button></dd></div>
+                <div><dt>Exact matches found</dt><dd><button class="compiler-stat" type="button" data-results-filter="exact" aria-label="View exact match results" aria-controls="compilerImprovements" aria-expanded="false" disabled><span data-exact>0</span><span class="compiler-stat-action">Review &amp; apply</span></button></dd></div>
+              </dl>
+              <p class="small muted compiler-single-exact"><b data-single-exact>0</b> exact compiler/flag matches found</p>
+              <p class="small muted compiler-progress-profile" data-profile>Comparing the saved C. Compiler settings stay unchanged.</p>
+</template>
+<script src="/assets/js/compiler-progress.js"></script>
+<script src="/assets/js/compiler-groups.js"></script>
+<script src="/assets/js/code-audit.js"></script>
+<script src="/assets/js/boundary-repairs.js"></script>
+<script src="/assets/js/repository-setup.js"></script>
+<script src="/assets/js/repository-push.js"></script>
 <script src="/assets/js/steering.js"></script>
+<script src="/assets/js/background-work.js"></script>
+<script src="/assets/js/data-directories.js"></script>
 <script src="/assets/js/pages.js"></script>
+<script src="/assets/js/database-cleanup.js"></script>
+<script src="/assets/js/header-storage.js"></script>
+<script src="/assets/js/pwa.js"></script>
 </body>
 </html>

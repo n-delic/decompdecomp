@@ -22,3 +22,37 @@ arithmetic are usually right; its types and names usually wrong. Start from it a
 - `saved_reg_*`: a register preserved for the caller; usually nothing to write in C.
 - m2c inlines expressions aggressively. The original often had temporaries; put them back when the
   register allocation differs.
+
+Machine drafts preserve exact call addresses: an interior `function+offset` is not a C callee.
+The initial draft search also tries a bounded optional explicit backedge for eligible do/while
+loops; the raw m2c draft remains available. Shared repair search can stage an unsigned row counter
+and reuse disjoint scalar storage with conversion boundaries preserved. These are compiler-matching
+hypotheses, not evidence of the original source. Loops with unsafe transfers or ambiguous
+initialization stay unchanged, and only the ordinary compiler/judge can establish a match.
+Partial m2c output and `M2C_ERROR` placeholders are reported as generation failures.
+Draft regeneration tries bounded private callback/frame repairs after compilation fails;
+only the ordinary compiler and exact judge can establish a match. Missing delay slots
+or targets outside the recorded function need boundary review, never invented instructions.
+
+Autopilot retains raw m2c output and can judge up to three additional typed-store
+alternatives: replace a CFG-dead embedded scalar assignment with a destination-typed
+coordinate temporary, fold consecutive narrow field updates while retaining their
+intermediate cast, or combine the two. Declared record types and scalar bounds are
+required; no missing layout is invented. These candidates also reach shared local
+and deep repair search. They are optional compiler-matching trials, not unconditional
+cleanup of m2c output. A narrow temporary and a wide temporary need not allocate alike.
+
+Those three extra trials can also try a bounded complete record-lifetime recipe:
+reuse compatible disjoint constructor-result storage, coordinate repeated field
+pairs across values/pointers of the same declared record, then apply the typed
+capture/fold. Raw drafts remain first. Missing types, overlapping lifetimes,
+address escapes or opaque macros prevent the relevant proposal; exact destination
+verification remains mandatory. A successful replay of a solved case is evidence
+for that shape, not proof that m2c recovered the original source.
+
+Optional post-draft alternatives can distribute a small unsigned packing/store
+tail into an exhaustive if/else-if/else chain. Cursor/count updates stay shared.
+This uses the existing three-extra-trial allowance and keeps the raw draft first.
+Measured local/deep search can later combine the tail alternative with a uniformly
+supported frame reservation. Inferred frame padding is labeled as such; it does
+not recover the original reservation's purpose or enlarge known objects.

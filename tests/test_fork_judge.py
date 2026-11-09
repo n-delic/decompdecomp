@@ -133,8 +133,9 @@ def test_a_literal_named_and_placed_differently_matches(fork):
 
 def test_resubmitting_a_matched_function_is_never_rejected(fork):
     net, slug, agent = fork
-    out = net.compile_and_diff(agent, "offset", OFFSET, slug)
-    assert "still matches" in out, out
+    out = net.forks.attempt(agent,slug,"offset",OFFSET)
+    assert "still matches" in out['text'], out
+    assert out['exact'] and out['adopted'] and not out['new_match']
 
 
 def test_a_wrong_constant_is_not_a_match(fork):
@@ -241,3 +242,67 @@ def test_a_function_only_declared_in_the_build_is_not_built_yet(tmp_path, monkey
     monkeypatch.setattr(objdiff, "_run", lambda args, cwd, timeout: json.dumps(answer))
     d = objdiff.diff(tmp_path / "t.o", tmp_path / "b.o", "f", tmp_path)
     assert d.match_percent is None and not d.matched
+
+
+def test_rom_donor_into_imported_project_uses_real_objdiff_judge(fork, monkeypatch):
+    from decompnet.app.twins import Job, Print
+
+    # The synthetic fixture uses a 16-byte leaf; production discovery keeps its 32-byte floor.
+    monkeypatch.setattr("decompnet.app.shared_reuse.ACROSS_MIN_BYTES", 16)
+    net, slug, _ = fork
+    destination = net.project_row(slug)
+    target = net._function('scale', slug)
+    original_prints = net.twins.prints
+    fingerprint = original_prints(destination)[target['id']]
+    with net.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)',
+                         ('rom-donor', 'ROM donor', 'mips', 1, str(Path(destination['root']).parent / 'rom-donor'),
+                          json.dumps({'platform': 'n64', 'rom': {'sha1': 'synthetic'},
+                                      'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O0']}}))).lastrowid
+        fid = db.execute('INSERT INTO functions(project_id,name,size,status,matched_source) VALUES(?,?,?,?,?)',
+                         (pid, 'library_scale', fingerprint.size, 'matched',
+                          'double library_scale(double x) { return x * 9.9; }')).lastrowid
+        db.execute('INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,?,?,?)', (pid, 1, '', ''))
+    monkeypatch.setattr(net.twins, 'prints', lambda proj: {fid: Print(fingerprint.key, fingerprint.refs, fingerprint.size)}
+                        if proj['id'] == pid else original_prints(proj))
+    assert net.twins.across_games(slug, Job()) == 0
+    assert net._function('scale', slug)['status'] == 'open'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET matched_source=? WHERE id=?', (SCALE.replace('scale(', 'library_scale('), fid))
+    assert net.twins.across_games(slug, Job()) == 1
+    assert net._function('scale', slug)['status'] == 'matched'
+    assert net.twins.cross_game_results(slug)['counts'] == {'miss': 1, 'match': 1}
+
+
+def test_browser_room_contribution_uses_real_project_judge(fork):
+    from starlette.testclient import TestClient
+
+    from decompnet.app import collab, forkroom
+    net, slug, _ = fork
+    room = collab.Room(net, slug)
+    room.open_invite()
+    token, _ = room.join('browserguest', forkroom.project_identity(room.cfg) or '')
+    headers = {'Authorization': 'Bearer ' + token}
+    client = TestClient(collab.host_app(net, {slug: room}))
+    task = client.get('/collab/browser/task?function=offset', headers=headers).json()
+    assert 'double offset' in task['source'] and 'asm' not in task
+    result = client.post('/collab/browser/compile', headers=headers,
+                         json={'function': 'scale', 'source': SCALE}).json()
+    assert result['matched'] and result['score'] == 0, result
+    assert _status(net, slug, 'scale') == 'matched' and _status(net, slug, 'offset') == 'matched'
+
+
+def test_imported_trial_fingerprint_is_captured_before_undo(fork):
+    from decompnet.app import imported_output
+    net,slug,agent=fork
+    _,fp,_=net.forks.get(slug)
+    fn=net._function('scale',slug);unit=fp.unit(fn['unit'])
+    before=(fp.root/unit.source).read_text()
+    prior=imported_output.read(unit.base,'scale')
+    out=net.forks.attempt(agent,slug,'scale',SCALE.replace('1.1','1.2'),keep=False,quiet=10**9)
+    assert out['score'] is not None and not out['matched']
+    assert out['compiled_output']['granularity']=='function'
+    assert (fp.root/unit.source).read_text()==before
+    assert imported_output.read(unit.base,'scale')==prior
+    # This is the candidate's evidence, not a late read of the restored build.
+    assert out['compiled_output']!=prior

@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from elftools.elf.elffile import ELFFile
 
 from decompnet import toolchains
@@ -90,10 +91,23 @@ def test_export_rebuilds_the_game(tmp_path, platform):
     if not _ready(platform):
         pytest.skip(f"needs the {platform} toolchain and binutils-mips")
     net, slug = _decompile(tmp_path, platform)
+    if platform == "n64":
+        # Unnamed cartridge data segments receive hexadecimal names that can start with a digit. The generated
+        # linker symbols must still parse; exercise the same case on the homemade demo's raw header segment.
+        config = next(Path(net._project(slug)["root"]).glob("*.yaml"))
+        contents = yaml.safe_load(config.read_text())
+        contents["segments"][0]["name"] = "123"
+        config.write_text(yaml.safe_dump(contents, sort_keys=False))
+        # Startup code may refer to an import-time alias that is absent from the current symbol table.
+        # The alias still has a fixed address in the original splat symbol file.
+        with (Path(net._project(slug)["root"]) / "symbol_addrs.txt").open("a") as stream:
+            stream.write("\nstartup_alias = 0x80000400; // type:func\n")
     out = net.export_rom(slug, log=lambda *_: None)
     assert out["identical"], out["log"]
     assert out["matched"] == len(matched(platform)) and not out["fallback"]
     tree = Path(out["path"])
+    if platform == "n64":
+        assert json.loads((tree / "build.json").read_text())["symbols"]["startup_alias"] == 0x80000400
     assert len(list((tree / "src").glob("*/*.c"))) == len(matched(platform))
     # the functions still in assembly are assembled a run at a time (a PSP game with its modules has 48,000), and
     # `build.py targets` gives each its own object, where objdiff.json looks for it
@@ -182,3 +196,210 @@ def test_an_agents_own_include_of_context_h_names_the_exports_header():
     text = exported_source("", "common_ovl.h", '#include "context.h"\n\nint f(void) { return 1; }')
     assert text == '#include "common_ovl.h"\n\n#include "common_ovl.h"\n\nint f(void) { return 1; }\n'
     assert "context.h" not in exported_source("", "common.h", '  # include "context.h"\nint g;')
+
+
+def test_generated_address_references_link_across_objects(tmp_path):
+    """Raw-data references and split local branch targets keep their encoded addresses; unknown names still fail."""
+    import runpy
+
+    if toolchains.installed("binutils-mips") is None:
+        pytest.skip("needs pinned MIPS binutils")
+    # Importing export_build normally reads a build.json next to its own source, so execute a private copy instead.
+    from decompnet.rom import export
+
+    shutil.copyfile(Path(export.__file__).with_name("export_build.py"), tmp_path / "build.py")
+    config = {"image": "baserom.z64", "symbols": {}, "functions": [
+        {"name": "first", "rom": 0, "vram": 0x80000000},
+        {"name": "second", "rom": 16, "vram": 0x80000010}], "segments": [
+        {"name": "code", "kind": "code", "start": 0, "end": 24, "vram": 0x80000000,
+         "pieces": [], "bss": []}]}
+    (tmp_path / "build.json").write_text(json.dumps(config))
+    (tmp_path / "baserom.z64").write_bytes(bytes(24))
+    sources = {
+        "first": ".text\n.set noreorder\n.globl first\nfirst:\n"
+                 "lui $8, %hi(D_80001000)\nlw $8, %lo(D_80001000)($8)\nb .L80000010\nnop\n",
+        "second": ".text\n.set noreorder\n.globl second\nsecond:\n.L80000010:\njr $31\nnop\n"}
+    assembler = str(toolchains.binary("binutils-mips").parent / "mips-ps2-decompals-as")
+    linker = str(toolchains.binary("binutils-mips").parent / "mips-ps2-decompals-ld")
+    for name, source in sources.items():
+        (tmp_path / f"{name}.s").write_text(source)
+        subprocess.run([assembler, "-EB", "-mips2", "-no-pad-sections", "-o", f"{name}.o", f"{name}.s"],
+                       cwd=tmp_path, check=True, capture_output=True)
+    script = runpy.run_path(str(tmp_path / "build.py"))
+    text = script["linker_script"]({"first": "first.o", "second": "second.o"},
+                                      [(0x80000000, 0, "first.o"), (0x80000010, 16, "second.o")], [])
+    (tmp_path / "game.ld").write_text(text)
+    linked = subprocess.run([linker, "-EB", "-T", "game.ld", "-o", "game.elf", "first.o", "second.o"],
+                            cwd=tmp_path, capture_output=True, text=True)
+    assert linked.returncode == 0, linked.stderr
+    symbols = {s.name: s["st_value"] for s in ELFFile(open(tmp_path / "game.elf", "rb"))
+               .get_section_by_name(".symtab").iter_symbols()}
+    assert symbols["D_80001000"] == 0x80001000
+    assert symbols[".L80000010"] == 0x80000010
+    (tmp_path / "first.s").write_text(sources["first"].replace("D_80001000", "unknown_data"))
+    subprocess.run([assembler, "-EB", "-mips2", "-no-pad-sections", "-o", "first.o", "first.s"],
+                   cwd=tmp_path, check=True, capture_output=True)
+    text = script["linker_script"]({"first": "first.o", "second": "second.o"},
+                                      [(0x80000000, 0, "first.o"), (0x80000010, 16, "second.o")], [])
+    (tmp_path / "game.ld").write_text(text)
+    linked = subprocess.run([linker, "-EB", "-T", "game.ld", "-o", "game.elf", "first.o", "second.o"],
+                            cwd=tmp_path, capture_output=True, text=True)
+    assert linked.returncode != 0 and "unknown_data" in linked.stderr
+
+
+def test_export_moves_data_boundary_past_known_function_tail():
+    from decompnet.rom.export import _export_segments
+
+    config = {'segments': [{'type': 'code', 'start': 0x100, 'vram': 0x80000000,
+                            'subsegments': [[0x100, 'c', 'code'], [0x118, 'data', 'data'],
+                                            {'type': 'bss', 'vram': 0x80000100}]}, [0x140]]}
+    result = _export_segments(config, [{'vram': 0x80000010, 'size': 12}])
+    assert result['segments'][0]['subsegments'][1][0] == 0x11c
+    assert config['segments'][0]['subsegments'][1][0] == 0x118  # the project's config stays unchanged
+    assert _export_segments(config, [{'vram': 0x80000010, 'size': 8}]) == config
+
+
+def test_export_refuses_to_consume_an_entire_data_segment():
+    from decompnet.rom.export import ExportError, _export_segments
+
+    config = {'segments': [{'type': 'code', 'start': 0x100, 'vram': 0x80000000,
+                            'subsegments': [[0x100, 'c', 'code'], {'start': 0x118, 'type': 'data'}]}, [0x11c]]}
+    with pytest.raises(ExportError, match='review its boundaries'):
+        _export_segments(config, [{'vram': 0x80000010, 'size': 12}])
+
+
+def test_export_requires_a_single_constant_pool_base():
+    from decompnet.rom.export import _section_bases
+    assert _section_bases({'.rodata': {0: 0x80001008, 8: 0x80001010}}) == ({'.rodata': 0x80001008}, None)
+    assert "isn't laid out" in _section_bases({'.rodata': {0: 0x80001000, 8: 0x80001018}})[1]
+    assert _section_bases({}) == ({}, None)
+
+
+def test_export_detects_extra_function_definitions():
+    from decompnet.arch.mips_image import linked_object
+    from decompnet.rom.export import _single_definition
+    obj = linked_object('target', 0x80001000, bytes(8))
+    assert _single_definition(obj, 'target')
+    assert not _single_definition(obj, 'other')
+
+
+def test_export_preserves_judged_constant_address_despite_object_alignment(tmp_path):
+    import runpy
+
+    if toolchains.installed("binutils-mips") is None:
+        pytest.skip("needs binutils-mips")
+    compiler_dir = toolchains.binary("binutils-mips").parent
+    source = ".set noreorder\n.text\n.globl target\ntarget:\nlui $8, %hi(value)\nlw $2, %lo(value)($8)\njr $ra\nnop\n.section .rodata\n.balign 16\n.globl value\nvalue: .word 0x12345678\n"
+    (tmp_path / "target.s").write_text(source)
+    (tmp_path / "target.c").write_text("/* selected C, object assembled for this linker test */")
+    (tmp_path / "original.bin").write_bytes(bytes(16))
+    config = {"image": "original.bin", "functions": [{"name": "target", "c": "target.c", "own": {".rodata": 0x80001008}}],
+              "segments": [{"name": "code", "kind": "code", "start": 0, "end": 16, "vram": 0x80000000,
+                            "pieces": [], "bss": []}], "symbols": {}}
+    (tmp_path / "build.json").write_text(json.dumps(config))
+    shutil.copyfile(ROOT / "src/decompnet/rom/export_build.py", tmp_path / "build.py")
+    script = runpy.run_path(str(tmp_path / "build.py"))
+    subprocess.run([str(compiler_dir / "mips-ps2-decompals-as"), "-EB", "-mips2", "-o", "target.o", "target.s"],
+                   cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "game.ld").write_text(script["linker_script"]({"target": "target.o"}, [(0x80000000, 0, "target.o")], []))
+    subprocess.run([str(compiler_dir / "mips-ps2-decompals-ld"), "-EB", "-T", "game.ld", "-o", "game.elf", "target.o"],
+                   cwd=tmp_path, capture_output=True, check=True)
+    with (tmp_path / "game.elf").open('rb') as stream:
+        elf = ELFFile(stream)
+        symbols = {s.name: s['st_value'] for s in elf.get_section_by_name('.symtab').iter_symbols()}
+        assert symbols['value'] == 0x80001008
+        assert elf.get_section_by_name('.code').data()[4:8] == bytes.fromhex('8D021008')
+    # A saved candidate can define a neighbouring function too: it must not be exported into one slot.
+    from decompnet.rom.export import _single_definition
+    extra = source.replace("target:\n", ".type target, @function\ntarget:\n").replace(
+        ".section .rodata", ".size target, .-target\n.section .rodata")
+    extra += ".text\n.globl neighbour\n.type neighbour, @function\nneighbour:\njr $ra\nnop\n.size neighbour, .-neighbour\n"
+    (tmp_path / "extra.s").write_text(extra)
+    subprocess.run([str(compiler_dir / "mips-ps2-decompals-as"), "-EB", "-mips2", "-o", "extra.o", "extra.s"],
+                   cwd=tmp_path, capture_output=True, check=True)
+    assert not _single_definition((tmp_path / "extra.o").read_bytes(), "target")
+
+
+
+@pytest.mark.parametrize('symbol',['target__4Mathi','_ZN4Math6targetEi'])
+def test_cpp_single_definition_uses_judge_symbol_mapping(symbol):
+    from decompnet.arch.mips_image import linked_object
+    from decompnet.rom.export import _single_definition
+    obj=linked_object(symbol,0x80001000,bytes(8))
+    assert _single_definition(obj,'target')
+    assert not _single_definition(obj,'unrelated')
+
+
+def test_cpp_overloads_are_not_hidden_by_export_name_mapping():
+    import struct
+    from io import BytesIO
+
+    from decompnet.arch.mips_image import linked_object
+    from decompnet.rom.export import _single_definition
+    first,second='target__4Mathi','target__4Mathf'
+    obj=bytearray(linked_object(first+'\0'+second,0x80001000,bytes(16)))
+    elf=ELFFile(BytesIO(obj));symtab=elf.get_section_by_name('.symtab')
+    symbols=bytearray(symtab.data())
+    struct.pack_into('>I',symbols,16+8,8)  # first body occupies half the text section
+    symbols+=struct.pack('>IIIBBH',len(first)+2,0x80001008,8,0x12,0,1)
+    new_offset=len(obj);obj+=symbols
+    section=elf['e_shoff']+2*elf['e_shentsize']  # point symtab at the extended table
+    struct.pack_into('>II',obj,section+16,new_offset,len(symbols))
+    assert not _single_definition(bytes(obj),'target')
+
+
+def test_exported_build_reports_a_silent_linker_kill():
+    import ast
+    from types import SimpleNamespace
+
+    from decompnet.rom import export
+
+    # Exercise the generated script's real process-reporting functions without
+    # importing its project-specific manifest or requiring a compiler in CI.
+    tree=ast.parse(Path(export.__file__).with_name('export_build.py').read_text())
+    functions=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'run','fail'}]
+    scope={'sys':sys,'subprocess':SimpleNamespace(run=lambda *a,**k:SimpleNamespace(returncode=-9,stdout='',stderr='')),
+           'ROOT':Path('.')}
+    exec(compile(ast.Module(body=functions,type_ignores=[]),'export-build-test','exec'),scope)
+    with pytest.raises(SystemExit,match='exited with -9'):
+        scope['run'](['ld','-EB'])
+
+
+@pytest.mark.parametrize('remote', [False, True])
+def test_default_repository_is_rebuildable_and_reopens_all_progress(tmp_path, remote, monkeypatch):
+    if not _ready('n64'):
+        pytest.skip('needs the N64 toolchain and binutils-mips')
+    from decompnet.app import repository_setup, saves
+    from tests.test_repository_progress import git
+    (tmp_path/'original-app').mkdir()
+    net, slug = _decompile(tmp_path/'original-app', 'n64')
+    before = net.overview(slug)['matched']
+    state = repository_setup.run(net, slug, 'init', '', lambda *_: None)
+    root = Path(state['root'])
+    assert root.name == 'source' and state['rebuildable']
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    repository_setup.run(net, slug, 'checkpoint', '', lambda *_: None)
+    tracked = git(root, 'ls-files').splitlines()
+    assert {'build.py', 'build.json', 'splat.yaml', 'progress/decompdecomp.json'} <= set(tracked)
+    assert not any(name.startswith(('baserom', 'asm/', 'assets/', 'build/')) for name in tracked)
+    clone = tmp_path/'clone'
+    git(tmp_path, 'clone', '-q', str(root), str(clone))
+    build = json.loads((clone/'build.json').read_text())
+    shutil.copyfile(root/build['image'], clone/build['image'])
+    built = subprocess.run([sys.executable, 'build.py'], cwd=clone, capture_output=True, text=True)
+    assert built.returncode == 0, built.stdout+built.stderr
+    assert 'identical' in built.stdout
+    reopened = RomNetwork(tmp_path/'reopened.db', tmp_path/'reopened')
+    messages = []
+    if remote:
+        def local_clone(source, into, log):
+            git(tmp_path, 'clone', '-q', str(root), str(into))
+            return into
+        monkeypatch.setattr(saves, 'fetch', local_clone)
+    restored = saves.restore(reopened, 'https://example.invalid/game.git' if remote else str(clone), DEMOS['n64'][0], log=messages.append)
+    assert reopened.overview(restored['slug'])['matched'] >= before, (restored, messages)
+    restored_root = saves.build_checkout(saves.default_folder(reopened, restored['slug']))
+    assert restored_root and (restored_root/'build.py').is_file()
+    assert (restored_root/'.git').exists()
+    assert git(restored_root, 'rev-parse', 'HEAD') == git(root, 'rev-parse', 'HEAD')

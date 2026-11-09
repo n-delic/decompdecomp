@@ -308,10 +308,10 @@ def set_stubs_aside(net, slug: str, log=print) -> int:
     ranges = [stubs] if stubs and isinstance(stubs[0], int) else stubs  # (one range: imported before modules were)
     why = ("an imported system function's stub: the PSP's module loader links it to the library function its NID "
            "names, so no C is behind it")
-    rows = [r for start, end in ranges for r in net.store.all(
+    rows = [r for start, end in ranges for r in net.project_store(proj['id']).all(
         "SELECT id, meta FROM functions WHERE project_id=? AND vram>=? AND vram<? AND status='open'",
         proj["id"], start, end)]
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         db.executemany("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'",
                        [(json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why}), r["id"]) for r in rows])
     if rows:

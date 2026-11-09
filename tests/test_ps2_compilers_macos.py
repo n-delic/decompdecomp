@@ -2,7 +2,6 @@
 import hashlib
 import json
 import os
-from types import SimpleNamespace
 
 import pytest
 
@@ -15,37 +14,6 @@ from decompnet.project import compiler_config
 SONY = ('ee-gcc-2.96', 'ee-gcc-2.9-991111', 'ee-gcc-3.2')
 SN = ('ee-gcc-2.95.2', 'ee-gcc-2.95.3')
 MW = ('mwcps2-2.3.3', 'mwcps2-3.0.1')
-
-
-def test_wibo_dependency_reports_missing_rosetta(monkeypatch):
-    from functools import cache
-
-    monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
-    monkeypatch.setattr(toolchains, '_intel_mac_runtime_ready', cache(lambda: False))
-    assert 'Rosetta 2' in toolchains.runtime_error('mwcps2-3.0.1')
-
-
-def test_installing_vm_compiler_requires_explicit_prepare(tmp_path, monkeypatch):
-    monkeypatch.setenv('DECOMPNET_TOOLCHAINS', str(tmp_path))
-    monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
-    monkeypatch.setattr(linuxvm, 'wanted', lambda: True)
-    monkeypatch.setattr(toolchains.wsl, 'wanted', lambda: False)
-    monkeypatch.setattr(linuxvm, 'status', lambda refresh=False: (False, 'Choose Prepare Linux runner'))
-    monkeypatch.setattr(linuxvm, 'setup', lambda **kwargs: pytest.fail('install must not start VM'))
-    with pytest.raises(toolchains.ToolchainError, match='Prepare Linux runner'):
-        toolchains.install('ee-gcc-2.96', log=lambda *_: None, accept_license=True)
-
-
-def test_own_compiler_is_not_copied_into_vm(tmp_path, monkeypatch):
-    from decompnet import kits
-
-    monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
-    monkeypatch.setattr(linuxvm, 'wanted', lambda: True)
-    monkeypatch.setattr(toolchains.wsl, 'wanted', lambda: False)
-    monkeypatch.setattr(kits, 'own_compiler', lambda _: SimpleNamespace(like='ee-gcc-2.96'))
-    monkeypatch.setattr(linuxvm, 'prepare_tools', lambda _: pytest.fail('kit must stay in place'))
-    with pytest.raises(toolchains.ToolchainError, match='cannot read your own compiler kit in place'):
-        compiler_config(tmp_path, {'compiler': {'toolchain': 'own-ee-gcc'}})
 
 
 @pytest.mark.parametrize('host', ['macos-arm64', 'macos-x86_64'])

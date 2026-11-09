@@ -350,20 +350,32 @@ def test_your_copy_of_a_packs_compiler_builds_the_same_object_from_your_folder(t
 
     if toolchains.installed(pack) is None:
         pytest.skip(f"needs the {pack} pack")
-    real = toolchains.require(pack).parent
+    toolchains.require(pack)
+    real = toolchains.root()  # native, WSL and VM packs keep distinct subfolders
     scratch = tmp_path / "toolchains"
     scratch.mkdir()
-    for entry in real.iterdir():  # (the packs it needs besides, as installed; nothing of them is changed)
+    for entry in real.iterdir():  # dependencies stay read-only; local kit registrations belong to this test
+        if toolchains.known(entry.name) and toolchains.get(entry.name).local:
+            continue
         (scratch / entry.name).symlink_to(entry)
     monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(scratch))
     mine = tmp_path / "my compiler"
     shutil.copytree(toolchains.require(pack), mine, symlinks=True)
     console = next(c for c in consoles.CONSOLES if any(x.id == pack for x in c.fixed_compilers))
+    flags = toolchains.get(pack).flags
+    body = "int add(int a, int b) { return a + b * 3; }"
+    if toolchains.installed(pack).get('archive_parts'):
+        # Proxy installs retain archives for case-sensitive extraction inside Linux.
+        # They still compile there, but are not a user's extracted compiler folder.
+        assert kits.get(console.kits[0]).compilers(mine) == []
+        with pytest.raises(toolchains.ToolchainError, match="doesn't look like"):
+            _add(console.kits[0], mine)
+        built = compile_source(compiler_config(tmp_path, {"compiler": {"toolchain": pack, "flags": flags}}), "", body)
+        assert built.ok, built.log
+        return
     _add(console.kits[0], mine)
     own = next(c for c in kits.compilers(console.kits) if c.like == pack)
     assert own.version in [c.id for c in console.compilers]
-    flags = toolchains.get(pack).flags
-    body = "int add(int a, int b) { return a + b * 3; }"
     built = [compile_source(compiler_config(tmp_path, {"compiler": {"toolchain": t, "flags": flags}}), "", body)
              for t in (pack, own.version)]
     assert all(r.ok for r in built), [r.log for r in built]
@@ -386,20 +398,35 @@ def _code(obj: bytes) -> dict:
     return out
 
 
-def test_each_installed_pack_is_known_as_itself():
+def test_installed_packs_identify_compilers_and_keep_guest_archives_opaque():
     """A pack's own folder, read as your own copy, runs like that pack alone: its version is read as a whole number
     ("2.96" isn't "3.2"), and from a program's version record (CodeWarrior PS2 3.0.1.145). The PS1's two GCC 2.7.2s
     are one version run two ways: a copy of either is offered as both."""
     from decompnet.kits import owncompiler
 
-    both = {"gcc-2.7.2-psx", "gcc-2.7.2-cdk-psx"}
+    both = ({"gcc-2.7.2-psx", "gcc-2.7.2-cdk-psx"},
+            {"gcc-2.8.1-pm", "gcc-2.8.1-pm-sn-as"})  # same compiler, two assembler paths
     checked = 0
     for kit in owncompiler.OWN_COMPILERS:
         for pack in owncompiler.packs(kit.platform):
             if toolchains.installed(pack) is None:
                 continue
-            got = [c.like for c in kit.compilers(toolchains.require(pack))]
-            assert got == [pack] or (pack in both and set(got) == both), (pack, got)
+            try:
+                folder = toolchains.require(pack)
+            except toolchains.ToolchainError:  # installed archive needs an unavailable Linux VM runner
+                continue
+            got = [c.like for c in kit.compilers(folder)]
+            archives = toolchains.installed(pack).get('archive_parts')
+            if archives:
+                assert got == [], (pack, got)
+                assert all((folder / part['archive']).is_file() for part in archives)
+                checked += 1
+                continue
+            # Aliases of the same pinned archives, command and flags share one entry.
+            specs = owncompiler.packs(kit.platform)
+            same = {tid for tid, spec in specs.items() if spec[2:] == specs[pack][2:]
+                    and toolchains.get(tid).parts == toolchains.get(pack).parts}
+            assert (len(got) == 1 and got[0] in same) or any(pack in group and set(got) == group for group in both), (pack, got)
             checked += 1
     if not checked:
         pytest.skip("needs a ROM console's compiler pack")

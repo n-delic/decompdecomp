@@ -11,7 +11,10 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 HERE="$ROOT/packaging/linux"
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/pyproject.toml")
+VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$ROOT/src/decompnet/__init__.py")
+# Fork revisions follow the base version; alpha/beta/rc builds precede it.
+PACKAGE_VERSION=${VERSION/-/\~}
+if [[ $VERSION == *-rr.* ]]; then PACKAGE_VERSION=${VERSION/-rr./+rr.}; fi
 APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -31,6 +34,7 @@ rm -rf "$APP/python/lib/python3.12/EXTERNALLY-MANAGED" "$APP/python/lib/python3.
 uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages \
   --requirements "$WORK/runtime-requirements.txt"
 uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages --no-deps "$WORK"/wheel/*.whl
+"$APP/python/bin/python3.12" "$ROOT/packaging/stamp_build.py" "$ROOT"
 rm -f "$APP/python/bin/decomp"  # its shebang names this build's folder: the launchers below run the module instead
 cp "$(command -v uv)" "$APP/bin/uv"
 find "$APP/python" -name __pycache__ -prune -exec rm -rf {} +
@@ -53,7 +57,7 @@ sed 's|^Exec=decomp$|Exec=/usr/bin/decomp|' "$HERE/decompdecomp.desktop" > "$DEB
 cp "$ROOT/src/decompnet/app/static/icon.svg" "$DEB/usr/share/icons/hicolor/scalable/apps/decompdecomp.svg"
 cat > "$DEB/DEBIAN/control" <<CONTROL
 Package: decompdecomp
-Version: ${VERSION/-/\~}
+Version: $PACKAGE_VERSION
 Architecture: amd64
 Maintainer: decompdecomp <https://github.com/n-delic/decompdecomp>
 Installed-Size: $(du -sk "$DEB" | cut -f1)
@@ -77,7 +81,7 @@ if command -v rpmbuild >/dev/null; then
   sed -i 's/DECOMP_PACKAGE=deb/DECOMP_PACKAGE=rpm/' "$RPM/root/usr/bin/decomp"
   cat > "$RPM/decompdecomp.spec" <<SPEC
 Name: decompdecomp
-Version: ${VERSION/-/\~}
+Version: $PACKAGE_VERSION
 Release: 1
 Summary: AI agents decompile the games you own, byte for byte
 License: AGPL-3.0-only

@@ -10,6 +10,7 @@ import re
 import shutil
 import tempfile
 import time
+from collections import Counter
 from pathlib import Path
 
 from ... import consoles, scoring, seeds, toolchains
@@ -114,7 +115,7 @@ class ImportMixin:
         check_cancel = getattr(log, "check_cancel", lambda: None)
         check_cancel()
         if reimport is None:
-            for p in self.store.all("SELECT slug, config FROM projects"):
+            for p in self.project_rows():
                 if json.loads(p["config"]).get("rom", {}).get("sha1") == info["sha1"]:
                     log(f"already imported as {p['slug']}")
                     return p["slug"]
@@ -167,6 +168,7 @@ class ImportMixin:
             "kind": "rom", "platform": console.id, "big_endian": picked.big_endian, "gp": res.gp,
             "rom": {**info, "file": res.image or picked.filename, "program": picked.filename},
             "segments": [vars(s) for s in res.segments],
+            "coverage_notes": getattr(res, 'coverage_notes', []),
             "compiler": {"toolchain": toolchain, "flags": flags, "timeout": 20},
             "legal": {"basis": "personal-copy", "license": "personal use only",
                       "statement": "imported by the owner of this copy of the game, who confirmed it was legally obtained",
@@ -177,7 +179,7 @@ class ImportMixin:
         if reimport is not None:
             old_cfg = json.loads(reimport["config"])
             for key, value in old_cfg.items():
-                if key not in {"kind", "platform", "big_endian", "gp", "rom", "segments", "legal"}:
+                if key not in {"kind", "platform", "big_endian", "gp", "rom", "segments", "legal", "coverage_notes"}:
                     cfg[key] = value
             cfg["compiler"] = old_cfg.get("compiler", cfg["compiler"])
             cfg.pop("export", None)
@@ -191,7 +193,7 @@ class ImportMixin:
             symbols.add(Symbol(name, addr, 0, "func"), reindex=False)
         for fn in res.functions:
             check_cancel()
-            symbols.add(Symbol(fn.name, fn.vram, fn.size, "func"), reindex=False)
+            symbols.add(Symbol(fn.name, fn.vram, fn.size, "func"), reindex=False, alias=True)
         rom_bytes, segs = rom, res.segments
 
         def read(addr, n):
@@ -206,8 +208,10 @@ class ImportMixin:
             check_cancel()
             if d.name in symbols.by_name:
                 continue
-            symbols.add(Symbol(d.name, d.vram, d.size, d.kind), reindex=False)
-            data_rows.append((d.name, d.vram, d.size, d.kind, data_preview(read(d.vram, min(d.size, 48)), d.kind) if d.kind != "bss" else ""))
+            symbols.add(Symbol(d.name, d.vram, d.size, d.kind), reindex=False, alias=True)
+            preview = (rom_bytes[d.rom:d.rom + min(d.size, 48)] if d.rom is not None
+                       else read(d.vram, min(d.size, 48)))
+            data_rows.append((d.name, d.vram, d.size, d.kind, data_preview(preview, d.kind) if d.kind != "bss" else ""))
         symbols.reindex_symbols()
 
         root = Path(reimport["root"]) if reimport is not None else workdir
@@ -229,19 +233,27 @@ class ImportMixin:
             workdir = root
         try:
             now = time.time()
-            with self.store.tx() as db:
+            with self.project_registration(slug=slug,name=info["title"],
+                    description=f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
+                    arch=console.arch,big_endian=picked.big_endian,root=workdir,config=cfg,
+                    existing=reimport["id"] if reimport is not None else None) as (db,pid):
                 if reimport is None:
-                    pid = db.execute(
-                        "INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
-                        (slug, info["title"], f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
-                         console.arch, int(picked.big_endian), str(workdir), json.dumps(cfg))).lastrowid
                     old_functions, gone, old_names = {}, {}, {}
                 else:
-                    pid = reimport["id"]
                     rows = db.execute("SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()
-                    # by address first: a function renamed since (rename_symbol, polishing) has its old name nowhere
-                    # in the new split, and paired by name it lost its matched C
-                    old_functions = pair_old_functions(rows, res.functions)
+                    # A bank and address identify renamed functions. A bare address is safe only when
+                    # unique on both sides; mutually exclusive overlays share their RAM slots.
+                    old_counts = Counter(r['vram'] for r in rows)
+                    new_counts = Counter(fn.vram for fn in res.functions)
+                    by_vram = {r["vram"]: r for r in rows if r["vram"] is not None
+                               and old_counts[r['vram']] == new_counts[r['vram']] == 1}
+                    by_unit = {(r['unit'], r['vram']): r for r in rows}
+                    by_name = {r["name"]: r for r in rows}
+                    old_functions = {}
+                    for fn in res.functions:
+                        old = by_unit.get((fn.segment, fn.vram)) or by_name.get(fn.name) or by_vram.get(fn.vram)
+                        if old is not None and old["id"] not in {o["id"] for o in old_functions.values()}:
+                            old_functions[fn.name] = old
                     paired = {o["id"] for o in old_functions.values()}
                     gone = {r["name"]: r for r in rows if r["id"] not in paired}
                     # the names agents gave (functions and data), by address: matched C calls them by those names
@@ -278,12 +290,23 @@ class ImportMixin:
                     same_target = (old is not None and old["target"] == target.code
                                    and json.loads(old["relocs"] or "[]") == target.to_json())
                     asm = console.function_asm(fn)
-                    meta_data = dict(console.function_meta(fn))
+                    # Identical targets keep operator decisions and naming provenance too.
+                    # Re-analysis facts may refresh, but must not erase unrelated saved metadata.
+                    meta_data = json.loads(old['meta'] or '{}') if same_target else {}
+                    meta_data.update(console.function_meta(fn))
                     if known:
                         meta_data["debug"] = known
+                    status = old["status"] if same_target else console.function_status(fn)
+                    classify = not same_target or (status == "open" and not meta_data.get("reopened"))
+                    if classify and (why := console.asm_reason(target.code)):
+                        # Classify before the target reaches the claim queue; keep its bytes and symbols.
+                        meta_data["asm_code"] = why
+                        status = "asm"
+                    from ..boundary_repairs import reason as boundary_reason
+                    warning = boundary_reason(console, {'target': target.code, 'status': status})
+                    if warning:meta_data['boundary_review'] = warning
                     meta = json.dumps(meta_data) if meta_data else None
                     n_insns = console.function_insns(fn)
-                    status = console.function_status(fn)
                     if old is None:
                         db.execute(
                             "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,meta,status) "
@@ -291,10 +314,29 @@ class ImportMixin:
                             (pid, fn.name, fn.size, n_insns, target.code, relocs, asm, None, unit, fn.vram,
                              fn.rom, meta, status))
                     elif same_target:
+                        # A source-prepared function can own private SDK/types. The
+                        # new disassembler's segment is not its compiler context.
+                        if old['unit'] and db.execute('SELECT 1 FROM context_versions WHERE project_id=? AND unit=? LIMIT 1',
+                                                      (pid,old['unit'])).fetchone():
+                            unit=old['unit']
+                        elif old['matched_source']:
+                            # Repair the legacy reset only when the identical saved
+                            # source has an exact attempt whose header is still the
+                            # current version of that private unit.
+                            ctx=db.execute('SELECT c.unit,c.header FROM attempts a JOIN context_versions c '
+                                           'ON c.project_id=? AND c.version=a.context_version '
+                                           'WHERE a.function_id=? AND a.score=0 AND a.compiled=1 AND a.source=? ORDER BY a.id DESC LIMIT 1',
+                                           (pid,old['id'],old['matched_source'])).fetchone()
+                            if ctx and ctx['unit']:
+                                latest=db.execute('SELECT header FROM context_versions WHERE project_id=? AND unit=? ORDER BY version DESC LIMIT 1',
+                                                  (pid,ctx['unit'])).fetchone()
+                                if latest and latest['header']==ctx['header']:unit=ctx['unit']
                         db.execute(
-                            "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,unit=?,vram=?,rom_offset=?,meta=? "
+                            "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,unit=?,vram=?,rom_offset=?,meta=?,status=? "
                             "WHERE id=?",
-                            (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, old["id"]))
+                            (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, status, old["id"]))
+                        if status != old["status"]:
+                            db.execute("DELETE FROM claims WHERE function_id=?", (old["id"],))
                         preserved += old["status"] == "matched" and bool(old["matched_source"])
                     else:
                         for table in ("claims", "attempts", "twin_misses"):
@@ -334,6 +376,7 @@ class ImportMixin:
                 shutil.rmtree(failed_root, ignore_errors=True)
             raise
         if reimport is not None:
+            self.twins.clear_index(pid)
             for cache in (self._roms, self._syms, self._sym_override, self._xrefs, self._asm_names,
                           self._ops, self._warmed, self._cmaps):
                 cache.pop(pid, None)
@@ -365,7 +408,7 @@ class ImportMixin:
         picked = console.read_game(data, name)
         log("Game recognized; starting the replacement split.")
         self.import_split(console, picked, reimport_slug=slug, log=log)
-        counts = self.store.one(
+        counts = self.project_store(proj['id']).one(
             "SELECT COUNT(*) AS functions, SUM(status='matched') AS matched FROM functions WHERE project_id=?",
             proj["id"])
         log(f"Reimport complete: {counts['functions']} functions; {counts['matched'] or 0} still match.")
@@ -399,19 +442,18 @@ class ImportMixin:
         m2c's drafts of bigger functions are GCC-style and CodeWarrior never matches them, but `return p->x;` is the
         same C for every compiler, and each fills the return's delay slot its own way. Functions in a range another
         compiler builds aren't asked. Returns compiler -> matches."""
-        from concurrent.futures import ThreadPoolExecutor
-
         from ...compiler import compile_source
         from ...project import compiler_config
+        from ..purpose_work import Executor
 
         proj = self._project(slug)
         cfg = json.loads(proj["config"])  # a copy of its own: the compiler may change below
         current = cfg["compiler"]["toolchain"]
         tcs = [t for t in compilers if toolchains.installed(t) is not None
                and all(toolchains.installed(d) is not None for d in toolchains.get(t).requires)]
-        rows = [r for r in self.store.all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 3 AND 30 "
+        rows = [r for r in self.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 3 AND 30 "
                                           "ORDER BY vram", proj["id"])
-                if compiler_for(cfg, r["vram"])["toolchain"] == current]
+                if compiler_for(cfg, r["vram"], r)["toolchain"] == current]
         rows = rows[::max(1, len(rows) // sample)][:sample]  # spread over the whole game, not one library
         if len(tcs) < 2 or not rows or not seeds.available():
             return {}
@@ -435,7 +477,7 @@ class ImportMixin:
                                          else scoring.diff(self._target_obj(fn, proj), cand).bytes_match)
 
         jobs = [(tc, d) for tc in tcs for d in drafts]
-        with ThreadPoolExecutor(4) as pool:
+        with Executor(4, purpose='Import compiler detection', project=slug) as pool:
             found = list(pool.map(matches, jobs))
         counts = {tc: sum(ok for (t, _), ok in zip(jobs, found) if t == tc) for tc in tcs}
         best = max(tcs, key=lambda t: (counts[t], t == current))

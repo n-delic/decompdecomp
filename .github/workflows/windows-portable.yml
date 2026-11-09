@@ -1,0 +1,22 @@
+name: Windows portable
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  portable:
+    runs-on: blacksmith-4vcpu-windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - name: Check native launcher argument forwarding
+        run: uv run pytest tests/test_windows_portable.py -q
+      - name: Build and smoke test relocated portable EXE
+        shell: pwsh
+        run: packaging/windows/build.ps1 -PortableOnly
+      - uses: actions/upload-artifact@v4
+        with:
+          name: decompdecomp-windows-x64-portable
+          path: dist/*-windows-x64-portable.zip
+          if-no-files-found: error

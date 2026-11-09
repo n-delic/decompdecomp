@@ -2409,7 +2409,8 @@ def tool_args(kit_ids=()) -> list[str]:
     the compilers in the user's copies of the kits `kit_ids` (the console's Console.kits: --own).
     Nothing about wine: a 2017 file finds it when it builds (WindowsPC.build_env), so no configure.py, older or
     new, is given an argument it doesn't know."""
-    packs = [p for p in reversed(MSVC_PACKS) if toolchains.installed(p) is not None]
+    packs = [p for p in reversed(MSVC_PACKS) if toolchains.installed(p) is not None
+             and all(toolchains.installed(h) is not None for h in toolchains.get(p).headers)]
     if not packs:
         raise ForkError("PC games are built with Microsoft Visual C++, which is proprietary: install it in Setup "
                         "(Visual C++) if you accept that, then try again")
@@ -2909,7 +2910,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
                                      ".ninja_*\nobjdiff.json\n__pycache__/\n.decomp-wtf/\n", encoding="utf-8")
     (root / "README.md").write_text(f"""# {info['title']} decompilation
 
-Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp): the game's functions, {FOUND_BY_X64 if pe.x64 else 'found by Ghidra'}, are cut out of your
+Started from scratch with [decompdecomp](https://github.com/RetroReversing/decompdecomp): the game's functions, {FOUND_BY_X64 if pe.x64 else 'found by Ghidra'}, are cut out of your
 copy of its program and compared with what `src/` compiles to, function by function, with objdiff.
 
 1. {game_step or f"Put your own copy of the game's program here as `orig/{version}.exe`"} (never commit it).

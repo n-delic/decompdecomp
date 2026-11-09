@@ -2,10 +2,10 @@
 /* decompdecomp GUI. Plain JS, no build step. Everything shown from agents or ROMs is untrusted text:
    it only ever reaches the page through textContent or esc().
 
-   The GUI is nine classic scripts sharing one global scope, loaded by index.html in this order: base (helpers,
+   The GUI is classic scripts sharing one global scope, loaded by index.html in this order: base (helpers,
    theme, state and routing, bug reports), sidebar (the project list, New project, the notification centre), home,
    project (overview, decompiling together, public decomps), map, agents (who's working, the launcher, what
-   happens), function (the drawer, the function list), steering (drawers and keys, instructions, export, project
+   happens), transcripts (full session messages and usage), candidate-recovery (local batch diagnostics), repair-feedback (captured repairs for review), function (the drawer, the function list), repository-push (unpushed commits and explicit origin pushes), steering (drawers and keys, instructions, export, project
    settings and the compiler), pages (the app's own pages, updates, and starting the app). Functions can be called
    across files once all have loaded; code that runs while a file loads may only use what this file or an earlier
    one defines. Not ES modules: they would need an import for every name used across files. */
@@ -65,15 +65,52 @@ function duration(h) { return h < 1 ? `${Math.max(1, Math.round(h * 60))}\u00a0m
 function bytes(n) { return n >= MIB ? `${(n / MIB).toFixed(1)} MB` : n >= KIB ? `${(n / KIB).toFixed(1)} KB` : `${n} bytes`; }
 function money(usd) { return usd >= 10 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`; }
 
-async function api(path, { method = "GET", body, raw } = {}) {
+function uiTimingEnabled() {
+  try { return typeof localStorage!=='undefined' && localStorage.getItem('decomp.perf')==='1'; } catch { return false; }
+}
+function uiTiming(label, started, extra={}) {
+  if (started!=null) console.debug('[decompdecomp timing]',label,{ms:Math.round((performance.now()-started)*10)/10,...extra});
+}
+
+async function api(path, { method = "GET", body, raw, signal } = {}) {
+  const serverMode = typeof document !== "undefined" && document.body?.dataset?.serverMode;
+  if (serverMode && path === "/api/pick" && method === "POST") {
+    return {path: window.prompt(`${body?.title || "Choose a path"}\nEnter the ${body?.kind === "folder" ? "folder" : "file"} path on the server computer:`, "")?.trim() || ""};
+  }
+  if (method !== "GET" && typeof window !== "undefined" && window.decompIsOffline?.()) throw new Error("Offline: connect to your Mac to make changes. Nothing has been queued.");
   const opts = { method, headers: {} };
+  if (signal) opts.signal = signal;
   if (method !== "GET") opts.headers["X-Decomp"] = "1";
   if (raw !== undefined) { opts.body = raw; opts.headers["Content-Type"] = "application/octet-stream"; }
   else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
-  const res = await fetch(path, opts);
-  let data = null;
-  try { data = await res.json(); } catch { /* not json */ }
-  if (!res.ok) throw new Error((data && data.error) || `request failed (${res.status})`);
+  const timing=uiTimingEnabled() ? performance.now() : null;
+  let res;
+  try { res = await fetch(path, opts); }
+  catch (cause) {
+    if (cause.name === "AbortError") throw cause;
+    const error = new Error("Could not reach the app server. It may be restarting or temporarily unavailable.");
+    error.request = `${method} ${path}`;
+    error.diagnostic = `${cause.name || "Error"}: ${cause.message || cause}`;
+    error.connectionFailure = true;
+    throw error;
+  }
+  if (typeof window !== "undefined") window.decompConnection?.(res);
+  let data = null, decoded = true;
+  try { data = await res.json(); } catch { decoded = false; }
+  uiTiming(path.split('?')[0],timing,{server:res.headers?.get?.('Server-Timing') || ''});
+  if (res.status === 401 && serverMode) location.assign("/login");
+  if (!res.ok) {
+    const error = new Error((data && data.error) || `The app server returned HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}.`);
+    error.request = `${method} ${path}`;
+    error.status = res.status;
+    throw error;
+  }
+  if (!decoded && res.status !== 204) {
+    const error = new Error("The app server returned an unreadable response. Retry after the app finishes restarting.");
+    error.request = `${method} ${path}`;
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 
@@ -119,6 +156,7 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
   bar.setAttribute("aria-label", label);
   bar.append(document.createElement("i"));
   log.before(bar);
+  log._workBar = bar;
   const disabled = controls.map((control) => control.disabled);
   controls.forEach((control) => { control.disabled = true; });
   return () => {
@@ -131,11 +169,56 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
   };
 }
 
-async function followJob(id, logEl, onUpdate) {
+function updateWorkProgress(log, progress) {
+  if (!progress || !log._workStatus || !log._workBar) return;
+  const bar = log._workBar, phase = progress.phase || "Working";
+  const total = Number(progress.total), done = Number(progress.finished ?? progress.done);
+  const counted = Number.isFinite(total) && total > 0 && Number.isFinite(done) && done >= 0;
+  const finished = counted ? Math.min(done, total) : 0;
+  const percent = counted ? Math.floor(100 * finished / total) : 0;
+  log._workStatus.textContent = phase + (counted ? ` · ${finished.toLocaleString()} / ${total.toLocaleString()} processed (${percent}%)` : "")
+    + (progress.game ? ` · ${progress.game}` : "")
+    + (progress.function ? ` · ${progress.donor ? `${progress.donor} → ` : ""}${progress.function}` : "")
+    + (progress.confirmed != null ? ` · ${progress.confirmed} matches confirmed` : "")
+    + (progress.submitted != null ? ` · ${progress.submitted} better attempts submitted` : "");
+  bar.setAttribute("aria-label", phase);
+  bar.className = counted ? "workbar counted" : "workbar";
+  if (counted) {
+    bar.setAttribute("aria-valuemin", "0"); bar.setAttribute("aria-valuemax", String(total)); bar.setAttribute("aria-valuenow", String(finished));
+    bar.style.setProperty("--work-progress", `${percent}%`);
+  } else {
+    bar.removeAttribute("aria-valuemin"); bar.removeAttribute("aria-valuemax"); bar.removeAttribute("aria-valuenow");
+  }
+}
+
+async function followJob(id, logEl, onUpdate, active = () => true) {
   for (;;) {
-    const job = await api(`/api/job?id=${id}`);
-    if (logEl) { logEl.textContent = job.log.join("\n"); logEl.scrollTop = logEl.scrollHeight; }
-    if (onUpdate) onUpdate(job.log);
+    if (!active()) return null;
+    // A stalled fetch must not leave the panel following a job forever without
+    // another poll. Callers already handle transport failures/reconnection.
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    let timeout;
+    const expired = new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        controller?.abort();
+        reject(new Error("Progress request timed out. Reconnecting…"));
+      }, 10000);
+    });
+    let job;
+    try { job = await Promise.race([api(`/api/job?id=${id}`, {signal:controller?.signal}), expired]); }
+    finally { clearTimeout(timeout); }
+    if (!active()) return null;
+    if (logEl) {
+      const text = job.log.join("\n");
+      if (logEl.textContent !== text) {
+        const top = logEl.scrollTop;
+        const follow = logEl._followTail !== false && logEl.scrollHeight - logEl.clientHeight - top < 32;
+        logEl.textContent = text;
+        logEl.scrollTop = follow ? logEl.scrollHeight : top;
+      }
+    }
+    if (logEl?._showJobProgress) updateWorkProgress(logEl, job.progress);
+    if (onUpdate) onUpdate(job.log, job);
     if (job.state === "done") return job.result;
     if (job.state === "error" || job.state === "cancelled") {
       const err = new Error(job.error || (job.state === "cancelled" ? "Cancelled." : "The job failed. Try again."));
@@ -165,12 +248,13 @@ function showJobError(logEl, message) {
   box.hidden = !message;
   box.textContent = summary;
   if (message) {
-    // The exception may repeat the streamed tail. Keep any new detail after the existing lines.
+    // The exception repeats the build tail already streamed into the log. Add only genuinely missing lines.
     const current = logEl.textContent.trim();
-    const extra = message.split("\n").slice(1).filter((line) => line.trim() && !current.includes(line));
-    logEl.textContent = [current, extra.join("\n")].filter(Boolean).join("\n\n");
-    logEl.hidden = !logEl.textContent;
-    if (logEl.textContent && !logEl._copyToolbar) {
+    const extra = message.split("\n").filter((line) => line.trim() && line !== "Build output:" && !current.includes(line));
+    logEl.textContent = [extra.join("\n"), current].filter(Boolean).join("\n\n");
+    logEl.hidden = false;
+    if (!/\bjoblog\b/.test(logEl.className || "")) logEl.className = `${logEl.className || ""} joblog tall`.trim();
+    if (!logEl._copyToolbar) {
       const toolbar = document.createElement("div");
       toolbar.className = "row joblog-toolbar";
       const label = document.createElement("b");
@@ -187,7 +271,10 @@ function showJobError(logEl, message) {
       logEl.before(toolbar);
       logEl._copyToolbar = toolbar;
     }
-    if (logEl._copyToolbar) logEl._copyToolbar.hidden = !logEl.textContent;
+    logEl._copyToolbar.hidden = false;
+    const details = logEl.closest?.("details");
+    if (details) details.open = true;
+    logEl.scrollTop = logEl.scrollHeight;
   } else {
     logEl.textContent = "";
     logEl.hidden = false;
@@ -248,7 +335,7 @@ const S = {
   projects: [], agents: null,
   gen: 0, primed: false, openedAt: 0,  // which opening of a project polls belong to, its first poll done, and when
 };
-const VIEWS = ["home", "catalog", "project", "agentsPage", "toolsPage", "settingsPage"];
+const VIEWS = ["home", "catalog", "project", "agentsPage", "toolsPage", "settingsPage", "backgroundPage"];
 /* A project's views. Activity is in Agents now, Team and Source are the header's Decompile together and Export:
    seven tabs were too many to tell apart. */
 const TABS = ["overview", "functions", "agents", "settings"];
@@ -268,7 +355,7 @@ function installName(st) {
   const i = st.install || {};
   return st.dev ? "a development copy" : i.channel === "branch" ? `the ${i.branch} branch @ ${(i.commit || "?").slice(0, 7)}` : "";
 }
-const versionLine = (st) => `decompdecomp ${st.version || "?"}${st.build ? ` (${st.build})` : ""}${installName(st) ? `, from ${installName(st)}` : ""}`
+const versionLine = (st) => `decompdecomp ${st.version || "?"}${st.fork ? ` · ${st.fork}` : ""}${st.build ? ` (${st.build})` : ""}${installName(st) ? `, from ${installName(st)}` : ""}`
   + ` · ${st.platform || navigator.platform}${st.system ? ` · ${st.system}` : ""}`;
 function bugReport(lines, log = "") {
   const st = S.st || {};
@@ -287,7 +374,7 @@ async function copyText(text) {
 }
 
 async function loadState() {
-  S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`;
+  S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version} · ${S.st.fork || "RetroReversing fork"} · ${S.st.build || "build unknown"}`;
   const i = S.st.install || {}, branch = !S.st.dev && i.channel === "branch";
   $("navBranch").hidden = !branch;
   if (branch) {
@@ -315,7 +402,7 @@ function route() {
   closeNav();
   hideLaunch();
   if (m) {
-    if (S.slug === m[1] && !$("project").hidden) { setTab(m[2] || "overview"); markNav(); return; }
+    if (S.slug === m[1] && !$("project").hidden) { if (S.ov) setTab(m[2] || "overview"); else S.tab = m[2] || "overview"; markNav(); return; }
     leaveProject();
     openProject(m[1], m[2] || "overview");
   } else {
@@ -324,6 +411,7 @@ function route() {
     else if (h === "#/agents") showAgentsPage();
     else if (h === "#/tools") showToolsPage();
     else if (h === "#/settings") showSettingsPage();
+    else if (h === "#/background") showBackgroundWork();
     else showHome();
   }
   markNav();
@@ -336,9 +424,43 @@ function show(view) {
   window.scrollTo(0, 0);
 }
 function leaveProject() {
+  if (typeof cancelProjectLoad === "function") cancelProjectLoad();
   stopPolling();
   S.gen++;  // what its polls bring back now is dropped
   S.slug = null;
   clearInterval(teamTimer);
 }
 
+
+function compilerProfileUsage(row, usage) {
+  const count = usage.find(p => p.toolchain === row.toolchain && JSON.stringify(p.flags) === JSON.stringify(row.flags));
+  return `${count?.functions ?? 0} functions · ${count?.matched ?? 0} matched`;
+}
+function compilerRankedTable(rows, selectable = false, usage = null, sort = null) {
+  if (!rows.length) return "";
+  sort ||= {key: usage ? 'used' : 'match', descending: true};
+  const headings = [['match', 'Match'], ['compiler', 'Compiler'], ['flags', 'Flags'],
+    ...(usage ? [['used', 'Used by']] : []), ['result', 'Result']];
+  const header = headings.map(([key, label]) => `<th scope="col" aria-sort="${sort.key === key ? sort.descending ? 'descending' : 'ascending' : 'none'}"><button type="button" class="table-sort" data-compiler-sort="${key}"${key === 'used' ? ' title="Functions using this exact compiler and flag order in this project"' : ''}>${label}<span aria-hidden="true">${sort.key === key ? sort.descending ? ' ↓' : ' ↑' : ' ↕'}</span></button></th>`).join('');
+  const usageByProfile = new Map((usage || []).map(p => [JSON.stringify([p.toolchain, p.flags]), p]));
+  const resultLabel = r => r.untested ? 'Not verified with this source' : r.exact ? 'Exact match' : r.percent == null ? 'Could not compile or compare' : 'Partial match';
+  const indexed = rows.map((r, index) => ({r, index, uses: usageByProfile.get(JSON.stringify([r.toolchain, r.flags])) || {functions: 0, matched: 0}}));
+  indexed.sort((a, b) => {
+    const value = item => sort.key === 'used' ? item.uses.functions : sort.key === 'match' ? item.r.percent
+      : sort.key === 'compiler' ? item.r.toolchain : sort.key === 'flags' ? item.r.flags.join(' ') : resultLabel(item.r);
+    const av = value(a), bv = value(b);
+    // Unscored results stay at the bottom in either direction.
+    if (av == null || bv == null) return av == null ? bv == null ? a.index - b.index : 1 : -1;
+    const order = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv), undefined, {numeric: true});
+    return order * (sort.descending ? -1 : 1)
+      || (sort.key === 'used' ? b.uses.matched - a.uses.matched : 0)
+      || Number(!!(b.r.default && b.r.exact)) - Number(!!(a.r.default && a.r.exact)) || a.index - b.index;
+  });
+  return `<div class="compiler-table"><table><thead><tr>${header}${selectable ? '<th scope="col">Action</th>' : ""}</tr></thead><tbody>${indexed.map(({r, index}) => `<tr><td><b>${r.percent == null ? "—" : `${r.percent.toFixed(2)}%`}</b></td><td>${esc(r.toolchain)}${r.default ? ` <span class="chip-s">Default</span>` : ""}${r.selected ? ` <span class="chip-s compiler-selected">Currently selected</span>` : ""}</td><td class="mono">${esc(r.flags.join(" "))}</td>${usage ? `<td>${compilerProfileUsage(r, usage)}</td>` : ""}<td>${r.untested ? "Not verified with this source" : r.exact ? "Exact match" : r.percent == null ? "Could not compile or compare" : "Partial match"}${r.current && !r.selected ? " · settings at test time" : ""}</td>${selectable ? `<td><button type="button" class="ghost small-btn" data-compiler-choice="${index}" ${r.percent == null || r.apply_disabled ? "disabled" : ""}>${r.selected ? "Selected" : r.default ? "Use default" : "Apply"}</button></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+}
+
+// Shared secondary context stays visible when a settings disclosure is collapsed.
+function disclosureContext(id, text) {
+  const el = $(id);
+  if (el) el.textContent = `— ${text}`;
+}

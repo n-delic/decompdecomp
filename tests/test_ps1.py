@@ -108,14 +108,15 @@ def test_the_code_is_found_where_its_returns_and_frames_are(tmp_path):
     assert yaml.safe_load(config.read_text())["segments"][1]["subsegments"] == subs
 
 
-def test_bios_calls_and_the_gte_are_set_aside_as_assembly():
+def test_bios_calls_and_unknown_gte_are_set_aside_as_assembly():
     def code(*words):
         return struct.pack(f"<{len(words)}I", *words)
 
     puts = code(0x240A00B0, 0x01400008, 0x2409003F, 0)  # li t2, 0xB0; jr t2; li t1, 0x3F (puts)
     assert "BIOS" in PS1.asm_reason(puts)
     gte = code(0x4A180001, 0x03E00008, 0)  # RTPS; jr ra; nop
-    assert "GTE" in PS1.asm_reason(gte)
+    assert PS1.asm_reason(gte) is None  # a fixed C intrinsic implements RTPS
+    assert "GTE" in PS1.asm_reason(code(0x4A000000, 0x03E00008, 0))
     plain = code(0x00851021, 0x03E00008, 0)  # addu v0, a0, a1; jr ra; nop
     assert PS1.asm_reason(plain) is None
 
@@ -190,9 +191,13 @@ def test_the_demo_imports_with_gp_and_its_compiler(demo):
 
 @needs_demo
 def test_every_game_function_matches(demo):
+    net, slug, syms = demo
+    _match_game_functions(net, slug, syms)
+
+
+def _match_game_functions(net, slug, syms):
     from decompnet.forks import csource
 
-    net, slug, syms = demo
     agent, _ = net.local_agent("ps1-agent")
     header = (GAME / "game.h").read_text()
     header = "\n".join(line for line in header.splitlines() if not line.startswith("#include")
@@ -210,3 +215,50 @@ def test_every_game_function_matches(demo):
     source = (GAME / "game.c").read_text()
     scores = {name: net.attempt(agent, name, csource.get(source, name), slug)["score"] for name in FUNCTIONS}
     assert all(score == 0 for score in scores.values()), scores
+
+
+OTHER_COMPILERS = ["gcc-2.5.7-psx", "gcc-2.6.0-psx", "gcc-2.7.2-cdk", "gcc-2.8.0-psx",
+                   "gcc-2.91.66-psx", "gcc-2.95.2-psx"]
+
+
+@pytest.mark.parametrize("toolchain", OTHER_COMPILERS)
+def test_other_ps1_compilers_rebuild_and_match_the_game(toolchain, tmp_path):
+    """Each compiler's own linked PS1 demo is the target: compiler changes must still reach the byte judge."""
+    from decompnet.app.engine import RomNetwork
+
+    needed = (toolchain, "maspsx", "binutils-mips")
+    if any(toolchains.installed(t) is None for t in needed) or not (ROOT / "projects/zlib-n64/original").exists():
+        pytest.skip(f"needs {toolchain}, PS1 tools and the demo's pinned zlib source")
+    build = DEMO / "build" / toolchain
+    if not (build / "demo.json").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py"), toolchain], check=True)
+    built = json.loads((build / "demo.json").read_text())
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(build / built["game"], confirmed=True, toolchain=toolchain, log=lambda *_: None)
+    assert net.overview(slug)["compiler"]["toolchain"] == toolchain
+    _match_game_functions(net, slug, built["symbols"])
+    exported = net.export_rom(slug, log=lambda *_: None)
+    assert exported["identical"], exported.get("log") or exported.get("detail")
+
+
+def test_ps1_gcc_variants_keep_their_assembler_profiles():
+    profiles = {"gcc-2.5.7-psx": "2.08", "gcc-2.6.0-psx": "2.34", "gcc-2.7.2-cdk": "2.67",
+                "gcc-2.8.0-psx": "2.77", "gcc-2.91.66-psx": "2.81", "gcc-2.95.2-psx": "2.86"}
+    choices = {c.id for c in PS1.compilers}
+    for tid, version in profiles.items():
+        tc = toolchains.get(tid)
+        assert tid in choices and tc.arch == "mipsel" and not tc.proprietary
+        assert tc.cmd[7] == version
+        assert tc.parts_for("linux-x86_64")[0]["sha256"]
+
+
+@pytest.mark.parametrize("toolchain", [*OTHER_COMPILERS, "gcc-2.6.3-psx", "gcc-2.7.2-psx", "gcc-2.8.1-psx"])
+def test_ps1_variants_compile_cpp_methods(toolchain, tmp_path):
+    from decompnet.compiler import compile_source
+    from decompnet.project import compiler_config
+
+    if any(toolchains.installed(t) is None for t in (toolchain, "maspsx", "binutils-mips")):
+        pytest.skip(f"needs {toolchain} and its assembler tools")
+    cfg = compiler_config(tmp_path, {"compiler": {"toolchain": toolchain}})
+    result = compile_source(cfg, "class Item { public: int value; int get(); };", "int Item::get() { return value; }")
+    assert result.ok and result.language == "c++", result.log

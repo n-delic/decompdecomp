@@ -61,7 +61,7 @@ function fetch(url) {
   asked.push(url);
   const prefix = Object.keys(answers).sort((a, b) => b.length - a.length).find((p) => url.startsWith(p));
   const res = { ok: true, json: async () => (prefix ? answers[prefix](url) : {}) };
-  if (hold && url.startsWith(hold)) { hold = null; return new Promise((resolve) => held.push(() => resolve(res))); }
+  if (hold && (url.startsWith(hold) || (hold === 'annotations' && url.startsWith('/api/map?') && !url.includes('quick=1')))) { hold = null; return new Promise((resolve) => held.push(() => resolve(res))); }
   return Promise.resolve(res);
 }
 const ctx = {
@@ -74,7 +74,7 @@ const ctx = {
 ctx.window = ctx;
 vm.createContext(ctx);
 const js = process.env.GUI_JS || path.join(__dirname, "..", "src", "decompnet", "app", "static", "js");
-for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "steering", "pages"]) {
+for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "repository-setup", "repository-push", "steering", "pages"]) {
   vm.runInContext(fs.readFileSync(path.join(js, `${name}.js`), "utf8"), ctx, { filename: `${name}.js` });
 }
 const settle = async () => { for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r)); };
@@ -82,10 +82,20 @@ const fills = (name) => drawn[name].filter(([k]) => k === "fill").length;
 const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
 
 (async () => {
+  hold = 'annotations';
   await ctx.openProject("a");
   await settle();
-  // the first drawing: every cell once
-  assert.equal(fills("base"), FUNCTIONS);
+  assert.equal(elements.get('projectLoading').hidden, true, 'Project is usable while annotations are pending');
+  assert.equal(fills('base'), FUNCTIONS, 'Basic map paints without annotations');
+  assert.equal(held.length, 1);
+  held.shift()();
+  await settle();
+  // Saved rows paint first, then the complete annotation snapshot replaces them.
+  assert.equal(fills("base"), FUNCTIONS * 2);
+  const mapReads = asked.filter(u => u.startsWith('/api/map?'));
+  assert.ok(mapReads[0].includes('quick=1'));
+  assert.ok(!mapReads[1].includes('quick=1'));
+  assert.equal(asked.filter(u=>u.startsWith('/api/mapcolumns')).length,0,'Progress view does not request compiler analysis');
 
   // a poll that brings a better score for one function and a claim on another: those two cells, not all 2,000
   reset();

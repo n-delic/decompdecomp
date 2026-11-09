@@ -98,6 +98,11 @@ decompdecomp helps with these steps:
 - It shows the agent the data of a file that is almost complete, next to the original data.
 - It links a complete file automatically. It keeps the change only if the checksum of the game stays correct.
 
+Imported projects with verified assembly references can also use Autopilot: it first probes C candidate
+files with the project's own compiler. It prepares up to 32 new units per run; **Run again** prepares the next
+batch. The original assembly remains the linked baseline until the project integrates the recovered C.
+An unsupported C build rule still needs project-specific setup.
+
 ## Features
 
 | Feature | Description |
@@ -108,18 +113,40 @@ decompdecomp helps with these steps:
 | **Batches** | Agents write many small functions in one turn. decompdecomp judges them in one call. |
 | **Editor** | Each function has an editor. Write C, push Ctrl+Enter and look at the diff. |
 | **Suggestions** | Agents can suggest a different compiler, for the full game or for address ranges. decompdecomp tests each suggestion first. You apply it with one click, or let proven suggestions apply automatically (a setting of each game). |
+| **Test installed compilers** | In Settings → Compiler, compare up to 400 existing unmatched C attempts with this console’s installed compilers. Runs locally without AI tokens or downloads. Reports exact alternative matches without changing settings, including when automatic changes are enabled. Reports every matching profile, including the current settings. Function comparisons show all tested profiles ranked by percentage; project comparisons list improvements ranked by resulting percentage, with an apply button per function. Applying revalidates the saved C and changes only that function’s compiler range. Project-wide and single-function tests use the same supported flag-search and debug variants; project-wide runs therefore take longer. No result is not proof that a compiler is wrong. An unmatched function also has **Test installed compilers & flags**, which tries its saved C with the supported optimization, small-data and other flag-search variants plus debug variants. This is not an exhaustive search of all possible flag combinations. ROM-mode MIPS projects for now. |
 | **Flag search** | `search_flags` builds a function again with each flag of its compiler changed, one at a time (up to 12 builds), and says which change gets closer. MIPS for now. |
 | **Shared header** | Structs and prototypes go into one header. decompdecomp accepts a change only if all matches stay matches. |
 | **Safe names** | Matches use addresses. A new name for a function or data cannot break a match. |
 | **Look-alikes** | `find_similar` compares instruction sequences across the full game and finds copied and inlined code. |
 | **Compiler map** | Big games mix compilers. The ROM map's Compiler view shows which compiler built each part of the game: from matches, from habits that rule a compiler out (`-G0` code never reads through `$gp`), and from the judge's survey, which builds agents' C with each compiler the project uses. A part the judge confirms becomes a suggestion. A suggested range applies only after a second, neighbouring function confirms it (a range check); a range that only one function supports, with the game's compiler on both sides, is a quirk. decompdecomp checks the ranges a project already has again by itself. Agents read it with `compiler_map`. MIPS for now. |
 | **Struct layouts** | decompdecomp reads every load and store through a function's pointer arguments and globals, along the call graph. The brief lists the likely fields of each pointer argument, and `guess_struct` writes the struct as C. MIPS (N64, PlayStation, PlayStation 2) for now. |
-| **Twins across your games** | Code that one of your games has matched is tried on the identical functions of your other games (libraries, the compiler's runtime). No agent time. |
+| **Twins across your games** | Code that one of your games has matched is tried on the identical functions of your other games (libraries, the compiler's runtime). No agent time. Imported decomps can also donate verified C to ROM projects: identical machine-code fingerprints select candidates, and the receiving ROM’s compiler and byte-for-byte judge must verify every match. Functions with missing types or macros remain unmatched. |
+| **Similar code across your games** | After exact transfers, autopilot tries close verified C and small constant edits in MIPS ROM projects. No tokens; only byte-identical results count. Attempts are bounded and failed candidates are cached. Run again to continue. |
 | **Shared knowledge** | Agents propose what they learn about a game. A proposal counts when helpers of two different models back it. Then it reaches every agent, after you accept it (or at once, a setting of each game). Run helpers of several models for this. |
 | **C++ classes** | decompdecomp finds a C++ game's classes in its machine code: the vtables its constructors store, the base class of each, and every field its functions touch (offset, type). Agents read them with `get_class`, and `get_function` names the fields of `this` a function uses. MIPS (N64, PlayStation, PlayStation 2) for now. |
 | **Drafts** | m2c for MIPS, PowerPC and ARM. Ghidra (optional) for x86, AArch64 and other architectures. |
 | **Guides** | Agents get guides for each architecture and compiler, and for C++ and objdiff. |
 | **Disc formats** | ROMs, PlayStation, PlayStation 2 and PSP discs (ISO, BIN, CHD, CSO), GameCube and Wii discs (ISO, GCM, RVZ, WIA, WBFS, CISO, GCZ) and program files. |
+
+### Reusing similar functions without AI
+
+Run autopilot after another compatible ROM project has verified C. It learns names and conservative byte-offset
+changes from accepted transfers, tries close C, and gives close failures a bounded search guided by the assembly
+differences. Tiny-function templates also work without another matched project. Every result still passes the
+ordinary compiler/link byte check.
+
+New matches automatically queue compatible projects. In **Settings**, turn automatic reuse on/off and set the
+elapsed-time and attempt budgets (two minutes / 128 by default, shared across an automatic wave). **Stop** pauses
+that project's automatic reuse; **Run again** resumes it. Completed trials are cached across restarts. Changed
+headers, symbols, compiler settings and source make affected trials eligible again.
+
+For library code, open the SDK panel and supply a local object archive, its optional C file/folder and an optional
+self-contained declarations header. Fingerprints select definitions to try with the compiler used when importing.
+This does not download source, run SDK build scripts, or resolve a library's header dependencies for you.
+
+A **compiler** result means the candidate matches with the donor's flags. Its C and settings are saved in the
+function's notes for review. It is not counted as progress until accepted with the project's build settings.
+These additional searches currently support MIPS ROM projects; imported repository projects retain exact transfers.
 
 ## Agents
 
@@ -129,6 +156,7 @@ decompdecomp helps with these steps:
 | **Claude Code** | Operates without a window, through the local MCP server of the app. |
 | **Codex CLI** | The same. It can approve only the tools of decompdecomp. |
 | **Antigravity CLI** | The same, through the MCP configuration of the workspace (`agy`). |
+| **Kimi Code** | Install `npm install -g @moonshot-ai/kimi-code` (Node.js 22.19+), then `kimi login`. Uses your Kimi Code account and configured models. The legacy Python `kimi-cli` is not supported. |
 | **opencode** | The same, with each provider that you set up: DeepSeek, Qwen, Kimi and more. |
 | **Cursor Agent** | Runs headlessly with the app’s MCP tools in a private configuration. |
 | **Kimi Code** | Uses the npm CLI with a private configuration and app MCP tools. |
@@ -140,6 +168,14 @@ by itself. On a usage limit it waits until the limit resets. Five fast failures 
 why. Run several helpers, of different models: they work on different functions at the same time. Choose **Multiple
 models** in the launcher to pick several at once; the app remembers the choice. One start can begin at most 24
 helpers in total.
+
+**Paused candidates are model-specific.** An unchanged function pauses after three releases or
+reported exhaustion for that recorded model. A different model can still attempt it. Use the worker's
+**⋮ → Retry paused functions**, or the button on a waiting card, to grant one fresh turn to up to five
+functions by default (maximum 50). Existing work filters, active claims and compile limits remain.
+Grants are consumed when claimed and persist across restart. Waiting workers check within 30 seconds;
+stopped workers stay stopped. Running workers may resume normal paid model calls. See the README's
+work-selection section for model identity and legacy-pause behavior.
 
 Agents get only the tools of decompdecomp. They get no shell. They cannot access your files, except the source tree
 of a fork. The app installs missing agents and tells you how to sign in.
@@ -155,6 +191,21 @@ need many more attempts. Less expensive models often fail on register allocation
 
 Then select the preset in **Agents & models → API key**. If the model does not use llama.cpp, set the context size
 there too. Small models can do small functions. Large functions need a strong model.
+
+## Agents outside the app
+
+A script or another tool on this computer can work one project through the app's tools, once you approve it. It asks
+on its own (its name and a secret it makes up), and the Agents & models page shows the request: pick the project it
+may work and approve it, or refuse. The agent reads the answer — its token — with its secret, and from then on its
+tools are that project's and nothing else. Refused or idle requests show up only while they wait.
+
+```sh
+curl -s http://127.0.0.1:6464/api/pair/request -d '{"name":"my-script","secret":"a-long-secret-only-i-know"}'
+curl -s http://127.0.0.1:6464/api/pair/status  -d '{"id":"…","secret":"a-long-secret-only-i-know"}'
+```
+
+The port is the app's own (shown in its window title and `~/.decomp/server.json`). The app never sends a token
+anywhere: it waits for the agent to come back with the secret only it holds.
 
 ## Decompile together
 
@@ -189,8 +240,8 @@ the game.
 
 | Platform | Status | From scratch | Compilers | Rebuildable project | Public decomps |
 | :-- | :-- | :-- | :-- | :-- | :-- |
-| **Nintendo 64** | ★ **Recommended** | ✓ ROM | KMC GCC 2.7.2 · IDO 5.3 / 7.1 | ✓ export | ✓ |
-| **PlayStation** | Beta | ✓ disc (BIN, ISO, CHD) or PS-X EXE | GCC 2.5.7 · 2.6.0 · 2.6.3 · 2.7.2 (and CDK) · 2.8.0 · 2.8.1 · EGCS 2.91.66 · 2.95.2 (PSY-Q), with maspsx | ✓ export | ✓ |
+| **Nintendo 64** | ★ **Recommended** | ✓ ROM | KMC GCC 2.7.2 · IDO 5.3 / 7.1 · SN64 GCC 2.7.2 / 2.8.1 | ✓ export | ✓ |
+| **PlayStation** | Beta | ✓ disc (BIN, ISO, CHD) or PS-X EXE | GCC 2.5.7 · 2.6.0 · 2.6.3 · 2.7.2 PSX/CDK · 2.8.0 · 2.8.1 · EGCS 2.91.66 · 2.95.2, with maspsx | ✓ export | ✓ |
 | **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
 | **PS3** | Beta | ✓ program (decrypted EBOOT.ELF; a SELF is refused) | ps3dev GCC (free) · your own SDK's ppu-lv2-gcc and SNC | — | |
 | **PSP** | Beta | ✓ UMD image (ISO, CSO, CHD) with its other modules, or ELF/PRX, unencrypted or decrypted | CodeWarrior for PSP 3.0.1 · PSP SDK GCC 3.3.3 · SN pspsnc | ✓ export | ✓ |
@@ -214,7 +265,9 @@ different build, which is planned.
 **Beta:**
 
 - **PlayStation** passes every step on the homemade demo game, built the way PSY-Q games were (GCC, then maspsx
-  for Sony's assembler ASPSX). No real game is tested from start to end yet.
+  for Sony's assembler ASPSX). Each compiler uses its corresponding assembler profile. GCC 2.5.7, EGCS
+  2.91.66 and GCC 2.95.2 currently need Linux or WSL; the other listed PS1 compilers have Apple Silicon builds.
+  No real game is tested from start to end yet.
 - **PlayStation 2** is tested on real games (GTA San Andreas, Ridge Racer V), with several compilers per game. No
   real game is rebuilt whole yet.
 - **GameCube and Wii** projects are dtk-template projects, as most community decomps are. Each build makes the game
@@ -250,18 +303,17 @@ Please [report problems](https://github.com/n-delic/decompdecomp/issues). The st
 | Windows PC | [Ghidra](https://github.com/NationalSecurityAgency/ghidra). decompdecomp cuts each function out of the .exe and the game's own DLLs into a project for Visual C++ and objdiff (`consoles/pc/scratch.py`). |
 
 **C and C++.** GameCube, Wii, PS2 and Windows PC games are often C++. On these platforms, agents can write
-classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use
-C. Public decomps use the language of their project.
+classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use C. Public decomps use the language of their project.
 
 **Proprietary compilers** (IDO, CodeWarrior, Visual C++) install only after you accept them. Heavy tools operate
 with a memory limit. Visual C++ 2017 needs wine on Linux and macOS (installing it says how to get wine).
 
 ## The export
 
-**Export**, in the project's header, writes a usual decomp tree: matched functions as C, other functions as assembly, a
-linker script and `build.py`. The export proves that the tree builds your game byte for byte. Game code and data are
-not in git. The build makes them again from your copy of the game. GameCube and Wii projects are dtk-template
-projects. They build the game again on each build.
+**Export**, in the project's header, writes a usual decomp tree: matched functions as C, other functions as assembly, a linker script
+and `build.py`. The export proves that the tree builds your game byte for byte. Game code and data are not in git.
+The build makes them again from your copy of the game. GameCube and Wii projects are dtk-template projects. They
+build the game again on each build.
 
 ## Installation details
 
@@ -280,17 +332,18 @@ compilers run through WSL 2; run `wsl --install` in an administrator PowerShell,
 once before importing a game that needs one.
 
 **macOS (Intel and Apple Silicon).** Install the current source with
-`curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main` until a Mac-capable
-release is tagged. The installer creates `~/Applications/decompdecomp.app`; the app uses a native Cocoa/WebKit
-window and Finder file dialogs. On Apple Silicon, the pinned Intel KMC compiler and binutils need Rosetta 2: run
+`curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main` until a Mac-capable release is
+tagged. The installer creates `~/Applications/decompdecomp.app`; the app uses a native Cocoa/WebKit window and
+Finder file dialogs. On Apple Silicon, the pinned Intel KMC compiler and binutils need Rosetta 2: run
 `softwareupdate --install-rosetta` and accept Apple's license if you agree. PS1/PS2 period compilers are Linux-only,
 and there is no macOS menu bar tray icon yet. Running `decomp` reopens the window while helpers continue.
 
 **Its window and the tray.** decompdecomp opens in a window of its own. Linux uses GTK and WebKitGTK from your
-system, macOS uses Cocoa and WebKit, and Windows uses WebView2. Only that window can open the app: its address
-does nothing in a browser. There is only one window: `decomp` or the apps menu shows the open one. When you close it
-while helper agents work, the app asks: stop them and quit, or keep them working. They keep working without the
-window; the tray icon where available (or `decomp`) brings it back. **Quit** ends the app and every helper agent it started.
+system, macOS uses Cocoa and WebKit, and Windows uses WebView2. Only that window can open the app: its address does
+nothing in a browser. There is only one
+window: `decomp` or the apps menu shows the open one. When you close it while helper agents work, the app asks: stop
+them and quit, or keep them working. They keep working without the window; the tray icon where available (or `decomp`) brings it
+back. **Quit** ends the app and every helper agent it started.
 
 **Updates.** When a new version is available, the app asks you one time. One click installs it and restarts the app.
 Helper agents continue their work. To change this behavior, go to Settings.
@@ -375,13 +428,208 @@ commit.
 
 ## Built on
 
-[splat](https://github.com/ethteck/splat) and [spimdisasm](https://github.com/Decompollaborate/spimdisasm) split ROMs.
-[decomp-toolkit](https://github.com/encounter/decomp-toolkit) splits GameCube and Wii games
-[objdiff](https://github.com/encounter/objdiff) judges forks.
-[m2c](https://github.com/matt-kempster/m2c) and [Ghidra](https://github.com/NationalSecurityAgency/ghidra) write drafts.
-[decomp-permuter](https://github.com/simonlindholm/decomp-permuter) rewrites near misses.
-The [decompals](https://github.com/decompals) and other period compilers build the code.
-[wibo](https://github.com/decompals/wibo) runs Visual C++ 6.0 to 2010 on Linux/macOS
-[wine](https://www.winehq.org/) runs Visual C++ 2017 (32- and 64-bit).
-Thank you to the decomp community for these tools.
-decompdecomp is not related to these projects.
+[splat](https://github.com/ethteck/splat) and [spimdisasm](https://github.com/Decompollaborate/spimdisasm) split
+ROMs. [objdiff](https://github.com/encounter/objdiff) judges forks. [m2c](https://github.com/matt-kempster/m2c) and
+[Ghidra](https://github.com/NationalSecurityAgency/ghidra) write drafts.
+[decomp-permuter](https://github.com/simonlindholm/decomp-permuter) rewrites near misses. The
+[decompals](https://github.com/decompals) period compilers build the code.
+[decomp-toolkit](https://github.com/encounter/decomp-toolkit) splits GameCube and Wii games, and
+[wibo](https://github.com/decompals/wibo) runs the Windows compilers on Linux. Thank you to the decomp community for
+these tools. decompdecomp is not related to these projects.
+
+### Reusing function names
+
+The free matching pass also looks for useful names in other local ROM and imported projects. It only names
+functions that still have generated names and have not been explicitly renamed. Donors must be matched,
+share the processor and byte order, and have an identical relocation-normalized machine-code fingerprint.
+Functions smaller than 32 bytes, conflicting donor names, duplicate target candidates, occupied names and
+claimed functions are skipped. Existing names are preserved. Every rename uses the normal regression checks.
+
+Function details distinguish generated names, named functions and recorded renames. An automatic transfer
+is labelled **inferred**, with its donor project: identical machine code does not prove an original source
+name or identical purpose. New renames retain their original name and provenance; older names are recognized
+as named, without inventing a rename history that was never recorded.
+
+### Detecting libultra and naming library routines
+
+Nintendo 64 ROM projects show **Libultra (header)** in project settings. This decodes the SDK declaration
+at ROM offset `0x0C`; it does not establish the version of every linked library object.
+
+In **Local SDK signatures**, index your own `.a` or `.o` files with a corpus label such as
+`libultra 2.0I / libgultra_rom.a`. Keep releases and IDO/GCC, debug and retail variants separate.
+Settings list the strongest exact fingerprint matches and the fingerprints specific to a release
+**among the archives you indexed**. Missing variants, shared objects and developer modifications can
+prevent an exact version determination. A leading candidate is evidence, not a confirmed version.
+
+The free pass also names generated, unclaimed functions when a signature at least 32 bytes long has one
+name across the indexed library variants and one target in the game. Compiler builtin names such as `memcpy` are excluded because the spelling can change compilation.
+Name collisions and explicit prior renames are preserved. The normal checked rename operation verifies existing matched C before saving.
+Function naming metadata and notes retain the source corpora and fingerprint. Naming a routine does not
+increase the decompilation match count. No library archive or source is bundled or downloaded.
+
+## Agent token use
+
+Agent tools now return compact project facts, claim assembly and compiler feedback. Complete function briefs
+remain available through `get_function`; `project_info(detail=true)` returns all project facts. Detailed guides
+and long tool instructions load through `guide(topic)` and `guide(topic="tool:compile_patch")` when needed.
+
+For a small source change, an agent can call `get_candidate(function)` once, then use
+`compile_patch(function, revision, old, new)`. The old text must occur exactly once and the revision must still
+identify the current candidate. Each response supplies the next revision. A stale or ambiguous patch is refused;
+a valid patch goes through the same claim limits, compiler, build protection and byte judge as a full submission.
+`compile_and_diff` remains available for a new function or larger rewrite, and both tools accept optional repair
+notes on a verified match.
+
+Compile feedback shows a bounded set of changed instruction rows. An equal score alone never means the diff is
+unchanged. `last_diff(function, start=0, limit=40)` pages the saved full diff without compiling, and `get_assembly`
+pages the target listing. Cached submissions return a short result and do not consume another compile attempt.
+Claims include a small historical summary across agents, recent source-change summaries and the number of
+recorded automatic repair/reuse trials. Historical scores can reflect different headers or compiler settings.
+
+The model-cost panel separates reported uncached input, cache reads, cache writes and output. These are token
+categories, not interchangeable prices. Older records without a breakdown say it is unavailable. Providers'
+reported dollar amounts remain separate; no cost estimate is inferred from total tokens alone.
+
+
+Small agent edits use `compile_patch`: fetch the candidate once, then retain the edited C and
+reuse the revision returned by each compile. Fetch again only if the revision is stale or the
+agent lost the source. Full submissions remain available for rewrites. Claims keep candidate C,
+compiler facts and declarations; supporting notes, similarity details, layouts and attempt history
+are available through `get_function` when needed. Codex errors rejecting a reasoning effort pause
+the helper immediately; change the model or effort before restarting it.
+
+### Agent names, history and estimated costs
+
+Use **Rename** on an agent card to give it a display name. Its internal identity, claims and
+credited work stay unchanged, and the name survives app restarts. **Add agents** creates fresh
+identities with fresh counts; **Start again** resumes a stopped agent and keeps its history.
+Removing a card preserves historical project and model totals.
+
+Codex cards can show **API-equivalent** dollars and dollars per match, calculated from separately
+recorded input, cached-input and output tokens. These estimates use Standard API rates checked
+on 26 October 2026 ([OpenAI pricing](https://developers.openai.com/api/docs/pricing), with older
+models' model pages). They are not subscription charges or additional money owed. Cache-write,
+long-context, Fast-mode and regional premiums are excluded. Unknown models or incomplete legacy
+token breakdowns have no estimate; reported provider charges remain separate.
+
+
+### Fewer model round trips for small experiments
+
+`compile_variants(function, revision, patches)` tests up to six independent `{"old": "...",
+"new": "..."}` replacements against the same candidate snapshot. Each uses the normal compiler,
+claim limits and exact judge. All replacements are validated before trials begin. Trials stop on
+a match or claim error, and do not start another trial after 60 seconds; results give a compact summary and the current revision. Patches are not
+cumulative. The current candidate is not automatically restored to the best trial; cached or
+rejected trials may retain an earlier candidate. Best attempts remain saved normally. Use
+`get_candidate` if you need to recover the current C, or `last_diff` for the last completed trial.
+
+Claims include the candidate revision when their C is exactly the patchable candidate. If a brief
+only shows a fragment of a larger source file, fetch the full candidate before patching.
+`get_function(section="notes")` fetches supporting notes without the complete brief; `history`,
+`candidate`, `declarations`, `compiler` and `layouts` are also available, with `all` preserving the
+full view. After three successive identical instruction diffs, feedback suggests changing approach
+or trying a local permutation search. This advice does not skip attempts or change the judge.
+
+
+Batch results group variants with identical displayed instruction diffs and scores into one line;
+this is display compression, not proof of identical bytes and never skips the normal judge.
+Where available, results compare scores with a previous compile of the starting C and count changed
+displayed diff rows. Missing baselines are marked unavailable; historical compiler/header settings
+may differ. Equal scores with different diffs remain separate, and compile errors stay distinct.
+
+`compile_family(function, revision, family, old)` generates local experiments without sending each
+replacement. `casts` wraps expression `old` in int, unsigned int, short, unsigned short, char and
+unsigned char casts. `signedness` toggles the integer type at the start of an exact declaration
+anchor (standard integer types or s8/u8 through s64/u64). `declaration_order` swaps exactly two
+adjacent simple uninitialized declarations. The generated replacements are shown with their variant
+numbers. All use the same six-trial/60-second batch limits and normal claim, compiler and judge paths.
+
+Claims include a bounded summary of recent recorded batch families and their best historical scores,
+shared across agents. `get_function(section="history")` includes this summary. These records are
+observations, not a permanent exhausted-family blacklist; later headers and compiler settings may
+make another trial useful. Records contain family names and summary metrics, not game source.
+
+
+### Choosing local experiment targets
+
+For `compile_family`, use `declaration="counter"` with `signedness` or `declaration_order` to
+select a unique simple uninitialized declaration by name. The latter swaps it with the immediately
+following supported declaration. Initialized, complex, duplicate-name and comment-only examples
+are excluded. Claims suggest at most two applicable declaration experiments. Missing or invalid
+targets return at most six declaration choices with line numbers instead of requiring a full-source read.
+
+For repeated expressions, use `old="value"` and `occurrence=2` to change only the second exact,
+nonoverlapping occurrence. Occurrences count literal text throughout the candidate, including
+comments and declarations: use a larger anchor for surrounding context when needed. This applies
+to `compile_family`, `compile_patch`, and each patch in `compile_variants`. Omitted/zero occurrence
+still requires a unique anchor; all edits retain revision checks and the normal judge. Ambiguous
+anchors return occurrence counts and up to six line numbers.
+
+Compact claims defer shared-header declaration fences longer than 16 lines to
+`get_function(section="declarations")` / `get_context(function)`, and reference identical declaration
+blocks once within a batch. Candidate C and user instructions remain intact. Repeated generated
+compilation instructions are shown once, and the recent-family summary is limited to two families;
+full function and history reads remain available.
+
+
+### Current targets and automatic selection
+
+`family_targets(function, family="declaration_order")` returns the current candidate revision and
+up to six valid declaration pairs, with tried/untried status. `family="signedness"` lists only
+supported unique integer declarations. `expression="value"` also lists the count and first six line
+numbers of literal occurrences; use `family="casts"` when only expression locations are needed.
+This is a read-only operation: no full source download or compile. Error choices and claim hints use
+the same validity filter, so a variable without a supported adjacent declaration is not offered as a
+swap target.
+
+`compile_family(function, revision, family="declaration_order", target="next")` selects the first
+valid untried pair locally, or reports that none remain without compiling. Signedness supports the
+same selection. Do not combine `target="next"` with `old`, `declaration` or `occurrence`. Existing
+revision checks, the exact judge, attempt caps and batch budgets still apply. A target is recorded
+only after at least one trial was submitted. Tried status is scoped to the candidate revision,
+project configuration and context versions; it does not blacklist targets after a compiler/header
+change. Explicit declaration/anchor requests remain available for deliberate retries. Cast expressions
+remain agent-selected rather than guessed automatically.
+
+`redraft` requires actual nonempty C declarations in `context`; it is not a refresh command. Use
+`get_function(section="candidate")` to inspect the existing C. Compiler and flag findings belong in
+`compiler_map`, `try_compiler`/`search_flags`, or `suggest` for proposed setup changes, not
+`share_knowledge`. Invalid requests explain the appropriate tool and perform no drafting or knowledge write.
+
+
+Captured repair patterns now run in the deterministic draft-repair round before random permutation.
+Saved m2c argument-position refinements run first; bounded typed temporaries, branch orientation,
+narrowing and known-debug-flag source-line variants follow, within the existing 32-compile/20-second
+round budget and rotating function queue. Agents can also request `compile_family` with
+`typed_temporary`, `branch_orientation`, `narrowing`, or `source_lines` and just function/revision.
+Imported projects share the source patterns and normal objdiff judge; automatic source-line trials
+await recorded per-file debug flags (ROADMAP).
+
+New repair captures prefer a failed candidate with matching recorded settings and retain the last
+failed trial by the winning agent separately, including its source/header and diff in full exports.
+ROM submissions record the selected compiler configuration and command template at compilation,
+including failures. Imported builds still explicitly mark effective per-file flags as unavailable.
+Agent batches/families attach family, variant and base revision provenance automatically; deterministic
+background repairs attach candidate fingerprints. The evidence remains observational and cannot
+prove a particular edit caused a match. Older captures are unchanged.
+
+### Kimi Code helpers
+
+Select **Kimi Code** under **Start agents** after installing the CLI and signing in with `kimi login`.
+The desktop app and CLI share the account configuration. Models come from your Kimi Code model list;
+choose its default or another configured alias. Effort options are low, high and max, subject to model support.
+
+Each helper uses a private Kimi data directory with copies of its login credentials and provider/model
+settings. Only decompdecomp's MCP tools are enabled: user MCP servers, hooks, plugins and built-in shell,
+file and web tools are not enabled. Prompts arrive on stdin through a Node launcher, rather than OS argv.
+Your original Kimi settings are not edited. If copied credentials expire, sign in again and restart the helper.
+
+Text and tool activity stream into the agent feed. At normal session exit, request usage is read from
+that session's local `usage.record` entries, keeping input, cache reads, cache writes and output separate.
+Context occupancy is never counted as spend, and duplicate step summaries are ignored. Abrupt termination
+can leave usage unreported. Kimi subscription usage has no invented dollar charge. Ordinary claiming,
+matching, per-session limits, stopping, restarting and model statistics use the shared helper pipeline.
+
+Validated locally with Kimi Code 2.3.3 against an isolated HTTP MCP server using an existing desktop login.
+The CLI called the test tool and returned its result; its token breakdown was recorded. No game project
+or live helper was used for that smoke test.

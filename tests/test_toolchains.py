@@ -710,3 +710,37 @@ def test_threads_that_all_need_a_free_tool_install_it_once(tc_root, monkeypatch)
         t.join()
     assert not errors and len(downloads) == 1 and toolchains.installed("fake") is not None
     assert not list((toolchains.root() / ".downloads").glob("*.part"))  # (written beside it, then moved whole)
+
+
+@pytest.mark.parametrize('platform', ['macos-arm64', 'macos-x86_64'])
+def test_wibo_is_supported_and_visible_as_a_mac_tool(tc_root, monkeypatch, platform):
+    from decompnet.app.engine import TOOLS
+    monkeypatch.setattr(toolchains, 'current_platform', lambda: platform)
+    assert 'wibo' in TOOLS
+    row = next(t for t in toolchains.status() if t['id'] == 'wibo')
+    assert row['supported'] and not row['installed'] and row['kind'] == 'tool'
+    with pytest.raises(toolchains.ToolchainError, match='Compilers & tools → Tools'):
+        toolchains.require('wibo')
+
+
+def test_install_repairs_missing_runtime_without_reinstalling_compiler(tc_root, monkeypatch):
+    url, sha = _archive(tc_root, 'runtime', {'runner':'test runtime'})
+    compiler_url, compiler_sha = _archive(tc_root, 'compiler', {'compiler':'test compiler'})
+    reg = {
+        'runner':toolchains.Toolchain(id='runner',name='Runner',license='MIT',source='test',kind='tool',
+                                     parts=[{'url':url,'sha256':sha}]),
+        'compiler':toolchains.Toolchain(id='compiler',name='Compiler',license='MIT',source='test',requires=['runner'],
+                                       parts=[{'url':compiler_url,'sha256':compiler_sha}]),
+    }
+    monkeypatch.setattr(toolchains, 'registry', lambda: reg)
+    toolchains.install('compiler', log=lambda _:None)
+    compiler = toolchains.path('compiler')
+    stamp = (compiler/toolchains.MANIFEST).stat().st_mtime_ns
+    shutil.rmtree(toolchains.path('runner'))
+    row = next(t for t in toolchains.status() if t['id'] == 'compiler')
+    assert row['installed'] and row['missing_dependencies'] == [{'id':'runner','name':'Runner'}]
+    toolchains.install('compiler', log=lambda _:None)
+    assert (compiler/toolchains.MANIFEST).stat().st_mtime_ns == stamp
+    assert toolchains.require('runner').is_dir()
+    assert len(toolchains.runtime_dirs('compiler')) == 2
+    assert next(t for t in toolchains.status() if t['id'] == 'compiler')['missing_dependencies'] == []

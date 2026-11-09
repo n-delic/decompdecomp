@@ -8,12 +8,13 @@ from __future__ import annotations
 import difflib
 import math
 import re
-from collections import Counter
+import threading
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 
 import capstone
 
-from . import arch
+from . import arch, compile_sessions
 from .elfobj import FunctionObj, mask_relocs
 
 PENALTY_STACKDIFF = 1
@@ -41,6 +42,7 @@ class Insn:
     mnemonic: str
     operands: str
     text: str  # normalized "mnemonic operands" with reloc targets symbolized
+    encoding: bytes = b""  # relocation-masked bytes; aliases can hide different machine instructions
 
 
 def percent_text(p: float | None) -> str:
@@ -55,7 +57,26 @@ def percent_text(p: float | None) -> str:
 VARIANT_INSN_BYTES = 4  # what a variant's own reader decodes (arch.Arch.variants): fixed-width words
 
 
+_decoders = threading.local()
+
+
 def disassemble(fn: FunctionObj, cpu: str | None = None) -> list[Insn]:
+    key = (_comparison_key(fn), cpu)
+    cache = getattr(_decoders, "instructions", None)
+    if cache is None:
+        cache = _decoders.instructions = OrderedDict()
+    if key in cache:
+        cache.move_to_end(key)
+        return [Insn(*values) for values in cache[key]]
+    result = _disassemble(fn, cpu)
+    if len(fn.code) <= 32768:
+        cache[key] = tuple((ins.offset, ins.mnemonic, ins.operands, ins.text, ins.encoding) for ins in result)
+        while len(cache) > 8:
+            cache.popitem(last=False)
+    return result
+
+
+def _disassemble(fn: FunctionObj, cpu: str | None = None) -> list[Insn]:
     """A function's instructions, with relocated fields masked and named after their symbols, so the target and a
     candidate compare by what they do, not by where they were linked. `cpu`: the processor's variant (fn.cpu by
     default); one capstone can't decode (the PSP's Allegrex) is read by its processor's own reader (arch/)."""
@@ -65,14 +86,25 @@ def disassemble(fn: FunctionObj, cpu: str | None = None) -> list[Insn]:
         lines = [(at, VARIANT_INSN_BYTES, name, ops, None) for at, name, ops in own(code, fn.big_endian)]
     else:
         cs_arch, mode = _CS[(fn.arch, fn.big_endian)]
-        md = capstone.Cs(cs_arch, mode)
-        md.detail = True
-        md.skipdata = True
+        decoders = getattr(_decoders, "values", None)
+        if decoders is None:
+            decoders = _decoders.values = {}
+        md = decoders.get((cs_arch, mode))
+        if md is None:
+            md = decoders[cs_arch, mode] = capstone.Cs(cs_arch, mode)
+            md.detail = True
+            md.skipdata = True
         lines = [(ins.address, ins.size, ins.mnemonic, ins.op_str, ins) for ins in md.disasm(code, 0)]
     mips_names = _mips_reloc_names(fn.relocs) if fn.arch == "mips" else {}
+    # Preserve original relocation precedence, including duplicate offsets.
+    relocation_order = {id(r): index for index, r in reversed(list(enumerate(fn.relocs)))}
+    relocations = {}
+    for relocation in fn.relocs:
+        relocations.setdefault(relocation.offset, relocation)
     out: list[Insn] = []
     for address, size, mnemonic, ops, ins in lines:
-        rel = next((r for r in fn.relocs if address <= r.offset < address + size), None)
+        nearby = [relocations[offset] for offset in range(address, address + size) if offset in relocations]
+        rel = min(nearby, key=lambda r: relocation_order[id(r)]) if nearby else None
         if rel is not None and rel.offset in mips_names:
             ops = _mips_symbolize(ops, mips_names[rel.offset])
         elif rel is not None:
@@ -84,7 +116,7 @@ def disassemble(fn: FunctionObj, cpu: str | None = None) -> list[Insn]:
             ops = _symbolize(ins, ops, rel.offset - address, target, fn.arch)
         elif ins is not None and ins.id and ins.group(capstone.CS_GRP_JUMP) and _NUM.match(ops.strip()):
             ops = f".L{int(ops, 16):x}"  # intra-function branch: keep it position-relative
-        out.append(Insn(address, mnemonic, ops, f"{mnemonic} {ops}".strip()))
+        out.append(Insn(address, mnemonic, ops, f"{mnemonic} {ops}".strip(), code[address:address + size]))
     return out
 
 
@@ -99,7 +131,10 @@ def _mips_reloc_names(relocs) -> dict[int, str]:
     out: dict[int, str] = {}
     for k, r in enumerate(relocs):
         if r.type == 4:  # R_MIPS_26
-            out[r.offset] = r.symbol
+            # REL jump addends are instruction words, not bytes. Keeping the symbol alone hid
+            # jumps to different labels within the same function even though the exact judge failed.
+            off = r.addend << 2
+            out[r.offset] = f"{r.symbol}{f'{off:+#x}' if off else ''}"
         elif r.type in (5, 6):  # R_MIPS_HI16 / R_MIPS_LO16
             if r.type == 5:
                 pair = next((x for x in relocs[k + 1:] if x.type == 6 and x.symbol == r.symbol), None)
@@ -174,7 +209,8 @@ class DiffResult:
         """Compact side-by-side diff: a count of each kind of mismatch, then only mismatches with a little context.
         Long runs of missing or extra instructions are shortened (a half-written function would otherwise spend
         every row on code that isn't there yet), so each compile costs the agent little context."""
-        return render_rows(self.rows, context, max_rows)
+        from .diff_summary import text
+        return text(self.rows)+"\n"+render_rows(self.rows, context, max_rows)
 
 
 def first_mismatch(rows: list[tuple[str, str, str]]) -> tuple[int, int, tuple[str, str, str] | None]:
@@ -353,12 +389,63 @@ def compact_asm(text: str) -> str:
     return "\n".join(out)
 
 
+def _prepared_target(target):
+    session = compile_sessions.current()
+    if session is None or len(target.code) > 65536:
+        return disassemble(target), target.fingerprint()
+    # Key all fields actually used by disassembly/fingerprinting, including relocation
+    # symbol names and CPU variants. Never cache candidate instructions as target state.
+    key = (target.name, target.arch, target.big_endian, target.cpu, bytes(target.code),
+           tuple(r.key() for r in target.relocs))
+    if key not in session.instructions:
+        session.instructions[key] = (disassemble(target), target.fingerprint())
+        while len(session.instructions) > 8:session.instructions.popitem(last=False)
+    return session.instructions[key]
+
+
+def _comparison_key(fn):
+    return (fn.name, fn.arch, fn.big_endian, fn.cpu, bytes(fn.code), tuple(r.key() for r in fn.relocs))
+
+
+def score(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
+    """Identical scoring without allocating diagnostic rows for ordinary misses."""
+    return _diff(target, candidate, details=False)
+
+
 def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
+    # Advisory instruction comparisons only. Link verdicts and source locations are
+    # computed by callers for the actual object, even when two C variants emit alike.
+    session = compile_sessions.current()
+    key = None
+    if session is not None and len(target.code) + len(candidate.code) <= 32768:
+        key = (_comparison_key(target), _comparison_key(candidate))
+        cached = session.comparisons.get(key)
+        if cached is not None:
+            session.comparisons.move_to_end(key)
+            from .compile_timing import add
+            add('comparison_hits', 1)
+            return DiffResult(cached.score, cached.max_score, list(cached.rows), cached.bytes_match)
+    result = _diff(target, candidate)
+    if key is not None and result.score > 0 and not result.bytes_match:
+        # Bound both retained machine bytes and potentially large diagnostic rows.
+        size = len(repr((key, result)).encode())
+        if size <= 1024 * 1024:
+            session.comparisons[key] = DiffResult(result.score, result.max_score, list(result.rows), result.bytes_match)
+            session.comparison_bytes += size
+            session.comparison_sizes[key] = size
+            while len(session.comparisons) > 128 or session.comparison_bytes > 8 * 1024 * 1024:
+                old, _ = session.comparisons.popitem(last=False)
+                session.comparison_bytes -= session.comparison_sizes.pop(old)
+    return result
+
+
+def _diff(target: FunctionObj, candidate: FunctionObj, *, details=True) -> DiffResult:
     """Compare a candidate with the target instruction by instruction: a score (0 is a match, lower is closer), the
     rows to show, and what's missing or extra. Equal bytes are a match whatever the score."""
-    t_ins, c_ins = disassemble(target), disassemble(candidate, target.cpu)  # (a candidate is the target's processor)
+    t_ins, target_fingerprint = _prepared_target(target)
+    c_ins = disassemble(candidate, target.cpu)  # a candidate is the target's processor
     max_score = max(1, len(t_ins)) * PENALTY_INSERTION
-    bytes_match = target.fingerprint() == candidate.fingerprint()
+    bytes_match = target_fingerprint == candidate.fingerprint()
 
     sm = difflib.SequenceMatcher(a=[i.mnemonic for i in t_ins], b=[i.mnemonic for i in c_ins], autojunk=False)
     rows: list[tuple[str, str, str]] = []
@@ -370,21 +457,29 @@ def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
             for a, b in zip(t_ins[a0:a1], c_ins[b0:b1]):
                 pen, mark = _classify(a, b)
                 score += pen
-                rows.append((mark, a.text, b.text))
+                if not details:
+                    continue
+                if not bytes_match and a.text == b.text and a.encoding != b.encoding:
+                    # e.g. 32-bit addu and 64-bit daddu both disassemble as "move".
+                    # Keep the existing score; make the strict judge's byte disagreement visible.
+                    rows.append(("|", f"{a.text} [bytes {a.encoding.hex()}]",
+                                 f"{b.text} [bytes {b.encoding.hex()}]"))
+                else:
+                    rows.append((mark, a.text, b.text))
             continue
         ta, cb = t_ins[a0:a1], c_ins[b0:b1]
         for k in range(max(len(ta), len(cb))):
             a = ta[k] if k < len(ta) else None
             b = cb[k] if k < len(cb) else None
             if a and b:
-                rows.append(("|", a.text, b.text))
+                if details:rows.append(("|", a.text, b.text))
                 missing[a.text] += 1
                 extra[b.text] += 1
             elif a:
-                rows.append(("<", a.text, ""))
+                if details:rows.append(("<", a.text, ""))
                 missing[a.text] += 1
             else:
-                rows.append((">", "", b.text))
+                if details:rows.append((">", "", b.text))
                 extra[b.text] += 1
     # instructions that are merely in the wrong place are cheaper than real insert/delete
     reordered = sum((missing & extra).values())

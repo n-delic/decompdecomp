@@ -8,10 +8,10 @@ import mimetypes
 import secrets
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ... import __version__, hostenv
-from .. import edition, window
+from .. import edition, frontend_reload, window
 from ..support import static_file
 from . import App
 
@@ -33,22 +33,47 @@ def register(app: App) -> None:
     async def index(request: Request) -> Response:
         if request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"error": "bad host"}, status_code=403)
-        if not secrets.compare_digest(window.request_token(request), secret):
-            return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_old_windows_install() else OLD_PAGE_LINUX), status_code=401)
-        return HTMLResponse(static_file("index.html").decode(), headers={"Cache-Control": "no-store"})
+        if app.web_login and not (app.web_login.authorized(request) or secrets.compare_digest(window.request_token(request), secret)):
+            return RedirectResponse('/login', status_code=303, headers={'Cache-Control':'no-store'})
+        if not app.web_login and not secrets.compare_digest(window.request_token(request), secret):
+            return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if await app.call(hostenv.in_old_windows_install) else OLD_PAGE_LINUX), status_code=401)
+        revisions = await app.call(frontend_reload.snapshot) if frontend_reload.enabled() else None
+        page=(await app.call(static_file, "index.html")).decode()
+        if revisions:
+            page=page.replace('</head>', f'<meta name="decomp-live-reload" data-css="{revisions["css"]}" data-page="{revisions["page"]}"></head>')
+            page=page.replace('</body>', '<script src="/assets/js/live-reload.js"></script></body>')
+        if app.web_login and not secrets.compare_digest(window.request_token(request), secret):
+            page=page.replace("form-action 'none'", "form-action 'self'").replace('<body>', '<body data-server-mode="1">')
+            page=page.replace('</aside>', '<form class="web-session" method="post" action="/logout"><span>Server mode</span><button type="submit">Sign out</button></form></aside>', 1)
+            page=page.replace('</head>', '<link rel="stylesheet" href="/assets/server.css"></head>')
+        return HTMLResponse(page, headers={"Cache-Control": "no-store", 'Referrer-Policy':'same-origin', 'X-Frame-Options':'DENY'})
+
+    @mcp.custom_route("/api/frontend-revision", methods=["GET"])
+    async def frontend_revision(request: Request) -> Response:
+        if (bad := app.guard(request)):
+            return bad
+        revisions = await app.call(frontend_reload.snapshot) if frontend_reload.enabled() else {}
+        return JSONResponse({'enabled': frontend_reload.enabled(), **revisions}, headers={'Cache-Control': 'no-store'})
+
+    @mcp.custom_route("/sw.js", methods=["GET"])
+    async def service_worker(request: Request) -> Response:
+        if request.headers.get('host') not in allowed_hosts:
+            return Response(status_code=403)
+        script = (await app.call(static_file, 'sw.js')).decode().replace('__BUILD__', build_id or __version__)
+        return Response(script, media_type='text/javascript', headers={'Cache-Control':'no-cache', 'Service-Worker-Allowed':'/'})
 
     @mcp.custom_route("/assets/{name:path}", methods=["GET"])
     async def asset(request: Request) -> Response:
         if request.headers.get("host") not in allowed_hosts:
             return Response(status_code=403)
         name = request.path_params["name"]
-        data = static_file(name)
+        data = await app.call(static_file, name)
         if data is None:
             return Response(status_code=404)
-        ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        ctype = (await app.call(mimetypes.guess_type, name))[0] or "application/octet-stream"
         return Response(data, media_type=ctype, headers={"Cache-Control": "no-cache"})
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "app": "decomp-wtf", "edition": edition.NAME, "version": __version__,
-                             "build": build_id})
+                             "build": app.build_id, "mode":"serve" if app.headless else "desktop", "web_interface":app.web_login is not None})

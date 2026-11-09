@@ -34,6 +34,7 @@ subdir = "usr/lib32"
 platforms = ["wsl-x86_64"]
 
 ["gcc-2.7.2-kmc"]
+intrinsics = "decompnet.arch.mips_debug_break"
 name = "GCC 2.7.2 (KMC-compatible) + binutils 2.6"
 platform = "N64"
 arch = "mips"
@@ -61,46 +62,20 @@ sha256 = "ab21ad5908fb7776a4b0c596cc82f216876e3b5d108c7c7c1f33543b3f3fce4c"
 platforms = ["macos-x86_64", "macos-arm64"]
 rosetta = true
 
-["gcc-2.5.7-psx"]
-name = "GCC 2.5.7 for PlayStation + maspsx (ASPSX 2.08)"
-platform = "PS1"
-arch = "mipsel"
-license = "GPL-2.0"
-source = "decompals/old-gcc 0.17 (gcc-2.5.7-psx)"
-description = "GCC 2.5.7 with the PlayStation patches, for early PlayStation games (1995); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.08 did, then GNU as. ASPSX 2.08's division check uses tge, a MIPS II instruction, so its assembly is assembled as MIPS II rather than the R3000's MIPS I."
-requires = ["maspsx", "binutils-mips"]
-cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=mips2 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.08", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
-flags = ["-O2", "-G8"]
-[["gcc-2.5.7-psx".parts]]
-url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.5.7-psx.tar.gz"
-sha256 = "0db1fb403c766e51b094354b9a136a6c1f01457aa41ccca28ac457b7cb67d871"
-platforms = ["linux-x86_64"]
-
-["gcc-2.6.0-psx"]
-name = "GCC 2.6.0 for PlayStation + maspsx (ASPSX 2.34)"
-platform = "PS1"
-arch = "mipsel"
-license = "GPL-2.0"
-source = "decompals/old-gcc 0.17 (gcc-2.6.0-psx)"
-description = "GCC 2.6.0 with the PlayStation patches, the compiler of PSY-Q 3.3 to 3.5 (1995-1996); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.34 did, then GNU as."
-requires = ["maspsx", "binutils-mips"]
-cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
-flags = ["-O2", "-G8"]
-[["gcc-2.6.0-psx".parts]]
-url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.6.0-psx.tar.gz"
-sha256 = "358dac949f0f566af9c6af93bba0d4ac04d56ca9df80c58bd66d81bbb50deceb"
-platforms = ["linux-x86_64"]
-
 ["gcc-2.6.3-psx"]
+intrinsics = "decompnet.consoles.ps1.gte"
 name = "GCC 2.6.3 for PlayStation + maspsx (ASPSX 2.34)"
 platform = "PS1"
 arch = "mipsel"
 license = "GPL-2.0"
 source = "GNU GCC 2.6.3 (Slackware 2.2.0); PS1 patches from decompals/old-gcc 0.17"
-description = "GCC 2.6.3 with the PlayStation patches, an early PlayStation compiler (1995-1996); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.34 did, then GNU as."
+description = "GCC 2.6.3 with the PlayStation patches, an early PlayStation compiler variant; its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.34 did, then GNU as."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
+cplusplus = true
 [["gcc-2.6.3-psx".parts]]
 url = "https://mirrors.slackware.com/slackware/slackware-2.2.0/source/d/gcc/gcc-2.6.3.tar.gz"
 sha256 = "66529b6ced4ccc580ec365809c1abed856d948283deff656801dec14f47d081a"
@@ -125,6 +100,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.7.2-cdk)"
 description = "The 2.7.2 build from Cygnus' PlayStation Developer's Kit (CDK), the compiler of PSY-Q 4.1 (1997); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.67 did, then GNU as. It is not the same build as the 2.7.2 PSY-Q compiler: code generation differs."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.67", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.67", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 [["gcc-2.7.2-cdk-psx".parts]]
@@ -138,15 +115,19 @@ sha256 = "43fe3df44badd23d57075adc06ab177d980b1e29f0392a5426e89f652c832d1a"
 platforms = ["macos-arm64"]
 
 ["gcc-2.7.2-psx"]
+intrinsics = "decompnet.consoles.ps1.gte"
 name = "GCC 2.7.2 for PlayStation + maspsx (ASPSX 2.56)"
 platform = "PS1"
 arch = "mipsel"
 license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.7.2-psx)"
-description = "GCC 2.7.2 with the PlayStation patches, the compiler of PSY-Q 4.0 and 4.1 (1996-1997); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.56 did, then GNU as."
+description = "GCC 2.7.2 with the PlayStation patches, a PSY-Q 4.0-era compiler; its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.56 did, then GNU as."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.56", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.56", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
+cplusplus = true
 [["gcc-2.7.2-psx".parts]]
 url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-psx.tar.gz"
 sha256 = "500a459b3485e885a8d302cac23c2a4632f3900e03a09153f6190699fd723571"
@@ -157,31 +138,20 @@ url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-psx
 sha256 = "4280894661c9792bc19f5c970c283d35381937fb44e479a91d0c044c95fcd208"
 platforms = ["macos-arm64"]
 
-["gcc-2.8.0-psx"]
-name = "GCC 2.8.0 for PlayStation + maspsx (ASPSX 2.77)"
-platform = "PS1"
-arch = "mipsel"
-license = "GPL-2.0"
-source = "decompals/old-gcc 0.17 (gcc-2.8.0-psx)"
-description = "GCC 2.8.0 with the PlayStation patches, the compiler of PSY-Q 4.3 (1997-1998); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.77 did, then GNU as."
-requires = ["maspsx", "binutils-mips"]
-cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.77", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
-flags = ["-O2", "-G8"]
-[["gcc-2.8.0-psx".parts]]
-url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.0-psx.tar.gz"
-sha256 = "1a3c956fe8aea5ebdb251749d95de2c84f023530584d7bd663744b5ec24050b7"
-platforms = ["linux-x86_64"]
-
 ["gcc-2.8.1-psx"]
+intrinsics = "decompnet.consoles.ps1.gte"
 name = "GCC 2.8.1 for PlayStation + maspsx (ASPSX 2.79)"
 platform = "PS1"
 arch = "mipsel"
 license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.8.1-psx)"
-description = "GCC 2.8.1 with the PlayStation patches, the compiler of PSY-Q 4.4 (1998); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.79 did, then GNU as."
+description = "GCC 2.8.1 with the PlayStation patches, a PSY-Q 4.4-era compiler; its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.79 did, then GNU as."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.79", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.79", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
+cplusplus = true
 [["gcc-2.8.1-psx".parts]]
 url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.1-psx.tar.gz"
 sha256 = "f6f6e883942d4d3289d048236c672e71ed410e546aaae8ff655952f1567e1be0"
@@ -192,31 +162,137 @@ url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.1-psx
 sha256 = "bab0c6ea1f394573d5aabbdd7b37e36aceeb83c522141d946a87a9f58c199ea0"
 platforms = ["macos-arm64"]
 
+["gcc-2.5.7-psx"]
+name = "GCC 2.5.7-psx for PlayStation + maspsx (ASPSX 2.08)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.5.7-psx)"
+description = "Early PS1 code; uses ASPSX 2.08 behaviour, as in a matching early platform game build."
+requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; case \"$src\" in *.cpp) set -- -x c++ \"$@\";; esac; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.08", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; case "$src" in *.cpp) set -- -x c++ "$@";; esac; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.08", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+cplusplus = true
+[["gcc-2.5.7-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.5.7-psx.tar.gz"
+sha256 = "0db1fb403c766e51b094354b9a136a6c1f01457aa41ccca28ac457b7cb67d871"
+platforms = ["linux-x86_64"]
+
+["gcc-2.6.0-psx"]
+name = "GCC 2.6.0-psx for PlayStation + maspsx (ASPSX 2.34)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.6.0-psx)"
+description = "Early PSY-Q-era GCC; uses ASPSX 2.34 behaviour. Some original SDK releases paired this compiler with older assemblers."
+requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+cplusplus = true
+[["gcc-2.6.0-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.6.0-psx.tar.gz"
+sha256 = "358dac949f0f566af9c6af93bba0d4ac04d56ca9df80c58bd66d81bbb50deceb"
+platforms = ["linux-x86_64"]
+[["gcc-2.6.0-psx".parts]]
+url = "https://www.nic.funet.fi/index/gnu/funet/historical-funet-gnu-area-from-early-1990s/gcc-2.6.0.tar.gz"
+sha256 = "678b217098c40ea23c14ff36c42c6e1c85a375b1d9fa235525f209c826525695"
+platforms = ["macos-arm64", "macos-x86_64"]
+build = "psx-gcc"
+patches_url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+patches_sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+config_guess_url = "https://raw.githubusercontent.com/gcc-mirror/gcc/74af13c174714dd3b9f1ded4b39955f003c16361/config.guess"
+config_guess_sha256 = "7d1e3c79b86de601c3a0457855ab854dffd15163f53c91edac54a7be2e9c931b"
+config_sub_url = "https://raw.githubusercontent.com/gcc-mirror/gcc/6fad101f3063d722e3348d07dc93cf737f8709e4/config.sub"
+config_sub_sha256 = "71b8d73e46e0c31b1dc91ba5306f5ef0af009273b3bb283f31d8dad69666fa9e"
+version = "2.6.0"
+
+["gcc-2.7.2-cdk"]
+name = "GCC 2.7.2-cdk for PlayStation + maspsx (ASPSX 2.67)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.7.2-cdk)"
+description = "Cygnus CDK GCC variant for PS1, corresponding to the PSY-Q 4.1-era compiler and ASPSX 2.67."
+requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.67", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.67", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+cplusplus = true
+[["gcc-2.7.2-cdk".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-cdk.tar.gz"
+sha256 = "42bb0df96db11a9b5d2e23d78bdc962791f40046280d3d360da93fe5eef6f0bb"
+platforms = ["linux-x86_64"]
+[["gcc-2.7.2-cdk".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-cdk-macos.tar.gz"
+sha256 = "43fe3df44badd23d57075adc06ab177d980b1e29f0392a5426e89f652c832d1a"
+platforms = ["macos-arm64"]
+
+["gcc-2.8.0-psx"]
+name = "GCC 2.8.0-psx for PlayStation + maspsx (ASPSX 2.77)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.8.0-psx)"
+description = "PSY-Q 4.3-era GCC with ASPSX 2.77 behaviour."
+requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.77", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.77", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+cplusplus = true
+[["gcc-2.8.0-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.0-psx.tar.gz"
+sha256 = "1a3c956fe8aea5ebdb251749d95de2c84f023530584d7bd663744b5ec24050b7"
+platforms = ["linux-x86_64"]
+[["gcc-2.8.0-psx".parts]]
+url = "https://mirrors.kernel.org/gnu/gcc/gcc-2.8.0.tar.gz"
+sha256 = "549e0482caa6c7fbdec723fae3f7748d35290d9f89cc02fe5a60e6a42b237abd"
+platforms = ["macos-arm64", "macos-x86_64"]
+build = "psx-gcc"
+patches_url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
+patches_sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
+config_guess_url = "https://raw.githubusercontent.com/gcc-mirror/gcc/74af13c174714dd3b9f1ded4b39955f003c16361/config.guess"
+config_guess_sha256 = "7d1e3c79b86de601c3a0457855ab854dffd15163f53c91edac54a7be2e9c931b"
+config_sub_url = "https://raw.githubusercontent.com/gcc-mirror/gcc/6fad101f3063d722e3348d07dc93cf737f8709e4/config.sub"
+config_sub_sha256 = "71b8d73e46e0c31b1dc91ba5306f5ef0af009273b3bb283f31d8dad69666fa9e"
+version = "2.8.0"
+
 ["gcc-2.91.66-psx"]
-name = "EGCS 2.91.66 for PlayStation + maspsx (ASPSX 2.81)"
+name = "GCC 2.91.66-psx for PlayStation + maspsx (ASPSX 2.81)"
 platform = "PS1"
 arch = "mipsel"
 license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.91.66-psx)"
-description = "EGCS 2.91.66 (EGCS 1.1.2) with the PlayStation patches, the compiler of PSY-Q 4.5 (1999); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.81 did, then GNU as."
+description = "EGCS 1.1.2 (GCC 2.91.66), corresponding to PSY-Q 4.5, with ASPSX 2.81 behaviour."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.81", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.81", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
+cplusplus = true
 [["gcc-2.91.66-psx".parts]]
 url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.91.66-psx.tar.gz"
 sha256 = "f773a0a9659fa4ff74313ac4363d939312e8125675cd09ad9f8c1202f587f1fd"
 platforms = ["linux-x86_64"]
 
 ["gcc-2.95.2-psx"]
-name = "GCC 2.95.2 for PlayStation + maspsx (ASPSX 2.86)"
+name = "GCC 2.95.2-psx for PlayStation + maspsx (ASPSX 2.86)"
 platform = "PS1"
 arch = "mipsel"
 license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.95.2-psx)"
-description = "GCC 2.95.2 with the PlayStation patches, the compiler of PSY-Q 4.6 (1999-2000); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.86 did, then GNU as."
+description = "PSY-Q 4.6-era GCC 2.95.2 with ASPSX 2.86 behaviour."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.86", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.86", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
-flags = ["-O2", "-G8"]
+flags = ["-O2", "-G8", "-mel"]
+cplusplus = true
 [["gcc-2.95.2-psx".parts]]
 url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.95.2-psx.tar.gz"
 sha256 = "932ed3669710a82b12570c29c46ff42989b6505b2af10db84d4551d55dfc0b1c"
@@ -234,6 +310,7 @@ sha256 = "9f8ea9827b785ae41437befa8ebdceb8c00f3b1e8f3a90c506948e2df1079bde"
 subdir = "maspsx-e85ecb373828aabea96d7e6400974d4f91ce8c74"
 platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
+# Sony packs retain their original i386 binaries on Mac, through the shared local Linux runner.
 ["ee-gcc-2.96"]
 linux_vm = true
 cplusplus = true
@@ -272,6 +349,7 @@ sha256 = "99cb5db603cd985b50fc6851157020ad69489f2227309ccf825bd43ac7bc19dd"
 platforms = ["linux-x86_64"]
 
 ["ee-gcc-2.95.2"]
+space_free_runtime = true
 cplusplus = true
 name = "EE-GCC 2.95.2 (SN Systems 273a)"
 platform = "PS2"
@@ -288,6 +366,7 @@ sha256 = "ee9d9a7fccb59aebfa78a5587f6f8059660b91f705acddbc292ad2243c8e562e"
 platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["ee-gcc-2.95.3"]
+space_free_runtime = true
 cplusplus = true
 name = "EE-GCC 2.95.3 (SN Systems 136)"
 platform = "PS2"
@@ -1164,6 +1243,18 @@ url = "https://github.com/encounter/sjiswrap/releases/download/v1.2.2/sjiswrap-w
 sha256 = "01d50fa1148cfc3c3b16658c6c9b1c0d9f5324cde79ed6c09ef8353af9d63adf"
 binary = "sjiswrap.exe"
 
+[dtk-signatures]
+name = "decomp-toolkit SDK fingerprints"
+kind = "tool"
+license = "MIT OR Apache-2.0"
+source = "encounter/decomp-toolkit v1.8.4"
+description = "Public relocation-masked GameCube/Wii SDK fingerprints; no SDK source or compiler."
+[[dtk-signatures.parts]]
+url = "https://github.com/encounter/decomp-toolkit/archive/refs/tags/v1.8.4.tar.gz"
+sha256 = "d28a44cdbc2a112838ef242b2a53a690f5884eeee215eb01d0c4da92c88096a8"
+subdir = "decomp-toolkit-1.8.4"
+keep = { "assets/signatures" = "signatures", "LICENSE-MIT" = "LICENSE-MIT", "LICENSE-APACHE" = "LICENSE-APACHE" }
+
 [dtk-template]
 name = "dtk-template"
 kind = "template"
@@ -1175,43 +1266,465 @@ url = "https://github.com/encounter/dtk-template/archive/95a941f755919ebe50c1725
 sha256 = "c49f889a4e092388beef4867340887ec6f0410bd1055d79a8f8850bea89ada61"
 subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
 
-# UNPUBLISHED DRAFT (commented out on purpose: the release below doesn't exist yet, so nothing may try to download it).
-# Sony's PS3 PPU compiler, built from the GPL sources Sony published (packaging/ps3-gcc/). To publish:
-#   packaging/ps3-gcc/build.sh 1.9.0 dist && packaging/ps3-gcc/build.sh 2.7.0 dist
-#   gh release create ps3-gcc-1.9.0 dist/ppu-lv2-gcc-1.9.0.tar.xz --title "PS3 ppu-lv2-gcc 1.9.0 (GPL build)" \
-#      --notes "GCC 4.1.1 + binutils 2.17 built from Sony's GPL source; the exact source is inside the archive."
-#   (same for 2.7.0), then sha256sum the uploaded files, fix the sha256 below if the rebuild differs, and uncomment.
-# The archive carries the source it was built from (share/doc/ppu-lv2-gcc/ps3gcc-source.tar.gz) and the GPL texts.
-# No libgcc, crt files or SDK headers: the app compiles to objects and links itself.
-#
-# ["ppu-lv2-gcc-1.9.0"]
-# cplusplus = true
-# name = "PPU GCC 4.1.1 (SDK 1.9.0, CELL 4.1.2.7)"
-# platform = "PS3"
-# arch = "ppc64"
-# license = "GPL-2.0-or-later"
-# source = "Sony's published GPL toolchain source, sagemono/ps3gcc commit 8bc057a8fb9e, built by packaging/ps3-gcc"
-# description = "The PS3 SDK's PowerPC compiler, generation 1.9.0 (early PS3 games), rebuilt from its GPL source."
-# cc = ["{tc}/bin/ppu-lv2-gcc", "-c"]
-# flags = ["-O2"]
-# [["ppu-lv2-gcc-1.9.0".parts]]
-# url = "https://github.com/n-delic/decompdecomp/releases/download/ps3-gcc-1.9.0/ppu-lv2-gcc-1.9.0.tar.xz"
-# sha256 = "8ad0d07500cdf4e5b2fe3e3dbabf1bce41e6928bd51d1edb3d3e42c51057f53b"
-# subdir = "ppu-lv2-gcc-1.9.0"
-# platforms = ["linux-x86_64"]
-#
-# ["ppu-lv2-gcc-2.7.0"]
-# cplusplus = true
-# name = "PPU GCC 4.1.1 (SDK 2.7.0, $Rev: 3019 $)"
-# platform = "PS3"
-# arch = "ppc64"
-# license = "GPL-2.0-or-later"
-# source = "Sony's published GPL toolchain source, sagemono/ps3gcc commit dc6c3b99344, built by packaging/ps3-gcc"
-# description = "The PS3 SDK's PowerPC compiler, generation 2.7.0, rebuilt from its GPL source."
-# cc = ["{tc}/bin/ppu-lv2-gcc", "-c"]
-# flags = ["-O2"]
-# [["ppu-lv2-gcc-2.7.0".parts]]
-# url = "https://github.com/n-delic/decompdecomp/releases/download/ps3-gcc-2.7.0/ppu-lv2-gcc-2.7.0.tar.xz"
-# sha256 = "be179831ffde0bc185c68939dd43213d05afd4a502de6f56c8b6e6f5f3fc651c"
-# subdir = "ppu-lv2-gcc-2.7.0"
-# platforms = ["linux-x86_64"]
+
+["sn-n64-281"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.8.1"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "marijnvdwerf/sn64 release 1,0,0,2"
+description = "Original SN64 GCC 2.8.1, preprocessor and ASN64 2.78. Matching uses wibo and the pinned PsyQ-to-ELF converter."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mcpu=VR4300", "-mhard-float", "-mfp64"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+[["sn-n64-281".parts]]
+url = "https://github.com/marijnvdwerf/sn64/releases/download/1%2C0%2C0%2C2/cc1n64.exe"
+sha256 = "d90df1028c46d826e37146dbcc3e3385f78c59e05a9ddd952daa94c9ad379d9c"
+binary = "cc1n64.exe"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[["sn-n64-281".parts]]
+url = "https://github.com/marijnvdwerf/sn64/releases/download/1%2C0%2C0%2C2/asn64.exe"
+sha256 = "53e3a9f8b7b9a06c8f5a781f01074441df3469e6bbe2df5438ba4e2d8fcf3819"
+binary = "asn64.exe"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+[["sn-n64-281".parts]]
+url = "https://github.com/marijnvdwerf/sn64/releases/download/1%2C0%2C0%2C2/cppn64.exe"
+sha256 = "277f1db571ab963df68a07af8b128995493208776dd68a69979809e45d912595"
+binary = "cppn64.exe"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+["sn-n64-272-0001"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.7.2 (0001)"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "decompme/compilers n64_sn272_0001"
+description = "Original SN64 GCC 2.7.2 build 0001 and ASN64 2.56. Matching uses wibo and the pinned PsyQ-to-ELF converter."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+[["sn-n64-272-0001".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/n64_sn272_0001.tar.gz"
+sha256 = "17c57ccd5f2305fe5445c576d4cc2c1fea681dd78b29dd3d1f15c5ca0fdf2cea"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[psyq-obj-parser]
+name = "PsyQ object to ELF converter"
+kind = "tool"
+license = "GPL-2.0-or-later"
+source = "PCSX-Redux 8a86b7e and its pinned header dependencies"
+description = "Converts SN Systems objects to ELF; built locally with a C++20 compiler and zlib headers."
+build = "psyq-obj-parser"
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/grumpycoders/pcsx-redux/tar.gz/8a86b7ec1d246eb5ae9b213cac27aa2f7854a176"
+sha256 = "bebf3b6c67315a33191d1c338ad04297d1a3e10a5e8049bb4409492d489372a7"
+file = "psyq-pcsx-8a86b7ec1d246eb5ae9b213cac27aa2f7854a176.tar.gz"
+subdir = "pcsx-redux-8a86b7ec1d246eb5ae9b213cac27aa2f7854a176"
+into = "source/pcsx"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/fmtlib/fmt/tar.gz/407c905e45ad75fc29bf0f9bb7c5c2fd3475976f"
+sha256 = "2bc1fe4a5b6d5d6a614239b4ca1d520e66e152a02d3d262684d26dfd6ab3438a"
+file = "psyq-fmt-407c905e45ad75fc29bf0f9bb7c5c2fd3475976f.tar.gz"
+subdir = "fmt-407c905e45ad75fc29bf0f9bb7c5c2fd3475976f"
+into = "source/fmt"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/serge1/ELFIO/tar.gz/8ae6cec5d60495822ecd57d736f66149da9b1830"
+sha256 = "71c1a72e3fac6c9db3d4126c8f9b84bbda902e8dfb563f6dfcbed454636fa1c5"
+file = "psyq-elfio-8ae6cec5d60495822ecd57d736f66149da9b1830.tar.gz"
+subdir = "ELFIO-8ae6cec5d60495822ecd57d736f66149da9b1830"
+into = "source/elfio"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/Taywee/args/tar.gz/794f2dc7caa306984cf385cbb8e7176146514959"
+sha256 = "009aad8e019da87322cea8feaee68f8b2d1d5434511b23743292bdf474cdd983"
+file = "psyq-args-794f2dc7caa306984cf385cbb8e7176146514959.tar.gz"
+subdir = "args-794f2dc7caa306984cf385cbb8e7176146514959"
+into = "source/args"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+[[psyq-obj-parser.parts]]
+url = "https://codeload.github.com/Neargye/magic_enum/tar.gz/e55b9b54d5cf61f8e117cafb17846d7d742dd3b4"
+sha256 = "bdb15ee58b44988a493b514194ca7e770b7c69d8af0c93d4447bcfa5fc044e3a"
+file = "psyq-magic_enum-e55b9b54d5cf61f8e117cafb17846d7d742dd3b4.tar.gz"
+subdir = "magic_enum-e55b9b54d5cf61f8e117cafb17846d7d742dd3b4"
+into = "source/magic_enum"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+["gcc-2.8.1-pm"]
+family = "gcc"
+name = "GCC 2.8.1 (PM matching)"
+platform = "N64"
+arch = "mips"
+license = "GPL-2.0-or-later"
+source = "pmret/gcc-papermario and pmret/binutils-papermario master releases"
+description = "Distinct matching compiler and paired GNU assembler; not an SN64 compiler alias."
+cc = ["{tc}/gcc", "-B{tc}/", "-c"]
+flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2"]
+cplusplus = true
+[["gcc-2.8.1-pm".parts]]
+url = "https://github.com/pmret/gcc-papermario/releases/download/master/linux.tar.gz"
+sha256 = "1156cf0d6a88a64c20e2a10fc9445d99cb9a38518f432b1669528dfa82ebb45f"
+file = "pm-gcc-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-2.8.1-pm".parts]]
+url = "https://github.com/pmret/binutils-papermario/releases/download/master/linux.tar.gz"
+sha256 = "c3cd88db47ac41f78b557042c7e7ad47ac9c04cee6f0d1069a489c1c9e8c103c"
+file = "pm-as-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-2.8.1-pm".parts]]
+url = "https://github.com/pmret/gcc-papermario/releases/download/master/mac.tar.gz"
+sha256 = "772efc8272a992401f9a9a3faef58ef2f4b6028e792afa0015d894de96fe584e"
+file = "pm-gcc-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+[["gcc-2.8.1-pm".parts]]
+url = "https://github.com/pmret/binutils-papermario/releases/download/master/mac.tar.gz"
+sha256 = "7c1680dbbd207bc6e85d113da601dd75d93e1f982282b1f4bef0b25c15c5432c"
+file = "pm-as-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+
+
+["gcc-egcs-2.91.66"]
+family = "gcc"
+name = "EGCS 1.1.2 / GCC 2.91.66"
+platform = "N64"
+arch = "mips"
+license = "GPL-2.0-or-later"
+source = "decompals EGCS 0.7 and binutils 0.6"
+description = "Distinct matching compiler and paired GNU assembler; not an SN64 compiler alias."
+cc = ["{tc}/gcc", "-B{tc}/", "-c"]
+flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2", "-mno-abicalls", "-fno-pic"]
+cplusplus = true
+[["gcc-egcs-2.91.66".parts]]
+url = "https://github.com/decompals/mips-gcc-egcs-2.91.66/releases/download/0.7/mips-gcc-egcs-2.91.66-linux.tar.gz"
+sha256 = "47b8cfccbad18fba40daa3fb01f4d71da7895d9183ab3ab91d6d7b1d27a715ab"
+file = "egcs-gcc-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-egcs-2.91.66".parts]]
+url = "https://github.com/decompals/mips-binutils-egcs-2.9.5/releases/download/0.6/mips-binutils-egcs-2.9.5-linux.tar.gz"
+sha256 = "54eb249ccfbc9956048de5c740ff41d6ab6137cfc3a872739e465349327bbcbf"
+file = "egcs-as-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-egcs-2.91.66".parts]]
+url = "https://github.com/decompals/mips-gcc-egcs-2.91.66/releases/download/0.7/mips-gcc-egcs-2.91.66-macos.tar.gz"
+sha256 = "ceb26826e708ce484a120b002680dff9f13fd3f71a4b4c51e991994107b29542"
+file = "egcs-gcc-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+[["gcc-egcs-2.91.66".parts]]
+url = "https://github.com/decompals/mips-binutils-egcs-2.9.5/releases/download/0.6/mips-binutils-egcs-2.9.5-macos.tar.gz"
+sha256 = "71d16bb4a0e537ff76421fd5d26aaad44d073dfc0d0ee66344250169500d4706"
+file = "egcs-as-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+
+
+["modern-asn64"]
+name = "SN64 assembler compatibility wrapper"
+kind = "tool"
+license = "Unlicense"
+source = "RocketRet/modern-asn64 20d21729ce6a2e7bc8a4a91ec9505cab0d6e50f9"
+description = "Reproduces SN assembler expansion and scheduling before the pinned GNU assembler."
+[["modern-asn64".parts]]
+url = "https://raw.githubusercontent.com/RocketRet/modern-asn64/20d21729ce6a2e7bc8a4a91ec9505cab0d6e50f9/modern-asn64.py"
+sha256 = "7e6815e2c2c0ae0b4581ace1c5adab3d1d567f0fc729f674fc52bdd77e2240bc"
+binary = "modern-asn64.py"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+
+["sn-n64-272-970404"]
+family = "gcc"
+name = "Reconstructed SN64 GCC 2.7.2 (970404)"
+platform = "N64"
+arch = "mips"
+license = "GPL-2.0-or-later"
+source = "decompals/SN64-gcc 2c037f330a99b514e5b53c66f1c63f90d8a15302"
+description = "Reconstructed SN compiler, with modern-asn64 compatibility assembly. Native source build on macOS."
+requires = ["modern-asn64", "binutils-mips"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float", "-fno-exceptions"]
+cmd = ["{python}", "{driver}", "--native", "--cc", "{tc}/cc1", "--cpp", "{tc}/cpp", "--assembler", "{tc:binutils-mips}/mips-ps2-decompals-as", "--wrapper", "{tc:modern-asn64}/modern-asn64.py", "{src}", "{obj}", "{include}", "{flags}"]
+[["sn-n64-272-970404".parts]]
+url = "https://github.com/decompals/SN64-gcc/releases/download/gcc-2.7.2-970404/SN64-gcc-2.7.2-970404-linux.tar.gz"
+sha256 = "60abe17c2562f5ae28444fe4f783fa8217d84b73e59e29cf39c41f7551d968f4"
+platforms = ["linux-x86_64"]
+[["sn-n64-272-970404".parts]]
+url = "https://codeload.github.com/decompals/SN64-gcc/tar.gz/2c037f330a99b514e5b53c66f1c63f90d8a15302"
+sha256 = "51ddf17004bd74e738941c71fe6532e0dfe2d02822e0029c3624620a02da3eb7"
+file = "sn64-gcc-2c037f330a99b514e5b53c66f1c63f90d8a15302.tar.gz"
+subdir = "SN64-gcc-2c037f330a99b514e5b53c66f1c63f90d8a15302/2.7.2-970404"
+build = "sn64-gcc"
+platforms = ["macos-x86_64", "macos-arm64"]
+
+["sn-n64-272-0004"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.7.2 (0004)"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "Mr-Wiseguy/pcsx-redux n64 preserved build 0004; SN64 2.8.1 preprocessor"
+description = "Preserved SN64 build 0004 with its paired ASN64 assembler. Distinct from build 0001."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+[["sn-n64-272-0004".parts]]
+url = "https://github.com/Mr-Wiseguy/pcsx-redux/releases/download/n64/cc1n64.exe"
+sha256 = "17b0d9dc6a80b2aaec90f912bb442321ec8bc5cecaf7071f5bd187e1d6525d49"
+binary = "cc1n64.exe"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+[["sn-n64-272-0004".parts]]
+url = "https://github.com/Mr-Wiseguy/pcsx-redux/releases/download/n64/asn64.exe"
+sha256 = "1e04e1195f6504fe711c3db67ad94eb50d47f2a0f21e87dbbe20cbac4d83db39"
+binary = "asn64.exe"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+[["sn-n64-272-0004".parts]]
+url = "https://github.com/marijnvdwerf/sn64/releases/download/1%2C0%2C0%2C2/cppn64.exe"
+sha256 = "277f1db571ab963df68a07af8b128995493208776dd68a69979809e45d912595"
+binary = "cppn64.exe"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+["sn-n64-272-0006"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.7.2 (0006)"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "decompme/compilers n64_sn272_0006"
+description = "Preserved SN64 build 0006 with its paired ASN64 assembler. Distinct from build 0001."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+[["sn-n64-272-0006".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/n64_sn272_0006.tar.gz"
+sha256 = "1a35a875278f38bfc285c2bd80b782cec38859dedfd925d8b8a2f1733ba9acad"
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
+
+# Additional comparison profiles: Linux packs, Windows via WSL.
+
+["gcc-egcs-1.1.2-4"]
+linux_vm = true
+name = "Original EGCS 1.1.2-4"
+platform = "N64"
+arch = "mips"
+family = "gcc"
+license = "GPL-2.0-or-later"
+source = "https://github.com/AngheloAlf/egcs_1.1.2-4/releases/download/latest/egcs_1.1.2-4.tar.gz"
+description = "Linux executable pack; Windows through WSL; macOS through the optional local Linux VM. Explicit comparison does not establish retail N64 use."
+cc = ["{tc}/mips-linux-gcc", "-B{tc}/", "-c"]
+flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-mcpu=4300", "-O2", "-fno-PIC", "-mno-abicalls"]
+requires = ["runtime-i386"]
+[["gcc-egcs-1.1.2-4".parts]]
+url = "https://github.com/AngheloAlf/egcs_1.1.2-4/releases/download/latest/egcs_1.1.2-4.tar.gz"
+sha256 = "c8d0adeecbe655db1631df5dea58781f4aa738f9762b907f58a6e70740d1815a"
+platforms = ["linux-x86_64"]
+
+["gcc-4.4.0-n64"]
+linux_vm = true
+name = "GCC 4.4.0 (MIPS64 ELF)"
+platform = "N64"
+arch = "mips"
+family = "gcc"
+license = "GPL-2.0-or-later"
+source = "https://github.com/devwizard64/gcc4.4.0-mips64-elf/releases/download/latest/gcc4.4.0-mips64-elf.tar.gz"
+description = "Linux executable pack; Windows through WSL; macOS through the optional local Linux VM. Explicit comparison does not establish retail N64 use."
+cc = ["{tc}/bin/mips64-elf-gcc", "-c"]
+flags = ["-G0", "-march=vr4300", "-mabi=32", "-mno-abicalls", "-fno-pic", "-O2"]
+requires = ["runtime-gcc-math"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-gcc-math}", "{tc}/bin/mips64-elf-gcc", "-c", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+[["gcc-4.4.0-n64".parts]]
+url = "https://github.com/devwizard64/gcc4.4.0-mips64-elf/releases/download/latest/gcc4.4.0-mips64-elf.tar.gz"
+sha256 = "d1a9815f730582ff65f8c14371c62436790655b20a21a5f8ee8b39b4fafa2f58"
+platforms = ["linux-x86_64"]
+
+[runtime-gcc-math]
+linux_vm = true
+name = "GCC host math libraries (GMP and MPFR)"
+kind = "runtime"
+license = "LGPL-3.0-or-later"
+source = "Debian 12 GMP 6.2.1 and MPFR 4.2.0"
+description = "Pinned x86_64 Linux host libraries required by the GCC 4.4 pack. Windows uses these through WSL."
+[[runtime-gcc-math.parts]]
+url = "https://deb.debian.org/debian/pool/main/m/mpfr4/libmpfr6_4.2.0-1_amd64.deb"
+sha256 = "37b7a2b4e78890b6a074777f27b96c84f58e81558ba08410c2b6c0ca4a4ad77b"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+[[runtime-gcc-math.parts]]
+url = "https://deb.debian.org/debian/pool/main/g/gmp/libgmp10_6.2.1+dfsg1-1.1_amd64.deb"
+sha256 = "187aedef2ed763f425c1e523753b9719677633c7eede660401739e9c893482bd"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+
+["ido-4.1"]
+case_sensitive = true
+linux_vm = true
+name = "IDO 4.1 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "https://github.com/decompme/compilers/releases/download/compilers/ido4.1.tar.gz"
+description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; Windows uses WSL; macOS uses the optional local Linux VM. Install only after license acceptance."
+requires = ["runtime-irix-host-modern"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host-modern}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-4.1", "{src}", "{obj}", "{include}", "{flags}"]
+[["ido-4.1".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/ido4.1.tar.gz"
+sha256 = "16008087602fe1a39cdd7880a3c6987891ddb594cce4416670f2e96456e9b4d4"
+platforms = ["linux-x86_64"]
+
+["ido-5.2"]
+case_sensitive = true
+linux_vm = true
+name = "IDO 5.2 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido5.2.tar.xz"
+description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; Windows uses WSL; macOS uses the optional local Linux VM. Install only after license acceptance."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-5.2", "{src}", "{obj}", "{include}", "{flags}"]
+[["ido-5.2".parts]]
+url = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido5.2.tar.xz"
+sha256 = "870cd946d31d6abee24d47926328d15909771520240a0a4f5cb7d27aea90e1ad"
+platforms = ["linux-x86_64"]
+
+["ido-5.3-cxx"]
+case_sensitive = true
+linux_vm = true
+name = "IDO 5.3 C++ (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido5.3_c++.tar.xz"
+description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; Windows uses WSL; macOS uses the optional local Linux VM. Install only after license acceptance."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-5.3-cxx", "{src}", "{obj}", "{include}", "{flags}"]
+cplusplus = true
+[["ido-5.3-cxx".parts]]
+url = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido5.3_c++.tar.xz"
+sha256 = "851426c63ffb0688c702793113c2d9aa3c703c7a4e9d4240fc99d1862f79e4b9"
+platforms = ["linux-x86_64"]
+
+["ido-6.0"]
+case_sensitive = true
+linux_vm = true
+name = "IDO 6.0 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido6.0.tar.xz"
+description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; Windows uses WSL; macOS uses the optional local Linux VM. Install only after license acceptance."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-6.0", "{src}", "{obj}", "{include}", "{flags}"]
+[["ido-6.0".parts]]
+url = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido6.0.tar.xz"
+sha256 = "c56d4be020bdaf76310ceec455ebc0d443fb7a46c740491f74898b04f6a60356"
+platforms = ["linux-x86_64"]
+
+["mipspro-7.4.4"]
+case_sensitive = true
+linux_vm = true
+name = "MIPSpro 7.4.4 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/mipspro7.4.4.tar.xz"
+description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; Windows uses WSL; macOS uses the optional local Linux VM. Install only after license acceptance."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips3", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "mipspro-7.4.4", "{src}", "{obj}", "{include}", "{flags}"]
+[["mipspro-7.4.4".parts]]
+url = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/mipspro7.4.4.tar.xz"
+sha256 = "df33be0d9605b00b44070e567121fc00283a9b1f97763403f0898d2216028d24"
+platforms = ["linux-x86_64"]
+
+[runtime-irix-host]
+name = "IRIX emulator host libraries"
+kind = "runtime"
+linux_vm = true
+license = "LGPL-2.1-or-later AND BSD-3-Clause"
+source = "Debian 12 GLib 2.74.6 and PCRE2 10.42"
+description = "Pinned Linux x86_64 host libraries for the preserved SGI packs' bundled IRIX emulators."
+[[runtime-irix-host.parts]]
+url = "https://deb.debian.org/debian/pool/main/g/glib2.0/libglib2.0-0_2.74.6-2+deb12u9_amd64.deb"
+sha256 = "7ff85197685d89e150e342b29a59aab1beee400050ba7da73de81cd999ffee5a"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+[[runtime-irix-host.parts]]
+url = "https://deb.debian.org/debian/pool/main/p/pcre2/libpcre2-8-0_10.42-1_amd64.deb"
+sha256 = "030db54f4d76cdfe2bf0e8eb5f9efea0233ab3c7aa942d672c7b63b52dbaf935"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+
+[runtime-irix-host-modern]
+name = "Modern IRIX emulator host libraries"
+kind = "runtime"
+linux_vm = true
+license = "LGPL-2.1-or-later AND BSD-3-Clause AND GPL-3.0-with-GCC-exception"
+source = "Debian 13 GLib 2.84.4; Debian 12 PCRE2 10.42 and libatomic 12.2.0"
+description = "Pinned modern GLib required by the IDO 4.1 pack's newer emulator; Linux hosts need glibc 2.38 or newer."
+[[runtime-irix-host-modern.parts]]
+url = "https://deb.debian.org/debian/pool/main/g/glib2.0/libglib2.0-0t64_2.84.4-3~deb13u5_amd64.deb"
+sha256 = "e2baf92c57d1db1753e5781a61450d9a01e7833c7bd2dfe87776a6811c11ecc2"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+[[runtime-irix-host-modern.parts]]
+url = "https://deb.debian.org/debian/pool/main/p/pcre2/libpcre2-8-0_10.42-1_amd64.deb"
+sha256 = "030db54f4d76cdfe2bf0e8eb5f9efea0233ab3c7aa942d672c7b63b52dbaf935"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+[[runtime-irix-host-modern.parts]]
+url = "https://deb.debian.org/debian/pool/main/g/gcc-12/libatomic1_12.2.0-14+deb12u1_amd64.deb"
+sha256 = "fbd4e154a6b444229ea002cc209df099209c0adc09102e5fd21239a3d2b55e2d"
+subdir = "usr/lib/x86_64-linux-gnu"
+platforms = ["linux-x86_64"]
+
+["gcc-2.8.1-pm-sn-as"]
+family = "gcc"
+name = "GCC 2.8.1 + SN ASN64 2.56"
+platform = "N64"
+arch = "mips"
+license = "proprietary"
+source = "pmret/gcc-papermario and preserved SN64 0001 assembler"
+description = "GCC 2.8.1 PM code generation paired with original SN ASN64 2.56. Tests assembler macro encodings and scheduling independently; not proof of a game's original toolchain."
+requires = ["sn-n64-272-0001", "wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2"]
+cmd = ["{python}", "{driver}", "--gcc", "{tc}/gcc", "--assembler", "{tc:sn-n64-272-0001}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+[["gcc-2.8.1-pm-sn-as".parts]]
+url = "https://github.com/pmret/gcc-papermario/releases/download/master/linux.tar.gz"
+sha256 = "1156cf0d6a88a64c20e2a10fc9445d99cb9a38518f432b1669528dfa82ebb45f"
+file = "pm-gcc-linux.tar.gz"
+platforms = ["linux-x86_64"]
+[["gcc-2.8.1-pm-sn-as".parts]]
+url = "https://github.com/pmret/gcc-papermario/releases/download/master/mac.tar.gz"
+sha256 = "772efc8272a992401f9a9a3faef58ef2f4b6028e792afa0015d894de96fe584e"
+file = "pm-gcc-mac.tar.gz"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true

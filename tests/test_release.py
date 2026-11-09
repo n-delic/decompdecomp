@@ -125,6 +125,8 @@ def test_a_release_naming_what_it_needs_waits_and_that_one_goes_first(tmp_path):
         net.release_function(a, "f", "", "game", needs="f")
     with pytest.raises(NetworkError, match="you already hold f; .*needs=\"g\""):
         net.claim_row(a, "game", "g")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET asm='bl g' WHERE name='f'")
     said = net.release_function(a, "f", "calls g with esi; its convention comes from g's definition", "game", needs="g")
     assert said.startswith("Released f") and "f now waits for g" in said
     assert _held(net, a) == "g"  # handed over (no push-back: the agent said why compiling can't help yet)
@@ -260,14 +262,17 @@ def test_a_note_newer_than_the_best_or_better_than_it_isnt_superseded():
     assert out[2] == "- (c) (superseded: best is now 90.0%) stuck around 80% (score 2000)"
 
 
-def test_the_prompts_count_only_claims_that_were_compiled():
+def test_prompts_bound_compiled_claims_and_allow_context_limited_sessions():
     from decompnet.app import tools
 
     for prompt in (tools.WORK_PROMPT, tools.FORK_PROMPT):
         text = " ".join(prompt.format(title="t", count=2, compiler_guide="g", platform="p", guides="g",
                                       budget="b", what="w").split())
-        assert "Do 2 claims you compiled (a batch is one; one you released without compiling it doesn't count)" in text
-        assert "Don't stop early" in text and "on request" in text  # agents stopped at 2-3 of 4, or offered more
+        assert "Work on up to 2 compiled claims (a batch is one)" in text
+        assert "The claim count is a maximum, not a quota" in text
+        assert "Continue with the next eligible function while session capacity remains" in text
+        assert "Stop earlier when the session turn/context allowance is nearly used" in text
+        assert "on request" in text
         assert "needs=" in text
 
 

@@ -59,11 +59,18 @@ class PlayStation2(Console):
     demo_tools = ("ee-gcc-2.96", "binutils-mips")
     own_features = frozenset({EXPORT})
     as_flags = ("-EL", "-march=r5900", "-mabi=eabi")
+    reference_tools = ("binutils-mips", "mips-ps2-decompals-as", "mips-ps2-decompals-ld")
 
     def sniff(self, head: bytes, file) -> bool:
         from . import chd, cso, disc, elf
 
         return elf.is_mips_elf(head) or chd.is_chd(head) or cso.is_cso(head) or disc.is_disc(head)
+
+    def display_title(self, name: str, info: dict) -> str:
+        from ..playstation_titles import title
+
+        code = info.get("game_code", "")
+        return title("ps2", code, name) if code and name == code else name
 
     def read_game(self, file, name: str = "") -> Picked:
         """The program: an ELF the user picked, or the one a disc image names (with the disc's overlays)."""
@@ -99,12 +106,14 @@ class PlayStation2(Console):
     def _from_disc(self, src) -> Picked:
         import struct
 
+        from ..playstation_titles import disc_title
         from . import disc, elf, overlays
 
         raw, boot = disc.from_disc(src)
         if not elf.is_mips_elf(raw):
             raise RomError(f"the disc's program {boot} isn't a PlayStation 2 program this app can read")
         program, info = elf.read_elf(raw, boot)
+        disc_title("ps2", info, disc._Disc(src))
         picked = Picked(self.id, program, "game.elf", info, False)
         segs = overlays.elf_segments(raw) or []
         main = (min((a for a, _ in segs), default=0), max((a + len(d) for a, d in segs), default=0))
@@ -196,10 +205,10 @@ class PlayStation2(Console):
         for guess in sorted({g for *_, g in parts if g != main}):
             spans = []
             for start, end, g in parts:
-                inside = net.store.all("SELECT vram FROM functions WHERE project_id=? AND vram>=? AND vram<?",
+                inside = net.project_store(proj['id']).all("SELECT name,vram,rom_offset FROM functions WHERE project_id=? AND vram>=? AND vram<?",
                                        proj["id"], start, end)
                 if g == guess and inside and not (main_agrees and all(
-                        family.get(compiler_for(cfg, r["vram"])["toolchain"]) == guess.split("-")[0] for r in inside)):
+                        family.get(compiler_for(cfg, r["vram"], r)["toolchain"]) == guess.split("-")[0] for r in inside)):
                     spans.append((start, end))
             if spans:
                 net.suggest(agent, slug, f"The program's symbols say {by_guess[guess].name} built these object files.",
@@ -207,7 +216,7 @@ class PlayStation2(Console):
                 said.append(f"{by_guess[guess].name} for {len(spans)} stretches of object files, range-checked")
         net._update_cfg(slug, lambda c: c.__setitem__("object_reading", OBJECT_READING))
         if said:
-            with net.store.tx() as db:
+            with net.project_store(proj['id']).tx() as db:
                 net._event(db, proj["id"], None, "analysis", "the program's symbols name its compilers: "
                            + "; ".join(said))
 
@@ -224,7 +233,7 @@ def name_kernel_calls(net, slug: str, log=print) -> int:
     cfg = net.cfg(proj)
     if cfg.get("kind") != "rom" or cfg.get("kernel_calls_named") or net._link(slug):
         return 0  # (a room's guest: the host names them)
-    rows = net.store.all("SELECT name, target FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
+    rows = net.project_store(proj['id']).all("SELECT name, target FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
     pairs = syscalls.stub_names([(r["name"], r["target"]) for r in rows], set(net.symbols(proj["id"]).by_name))
     if pairs:
         agent, _ = net.local_agent("autopilot")

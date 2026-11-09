@@ -8,6 +8,7 @@ PowerPC (GameCube, Wii), ARM and Thumb (public GBA and DS decomps).
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -23,6 +24,16 @@ def supported(platform: str) -> bool:
 
 def find_asm(root: Path, unit_name: str, symbol: str, source_text: str | None) -> Path | None:
     """The assembly file holding `symbol`, if the project has one."""
+    try:
+        cfg = json.loads((root / 'objdiff.json').read_text(encoding='utf-8'))
+        entry = next((u for u in cfg.get('units', []) if u.get('name') == unit_name), {})
+        value = (entry.get('metadata') or {}).get('draft_assembly')
+        if isinstance(value, str) and not Path(value).is_absolute():
+            assembly = (root / value).resolve()
+            if root.resolve() in assembly.parents and assembly.is_file():
+                return assembly
+    except (OSError, ValueError):
+        pass
     if source_text:
         m = re.search(rf'INCLUDE_ASM\(\s*"([^"]+)"\s*,\s*{re.escape(symbol)}\s*\)', source_text)
         if m and (root / m.group(1) / f"{symbol}.s").is_file():
@@ -34,6 +45,13 @@ def find_asm(root: Path, unit_name: str, symbol: str, source_text: str | None) -
         if base.is_dir():
             for hit in base.rglob(f"{symbol}.s"):
                 return hit
+    # Verified Splat reference assembly for a generated C candidate (same unit name across preparation).
+    if unit_name.startswith("asm/"):
+        relative = Path(unit_name[4:])
+        if not relative.is_absolute() and '..' not in relative.parts:
+            reference = root / ".decomp-wtf/objdiff-references/asm" / relative.with_suffix('.s')
+            if reference.is_file():
+                return reference
     # dtk: build/<version>/asm/<unit path>.s, unit names being "<module>/<path>"
     parts = unit_name.split("/")
     for asm_root in root.glob("build/*/asm"):

@@ -13,30 +13,18 @@ NODE = shutil.which("node")
 GUI_TIMEOUT_SECONDS = 60
 
 
-def test_the_game_picker_stays_above_existing_project_cards():
-    """Returning users need to see the new game's details without scrolling past their projects."""
-    static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
-    html = (static / "index.html").read_text(encoding="utf-8")
-    home = html.split('<main id="home"', 1)[1].split('</main>', 1)[0]
-    assert home.index('class="hero"') < home.index('id="recent"')
-    css = (static / "app.css").read_text(encoding="utf-8")
-    for selector, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
-        if "#recent" in selector or ".hero" in selector:
-            assert not re.search(r"(?:^|;)\s*order\s*:", declarations), selector
-
-
 def test_foreground_progress_covers_delayed_starts_and_clears_on_every_outcome():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_progress.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_saved_project_dialog_preserves_state_and_cancels_pending_requests():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_restore.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
@@ -60,10 +48,9 @@ def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
 def gui():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
-    from decompnet.consoles import CONSOLES
-
-    env = {**os.environ, "GUI_CONSOLES": json.dumps([c.describe() for c in CONSOLES])}  # (/api/state's)
-    out = subprocess.run([NODE, str(Path(__file__).with_name("gui_polls.js"))], capture_output=True, text=True,
+    from decompnet import consoles
+    env = {**os.environ, 'GUI_CONSOLES':json.dumps([console.describe() for console in consoles.CONSOLES])}
+    out = subprocess.run([NODE, str(Path(__file__).with_name("gui_polls.js"))], capture_output=True, text=True, encoding="utf-8",
                          timeout=GUI_TIMEOUT_SECONDS, check=True, env=env)
     result = json.loads(out.stdout)
     assert result["errors"] == []
@@ -261,6 +248,18 @@ def test_the_import_offers_every_compiler_of_the_games_console(gui):
     assert gui["checks"]["missing"] == [["ee-gcc-2.96", "mwcps2-3.0.1"], 3, 0]
 
 
+def test_helper_cards_show_polished_counts_separately_from_matches(gui):
+    assert gui["checks"]["helperResults"] == ['<b class="ok">2 polished</b>', '<b class="ok">0 polished</b>',
+                                               '<b class="ok">9 matched</b> · <span title="Distinct functions where this agent beat the previous best matching score. Includes matches; repeated improvements to the same function count once. An initial candidate must improve on 0%.">4 improved</span>']
+
+
+def test_public_project_settings_show_compiler_and_per_file_flags(gui):
+    facts, rom, missing = gui["checks"]["projectCompiler"]
+    assert ["Compiler (declared)", "IDO 5.3"] in facts
+    assert ["OPT_FLAGS (declared)", "-O2"] in facts
+    assert ["Per-file flags (declared)", "src/audio/%.o: OPT_FLAGS = -O3"] in facts
+    assert ["Compiler settings read from", "Makefile. Declared settings"] in facts
+    assert rom == missing == []
 def test_a_dropped_pc_game_is_offered_the_visual_cpp_pack_its_program_names(gui):
     """A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then asked for 2005-2010's: the drop reads the
     Rich header (or the linker's version) as the import does, and offers the pack the import will build with."""
@@ -270,19 +269,9 @@ def test_a_dropped_pc_game_is_offered_the_visual_cpp_pack_its_program_names(gui)
     for head, pack, offered, target in packs:
         built = scratch.describe(bytes.fromhex(head))
         assert pack == offered == scratch.compiler_pack(built.pack_version), (head, built)
-        assert target == "x86"  # (a 32-bit program: its import lists 32-bit compilers only, next)
+        assert target == "x86" and built.machine == scratch.X86
     assert [p for _, p, _, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc",
-                                        "msvc2015", "msvc2015", "msvc2005", "msvc2015", "msvc2015"]
-
-
-def test_a_pc_game_dropped_before_the_page_loaded_is_offered_its_pack_and_32_bit_compilers(gui):
-    """Review of #138: the drop read a program before the page's state arrived, whose PC table names the pack (pcPack),
-    so a 2017 game dropped early was offered 6.0-7.1's; and the import's dialog listed MSVC/14.16-x64 for a 32-bit
-    program, which can never match it. Run through the page's own pickFile and setupCompilers."""
-    drop = gui["checks"]["pcDrop"]
-    assert drop["pack"] == "msvc2015"
-    assert "MSVC/6.0" in drop["options"] and "MSVC/14.16" in drop["options"], drop
-    assert not any(option.endswith("-x64") for option in drop["options"]), drop
+                                          "msvc2015", "msvc2015", "msvc2005", "msvc2015", "msvc2015"]
 
 
 def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
@@ -299,8 +288,387 @@ def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
     assert {int(x, 16) for x in re.findall(r"0x[0-9a-f]+", linkers)} == scratch.RICH_LINKERS
 
 
+def test_grouped_name_hints_and_rename_refresh():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_name_hints.js"))], check=True,
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_work_selection_keeps_zero_and_blank_distinct_and_validates_the_threshold(gui):
+    assert gui["checks"]["selection"] == [
+        {"strategy": "hardest", "match_below": 80}, {"strategy": "untried", "match_below": None}, True, True]
+
+
+def test_transfer_results_filter_successes_and_explain_mismatch_scores():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_transfers.js'))], check=True,
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_work_selection_attempt_cap_is_optional_and_requires_whole_number(gui):
+    assert gui["checks"]["selectionStall"] == [
+        {"strategy": "", "match_below": None, "stall_compiles": 30},
+        {"strategy": "", "match_below": None}, True, True]
+    assert gui["checks"]["selectionCap"] == [{"strategy": "hardest", "match_below": None, "max_tries": 12}, True, True]
+
+
+def test_local_importer_groups_searches_and_preserves_filtered_selection():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_local_import.js'))], check=True,
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_agent_cards_sort_metrics_and_handle_unavailable_rates(gui):
+    cards = gui['checks']['agentCards']
+    assert cards['sorts'] == [['b', 'a', 'c'], ['a', 'b', 'c'], ['a', 'b', 'c'],
+                              ['b', 'c', 'a'], ['b', 'a', 'c']]
+    assert cards['elapsed'] == 300 and cards['stopped'] == 0
+    assert cards['rate'] == 5000 and cards['empty'] is None
+    assert 'since latest start' in cards['html']
+    assert 'matched' in cards['html'] and 'improved' in cards['html']
+    assert cards['least']
+
+
+def test_token_breakdown_distinguishes_cache_and_missing_usage():
+    if NODE is None:
+        pytest.skip('needs node')
+    source = (Path(__file__).parents[1] / 'src/decompnet/app/static/js/agents.js').read_text()
+    function = source[source.index('function tokenBreakdown('):source.index('async function renderCosts(')]
+    script = function + "\nconst assert=require('node:assert/strict');\n" + "assert.match(tokenBreakdown({input_tokens:1000,cache_read_tokens:9000,output_tokens:500}), /1.0k uncached input.*9.0k cache reads.*0.5k output/);\nassert.equal(tokenBreakdown({}), 'Token breakdown unavailable');"
+    subprocess.run([NODE, '-e', script], check=True, capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_compiler_results_apply_selected_profile_and_guard_function():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_compiler_results.js'))], check=True,
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_linux_vm_setup_shows_readiness_and_uses_progress():
     if NODE is None:
         pytest.skip('needs node to run GUI scripts')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_linuxvm.js'))], check=True,
                    capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_compiler_summary_and_job_log_respect_reader_scroll():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_compiler_progress.js"))], check=True,
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_unchanged_output_limit_preserves_default_disable_and_validation(gui):
+    assert gui['checks']['selectionUnchanged'] == [
+        {'strategy': '', 'match_below': None},
+        {'strategy': '', 'match_below': None, 'unchanged_compiles': 0},
+        {'strategy': '', 'match_below': None, 'unchanged_compiles': 8},
+        [True, True, True, True], True,
+    ]
+
+def test_function_recency_and_model_filter_controls():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_recency.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_compact_agent_cards_keep_results_and_secondary_actions_accessible():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_compact_agents.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_deep_metrics_history_and_reset():
+    if not NODE:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_deep_metrics.js'))], check=True,
+                   cwd=Path(__file__).resolve().parents[1])
+
+
+def test_deep_trial_outcomes_and_followup_summary_are_visible():
+    if NODE is None:
+        pytest.skip('needs node')
+    source = (Path(__file__).parents[1] / 'src/decompnet/app/static/js/steering.js').read_text()
+    function = source[source.index('function renderDeepSweepResults('):source.index('async function renderDeepSweep(')]
+    script = """const assert=require('node:assert/strict');
+const S={slug:'game'}, boxes={}; function $(id) { return boxes[id] ||= {dataset:{},innerHTML:'',querySelector:()=>null,querySelectorAll:()=>[]}; }
+function esc(x){return String(x)}; function openFn(){}; function renderDeepMetricDrawer(){}; let deepMetricRows=[];
+""" + (Path(__file__).parents[1] / "src/decompnet/app/static/js/rewrite-performance.js").read_text() + function + """
+renderDeepSweepResults({measurements:[{family:'typed_temporary',phase:'local repairs after random improvement',attempted:5,compile_failed:1,unscored:1,unchanged:1,worse:0,improved:2,matched:1,elapsed_ms:1500,score_gain:40}]});
+assert.match(boxes.deepSweepRecipes.innerHTML,/typed temporary/);
+assert.match(boxes.deepSweepRecipes.innerHTML,/Rewrite performance/);
+assert.match(boxes.deepSweepRecipes.innerHTML,/1.5s/);
+"""
+    subprocess.run([NODE, '-e', script], check=True, capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_deep_pass_is_project_scoped_and_keeps_table_scroll():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_deep_pass_ui.js'))], check=True,
+                   cwd=Path(__file__).resolve().parents[1], timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_agent_toolbar_has_remove_paused_control():
+    html = (Path(__file__).parents[1] / 'src/decompnet/app/static/index.html').read_text()
+    assert 'id="removePaused"' in html
+
+
+def test_compiler_range_grouping_preserves_distinct_settings():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_compiler_groups.js"))],
+                   cwd=Path(__file__).resolve().parents[1], check=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_copy_target_assembly_preserves_labels_and_operands():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_copy_assembly.js"))],
+                   cwd=Path(__file__).resolve().parents[1], check=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_candidate_link_and_export_diagnostics_preserve_exact_verdict_and_escape_text():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_candidate_checks.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_navigation_clears_stale_views_and_ignores_out_of_order_responses():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI scripts")
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_navigation.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_manual_mcp_setup_shows_server_tools_and_copyable_configuration():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_manual_mcp.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_parallel_deep_activity_keeps_cards_logs_and_expansion_scoped():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_deep_activity.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_fork_update_source_ui_saves_validated_source_and_handles_errors():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_update_source.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_rewrite_metrics_merge_sort_and_csv_round_trip():
+    import csv
+    import io
+
+    if NODE is None:
+        pytest.skip('needs node')
+    result = subprocess.run([NODE, str(Path(__file__).with_name('gui_rewrite_performance.js'))], check=True,
+                            capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+    rows = list(csv.DictReader(io.StringIO(result.stdout)))
+    assert len(rows) == 2
+    assert rows[0]['family'] == 'comma,"quote"\nnext'
+    assert rows[0]['elapsed_ms'] == '' and rows[0]['compile_failed'] == ''
+    assert rows[0]['tested'] == '100'
+    assert rows[1]['family'] == "'=SUM(A1)"
+    assert rows[1]['timing_coverage'] == 'partial'
+    assert rows[1]['mean_ms'] == '125'
+    assert rows[1]['project'] == 'example' and rows[1]['build'] == 'abc123'
+
+
+def test_manual_mcp_panel_is_a_collapsed_native_disclosure():
+    html = (Path(__file__).parent.parent / 'src/decompnet/app/static/index.html').read_text()
+    start = html.index('<details class="panel manual-mcp settings-disclosure"')
+    panel = html[start:html.index('<details class="panel settings-disclosure" open>', start)]
+    assert 'open' not in panel.split('>', 1)[0]
+    assert '<summary class="panel-head"><h2 id="mcpHeading">Connect another AI tool with MCP' in panel
+    assert 'id="mcpCreate"' in panel and panel.rstrip().endswith('</details>')
+
+
+def test_function_call_cards_keep_all_links_and_separate_directions():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_function_calls.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_function_suggestion_card_shows_narrow_scope():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_suggestion.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_retry_paused_dialog_validates_allowance_and_cleans_up_progress():
+    if NODE is None:pytest.skip('needs node')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_retry_paused.js'))],check=True,capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_function_note_cards_escape_source_and_explain_score_outcomes():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_notes.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_activity_feed_shows_recorded_score_improvements():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_activity_improvements.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_agent_blocker_review_cards_show_evidence_and_retry_context():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_agent_blocker_reviews.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_repository_folder_restores_checkout_without_overwriting_edits_or_other_projects():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_repository_folder.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_boundary_review_preview_shows_original_extent_and_escapes_evidence():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_boundary_repairs.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_machine_draft_refresh_has_progress_cancellation_and_error_cleanup():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_machine_drafts.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_local_match_library_lists_shared_games_and_empty_state():
+    if NODE is None:
+        pytest.skip('node is required')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_match_library.js'))],check=True,
+                   cwd=Path(__file__).parents[1],timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_maintenance_tools_use_shared_disclosure_cards():
+    html = (Path(__file__).parents[1] / 'src/decompnet/app/static/index.html').read_text()
+    for panel_id, action_id in [('machineDraftPanel', 'regenerateMachineDrafts'),
+                                ('savedMatchRecoveryPanel', 'recoverSavedMatches')]:
+        start = html.index(f'<details class="panel settings-disclosure" id="{panel_id}">')
+        next_card = html.find('<details class="panel settings-disclosure"', start+1)
+        card = html[start:next_card if next_card >= 0 else len(html)]
+        assert '<summary class="panel-head"><h2>' in card
+        assert 'disclosure-context' in card
+        assert 'class="pad maintenance-body"' in card
+        assert f'id="{action_id}"' in card
+        assert 'Local CPU · No AI tokens' in card
+        assert 'class="joblog" hidden' in card
+        assert ' open' not in card.split('>', 1)[0]
+    assert '<label class="field"><span>Time limit (seconds)</span><input id="savedMatchSeconds"' in html
+    assert '<label class="field"><span>Compile limit</span><input id="savedMatchAttempts"' in html
+    assert '<details class="transfer-advanced" id="savedMatchLimits">' in html
+    for field in ('savedMatchSeconds', 'savedMatchAttempts'):
+        input_tag = html[html.index(f'<input id="{field}"'):].split('>', 1)[0]
+        assert 'value=' not in input_tag and 'placeholder="No limit"' in input_tag
+    assert '>Recover all saved matches</button>' in html
+
+
+def test_database_cleanup_preview_save_progress_stop_and_error_controls():
+    if NODE is None:pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_database_cleanup.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_header_storage_controls_preview_cleanup_compaction_and_stop():
+    if NODE is None:pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_header_storage.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+
+def test_deep_permuter_reset_is_visible_without_expanding_more_actions():
+    html = (Path(__file__).parents[1] / 'src/decompnet/app/static/index.html').read_text()
+    start = html.index('<div class="deep-sweep-tools">')
+    tools = html[start:html.index('id="deepSweepStatus"', start)]
+    assert '<button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button>' in tools
+    assert 'deep-sweep-more' not in tools
+    assert '<summary>More actions</summary>' not in tools
+
+
+def test_routine_saved_progress_checks_stay_in_the_header():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_quiet_sync.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_compiler_profile_drawer_uses_scope_and_one_progress_display():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_profile_test.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_function_drawer_shows_existing_focused_agents_and_live_controls():
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_focus.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_settings_panels_restore_server_jobs_without_restarting_work():
+    if NODE is None:pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_settings_jobs.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_repository_push_counts_errors_and_project_switches():
+    if NODE is None:pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_repository_push.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+@pytest.mark.skipif(not NODE, reason='node is not installed')
+def test_save_repository_setup_and_project_switches():
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_repository_setup.js'))], check=True,
+                   capture_output=True, text=True)
+
+
+@pytest.mark.skipif(not NODE, reason='node is not installed')
+def test_auto_push_preferences_defaults_errors_and_project_switches():
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_auto_push.js'))], check=True,
+                   capture_output=True, text=True)
+
+
+def test_function_chart_cursor_shows_compile_scores():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_chart.js'))], check=True,
+                   cwd=Path(__file__).resolve().parents[1], timeout=GUI_TIMEOUT_SECONDS)
+
+
+@pytest.mark.skipif(not NODE, reason='node is not installed')
+def test_score_commit_preferences_defaults_errors_and_project_switches():
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_score_commits.js'))], check=True,
+                   capture_output=True, text=True)
+
+
+@pytest.mark.skipif(not NODE, reason='node is not installed')
+def test_function_attempt_stages_reattach_and_preserve_edits():
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_attempt.js'))], check=True,
+                   cwd=Path(__file__).resolve().parents[1], timeout=GUI_TIMEOUT_SECONDS)

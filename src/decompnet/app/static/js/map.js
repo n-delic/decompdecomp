@@ -2,6 +2,14 @@
 /* ------------------------------------------------------------------ map */
 let colors = null, geo = null, animating = false;
 
+function resetMap() {
+  geo = null; base = null; baseDirty = true; shown = null;
+  moving = []; dirtyCells.clear(); ccIndex = new Map();
+  const canvas = $("map");
+  // Resetting dimensions clears pixels immediately, including a previous project's map.
+  canvas.width = 1; canvas.height = 1; canvas.style.height = "0px";
+}
+
 // a 1×1 canvas turns any CSS colour (oklch, color-mix, color(srgb …)) into the sRGB bytes the map is drawn with
 const swatch = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
 function cssColor(name) {
@@ -15,7 +23,7 @@ function cssColor(name) {
   return [...swatch.getImageData(0, 0, 1, 1).data.slice(0, 3)];
 }
 function readColors() {
-  colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), match: cssColor("--match"), polished: cssColor("--polished"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
+  colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), boundary: cssColor("--boundary-review"), match: cssColor("--match"), polished: cssColor("--polished"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
              notC: cssColor("--not-c"), cc: CC_COLORS.map(cssColor) };
 }
 
@@ -53,9 +61,10 @@ function renderMapView() {
 /* The compiler map's colours come in a request of their own, after the map is drawn: after a match the compiler map
    is built again, and the ROM map waited for it (GTA San Andreas: 710-800 ms). */
 async function loadMapColumns(slug) {
+  const gen = S.gen;
   let data;
   try { data = await api(`/api/mapcolumns?slug=${slug}`); } catch { return; }
-  if (slug !== S.slug || !data.rows.length) return;
+  if (gen !== S.gen || slug !== S.slug || !data.rows.length) return;
   const col = Object.fromEntries(data.keys.map((k, i) => [k, i]));
   const at = new Map(S.map.map((f, i) => [f.vram, i]));
   for (const r of data.rows) {
@@ -71,6 +80,7 @@ $("mapView").addEventListener("click", (ev) => {
   if (!b) return;
   S.mapView = b.dataset.view;
   renderMapView(); mapChanged(); drawMap();
+  if (S.mapView === "compiler" && S.slug && S.ov?.kind !== "fork") loadMapColumns(S.slug);
 });
 const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
 const rgb = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
@@ -121,7 +131,8 @@ function applyAttempts(attempts) {
 function cellColor(f) {
   if (S.mapView === "compiler" && f.cc) return [colors.cc[ccIndex.get(f.cc) ?? 0], 1];
   if (f.status === "matched") return [f.polished ? colors.polished : colors.match, 1];
-  // set aside: red, as no C makes it; lighter when its shape told (assembly, a piece), full when agents agreed
+  if (f.analysis_state === "boundary_review") return [colors.boundary, 1];
+  // Set-aside assessments are not assembly provenance; incomplete extents stay yellow.
   if (f.status === "asm") return [colors.notC, f.not_c ? 1 : 0.45];
   if (f.best != null) return [mix(colors.tried, colors.hi, Math.pow(pctOf(f.best, f.insns) || 0, 3)), 1];
   return [colors.open, 1];
@@ -162,8 +173,11 @@ function drawBase(cells = null) {
 /* What the canvas shows besides `base`: a frame where only working cells pulse redraws just those, not the whole
    canvas (megapixels for a big game, 30 times a second while agents work). */
 let shown = null;
+let mapTimingAt=0;
 function drawMap() {
   if (!geo || S.tab !== "overview") return;
+  const timing=typeof uiTimingEnabled==='function' && uiTimingEnabled() && performance.now()-mapTimingAt>1000 ? performance.now() : null;
+  if (timing!=null) mapTimingAt=timing;
   if (!colors) readColors();
   let whole = !shown;
   if (baseDirty || !base || base.width !== $("map").width || base.height !== $("map").height) { drawBase(); whole = true; }
@@ -193,7 +207,7 @@ function drawMap() {
   for (const i of moving) {
     const [x, y] = at(i);
     if (!whole) restore(i, 1);
-    ctx.fillStyle = rgb(colors.work, 0.55 + 0.45 * Math.sin(now / 260 + i));
+    ctx.fillStyle = rgb(S.map[i].analysis_state === "boundary_review" ? colors.boundary : colors.work, 0.55 + 0.45 * Math.sin(now / 260 + i));
     ctx.beginPath(); ctx.roundRect(x, y, size, size, r); ctx.fill();
   }
   for (const [name, fl] of S.flash) {
@@ -207,6 +221,7 @@ function drawMap() {
   }
   if (sel != null) { const [x, y] = at(sel); ctx.strokeStyle = rgb(colors.ink, 0.9); ctx.lineWidth = 1.5; ctx.strokeRect(x - 1.5, y - 1.5, size + 3, size + 3); }
   shown = { sel, flash: flashed };
+  if (timing!=null) uiTiming('map render',timing,{cells:S.map.length,whole});
   if (live && !animating) {  // about 30 frames a second is plenty for a pulse
     animating = true;
     setTimeout(() => requestAnimationFrame(() => { animating = false; drawMap(); }), 33);
@@ -227,7 +242,7 @@ $("map").addEventListener("mousemove", (ev) => {
   if (i < 0) { tip.hidden = true; return; }
   const f = S.map[i];
   const p = pctOf(f.best, f.insns);
-  const status = f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}` : f.status === "working" ? `${esc(f.agent)} is on it` : f.best != null ? `best ${pctText(p)}` : "not started";
+  const status = f.analysis_state === "boundary_review" ? "incomplete extent — boundary review" : f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}` : f.status === "working" ? `${esc(f.agent)} is on it` : f.best != null ? `best ${pctText(p)}` : "not started";
   const where = S.ov && S.ov.kind === "fork" ? esc(f.unit || "") : hex8(f.vram);
   const cc = f.cc ? `<br>looks built by ${esc(f.cc)}${f.ccx ? ", not its compiler today" : ""}` : "";
   tip.innerHTML = `<b>${esc(f.name)}</b><br>${where} · ${f.insns} instructions<br>${status}${cc}`;

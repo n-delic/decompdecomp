@@ -13,7 +13,30 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import arm, mips, mips_fields, ppc, ppc64, x86, x86_fields
+from . import (
+    arm,
+    mips,
+    mips_code_recovery,
+    mips_debug,
+    mips_drafts,
+    mips_fields,
+    mips_hazards,
+    mips_local_storage,
+    mips_pointer_lifetime,
+    mips_regions,
+    mips_return_paths,
+    mips_returns,
+    mips_search,
+    mips_source_recovery,
+    mips_source_symbols,
+    mips_stack,
+    mips_tail_dispatch,
+    mips_tools,
+    ppc,
+    ppc64,
+    x86,
+    x86_fields,
+)
 
 # What decompdecomp's readers can do with a processor's code (each is a module of its own that reads MIPS, and some
 # x86):
@@ -32,7 +55,7 @@ class Arch:
     # why a function's code can't come from a compiler, or None: (code, big_endian, **the console's facts)
     asm_reason: Callable[..., str | None] | None = None
     # its asm_reason needs the console's facts (MIPS: which registers carry arguments depends on the console's ABI,
-    # the PS2's EABI passes them in t0-t3 too), so code whose console isn't known (a fork's object) isn't judged
+    # the PS2's EABI passes them in t0-t3 too), so unknown-console objects use only padding_reason
     asm_needs_console: bool = False
     features: frozenset[str] = frozenset()
     # what a function does with pointers, for structs.py: (vram, code, relocs, big_endian=, datum=) -> structs.Facts
@@ -40,18 +63,49 @@ class Arch:
     # the float constants a diff row's instruction loads from data by address: text -> [(address, "f" | "d")], so
     # the diff can show their values (forkengine)
     float_operands: Callable[[str], list[tuple[int, str]]] | None = None
+    build_tool_paths: Callable[[Any], list[Any]] | None = None
     # a decompiler's draft of a method shown as `Class::method`, with `this` (x86: Ghidra's, `this` in ecx):
     # (draft, function's address name, class, name, role, found from) -> the draft, or None (forkengine)
     method_draft: Callable[..., str | None] | None = None
     # variants of it capstone can't decode (Console.cpu_variant) -> their own reader: (code, big_endian) ->
     # [(offset, mnemonic, operands)], for scoring's diffs (MIPS: the PSP's Allegrex, read by rabbitizer)
+    # Uniform saved-register/frame shifts in scored instruction pairs, for bounded padding hypotheses.
+    stack_frame_growth: Callable[..., int | None] | None = None
+    called_code_extent: Callable[..., int | None] | None = None  # bounded framed direct-call recovery for ROM splits
+    boundary_instruction: Callable[..., dict] | None = None  # original-word control-flow facts for review
+    source_operand_changes: Callable[..., list] | None = None
+    source_switch_blocks: Callable[..., dict] | None = None
+    source_recovery_hints: Callable[..., list] | None = None
+    source_extra_narrowing: Callable[..., list] | None = None
+    source_private_abi: Callable[..., dict | None] | None = None
+    source_pointer_lifetime: Callable[..., list] | None = None
+    source_pointer_snapshot: Callable[..., bool] | None = None
+    repair_search_hints: Callable[..., dict] | None = None
+    source_return_paths: Callable[..., dict | None] | None = None
+    source_return_contract: Callable[..., dict | None] | None = None
+    source_stack_call_store: Callable[..., bool] | None = None
+    source_local_storage: Callable[..., dict | None] | None = None
+    source_scalar_destination: Callable[[str], str | None] | None = None
+    source_hazard_rows: Callable[..., bool] | None = None
+    source_tail_branch: Callable[..., dict | None] | None = None
+    source_tail_dispatch: Callable[..., dict | None] | None = None
+    source_symbol_bindings: Callable[..., list] | None = None
+    initial_draft_evidence: Callable[..., dict] | None = None
+    stack_layout: Callable[..., dict] | None = None
+    instruction_regions: Callable[..., dict | None] | None = None
+    boundary_reason: Callable[..., str | None] | None = None
     variants: dict[str, Callable[[bytes, bool], list[tuple[int, str, str]]]] = field(default_factory=dict)
+
+    gcc_register_aliases: Callable[[int], tuple[str, ...]] | None = None
+    object_functions: Callable[..., dict] | None = None  # explicit private procedure metadata missing from .symtab
+    object_placeholders: Callable[..., dict] | None = None  # proven unused inline-return stubs
+    padding_reason: Callable[..., str | None] | None = None  # padding-only targets, without console or ABI facts
 
 
 ARCHES = [
     Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
-         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts,
-         variants={mips.ALLEGREX: mips.allegrex_lines}),
+         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts, called_code_extent=mips_code_recovery.called_extent, padding_reason=mips.padding_reason, gcc_register_aliases=mips.gcc_register_aliases,
+         source_local_storage=mips_local_storage.read, source_scalar_destination=mips_local_storage.scalar_destination, initial_draft_evidence=mips_drafts.read, source_hazard_rows=mips_hazards.rows_witness, source_return_paths=mips_return_paths.read, source_return_contract=mips_returns.result, source_stack_call_store=mips_returns.stack_call_store, repair_search_hints=mips_search.read, object_functions=mips_debug.functions, object_placeholders=mips_debug.placeholders, instruction_regions=mips_regions.read, build_tool_paths=mips_tools.build_paths, stack_frame_growth=mips_stack.frame_growth, stack_layout=mips_stack.repair_layout, source_operand_changes=mips_source_recovery.operand_changes, source_extra_narrowing=mips_source_recovery.extra_narrowing, source_private_abi=mips_source_recovery.private_abi, source_pointer_lifetime=mips_pointer_lifetime.read, source_pointer_snapshot=mips_source_recovery.pointer_snapshot_order, source_switch_blocks=mips_source_recovery.blocks, source_recovery_hints=mips_source_recovery.recovery_hints, source_tail_branch=mips_source_recovery.tail_branch, source_tail_dispatch=mips_tail_dispatch.read, source_symbol_bindings=mips_source_symbols.bindings, boundary_reason=mips.boundary_reason, boundary_instruction=mips.boundary_instruction, variants={mips.ALLEGREX: mips.allegrex_lines}),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
     Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES})),
     Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, features=frozenset({CLASSES, STRUCTS}),

@@ -29,6 +29,7 @@ from . import workers
 
 log = logging.getLogger("decompdecomp")
 POLL_SECONDS = 30  # how often a drafter looks whether what drafts are made from changed
+DRAFT_BATCH = 2  # initial compiles share SQLite/progress writes; do not flood the global worker pool
 SYNC_WAIT = 5  # how often it looks whether the room it joined has caught up
 
 
@@ -54,7 +55,7 @@ class Drafter:
 
     def start(self, slug: str) -> State:
         with self._lock:
-            if (st := self.jobs.get(slug)) is not None and st.state == "running":
+            if (st := self.jobs.get(slug)) is not None and st.state in ("running", "update_wait", "idle"):
                 return st
             st = self.jobs[slug] = State()
         threading.Thread(target=self._loop, args=(slug, st), daemon=True, name=f"drafts-{slug}").start()
@@ -68,6 +69,16 @@ class Drafter:
         mark = None
         try:
             while not st.stop.is_set():
+                from .project_activity import active
+                if not active(self.net, slug):
+                    st.state = "idle"
+                    st.stop.wait(2)
+                    continue
+                st.state = "running"
+                from .source_runtime import checkpoint, idle_wait
+                checkpoint(self.net, st)
+                if st.stop.is_set():
+                    return
                 link = self.net.links.get(slug)
                 if link is not None and link.status()["state"] == "syncing":
                     # a room's first sync is still bringing the names and matches that drafts are made from: drafting
@@ -86,31 +97,41 @@ class Drafter:
                     st.total, st.made = len(todo), 0
                     if todo:
                         agent, _ = self.net.local_agent("autopilot")
-                        wait([workers.pool().submit(self._one, agent, proj, fid, st) for fid in todo])
-                    mark = now  # (what changed while the pass ran is seen at the next look)
-                st.stop.wait(POLL_SECONDS)
+                        from .purpose_work import Executor
+                        with Executor(workers.WORKERS, purpose='Machine drafts', project=slug, stop=st.stop.set, initializer=workers.lower_priority) as pool:
+                            for start in range(0,len(todo),DRAFT_BATCH):
+                                if st.stop.is_set() or not active(self.net, slug):break
+                                wait([pool.submit(self._one, agent, proj, fid, st) for fid in todo[start:start+DRAFT_BATCH]])
+                    mark = now if active(self.net, slug) else None  # (what changed while the pass ran is seen at the next look)
+                idle_wait(self.net, st, POLL_SECONDS)
         except Exception:  # background work: it never stands in the way, and says why it stopped
             log.exception("machine drafts for %s stopped", slug)
         finally:
             st.state = "stopped" if st.stop.is_set() else "done"
 
     def _one(self, agent, proj, fid: int, st: State) -> None:
-        if st.stop.is_set():
+        from .project_activity import active
+        if st.stop.is_set() or not active(self.net, proj['slug']):
             return
         try:
-            fn = self.net.store.one("SELECT * FROM functions WHERE id=?", fid)
+            fn = self.net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", fid)
             if fn is None or fn["status"] != "open":
                 return
+            from .boundary_repairs import blocked
+            if fid in blocked(self.net,proj):return
             fork = self.net.fork_slug(proj["slug"])  # a game started from scratch in project mode (PC)
             if fork:
                 self.net.forks.background_draft(proj, fn)
+                recovered = not fn["best_source"]
             else:
                 self.net._seed_for(fn, proj)
+                recovered = not fn['best_source']
             st.made += 1
-            if proj["slug"] not in self.net.links and self.net.store.one(
-                    "SELECT 1 FROM attempts WHERE function_id=? AND agent_id=?", fid, agent.id):
+            if proj["slug"] not in self.net.links and (recovered or self.net.project_store(proj['id']).one(
+                    "SELECT 1 FROM attempts WHERE function_id=? AND agent_id=?", fid, agent.id)):
                 # autopilot tried this function's draft before: the new one goes through the judge too (in a room,
                 # the host's copy does that, and its matches come back here)
+                # A fresh or recovered seed has no attempt until its first compilation.
                 outcome = (self.net.forks.autopilot_one if fork else self.net._autopilot_one)(agent, proj, fid)
                 st.retried += outcome in ("match", "near", "far")
                 st.matched += outcome == "match"

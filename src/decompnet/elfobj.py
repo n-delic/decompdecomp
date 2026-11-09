@@ -11,13 +11,14 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from io import BytesIO
 
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 from elftools.elf.sections import SymbolTableSection
 
 from . import arch
+from .candidate_work import current, remember
+from .candidate_work import elf as candidate_elf
 
 # e_machine -> arch key used throughout decompnet
 MACHINES = {"EM_X86_64": "x86_64", "EM_386": "x86", "EM_MIPS": "mips", "EM_PPC": "ppc", "EM_PPC64": "ppc64",
@@ -130,11 +131,16 @@ def section_target(arch: str, raw: list[dict], k: int) -> int | None:
     if t == 2:  # R_MIPS_32
         return v
     same = [x for x in raw if x["symidx"] == r["symidx"] and x["symtab"] is r["symtab"]]
-    if t == 5:  # HI16: combine with the next LO16 of the same symbol
-        lo = next((x for x in same if x["off"] > r["off"] and x["type"] == 6), None)
+    # ELF relocation order encodes HI16/LO16 pairing. Instruction scheduling can move a
+    # LUI past another pair (even reusing the same register on separate branches), so
+    # sorting by instruction offset before pairing invents conflicting data placements.
+    position = r.get("order", r["off"])
+    same.sort(key=lambda x: x.get("order", x["off"]))
+    if t == 5:  # HI16: combine with the next LO16 in relocation-table order
+        lo = next((x for x in same if x.get("order", x["off"]) > position and x["type"] == 6), None)
         return (v << 16) + _sext16(lo["value"]) if lo else v << 16
-    if t == 6:  # LO16: combine with the previous HI16 of the same symbol
-        hi = next((x for x in reversed(same) if x["off"] < r["off"] and x["type"] == 5), None)
+    if t == 6:  # LO16: combine with the previous HI16 in relocation-table order
+        hi = next((x for x in reversed(same) if x.get("order", x["off"]) < position and x["type"] == 5), None)
         return ((hi["value"] << 16) if hi else 0) + _sext16(v)
     return None
 
@@ -158,7 +164,10 @@ def symbol_at(symtab: SymbolTableSection, shndx: int, offset: int) -> tuple[str,
         rank = (lo == offset, kind, s["st_info"]["bind"] == "STB_GLOBAL")
         if best is None or rank > best[0]:
             best = (rank, canonical_symbol(s.name, s["st_info"]["bind"]), offset - lo)
-    return (best[1], best[2]) if best else None
+    if best:return best[1],best[2]
+    hits=[(name,offset-start) for name,(sx,start,size) in metadata_functions(symtab.elffile).items()
+          if sx==shndx and start<=offset<start+size]
+    return hits[0] if len(hits)==1 else None
 
 
 def _encode(arch: str, r: dict, residual: int) -> int:
@@ -178,7 +187,24 @@ def _encode(arch: str, r: dict, residual: int) -> int:
 _MARKERS = ("gcc2_compiled.", "__gnu_compiled_c", "__gnu_compiled_cplusplus")
 
 
+def metadata_functions(elf):
+    reader=arch.get(MACHINES.get(elf['e_machine'],'')).object_functions
+    return reader(elf) if reader else {}
+
+
+def metadata_placeholders(elf):
+    reader=arch.get(MACHINES.get(elf['e_machine'],'')).object_placeholders
+    return reader(elf) if reader else {}
+
+
 def _function_symbols(elf) -> dict[str, tuple[int, int, int]]:
+    work = current()
+    if work is not None and any(parsed is elf for parsed in work.objects.values()):
+        return dict(remember(('elf-functions', elf), lambda: _read_function_symbols(elf)))
+    return _read_function_symbols(elf)
+
+
+def _read_function_symbols(elf) -> dict[str, tuple[int, int, int]]:
     """name -> (section index, offset, size) of every function defined in the object.
 
     Modern assemblers mark functions (STT_FUNC, with a size). Period ones, like the binutils 2.6 that PSY-Q-era
@@ -196,7 +222,7 @@ def _function_symbols(elf) -> dict[str, tuple[int, int, int]]:
         if s["st_info"]["type"] == "STT_FUNC" and s["st_size"] > 0:
             out[s.name] = (shndx, s["st_value"], s["st_size"])
         elif s["st_size"] == 0 and s.name not in _MARKERS and s.name[0] not in ".$" \
-                and elf.get_section(shndx)["sh_flags"] & 0x4:  # SHF_EXECINSTR
+                and 0 <= shndx < elf.num_sections() and elf.get_section(shndx)["sh_flags"] & 0x4:  # SHF_EXECINSTR
             loose.setdefault(shndx, []).append((s["st_value"], s.name))
     for shndx, syms in loose.items():
         section = elf.get_section(shndx)
@@ -216,17 +242,17 @@ def _function_symbols(elf) -> dict[str, tuple[int, int, int]]:
                     end += 4
             if end > off:
                 out[name] = (shndx, off, end - off)
-    return out
+    return {**metadata_functions(elf),**out}
 
 
 def list_functions(data: bytes) -> list[str]:
-    return list(_function_symbols(ELFFile(BytesIO(data))))
+    return list(_function_symbols(candidate_elf(data, ELFFile)))
 
 
 def extract_function(data: bytes, name: str) -> FunctionObj | None:
     """One function of an object file: its code, its relocations (with what each refers to) and the processor; None
     when the object has no function of that name."""
-    elf = ELFFile(BytesIO(data))
+    elf = candidate_elf(data, ELFFile)
     arch, big_endian = _arch_of(elf)
     found = _function_symbols(elf).get(name)
     if found is None:
@@ -254,7 +280,7 @@ def extract_function(data: bytes, name: str) -> FunctionObj | None:
                 field_at = off - start + delta
                 value = int.from_bytes(code[field_at : field_at + length], "big" if big_endian else "little") & mask
             raw.append({"off": off - start, "type": rtype, "symidx": rel["r_info_sym"], "rela": rel.is_RELA(),
-                        "value": value, "symtab": rsymtab})
+                        "value": value, "symtab": rsymtab, "order": len(raw)})
     raw.sort(key=lambda r: r["off"])
 
     relocs: list[Reloc] = []
@@ -292,7 +318,7 @@ def unmangle(data: bytes, known) -> bytes:
     (_$_4CPed, a destructor; _vt$4CPed, a vtable) are the game's with _ for $ (consoles/ps2/symtab.py), as long."""
     if b"__" not in data and b"_Z" not in data and b"$" not in data:
         return data
-    elf = ELFFile(BytesIO(data))
+    elf = candidate_elf(data, ELFFile)
     symtab = elf.get_section_by_name(".symtab")
     if not isinstance(symtab, SymbolTableSection):
         return data

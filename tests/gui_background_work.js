@@ -1,0 +1,75 @@
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
+const elements=new Map();const $=id=>{if(!elements.has(id))elements.set(id,{hidden:id==='backgroundPage',querySelectorAll:()=>[]});return elements.get(id);};
+let reads=0,resolve,bars=0,maxBars=0;
+const ctx=vm.createContext({$,document:{hidden:false},esc:s=>String(s).replaceAll('<','&lt;'),setInterval:()=>{},beginWork:(host,label)=>{bars++;maxBars=Math.max(maxBars,bars);host._workStatus={textContent:label,dataset:{state:'running'}};return ()=>{bars--;if(host._workStatus.dataset.state==='running')host._workStatus.dataset.state='done';};},showJobError:(host,message)=>{if(message&&host._workStatus)host._workStatus.dataset.state='error';},api:()=>{reads++;return new Promise(r=>resolve=r);}});
+vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/background-work.js','utf8'),ctx);
+(async()=>{
+ await ctx.readBackgroundWork();assert.equal(reads,0);
+ $('backgroundPage').hidden=false;
+ const p=ctx.readBackgroundWork();await ctx.readBackgroundWork();assert.equal(reads,1);
+ resolve({cpu_percent:125.5,threads:['worker'],cpu_note:'Process only',items:[{title:'<unsafe>',state:'running',kind:'job',key:'x',stoppable:true,detail:'Checking'}]});await p;
+ assert.equal($('backgroundCpu').textContent,'125.5%');assert.match($('backgroundRows').innerHTML,/&lt;unsafe>/);assert.match($('backgroundRows').innerHTML,/Stop/);
+ ctx.renderBackgroundWork({cpu_percent:0,threads:['x'],cpu_note:'',thread_details:[{name:'<thread>',native_id:1,role:'Server',purpose:'<purpose>',cpu_percent:12.5,cpu_state:'measured'},{name:'pending',role:'Other',purpose:'',cpu_percent:null,cpu_state:'measuring'}],items:[]});
+ assert.match($('backgroundRows').innerHTML,/12.5%/);assert.match($('backgroundRows').innerHTML,/Measuring…/);assert.match($('backgroundRows').innerHTML,/&lt;thread>/);
+ const merged=ctx.mergeBackgroundActivity({threads:[],items:[{title:'Search',kind:'job',key:'j',thread_ids:[1],stoppable:true}],thread_details:[{name:'coordinator',native_id:1,cpu_percent:2,cpu_state:'measured'},{name:'pool',native_id:2,cpu_percent:30,cpu_state:'measured'}]});
+ assert.equal(merged.length,2);assert.equal(merged[0].cpu_percent,2);assert.equal(merged[0].threads[0].name,'coordinator');assert.equal(merged[1].title,'pool');assert.equal(merged[1].stoppable,false);
+ const unavailable=ctx.mergeBackgroundActivity({threads:[],items:[{title:'No mapping',thread_ids:[]}],thread_details:[]});assert.equal(unavailable[0].cpu_percent,null);
+ const stopButton={dataset:{stopBackground:'0'}};$('backgroundRows').querySelectorAll=()=>[stopButton];
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'Lower CPU',kind:'job',key:'low',thread_ids:[10],stoppable:true},{title:'Higher CPU',kind:'job',key:'high',thread_ids:[11],stoppable:true}],thread_details:[{name:'low-thread',native_id:10,cpu_percent:1},{name:'high-thread',native_id:11,cpu_percent:20}]});
+ let stopped;ctx.document.hidden=true;ctx.api=async(url,options)=>{stopped=options.body.key;};await stopButton.onclick();assert.equal(stopped,'high');
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'SDK naming',kind:'startup',key:'task-1',project:'game',state:'running',detail:'Checking 1 / 10',stoppable:true}],thread_details:[]});
+ assert.match($('backgroundRows').innerHTML,/role="progressbar"/);
+ await stopButton.onclick();assert.equal(stopped,'task-1');
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'Compiler profile comparisons',kind:'purpose',key:'purpose-1',project:'game',state:'running',detail:'2 working · 1 queued',stoppable:true}],thread_details:[]});
+ assert.match($('backgroundRows').innerHTML,/2 working/);await stopButton.onclick();assert.equal(stopped,'purpose-1');
+ ctx.document.hidden=true;await ctx.readBackgroundWork();assert.equal(reads,1);
+ let autosaveAction;
+ ctx.api=async(url,options)=>{autosaveAction=options.body;};
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'Project autosave',kind:'autosave',key:'game',project:'game',state:'paused',stoppable:true}],thread_details:[]});
+ assert.match($('backgroundRows').innerHTML,/Resume/);await stopButton.onclick();assert.equal(autosaveAction.action,'resume');
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'Project autosave',kind:'autosave',key:'game',project:'game',state:'running',stoppable:true}],thread_details:[]});
+ assert.match($('backgroundRows').innerHTML,/Pause/);await stopButton.onclick();assert.equal(autosaveAction.action,'stop');
+ let savedCpu;
+ ctx.api=async(url,options)=>{savedCpu=options.body.maintenance_cpu_percent;};
+ $('maintenanceCpuLimit').value='50';await $('maintenanceCpuSave').onclick();assert.equal(savedCpu,50);
+ $('maintenanceCpuLimit').value='101';await $('maintenanceCpuSave').onclick();assert.equal(savedCpu,50);
+ // Five simultaneous operations must create only one bar and keep it until the last settles.
+ const controls=Array.from({length:5},()=>({disabled:false}));
+ const finishes=controls.map((control,i)=>ctx.beginBackgroundWork(`Request ${i}`,[control],`Request ${i} saved.`));
+ assert.equal(bars,1);assert.equal(maxBars,1);
+ assert.match($('backgroundWorkStatus')._workStatus.textContent,/5 requests in progress/);
+ controls.forEach(control=>assert.equal(control.disabled,true));
+ finishes[2]();finishes[2]();assert.equal(bars,1,'finishing twice is harmless');
+ assert.equal(controls[2].disabled,false);
+ assert.match($('backgroundWorkStatus')._workStatus.textContent,/4 requests in progress/);
+ finishes[0]();finishes[4]();finishes[1]();assert.equal(bars,1);
+ assert.match($('backgroundWorkStatus')._workStatus.textContent,/Request 3/);
+ finishes[3]();assert.equal(bars,0);assert.equal($('backgroundWorkStatus')._workStatus.textContent,'Request 3 saved.');
+ // An error stays visible when another request succeeds; a fresh batch resets its status.
+ const first=ctx.beginBackgroundWork('Stop first'),second=ctx.beginBackgroundWork('Stop second');
+ ctx.showJobError($('backgroundWorkStatus'),'Stop failed');first();second();
+ assert.equal(bars,0);assert.equal($('backgroundWorkStatus')._workStatus.dataset.state,'error');
+ const retry=ctx.beginBackgroundWork('Retry');assert.equal(bars,1);assert.equal($('backgroundWorkStatus')._workStatus.dataset.state,'running');retry();
+ assert.equal(bars,0);assert.equal(maxBars,1);
+ $('backgroundGroupBy').value='project';$('backgroundThreadSort').value='cpu';
+ const groupedData={cpu_percent:0,threads:[],cpu_note:'',items:[
+  {title:'Z task',kind:'purpose',key:'z-high',project:'z-game',thread_ids:[1],stoppable:true},
+  {title:'A low',kind:'purpose',key:'a-low',project:'a-game',thread_ids:[2],stoppable:true},
+  {title:'A high',kind:'purpose',key:'a-high',project:'a-game',thread_ids:[3],stoppable:true},
+  {title:'App task',kind:'purpose',key:'app',thread_ids:[4],stoppable:true}],
+  thread_details:[{name:'z',native_id:1,cpu_percent:90},{name:'low',native_id:2,cpu_percent:1},{name:'high',native_id:3,cpu_percent:30},{name:'app',native_id:4,cpu_percent:99}]};
+ ctx.api=async(url,options)=>{stopped=options.body.key;};
+ ctx.renderBackgroundWork(groupedData);
+ let html=$('backgroundRows').innerHTML;
+ assert.equal((html.match(/scope="rowgroup"/g)||[]).length,3);
+ assert.ok(html.indexOf('a-game')<html.indexOf('z-game'));
+ assert.ok(html.indexOf('A high')<html.indexOf('A low'));
+ assert.ok(html.indexOf('Z task')<html.indexOf('App task'));
+ assert.match(html,/2 items/);
+ await stopButton.onclick();assert.equal(stopped,'a-high','Stop keeps the grouped row identity');
+ ctx.renderBackgroundWork(groupedData);assert.equal($('backgroundGroupBy').value,'project','Refresh preserves grouping');
+ $('backgroundGroupBy').value='none';$('backgroundGroupBy').onchange();
+ assert.doesNotMatch($('backgroundRows').innerHTML,/scope="rowgroup"/);
+ await stopButton.onclick();assert.equal(stopped,'app','Ungrouped view restores global CPU sorting');
+ console.log('background visibility, request deduplication and escaping passed');
+})().catch(e=>{console.error(e);process.exitCode=1;});

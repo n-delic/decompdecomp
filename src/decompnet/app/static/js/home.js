@@ -55,6 +55,7 @@ async function showHome() {
 
 function resetDrop() {
   picked = null;
+  $("errRetry").onclick = null;
   $("dropIdle").hidden = false;
   $("dropPicked").hidden = true;
   $("dropBusy").hidden = true;
@@ -448,7 +449,12 @@ function fillCompilers(select, current, platform, only) {
   }).join("");
 }
 
+let importRunning = false;
 async function runImport(query, file, title, name = "") {
+  if (importRunning) return;
+  importRunning = true;
+  $("dropError").hidden = true;
+  $("errRetry").onclick = null;
   $("dropIdle").hidden = true;
   $("dropPicked").hidden = true;
   $("dropBusy").hidden = false;
@@ -479,12 +485,20 @@ async function runImport(query, file, title, name = "") {
     loadNav();
     location.hash = `#/p/${res.slug}`;
   } catch (e) {
-    importFailed(name || title.replace(/^\w+ |…$/g, ""), e, $("jobLog").textContent);
-  } finally { clearInterval(tick); $("busyTime").textContent = ""; $("impWork").hidden = true; }
+    importFailed(name || title.replace(/^\w+ |…$/g, ""), e, $("jobLog").textContent, () => runImport(query, file, title, name));
+  } finally { importRunning = false; clearInterval(tick); $("busyTime").textContent = ""; $("impWork").hidden = true; }
 }
 
 /* A failed import stays on screen with what happened, ready to report: a toast is gone before it's read. */
-function importFailed(name, e, logText) {
+function importFailed(name, e, logText, retry) {
+  $("errRetry").hidden = !retry;
+  $("errRetry").onclick = retry ? (event) => {
+    event.stopPropagation();
+    // Consume the action immediately, before any upload or prerequisite request.
+    $("errRetry").onclick = null;
+    $("dropError").hidden = true;
+    return retry();
+  } : null;
   const job = e.job || {};
   const log = (job.log ? job.log.join("\n") : logText || "").trim();
   $("dropIdle").hidden = true; $("dropPicked").hidden = true; $("dropBusy").hidden = true;
@@ -524,7 +538,7 @@ $("analyse").onclick = async () => {
   if (!$("mwConsent").hidden) {
     $("dropPicked").hidden = true; $("dropBusy").hidden = false; $("impUp").hidden = true;
     try { await ensureCodeWarrior(); } catch (e) {
-      importFailed(cwPack(packOf(picked.info)).title, e, $("jobLog").textContent);
+      importFailed(cwPack(packOf(picked.info)).title, e, $("jobLog").textContent, () => $("analyse").onclick());
       return;
     }
   }
@@ -585,6 +599,10 @@ function renderRestore() {
     : restoreCancelling ? "Cancelling saved project opening…" : busy ? "Opening saved project…"
     : restoreJob?.state === "cancelled" ? "Saved project opening cancelled."
     : restoreJob?.state === "done" ? "Saved project opened." : "";
+  if(busy && !message && !restoreCancelling){
+    const log=$("rsLog");log._workStatus=$("rsStatus");log._workBar=$("rsWork");
+    updateWorkProgress(log,restoreJob?.progress || {phase:"Opening saved project…"});
+  }
   $("rsStatus").hidden = !$("rsStatus").textContent;
   $("rsGo").disabled = busy || !restoreInput.own;
   $("rsGo").textContent = busy ? "Opening…" : "Open it";
@@ -600,9 +618,9 @@ function renderRestore() {
 }
 function openRestore() {
   const running = restoreBusy();
-  const body = dialog("Open a saved project", `<p class="muted">Your progress on a game, saved by decompdecomp (on this computer or another one): the matched C, notes, names and settings. The game itself is never in a save: you add your own copy, and decompdecomp checks it's the same game.</p>
+  const body = dialog("Open a saved project", `<p class="muted">Your progress on a game, saved by decompdecomp (on this computer or another one): the matched C, notes, names and settings. Game files are not included in progress saves. decompdecomp checks for a matching copy in your local project or an already imported game; you can also choose one below.</p>
     <label class="field"><span>The save: its folder, or the git address you pushed it to</span><span class="pick-row"><input id="rsSource" class="mono" placeholder="/home/you/saves/my-game, or a git address"><button class="ghost small-btn" type="button" data-pick="folder" data-for="rsSource" data-title="The saved project's folder">Choose…</button></span></label>
-    <label class="field"><span>Your copy of the game: its path on this computer</span><span class="pick-row"><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"><button class="ghost small-btn" type="button" data-pick="file" data-for="rsGame" data-title="Your copy of the game">Choose…</button></span></label>
+    <label class="field"><span>Your copy of the game (optional if available locally)</span><span class="pick-row"><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"><button class="ghost small-btn" type="button" data-pick="file" data-for="rsGame" data-title="Your copy of the game">Choose…</button></span></label>
     <label class="check"><input type="checkbox" id="rsOwn"><span>This is my own copy of this game, obtained legally. The results stay with me for my own use.</span></label>
     <div class="row"><button class="primary" id="rsGo" type="button" disabled>${running ? "Opening…" : "Open it"}</button><button class="ghost" id="rsCancel" type="button">${running ? "Cancel opening" : "Cancel"}</button></div>
     <p class="muted small" id="rsStatus" role="status" hidden></p>
@@ -633,8 +651,8 @@ function openRestore() {
   body.querySelector("#rsGo").onclick = async () => {
     if (restoreBusy() || !restoreInput.own) return;
     const source = restoreInput.source.trim(), path = restoreInput.path.trim();
-    if (!source || !path) {
-      restoreError = "Say where the save is and where your copy of the game is.";
+    if (!source) {
+      restoreError = "Say where the saved project is. Leave the game path blank to check for a matching local copy.";
       renderRestore(); return;
     }
     restoreStarting = true; restoreJob = null; restoreError = "";

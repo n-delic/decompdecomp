@@ -10,7 +10,9 @@ from __future__ import annotations
 import re
 import struct
 import subprocess
+import time
 from dataclasses import dataclass, field
+from importlib import metadata
 from pathlib import Path
 
 import rabbitizer
@@ -19,7 +21,9 @@ from ..hostenv import NO_WINDOW, console_python, stop_process_tree
 from . import Picked, RomError
 
 _INSN = re.compile(r"^\s*/\* ([0-9A-F]+) ([0-9A-F]{8}) ([0-9A-F]{8}) \*/\s+(\S+)\s*(.*?)\s*$")
-_LABEL = re.compile(r"^\s*(?:jlabel\s+)?(\.?L[0-9A-F]{8}):?\s*$")
+_LOCAL_NAME = r"\.?L([0-9A-F]{8})(?:_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3}))?"
+_LOCAL_REF = re.compile(r"(?<![\w.$])" + _LOCAL_NAME + r"(?![\w.$])")
+_LABEL = re.compile(r"^\s*(?:jlabel\s+)?(" + _LOCAL_NAME + r"):?\s*$")
 _DATA = re.compile(r"^\s*/\* ([0-9A-F]+ )?([0-9A-F]{8})(?: [0-9A-F]+)? \*/\s+\.(\w+)\s*(.*?)\s*$")
 _DLABEL = re.compile(r"^\s*dlabel\s+(\S+)")
 _GLABEL = re.compile(r"^\s*glabel\s+(\S+)")
@@ -96,13 +100,18 @@ class SplitResult:
     platform: str = "n64"
     gp: int = 0  # value of $gp for $gp-relative data (PlayStation), 0 if unused
     image: str = ""  # the flat image splat reads (the ROM itself, or one made from an ELF)
+    coverage_notes: list[str] = field(default_factory=list)
 
 
 def segments_from_config(path: Path) -> list[Segment]:
     """Code segments (ROM range + load address) from a splat config."""
     import yaml
 
-    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return segments_from_config_data(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+def segments_from_config_data(cfg: dict) -> list[Segment]:
+    """The same validated code-parent mappings from a staged split configuration."""
     raw = cfg.get("segments", [])
 
     def start_of(seg):
@@ -171,13 +180,33 @@ def _add_symbols(path: Path, lines: list[str]) -> None:
     path.write_text(text.rstrip("\n") + "\n" + "".join(f"{line}\n" for line in keep), encoding="utf-8")
 
 
-def _splat(args: list[str], cwd: Path, log=print) -> str:
+MIN_SPLAT_VERSION = (0, 50, 1)
+
+
+def _check_splat_runtime():
+    """A pulled checkout can still be running an older, incompatible environment."""
+    try:
+        installed = metadata.version('splat64')
+    except metadata.PackageNotFoundError:
+        installed = 'not installed'
+    parsed = re.match(r'^(\d+)\.(\d+)\.(\d+)', installed)
+    if parsed is None or tuple(map(int, parsed.groups())) < MIN_SPLAT_VERSION:
+        raise RomError(f'Installed Splat is {installed}; decompdecomp requires 0.50.1 or newer. '
+                       'Close the app, update its dependencies (run uv sync in a development checkout), '
+                       'then reopen it and retry. For a packaged app, use an updated app build.')
+
+
+def _splat(args: list[str], cwd: Path, log=print, *, timeout: float | None = None) -> str:
+    _check_splat_runtime()
     check_cancel = getattr(log, "check_cancel", lambda: None)
-    proc = subprocess.Popen([console_python(), "-m", "splat", *args], cwd=cwd, stdout=subprocess.PIPE,
+    from ..limits import capped
+    deadline=time.monotonic()+timeout if timeout is not None else None
+    proc = subprocess.Popen(capped([console_python(), "-m", "splat", *args]), cwd=cwd, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     try:
         while True:
             check_cancel()
+            if deadline is not None and time.monotonic()>=deadline:raise RomError('Staged disassembly exceeded its time limit; no reviewed changes were published.')
             try:
                 stdout, stderr = proc.communicate(timeout=0.2)
                 break
@@ -437,7 +466,7 @@ def parse_function(path: Path, segment: str, big_endian: bool = True) -> RomFunc
             continue
         m = _LABEL.match(raw)
         if m:
-            labels.add(int(m.group(1).lstrip(".L"), 16))
+            labels.add(int(m.group(2), 16))
     if name is None or not lines:
         return None
     _trim_padding(lines)
@@ -448,11 +477,48 @@ def function_asm(fn: RomFunction) -> str:
     """A function's stored assembly, as the project keeps and shows it (spimdisasm's lines with their words)."""
     out = [f"glabel {fn.name}"]
     for ln in fn.lines:
-        if ln.vram in fn.labels and ln.vram != fn.vram:
+        if ln.vram in fn.labels:
             out.append(f".L{ln.vram:08X}:")
-        out.append(f"/* {ln.rom:X} {ln.vram:08X} {ln.word:08X} */  {ln.mnemonic:<10} {ln.operands}".rstrip())
+        # Overlay labels carry a suffix in splat's input. Keep their references consistent
+        # with the address labels we emit, including jump-table case entries.
+        operands = _LOCAL_REF.sub(lambda m: f".L{m[1]}" if int(m[1], 16) in fn.labels else m[0], ln.operands)
+        out.append(f"/* {ln.rom:X} {ln.vram:08X} {ln.word:08X} */  {ln.mnemonic:<10} {operands}".rstrip())
     out.append(f"endlabel {fn.name}")
     return "\n".join(out)
+
+
+def draft_asm(text: str, name: str, vram: int | None = None, data_asm: str = '') -> str:
+    """Recover labels lost by older imports without changing an instruction or extending a target.
+
+    Only recorded instruction addresses can define missing local labels. An outgoing
+    branch remains unresolved: inventing its code would hide a boundary problem.
+    The row owns this assembly, so its entry name also follows subsequent renames.
+    """
+    lines = text.splitlines()
+    instructions = [(i, _INSN.match(line)) for i, line in enumerate(lines)]
+    instructions = [(i, m) for i, m in instructions if m]
+    if not instructions or (vram is not None and int(instructions[0][1][2], 16) != vram):
+        return text
+    if vram is None:
+        entries = [m[1] for line in lines if (m := _GLABEL.match(line))]
+        if entries != [name]:
+            return text  # a project-mode file can contain several functions; do not rename its first one
+    entry = next((m for line in lines[:instructions[0][0]] if (m := _GLABEL.match(line))), None)
+    if entry and entry[1] != name:
+        text = re.sub(r"(?<![\w.])" + re.escape(entry[1]) + r"(?!\w)", lambda _: name, text)
+        lines = text.splitlines()
+    defined = {m[1] for line in lines if (m := _LABEL.match(line))}
+    # Case targets can occur only in the supplied jump table, not in an instruction.
+    missing = {m[0]: int(m[1], 16) for m in _LOCAL_REF.finditer(text + '\n' + data_asm) if m[0] not in defined}
+    by_address: dict[int, list[str]] = {}
+    for label, address in missing.items():
+        by_address.setdefault(address, []).append(label)
+    out = []
+    for line in lines:
+        if m := _INSN.match(line):
+            out.extend(f"{label}:" for label in sorted(by_address.pop(int(m[2], 16), [])))
+        out.append(line)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
 def function_from_text(name: str, text: str, segment: str) -> RomFunction:
@@ -466,7 +532,7 @@ def function_from_text(name: str, text: str, segment: str) -> RomFunction:
             continue
         m = _LABEL.match(raw)
         if m:
-            labels.add(int(m.group(1).lstrip(".L"), 16))
+            labels.add(int(m.group(2), 16))
     return RomFunction(name, lines[0].vram, lines[0].rom, segment, lines, Path(), labels)
 
 
@@ -604,6 +670,10 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     log("disassembling every function")
     out += "\n" + _splat(["split", config.name], workdir, log)
 
+    from . import mixed_code
+
+    out += mixed_code.run(config, workdir, image, console, log)
+
     functions = []
     for path in sorted((workdir / "asm" / "nonmatchings").glob("*/*.s")):
         fn = parse_function(path, path.parent.name, big_endian)
@@ -616,7 +686,7 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     seen: dict[str, int] = {}  # name -> where it is in the image
     unique = []
     rom = (workdir / image).read_bytes()
-    for fn in sorted(functions, key=lambda f: f.vram):
+    for fn in sorted(functions, key=lambda f: (f.segment, f.vram)):
         if fn.name in seen:  # overlays loaded at the same address: the same name in another overlay
             if seen[fn.name] == fn.rom:
                 continue
@@ -629,13 +699,21 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     data = []
     for path in sorted((workdir / "asm" / "data").glob("**/*.s")):
         data += parse_data(path)
+    from .automatic_boundaries import repair
+
+    segments = segments_from_config(config)
+    unique = repair(unique, data, rom, console, segments, symbols=symbols or (), log=log)
     unique = merge_switch_cases(unique, data, rom, big_endian)
     if not unique:
         raise RomError("splat found no functions; the code may be compressed or use an unusual boot layout")
     segments = segments_from_config(config)
     gp = gp or console.find_gp(rom, (workdir / rom_name).read_bytes(), segments)
     log(f"found {len(unique)} functions and {len(data)} data symbols")
-    return SplitResult(unique, data, segments, named_symbols(workdir), config, compiler, out, console.id, gp, image)
+    import json
+
+    coverage = workdir / 'analysis-coverage.json'
+    notes = json.loads(coverage.read_text(encoding='utf-8')) if coverage.is_file() else []
+    return SplitResult(unique, data, segments, named_symbols(workdir), config, compiler, out, console.id, gp, image, notes)
 
 
 def join_saved_functions(parts: list[RomFunction], start: int, end: int, read) -> RomFunction:

@@ -71,7 +71,7 @@
     <label><input type="radio" name="platform" value="gc"><span>GameCube</span></label>
     <label><input type="radio" name="platform" value="wii"><span>Wii</span></label>
     <label><input type="radio" name="platform" value="ps1"><span>PlayStation</span></label>
-    <label title="EE-GCC and CodeWarrior also run on macOS"><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
+    <label title="EE-GCC also runs on macOS: Sony builds through the local Linux runner, SN Systems and CodeWarrior builds through wibo"><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
     <label><input type="radio" name="platform" value="ps3"><span>PlayStation 3</span></label>
     <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
@@ -86,7 +86,7 @@
       <h3><span class="pl-name">Nintendo 64</span> <span class="status rec">Recommended</span></h3>
       <ol class="stations">
         <li><small>Your file</small><b>ROM</b><span>.z64, .n64 or .v64</span></li>
-        <li><small>Split by</small><b>splat</b><span>with spimdisasm; finds code loaded later, and compressed code</span></li>
+        <li><small>Split by</small><b>splat</b><span>with spimdisasm; finds code loaded later and compressed code; separates TLB boot stubs from compiled code when calls confirm a later load mapping; preserves overlay branch labels; recovers directly called, balanced routines hidden in raw text output; regenerates compiler-tested drafts locally for hosts and room members, targeting missing compiling C by default, with bounded callback, argument and stack-view recovery and saved failure diagnostics, with bounded recovery of truncated function tails and a read-only audit of binary gaps, possible pointers and unowned data interiors, with saved review notes and bounded indirect-dispatch evidence</span></li>
         <li><small>Built by</small><b>KMC GCC 2.7.2</b><span>or IDO 5.3 / 7.1, the game's own compiler; another build from your own copy</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds your ROM again, byte for byte</span></li>
@@ -96,7 +96,7 @@
       <h3><span class="pl-name">GameCube</span> <span class="status beta">Beta</span></h3>
       <ol class="stations">
         <li><small>Your file</small><b>Disc or DOL</b><span>ISO, GCM, RVZ, WIA, CISO, GCZ</span></li>
-        <li><small>Split by</small><b>decomp-toolkit</b><span>in a dtk-template project</span></li>
+        <li><small>Split by</small><b>decomp-toolkit</b><span>dtk-template project; automatic SDK pattern identification after building targets</span></li>
         <li><small>Built by</small><b>CodeWarrior</b><span>GC 1.0 to 3.0, C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>in the project's own build; finished files are linked into the game</span></li>
         <li><small>You get</small><b>A dtk-template project</b><span>the shape community decomps use</span></li>
@@ -106,7 +106,7 @@
       <h3><span class="pl-name">Wii</span> <span class="status beta">Beta</span></h3>
       <ol class="stations">
         <li><small>Your file</small><b>Disc or DOL</b><span>ISO, RVZ, WIA, WBFS, CISO</span></li>
-        <li><small>Split by</small><b>decomp-toolkit</b><span>in a dtk-template project</span></li>
+        <li><small>Split by</small><b>decomp-toolkit</b><span>dtk-template project; automatic SDK pattern identification after building targets</span></li>
         <li><small>Built by</small><b>CodeWarrior</b><span>up to Wii 1.7, C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>in the project's own build; finished files are linked into the game</span></li>
         <li><small>You get</small><b>A dtk-template project</b><span>the shape community decomps use</span></li>
@@ -115,8 +115,8 @@
     <article class="pipeline" data-platform="ps1" data-file="game.bin">
       <h3><span class="pl-name">PlayStation</span> <span class="status beta">Beta</span></h3>
       <ol class="stations">
-        <li><small>Your file</small><b>Disc or PS-X EXE</b><span>BIN, ISO or CHD; the game's main program and its overlays</span></li>
-        <li><small>Split by</small><b>splat</b><span>with spimdisasm</span></li>
+        <li><small>Your file</small><b>Disc or PS-X EXE</b><span>BIN, ISO or CHD; offline game names with serials, main program and overlays</span></li>
+        <li><small>Split by</small><b>splat</b><span>with spimdisasm; bounded recovery of called, balanced routines hidden in raw text output</span></li>
         <li><small>Built by</small><b>PSY-Q's GCC</b><span>2.5.7 to 2.95.2, EGCS 2.91.66 included, through maspsx for Sony's assembler; another build from your own copy; C</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
@@ -125,9 +125,9 @@
     <article class="pipeline" data-platform="ps2" data-file="game.iso">
       <h3><span class="pl-name">PlayStation 2</span> <span class="status beta">Beta</span></h3>
       <ol class="stations">
-        <li><small>Your file</small><b>Disc or ELF</b><span>the game's main program</span></li>
-        <li><small>Split by</small><b>splat</b><span>with spimdisasm</span></li>
-        <li><small>Built by</small><b>EE-GCC or CodeWarrior</b><span>EE-GCC 2.9 to 3.2 (Sony builds use the local Linux runner on Mac), CodeWarrior 2.3.3 / 3.0.1 (also on Mac through wibo with license acceptance); C and C++; one compiler per address range when a game mixes them; another build from your own copy</span></li>
+        <li><small>Your file</small><b>Disc or ELF</b><span>offline game names with serials; the game's main program</span></li>
+        <li><small>Split by</small><b>splat</b><span>with spimdisasm; bounded recovery of called, balanced routines hidden in raw text output</span></li>
+        <li><small>Built by</small><b>EE-GCC or CodeWarrior</b><span>EE-GCC 2.9 to 3.2 (Sony builds through the local Linux runner on Mac; SN Systems and CodeWarrior builds through wibo), CodeWarrior 2.3.3 / 3.0.1 (also on Mac through wibo, with license acceptance); C and C++; one compiler per address range when a game mixes them; another build from your own copy</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
       </ol>
@@ -146,7 +146,7 @@
       <h3><span class="pl-name">PSP</span> <span class="status beta">Beta</span></h3>
       <ol class="stations">
         <li><small>Your file</small><b>UMD image, ELF or PRX</b><span>an ISO whose program isn't encrypted, or the game's program decrypted (PPSSPP can dump it); its debug symbols, when it has them</span></li>
-        <li><small>Split by</small><b>splat</b><span>with spimdisasm; a PRX is first placed where the PSP loads it</span></li>
+        <li><small>Split by</small><b>splat</b><span>with spimdisasm; bounded recovery of called, balanced routines hidden in raw text output; a PRX is first placed where the PSP loads it</span></li>
         <li><small>Built by</small><b>CodeWarrior or Sony's GCC</b><span>CodeWarrior for PSP 3.0.1, the PSP SDK's GCC 3.3.3, SN's pspsnc; another build from your own copy; C and C++</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
@@ -205,6 +205,10 @@
     <h2 id="proof-h">The game's compiler is the judge. Not the AI.</h2>
     <p>Each attempt is compiled with the same compiler and flags the game was built with, linked at the function's real address, and compared with your copy. A near miss comes back with an instruction diff. Only <mark>score 0</mark> is a match.</p>
   </div>
+  <p class="fineprint">For MIPS register-only near misses, the deep permuter can identify register swaps and prioritize bounded lifetime repairs. Optional installed-GCC diagnostics explain allocation choices without AI requests. Only the normal exact judge accepts a match.</p>
+  <p class="fineprint">Reviewed incomplete MIPS ROM functions can be extended into original raw bytes with staged disassembly and overlap guards. Recovery reopens a candidate; it does not infer a C match. A controlled demo benchmark measures missed-function detection separately from matching progress.</p>
+  <p class="fineprint">MIPS ROM imports and reimports automatically repair proven framed and frameless fragments while retaining original bytes; ambiguous mappings, independent entries and indirect flow still need review. N64 imports also complete segments truncated just after a prologue and separate code banks using corroborated ROM-to-RAM loader arguments. Local MIPS ROM projects can audit incomplete function boundaries and unanalysed binary regions using only the CPU, without existing source. The overview checks coverage when the detected queue empties and keeps unresolved boundaries, search limits and raw bytes visible. Detected matching percentages and identical builds do not prove whole-game source recovery. Mapped MIPS ROM projects also provide original-assembly previews for delay-slot, join, end-address, padding/data and intentional-entry decisions, retaining source/history with guarded undo. Guided reviews show neighbouring instructions and before/after extents. An optional agent investigates one entry and saves cited supporting evidence, counter-evidence and uncertainty for user review; it never changes boundaries automatically. Safety checks protect existing matches, rather than prove function ownership. Unresolved boundaries wait outside automatic work queues. Other processors and imported builds still need coverage and repair adapters.</p>
+  <p class="fineprint">Local source preparation recovers referenced enums and object declarations and highlights branch differences for review. MIPS ROM candidates can try private aligned-symbol hypotheses and independently verified small helper/profile context before paid agents. Local MIPS ROM source preparation can try real matched callback owners as compiler context using only your CPU. ROM projects can also verify supplied assembly with an installed compatible compiler driver, checking linked code and data separately from C coverage. The overview distinguishes exact C, verified source assembly, other assembly and open functions; imported-build assembly verification is planned.</p>
   <div class="listing">
     <div class="pane">
       <p class="pane-label">From your ROM <span>0x800007D0</span></p>
@@ -252,12 +256,19 @@ jr      $ra
   <div class="steps">
     <div class="step">
       <p class="step-n">1 · Install</p>
-      <p class="cmd"><code id="cmd-linux">curl -fsSL https://decomp.ndelic.com/install.sh | bash</code><button type="button" class="copy" data-copy-from="cmd-linux">Copy</button></p>
-      <p class="step-note">Linux: run it in your terminal. It installs the app and compilers, then opens the app in its own window. There's also a .deb, an .rpm and an AppImage on the <a href="https://github.com/n-delic/decompdecomp/releases/latest">releases page</a>.</p>
-      <p class="step-note">Windows 10 and 11: download and open <code>decompdecomp-&lt;version&gt;-windows-x64-setup.exe</code> from the <a href="https://github.com/n-delic/decompdecomp/releases/latest">latest release</a>. The app opens in a native Windows window, with desktop and Start shortcuts and a tray icon. PS1, PS2 and most N64 games also need WSL 2 for their period compilers: run <code>wsl --install</code> in an administrator PowerShell, restart if asked, then open Ubuntu once. GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't.</p>
-      <p class="cmd"><code id="cmd-macos">curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main</code><button type="button" class="copy" data-copy-from="cmd-macos">Copy</button></p>
-      <p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS2 Sony EE-GCC uses the optional local Linux runner on macOS 13+: install <code>brew install colima docker</code>, then choose Prepare Linux runner in Compilers &amp; tools. SN Systems EE-GCC and CodeWarrior PS2 use wibo; CodeWarrior requires license acceptance in Setup. Linux-only PS1 builds still need Linux; macOS has no menu bar tray icon yet.</p>
-      <p class="step-note">There's also a downloadable macOS app on the <a href="https://github.com/n-delic/decompdecomp/releases/latest">latest release</a>: download macos_arm64 for Apple Silicon or macos_x86_64 for Intel, unzip it, move decompdecomp.app to Applications, and open it from Finder. It isn't signed, so macOS may ask you to approve its first launch in Privacy &amp; Security.</p>
+      <p class="cmd"><code id="cmd-linux">curl -fsSL https://raw.githubusercontent.com/RetroReversing/decompdecomp/main/site/public/install.sh | bash</code><button type="button" class="copy" data-copy-from="cmd-linux">Copy</button></p>
+      <p class="step-note">Without a desktop window: run <code>decomp serve --port 6464</code>, open <code>http://127.0.0.1:6464/</code>, and use the sign-in code printed in the terminal. The same agents and compilers run on that computer; the server binds to localhost only.</p>
+      <p class="step-note">Linux: run it in your terminal. It installs the app and compilers, then opens the app in its own window. There's also a .deb, an .rpm and an AppImage on the <a href="https://github.com/RetroReversing/decompdecomp/releases/latest">releases page</a>.</p>
+      <p class="step-note">Projects and settings use <code>~/Decomp-RetroReversing</code> (<code>%USERPROFILE%\Decomp-RetroReversing</code> on Windows), separate from upstream. Existing <code>DECOMP_HOME</code> overrides are respected; upstream databases are not migrated automatically.</p>
+      <p class="step-note">Fork releases use <code>vX.Y.Z-rr.N</code>. Current automated downloads include Windows setup and portable ZIPs, plus Apple Silicon macOS apps.</p>
+      <p class="step-note">Windows 10 and 11: for a portable app, extract the <code>windows-x64-portable.zip</code> download and open <code>decompdecomp.exe</code>. Keep its bundled folders alongside it. The portable download uses the same separate fork data folder and needs .NET Framework 4.8 and Microsoft Edge WebView2 Runtime already available. For setup with prerequisite installation, download and open <code>decompdecomp-&lt;version&gt;-windows-x64-setup.exe</code> from the <a href="https://github.com/RetroReversing/decompdecomp/releases/latest">latest release</a>. The app opens in a native Windows window, with desktop and Start shortcuts and a tray icon. PS1, PS2 and most N64 games also need WSL 2 for their period compilers: run <code>wsl --install</code> in an administrator PowerShell, restart if asked, then open Ubuntu once. GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't.</p>
+      <p class="step-note">Frequent source updates: Settings → Run from Git can prepare main updates in a separate runtime while agents keep working. Enable automatic updates there; a restart check holds new sessions for at most 15 seconds, then releases them and retries later if active work needs longer. Agents resume with saved usage limits. No app rebuild is needed.</p>
+      <p class="cmd"><code id="cmd-macos">curl -fsSL https://raw.githubusercontent.com/RetroReversing/decompdecomp/main/site/public/install.sh | bash -s -- --source branch:main</code><button type="button" class="copy" data-copy-from="cmd-macos">Copy</button></p>
+      <p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS2 Sony EE-GCC needs the optional local Linux runner: install <code>brew install colima docker</code>, then choose Prepare Linux runner in Compilers &amp; tools. SN Systems EE-GCC 2.95.2/2.95.3 and CodeWarrior PS2 2.3.3/3.0.1 use wibo. Install wibo under Compilers &amp; tools → Tools; existing compiler packs show Install missing tools when a runtime needs repair. Pinned SN packs handle install paths containing spaces automatically; CodeWarrior requires license acceptance in Setup. macOS has no menu bar tray icon yet.</p>
+      <p class="step-note">There's also a downloadable macOS app on the <a href="https://github.com/RetroReversing/decompdecomp/releases/latest">latest release</a>: download macos_arm64 for Apple Silicon or macos_x86_64 for Intel, unzip it, move decompdecomp.app to Applications, and open it from Finder. It isn't signed, so macOS may ask you to approve its first launch in Privacy &amp; Security.</p>
+      <p class="step-note">The update dialog also offers a Git source download into a new folder: use Browse to choose its parent folder, then download. It includes Git/uv setup links and commands to run a separate development copy. It follows your configured update repository and branch.</p>
+      <p class="step-note">The Save location panel can create a Git repository with ignore rules, commit a first portable-progress checkpoint, and add origin. Portable ROM saves can batch distinct improved functions (10 by default), alongside per-match commits. An optional automatic-push checkbox pushes at a configurable threshold (10 unpushed commits by default). Project Settings shows unpushed Git commits and lets you review and push existing commits to origin without staging unfinished work. Automatic ROM match commits identify the agent or matching method and include available repair-example summaries.</p>
+      <p class="step-note">RetroReversing fork builds show their version and source commit in the app sidebar and startup log. Include both when reporting an issue; clients need a fresh app package to receive new client-side features.</p>
     </div>
     <div class="step">
       <p class="step-n">2 · Open your game</p>

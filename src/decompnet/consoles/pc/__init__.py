@@ -197,7 +197,7 @@ class WindowsPC(Console):
             return
 
         def matched() -> set[str]:  # not into or out of a matched function: its C would no longer be the whole one
-            return {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+            return {r["name"] for r in net.project_store(slug).all("SELECT name FROM functions WHERE project_id=? AND "
                                                      "status='matched'", net.project_row(slug)["id"])}
 
         def repairs(fp):
@@ -240,7 +240,7 @@ class WindowsPC(Console):
                     "function each calls, and set aside" if n else None)
 
         def frames(fp):  # (files with matched code keep their flags: that C matches with them)
-            done = {scratch._source(fp.root, r["unit"]) for r in net.store.all(
+            done = {scratch._source(fp.root, r["unit"]) for r in net.project_store(slug).all(
                 "SELECT DISTINCT unit FROM functions WHERE project_id=? AND status='matched'", net.project_row(slug)["id"])}
             n = scratch.set_frame_flags(fp.root, version, keep=done)
             return (f"{n} source files whose functions keep an ebp frame build with {scratch.FRAME_FLAG} now (Visual "
@@ -299,7 +299,7 @@ class WindowsPC(Console):
         for m in _functions_json(fp, manifest["version"]).get("modules", []):
             log(f"analysing {m['exe'].removeprefix('orig/')} with Ghidra again")
             found[m["name"]] = scratch.module_rows(ghidra, fp.root / m["exe"], m["image_base"] - m["preferred_base"])
-        matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+        matched = {r["name"] for r in net.project_store(slug).all("SELECT name FROM functions WHERE project_id=? AND "
                                                      "status='matched'", net.project_row(slug)["id"])}
         return net.forks.reanalyse(slug, lambda fp: scratch.reanalyse_program(fp.root, manifest["version"], found,
                                                                                 keep=matched), log=log)

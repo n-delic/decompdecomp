@@ -1,7 +1,7 @@
 """Variants of one function's C, made by decomp-permuter's randomizer (MIT, a pinned tool: toolchains.toml).
 
 A program of its own, not a module of decompdecomp: app/permute.py runs it with the Python of decomp-permuter's
-environment, `python -I permuter_gen.py <decomp-permuter's folder>`, and it imports nothing of decompdecomp. Our
+environment, `python -I permuter_gen.py <decomp-permuter's folder>`, with dependency-free capture and formatting guards. Our
 own judge scores what it writes; this only makes candidates, so a variant that doesn't compile costs one compile.
 
 In, on stdin, one job per line, each a JSON object:
@@ -30,9 +30,12 @@ import json
 import random
 import re
 import sys
+from functools import wraps
+from pathlib import Path
 
 KEEP = 0.6  # decomp-permuter's default chance of building on the last variant instead of starting again
 SOURCE_STARTS = "DECOMPDECOMP_SOURCE_STARTS"  # a typedef put between the header and the source, to find the seam
+
 TRIES_PER_VARIANT = 4  # rewrites can repeat or fail: give up on a job that yields nothing new this many times over
 MAX_SEED = 10**20
 # a comment, or a string or character literal (group 1), which keeps any /* inside it
@@ -45,9 +48,46 @@ def plain_c(text: str, directives: bool = True) -> str:
     return text if directives else "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
+def private_inline(original):
+    """Keep newly generated helpers local to their candidate's translation unit."""
+    @wraps(original)
+    def call(fn, ast, indices, region, random):
+        existing = {id(node) for node in ast.ext}
+        result = original(fn, ast, indices, region, random)
+        for node in ast.ext:
+            if (id(node) not in existing and type(node).__name__ == 'FuncDef'
+                    and 'inline' in node.decl.funcspec and not node.decl.storage):
+                # GNU89 external inline still emits an out-of-line global body.
+                # Separate accepted functions could otherwise define the same
+                # helper, or add text outside the judged function's byte range.
+                node.decl.storage.append('static')
+        return result
+    return call
+
+
+def supported_methods(methods):
+    """Do not manufacture self reads or arithmetic cancellations to shape allocation."""
+    # Native perm_add_self_assignment also inserts x++; x--;. Signed overflow,
+    # pointer bounds and uninitialized/qualified reads make these unsafe without
+    # range and type proofs. They add no source-level computation to recover.
+    # The native remover substitutes names without liveness and can turn base+b
+    # into base+a+b after a pointer is overwritten. Shared CFG repairs provide
+    # bounded storage reuse instead; never feed this pass invalid parents.
+    # The audit also found uninitialized inserted reads, similar-type array
+    # aliases without escape proofs, and arbitrary effect removal. Those passes
+    # stay disabled until independently guarded.
+    return [(method, weight) for method, weight in methods
+            if method.__name__ not in {'perm_add_self_assignment','perm_remove_var',
+                                      'perm_refer_to_var','perm_alias_array','perm_remove_ast'}]
+
+
 def main() -> int:
     sys.path.insert(0, sys.argv[1])  # decomp-permuter's folder: its `src` package and its own copy of pycparser
-    from perm_pycparser import c_ast
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from perm_pycparser import c_ast, c_parser
+    from permuter_capture import protect_expand
+    from permuter_dependencies import GUARDED, RejectedRewrite, protect
+    from permuter_formatting import LineGroups
     from src.ast_util import to_c
     from src.candidate import Candidate
     from src.helpers import get_default_randomization_weights
@@ -63,27 +103,61 @@ def main() -> int:
                 f"{plain_c(source, directives=False)}\n")
         rng = random.Random(job["seed"])
         try:
-            weights = get_default_randomization_weights(job.get("family") or "base")
+            weights = dict(get_default_randomization_weights(job.get("family") or "base"))
+            for key, factor in job.get("weight_boosts", {}).items():
+                if key in weights and isinstance(factor, (int, float)) and 0.25 <= factor <= 4:
+                    weights[key] *= factor
             first = Candidate.from_source(unit, EvalState(), name, weights, rng.randrange(1, MAX_SEED))
         except Exception as e:  # the C or the header isn't C pycparser reads (a macro call, a compiler extension)
             yield {"error": f"{type(e).__name__}: {e}"}
             return
         seam = next(node for node in first.ast.ext if isinstance(node, c_ast.Typedef) and node.name == SOURCE_STARTS)
+        line_groups = LineGroups(job['source'], job['header'], name, c_parser.CParser().parse)
+        line_groups.bind_origins(next(node for node in first.ast.ext
+                                     if isinstance(node, c_ast.FuncDef) and node.decl.name == name))
 
         def own_part(ast) -> str:
             """The C after the seam: the function and its neighbours from the source, without the header. A header
             declaration the randomizer retyped is left out: the header isn't the permuter's to change, and a
             second, different declaration would only fail to compile."""
-            return to_c(c_ast.FileAST(ast.ext[ast.ext.index(seam) + 1:]))
+            function = next(node for node in ast.ext
+                            if isinstance(node, c_ast.FuncDef) and node.decl.name == name)
+            return line_groups.apply(to_c(c_ast.FileAST(ast.ext[ast.ext.index(seam) + 1:])), function)
 
         seen = {own_part(first.ast)}  # the source as decomp-permuter prints it: not a variant
         cand = first
+        lineage = []
+        blocked = set(re.findall(r'\b[A-Za-z_]\w*\b', "\n".join(
+            line for line in (job["header"]+"\n"+source).splitlines() if line.lstrip().startswith("#"))))
+
+        def configure(candidate):
+            def wrap(method):
+                def call(*args):
+                    result = method(*args)
+                    if job.get("trace"):
+                        lineage.append(method.__name__)
+                    return result
+                return call
+            def guarded(method):
+                if method.__name__ in GUARDED:
+                    return protect(method, RejectedRewrite, blocked)
+                if method.__name__ == "perm_expand_expr":
+                    return protect_expand(method, blocked, lambda: [
+                        node for node in candidate.ast.ext if isinstance(node, c_ast.Typedef)])
+                if method.__name__ == "perm_inline":
+                    return private_inline(method)
+                return method
+            candidate.randomizer.methods = [(wrap(guarded(method)), weight)
+                                             for method, weight in supported_methods(candidate.randomizer.methods)]
+        configure(cand)
         for _ in range(count * TRIES_PER_VARIANT):
             if len(seen) > count:
                 break
             try:
                 if cand is None or rng.random() >= KEEP:
                     cand = Candidate.from_source(unit, EvalState(), name, weights, rng.randrange(1, MAX_SEED))
+                    lineage = []
+                    configure(cand)
                 cand.randomize_ast()
                 variant = own_part(cand.ast)
             except Exception:  # a rewrite that trips over this code: start again from the source
@@ -91,12 +165,15 @@ def main() -> int:
                 continue
             if variant not in seen:
                 seen.add(variant)
-                yield {"variant": directives + variant}
+                result = {"variant": directives + variant}
+                if job.get('trace'):
+                    result['lineage'] = list(lineage)
+                yield result
 
     for line in sys.stdin:
         if line.strip():
             for answer in variants(json.loads(line)):
-                print(json.dumps(answer))
+                print(json.dumps(answer), flush=True)
             print(json.dumps({"done": True}), flush=True)
     return 0
 

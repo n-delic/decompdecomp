@@ -244,3 +244,29 @@ def test_the_game_rebuilds_byte_for_byte(demo):
     else:
         pytest.skip(f"{console.name} has no export yet (ROADMAP.md)")
     assert res["identical"], res.get("log") or res.get("detail")
+
+
+@pytest.mark.parametrize('demo', [c for c in DEMOS if c.mode == consoles.ROM and arch.get(c.arch).boundary_instruction],
+                         indirect=True, ids=lambda c:c.id)
+def test_guided_boundary_evidence_reads_the_original_demo_without_claiming_or_matching(demo):
+    """The same original-byte review adapter serves every mapped MIPS ROM console."""
+    from decompnet.app import boundary_evidence
+    console,net,slug,_,_=demo
+    if console.mode != consoles.ROM or arch.get(console.arch).boundary_instruction is None:
+        pytest.skip('Guided boundary evidence needs a mapped ROM extent adapter (ROADMAP.md).')
+    fn=net.store.one('SELECT * FROM functions WHERE project_id=? AND size>=16 AND vram IS NOT NULL '
+                     'AND rom_offset IS NOT NULL AND gone_mark IS NULL ORDER BY id LIMIT 1',net.project_row(slug)['id'])
+    if fn is None:pytest.skip('Demo has no mapped instruction extent.')
+    # Retain the fixture's original layout for the other demo features in this file.
+    try:
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET size=4,n_insns=1,target=? WHERE id=?',(fn['target'][:4],fn['id']))
+        packet=boundary_evidence.read(net,slug,fn['name'])
+        assert packet['start']==fn['vram'] and packet['end']==fn['vram']+4
+        assert any(line['address']==packet['end'] for line in packet['assembly'])
+        assert 'Indirect calls' in packet['limits'] and packet['segment']['start']<=packet['start']
+        assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
+    finally:
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET size=?,n_insns=?,target=? WHERE id=?',
+                       (fn['size'],fn['n_insns'],fn['target'],fn['id']))

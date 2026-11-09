@@ -101,6 +101,9 @@ def test_finder_launcher_preserves_interpreter_and_helper_path(monkeypatch, tmp_
     bundle = home / "Applications/decompdecomp.app/Contents"
     info = plistlib.loads((bundle / "Info.plist").read_bytes())
     assert info["CFBundleIdentifier"] == "com.ndelic.decompdecomp"
+    icon = bundle / "Resources" / info["CFBundleIconFile"]
+    assert icon.read_bytes() == (Path(launcher.__file__).with_name("static") / "icon.icns").read_bytes()
+    assert icon.read_bytes()[:4] == b"icns"
     script = bundle / "MacOS" / info["CFBundleExecutable"]
     if os.name != "nt":
         assert script.stat().st_mode & 0o111
@@ -116,7 +119,7 @@ def test_packaged_mac_app_keeps_its_own_bundle(monkeypatch, tmp_path):
     monkeypatch.setenv("DECOMP_PACKAGE", "macos")
     assert "already available" in launcher.install_launcher()
     assert not (tmp_path / "Applications").exists()
-    assert updates.can_apply() == (False, "this decompdecomp was installed as a macOS app: download the new one from https://github.com/n-delic/decompdecomp/releases")
+    assert updates.can_apply() == (False, "this decompdecomp was installed as a macOS app: download the new one from https://github.com/RetroReversing/decompdecomp/releases")
 
 
 def test_mac_chooser_uses_the_apps_python_and_cancellation_is_empty(monkeypatch):
@@ -176,7 +179,7 @@ def test_mac_window_uses_its_python_and_private_environment(monkeypatch, tmp_pat
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the installer is a POSIX shell script")
-def test_mac_installer_skips_linux_packages_and_tracks_upstream(tmp_path):
+def test_mac_installer_skips_linux_packages_and_tracks_this_fork(tmp_path):
     bindir = tmp_path / "test bin"
     bindir.mkdir()
     calls = tmp_path / "calls"
@@ -193,11 +196,11 @@ def test_mac_installer_skips_linux_packages_and_tracks_upstream(tmp_path):
     script = tmp_path / "install.sh"
     script.write_bytes((Path(__file__).resolve().parents[1] / "site/public/install.sh").read_bytes())
     env = dict(os.environ, HOME=str(tmp_path / "home"), PATH=str(bindir) + ":/usr/bin:/bin")
-    result = subprocess.run(["bash", str(script), "--no-start"],
+    result = subprocess.run(["bash", str(script), "--no-start", "--source", "branch:main"],
                             capture_output=True, text=True, env=env, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
     recorded = calls.read_text()
-    assert "--repo n-delic/decompdecomp" in recorded and "--branch main" in recorded
+    assert "--repo RetroReversing/decompdecomp" in recorded and "--branch main" in recorded
     assert "setup" in recorded and "shortcut" in recorded
     assert "GTK" not in result.stdout and "sudo" not in result.stdout
 
@@ -297,7 +300,7 @@ def test_ps1_assembler_uses_app_python_on_mac_only(host, expected, tmp_path, mon
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="native macOS PS1 compilers")
-@pytest.mark.parametrize("tid", ["gcc-2.6.3-psx", "gcc-2.7.2-psx", "gcc-2.8.1-psx"])
+@pytest.mark.parametrize("tid", ["gcc-2.6.0-psx", "gcc-2.6.3-psx", "gcc-2.7.2-psx", "gcc-2.7.2-cdk", "gcc-2.8.0-psx", "gcc-2.8.1-psx"])
 def test_native_ps1_compiler_produces_little_endian_mips(tid, tmp_path):
     from io import BytesIO
 
@@ -314,3 +317,38 @@ def test_native_ps1_compiler_produces_little_endian_mips(tid, tmp_path):
     elf = ELFFile(BytesIO(result.obj))
     assert elf["e_machine"] == "EM_MIPS" and elf.little_endian
     assert elf.get_section_by_name(".text").data()
+
+
+@pytest.mark.parametrize("version", ["2.6.0", "2.8.0"])
+def test_more_ps1_source_builds_are_pinned_for_mac(version):
+    tc = toolchains.get("gcc-" + version + "-psx")
+    for cpu in ("arm64", "x86_64"):
+        part, = tc.parts_for("macos-" + cpu)
+        assert part["build"] == "psx-gcc" and part["version"] == version
+        assert all(len(part[key]) == 64 for key in ("sha256", "patches_sha256", "config_guess_sha256", "config_sub_sha256"))
+    assert not toolchains.get("gcc-2.5.7-psx").parts_for("macos-arm64")
+    assert not toolchains.get("gcc-2.91.66-psx").parts_for("macos-arm64")
+    assert not toolchains.get("gcc-2.95.2-psx").parts_for("macos-arm64")
+
+
+def test_macos_bundle_check_rejects_checkout_virtual_environment(tmp_path):
+    # A venv copied to Runtime can import the app yet still depend on the developer's Python.
+    # Exercise the build script's actual check against such a runtime, without downloads/building.
+    script = (Path(__file__).resolve().parents[1]/'packaging/macos/build.sh').read_text()
+    check = next(line for line in script.splitlines() if 'sys.prefix.endswith' in line)
+    command = shlex.split(check)
+    runtime = tmp_path/'Runtime'
+    subprocess.run([sys.executable,'-m','venv','--without-pip',str(runtime)],check=True)
+    python = runtime/('Scripts/python.exe' if sys.platform=='win32' else 'bin/python')
+    result = subprocess.run([str(python),'-c',command[-1]],capture_output=True,text=True)
+    assert result.returncode != 0 and 'AssertionError' in result.stderr
+
+
+@pytest.mark.skipif(os.name=='nt' or not shutil.which('bash'),reason='POSIX packaging shell required')
+def test_macos_build_temporary_files_respect_selected_volume(tmp_path):
+    script=(Path(__file__).resolve().parents[1]/'packaging/macos/build.sh').read_text()
+    prefix=script.split('uv python install',1)[0]
+    result=subprocess.run(['bash','-c',prefix+'\nprintf "%s" "$WORK"'],
+                          env={**os.environ,'TMPDIR':str(tmp_path)},capture_output=True,text=True,check=True)
+    created=Path(result.stdout)
+    assert created.parent==tmp_path and not created.exists()

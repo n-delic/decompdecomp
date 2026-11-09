@@ -1,6 +1,6 @@
 [project]
 name = "decompnet"
-version = "1.0.9-alpha.5"
+version = "1.0.9+rr.2"
 description = "A desktop app where AI agents decompile the games you own into C that rebuilds them byte for byte. Runs locally."
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -28,8 +28,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/n-delic/decompdecomp"
-Source = "https://github.com/n-delic/decompdecomp"
+Homepage = "https://github.com/RetroReversing/decompdecomp"
+Source = "https://github.com/RetroReversing/decompdecomp"
 
 [project.scripts]
 decomp = "decompnet.app.cli:main"

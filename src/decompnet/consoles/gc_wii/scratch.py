@@ -789,6 +789,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     compiler = compiler or (WII_DEFAULT if platform == "wii" else GC_DEFAULT)
     template = toolchains.ensure("dtk-template", log=log)
     shutil.copytree(template, root, ignore=shutil.ignore_patterns(".decompnet-toolchain.json"))
+    from . import template_paths
+    template_paths.prepare(root)
     for placeholder in ("orig/GAMEID", "config/GAMEID"):
         shutil.rmtree(root / placeholder, ignore_errors=True)
     orig, config = root / "orig" / gid, root / "config" / gid
@@ -922,7 +924,7 @@ write_asm: true
         f.write("\n# decompdecomp\n.decomp-wtf/\n")
     (root / "README.md").write_text(f"""# {info['title']} ({gid}) decompilation
 
-Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp) on [dtk-template](https://github.com/encounter/dtk-template),
+Started from scratch with [decompdecomp](https://github.com/RetroReversing/decompdecomp) on [dtk-template](https://github.com/encounter/dtk-template),
 the layout GameCube and Wii decomps use. Every build rebuilds `main.dol` and checks it against your copy, byte for byte.
 
 1. Put your own copy of the game in `orig/{gid}/` (never commit it).

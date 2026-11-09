@@ -20,12 +20,14 @@ import subprocess
 from pathlib import Path
 
 import yaml
+from elftools.elf.elffile import ELFFile
 
 from .. import toolchains
+from ..candidate_work import elf as candidate_elf
 from ..hostenv import NO_WINDOW, console_python
 from ..limits import capped
 from ..project import compiler_for
-from . import match
+from . import match, split
 from .symbols import AUTO_NAME
 
 _ADDR_COMMENT = re.compile(r"/\*\s*([0-9A-F]+)\s+([0-9A-F]{8})\b")
@@ -67,7 +69,7 @@ def _symbol_lines(net, proj) -> list[str]:
     function's size too: spimdisasm ends a function with a switch at its first return, and the import put the cases
     back (split.merge_switch_cases: a PSP game's GCC and EE-GCC 3.2 load jump tables that way), so splat must too."""
     syms = net.symbols(proj["id"])
-    funcs = {r["vram"]: r for r in net.store.all("SELECT name, vram, size FROM functions WHERE project_id=?", proj["id"])}
+    funcs = {r["vram"]: r for r in net.project_store(proj['id']).all("SELECT name, vram, size FROM functions WHERE project_id=?", proj["id"])}
     lines = []
     for vram, r in sorted(funcs.items()):
         lines.append(f"{r['name']} = 0x{vram:08X}; // type:func size:0x{r['size']:X}")
@@ -92,8 +94,83 @@ def _segments(config: dict) -> list[dict]:
             if len(seg) == 1:
                 continue  # the end marker
             seg = {"start": seg[0], "type": seg[1], "name": seg[2] if len(seg) > 2 else f"{seg[0]:X}"}
-        out.append(dict(seg) | {"start": start, "end": end})
+        seg = dict(seg) | {"start": start, "end": end}
+        # splat's parent size spans the address gap left by newly discovered code segments. Export only the
+        # actual BSS extent, whose start may be well beyond this parent's shortened ROM-backed data.
+        bss_vram = next((sub["vram"] for sub in seg.get("subsegments", [])
+                         if isinstance(sub, dict) and sub.get("type") == "bss" and "vram" in sub), None)
+        if bss_vram is not None and end is not None and "vram" in seg:
+            seg["bss_size"] = seg["vram"] + end - start + int(seg.get("bss_size") or 0) - bss_vram
+        out.append(seg)
     return out
+
+
+def _export_segments(config: dict, functions) -> dict:
+    """Keep known function tails out of data when regenerating the export's split.
+
+    An inferred text boundary can land on a return's delay slot. The importer
+    already recovered that word in the function; exporting the old boundary
+    would put it in both the compiled function and a data object.
+    """
+    from .reviewed import extend_config
+    config = extend_config(config, functions)
+    for segment in _segments(config):
+        if segment.get('type') != 'code' or 'vram' not in segment:
+            continue
+        subs = segment.get('subsegments', [])
+        for index, sub in enumerate(subs):
+            start = sub[0] if isinstance(sub, list) else sub.get('start')
+            kind = sub[1] if isinstance(sub, list) else sub.get('type')
+            if start is None or kind not in ('data', 'rodata', '.data', '.rodata'):
+                continue
+            address = segment['vram'] + start - segment['start']
+            ends = [f['vram'] + f['size'] for f in functions
+                    if f['vram'] is not None and f['vram'] < address < f['vram'] + f['size']]
+            if not ends:
+                continue
+            end = start + max(ends) - address
+            following = [s[0] if isinstance(s, list) else s.get('start') for s in subs[index + 1:]]
+            limit = next((offset for offset in following if offset is not None), segment['end'])
+            if limit is None or end >= limit:
+                raise ExportError('a known function overlaps a complete data segment; review its boundaries before exporting')
+            if isinstance(sub, list):
+                sub[0] = end
+            else:
+                sub['start'] = end
+    return config
+
+
+def _single_definition(obj: bytes, name: str) -> bool:
+    """One exported object occupies one function's slot. Extra helper bodies can match in isolation but collide
+    with their own slots in the full image; don't silently include those definitions twice."""
+    from ..elfobj import _function_symbols, unmangle
+
+    # Count before name mapping: overloads can map to the same game name, but still have
+    # separate bodies. The ordinary judge resolves the single C++ method back to that name.
+    if len(_function_symbols(candidate_elf(obj, ELFFile))) != 1:
+        return False
+    obj = unmangle(obj, lambda symbol: symbol == name)
+    elf=candidate_elf(obj, ELFFile)
+    if set(_function_symbols(elf))!={name}:return False
+    # A debug-only static procedure has no linkable entry symbol. It needs the
+    # same freshly judged matching-only extraction as a real multi-body unit.
+    symtab=elf.get_section_by_name('.symtab')
+    section,start,_=_function_symbols(elf)[name]
+    return bool(symtab and any(s.name==name and s['st_info']['bind']=='STB_GLOBAL'
+                              and s['st_shndx']==section and s['st_value']==start
+                              for s in symtab.iter_symbols()))
+
+
+def _section_bases(placements: dict) -> tuple[dict, str | None]:
+    """Constants must share one judge-proven base. A standalone object's preferred section alignment need not
+    match a constant pool inside the original translation unit; the build script preserves the verified base."""
+    bases = {}
+    for section, offsets in placements.items():
+        possible = {address - offset for offset, address in offsets.items()}
+        if len(possible) != 1:
+            return {}, "its own data isn't laid out like the game's"
+        bases[section] = possible.pop()
+    return bases, None
 
 
 def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
@@ -102,6 +179,9 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
     from ..consoles import EXPORT
 
     proj = net._project(slug)
+    if net.project_store(proj['id']).one("SELECT vram FROM functions WHERE project_id=? GROUP BY vram HAVING COUNT(*)>1 LIMIT 1", proj["id"]):
+        raise ExportError("Rebuildable export does not yet support overlapping overlay banks. "
+                          "Your matches remain saved; continue working in the app until bank-aware export is available.")
     cfg = net.cfg(proj)
     if EXPORT not in console.features:
         raise ExportError(f"exporting a rebuildable project isn't supported for {console.name or 'this console'} yet")
@@ -121,7 +201,9 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
 
     # 1. splat again, with the project's names
     log("writing the assembly with the project's names (splat)")
-    shutil.copyfile(configs[0], out / "splat.yaml")
+    split_config = yaml.safe_load(configs[0].read_text(encoding='utf-8'))
+    known = net.project_store(proj['id']).all('SELECT vram,size FROM functions WHERE project_id=?', proj['id'])
+    (out / 'splat.yaml').write_text(yaml.safe_dump(_export_segments(split_config, known), sort_keys=False), encoding='utf-8')
     shutil.copyfile(work / image_name, out / image_name)
     for extra in ("reloc_addrs.txt",):
         if (work / extra).exists():
@@ -137,7 +219,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         ld.rename(out / f"splat-{ld.name}")
 
     # 2. which function is where, and which are matched
-    rows = {r["vram"]: r for r in net.store.all("SELECT * FROM functions WHERE project_id=?", proj["id"])}
+    rows = {r["vram"]: r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=?", proj["id"])}
     units = net._unit_contexts(proj["id"])
     header = net._context(proj["id"])["header"]
     (out / "include").mkdir(exist_ok=True)
@@ -164,6 +246,8 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         if row is None or row["status"] != "matched" or not row["matched_source"]:
             f["kind"] = "asm"
             continue
+        from ..app.function_names import canonical_source
+        row = dict(row) | {"matched_source": canonical_source(row, row["matched_source"])}
         unit = net._effective_unit(row, units)
         hdr = net._context(proj["id"], unit)["header"]
         compiled = net._compile(proj, hdr, row["matched_source"], row)
@@ -171,26 +255,31 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
             as_fallback.append((f["name"], "doesn't compile any more"))
             f["kind"] = "asm"
             continue
+        from ..app.compiler_context import verified
+        predecessor=None if _single_definition(compiled.obj,row['name']) else verified(net,proj,row,compiled.obj)
+        if not _single_definition(compiled.obj, row["name"]) and not predecessor:
+            as_fallback.append((f["name"], "its C also defines other functions; split their bodies into separate source files"))
+            f["kind"] = "asm"
+            continue
         linked = match.link(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), net.reader(proj))
         if not linked.exact:
             as_fallback.append((f["name"], "no longer matches"))
             f["kind"] = "asm"
             continue
-        bases, ok = {}, True
-        for section, offsets in linked.placements.items():
-            base = {addr - off for off, addr in offsets.items()}
-            if len(base) != 1:
-                ok = False
-                break
-            bases[section] = base.pop()
-        if not ok:
-            as_fallback.append((f["name"], "its own data isn't laid out like the game's"))
-            f["kind"] = "asm"
-            continue
+        bases, problem = _section_bases(linked.placements)
+        if problem or predecessor:
+            # Recompile and judge this entry every build; the builder can retain
+            # scattered original pools without pretending they share one base.
+            from .export_entry import object_for
+            try:object_for(compiled.obj,row['name'],linked.linked_code)
+            except (ValueError,TypeError):
+                as_fallback.append((f['name'],problem));f['kind']='asm';continue
+            f['entry_only']=True
+            bases={}
         src = out / "src" / f["seg"] / f"{f['name']}.{'cpp' if compiled.language == 'c++' else 'c'}"  # as it compiled
         src.parent.mkdir(parents=True, exist_ok=True)
         include = "common.h" if not unit else f"common_{unit}.h"
-        prelude = toolchains.get(compiler_for(cfg, row["vram"])["toolchain"]).prelude
+        prelude = toolchains.source_prelude(toolchains.get(compiler_for(cfg, row["vram"], row)["toolchain"]), row["matched_source"]+"\n"+hdr)
         src.write_text(exported_source(prelude, include, row["matched_source"]), encoding="utf-8")
         f["kind"] = "c"
         f["src"] = src.relative_to(out).as_posix()
@@ -229,6 +318,8 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
     for seg in segments:
         kind = seg.get("type")
         name = re.sub(r"\W", "_", str(seg.get("name") or f"{seg['start']:X}"))
+        if name[0].isdigit():
+            name = "seg_" + name
         if kind == "header" or (kind == "hasm" and "vram" not in seg):
             layout.append({"name": name, "kind": "raw", "start": seg["start"], "objects": [f"build/asm/{seg.get('name', 'header')}.o"]})
         elif kind == "bin":
@@ -250,6 +341,11 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
                            "pieces": sorted(data, key=lambda d: d["vram"]), "bss": sorted(bss, key=lambda d: d["vram"])})
     syms = net.symbols(proj["id"])
     absolute = {s.name: s.address for s in syms.by_name.values() if s.name not in defined}
+    # Startup assembly can retain an import-time alias after a discovered function receives an address-based
+    # name. Keep those known addresses too; otherwise its named jump target is undefined in the standalone link.
+    for name, address in split.named_symbols(work).items():
+        if name not in defined:
+            absolute.setdefault(name, address)
     for auto in ("undefined_syms_auto.txt", "undefined_funcs_auto.txt"):
         p = out / auto
         if p.exists():
@@ -268,6 +364,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         entry = {"name": f["name"], "seg": f["seg"], "vram": f["vram"], "rom": f["rom"], "asm": f["asm"]}
         if f["kind"] == "c":
             entry["c"] = f["src"]
+            if f.get('entry_only'):entry['entry_only']=True
             entry["own"] = {sec: base for (obj, sec, base) in private if obj == f["obj"]}
         fn_json.append(entry)
 
@@ -281,15 +378,35 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
     build = {
         "title": proj["name"], "platform": console.id, "image": base, "output": f"build/game{ext}",
         "sha1": hashlib.sha1(image).hexdigest(), "compiler": cfg["compiler"],
-        "compiler_ranges": cfg.get("compiler_ranges") or [], "gp": cfg.get("gp") or 0,
+        "compiler_ranges": cfg.get("compiler_ranges") or [], "function_compilers": cfg.get('function_compilers') or {}, "gp": cfg.get("gp") or 0,
         "big_endian": console.big_endian, "asm_preamble": console.asm_preamble,
         "as_flags": [*console.as_flags, "-G0", "-no-pad-sections", "-I", "include"],
         "ld_flags": ["-EB" if console.big_endian else "-EL", "--no-check-sections"],
         "assembly": objects, "segments": layout, "functions": fn_json,
         "symbols": {k: v for k, v in sorted(absolute.items(), key=lambda kv: kv[1])},
     }
+    # An expanded analysis image is not the cartridge. Rebuild RNC literals from linked code before reporting
+    # an original-ROM match; both the expanded image and the final cartridge must pass their comparisons.
+    original_name = cfg["rom"].get("program")
+    if console.id == "n64" and original_name and original_name != image_name:
+        from ..consoles.n64.code import unpack_code
+
+        original = (work / original_name).read_bytes()
+        blocks, cursor = [], len(original)
+        for offset, payload in unpack_code(original):
+            cursor += -cursor % 0x10 + 0x2000
+            if original[offset:offset + 4] != b"RNC\x01" or image[cursor:cursor + len(payload)] != payload:
+                raise ExportError("compressed analysis export needs a verified reconstruction for every block")
+            blocks.append({"rom": offset, "analysis": cursor, "size": len(payload)})
+            cursor += len(payload)
+        if not blocks:
+            raise ExportError("expanded analysis image has no verified compressed-block reconstruction")
+        cartridge = f"baserom.cartridge{ext}"
+        (out / cartridge).write_bytes(original)
+        build["cartridge"] = {"image": cartridge, "sha1": hashlib.sha1(original).hexdigest(), "blocks": blocks}
     (out / "build.json").write_text(json.dumps(build, indent=1), encoding="utf-8")
     shutil.copyfile(Path(__file__).with_name("export_build.py"), out / "build.py")
+    shutil.copyfile(Path(__file__).with_name("export_entry.py"), out / "export_entry.py")
     units_json = []
     for f in functions:
         unit = {"name": f"{f['seg']}/{f['name']}", "target_path": f["obj_asm"],
@@ -301,6 +418,18 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
                                       encoding="utf-8")
     matched = sum(1 for f in functions if f["kind"] == "c")
     _write_docs(out, proj["name"], console.name, base, matched, len(functions), as_fallback)
+    if cartridge := build.get("cartridge"):
+        readme = out / "README.md"
+        text = readme.read_text(encoding="utf-8")
+        text = text.replace(f"1. Put your own copy of the game here as `{base}` (it is in `.gitignore`; never commit it).",
+                            f"1. Keep both generated private inputs: `{base}` (expanded analysis image) and "
+                            f"`{cartridge['image']}` (original normalized cartridge). Reimport and export your ROM "
+                            "to regenerate them; the original cartridge alone is not the expanded analysis input.")
+        text += ("\nThe build first compares the expanded linked image, then reconstructs RNC method-1 blocks "
+                 "from that linked output using the original compression template. It checks the final cartridge "
+                 "against its fixed original checksum. Incompatible edits require a general compressor.\n")
+        readme.write_text(text, encoding="utf-8")
+
     # everything made from the game itself stays local: build.py regenerates it from your copy
     (out / ".gitignore").write_text("build/\nbaserom*\nasm/\nassets/\n*.ld\n*_auto.txt\n.splat/\n*.d\n",
                                     encoding="utf-8")
@@ -320,7 +449,7 @@ def _write_docs(out: Path, title: str, console_name: str, base: str, matched: in
     notes = "".join(f"\n- `{n}`: kept as assembly, {why}" for n, why in fallback)
     (out / "README.md").write_text(f"""# {title} (decompilation)
 
-A matching decompilation of {title} for the {console_name}, started with [decompdecomp](https://github.com/n-delic/decompdecomp).
+A matching decompilation of {title} for the {console_name}, started with [decompdecomp](https://github.com/RetroReversing/decompdecomp).
 {matched} of {total} functions are C that compiles to exactly the original code; the rest are still assembly.
 `build.py` rebuilds the game from this tree and checks it against your original, byte for byte.
 

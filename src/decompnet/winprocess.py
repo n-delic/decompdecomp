@@ -48,13 +48,18 @@ def terminate_tree(pid: int) -> None:
     finally:
         kernel.CloseHandle(snapshot)
 
-    descendants, pending = [], [pid]
+    descendants, pending, seen = [], [pid], set()
     while pending:
         parent = pending.pop()
-        children = parents.get(parent, [])
-        descendants.extend(children)
-        pending.extend(children)
-    for process_id in reversed([*descendants, pid]):
+        # A Toolhelp snapshot is not a timeless tree: parent IDs can refer to exited
+        # processes whose IDs have since been reused. Never follow a cycle twice.
+        if parent in seen:
+            continue
+        seen.add(parent)
+        descendants.append(parent)
+        pending.extend(parents.get(parent, []))
+    # Children first, then the helper itself; stop each observed process at most once.
+    for process_id in reversed(descendants):
         handle = kernel.OpenProcess(PROCESS_TERMINATE, False, process_id)
         if handle:
             try:

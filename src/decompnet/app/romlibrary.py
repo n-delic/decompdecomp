@@ -22,15 +22,10 @@ CACHE_HASHES = os.name != 'nt'
 
 @lru_cache(maxsize=10000)
 def _hash(path: str, size: int, mtime: int, ctime: int, platform: str) -> str:
-    if not platform:
-        from .forkroom import game_identity
-
-        return game_identity(Path(path))
-    if platform != 'raw':
-        if identity := consoles.get(platform).identity(Path(path)):
-            return identity
-    with Path(path).open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha1').hexdigest()
+    if platform == 'raw':
+        with Path(path).open('rb') as stream:
+            return hashlib.file_digest(stream, 'sha1').hexdigest()
+    return consoles.get(platform).library_sha1(Path(path))
 
 
 def fingerprint(path: Path, platform: str) -> str | None:
@@ -83,7 +78,7 @@ def find(project, needs: dict, folder: str, log=print) -> dict:
         expected.setdefault(default, None)
     if not expected:
         return {'path': None, 'reason': 'This project does not declare an expected game SHA-1.'}
-    platform = str(getattr(project, 'platform', '') or '')
+    platform = project.detect_platform()
     local = project.root / needs['path'] if needs.get('path') else None
     # Retry setup without copying only when the file already has the exact bytes the project expects.
     if local and (digest := fingerprint(local, platform)) in expected:
