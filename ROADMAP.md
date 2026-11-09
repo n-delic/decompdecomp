@@ -953,7 +953,7 @@ similar C through objdiff. Other processors need an instruction reader for this 
 ROM Explorer can assign agents the entire unknown-data queue, a ROM range or a function’s
 referenced data. Durable project-scoped passes have leased region claims, progress, Stop/resume,
 restart recovery, provider-session continuation and paginated findings. CLI and API workers
-share a restricted inspection/proposal tool set; matching tools, symbol edits and review actions
+share a restricted inspection/proposal tool set with a task-aware MCP startup check; matching tools, symbol edits and review actions
 are unavailable to them. Proposals retain names, formats, layouts, advisory boundaries, related
 regions, citations, counter-evidence and uncertainty. Failed approaches and review feedback
 are retained for later passes. Human review can preview/edit, accept or reject proposals;
