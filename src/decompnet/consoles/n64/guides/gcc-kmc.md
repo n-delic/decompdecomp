@@ -1600,3 +1600,15 @@ The final V-Rally case matched under the original profile. Diagnostic flags that
 improve a residual should prompt a source-lifetime investigation before becoming a
 compiler override. All generated alternatives still need exact linked-byte judgment.
 See the compiler learning log for the earlier-checkpoint replay and coverage limits.
+
+### Reuse complete matched siblings before rewriting near-misses
+
+A threshold, negative coefficient adjustment and changed division reciprocal can be
+one shared source parameter. Autopilot's similar-code pass tries bounded coordinated
+literal transfers from current matched siblings, preserving scopes and repeated tails.
+Let GCC regenerate reciprocal multiplication/shifts from the changed C divisor. Keep
+the destination interface and require its normal linked-byte check. `find_similar`
+identifies a current donor and source hash; for a large body, retrieve all of it with
+`get_function(function="donor_name", section="matched")`. Avoid flattening or cleaning
+up a proven donor before testing it. These source-shape features were verified as a
+bundle, not independently established compiler rules.

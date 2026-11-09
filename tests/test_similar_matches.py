@@ -451,3 +451,61 @@ def test_successful_transfers_remain_available_after_many_recent_misses(pair):
     assert len(result['matches']) == 1 and result['matches'][0]['outcome'] == 'match'
     assert result['matches'][0]['source_slug'] == 'source'
     assert result['recent'][0]['source_slug'] == 'source'
+
+
+def test_grouped_parameter_transfer_uses_local_sibling_before_other_repairs(pair, monkeypatch):
+    from .test_parameter_transfers import SOURCE
+    from .test_parameter_transfers import pair as parameter_pair
+
+    a, b = parameter_pair()
+    with pair.store.tx() as db:
+        db.execute("UPDATE functions SET project_id=2,target=?,size=?,n_insns=?,vram=?,matched_source=? WHERE id=1",
+                   (a['target'],len(a['target']),len(a['target'])//4,a['vram'],SOURCE.replace('destination','old')))
+        db.execute("UPDATE functions SET target=?,size=?,n_insns=?,vram=?,best_source=? WHERE id=2",
+                   (b['target'],len(b['target']),len(b['target'])//4,b['vram'],
+                    'void new(void *arg0, short *arg1) {}'))
+    seen = []
+    def attempt(agent, proj, donor, target, source, **kwargs):
+        seen.append(source)
+        assert donor['project_id'] == target['project_id'] == 2
+        assert source.count('500') == 8
+        with pair.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=2", (source,))
+        return 'match', ''
+    monkeypatch.setattr(pair.twins, '_attempt_twin', attempt)
+    assert sm.run(pair.twins, 'destination', Job()) == 1
+    assert len(seen) == 1
+    assert 'donor source ' in pair.store.one('SELECT reason FROM cross_game_attempts')['reason']
+
+
+def test_donor_source_is_refreshed_after_shortlisting(pair, monkeypatch):
+    original = sm.similarity.rank
+    def rank(*args, **kwargs):
+        result = original(*args, **kwargs)
+        with pair.store.tx() as db:
+            db.execute("UPDATE functions SET matched_source='int old(int x) { /* fresh */ return x + 60; }' WHERE id=1")
+        return result
+    monkeypatch.setattr(sm.similarity, 'rank', rank)
+    seen = []
+    def attempt(agent, proj, a, b, source, **kwargs):
+        seen.append(source)
+        return 'miss', 'not close'
+    monkeypatch.setattr(pair.twins, '_attempt_twin', attempt)
+    sm.run(pair.twins, 'destination', Job())
+    assert seen and all('/* fresh */' in s for s in seen)
+
+
+def test_similarity_links_to_complete_large_matched_source_without_truncation(pair, monkeypatch):
+    import hashlib
+
+    source = 'int old(int x) {\n' + '/* preserve source line and scope */\n'*150 + 'return x;\n}'
+    with pair.store.tx() as db:
+        db.execute('UPDATE functions SET project_id=2,matched_source=? WHERE id=1', (source,))
+    monkeypatch.setattr(pair, 'similar', lambda *args, **kwargs: [(pair.store.one('SELECT * FROM functions WHERE id=1'), 1.)])
+    monkeypatch.setattr(pair.twins, 'suggestions', lambda *args, **kwargs: [])
+    result = pair.find_similar('destination', 'new')
+    assert source not in result and 'No partial C' in result
+    assert 'section="matched"' in result
+    from decompnet.app.agent_tokens import function_view
+    assert source in function_view(pair, None, 'destination', 'old', section='matched')
+    assert hashlib.sha256(source.encode()).hexdigest() in result
