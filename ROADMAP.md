@@ -693,7 +693,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
-| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
+| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, embedded ZIP packs) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Automatic indexed model geometry and local mesh wireframes (raw, RNC 1/2) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Automatic B1 audio banks, table evidence and mono VADPCM/PCM16 previews | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -974,7 +974,9 @@ display pages by imported data symbols or loader extents, with an ungroup contro
 comparison gallery tries common row-major formats/dimensions and palettes; a linked usage
 summary separates address references, loaders and buffer consumers. A fitted, rotatable
 wireframe viewer supports manual integer/float vertex layouts and optional index buffers.
-Texture and geometry settings persist as local annotations. N64 indexed geometry detection validates
+Texture and geometry settings persist as local annotations. Embedded ZIP texture packs now
+validate member CRCs and complete trailer-count layouts, with per-texture, palette and frame
+selection; old maps refresh automatically. Other archived asset formats need format adapters. N64 indexed geometry detection validates
 node/part/section tables, byte-plane vertices and cache-relative polygon runs; raw and RNC 1/2
 models offer mesh selection and local wireframes. Other native formats, assembled skeleton poses,
 animation and textured model rendering remain planned.

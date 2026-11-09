@@ -21,7 +21,7 @@ function romAssetHTML(region) {
 function romAssetOptions(body) {
   const keys=['source','block_offset','format','offset','width','height','palette_offset','palette_format','channels','rate','length'];
   const options=Object.fromEntries(keys.map(key=>[key,body.querySelector(`[data-asset-${key}]`).value]));
-  for(const key of ['frame','palette','mip']){const field=body.querySelector(`[data-texture-${key}]`);if(field)options[key]=field.value;}
+  for(const key of ['texture','frame','palette','mip']){const field=body.querySelector(`[data-texture-${key}]`);if(field)options[key]=field.value;}
   const sample=body.querySelector('[data-audio-sample]');if(sample)options.sample=sample.value;
   const mesh=body.querySelector('[data-native-model-mesh]');if(mesh)options.mesh=mesh.value;
   return options;

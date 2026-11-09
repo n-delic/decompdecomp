@@ -46,7 +46,8 @@ passes or reads. Open a region for image, raw texture/palette and audio previews
 supported decompressed blocks. Unknown helper roles and raw layouts can be recorded locally. Compare texture guesses as thumbnails,
 follow the linked usage summary, group regions by symbol/loader extents, and inspect raw 3D
 vertex/index buffers as a rotatable wireframe. N64 scans also recognize supported indexed texture banks,
-including RNC-compressed banks, CI8 banks with mixed 16/256-colour palettes, direct-color RGBA32 and supported RGBA16 mipmaps.
+including RNC-compressed banks, CI8 banks with mixed 16/256-colour palettes, direct-color RGBA32, supported RGBA16 mipmaps and
+trailer-count texture packs inside embedded ZIP archives.
 Open **Texture browser** for a thumbnail gallery, format/dimension filters and reference links.
 Select any frame, palette or mip level in a bank; animate frames at a chosen preview rate.
 N64 scans also recognize supported B1 sound banks and their sample tables. Open an audio

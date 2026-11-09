@@ -62,6 +62,15 @@ const row=(n=0)=>({id:'r'+n,kind:'image',start:128+n*200,detected_asset:{...asse
   assert.match(get('status').textContent,/stopped/);
  }
  {
+  const t=setup({}),body=element();let previews=0;
+  const pack={...asset,textures:[{...asset,frames:2,palettes:2},{...asset,frames:1,palettes:0,preview_settings:{format:'rgba8888',width:4,height:4}}]};
+  Object.assign(t.context,{body,region:{start:128,detected_asset:pack,annotation:{preview_settings:{texture:1}}},active:()=>true});
+  const html=t.run('romTextureControlsHTML(region)');assert.match(html,/data-texture-texture/);assert.match(html,/2 · 4 × 4 · rgba8888/);
+  body._romPreviewFrame=()=>{previews++;};t.run('setupRomTextureControls(body,region,active)');
+  body.querySelector('[data-texture-texture]').value='1';body.querySelector('[data-texture-texture]').onchange();
+  assert.equal(previews,1);assert.equal(body.querySelector('[data-texture-frame]').value,'0');assert.match(body.querySelector('[data-texture-palette]').innerHTML,/Direct color/);assert.equal(body.querySelector('[data-texture-play]').disabled,true);
+ }
+ {
   const t=setup({}),body=element(),get=key=>body.querySelector(`[data-texture-${key}]`);let requests=0;
   const mixed={...asset,palette_entries:[16,256]};Object.assign(t.context,{body,region:{start:128,detected_asset:mixed},active:()=>true});
   body._romPreviewFrame=async()=>{requests++;return true;};get('rate').value='8';
