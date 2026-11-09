@@ -41,6 +41,14 @@ PS4 ABI and global stack guard without a locally patched compiler. The project
 keeps its starting flags in `tools/compiler_flags.py`. Headers for proprietary
 platform APIs must be reconstructed from the user's code; none are supplied.
 
+Targets place each function in its own section, matching the compiler’s
+`-ffunction-sections` output. A nonallocated metadata section preserves original
+addresses for explicit stack-guard binding. The build normalizes PLT32 call
+relocations to PC32 while preserving their callee, offset and addend; those
+identities still participate in strict comparison. Projects imported with the
+earlier experimental target format should be imported afresh to regenerate
+the targets and build tools.
+
 GOT address loads for internal symbols are relaxed by the build to their linked
 LEA form. Default-visibility extern declarations can preserve a separate address
 load when the target has LEA followed by a load at an offset. Hidden visibility
@@ -75,5 +83,7 @@ This is beta, with strict per-function objdiff matching. It does not relink a
 complete runnable game or export a verified rebuild. Compiler switching, source
 splits, joining function pieces, automatic compiler surveys and class/structure
 recovery need further work. Import, matching, drafts and matched-function renaming
-are checked on the demo through the normal app interfaces. The roadmap marks
+are checked on the demo through the normal app interfaces. Matching tests cover
+leaf functions and same-file, cross-file and import calls, including rejection
+of incorrect callees and code. The roadmap marks
 other shared features as pending until they are exercised on PS4.

@@ -110,8 +110,9 @@ def test_objdiff_rejects_wrong_call_and_accepts_same_call_with_strict_options(tm
     code = bytes.fromhex('e800000000c3')
     target, base = tmp_path / 'target.o', tmp_path / 'base.o'
     target.write_bytes(object_for(code, [(1, 2, 'correct', -4)]))
-    for callee, matches in [('wrong', False), ('correct', True)]:
-        base.write_bytes(object_for(code, [(1, 2, callee, -4)]))
+    for callee, addend, matches in [('wrong', -4, False), ('correct', -3, False), ('correct', -4, True)]:
+        base.write_bytes(object_for(code, [(1, 4, callee, addend)]))
+        assert binder().normalize_plt(base) == 1
         result = subprocess.run([str(exe), 'diff', '-1', str(target), '-2', str(base), '-o', '-',
                                  '-c', 'functionRelocDiffs=all', 'demo'], capture_output=True, text=True, check=True)
         symbols = json.loads(result.stdout)['left']['symbols']
@@ -512,3 +513,58 @@ def test_original_addresses_are_read_from_the_import_config(tmp_path):
     fp = SimpleNamespace(root=tmp_path, manifest={'version': 'demo'})
     assert consoles.get('ps4').function_addresses(fp) == {('first', 'a'): 0x1003, ('second', 'a'): 0x2001}
     assert consoles.get('pc').function_addresses(fp) == {}
+
+
+def test_each_target_function_has_its_own_section_and_original_address(tmp_path):
+    code = bytes.fromhex('e800000000c3') + b'\x90'*10 + b'\xc3'
+    functions = [{'name': 'caller', 'addr': 0x1000, 'size': 6, 'relocs': [(1, 2, 'callee', -4)]},
+                 {'name': 'callee', 'addr': 0x1010, 'size': 1, 'relocs': []}]
+    obj = delinker().elf64('unit', functions, code, 0x1000)
+    elf = ELFFile(io.BytesIO(obj))
+    syms = elf.get_section_by_name('.symtab')
+    caller = syms.get_symbol_by_name('caller')[0]
+    callee = syms.get_symbol_by_name('callee')[0]
+    assert caller['st_shndx'] != callee['st_shndx']
+    assert caller['st_value'] == callee['st_value'] == 0
+    assert elf.get_section(caller['st_shndx']).data() == code[:6]
+    assert elf.get_section(callee['st_shndx']).data() == b'\xc3'
+    assert refs(obj) == [(1, 2, 'callee', -4)]
+    target = tmp_path / 'renamed_unit.o'
+    target.write_bytes(obj)
+    assert binder().game_addresses(target) == {'caller': 0x1000, 'callee': 0x1010}
+
+
+def test_plt_normalization_preserves_every_part_of_the_reference_except_its_type(tmp_path):
+    obj = tmp_path / 'caller.o'
+    code = bytes.fromhex('e800000000c3')
+    original = got_object_for(code, [(1, 4, 'precise_callee', -7)])
+    obj.write_bytes(original)
+    assert binder().normalize_plt(obj) == 1
+    assert refs(obj.read_bytes()) == [(1, 2, 'precise_callee', -7)]
+    before, after = (ELFFile(io.BytesIO(blob)).get_section_by_name('.text').data()
+                     for blob in [original, obj.read_bytes()])
+    assert before == after
+    assert binder().normalize_plt(obj) == 0
+
+
+def test_explicit_guard_binding_uses_the_later_functions_original_address(tmp_path):
+    import struct
+
+    code = bytes.fromhex('488b0500000000c3')
+    target = tmp_path / 'arbitrary_unit.o'
+    target.write_bytes(delinker().elf64('unit', [
+        {'name': 'first', 'addr': 0x1000, 'size': 1, 'relocs': []},
+        {'name': 'demo', 'addr': 0x1010, 'size': 8, 'relocs': []},
+    ], b'\xc3'+b'\x90'*15+code, 0x1000))
+    obj = tmp_path / 'demo.o'
+    obj.write_bytes(got_object_for(code, [(3, 9, '__stack_chk_guard', -4)]))
+    assert binder().bind(obj, target, 0x2000) == 1
+    text = ELFFile(io.BytesIO(obj.read_bytes())).get_section_by_name('.text').data()
+    assert struct.unpack_from('<i', text, 3)[0] == 0x2000 - (0x1010 + 7)
+    assert refs(obj.read_bytes()) == []
+
+
+@pytest.mark.parametrize('addr,size', [(0xfff, 1), (0x1000, 0), (0x1000, 4)])
+def test_invalid_target_extents_fail_instead_of_truncating_functions(addr, size):
+    with pytest.raises(ValueError, match='invalid function extent'):
+        delinker().elf64('unit', [{'name': 'demo', 'addr': addr, 'size': size, 'relocs': []}], b'\xc3', 0x1000)

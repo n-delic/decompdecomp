@@ -34,7 +34,9 @@ def main() -> None:
     source = HERE.parent / "demo-n64" / "original" / "game.c"
     for cmd in ([str(compiler), *CL_FLAGS, "-c", str(source), "-o", str(obj)],
                 [str(compiler), *CL_FLAGS, "-c", str(HERE / "extras.c"), "-o", str(BUILD / "extras.o")],
-                [str(linker), "-e", "abs_s32", "-Ttext=0x1000", str(obj), str(BUILD / "extras.o"), "-o", str(game)]):
+                [str(compiler), *CL_FLAGS, "-c", str(HERE / "remote.c"), "-o", str(BUILD / "remote.o")],
+                [str(linker), "-e", "abs_s32", "-Ttext=0x1000", str(obj), str(BUILD / "extras.o"),
+                 str(BUILD / "remote.o"), "-o", str(game)]):
         subprocess.run(capped(cmd), check=True, timeout=120)
     with game.open("rb") as file:
         elf = ELFFile(file)

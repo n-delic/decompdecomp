@@ -545,7 +545,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     conf = root / "config" / version
     conf.mkdir(parents=True)
     (conf / "functions.json").write_text(json.dumps({
-        "target_format_version": 3, "elf": f"orig/{version}.elf", "sha1": info["sha1"], "image_base": min(s.va for s in elf.segments), "entry": elf.entry,
+        "target_format_version": 4, "elf": f"orig/{version}.elf", "sha1": info["sha1"], "image_base": min(s.va for s in elf.segments), "entry": elf.entry,
         "text": {"va": text.va, "offset": text.offset, "size": text.filesz},
         "units": {u: [{"name": f.name, "addr": f.addr, "offset": elf.offset(f.addr), "size": f.size,
                        "relocs": [list(r) for r in f.relocs]} for f in fns] for u, fns in groups.items()},

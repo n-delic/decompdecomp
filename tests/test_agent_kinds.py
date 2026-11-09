@@ -150,8 +150,13 @@ def test_an_agent_that_runs_one_makers_models_names_their_family():
 def test_real_cli_signin_errors_are_recognized_from_stderr():
     assert helpers._SIGNED_OUT.search("Error: Authentication required. Please run 'agent login' first")
     assert helpers._SIGNED_OUT.search("No model configured. Run kimi and use /login to sign in")
+    # Oh My Pi with no sign-in: what `omp doctor` and a failed turn print
+    assert helpers._SIGNED_OUT.search("error: No API key found for openai.")
+    assert helpers._SIGNED_OUT.search("401 Incorrect API key provided: sk-x")
+    assert helpers._SIGNED_OUT.search("Use /login, set an API key environment variable, or select a local model")
     assert not agents.get('cursor').fatal("Error: Authentication required. Please run 'agent login' first")
     assert not agents.get('kimi').fatal("No model configured. Run kimi and use /login to sign in")
+    assert not agents.get('omp').fatal("error: No API key found for openai.")
 
 
 def test_antigravity_loads_decomps_tools_up_front():

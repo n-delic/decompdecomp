@@ -132,7 +132,8 @@ const CW_PACK = {
       + "community: only if you accept that. On Linux and macOS it runs through wine, which you install.",
     note: "decompdecomp reads which Visual C++ built the game from the program itself (a version it doesn't have yet "
       + "builds with the nearest it has, and the import says so); you can change it later in tools/configure.py. The "
-      + "functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+      + "functions are found by Ghidra (installed once, 540 MB, needs Java 21+); a 64-bit program lists its own, and "
+      + "Ghidra names them." },
   msvc2005: { title: "Visual C++ 2005-2010", text: "Install Visual C++ 2005, 2008 and 2010, the compilers PC games of 2005-2012 were built with (about 600 MB): this game's program says it's one of them. It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "decompdecomp reads which Visual C++ built the game from the program itself; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
   mwccarm: { title: "CodeWarrior for DS", text: "Install CodeWarrior for DS, the 24 compiler versions DS games were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
@@ -256,9 +257,18 @@ function identifyHead(head, file) {
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (isGbaHead(head)) return { ...base, platform: "gba", order: "GBA ROM", code: ascii(0xac, 0xb0), title: ascii(0xa0, 0xac) || stem, entry: dv.getUint32(0, true) };
-  if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
-    return { ...base, platform: "win32", order: "Windows program (.exe)",
-      entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe), target: "x86" };
+  // a 32-bit x86 Windows program (PE32) or a 64-bit x64 one (PE32+, its image base 8 bytes at 24 of its optional
+  // header): every 64-bit game builds with 2017's 64-bit compiler, the packs' only one (the server says which pack)
+  const machine = pe && pe + 0x40 <= head.length && text(pe, pe + 4) === "PE\0\0" ? dv.getUint16(pe + 4, true) : 0;
+  const pe32 = machine === 0x14c && dv.getUint16(pe + 24, true) === 0x10b;
+  const pe64 = machine === 0x8664 && dv.getUint16(pe + 24, true) === 0x20b;
+  if (pe32 || pe64) {
+    const imageBase = pe64 ? dv.getUint32(pe + 52, true) * 2 ** 32 + dv.getUint32(pe + 48, true)
+      : dv.getUint32(pe + 52, true);
+    return { ...base, platform: "win32", order: pe64 ? "64-bit Windows program (.exe)" : "Windows program (.exe)",
+      entry: imageBase + dv.getUint32(pe + 40, true),
+      pack: pe64 ? consoleOf("pc")?.pack_x64 || "msvc2015" : pcPack(head, pe), target: pe64 ? "x64" : "x86" };
+  }
   if (isXbe(head, dv)) return { ...base, platform: "xbox", order: "Xbox program (XBE)" };
   if (head.length >= 64 && text(0, 4) === "\x7fELF" && head[4] === 2 && head[5] === 1
       && [0xfe10, 0xfe04].includes(dv.getUint16(16, true)) && dv.getUint16(18, true) === 62)
@@ -300,15 +310,19 @@ function identifyHead(head, file) {
 function notSupported(head, file) {
   const text = (a, b) => String.fromCharCode(...head.slice(a, b));
   const ext = (file.name.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
-  if (text(0, 2) === "MZ") {  // (a 32-bit x86 one is identifyHead's): which machine, from its PE header
+  if (text(0, 2) === "MZ") {  // (a 32-bit x86 or 64-bit x64 one is identifyHead's): which machine, from its PE header
     const dv = new DataView(head.buffer), pe = head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
     const machine = pe && pe + 6 <= head.length && text(pe, pe + 4) === "PE\0\0" ? dv.getUint16(pe + 4, true) : 0;
-    if (machine === 0x8664) {
-      return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games "
-        + "come next (see the roadmap, Newer Windows games).";
+    if (machine === 0x14c || machine === 0x8664) {
+      return "That Windows program's header is damaged: its optional header isn't a 32-bit or 64-bit program's. "
+        + "Try a clean copy of the game's .exe.";
     }
-    if (machine) return "That Windows program isn't for a 32-bit x86 processor (it's for ARM or another one). decompdecomp starts PC games from their 32-bit x86 .exe.";
-    return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit Windows .exe.";
+    if (machine) {
+      return "That Windows program isn't for an x86 processor (it's for ARM or another one). decompdecomp starts PC "
+        + "games from their 32-bit or 64-bit x86 .exe.";
+    }
+    return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit or 64-bit "
+      + "Windows .exe.";
   }
   if (ext === "nds") return "That doesn't look like a DS ROM: its header's checksum is wrong. Try a clean dump of your cartridge.";
   if (ext === "gba") return "That doesn't look like a Game Boy Advance ROM: its header's branch, fixed 0x96 byte or checksum is wrong. Try a clean dump of your cartridge.";
@@ -425,7 +439,7 @@ function updateAnalyse() {
 }
 $("mwAccept").addEventListener("change", updateAnalyse);
 
-/* `only`: the project's own (its overview's compilers: a 32-bit PC game's, never a 64-bit compiler). */
+/* `only`: the project's own (its overview's compilers: a 32-bit PC game's 32-bit ones, a 64-bit game's 64-bit one). */
 function fillCompilers(select, current, platform, only) {
   // the console's compilers
   const own = (consoleOf(platform)?.compilers || []).map((c) => c.id).filter((id) => !only || only.includes(id));

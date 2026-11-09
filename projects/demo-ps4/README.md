@@ -13,3 +13,7 @@ uv run python projects/demo-ps4/build.py
 Open `build/demoquest.elf` in decompdecomp. Keep its adjacent
 `demoquest.functions.jsonl` file: it supplies exact function extents without
 requiring Ghidra. Generated files stay in the ignored `build/` directory.
+
+The 21 synthetic functions include same-file and cross-file callers, plus a
+locally defined import stand-in. Tests exercise the normal app judge with the
+pinned compiler and reject incorrect callees and code.

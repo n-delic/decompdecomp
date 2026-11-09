@@ -6,12 +6,13 @@ No address is assumed from another game. The unbound object remains judgeable.
 """
 
 import argparse
+import json
 import struct
 import sys
 from pathlib import Path
 
 GUARD_SYMBOL = "__stack_chk_guard"
-GOTPCREL, GOTPCRELX, REX_GOTPCRELX, PC32 = 9, 41, 42, 2
+GOTPCREL, GOTPCRELX, REX_GOTPCRELX, PC32, PLT32 = 9, 41, 42, 2, 4
 
 SHDR = struct.Struct("<IIQQQQIIQQ")
 SYM = struct.Struct("<IBBHQQ")
@@ -55,12 +56,43 @@ def unit_vaddr(obj: Path) -> int | None:
 
 
 def game_addresses(target: Path) -> dict[str, int]:
-    """name -> the address the game has that symbol at (from the delinked object, laid out at real offsets)."""
+    """Original addresses, independent of how functions are arranged in the target's sections."""
+    tab = section_table(target.read_bytes())
+    strings = tab["secs"][tab["shstrndx"]]
+    names = tab["data"][strings["off"]:strings["off"] + strings["size"]]
+    for section in tab["secs"]:
+        start = section["name"]
+        end = names.find(b"\0", start)
+        if names[start:end] == b".decomp.addresses":
+            return json.loads(tab["data"][section["off"]:section["off"] + section["size"]])
+    # Projects made before per-function sections keep symbols at offsets from their unit's name.
     base = unit_vaddr(target)
     if base is None:
         return {}
-    tab = section_table(target.read_bytes())
     return {name: base + value for name, _t, shndx, value, _s in symbol_table(tab) if shndx != 0 and name}
+
+
+def normalize_plt(obj: Path) -> int:
+    """The linked ELF has direct PC32 branches; Clang leaves their PLT32 form in candidates (#119).
+
+    Change only the relocation type. The callee symbol, field offset and addend still have to match exactly.
+    Imports need this too, even when there is no target beside the object yet.
+    """
+    data = bytearray(obj.read_bytes())
+    if data[:4] != b"\x7fELF":
+        return 0
+    count = 0
+    for section in section_table(bytes(data))["secs"]:
+        if section["type"] != 4:
+            continue
+        for offset in range(section["off"], section["off"] + section["size"], RELA.size):
+            info, = struct.unpack_from("<Q", data, offset + 8)
+            if info & 0xFFFFFFFF == PLT32:
+                struct.pack_into("<Q", data, offset + 8, (info & ~0xFFFFFFFF) | PC32)
+                count += 1
+    if count:
+        obj.write_bytes(data)
+    return count
 
 
 def bind(obj: Path, target: Path | None, guard: int | None) -> int:
@@ -189,10 +221,11 @@ def main() -> int:
     obj = Path(args.object)
     target = Path(args.target) if args.target else obj.parent.parent.parent / "target" / obj.name
     exists = target.exists()
+    calls = normalize_plt(obj)
     n = bind(obj, target if exists else None, args.guard)
     relaxed = relax_got(obj, target if exists else None)
     if not args.quiet:
-        print(f"{obj}: bound {n} guard load(s), relaxed {relaxed} GOT load(s)"
+        print(f"{obj}: normalized {calls} call relocation(s), bound {n} guard load(s), relaxed {relaxed} GOT load(s)"
               + ("" if exists else f" (no target object at {target})"))
     return 0
 

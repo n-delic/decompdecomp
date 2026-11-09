@@ -47,11 +47,11 @@ def _config_key(proj, cfg: dict) -> str:
     """A digest of only the settings a progress folder's manifest is rendered from.
 
     Spending, check marks and the stored revision change constantly and must not look like a manifest edit; a title,
-    compiler, instructions, priority, layout source or fingerprint does."""
+    compiler, instructions, claim order, priority, layout source or fingerprint does."""
     rom = cfg.get("rom") or {}
     settings = [proj["name"], cfg.get("platform"), rom.get("sha1"), rom.get("file"), cfg.get("compiler"),
-                cfg.get("compiler_ranges") or [], cfg.get("instructions") or "", cfg.get("priority") or [],
-                cfg.get("auto_compiler"), bool(cfg.get("knowledge_auto"))]
+                cfg.get("compiler_ranges") or [], cfg.get("instructions") or "", cfg.get("claim_order") or "",
+                cfg.get("priority") or [], cfg.get("auto_compiler"), bool(cfg.get("knowledge_auto"))]
     return hashlib.sha1(json.dumps(settings, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
@@ -133,7 +133,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     try:
         manifest = json.loads(disk[saves.MANIFEST])
         headers = dict(manifest.get("headers") or {})
-        layout = {entry["name"] for entry in manifest.get("layout") or []}
+        layout = {saves._source_file(entry["name"]) for entry in manifest.get("layout") or []}
     except (ValueError, TypeError, KeyError, AttributeError):
         return disk
     if not layout:
@@ -147,10 +147,11 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
             (folder / "include").mkdir(exist_ok=True)
             (folder / name).write_text(disk[name], encoding="utf-8")
             report(f"{name} was missing: written again from the project")
-    left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).stem not in layout)
+    left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).name not in layout)
     if left:
         known = {row["name"] for row in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
-        left = [name for name in left if Path(name).stem not in known]
+        known_files = {saves._source_file(function) for function in known}
+        left = [name for name in left if Path(name).name not in known_files]
     for name in left:
         (folder / "unlisted" / name).parent.mkdir(parents=True, exist_ok=True)
         os.replace(folder / name, folder / "unlisted" / name)
@@ -165,7 +166,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
 NAME = re.compile(r"[A-Za-z_]\w*|\.L[0-9A-F]+")
 
 
-def _manifest(files: dict[str, str], cfg: dict) -> dict:
+def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
     try:
         manifest = json.loads(files[saves.MANIFEST])
         if manifest["format"] != saves.FORMAT or manifest["game"]["sha1"] != cfg["rom"]["sha1"]:
@@ -214,18 +215,21 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
                 raise ValueError(f"set_aside entry {item.get('name')!r} is malformed")
         if "" not in (manifest.get("headers") or {}):
             raise ValueError("headers must name the project-wide header (the empty name)")
+        source_files = {saves._source_file(name) for name in layout}
+        known_by_file = {saves._source_file(name): name for name in known_names}
         for name in files:
-            if name.startswith(("src/", "best/")) and Path(name).stem not in layout:
-                raise NetworkError(f"Add {Path(name).stem} to the function layout in progress/decompdecomp.json before continuing.")
+            if name.startswith(("src/", "best/")) and Path(name).name not in source_files:
+                symbol = known_by_file.get(Path(name).name, Path(name).stem)
+                raise NetworkError(f"Add {symbol} to the function layout in progress/decompdecomp.json before continuing.")
         functions = {}
         for name, info in layout.items():
             if Path(name).name != name or "\\" in name or "/" in name:
                 raise ValueError(f"layout name {name!r} is not a function name")
             previous = manifest.get("functions", {}).get(name, {})
-            if f"src/{name}.c" in files:
+            if f"src/{saves._source_file(name)}" in files:
                 functions[name] = {"vram": info["vram"], "matched_by": previous.get("matched_by", ""),
                                    "readable": previous.get("readable", False)}
-            elif f"best/{name}.c" in files:
+            elif f"best/{saves._source_file(name)}" in files:
                 functions[name] = {"vram": info["vram"], "best_by": previous.get("best_by", "")}
         manifest["functions"] = functions
         return manifest
@@ -283,7 +287,7 @@ def _merge_manifest(old, new, current, key: str = ""):
 def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, str]) -> tuple[dict, dict[str, str]]:
     """A first sync has no deletion history, so keep database work while adding saved contributions."""
     local = json.loads(projected[saves.MANIFEST])
-    for key in ("title", "compiler", "compiler_ranges", "instructions", "priority", "auto_compiler",
+    for key in ("title", "compiler", "compiler_ranges", "instructions", "claim_order", "priority", "auto_compiler",
                 "knowledge_auto"):
         manifest[key] = local.get(key)
 
@@ -794,7 +798,7 @@ class Progress:
         if full:
             removed = {name: None for name in baseline.projected.files if name not in files}
         else:
-            possible = {f"src/{name}.c" for name in names} | {f"best/{name}.c" for name in names}
+            possible = {f"src/{saves._source_file(name)}" for name in names} | {f"best/{saves._source_file(name)}" for name in names}
             if flags.headers:
                 possible |= {name for name in baseline.projected.files if name.startswith("include/")}
             removed = {name: None for name in possible
@@ -867,7 +871,9 @@ class Progress:
         if saves.MANIFEST in disk and (before is None or snapshot.files != before.files):
             report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
             disk = _repair(net, pid, folder, disk, report)
-            manifest = _manifest(disk, cfg)
+            known_names = {row["name"] for row in net.store.all(
+                "SELECT name FROM functions WHERE project_id=?", pid)}
+            manifest = _manifest(disk, cfg, known_names)
             getattr(report, "check_cancel", lambda: None)()
             # Captured before any render: the folder's revision is compared with what the database wrote last.
             stored_revision = saves._stored_revision(cfg)
@@ -888,7 +894,7 @@ class Progress:
                 # A database match newer than the folder's snapshot wins even when the folder has an older file of
                 # the same name; its source is published below and that older file is not judged (#101 review).
                 legacy_newer = _database_newer(net, proj, manifest, stored_revision)
-                changed.difference_update(f"src/{name}.c" for name in legacy_newer)
+                changed.difference_update(f"src/{saves._source_file(name)}" for name in legacy_newer)
             projected = baseline.projected if baseline is not None else _Snapshot.of(comparison)
             # A helper can finish another function just before a pull. Publish that independent work before
             # loading the pull; the contributor wins if both changed the same file.
@@ -908,7 +914,7 @@ class Progress:
                     manifest["revision"] = saves._next_revision(net, proj, folder)
                     pending[saves.MANIFEST] = json.dumps(manifest, indent=1) + "\n"
                 for name in legacy_newer:
-                    source = f"src/{name}.c"
+                    source = f"src/{saves._source_file(name)}"
                     if source in rendered:
                         pending[source] = rendered[source]
                 if (before is not None and saves.MANIFEST in rendered and previous.manifest is not None
@@ -919,7 +925,7 @@ class Progress:
                 removed = {name: None for name in previous.files
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
-                merged_manifest = _manifest(candidate, cfg)
+                merged_manifest = _manifest(candidate, cfg, known_names)
                 all_code = any(name.startswith("include/") for name in changed)
                 if saves.MANIFEST in changed:
                     old = json.loads(comparison_manifest)
@@ -987,8 +993,8 @@ class Progress:
                     rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?",
                                       (pid,)).fetchall()
                     for row in rows:
-                        changed_source = f"src/{row['name']}.c" in applied_changed
-                        changed_best = f"best/{row['name']}.c" in applied_changed
+                        changed_source = f"src/{saves._source_file(row['name'])}" in applied_changed
+                        changed_best = f"best/{saves._source_file(row['name'])}" in applied_changed
                         keep_backup = False
                         keep_best = False
                         if changed_source or all_code:
@@ -1038,7 +1044,9 @@ class Progress:
             self.revisions[slug] = self.revisions.get(slug, 0) + 1
             self.published[slug] = set(pending) | set(removed)
             disk = _read(folder)
-            manifest = _manifest(disk, cfg)
+            known_names = {row["name"] for row in net.store.all(
+                "SELECT name FROM functions WHERE project_id=?", pid)}
+            manifest = _manifest(disk, cfg, known_names)
             saves._remember_revision(net, slug, manifest)
             self.results[slug] = saves._judge_saved(net, slug, folder, manifest, by_name,
                                                     manifest.get("functions") or {}, report,

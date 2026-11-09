@@ -3,7 +3,8 @@ owner changes Linux distributions now and then), to keep in git, or to start ove
 
 The progress folder is authoritative; progress.py keeps the engine's database in step with edits and git merges.
 It contains what people and agents made: the matched C, the best attempts, the shared headers, the names, the function
-splits, the notes, the instructions, what agents learned, the compiler and its ranges. Never the game: the save
+splits, the notes, the instructions, which functions helpers take first, what agents learned, the compiler and its
+ranges. Never the game: the save
 holds its fingerprint (sha1), and a restore asks for the user's own copy and checks it's the same game. Every
 matched function is judged again on the way in: a match counts because it matches, not because a file says so.
 
@@ -14,6 +15,7 @@ what only the database has is each open function's closest attempt, and a save w
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
@@ -26,8 +28,7 @@ from pathlib import Path
 
 from .. import compiler, consoles, toolchains
 from ..hostenv import NO_WINDOW, stop_process_tree
-from ..network import NetworkError
-from ..rom.symbols import AUTO_NAME
+from ..network import CLAIM_ORDERS, NetworkError
 from ..scoring import percent_text
 from . import save_readme
 
@@ -35,8 +36,22 @@ FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
 SET_ASIDE_META = ("asm_code", "not_c", "asm_twin")  # why an agent or user set a function aside
+SOURCE_COMPONENT_BYTES = 249  # leaves room for the publisher's .c.tmp suffix under common 255-byte limits
+SOURCE_PREFIX_BYTES = 80  # readable hint; the SHA-256 suffix distinguishes symbols with the same prefix
 GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
+
+
+def _source_file(name: str) -> str:
+    """Keep C++ template symbols intact, but fit their source files on Windows and Unix filesystems.
+
+    The layout retains the full symbol; its digest makes the shortened filename stable across computers and
+    different from another template with the same prefix. Leave room for the publisher's .c.tmp suffix.
+    """
+    if len(name.encode("utf-8")) <= SOURCE_COMPONENT_BYTES:
+        return name + ".c"
+    prefix = name.encode("utf-8")[:SOURCE_PREFIX_BYTES].decode("utf-8", errors="ignore")
+    return prefix + "_" + hashlib.sha256(name.encode("utf-8")).hexdigest() + ".c"
 
 
 def _header_file(unit: str) -> str:
@@ -272,7 +287,7 @@ def _read_owned(folder: Path) -> dict[str, str]:
     except (KeyError, TypeError, ValueError):
         raise NetworkError("Fix the saved project's manifest before replacing its files.") from None
     owned = {MANIFEST}
-    owned.update(f"src/{name}.c" if "matched_by" in info else f"best/{name}.c"
+    owned.update(f"src/{_source_file(name)}" if "matched_by" in info else f"best/{_source_file(name)}"
                  for name, info in functions.items() if isinstance(info, dict))
     owned.update("include/" + file for file in headers.values() if isinstance(file, str))
     return {name: text for name, text in previous.items() if name in owned}
@@ -316,14 +331,14 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "game": {"sha1": cfg.get("rom", {}).get("sha1"), "file": cfg.get("rom", {}).get("file")},
         "compiler": cfg.get("compiler"), "compiler_ranges": cfg.get("compiler_ranges") or [],
         "instructions": cfg.get("instructions") or "", "knowledge": knowledge,
+        "claim_order": cfg.get("claim_order") or "",
         "priority": cfg.get("priority") or [],
         "auto_compiler": cfg.get("auto_compiler"),
         "knowledge_auto": bool(cfg.get("knowledge_auto")), "headers": {u: _header_file(u) for u in sorted(units)},
         "functions": functions,
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
                     "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
-        "symbols": [dict(r) for r in net.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?",
-                                                    pid) if not AUTO_NAME.match(r["name"])],
+        "symbols": net.layout_symbols(pid),
         "notes": notes,
         # what's set aside and why: agents' verdicts that no C makes it, the user's, a boundary report's leftover
         # (the import sets aside again what it finds by itself)
@@ -386,7 +401,8 @@ src/<function>.c      each matched function's C, byte for byte
 best/<function>.c     the closest attempt so far at each function that doesn't match yet
 include/common.h      the shared header every function is compiled with (common_<part>.h: a part's own)
 {MANIFEST}     the game's fingerprint (its SHA-1, never the game), the compiler and its flags, the
-                      functions' layout and names, notes, instructions, what agents learned, who matched what
+                      functions' layout and names, notes, instructions, which functions helpers take first, what agents
+                      learned, who matched what
 README.md             this file
 ```
 
@@ -411,9 +427,9 @@ def _source_files(rows) -> dict[str, str]:
     files = {}
     for r in rows:
         if r["status"] == "matched" and r["has_matched"]:
-            files[f"src/{r['name']}.c"] = _source_text(r["matched_source"])
+            files[f"src/{_source_file(r['name'])}"] = _source_text(r["matched_source"])
         elif r["has_best"] and r["best_score"] is not None:
-            files[f"best/{r['name']}.c"] = _source_text(r["best_source"])
+            files[f"best/{_source_file(r['name'])}"] = _source_text(r["best_source"])
     return files
 
 
@@ -481,7 +497,7 @@ def _save_best(net, proj, folder: Path) -> dict:
     for r in rows:
         pct = 100 * (1 - r["best_score"] / max(1, (r["n_insns"] or 1) * 100))
         source = json.loads(r["meta"] or "{}").get("source") or r["unit"]
-        files[f"best/{r['name']}.c"] = (
+        files[f"best/{_source_file(r['name'])}"] = (
             f"/* {r['name']}: the closest attempt so far, {percent_text(pct)} match, by "
             f"{names.get(r['best_agent_id'], '?')}; it belongs in {source} */\n\n" + r["best_source"].strip() + "\n")
     readme = f"""# {proj['name']}: the closest attempts so far
@@ -723,6 +739,8 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
                 f"0x{int(r.get('start') or 0):X}-0x{int(r.get('end') or 0):X} {r.get('toolchain')}" for r in gone))
         cfg["compiler_ranges"] = kept
         cfg["instructions"] = manifest.get("instructions") or ""
+        order = manifest.get("claim_order") or ""
+        cfg["claim_order"] = order if order in CLAIM_ORDERS else ""
         cfg["priority"] = manifest.get("priority") or []
         cfg["auto_compiler"] = manifest.get("auto_compiler")
         cfg["knowledge_auto"] = bool(manifest.get("knowledge_auto"))
@@ -774,7 +792,7 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
         check_cancel()
         log(f"checking {old_name}")
         kind = "src" if "matched_by" in info else "best"
-        text = _saved_source(folder, files, f"{kind}/{old_name}.c")
+        text = _saved_source(folder, files, f"{kind}/{_source_file(old_name)}")
         row = by_name.get(old_name)
         name = old_name if row is not None and row["vram"] == info["vram"] else None
         if name is None:

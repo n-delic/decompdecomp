@@ -3,10 +3,9 @@
 
     python tools/delink.py config/<version>/functions.json OUT_DIR
 
-A unit's object holds the game's bytes for that range of code unchanged (so a reference from one function to another
-of the unit keeps its distance), each function as a global FUNC symbol at its own offset, and a relocation for every
-reference that leaves its function: calls and jumps, rip-relative data addresses, absolute immediates. objdiff masks
-the bytes a relocation fills, so the original's absolute address and the C's symbol compare as the same thing.
+A unit's object holds each function's bytes in its own section, like the compiled candidate, with a relocation for
+every reference that leaves it: calls and jumps, rip-relative data addresses, absolute immediates. Relocation fields
+are zeroed and their addends live in RELA entries; the destination symbol and addend remain part of strict matching.
 Standard library only. Made by decompdecomp.
 """
 
@@ -35,72 +34,74 @@ def _section(name: int, stype: int, flags: int, addr: int, offset: int, size: in
 
 
 def elf64(unit: str, functions: list[dict], blob: bytes, start: int) -> bytes:
-    """One unit's object: .text (the game's bytes), .rela.text, .symtab, .strtab, .shstrtab."""
-    text = bytearray(blob)
-    # the symbols: the unit's functions first (global), then whatever their code refers to (undefined)
-    symbols: list[tuple[str, int, int, int, int, int]] = []  # (name, info, shndx, value, size, section of name)
-    externs: dict[str, int] = {}
-    for fn in functions:
-        at = fn["addr"] - start
-        externs[fn["name"]] = len(symbols) + 1  # index zero is the ELF null symbol
-        symbols.append((fn["name"], (STB_GLOBAL << 4) | STT_FUNC, 1, at, fn["size"], 0))
-    relocs = bytearray()
+    """One independently relocatable text section per function, matching Clang's -ffunction-sections (#119).
+
+    Inter-function gaps are alignment, not instructions of either function. Original addresses are kept in a
+    non-allocated metadata section for explicit guard binding; symbol values remain section-relative ELF values.
+    """
+    symbols = []
+    externs = {}
+    addresses = {}
     for index, fn in enumerate(functions):
+        if fn["name"] in externs:
+            raise ValueError(f"duplicate function symbol in {unit}: {fn['name']}")
+        externs[fn["name"]] = len(symbols) + 1  # index zero is the ELF null symbol
+        symbols.append((fn["name"], (STB_GLOBAL << 4) | STT_FUNC, 1 + index * 2, 0, fn["size"]))
+        addresses[fn["name"]] = fn["addr"]
+
+    sym_index = 2 * len(functions) + 2  # null, text/rela pairs, original-address metadata, then symbol table
+    sections = []
+    for index, fn in enumerate(functions):
+        at, size = fn["addr"] - start, fn["size"]
+        if at < 0 or size <= 0 or at + size > len(blob):
+            raise ValueError(f"invalid function extent in {unit}: {fn['name']}")
+        text = bytearray(blob[at:at + size])
+        relocs = bytearray()
         for off, rtype, name, addend in fn.get("relocs") or []:
-            if not name:  # a label inside the function: nothing to relocate across objects
+            if not name:
                 continue
-            at = fn["addr"] - start + off
-            size = RELOC_WIDTH.get(rtype)
-            if size is None or off < 0 or off + size > fn["size"] or at < 0 or at + size > len(text):
+            width = RELOC_WIDTH.get(rtype)
+            if width is None or off < 0 or off + width > size:
                 raise ValueError(f"invalid relocation field in {fn['name']} at {off}: type {rtype}")
-            text[at:at + size] = bytes(size)  # the addend lives in the relocation; objdiff masks the field
+            text[off:off + width] = bytes(width)
             if name not in externs:
                 externs[name] = len(symbols) + 1
-                symbols.append((name, (STB_GLOBAL << 4) | STT_NOTYPE, 0, 0, 0, 0))
-            relocs += struct.pack("<QQq", at, (externs[name] << 32) | rtype, addend)
+                symbols.append((name, (STB_GLOBAL << 4) | STT_NOTYPE, 0, 0, 0))
+            relocs += struct.pack("<QQq", off, (externs[name] << 32) | rtype, addend)
+        section = ".text" if index == 0 else f".text.{fn['name']}"
+        sections.append((section, 1, SHF_ALLOC | SHF_EXECINSTR, bytes(text), 0, 0, 16, 0))
+        sections.append((f".rela{section}", SHT_RELA, SHF_INFO_LINK, bytes(relocs), sym_index, 1 + index * 2, 8, 24))
 
-    # strings and the symbol table
     strtab = bytearray(b"\0")
-    table = bytearray(24)  # index 0: the null symbol
-    for name, info, shndx, value, size, _ in symbols:
-        at = struct.pack("<I", len(strtab))
+    table = bytearray(24)
+    for name, info, shndx, value, size in symbols:
+        table += struct.pack("<IBBHQQ", len(strtab), info, 0, shndx, value, size)
         strtab += name.encode("utf-8") + b"\0"
-        table += at + struct.pack("<BBHQQ", info, 0, shndx, value, size)
-    first_global = 1  # every symbol here is global
-
+    sections.extend([
+        (".decomp.addresses", 1, 0, json.dumps(addresses, sort_keys=True).encode("utf-8"), 0, 0, 1, 0),
+        (".symtab", 2, 0, bytes(table), sym_index + 1, 1, 8, 24),
+        (".strtab", 3, 0, bytes(strtab), 0, 0, 1, 0),
+    ])
     shstr = bytearray(b"\0")
     names = {}
-    for sec in (".text", ".rela.text", ".symtab", ".strtab", ".shstrtab"):
-        names[sec] = len(shstr)
-        shstr += sec.encode() + b"\0"
+    for name in [*(s[0] for s in sections), ".shstrtab"]:
+        names[name] = len(shstr)
+        shstr += name.encode("utf-8") + b"\0"
+    sections.append((".shstrtab", 3, 0, bytes(shstr), 0, 0, 1, 0))
 
-    out = bytearray(64)  # the ELF header, filled once the offsets are known
-    _align(out, 16)
-    text_at = len(out)
-    out += text
-    _align(out, 8)
-    rela_at = len(out)
-    out += relocs
-    _align(out, 8)
-    sym_at = len(out)
-    out += table
-    str_at = len(out)
-    out += strtab
-    shstr_at = len(out)
-    out += shstr
+    out = bytearray(64)
+    headers = [_section(0, EMPTY, 0, 0, 0, 0)]
+    for name, kind, flags, data, link, info, alignment, entsize in sections:
+        _align(out, alignment)
+        headers.append(_section(names[name], kind, flags, 0, len(out), len(data), link, info, alignment, entsize))
+        out += data
     _align(out, 8)
     sh_at = len(out)
-    out += _section(0, EMPTY, 0, 0, 0, 0)
-    out += _section(names[".text"], 1, SHF_ALLOC | SHF_EXECINSTR, 0, text_at, len(text), 0, 0, 16)
-    out += _section(names[".rela.text"], SHT_RELA, SHF_INFO_LINK, 0, rela_at, len(relocs), 3, 1, 8, 24)
-    out += _section(names[".symtab"], 2, 0, 0, sym_at, len(table), 4, first_global, 8, 24)
-    out += _section(names[".strtab"], 3, 0, 0, str_at, len(strtab))
-    out += _section(names[".shstrtab"], 3, 0, 0, shstr_at, len(shstr))
-
+    out += b"".join(headers)
     ident = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(8)
-    struct.pack_into("<16sHHIQQQIHHHHHH", out, 0, ident, ET_REL, EM_X86_64, 1, 0, 0, sh_at, 0, 64, 0, 0, 64, 6, 5)
+    struct.pack_into("<16sHHIQQQIHHHHHH", out, 0, ident, ET_REL, EM_X86_64, 1, 0, 0, sh_at, 0, 64,
+                     0, 0, 64, len(headers), len(headers) - 1)
     return bytes(out)
-
 
 def main() -> None:
     config, out = Path(sys.argv[1]), Path(sys.argv[2])

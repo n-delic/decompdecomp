@@ -149,7 +149,7 @@
         <li><small>Your file</small><b>The program, decrypted</b><span>your own eboot.elf; no encrypted SELF, PKG or PRX modules</span></li>
         <li><small>Split by</small><b>Ghidra or a function map</b><span>drop a functions.jsonl map with the program, or let Ghidra find its functions</span></li>
         <li><small>Built by</small><b>Public Clang 5.0.2</b><span>free, pinned compiler; Linux x86-64 app only, including inside WSL 2; verify the compiler and flags for your game</span></li>
-        <li><small>Judged by</small><b>objdiff</b><span>strict per-function comparison, including relocation identities</span></li>
+        <li><small>Judged by</small><b>objdiff</b><span>beta: strict comparison tested on leaf functions and same-file, cross-file and import calls</span></li>
         <li><small>You get</small><b>A project of your game's functions</b><span>whole-game relinking and export remain planned; shared features await PS4 validation</span></li>
       </ol>
     </article>
@@ -166,9 +166,9 @@
     <article class="pipeline" data-platform="pc" data-file="game.exe">
       <h3><span class="pl-name">Windows PC</span> <span class="status beta">Beta</span></h3>
       <ol class="stations">
-        <li><small>Your file</small><b>Program</b><span>a 32-bit x86 .exe</span></li>
-        <li><small>Split by</small><b>Ghidra</b><span>then decompdecomp cuts each function out of the .exe</span></li>
-        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS); any other, from your own copy; C and C++</span></li>
+        <li><small>Your file</small><b>Program</b><span>a 32-bit or 64-bit .exe</span></li>
+        <li><small>Split by</small><b>Ghidra</b><span>then decompdecomp cuts each function out of the .exe (a 64-bit one's are in its own list, .pdata)</span></li>
+        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS; a 64-bit game builds with its 64-bit compiler); any other, from your own copy, for 32-bit games; C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
         <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
       </ol>
@@ -251,7 +251,7 @@ jr      $ra
   <h2 id="yours-h">Yours.</h2>
   <ol class="yours-list">
     <li><b>Your game</b> stays on your computer. No account, no telemetry, nothing uploaded. decompdecomp supplies no games.</li>
-    <li><b>Your agents</b> do the work: any model with an API key, Claude Code, Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI or ZCode CLI. The app starts them and restarts them. You pay your own provider.</li>
+    <li><b>Your agents</b> do the work: any model with an API key, Claude Code, Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI, ZCode CLI or Oh My Pi. The app starts them and restarts them. You pay your own provider.</li>
     <li><b>Your code</b> comes out as a project that builds your game again, byte for byte: the start of a port or a mod.</li>
   </ol>
   <p class="yours-note">The code from a game belongs to its rights holder. Keep it to yourself.</p>
@@ -273,7 +273,7 @@ jr      $ra
     </div>
     <div class="step">
       <p class="step-n">2 · Open your game</p>
-      <p class="step-note">Pick your own copy of the game in the app, then click <b>Start agents</b>: any model with an API key, Claude Code, Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI or ZCode CLI. Run several: they work on different functions at the same time. Or open Demo Quest 64 and watch first.</p>
+      <p class="step-note">Pick your own copy of the game in the app, then click <b>Start agents</b>: any model with an API key, Claude Code, Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI, ZCode CLI or Oh My Pi. Run several: they work on different functions at the same time. Or open Demo Quest 64 and watch first.</p>
       <p class="step-note">Continuing a public N64 or PlayStation Splat decomp? For supported simple splits, decompdecomp can create missing objdiff references after checking them byte for byte against your copy.</p>
     </div>
   </div>
