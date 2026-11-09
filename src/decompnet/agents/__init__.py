@@ -295,6 +295,14 @@ class Agent:
         """One line of the agent's stderr as worth showing, or "" for noise: the last ones say why a session failed."""
         return line.strip()
 
+    def stderr_failure(self, line: str, model: str = "") -> str:
+        """A terminal provider rejection on this process's stderr, as a safe diagnostic.
+
+        Ordinary logs and recoverable retries return empty; a confirmed rejection
+        ends this process through the runner's normal error classification.
+        """
+        return ""
+
     def startup_failure(self, text: str) -> str | None:
         """A CLI startup failure that stops before a model turn, or None for ordinary errors."""
         return None
