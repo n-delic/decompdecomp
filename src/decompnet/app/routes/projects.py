@@ -245,6 +245,10 @@ def register(app: App) -> None:
         from ..rom_explorer import asset_preview
         with net.progress.view():return asset_preview(net,slug,data)
 
+    def p_rom_inspect(slug, request, data):
+        from ..rom_explorer import asset_inspect
+        with net.progress.view():return asset_inspect(net,slug,data)
+
     def p_rom_loaders(slug, request, data):
         from ..rom_explorer import loader_contracts
         with net.progress.view():return loader_contracts(net,slug,data if request.method=='POST' else None)
@@ -893,6 +897,7 @@ def register(app: App) -> None:
     routes = {
         "/api/rom-explorer/preview": (p_rom_preview,["POST"]),
         "/api/rom-explorer/loaders": (p_rom_loaders,["GET","POST"]),
+        "/api/rom-explorer/inspect": (p_rom_inspect, ["POST"]),
         "/api/rom-explorer": (p_rom_explorer, ["GET", "POST"]),
         "/api/rom-explorer/annotation": (p_rom_annotation, ["POST"]),
         "/api/boundary-evidence": (g_boundary_evidence, ["GET"]),

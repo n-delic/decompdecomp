@@ -21,6 +21,7 @@ function setup(){
   vm.runInContext(base.slice(base.indexOf('function beginWork('),base.indexOf('async function followJob(')),context);
   vm.runInContext(base.slice(base.indexOf('function showJobError('),base.indexOf('/*',base.indexOf('function showJobError('))),context);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-assets.js'),'utf8'),context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-discovery.js'),'utf8'),context);
   vm.runInContext(source,context);
   vm.runInContext('renderRomExplorer=(view)=>renders.push(view.report);',Object.assign(context,{renders}));
   return {context,nodes,calls,renders,run:code=>vm.runInContext(code,context)};
@@ -132,7 +133,7 @@ function setup(){
     for(const [key,value] of Object.entries({source:'rom',format:'pcm-u8',offset:'0',width:'1',height:'1',channels:'1',rate:'22050',length:'8',block_offset:'0',palette_offset:'0',palette_format:'rgba5551-be'})){
       const field=body.querySelector(`[data-asset-${key}]`);field.value=value;fields.push(field);
     }
-    body.querySelectorAll=selector=>selector.includes('.rom-asset-fields') ? fields : [];
+    body.querySelectorAll=selector=>selector.includes('.rom-asset-fields') ? fields : selector==='input,select,button' ? [...fields,body.querySelector('[data-asset-preview]')] : [];
     t.context.body=body;t.context.reply=()=>pending.promise;
     t.run("setupRomAsset(body,{id:'0-10',start:0},'first','hash',()=>S.slug==='first')");
     const button=body.querySelector('[data-asset-preview]'),result=body.querySelector('[data-asset-result]');
@@ -166,6 +167,32 @@ function setup(){
     canvas.onclick({clientX:27,clientY:1});assert.equal(opened.length,2,'Gaps do not open adjacent regions');
     t.run('romView().report.stale=true;drawRomTypeMap()');canvas.onkeydown({key:'Enter',preventDefault(){}});assert.equal(opened.length,2);
     t.run('romView().report=null;drawRomTypeMap()');assert.equal(t.context.$('romTypeMapPanel').hidden,true);
+  }
+  // Discovery shares the preview lock and retains errors through delayed requests.
+  {
+    const t=setup(),body=element(),pending=deferred();t.context.body=body;
+    const textures=body.querySelector('[data-discovery-textures]'),model=body.querySelector('[data-discovery-model]'),preview=body.querySelector('[data-asset-preview]');
+    body.querySelectorAll=selector=>selector==='input,select,button' ? [textures,model,preview] : [];
+    t.context.reply=()=>pending.promise;
+    t.run("setupRomDiscovery(body,{id:'region'},'first','hash',()=>S.slug==='first')");
+    const waiting=textures.onclick();await tick();assert.equal(textures.disabled,true);assert.equal(model.disabled,true);
+    await textures.onclick();await model.onclick();assert.equal(t.calls.length,1);
+    pending.resolve({tried:8,note:'Layout guesses',candidates:[{data_url:'data:image/png;base64,AA==',details:{format:'ci4',width:8,height:8},score:55,settings:{format:'ci4',width:8,height:8,offset:0,palette_format:'rgba8888'}}],decoded:{block_offset:512}});await waiting;
+    assert.equal(textures.disabled,false);assert.equal(model.disabled,false);
+    const result=body.querySelector('[data-discovery-textures-result]');assert.equal(result.children.length,2);
+    let selected=0;preview.click=()=>selected++;body.querySelector('[data-asset-format]').onchange=()=>{};result.children[1].onclick();
+    assert.equal(selected,1);assert.equal(body.querySelector('[data-asset-source]').value,'decoded');assert.equal(body.querySelector('[data-asset-block_offset]').value,512);
+    t.context.reply=async()=>{throw Error('Invalid vertex stride');};await model.onclick();assert.match(body.querySelector('[data-discovery-model-work]').textContent,/Invalid vertex stride/);
+    const late=deferred();t.context.reply=()=>late.promise;const leaving=textures.onclick();t.context.S.slug='second';late.resolve({tried:0,candidates:[]});await leaving;
+    assert.equal(result.children.length,0,'Discovery cannot paint another project');assert.equal(textures.disabled,false);
+  }
+  {
+    const t=setup();const points=t.run('projectRomVertices([[0,0,0],[10,0,0]],0,0,1,200,200)');
+    assert.equal(points[0][1],100);assert.ok(points[0][0]<100 && points[1][0]>100);
+    const rotated=t.run('projectRomVertices([[0,0,0],[10,0,0]],Math.PI/2,0,1,200,200)');assert.ok(Math.abs(rotated[0][0]-rotated[1][0])<.001);
+    t.run("romView().report={regions:[{id:'a',start:0},{id:'b',start:8},{id:'c',start:16}],asset_groups:[{id:'group',start:0,region_ids:['a','b']}]}");
+    assert.equal(t.run('romTypeRows(romView()).length'),2);assert.equal(t.run('romTypeRows(romView())[0].id'),'a');
+    t.run('romView().groupAssets=false');assert.equal(t.run('romTypeRows(romView()).length'),3);
   }
   console.log('ROM Explorer lifecycle, sorting and notes passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

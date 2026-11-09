@@ -299,4 +299,9 @@ def test_rom_explorer_reads_the_imported_image_without_changing_targets(demo):
         preview=rom_explorer.asset_preview(net,slug,dict(region=row['id'],image_hash=report['image_hash'],
             options=dict(format='rgba5551-be',width=1,height=1,offset=row['start'])))
         assert preview['data_url'].startswith('data:image/png;base64,')
+        inspected=rom_explorer.asset_inspect(net,slug,dict(region=row['id'],image_hash=report['image_hash'],action='model',options=dict(offset=0),model_settings=dict(count=1)))
+        assert len(inspected['vertices'])==1 and not inspected['edges']
+        guessed=rom_explorer.asset_inspect(net,slug,dict(region=row['id'],image_hash=report['image_hash'],action='textures',options=dict(offset=0,width=8,height=16)))
+        assert guessed['candidates'] and len(guessed['candidates'])<=16
+
         assert before==[tuple(r) for r in net.project_store(proj['id']).all('SELECT name,target,status FROM functions WHERE project_id=?',proj['id'])]

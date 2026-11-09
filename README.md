@@ -43,7 +43,9 @@ returning to the tab or opening another window attaches to the same scan. Unknow
 unreferenced bytes are never called unused. This is separate from exact code progress.
 Loader source groups show bounded static copy/DMA/decompression arguments and later buffer
 passes or reads. Open a region for image, raw texture/palette and audio previews, including
-supported decompressed blocks. Unknown helper roles and raw layouts can be recorded locally.
+supported decompressed blocks. Unknown helper roles and raw layouts can be recorded locally. Compare texture guesses as thumbnails,
+follow the linked usage summary, group regions by symbol/loader extents, and inspect raw 3D
+vertex/index buffers as a rotatable wireframe.
 See [ROM Explorer](docs/ROM_EXPLORER.md) for formats, evidence and limits. Analysis images may
 contain expanded code; physical-media mapping and object-build adapters remain planned.
 
