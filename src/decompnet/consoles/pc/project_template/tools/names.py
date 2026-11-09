@@ -60,6 +60,8 @@ def address_of(name: bytes, real: dict[bytes, bytes], wide: bool = False) -> byt
     if name[:3] in (b"??0", b"??1"):  # a constructor, a destructor: by its class, outer scopes first (A::CFoo::~CFoo)
         scopes = name[3:].split(b"@@", 1)[0].split(b"@")[::-1]
         word = b"::".join(scopes) + b"::" + b"~" * (name[2:3] == b"1") + scopes[-1]
+    elif name.startswith(b"W?"):  # Watcom's free C++ function: W?UpdateTown$n(i)v
+        word = name[2:].split(b"$", 1)[0]
     elif name.startswith(b"?"):  # a method by its class too (Town::Update: debug information, a DLL's exports)
         word, _, rest = name[1:].partition(b"@")
         scopes = [] if rest.startswith(b"@") else rest.split(b"@@", 1)[0].split(b"@")[::-1]
@@ -67,7 +69,7 @@ def address_of(name: bytes, real: dict[bytes, bytes], wide: bool = False) -> byt
             return key
     else:
         word = (name[1:] if name[:1] in (b"_", b"@") and not wide else name).split(b"@", 1)[0]
-    return real.get(word)
+    return real.get(word) or (real.get(word[:-1]) if not wide and word.endswith(b"_") else None)  # Watcom's C register convention
 
 
 def rename(data: bytes, names: dict[bytes, bytes], real: dict[bytes, bytes] | None = None, wide: bool = False) -> bytes:

@@ -289,6 +289,11 @@ Rosetta 2 on Apple Silicon): the app says so when you install that pack. The old
 with a Visual C++ the packs don't have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your
 Visual Studio's VC folder (it's read where it is, never copied). A 64-bit game builds with 2017's 64-bit compiler, the pack's.
 
+Watcom Windows and DOS LE games can use your own compiler too: add its installation folder in **Setup → Compilers & tools**,
+then choose Watcom C or C++ when importing a 32-bit Windows PE or flat DOS LE `.exe`. This is experimental: 10.0a C and
+simple C++ are checked with homemade demos. Other DOS executable formats and full Watcom C++ support are planned.
+See [the Watcom guide](docs/WATCOM.md) for setup, checked features and current limits.
+
 ## Questions people ask
 
 **Is this just Ghidra?** No. Ghidra (and IDA) show you C so you can *read* a program. That C usually doesn't compile, and

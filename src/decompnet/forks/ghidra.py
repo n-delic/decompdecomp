@@ -109,9 +109,20 @@ _RUNS = threading.Semaphore(2)
 _OBJECTS: dict[str, threading.Lock] = defaultdict(threading.Lock)
 
 
+def draft_key(obj: Path) -> str:
+    """Repairing the native decompiler invalidates both disk drafts and the engine's cached empty seeds (#139)."""
+    native = toolchains.ghidra_decompiler(toolchains.path("ghidra"))
+    try:
+        stat = native.stat()
+        identity = f"{stat.st_size}:{stat.st_mtime_ns}"
+    except OSError:
+        identity = "missing"
+    return hashlib.sha1(b"native-drafts-v1\0" + identity.encode() + b"\0" + obj.read_bytes()).hexdigest()[:16]
+
+
 def decompile_object(obj: Path, cache_dir: Path, timeout: float = 900) -> dict[str, str]:
     """name -> decompiled C for every function in an object file (cached by the object's content)."""
-    key = hashlib.sha1(obj.read_bytes()).hexdigest()[:16]
+    key = draft_key(obj)
     cache = cache_dir / f"{obj.stem}-{key}.json"
     with _OBJECTS[str(cache)]:
         if cache.exists():
@@ -120,7 +131,11 @@ def decompile_object(obj: Path, cache_dir: Path, timeout: float = 900) -> dict[s
             return {}
         try:
             with _RUNS:
-                result = {row["name"]: row["c"] for row in _run_script(obj, "DecompWtfExport.java", timeout)}
+                said: list[str] = []
+                rows = _run_script(obj, "DecompWtfExport.java", timeout, said=said)
+                if any(message in line for line in said for message in _NO_DECOMPILER):
+                    return {}  # never cache a native-decompiler failure as an empty successful draft
+                result = {row["name"]: row["c"] for row in rows}
         except ForkError:  # a draft is optional: none this time, and nothing cached, so it's tried again
             return {}
         cache_dir.mkdir(parents=True, exist_ok=True)

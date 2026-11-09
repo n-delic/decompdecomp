@@ -2,8 +2,10 @@
 system it runs on (check.yml), so the test that needs it runs on Windows, Linux and both kinds of Mac, where
 Ghidra's decompiler was built at install (toolchains._build_ghidra_decompiler)."""
 
+import hashlib
 import os
 import struct
+from types import SimpleNamespace
 
 import pytest
 
@@ -77,3 +79,57 @@ def test_a_ghidra_whose_decompiler_didnt_run_stops_the_import(tmp_path, monkeypa
         ghidra.functions(program)
     fake.write_text(f"#!/bin/sh\nprintf '{rows('__cdecl')}' > \"$9\"\n")
     assert [r["convention"] for r in ghidra.functions(program)] == ["__cdecl", "__cdecl"]
+
+
+def test_repairing_ghidra_retries_legacy_empty_disk_drafts_and_database_seeds(tmp_path, monkeypatch):
+    from decompnet.app.forkengine import ForkEngine
+
+    obj, native, cache = tmp_path / "unit.obj", tmp_path / "decompile", tmp_path / "drafts"
+    obj.write_bytes(b"homemade object")
+    cache.mkdir()
+    legacy = hashlib.sha1(obj.read_bytes()).hexdigest()[:16]
+    (cache / f"unit-{legacy}.json").write_text("{}")
+    monkeypatch.setattr(ghidra.toolchains, "ghidra_decompiler", lambda *_: native)
+    missing = ghidra.draft_key(obj)
+    native.write_bytes(b"working native decompiler")
+    monkeypatch.setattr(ghidra, "available", lambda: True)
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        return [{"name": "function", "c": "int function(void) { return 1; }"}]
+
+    monkeypatch.setattr(ghidra, "_run_script", run)
+    key = ghidra.draft_key(obj)
+    assert key not in (legacy, missing)
+    assert ForkEngine._draft_key({"platform": "pc"}, SimpleNamespace(target=obj)) == key
+    assert ghidra.decompile_object(obj, cache)["function"]
+    assert ghidra.decompile_object(obj, cache)["function"] and len(calls) == 1
+    native.write_bytes(b"rebuilt native decompiler with another identity")
+    assert ghidra.draft_key(obj) != key
+    assert ghidra.decompile_object(obj, cache)["function"] and len(calls) == 2
+
+
+def test_native_decompiler_errors_are_not_cached_as_successful_empty_drafts(tmp_path, monkeypatch):
+    obj, cache = tmp_path / "unit.obj", tmp_path / "drafts"
+    obj.write_bytes(b"homemade object")
+    monkeypatch.setattr(ghidra, "available", lambda: True)
+
+    def run(*args, said, **kwargs):
+        said.append("ERROR os/mac_arm_64/decompile does not exist")
+        return []
+
+    monkeypatch.setattr(ghidra, "_run_script", run)
+    assert ghidra.decompile_object(obj, cache) == {}
+    assert not cache.exists()
+
+
+@pytest.mark.skipif(not ghidra.available(), reason="needs complete Ghidra with its native decompiler")
+def test_real_ghidra_produces_c_from_a_pc_target_object(tmp_path):
+    from decompnet.consoles.pc import scratch
+
+    obj = tmp_path / "unit.obj"
+    function = {"name": "_func_00401000", "addr": 0x401000, "offset": 0, "size": 3, "relocs": []}
+    obj.write_bytes(scratch._template_tool("delink").coff([function], bytes.fromhex("01d0c3")))
+    drafts = ghidra.decompile_object(obj, tmp_path / "drafts")
+    assert any("func_00401000" in name and "+" in code for name, code in drafts.items()), drafts

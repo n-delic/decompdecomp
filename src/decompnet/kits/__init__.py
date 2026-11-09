@@ -45,6 +45,7 @@ class OwnCompiler:
     args: tuple[str, ...] = ()
     flags: tuple[str, ...] = ()
     like: str = ""  # a pinned compiler it runs as (its command, with this copy's folder, `root`, in the pack's place)
+    family: str = "MSVC"  # project-mode compiler namespace; other families keep their own commands and flags
 
 
 class Kit:
@@ -171,9 +172,10 @@ def _registry() -> list[Kit]:
     from .owncompiler import OWN_COMPILERS
     from .ps3sdk import PS3SDK
     from .visualcpp import VISUALCPP
+    from .watcom import WATCOM
     from .xdk import XDK
 
-    return [XDK, VISUALCPP, PS3SDK, *OWN_COMPILERS]
+    return [XDK, VISUALCPP, WATCOM, PS3SDK, *OWN_COMPILERS]
 
 
 KITS: list[Kit] = _registry()

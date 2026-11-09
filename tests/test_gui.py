@@ -70,6 +70,15 @@ def gui():
     return result
 
 
+def test_importing_with_a_configured_copy_never_asks_to_download_another_compiler(gui):
+    result = gui["checks"]["watcomImport"]
+    assert result["local"] and result["listed"] and result["download"]
+    assert result["cleared"]
+    assert result["pathSelection"]
+    assert result["dos"]
+    assert "configured compiler copy" in result["note"]
+
+
 def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     nds = gui["checks"]["nds"]
     assert nds["good"] == ["nds", "ADQE", "DEMOQUESTDS"]
@@ -235,7 +244,7 @@ def test_the_drop_zone_takes_64_bit_programs_and_tells_arm_and_dos_ones_apart(gu
                                                 "x64"]
     assert arm[0] is None and "ARM" in arm[1] and "32-bit or 64-bit x86" in arm[1]
     assert x86[0] == "win32"  # a 32-bit x86 one is the PC console's (notSupported is asked only otherwise)
-    assert dos[0] is None and "DOS program" in dos[1]
+    assert dos[0] is None and "16-bit MZ" in dos[1] and "DOS LE" in dos[1]
     assert damaged[0] is None and "header is damaged" in damaged[1]
 
 

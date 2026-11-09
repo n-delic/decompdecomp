@@ -252,6 +252,8 @@ function identifyHead(head, file) {
   const stem = file.name.replace(/\.[^.]*$/, "");
   const base = { title: stem, size: file.size };
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
+  if (pe >= 64 && pe + 196 <= head.length && text(pe, pe + 4) === "LE\0\0")
+    return { ...base, platform: "win32", order: "DOS-extender program (LE)", format: "LE", target: "x86" };
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (isGbaHead(head)) return { ...base, platform: "gba", order: "GBA ROM", code: ascii(0xac, 0xb0), title: ascii(0xa0, 0xac) || stem, entry: dv.getUint32(0, true) };
   // a 32-bit x86 Windows program (PE32) or a 64-bit x64 one (PE32+, its image base 8 bytes at 24 of its optional
@@ -315,8 +317,7 @@ function notSupported(head, file) {
       return "That Windows program isn't for an x86 processor (it's for ARM or another one). decompdecomp starts PC "
         + "games from their 32-bit or 64-bit x86 .exe.";
     }
-    return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit or 64-bit "
-      + "Windows .exe.";
+    return "That DOS/OS2 format isn't supported yet. PC imports accept 32-bit or 64-bit Windows PE and flat 32-bit DOS LE executables; 16-bit MZ, NE and LX need other loaders.";
   }
   if (ext === "nds") return "That doesn't look like a DS ROM: its header's checksum is wrong. Try a clean dump of your cartridge.";
   if (ext === "gba") return "That doesn't look like a Game Boy Advance ROM: its header's branch, fixed 0x96 byte or checksum is wrong. Try a clean dump of your cartridge.";
@@ -381,6 +382,7 @@ async function pickFile(file, extras = []) {
 
 function setupCompilers(info) {
   const p = info.platform, select = $("compilerPick"), note = $("compilerNote");
+  select.onchange = null;  // another game's selector must not keep the previous project's consent handler
   const con = consoleOf(p) || { mode: "", compilers: [], packs: [], default_compiler: "" };
   $("compilerRow").hidden = false; note.hidden = true; $("mwConsent").hidden = true; $("mwAccept").checked = false;
   $("allCompilers").hidden = true;
@@ -407,14 +409,29 @@ function setupCompilers(info) {
   const shown = p === "gcwii" ? [consoleOf("gc"), consoleOf("wii")].filter(Boolean) : [con];
   const chosen = (c, v) => v.id === c.default_compiler && (p !== "gcwii" || c.id === "gc");
   const options = (c) => c.compilers.filter((v) => compilerFits(info, v))
+    .filter((v) => info.format !== "LE" || v.id.startsWith("Watcom/"))
     .map((v) => `<option value="${esc(v.id)}" ${chosen(c, v) ? "selected" : ""}>${esc(v.name)}</option>`).join("");
   select.innerHTML = shown.map((c) => `<optgroup label="${esc(c.name)}">${options(c)}</optgroup>`).join("")
     + (con.default_compiler ? "" : `<option value="" selected>Let decompdecomp pick (from the program itself)</option>`);
+  if (info.format === "LE") {
+    const copy = con.compilers.find((c) => c.id.startsWith("Watcom/") && compilerFits(info, c));
+    select.value = copy?.id || "";
+  }
   const pack = packOf(info);
   note.hidden = false;
   note.textContent = cwPack(pack).note;
   $("mwText").textContent = cwPack(pack).text;
   $("mwConsent").hidden = !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
+  // A configured user compiler needs no downloadable pack. Re-evaluate when the user changes the selection,
+  // before the import button can install a compiler the user didn't choose (#81).
+  const consentForSelection = () => {
+    const local = shown.flatMap((c) => c.compilers).find((c) => c.id === select.value)?.local;
+    $("mwConsent").hidden = info.format === "LE" || !!local || !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
+    note.textContent = info.format === "LE" ? (local ? "DOS LE: using your Watcom copy. Choose the game's exact version; the judge checks the bytes." : "DOS LE needs your own Watcom copy. Add its WATCOM folder in Setup → Compilers & tools first.") : local ? "Using your configured compiler copy. Choose the game's exact version; the judge checks the bytes." : cwPack(pack).note;
+    updateAnalyse();
+  };
+  select.onchange = consentForSelection;
+  consentForSelection();
 }
 
 /* The compilers of a game's console this computer doesn't have (every PlayStation's for a disc not read yet: a CHD
@@ -543,6 +560,7 @@ function askPath(why = "") {
   const asks = (S.st?.consoles || []).some((c) => c.sets_aside);
   const body = dialog("Use a file or folder on this computer", `${why ? `<p>${esc(why)}</p>` : ""}<p class="muted">For big disc images, and for a Windows game with DLLs of its own: decompdecomp reads the game where it is instead of copying it through the browser. A Windows game's folder, or its .exe, brings the game's own DLLs along (the import says which it found, and which it left out).</p>
     <label class="field"><span>Path to the game file, or a Windows game's folder</span><span class="pick-row"><input id="ppPath" class="mono" placeholder="/home/me/games/my-game.iso"><button class="ghost small-btn" type="button" data-pick="file" data-for="ppPath" data-title="Your copy of the game">File…</button><button class="ghost small-btn" type="button" data-pick="folder" data-for="ppPath" data-title="The game's folder">Folder…</button></span></label>
+    ${(S.st?.consoles || []).some((c) => c.compilers.some((v) => v.local)) ? `<label class="field"><span>Compiler (optional; otherwise picked from the game)</span><select id="ppCompiler"><option value="">Pick from the game</option>${(S.st.consoles || []).map((c) => c.compilers.filter((v) => v.local).map((v) => `<option value="${esc(v.id)}">${esc(c.name)}: ${esc(v.name)}</option>`).join("")).join("")}</select></label>` : ""}
     ${asks ? `<label class="field"><span>What should this project cover? (where decompdecomp recognises library code)</span><select id="ppScope">
       <option value="game" selected>The game's own code: library and middleware code it recognises is left out of agents' work and progress</option>
       <option value="program">The whole program: every function is decompiled and counted</option></select></label>` : ""}
@@ -553,8 +571,9 @@ function askPath(why = "") {
     const path = $("ppPath").value.trim();
     if (!path) return;
     const scope = asks ? $("ppScope").value : "";
+    const compiler = body.querySelector("#ppCompiler")?.value || "";
     closeDialog();
-    runImport(`confirmed=1&path=${encodeURIComponent(path)}${scope ? `&scope=${scope}` : ""}`, undefined, "Analysing your game…");
+    runImport(`confirmed=1&path=${encodeURIComponent(path)}${scope ? `&scope=${scope}` : ""}${compiler ? `&toolchain=${encodeURIComponent(compiler)}` : ""}`, undefined, "Analysing your game…");
   };
 }
 $("demoBtn").onclick = () => runImport("demo=1", undefined, "Opening Demo Quest 64…");

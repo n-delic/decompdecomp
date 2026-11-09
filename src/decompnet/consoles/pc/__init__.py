@@ -8,6 +8,8 @@ not Ghidra's guesses (scratch._analyse_x64). The user's own Visual C++ copies
 its Rich header's build picks the copy (scratch.own_copy) before the nearest pack's, and the project stores
 MSVC/own-<version>. A copy is read for its 32-bit compiler only, so a 64-bit game builds with the pack's.
 
+- watcom.py: offline compiler/object evidence for #81; kits/watcom.py supplies the user's own compiler.
+- project_template/tools/linear.py: flat DOS LE loading through a reversible PE view, shared by import and export.
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object
   of its own (the target objdiff compares with); which Visual C++ built it comes from the program's Rich header,
@@ -58,7 +60,7 @@ PE_HEAD_BYTES, X64_MACHINE = 4096, (0x8664).to_bytes(2, "little")  # where a pro
 
 class WindowsPC(Console):
     id = "pc"
-    name = "Windows PC"
+    name = "PC (Windows / DOS)"
     short = "PC"
     aliases = ("win32",)
     status = BETA
@@ -74,8 +76,8 @@ class WindowsPC(Console):
              ("msvc2015", "Visual C++ 2017, 32- and 64-bit, with its Windows 10 SDK (proprietary, 220 MB; runs "
                           "through wine on Linux and macOS, which you install)"),
              ("ghidra", "finds a PC game's functions, and drafts for platforms m2c can't read (540 MB, needs Java 21+)"))
-    kits = ("visualcpp",)  # the user's own Visual C++ copies: games built with a build the packs don't have
-    guides = ("x86", "cpp")
+    kits = ("visualcpp", "watcom")
+    guides = ("x86", "cpp", "watcom")
     compiler_guide = "x86"
     ram = (0x00400000, 0x80000000)  # a 32-bit program's address space above its usual image base
     demo = "demo-pc"
@@ -125,7 +127,7 @@ class WindowsPC(Console):
                 "pack_x64": compiler_pack(X64_DEFAULT)}
 
     def sniff(self, head: bytes, file) -> bool:
-        """Any Windows program, 64-bit ones too: the import says exactly why one it can't start can't start."""
+        """Windows PE or DOS LE; import validates the processor and supported executable features."""
         from .scratch import is_windows_program
 
         return is_windows_program(head)
@@ -160,7 +162,8 @@ class WindowsPC(Console):
     def kit_compilers(self) -> tuple[Compiler, ...]:
         from ... import kits
 
-        return tuple(Compiler(f"MSVC/{c.version}", c.name, "your own copy") for c in kits.compilers(self.kits))
+        return tuple(Compiler(f"{c.family}/{c.version}", c.name, "your own copy", target="x86", local=True)
+                     for c in kits.compilers(self.kits))
 
     def build_env(self) -> dict[str, str]:
         """Where wine and the app's prefix are, which tools/compile.py reads when a Visual C++ 2015+ file builds: read
@@ -248,6 +251,8 @@ class WindowsPC(Console):
 
         def tools(fp):  # (no source file changes: agents' C stays as it is)
             changed = scratch.write_tools(fp.root, version)
+            if scratch.update_segments(fp.root, version):
+                changed.append(f"config/{version}/functions.json (DOS segmented fixups enabled)")
             return (f"its build has the fixes decompdecomp's has had since the project was made ({', '.join(changed)})"
                     if changed else None)
         # (fix for the stubs: a step that changes no code can't break the rebuild, so it's kept where the rebuild
@@ -261,7 +266,7 @@ class WindowsPC(Console):
                     kept[level] = net.forks.reanalyse(slug, step, fix=fix, log=log)
                 net.forks.get(slug)[1].update_manifest(analysis=level)  # tried: a step taken back isn't tried again
         if manifest.get("tools") != scratch.tools_version():
-            net.forks.reanalyse(slug, tools, paths=("tools",), log=log)
+            net.forks.reanalyse(slug, tools, paths=("tools", "config"), log=log)
             net.forks.get(slug)[1].update_manifest(tools=scratch.tools_version())  # (tried: not again until they change)
         # (a step taken back joined nothing)
         grew = {**(joined if kept.get(4) else {}), **(rejoined if kept.get(7) else {})}
@@ -295,7 +300,7 @@ class WindowsPC(Console):
                                "there, then reimport")
         scratch.ensure_ghidra(log)  # (as the import does: a Mac's Ghidra without its decompiler is installed again)
         log(f"analysing {game.name} with Ghidra again (a big game takes a few minutes)")
-        found = {"": ghidra.functions(game)}
+        found = {"": scratch.program_rows(game)}
         for m in _functions_json(fp, manifest["version"]).get("modules", []):
             log(f"analysing {m['exe'].removeprefix('orig/')} with Ghidra again")
             found[m["name"]] = scratch.module_rows(ghidra, fp.root / m["exe"], m["image_base"] - m["preferred_base"])
@@ -347,7 +352,7 @@ class WindowsPC(Console):
         if "version" not in manifest or not scratch.compilers_file(fp.root, manifest["version"]).exists():
             return None
         own = scratch.file_compilers(fp.root, manifest["version"]).get(source)
-        return f"MSVC/{own}" if own else manifest.get("compiler", f"MSVC/{scratch.MSVC_DEFAULT}")
+        return scratch.compiler_id(own) if own else manifest.get("compiler", f"MSVC/{scratch.MSVC_DEFAULT}")
 
     def set_file_compiler(self, fp, source: str, compiler: str) -> str:
         from . import scratch
@@ -385,6 +390,12 @@ class WindowsPC(Console):
                 out.append(new)
         return out
 
+    def file_flag_variants(self, fp, source: str, flags: list[str]) -> list[list[str]]:
+        if (self.file_compiler(fp, source) or "").startswith("Watcom/"):
+            base = [f for f in flags if f not in ("-3r", "-3s")]
+            return [list(flags), *[v for c in ("-3r", "-3s") if (v := [*base, c]) != flags]]
+        return self.flag_variants(flags)
+
     def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
         from . import scratch
 
@@ -397,6 +408,8 @@ class WindowsPC(Console):
         from . import scratch
 
         manifest = fp.manifest or {}
+        if manifest.get("compiler", "").startswith("Watcom/"):
+            return []  # the Rich-header/linker-version survey identifies Visual C++, not Watcom (#81)
         path = fp.root / manifest.get("game", {}).get("path", f"orig/{manifest.get('version')}.exe")
         paths = [path, *(fp.root / m["exe"] for m in _functions_json(fp, manifest.get("version", "")).get("modules", []))]
         counted: dict[str, list] = {}
@@ -432,6 +445,15 @@ class WindowsPC(Console):
         from ..ps2.debuginfo import brief_lines
 
         return brief_lines(known, "include/debug_types.h (common.h includes it)")
+
+    def relocation_brief(self, fp, symbol: str) -> list[str]:
+        sites = (_entries(fp).get(symbol) or {}).get("segments", [])
+        if not sites:
+            return []
+        return ["", "### DOS symbolic fixups", "Read guide('watcom'); literal placeholders cannot replace these fixups.",
+                *[f"- +0x{off:X}: {'selector of LE object' if kind == 2 else '16-bit offset in LE object'} "
+                  f"0x{base:08X}" + (f", target D_{base + target:08X}" if kind != 2 else f" (use D_{base:08X})")
+                  for off, kind, base, target, _ in sites]]
 
     def classes(self, fp):
         from . import rtti
@@ -513,6 +535,11 @@ class WindowsPC(Console):
         """functions.json's `generated` entries: the exception-handling stubs (scratch.mark_exception_stubs)."""
         return {fn["name"]: fn["generated"] for fns in _functions_json(fp, version).get("units", {}).values()
                 for fn in fns if fn.get("generated")}
+
+    def obsolete_assembly(self, reason: str) -> bool:
+        from .scratch import LEGACY_SEGMENTS
+
+        return reason == LEGACY_SEGMENTS
 
     def rename_pattern(self, old: str) -> str:
         """func_0041B470 however a source spells it (a report's _func_0041B470@8 is func_0041B470 there, a method's

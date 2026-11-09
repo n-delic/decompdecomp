@@ -15,11 +15,22 @@ Standard library only. Made by decompdecomp.
 """
 
 import hashlib
+import importlib.util
 import json
 import re
 import struct
 import sys
 from pathlib import Path
+
+_spec = importlib.util.spec_from_file_location("linear", Path(__file__).with_name("linear.py"))
+linear = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(linear)
+_segments_path = Path(__file__).with_name("segments.py")
+if not _segments_path.is_file():  # the maintained module in the app; exported projects carry their own copy
+    _segments_path = Path(__file__).parents[4] / "arch/x86_segments.py"
+_spec = importlib.util.spec_from_file_location("segments", _segments_path)
+segments = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(segments)
 
 DIR32, REL32 = 0x06, 0x14  # (32-bit x86)
 ADDR64, REL32_64, REL32_64_LAST = 1, 4, 9  # (x64: a pointer; rip-relative, with 0 to 5 bytes after the 4)
@@ -46,6 +57,8 @@ def coff(functions: list[dict], exe: bytes, machine: str = "x86") -> bytes:
     sections = []
     for i, fn in enumerate(functions):
         symbols.append((fn["name"], 0, i + 1, 0x20, 2))
+    for fn in functions:
+        symbols.extend((segments.marker(fn["name"], site), 0, -1, 0, 3) for site in fn.get("segments", []))
     for i, fn in enumerate(functions):
         code = bytearray(exe[fn["offset"]:fn["offset"] + fn["size"]])
         relocs = bytearray()
@@ -145,7 +158,7 @@ def main() -> None:
         data = Path(path).read_bytes()
         if hashlib.sha1(data).hexdigest() != sha1:
             sys.exit(f"{path} isn't the copy this project was made from (its SHA-1 should be {sha1})")
-        loaded[name] = data if base is None else rebase(data, base)
+        loaded[name] = linear.Linear(data).view() if linear.header(data) is not None else data if base is None else rebase(data, base)
     for unit, functions in info["units"].items():
         data = coff(functions, loaded[module(unit)], "x64" if x64(info) else "x86")
         path = out / f"{unit}.obj"

@@ -51,6 +51,7 @@ class Compiler:
     built: str = ""  # which games it built, for Setup: "many third-party N64 games"
     guess: str = ""  # what read_game calls it when a program looks built by it ("KMC", "EEGCC-2.95.2")
     target: str = ""  # the processor its code is for, where a console's compilers differ ("x86", "x64"): Console.target
+    local: bool = False  # a configured user copy, so import needs no downloadable compiler pack or licence prompt
 
 
 class Console:
@@ -74,7 +75,7 @@ class Console:
         from .. import kits
 
         mine = {c.id for c in self.fixed_compilers}
-        return tuple(Compiler(c.version, c.name, "your own copy") for c in kits.compilers(self.kits)
+        return tuple(Compiler(c.version, c.name, "your own copy", local=True) for c in kits.compilers(self.kits)
                      if not c.like or c.like in mine)
 
     id = ""  # what project configs store as their platform ("n64")
@@ -312,6 +313,10 @@ class Console:
         """A function's brief lines from what debug_info (or debug_of) knew about it."""
         return []
 
+    def relocation_brief(self, fp, symbol: str) -> list[str]:
+        """Addressing constraints the compiler must preserve for this function."""
+        return []
+
     def debug_of(self, fp, version: str, symbol: str) -> dict | None:
         """PROJECT mode: what the game's own debug information says about a function (its symbol in the report), for
         its brief (debug_brief's lines); None: nothing (the import found none, or not about this function)."""
@@ -449,6 +454,10 @@ class Console:
         as hand-written assembly is, whatever the project covers, unless the user gave one back to the agents."""
         return {}
 
+    def obsolete_assembly(self, reason: str) -> bool:
+        """Whether a former automatic set-aside is now supported; user assembly decisions stay untouched."""
+        return False
+
     def rename_pattern(self, old: str) -> str:
         """A regex for how source files spell `old`, which rename_symbol replaces with the new name."""
         return rf"\b{re.escape(old)}\b"
@@ -564,6 +573,10 @@ class Console:
         when it can't be."""
         return None
 
+    def file_flag_variants(self, fp, source: str, flags: list[str]) -> list[list[str]]:
+        """Flag search for a file's compiler family; the default shares the console's existing variants."""
+        return self.flag_variants(flags)
+
     def installable_compilers(self) -> list[str]:
         """Its compilers the app installs itself, one toolchain each, that can run here (ROM mode's: "install them
         all" lets the import's compiler test try every one). A project console's come in its pack (`packs`)."""
@@ -580,7 +593,7 @@ class Console:
         return {"id": self.id, "name": self.name, "short": self.short or self.name, "aliases": list(self.aliases),
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "features": sorted(self.features), "packs": [*(tool for tool, _ in self.packs), *self.kits],
-                "compilers": [{"id": c.id, "name": c.name, "built": c.built, "target": c.target}
+                "compilers": [{"id": c.id, "name": c.name, "built": c.built, "target": c.target, "local": c.local}
                               for c in self.compilers],
                 "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",

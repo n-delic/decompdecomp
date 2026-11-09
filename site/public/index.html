@@ -74,7 +74,7 @@
     <label title="EE-GCC and CodeWarrior also run on macOS"><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
     <label><input type="radio" name="platform" value="ps3"><span>PlayStation 3</span></label>
     <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
-    <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
+    <label><input type="radio" name="platform" value="pc"><span>PC (Windows / DOS)</span></label>
     <label><input type="radio" name="platform" value="xbox"><span>Xbox</span></label>
     <label><input type="radio" name="platform" value="nds"><span>Nintendo DS</span></label>
     <label><input type="radio" name="platform" value="gba"><span>Game Boy Advance</span></label>
@@ -153,11 +153,11 @@
       </ol>
     </article>
     <article class="pipeline" data-platform="pc" data-file="game.exe">
-      <h3><span class="pl-name">Windows PC</span> <span class="status beta">Beta</span></h3>
+      <h3><span class="pl-name">PC (Windows / DOS)</span> <span class="status beta">Beta</span></h3>
       <ol class="stations">
         <li><small>Your file</small><b>Program</b><span>a 32-bit or 64-bit .exe</span></li>
         <li><small>Split by</small><b>Ghidra</b><span>then decompdecomp cuts each function out of the .exe (a 64-bit one's are in its own list, .pdata)</span></li>
-        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS; a 64-bit game builds with its 64-bit compiler); any other, from your own copy, for 32-bit games; C and C++</span></li>
+        <li><small>Built by</small><b>Visual C++ · Watcom</b><span>Visual C++ 6.0 to 2010, or 2017 (through wine on Linux and macOS; a 64-bit game builds with its 64-bit compiler); other 32-bit versions from your own copy. Your own Watcom: experimental Windows PE and flat 32-bit DOS LE support, including verified external selector/16-bit fixups and byte-identical rebuilding. Checked with 10.0a C and simple C++. Other DOS formats and full Watcom C++ support are planned.</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
         <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
       </ol>
@@ -256,7 +256,7 @@ jr      $ra
       <p class="step-note">Linux: run it in your terminal. It installs the app and compilers, then opens the app in its own window. There's also a .deb, an .rpm and an AppImage on the <a href="https://github.com/n-delic/decompdecomp/releases/latest">releases page</a>.</p>
       <p class="step-note">Windows 10 and 11: download and open <code>decompdecomp-&lt;version&gt;-windows-x64-setup.exe</code> from the <a href="https://github.com/n-delic/decompdecomp/releases/latest">latest release</a>. The app opens in a native Windows window, with desktop and Start shortcuts and a tray icon. PS1, PS2 and most N64 games also need WSL 2 for their period compilers: run <code>wsl --install</code> in an administrator PowerShell, restart if asked, then open Ubuntu once. GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't.</p>
       <p class="cmd"><code id="cmd-macos">curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main</code><button type="button" class="copy" data-copy-from="cmd-macos">Copy</button></p>
-      <p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS2 Sony EE-GCC uses the optional local Linux runner on macOS 13+: install <code>brew install colima docker</code>, then choose Prepare Linux runner in Compilers &amp; tools. SN Systems EE-GCC and CodeWarrior PS2 use wibo; CodeWarrior requires license acceptance in Setup. Linux-only PS1 builds still need Linux; macOS has no menu bar tray icon yet.</p>
+<p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Xcode Command Line Tools are needed to build Ghidra’s native decompiler at install. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS2 Sony EE-GCC uses the optional local Linux runner on macOS 13+: install <code>brew install colima docker</code>, then choose Prepare Linux runner in Compilers &amp; tools. SN Systems EE-GCC and CodeWarrior PS2 use wibo; CodeWarrior requires license acceptance in Setup. Linux-only PS1 builds still need Linux; macOS has no menu bar tray icon yet.</p>
       <p class="step-note">There's also a downloadable macOS app on the <a href="https://github.com/n-delic/decompdecomp/releases/latest">latest release</a>: download macos_arm64 for Apple Silicon or macos_x86_64 for Intel, unzip it, move decompdecomp.app to Applications, and open it from Finder. It isn't signed, so macOS may ask you to approve its first launch in Privacy &amp; Security.</p>
     </div>
     <div class="step">

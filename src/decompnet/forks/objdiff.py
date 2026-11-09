@@ -12,6 +12,7 @@ from pathlib import Path
 from decompnet.hostenv import NO_WINDOW
 
 from .. import toolchains
+from ..arch import x86_segments
 from ..network import NetworkError
 
 KIND_MARK = {None: " ", "DIFF_NONE": " ", "DIFF_REPLACE": "|", "DIFF_DELETE": "<", "DIFF_INSERT": ">",
@@ -239,16 +240,19 @@ def subtract_conflicts(project: Path, rep: dict) -> dict:
     except (OSError, ValueError):
         return rep
     bases = {u.get("name"): project / u["base_path"] for u in cfg.get("units", []) if u.get("base_path")}
+    targets = {u.get("name"): project / u["target_path"] for u in cfg.get("units", []) if u.get("target_path")}
     lost_fns, lost_code = 0, 0
     for unit in rep.get("units", []):
         base = bases.get(unit.get("name"))
-        if base is None or not base.with_suffix(".ltcg.json").is_file():
+        if base is None:
             continue
+        target = targets.get(unit.get("name"))
+        segments = x86_segments.conflicts(target, base) if target is not None else {}
         side = _sidecar(base)
         u_fns, u_code = 0, 0
         for f in unit.get("functions", []):
             bad = side.get(f.get("name")) or {}
-            if (bad.get("conflicts") or bad.get("data")) and float(f.get("fuzzy_match_percent") or 0) >= 100.0:
+            if (bad.get("conflicts") or bad.get("data") or f.get("name") in segments) and float(f.get("fuzzy_match_percent") or 0) >= 100.0:
                 f["fuzzy_match_percent"] = 99.99
                 u_fns, u_code = u_fns + 1, u_code + int(f.get("size") or 0)
         if u_fns:
@@ -394,6 +398,8 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
             at += int(ins.get("size") or 4)
         wrong = literals.mismatches(target, base, symbol, insns)
         wrong += mapping_conflicts(base, symbol)  # (an LTCG unit's address and data checks, tools/dll2coff.py)
+        if problem := x86_segments.conflicts(target, base).get(symbol):
+            wrong.append(MappingConflict(problem))
     refs = list(dict.fromkeys(n for lr in lrows if (n := _reloc_name(data.get("left"), lr))))
     return FunctionDiff(symbol, float(pct) if pct is not None else None, rows, int(left.get("size", 0)), scores, order, ops,
                         renamed, wrong, refs)
