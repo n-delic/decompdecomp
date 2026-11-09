@@ -102,6 +102,8 @@ def run(twins, slug, job):
     if not net.is_rom(proj) or proj['arch'] != 'mips' or net.fork_slug(slug) or slug in net.links:
         return 0
     budget(job)
+    if exhausted(job):
+        return 0
     agent, _ = net.local_agent('autopilot')
     cfg = net.cfg(proj)
     wrappers = wrapper_families.index(net,proj)
@@ -119,7 +121,9 @@ def run(twins, slug, job):
     # Leave half of the remaining wall time for wider cross-project discovery. Cached template/address
     # work must not prevent that phase from ever starting; both still share the original compile budget.
     phase_deadline = time.monotonic() + max(0, job.reuse_deadline-time.monotonic()) / 2
-    functions = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY size,id", proj['id'])
+    # Queue metadata must not decode every draft/assembly before the first
+    # budget check. Retrieve current payloads only for an eligible visited row.
+    functions = net.project_store(proj['id']).all("SELECT id,name,size FROM functions WHERE project_id=? AND status='open' ORDER BY size,id", proj['id'])
     with reuse_traversal.rotating(net, proj['id'], functions,
                                   ready=lambda: not exhausted(job) and time.monotonic() < phase_deadline) as rows:
         from .cross_game_progress import report as publish_progress
@@ -132,6 +136,11 @@ def run(twins, slug, job):
             fingerprint = prints.get(fn['id'])
             if fingerprint is None or fingerprint.asm:
                 continue
+            fn = net.project_store(proj['id']).one(
+                "SELECT * FROM functions WHERE id=? AND project_id=? AND status='open' AND gone_mark IS NULL",
+                fn['id'], proj['id'])
+            if fn is None:
+                continue  # Another worker may have matched or removed it since queue discovery.
             settings = compiler_for(cfg, fn['vram'], fn)
             candidates = wrapper_families.candidates(net,proj,fn,wrappers)
             candidates += [('template', 'MIPS leaf template', code) for code in mips_templates.candidates(fn, bool(proj['big_endian']), function_names)]
