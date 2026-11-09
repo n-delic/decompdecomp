@@ -11,6 +11,7 @@ _current = ContextVar('candidate_work', default=None)
 class Work:
     def __init__(self):
         self.owner = threading.get_ident()
+        self.preparing = False
         self.memo = {}
         self.objects = {}
         self.object_bytes = 0
@@ -23,10 +24,20 @@ def current():
 
 @contextmanager
 def scope():
-    if current() is not None:
+    value = current()
+    if value is not None and not value.preparing:
         yield;return
     token = _current.set(Work())
     try:yield
+    finally:_current.reset(token)
+
+
+@contextmanager
+def preparation():
+    """Share advisory batch reads, then discard them before any candidate is judged."""
+    value = Work();value.preparing = True
+    token = _current.set(value)
+    try:yield value
     finally:_current.reset(token)
 
 

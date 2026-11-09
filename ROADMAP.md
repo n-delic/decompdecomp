@@ -1,5 +1,13 @@
 # Roadmap
 
+- Done: repair implementation fingerprints reuse one search-session snapshot and refresh
+  next run; actual compiler/header/target guards remain fresh.
+- Done: deep-search history and speculative-compile preparation reuse advisory
+  fingerprints for one bounded batch, then recapture inputs at judgment. Large
+  lexical stability checks reuse exact bytes and staged include names only.
+  Compiler activity now distinguishes executing requests from search/background/shared
+  admission waits, and full-search benchmarks include preflight and generation.
+
 - Done: deep/permutation candidate scoring and history priming read captured database
   inputs without per-candidate saved-tree synchronization. The active-project watcher
   owns file synchronization; revision and saved-file recheck guards remain in the judge.

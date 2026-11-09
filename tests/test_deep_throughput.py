@@ -153,9 +153,57 @@ def test_average_compiler_slot_utilization_uses_elapsed_worker_time(monkeypatch)
     clock=[100.]
     monkeypatch.setattr(deep_throughput.time,'monotonic',lambda:clock[0])
     metrics=deep_throughput.Metrics();metrics.gate=SimpleNamespace(limit=8,active=1)
-    metrics.add('execute',8);metrics.add('history_transactions',2)
+    metrics.add('execute',8);metrics.add('history_transactions',2);metrics.add('executing',1)
     clock[0]=102.
     snapshot=metrics.snapshot()
     assert snapshot['active_compiles']==1
     assert snapshot['compiler_slot_utilization_percent']==50
     assert snapshot['history_transactions']==2
+
+
+@pytest.mark.parametrize('blocked', ['search','background','shared'])
+def test_waiting_compiles_identify_the_gate_without_reporting_execution(monkeypatch, blocked):
+    gates = {name:Admission(1) for name in ('search','background','shared')}
+    assert gates[blocked].acquire(timeout=0)
+    monkeypatch.setattr(compiler, '_SLOTS', gates['shared'])
+    monkeypatch.setattr(compiler, '_BACKGROUND_SLOTS', gates['background'])
+    metrics = deep_throughput.Metrics();metrics.gate = gates['search']
+    release = threading.Event();entered = threading.Event()
+    def run():
+        compiler.background_thread()
+        with compile_timing.collect(metrics), compiler.throughput_slots(False,gates['search']), compiler._slot():
+            entered.set();assert release.wait(3)
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(run)
+        try:
+            import time
+            deadline = time.monotonic()+3
+            while metrics.snapshot()['compiler_waiting_'+blocked] != 1 and time.monotonic()<deadline:
+                threading.Event().wait(.01)
+            stats = metrics.snapshot()
+            assert stats['compiler_waiting_'+blocked] == 1 and stats['active_compiles'] == 0
+            gates[blocked].release()
+            assert entered.wait(3)
+            stats = metrics.snapshot()
+            assert stats['compiler_waiting_'+blocked] == 0 and stats['active_compiles'] == 1
+            assert stats['compiler_queue_'+blocked+'_seconds'] > 0
+        finally:release.set()
+        future.result(3)
+    assert metrics.snapshot()['active_compiles'] == 0
+
+
+def test_cancelled_gate_wait_clears_metrics_and_releases_partial_admission(monkeypatch):
+    shared = Admission(1);assert shared.acquire(timeout=0)
+    local = Admission(2)
+    monkeypatch.setattr(compiler, '_SLOTS', shared)
+    metrics = deep_throughput.Metrics();metrics.gate = local
+    count = [0]
+    def cancel():
+        count[0] += 1
+        raise RuntimeError('cancelled')
+    with pytest.raises(RuntimeError), compile_timing.collect(metrics), compiler.throughput_slots(True,local), compiler.cancellable(cancel), compiler._slot():
+        pytest.fail('blocked compile entered')
+    assert count == [1] and local.active == 0
+    assert metrics.snapshot()['compiler_waiting_shared'] == 0
+    assert metrics.snapshot()['active_compiles'] == 0
+    shared.release()

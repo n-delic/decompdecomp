@@ -14,7 +14,7 @@ from collections import OrderedDict
 from contextlib import nullcontext
 
 from .. import compiler, scoring
-from ..candidate_work import scope as candidate_work_scope
+from ..candidate_work import preparation as candidate_preparation
 from ..candidate_work import trial
 from ..compile_sessions import batched
 from ..forks.project import ForkError
@@ -809,7 +809,10 @@ class Search(Permuter):
         rules = remember(('repair-rules', claim_stalls.repair_rules), claim_stalls.repair_rules)
         version=self.net.project_store(proj['id']).read_version('inputs',proj['id'])
         environment=sorted(os.environ.items())
-        identity=compiler_identity(own)
+        from ..candidate_work import current
+        preparing = current() is not None and current().preparing
+        identity = (remember(("prepared-compiler", compiler_identity, repr(own)), lambda:compiler_identity(own))
+                    if preparing else compiler_identity(own))
         capture=(version,tuple(dict(proj).items()),tuple(dict(fn).items()),identity,repr(rules),environment,
                  ctx['header'] if ctx else '')
         if capture!=getattr(self,'_recent_capture',None):
@@ -834,9 +837,9 @@ class Search(Permuter):
         keys = []
         self._primed_scopes = {}
         self._primed_trials = {}
-        for source in sources:
-            self.check()
-            with candidate_work_scope():
+        with candidate_preparation():
+            for source in sources:
+                self.check()
                 # External build inputs need a fresh filesystem scan at the actual
                 # trial. Avoid scanning those twice merely to batch one DB read.
                 recent_key = self._recent_key(proj, fn, source, fork)

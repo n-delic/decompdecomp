@@ -19,6 +19,7 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW, stop_process_tree
@@ -58,18 +59,28 @@ def background_thread():
 def _slot():
     acquired = []
     queued = time.monotonic()
-    gates = ([_LOCAL_SLOTS.get()] if _LOCAL_SLOTS.get() is not None else []) + ([_BACKGROUND_SLOTS] if getattr(_SCHEDULING, 'background', False) else []) + [_SLOTS]
+    gates = ([('search', _LOCAL_SLOTS.get())] if _LOCAL_SLOTS.get() is not None else [])
+    gates += ([('background', _BACKGROUND_SLOTS)] if getattr(_SCHEDULING, 'background', False) else [])
+    gates += [('shared', _SLOTS)]
+    executing = False
     try:
-        for gate in gates:
-            while not gate.acquire(timeout=0.1):
-                if check := _CANCEL_CHECK.get():
-                    check()
+        for name, gate in gates:
+            started = time.monotonic()
+            if not gate.acquire(timeout=0):
+                compile_timing.add('waiting_'+name, 1)
+                try:
+                    while not gate.acquire(timeout=0.1):
+                        if check := _CANCEL_CHECK.get():check()
+                finally:compile_timing.add('waiting_'+name, -1)
             acquired.append(gate)
+            compile_timing.add('queue_'+name, time.monotonic()-started)
         if check := _CANCEL_CHECK.get():
             check()
         compile_timing.add('queue', time.monotonic() - queued)
+        compile_timing.add('executing', 1);executing = True
         yield
     finally:
+        if executing:compile_timing.add("executing", -1)
         for gate in reversed(acquired):
             gate.release()
 
@@ -314,22 +325,34 @@ def _workspace(prefix):
         yield temporary
 
 
+MIN_CACHED_INPUT_BYTES = 4096
+MAX_CACHED_INPUT_BYTES = 2*1024*1024
+
+
 def _stable_inputs(inputs, staged_names=()):
-    staged_names = set(staged_names)
-    for part in inputs:
-        # Translation phase two removes line splices before macro expansion.
-        text = part.replace(b'\\\r\n', b'').replace(b'\\\n', b'')
-        if any(word in text for word in (b'__TIME__', b'__DATE__', b'__TIMESTAMP__',
-                                        b'__FILE__', b'__BASE_FILE__', b'__has_include', b'##', b'%:%:', b'??')):
+    names = frozenset(staged_names)
+    return all((_stable_part(part, names) if isinstance(part, bytes) and
+                MIN_CACHED_INPUT_BYTES <= len(part) <= MAX_CACHED_INPUT_BYTES
+                else _stable_part.__wrapped__(part, names)) for part in inputs)
+
+
+@lru_cache(maxsize=4)
+def _stable_part(part, staged_names):
+    # This is a pure lexical check, not a compiler/target verdict or a file cache.
+    # Exact bytes and the complete staged-name set key every retained result.
+    # Translation phase two removes line splices before macro expansion.
+    text = part.replace(b'\\\r\n', b'').replace(b'\\\n', b'')
+    if any(word in text for word in (b'__TIME__', b'__DATE__', b'__TIMESTAMP__',
+                                    b'__FILE__', b'__BASE_FILE__', b'__has_include', b'##', b'%:%:', b'??')):
+        return False
+    text = text.replace(b'%:', b'#')
+    text = _COMMENTS_AND_STRINGS.sub(
+        lambda match: ' ' if match.group().startswith('/') else match.group(),
+        text.decode('utf-8', errors='replace')).encode()
+    for directive in re.finditer(rb'(?m)^\s*#\s*(include(?:_next)?|import)\b([^\n]*)', text):
+        include = re.match(rb'\s*"([^"\n]+)"', directive[2])
+        if directive[1] == b'include_next' or include is None or include[1] not in staged_names:
             return False
-        text = text.replace(b'%:', b'#')
-        text = _COMMENTS_AND_STRINGS.sub(
-            lambda match: ' ' if match.group().startswith('/') else match.group(),
-            text.decode('utf-8', errors='replace')).encode()
-        for directive in re.finditer(rb'(?m)^\s*#\s*(include(?:_next)?|import)\b([^\n]*)', text):
-            include = re.match(rb'\s*"([^"\n]+)"', directive[2])
-            if directive[1] == b'include_next' or include is None or include[1] not in staged_names:
-                return False
     return True
 
 

@@ -8,6 +8,7 @@ from concurrent.futures import CancelledError, Future
 from contextlib import contextmanager, nullcontext
 
 from .. import compile_sessions, compile_sharing, compile_timing, compiler
+from ..candidate_work import preparation as candidate_preparation
 
 
 class Ticket:
@@ -124,28 +125,29 @@ def chunk(search, agent, proj, fn, sources, fork):
             from .deep_permuter import SearchLimit
             raise SearchLimit('Time limit reached')
     try:
-        for source in sources:
-            if len(tickets) >= min(pool.count*2, search.limit-search.tested):break
-            if source in tickets or source == fn['best_source']:continue
-            if random_safety.unsafe_update(fn['best_source'], source) or invalid_call(source, fn['name'], header):continue
-            key = search._recent_key(proj, fn, source, fork)
-            if key is None:continue  # External includes/custom compilers need ordinary fresh capture.
-            recent=getattr(search,'_recent_candidates',{}).get(key)
-            if recent is not None and recent[0]>=search.best:continue
-            scope = getattr(search, '_primed_scopes', {}).get(key)
-            if scope is not None:
-                import hashlib
-                import json
-                signature = 'deep-v1:'+hashlib.sha256((scope+source).encode()).hexdigest()
-                feedback = getattr(search, '_primed_trials', {}).get((fn['id'], signature))
-                if feedback:
-                    value = json.loads(feedback)
-                    score = value.get('score') if isinstance(value, dict) else value
-                    if isinstance(score, int) and score >= search.best:continue
-            snapshot = search.net._compile_snapshot(proj, fn, header, source)
-            ticket = Ticket(key[1], snapshot,
-                            lambda source=source:search.net._compile(proj, header, source, fn), check)
-            tickets[source] = ticket
+        with candidate_preparation():
+            for source in sources:
+                if len(tickets) >= min(pool.count*2, search.limit-search.tested):break
+                if source in tickets or source == fn['best_source']:continue
+                if random_safety.unsafe_update(fn['best_source'], source) or invalid_call(source, fn['name'], header):continue
+                key = search._recent_key(proj, fn, source, fork)
+                if key is None:continue  # External includes/custom compilers need ordinary fresh capture.
+                recent=getattr(search,'_recent_candidates',{}).get(key)
+                if recent is not None and recent[0]>=search.best:continue
+                scope = getattr(search, '_primed_scopes', {}).get(key)
+                if scope is not None:
+                    import hashlib
+                    import json
+                    signature = 'deep-v1:'+hashlib.sha256((scope+source).encode()).hexdigest()
+                    feedback = getattr(search, '_primed_trials', {}).get((fn['id'], signature))
+                    if feedback:
+                        value = json.loads(feedback)
+                        score = value.get('score') if isinstance(value, dict) else value
+                        if isinstance(score, int) and score >= search.best:continue
+                snapshot = search.net._compile_snapshot(proj, fn, header, source)
+                ticket = Ticket(key[1], snapshot,
+                                lambda source=source:search.net._compile(proj, header, source, fn), check)
+                tickets[source] = ticket
         with pool.window(len(tickets), check):
             for ticket in tickets.values():pool.submit(ticket)
             search._ahead = tickets

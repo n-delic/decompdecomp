@@ -177,3 +177,30 @@ def test_map_metadata_contention_returns_retryable_response_and_can_recover(app,
     assert 'Function map metadata busy' in caplog.text
     monkeypatch.setattr(view_snapshots, 'map_payload', lambda *args, **kwargs: {'sig':'ready','keys':[],'rows':[]})
     assert client.get('/api/map?slug=synthetic').status_code == 200
+
+
+def test_repair_implementation_snapshot_is_per_search_not_a_compiler_input_cache(monkeypatch):
+    from decompnet import compile_sessions
+    version = [1];calls = []
+    def read():calls.append(version[0]);return [('repair.py',str(version[0]))]
+    monkeypatch.setattr(claim_stalls, '_repair_rules', read)
+    with compile_sessions.session():
+        first = claim_stalls.repair_rules()
+        first.append(('mutated','must not leak'))
+        version[0] = 2
+        assert claim_stalls.repair_rules() == [('repair.py','1')]
+        assert calls == [1]
+    with compile_sessions.session():
+        assert claim_stalls.repair_rules() == [('repair.py','2')]
+    version[0] = 3
+    assert claim_stalls.repair_rules() == [('repair.py','3')]
+    assert calls == [1,2,3]
+
+
+def test_replaced_implementation_reader_invalidates_search_snapshot(monkeypatch):
+    from decompnet import compile_sessions
+    monkeypatch.setattr(claim_stalls, '_repair_rules', lambda:[('repair.py','old')])
+    with compile_sessions.session():
+        assert claim_stalls.repair_rules() == [('repair.py','old')]
+        monkeypatch.setattr(claim_stalls, '_repair_rules', lambda:[('repair.py','new')])
+        assert claim_stalls.repair_rules() == [('repair.py','new')]

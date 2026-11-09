@@ -36,3 +36,36 @@ This benchmark excludes repair generation, initial project import, GUI serializa
 and a real saved-project file tree. It isolates the candidate-to-judge path; its speedup
 is not a prediction for every game or Mac. Phase times sum concurrent workers and must
 not be added together as wall time. App CPU excludes compiler and generator processes.
+
+## Full search and admission waits
+
+Add `--full-search` to exercise the normal deep-search entry point, including source
+preparation, warning/flag preflight, baseline checks and proposal generation. Add
+`--balanced` to compare the balanced preset. `--profile` writes a cProfile file for
+the first full-search function beside the scratch directory. Keep TMPDIR on the
+scratch volume. GUI rendering and a real saved-project file tree are still excluded.
+
+For full searches, concurrent speculative work and object-sharing cache hits can
+slightly change actual compiler invocation counts. Compare completed search results,
+score digests and history rows too, and report any invocation-count difference.
+
+History priming and compile submission each share advisory fingerprints only while
+preparing one bounded batch. That context ends before judging; compiler identity,
+header, target, environment and revision guards are captured afresh on the actual
+candidate. Large lexical stability checks cache at most four byte strings, each
+4 KiB–2 MiB, keyed by exact bytes and the complete staged include-name set. They
+never cache file contents by pathname or supply a match verdict.
+
+The scorecard's active count now means requests that acquired every compiler gate.
+The waiting breakdown distinguishes this search's limit, the balanced-background
+reserve and the app-wide shared compiler limit. Shared busy slots include other
+app work, so an idle deep-search slot alone does not prove the machine is idle.
+Cumulative wait time sums threads; use the current waiter counts to locate a live
+stall. A partly checked project queue is intentional bounded lookahead, not an
+attempt to prepare every function before any search can run.
+
+Repair implementation fingerprints are captured once per search session and refreshed
+for the next session. Python does not reload those implementations mid-search. This
+is advisory search-version evidence only; compiler, header, target, environment and
+revision checks remain fresh for actual candidates. Outside sessions, implementation
+fingerprints remain fresh on each call.

@@ -27,3 +27,11 @@ assert.match(get('fnDeepThroughput').textContent,/0.4s linking/);
 render({throughput:{compiler_slot_utilization_percent:62.5,history_write_seconds:1.2,history_transactions:3}});
 assert.match(get('fnDeepThroughput').textContent,/62.5% average slots busy/);
 assert.match(get('fnDeepThroughput').textContent,/1.2s history writes \(3 transactions\)/);
+
+render({throughput:{active_compiles:2,compile_slots:16,compiler_waiting_search:1,compiler_waiting_background:0,
+  compiler_waiting_shared:3,shared_active_compiles:16,shared_compile_slots:16}});
+assert.match(get('fnDeepThroughput').textContent,/2\/16 compiles active/);
+assert.match(get('fnDeepThroughput').textContent,/waiting now 4 \(search 1, background 0, shared 3\)/);
+assert.match(get('fnDeepThroughput').textContent,/16\/16 shared compiler slots busy/);
+render({throughput:{compiler_waiting_search:0,compiler_waiting_background:0,compiler_waiting_shared:0}});
+assert.doesNotMatch(get('fnDeepThroughput').textContent,/waiting now/);

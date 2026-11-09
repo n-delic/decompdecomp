@@ -24,7 +24,7 @@ def width(maximum, slots):
 class Metrics:
     def __init__(self):
         self.lock = threading.Lock()
-        self.values = {}
+        self.values = {"executing":0}
         self.rates = deque(maxlen=26)
         self.started = time.monotonic()
         self.cpu = time.process_time()
@@ -57,7 +57,11 @@ class Metrics:
         rate_seconds=min(5,elapsed)
         gate = getattr(self,'gate',None)
         return {'active_proposal_workers':getattr(getattr(self,'proposals',None),'running',0),
-                'active_compiles':gate.active if gate else 0,
+                'active_compiles':values.get('executing',0),
+                'shared_active_compiles':getattr(compiler._SLOTS,'active',0),
+                'shared_compile_slots':getattr(compiler._SLOTS,'limit',0),
+                **{'compiler_waiting_'+name:values.get('waiting_'+name,0) for name in ('search','background','shared')},
+                **{'compiler_queue_'+name+'_seconds':values.get('queue_'+name,0) for name in ('search','background','shared')},
                 'pool_compiler_invocations':values.get('invocations',0),
                 'pool_compile_requests':values.get('requests',0),
                 'pool_compiler_invocations_at_first_exact':first_exact,

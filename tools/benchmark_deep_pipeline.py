@@ -25,7 +25,7 @@ class Log:
     def check_cancel(self):pass
 
 
-def benchmark(root, functions, variants, workers, slots, declarations):
+def benchmark(root, functions, variants, workers, slots, declarations, full_search=False, balanced=False, profile=False, search_seconds=60):
     net = RomNetwork(root/'benchmark.db', root)
     cfg = dict(kind='rom', platform='n64', big_endian=True,
                compiler=dict(toolchain='gcc-2.7.2-kmc', flags=['-O2','-G0','-mips3','-mgp32','-mfp32']))
@@ -47,7 +47,7 @@ def benchmark(root, functions, variants, workers, slots, declarations):
     agent, _ = net.local_agent('permuter-benchmark')
     proj = net.store.one('SELECT * FROM projects WHERE id=1')
     rows = net.store.all('SELECT * FROM functions ORDER BY id')
-    pool = deep_compilation.Pool(slots, maximum=True)
+    pool = deep_compilation.Pool(slots, maximum=not balanced)
     log = Log();log.compile_pool = pool
     syncs = {'forced':0,'ordinary':0};lock = threading.Lock();sync = net.progress.sync
     def observed(slug, **kwargs):
@@ -55,6 +55,17 @@ def benchmark(root, functions, variants, workers, slots, declarations):
         return sync(slug, **kwargs)
     net.progress.sync = observed
     def work(fn):
+        if full_search:
+            import cProfile
+            profiler = cProfile.Profile() if profile and fn["id"] == 1 else None
+            if profiler:profiler.enable()
+            output = Log();output.compile_pool = pool;output.maximum_seconds = search_seconds
+            try:
+                result = deep_permuter.run(net, "bench", fn["name"], (search_seconds+59)//60, variants, output)
+                return {k:result.get(k) for k in ("function","reason","tested","skipped","local_search","starting_score","best_score")}
+            finally:
+                if profiler:
+                    profiler.disable();profiler.dump_stats(str(root.parent/("deep-profile-"+str(fn["id"])+".prof")))
         search = deep_permuter.Search(net, 10, variants*2, log, fn);search.compile_pool = pool
         name = fn['name']
         sources = [f'int {name}(int x){{return x+{i+2};}}' for i in range(variants)]
@@ -79,7 +90,7 @@ def benchmark(root, functions, variants, workers, slots, declarations):
                     compiler_invocations=metrics['pool_compiler_invocations'],
                     compiles_per_second=metrics['pool_compiler_invocations']/seconds,
                     history_rows=history, scores_sha256=hashlib.sha256(json.dumps(results).encode()).hexdigest(),
-                    synchronization_calls=syncs, throughput=metrics)
+                    synchronization_calls=syncs, throughput=metrics, search_results=results if full_search else None)
     finally:
         pool.close()
         net.store.conn.close()
@@ -87,6 +98,10 @@ def benchmark(root, functions, variants, workers, slots, declarations):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--full-search", action="store_true", help="Run real preparation, preflight and repair generation too.")
+    parser.add_argument("--balanced", action="store_true")
+    parser.add_argument("--search-seconds", type=int, default=60, help="Per-function full-search deadline.")
+    parser.add_argument("--profile", action="store_true", help="Profile the first full-search function beside the scratch folder.")
     parser.add_argument('--functions', type=int, default=16)
     parser.add_argument('--variants', type=int, default=8)
     parser.add_argument('--workers', type=int, default=4)
@@ -94,7 +109,7 @@ def main():
     parser.add_argument('--declarations', type=int, default=3000)
     args = parser.parse_args()
     if not (1<=args.functions<=256 and 1<=args.variants<=256 and 1<=args.workers<=256
-            and 1<=args.slots<=256 and 0<=args.declarations<=10000):
+            and 1<=args.slots<=256 and 0<=args.declarations<=10000 and 1<=args.search_seconds<=7200):
         parser.error('Use 1–256 functions, variants, workers and slots; 0–10000 declarations.')
     if not toolchains.installed('gcc-2.7.2-kmc'):
         parser.error('Install the pinned gcc-2.7.2-kmc compiler first; this tool never downloads it.')

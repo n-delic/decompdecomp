@@ -226,3 +226,59 @@ def test_delayed_statistics_do_not_move_collection_windows_backwards(monkeypatch
         assert not thread.is_alive()
     row = net.store.one('SELECT first_at,last_at,attempted FROM repair_policy_coverage')
     assert (row['first_at'], row['last_at'], row['attempted']) == (20., 30., 2)
+
+
+def test_priming_shares_advisory_fingerprints_but_judging_recaptures_them(monkeypatch):
+    from decompnet import claim_stalls, match_bundle
+    net = FakeNet();proj = net.project_row('game');fn = net.function()
+    search = deep_permuter.Search(net, 1, 100, Log(), fn)
+    calls = {'rules':0,'compiler':0};version = [1]
+    def rules():calls['rules'] += 1;return [('rules',str(version[0]))]
+    def identity(*args):calls['compiler'] += 1;return ('compiler',version[0])
+    monkeypatch.setattr(claim_stalls, 'repair_rules', rules)
+    monkeypatch.setattr(match_bundle, 'compiler_identity', identity)
+    sources = [f'int f(void){{return {i};}}' for i in range(16)]
+    search._prime_trials(AGENT, proj, fn, sources, None)
+    assert calls == {'rules':1,'compiler':1}
+    prepared = search._recent_key(proj, fn, sources[0], None)
+    assert prepared in search._primed_scopes
+    version[0] = 2
+    fresh = search._recent_key(proj, fn, sources[0], None)
+    assert fresh != prepared and fresh not in search._primed_scopes
+    assert calls == {'rules':3,'compiler':3}
+
+
+def test_advisory_preparation_is_thread_owned_and_restores_outer_trial_on_cancel():
+    with candidate_work.scope():
+        outer = candidate_work.current()
+        with pytest.raises(RuntimeError), candidate_work.preparation() as prepared:
+            assert prepared.preparing and prepared is not outer
+            copied = __import__('contextvars').copy_context();seen = []
+            thread = threading.Thread(target=lambda:copied.run(lambda:seen.append(candidate_work.current())))
+            thread.start();thread.join(3)
+            assert seen == [None]
+            raise RuntimeError('cancelled')
+        assert candidate_work.current() is outer and not outer.preparing
+    assert candidate_work.current() is None
+
+
+def test_batched_history_scopes_equal_fresh_scopes_for_each_candidate():
+    from decompnet.app.agent_tokens import target_scope
+    net = FakeNet();proj = net.project_row('game');fn = net.function()
+    search = deep_permuter.Search(net, 1, 100, Log(), fn)
+    sources = ['int f(void){return 1;}', 'int f(void){return helper();}', 'int f(void){return other();}']
+    expected = {search._recent_key(proj,fn,source,None):target_scope(net,dict(fn,best_source=source),'') for source in sources}
+    search._prime_trials(AGENT,proj,fn,sources,None)
+    assert search._primed_scopes == expected
+    assert candidate_work.current() is None
+
+
+def test_judging_scope_never_inherits_advisory_preparation_memo():
+    with candidate_work.preparation() as batch:
+        candidate_work.remember('compiler', lambda:'prepared')
+        with candidate_work.scope():
+            assert not candidate_work.current().preparing
+            assert candidate_work.remember('compiler', lambda:'fresh') == 'fresh'
+        assert candidate_work.current() is batch
+        assert candidate_work.remember('compiler', lambda:'wrong') == 'prepared'
+    assert candidate_work.current() is None

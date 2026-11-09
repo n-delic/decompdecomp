@@ -86,3 +86,19 @@ def test_waiting_compile_checks_cancellation_and_releases_background_slot(monkey
     with pytest.raises(RuntimeError,match='cancelled'),compiler.cancellable(cancel),compiler._slot():
         raise AssertionError('must not acquire')
     assert background.acquire(blocking=False)
+
+
+def test_large_stability_checks_cache_exact_bytes_and_staged_include_names():
+    compiler._stable_part.cache_clear()
+    header = b'/*'+b'x'*compiler.MIN_CACHED_INPUT_BYTES+b'*/\n#include "types.h"\n'
+    assert compiler._stable_inputs([header], [b'types.h'])
+    assert compiler._stable_inputs([bytes(bytearray(header))], [b'types.h'])
+    assert compiler._stable_part.cache_info().hits == 1
+    assert not compiler._stable_inputs([header], [])
+    assert not compiler._stable_inputs([header.replace(b'types.h',b'other.h')], [b'types.h'])
+    assert not compiler._stable_inputs([header+b'__TIME__'], [b'types.h'])
+    assert compiler._stable_part.cache_info().currsize <= 4
+    before = compiler._stable_part.cache_info()
+    assert compiler._stable_inputs([b'int value;'])
+    assert compiler._stable_inputs([b' '* (compiler.MAX_CACHED_INPUT_BYTES+1)])
+    assert compiler._stable_part.cache_info() == before
