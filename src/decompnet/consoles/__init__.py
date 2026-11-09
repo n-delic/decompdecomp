@@ -150,7 +150,7 @@ class Console:
         return []  # consoles can recognize structurally validated native asset containers
 
     def asset_preview(self, data, asset, selection):
-        return None  # native assets can resolve validated texture or audio selections
+        return None  # native assets can resolve validated image, audio or model selections
 
     def asset_decode(self, data):
         return None  # None delegates to the common preview codecs

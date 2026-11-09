@@ -203,5 +203,26 @@ function setup(){
     assert.equal(t.run('romTypeRows(romView()).length'),2);assert.equal(t.run('romTypeRows(romView())[0].id'),'a');
     t.run('romView().groupAssets=false');assert.equal(t.run('romTypeRows(romView()).length'),3);
   }
+  // Native meshes share the guarded preview lifecycle and bypass image/audio decoding.
+  {
+    const t=setup(),body=element(),pending=deferred(),painted=[];
+    t.context.body=body;t.context.painted=painted;
+    t.run('renderRomModel=(host,model,active)=>{if(active())painted.push(model.vertices.length);}');
+    const mesh={node:0,part:0,section:0,vertices:3,triangles:1};
+    t.context.region={id:'mesh',start:128,annotation:{preview_settings:{mesh:1}},detected_asset:{media:'model',nodes:1,meshes:[mesh,mesh],vertices:6,triangles:2}};
+    const html=t.run('romAssetHTML(region)');assert.match(html,/Detected model geometry/);assert.match(html,/value="1" selected/);assert.ok(!html.includes('texture bank ·'));
+    vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-textures.js'),'utf8'),t.context);
+    assert.equal(t.run('romTextureControlsHTML(region)'),'');t.run('setupRomTextureControls(body,region,()=>true)');
+    assert.equal(t.run('romTextureBanks({regions:[region]}).length'),0);
+    for(const [key,value] of Object.entries({source:'rom',format:'auto',offset:'128'}))body.querySelector(`[data-asset-${key}]`).value=value;
+    const button=body.querySelector('[data-asset-preview]'),selector=body.querySelector('[data-native-model-mesh]');selector.value='1';
+    body.querySelectorAll=key=>key==='input,select,button' ? [button,selector] : [];
+    t.context.reply=()=>pending.promise;t.run('setupRomAsset(body,region,"first","hash",()=>S.slug==="first")');
+    const waiting=button.onclick();await tick();assert.ok(button.disabled && selector.disabled);await selector.onchange();await button.onclick();assert.equal(t.calls.length,1);
+    assert.equal(t.calls[0].options.body.options.mesh,'1');pending.resolve({media:'model',vertices:[[0,0,0],[1,0,0],[0,1,0]],edges:[],points:[],triangles:1});await waiting;
+    assert.deepEqual(painted,[3]);assert.equal(button.disabled,false);
+    t.context.reply=async()=>{throw Error('Mesh is invalid. Refresh ROM Explorer.');};await button.onclick();assert.match(body.querySelector('[data-asset-work]').textContent,/Mesh is invalid/);
+    const late=deferred();t.context.reply=()=>late.promise;const closing=button.onclick();body._romCancelPreview();late.resolve({media:'model',vertices:[]});await closing;assert.deepEqual(painted,[3]);
+  }
   console.log('ROM Explorer lifecycle, sorting and notes passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

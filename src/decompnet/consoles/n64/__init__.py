@@ -1,6 +1,7 @@
 """Nintendo 64: the VR4300's MIPS (big-endian), KMC GCC, IDO and SN64 GCC, ROM mode.
 
 - audio.py: source-assisted B1 sound banks, sample tables and mono VADPCM previews.
+- models.py: validated indexed geometry and local mesh wireframes.
 - textures.py: source-assisted indexed texture banks and bounded RNC asset previews.
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
 - code.py: code splat's own look misses: segments the game loads later, and code kept compressed in the ROM.
@@ -71,12 +72,12 @@ class Nintendo64(Console):
     asm_preamble = '.include "macro.inc"\n.set noat\n.set noreorder\n.set gp=64\n.section .text, "ax"\n'
 
     def asset_regions(self, image, *, context=None, **kwargs):
-        from . import audio, textures
-        return textures.regions(image, **kwargs)+audio.regions(image, context=context, **kwargs)
+        from . import audio, models, textures
+        return textures.regions(image, **kwargs)+audio.regions(image, context=context, **kwargs)+models.regions(image, **kwargs)
 
     def asset_preview(self, data, asset, selection):
-        from . import audio, textures
-        return (audio.preview if asset.get('media')=='audio' else textures.preview)(data, asset, selection)
+        from . import audio, models, textures
+        return {'audio':audio.preview,'model':models.preview}.get(asset.get('media'),textures.preview)(data, asset, selection)
 
     def asset_decode(self, data):
         from .textures import decode
