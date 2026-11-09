@@ -1,11 +1,11 @@
 """Aligned MIPS evidence for one threshold/subtraction/signed-divisor parameter change."""
 
+import json
+
 
 def scale_changes(a, b, big):
-    import json
-
     def relocations(fn):
-        return json.loads(fn['relocs'] or '[]')
+        return [row[:3] for row in json.loads(fn['relocs'] or '[]') if len(row) >= 3]
 
     a, b = dict(a), dict(b)
     left, right = a['target'] or b'', b['target'] or b''

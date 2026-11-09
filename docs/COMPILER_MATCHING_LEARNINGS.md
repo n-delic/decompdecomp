@@ -6821,3 +6821,8 @@ No SDK instructions or game fixtures are committed.
 - Read the current verified donor after ranking and record its source hash. Large source
   is retrieved completely through `get_function(section="matched")`, never as truncated C.
   Public regression fixtures are synthetic; private game code/bytes remain outside Git.
+
+To repeat a local/private replay, keep its fixture outside Git and run
+`PYTHONPATH=src TMPDIR=/path/on/data-volume python tools/replay_parameter_transfer.py /private/fixture.json`.
+The tool's docstring describes the fixture schema. It calls the ordinary compiler/link
+judge without an app connection; fixtures with referenced data need a future data-reader adapter.

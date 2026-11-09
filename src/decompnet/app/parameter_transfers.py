@@ -26,7 +26,7 @@ def variants(source, a, b, big):
             if value != old:
                 continue
             before = masked[:token.start()].rstrip()
-            # Exclude array sizes, field offsets, macros and unrelated additive literals.
+            # Limit edits to these arithmetic roles, leaving array sizes and additive offsets alone.
             role = next((op for op in ('/', '-', '<') if before.endswith(op) and not before.endswith(op*2)), None)
             if role is None or re.search(r'^\s*#', before.split('\n')[-1]):
                 continue
