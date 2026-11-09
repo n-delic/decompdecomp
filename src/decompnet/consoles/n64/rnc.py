@@ -184,3 +184,72 @@ def rebuild_cartridge(analysis: bytes, original: bytes, blocks: list[dict]) -> b
         packed = repack_like(analysis[start:start + size], original[offset:])
         result[offset:offset + len(packed)] = packed
     return bytes(result)
+
+
+def unpack_m2(data: bytes, *, max_output: int = MAX_OUTPUT) -> bytes:
+    """Bounded method-2 assets; code rebuilding continues to use method 1 only.
+
+    Token grammar reference: ScummVM common/compression/rnc_deco.cpp,
+    unpackM2 (ScummVM developers, GPL-3.0-or-later). Sizes, reads, both CRCs
+    and every back-reference are checked here before any asset is exposed.
+    """
+    if len(data)<HEADER_BYTES or data[:4]!=b'RNC\x02':raise RncError('not an RNC method-2 container')
+    size,packed,out_crc,in_crc=struct.unpack_from('>IIHH',data,4)
+    if not 0<size<=max_output or not 1<=packed<=len(data)-HEADER_BYTES:raise RncError('invalid RNC sizes')
+    payload=data[HEADER_BYTES:HEADER_BYTES+packed]
+    if crc16(payload)!=in_crc:raise RncError('RNC packed checksum differs')
+    cursor=buffer=left=0
+
+    def byte():
+        nonlocal cursor
+        if cursor>=len(payload):raise RncError('truncated RNC token')
+        value=payload[cursor];cursor+=1
+        return value
+
+    def bit():
+        nonlocal buffer,left
+        if not left:buffer=byte();left=8
+        left-=1
+        return (buffer>>left)&1
+
+    out=bytearray()
+
+    def literal(count):
+        if len(out)+count>size:raise RncError('RNC literal exceeds output')
+        for _ in range(count):out.append(byte())
+
+    if bit() or bit():raise RncError('encrypted or locked RNC streams are unsupported')
+    # Empty continuation chunks still consume input, so truncated streams terminate.
+    while True:
+        while not bit():literal(1)
+        length=2;high=0;distance=False
+        if not bit():
+            length=4+bit()
+            if bit():
+                length=(length-1)*2+bit()
+                if length==9:
+                    count=0
+                    for _ in range(4):count=count*2+bit()
+                    literal((count+3)*4)
+                    continue
+            distance=True
+        elif bit():
+            length=3
+            if bit():
+                length=byte()
+                if not length:
+                    if bit():continue
+                    break
+                length+=8
+            distance=True
+        if distance and bit():
+            high=bit()
+            if bit():
+                high=(high*2+bit())|4
+                if not bit():high=high*2+bit()
+            elif not high:high=2+bit()
+        offset=high*256+byte()+1
+        if offset>len(out) or len(out)+length>size:raise RncError('RNC back-reference is outside output')
+        for _ in range(length):out.append(out[-offset])
+    if len(out)!=size or crc16(out)!=out_crc:raise RncError('RNC unpacked size or checksum differs')
+    return bytes(out)

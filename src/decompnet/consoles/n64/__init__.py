@@ -1,5 +1,6 @@
 """Nintendo 64: the VR4300's MIPS (big-endian), KMC GCC, IDO and SN64 GCC, ROM mode.
 
+- textures.py: source-assisted indexed texture banks and bounded RNC asset previews.
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
 - code.py: code splat's own look misses: segments the game loads later, and code kept compressed in the ROM.
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
@@ -67,6 +68,14 @@ class Nintendo64(Console):
     reference_tools = ("binutils-mips", "mips-ps2-decompals-as", "mips-ps2-decompals-ld")
     image_ext = ".z64"
     asm_preamble = '.include "macro.inc"\n.set noat\n.set noreorder\n.set gp=64\n.section .text, "ax"\n'
+
+    def asset_regions(self, image, **kwargs):
+        from .textures import regions
+        return regions(image, **kwargs)
+
+    def asset_decode(self, data):
+        from .textures import decode
+        return decode(data)
 
     def sniff(self, head: bytes, file) -> bool:
         from .rom import MAGIC

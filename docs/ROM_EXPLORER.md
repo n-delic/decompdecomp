@@ -197,3 +197,29 @@ label propagation. Parser success and static references remain evidence rather
 than proof of intended use. Human acceptance is unchanged. These features share
 the ROM Explorer adapter on all supported ROM consoles; project-mode object/data
 mapping remains planned before these tools can reach project-mode consoles.
+
+### Automatic native textures
+
+N64 scans recognize source-assisted indexed texture banks, including RNC methods 1 and 2.
+Recognition checks the nested offset tables, format, dimensions, every bitmap and palette
+extent, and both compression checksums. Supported variants are CI8/RGBA16, CI4/RGBA16 and
+CI4/IA16. **Detect asset / texture bank** previews the first frame with its first palette;
+the region shows dimensions and frame/palette counts. Detection needs neither a source
+checkout nor release-specific ROM addresses. Generic data symbols retain their names and
+references while validated texture banks appear as images. Function regions retain priority.
+
+This validates the container layout, not runtime use. Direct-color, mipmapped, tiled and
+other proprietary layouts still need manual investigation. Native recognition is N64-only;
+other ROM consoles retain the shared PNG/JPEG/audio detection and manual preview controls.
+The native pass caps blocks at 16,384, individual input/output at 4 MiB and total attempted
+expanded output at 64 MiB; assets beyond those limits may be missed. It checks cancellation
+between blocks. Source and game bytes remain private; only generic format rules are shipped.
+
+The shared scan allows 256 bounded media validation probes, separately from compression
+probes. Headers beyond that budget remain unclassified and the report explains the limit.
+Rejected PNG/JPEG/VAGp headers no longer create image/audio regions. JPEG recognition checks
+frame and scan structure and dimensions; compressed scan validity is still checked by the
+browser. Saved scans refresh automatically after this detector update.
+
+RNC method-2 token grammar was checked against the
+[ScummVM decoder](https://github.com/scummvm/scummvm/blob/master/common/compression/rnc_deco.cpp).

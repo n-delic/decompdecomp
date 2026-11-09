@@ -247,21 +247,28 @@ def identify(data):
         if seconds>MAX_SECONDS:raise AssetError('This WAVE exceeds the 30 second preview limit. Select raw PCM and a shorter range.')
         return dict(mime='audio/wav',size=end,format='PCM WAVE',seconds=round(seconds,3),**spec)
     if data.startswith(b'\xff\xd8\xff'):
-        at=2;width=height=None
+        at=2;width=height=None;components=set()
         while at+4<=min(len(data),MAX_BYTES):
             if data[at]!=255:raise AssetError('JPEG marker structure is invalid.')
             while at<len(data) and data[at]==255:at+=1
             marker=_take(data,at,1)[0];at+=1
             if marker==0xd9:break
+            if marker not in (*range(0xc0,0xd0),0xda,0xdb,0xdc,0xdd,0xde,0xdf,*range(0xe0,0xf0),0xfe):
+                raise AssetError('JPEG marker structure is invalid.')
             length=int.from_bytes(_take(data,at,2),'big')
             if length<2:raise AssetError('JPEG segment length is invalid.')
             payload=_take(data,at+2,length-2)
             if marker in (0xc0,0xc1,0xc2):
-                if len(payload)<6:raise AssetError('JPEG dimensions are missing.')
+                if len(payload)<6 or payload[0]!=8 or not 1<=payload[5]<=4 or len(payload)!=6+3*payload[5]:
+                    raise AssetError('JPEG frame header is invalid.')
+                components=set(payload[6::3])
+                if len(components)!=payload[5]:raise AssetError('JPEG frame components are invalid.')
                 height,width=struct.unpack('>HH',payload[1:5])
                 if not 0<width<=MAX_DIMENSION or not 0<height<=MAX_DIMENSION or width*height>MAX_PIXELS:raise AssetError('JPEG dimensions exceed preview limits.')
             at+=length
             if marker==0xda:
+                if not payload or not 1<=payload[0]<=4 or len(payload)!=4+2*payload[0] or not set(payload[1:-3:2])<=components:
+                    raise AssetError('JPEG scan header is invalid.')
                 # Entropy bytes can contain escaped FF and restart markers. EOI
                 # terminates the contained JPEG; browsers validate the full scan.
                 end=data.find(b'\xff\xd9',at,min(len(data),MAX_BYTES))

@@ -693,6 +693,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Automatic indexed texture banks (CI4/CI8, RNC 1/2) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
 | Image, texture/palette and audio previews | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Agent asset discovery, automatic checks, independent review and similar regions | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | ROM Explorer: whole analysis image, references, clues and notes | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — image adapter planned | — image adapter planned | — image adapter planned | — image adapter planned |
@@ -1501,8 +1502,8 @@ four MIPS ROM columns in the table.
 
 Extend the current block-local loader/buffer evidence through indexed file-ID tables,
 mutable memory, cross-branch paths and arbitrary interprocedural consumers. Establish
-asynchronous DMA completion before presenting runtime guarantees. Add console texture
-tilings, stronger raw-image dimension/palette inference beyond the current comparison
+asynchronous DMA completion before presenting runtime guarantees. Extend native texture-bank
+recognition to other consoles and direct-color/mipmapped layouts. Add console texture tilings, stronger raw-image dimension/palette inference beyond the current comparison
 gallery, display-list/model-container decoding and more audio/compression formats. Current source groups and named contracts are static evidence, not runtime
 proof; raw preview choices remain manual interpretations.
 
