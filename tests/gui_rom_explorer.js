@@ -147,5 +147,25 @@ function setup(){
     const leaving=button.onclick();t.context.S.slug='second';late.resolve({media:'audio',data_url:'data:audio/wav;base64,AA=='});await leaving;
     assert.equal(result.children.length,0,'A late preview must not paint another project');
   }
+  // The categorical grid shares function-map geometry, retains ROM order and
+  // opens stable region IDs even after table sorts or local classifications.
+  {
+    const t=setup(),cells=[],opened=[];
+    const map=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/map.js'),'utf8');
+    vm.runInContext(map.slice(map.indexOf('function squareMapLayout('),map.indexOf('function layoutMap(')),t.context);
+    const canvas=t.context.$('romTypeMap');canvas.clientWidth=200;
+    canvas.getBoundingClientRect=()=>({left:0,top:0,width:200,height:parseFloat(canvas.style.height)});
+    canvas.getContext=()=>({scale(){},beginPath(){},roundRect(...args){cells.push(args);},fill(){},strokeRect(){}});
+    t.context.openRomRegion=id=>opened.push(id);
+    t.run("romView().report={available:true,regions:[{id:'b',start:20,end:40,size:20,kind:'image',annotation:{kind:'3d model'},confidence:'tentative'},{id:'a',start:0,end:20,size:20,kind:'code',functions:['reader'],confidence:'recorded'}]};drawRomTypeMap()");
+    assert.equal(cells.length,2);assert.match(t.context.$('romTypeStatus').textContent,/Function.*reader/);
+    let prevented=0;canvas.onkeydown({key:'ArrowRight',preventDefault(){prevented++;}});
+    assert.match(t.context.$('romTypeStatus').textContent,/3D model.*Your annotation/);
+    canvas.onkeydown({key:'Enter',preventDefault(){}});assert.deepEqual(opened,['b']);assert.equal(prevented,1);
+    canvas.onclick({clientX:1,clientY:1});assert.deepEqual(opened,['b','a']);
+    canvas.onclick({clientX:27,clientY:1});assert.equal(opened.length,2,'Gaps do not open adjacent regions');
+    t.run('romView().report.stale=true;drawRomTypeMap()');canvas.onkeydown({key:'Enter',preventDefault(){}});assert.equal(opened.length,2);
+    t.run('romView().report=null;drawRomTypeMap()');assert.equal(t.context.$('romTypeMapPanel').hidden,true);
+  }
   console.log('ROM Explorer lifecycle, sorting and notes passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

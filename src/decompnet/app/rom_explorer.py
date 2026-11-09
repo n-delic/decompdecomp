@@ -19,7 +19,7 @@ from ..rom.explorer import analyse
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
 ANALYSIS_REVISION=2
-KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', 'palette', 'audio', 'font', 'container', 'repeated bytes')
+KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'font', 'container', 'repeated bytes')
 
 
 def _project(net, slug):
