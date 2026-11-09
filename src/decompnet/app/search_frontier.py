@@ -13,6 +13,15 @@ WIDTH = 6
 REGIONAL_SLOTS = 2
 
 
+def source_layout(source):
+    """Coarse private search diversity, never evidence of semantic equivalence."""
+    # Token counts only rank already judged candidates. Ignore comments/literals.
+    from .repair_tokens import TOKEN
+    tokens=[m[0] for m in TOKEN.finditer(source) if not m[0].isspace()
+            and not m[0].startswith(('/*','//','"',"'"))]
+    return tuple(tokens.count(k) for k in ('goto','if','else','do','short','s16','u16'))
+
+
 def regional_choices(nodes):
     """Reserve different recovered target regions, even when allocation signatures coincide."""
     selected, shapes = [], set()
@@ -157,7 +166,7 @@ class Frontier:
         rows = permuter_focus.normalized(rows)
         from ..diff_summary import summarize
         summary = summarize(rows)
-        node = {'rows':rows, 'summary': summary, 'source': source, 'score': score, 'fitness': structure(rows),
+        node = {'layout':source_layout(source), 'rows':rows, 'summary': summary, 'source': source, 'score': score, 'fitness': structure(rows),
                 'frame_distance': permuter_focus.stack_distance(rows),
                 'missing_operations':missing_operations(rows),
                 'repaired':tuple(sorted(repaired)), 'kind': permuter_focus.classify(rows), 'regions': region_repairs.snapshot(rows,arch),
@@ -171,6 +180,12 @@ class Frontier:
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        # Preserve one measured alternate tail/storage topology independently of
+        # numeric score. It remains private and spends the existing search budget.
+        layouts=[n for n in pool if n.get('layout') != selected[0].get('layout')
+                 and baseline_score is not None and n['score']<=baseline_score*4]
+        if layouts:
+            selected.append(min(layouts,key=lambda n:(n['fitness'],n['score'])))
         # Allocation and ordering are separate search lanes. Keep an order recovery
         # even if its numeric score rises; it never replaces the saved winner.
         axes=shape_axes(baseline)

@@ -567,3 +567,23 @@ introduced and remaining, with a target-stream hash. Candidate insertions are
 anchored to the preceding target instruction; these are not C source locations.
 Lists are bounded at 32 entries. After recovery, region ranking can focus the
 densest surviving window; whole-function exploration remains interleaved.
+
+## Record-layout cold-start regression
+
+Keep source/header checkpoints and ROM exports private. Use the existing
+`python -m decompnet.app.checkpoint_benchmark` command with `--project`,
+`--function`, `--checkpoints` (SHA256-bound manifest), `--output`, `--trials 32`
+and `--seconds 30`. Run main and treatment against the same immutable export
+and manifest with fresh state. Include both the near-final score-75 scope
+checkpoint and the earlier score-70 structural checkpoint; report each separately.
+An exact near-final recovery is not proof of cold recovery from the earlier root.
+Record ordinary linked exactness, compiler calls, generated/tested family coverage
+and wall time, including proposal generation. Never copy the private fixture into Git.
+
+`record_layout_sequence` uses resumable finite pages before broad near-match
+search. It composes existing guarded tail/conversion/storage/loop/scope edits,
+retaining original physical text. Source-bound compiler mappings rank eligible
+storage/scope proposals; edited parents invalidate stale line associations rather
+than applying them to shifted lines. The normal judge, shared negative cache and
+existing stop/time/compile budget remain authoritative. No background AI calls,
+compiler overrides or live-project writes are needed for the benchmark.

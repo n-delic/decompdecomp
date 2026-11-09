@@ -11,6 +11,7 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'record_layout_sequence': ('branch_packing_tail','scalar_storage_reuse','loop_weight_scope','parameter_carriers'),
     'inline_bit_predicate': ('operation_scope_unwrap','operation_scope_merge','operation_scope_depth'),
     'staged_bit_predicate': ('masked_role_sequence','scalar_storage_reuse','operation_scope_merge'),
     'masked_role_sequence': ('inline_bit_predicate','operation_scope_depth'),

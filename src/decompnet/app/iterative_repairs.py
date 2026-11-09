@@ -447,6 +447,15 @@ def targeted_variants(source, report, fn, arch, flags, header='', tables=(), cal
                         repair_selection.Page([c for _,c in page], more=True))
     # A composed recipe avoids requiring a numerically worse intermediate to win
     # a frontier slot. Separate resumable pages preserve the ordinary total budget.
+    from . import record_layout_search
+    if (selection is not None and record_layout_search.FAMILY not in omit_families
+            and record_layout_search.applicable(report.get('rows'),arch)):
+        recipes=record_layout_search.variants(source,fn['name'],header,arch,locations=report.get('repair_locations'))
+        if recipes:
+            page=repair_selection.page(recipes,source,selection.setdefault('record_layout_pages',{}),limit)
+            if page:
+                return (repair_selection.Page(page,more=True) if tagged else
+                        repair_selection.Page([c for _,c in page],more=True))
     from . import carrier_sequence_repairs
     if (selection is not None and carrier_sequence_repairs.FAMILY not in omit_families
             and carrier_sequence_repairs.applicable(report.get('rows'),arch)):

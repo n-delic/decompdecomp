@@ -39,6 +39,8 @@ def machine_drafts(candidates, name, header, arch):
     No second decompiler run and no shared context edits. More involved compositions
     remain in the measured near-match search instead of inflating initial drafting.
     """
+    from .record_layout_search import machine_drafts as layout_drafts
+    candidates=layout_drafts(candidates,name,header,arch)
     remaining=3
     for family,source in candidates:
         yield family,source

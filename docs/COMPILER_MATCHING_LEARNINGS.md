@@ -6725,3 +6725,48 @@ a match. Normal byte/object judges, compile budgets and cancellation remain in c
 External PROJECT commands and C++ without proved invocation semantics remain
 ineligible for these new source transformations. Cross-function/compiler transfer
 and model-token savings have not been measured.
+
+## KMC GCC 2.7.2: alternate record decoder — measured reversals
+
+A freshly judged 960-byte / 240-instruction match illustrates why several source
+layouts must survive near-match search. Reversing one feature at a time from the
+exact C produced these ordinary linked-judge scores (lower is better):
+
+| Reversal | Score | Emitted code bytes |
+| --- | ---: | ---: |
+| Unchanged exact control | 0 | 960 |
+| Remove loop-latch reuse of the decoded working locals | 160 | 960 |
+| Share the two branch tails through a common label | 355 | 964 |
+| Narrow two working locals from signed word to signed halfword | 1480 | 932 |
+| Remove the once-only scope around the actual counter update | 75 | 960 |
+
+These are independent ablations, not an additive recipe or proof of original C.
+In particular, representable decoded values do not prove that the original compiler
+used halfword C storage. Keep working values wide and retain real narrowing at the
+observed conversion boundary. Never delete required intermediate truncations just
+to raise similarity. Existing guarded narrow-store/carrier repairs supply alternatives;
+this experiment does not authorize unrestricted local widening.
+
+The new `record_layout_sequence` reparses and composes guarded branch-tail,
+conversion, storage, loop and once-scope proposals. It has at most 24 proposals,
+three distinct components per path, two choices per component and eight expanded
+parents per depth. It targets mixed branch/loop MIPS layouts. No intermediate score
+needs to improve, and no intermediate is adopted without the ordinary judge.
+Dedicated resumable pages consume the existing compile/time allowance; exhausted
+pages return to ordinary search. Existing input-scoped negative-trial caching applies.
+Source edits retain untouched physical text rather than pretty-printing the function.
+
+A source-layout diversity slot retains one already judged alternate branch/storage
+shape alongside the numeric winner, within the unchanged six-root frontier. This is
+coarse search guidance, not a semantic proof or acceptance rule. Original m2c drafts
+remain available; at most two extra guarded branch-tail/carrier layouts are added
+across the draft stream, without invoking another model or decompiler.
+
+Private replay from the matched source with only its counter-update scope removed
+started at score 75. The existing loop-weight family recovered all 960 target bytes
+on its third trial, approximately 1.1 seconds in this local run. This is a deliberately
+near-final regression, **not** rediscovery from the earlier score-70 checkpoint and
+not evidence of a general speedup. The new composition lane is covered separately
+by synthetic semantic/control-flow and stop/resume tests. Game source, ROM and
+private evidence remain outside Git. A broader cold-start exact recovery remains
+an empirical benchmark, not a claimed result.
