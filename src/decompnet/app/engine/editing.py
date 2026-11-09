@@ -328,8 +328,8 @@ class EditMixin:
         ids=[r['id'] for r,words in indexed if r['vram'] in addresses.values() or words & all_words
              or any(re.search(r'\b'+re.escape(n)+r'\b',current_ctx[self._effective_unit(r,units)]['header']) for n in all_words)]
         matched=[r for r,_ in indexed]
-        affected=([dict(r) for r in self.project_store(proj['id']).all(
-            'SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',proj['id'],json.dumps(ids))] if ids else [])
+        from ...function_rows import selected
+        affected = selected(self.project_store(proj['id']), proj['id'], ids)
         rewritten={r['id']:swap(r['matched_source']) for r in affected if word.search(r['matched_source'] or '')}
         renamed_rows = [dict(r) | {"name": new_of.get(r["name"], r["name"])} for r in affected]
         if progress:

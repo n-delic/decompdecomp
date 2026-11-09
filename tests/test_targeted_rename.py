@@ -107,3 +107,24 @@ def test_inventory_reuses_source_tokens_but_invalidates_changed_and_deleted_sour
     assert any('newToken' in words for _,words in changed)
     with store.tx() as db:db.execute("UPDATE functions SET status='open' WHERE name='caller'")
     assert len(inventory(net,proj))==2
+
+
+def test_rename_batches_complete_affected_rows_without_dropping_judge_inputs(tmp_path, monkeypatch):
+    net, _ = prepare(tmp_path, monkeypatch)
+    store = net.store
+    expected = [dict(r) for r in store.all("SELECT * FROM functions WHERE name IN ('old','caller') ORDER BY id")]
+    expected[0]['name'] = 'new'
+    seen = []
+    def regression(proj, header, sources=None, only=None, **kwargs):
+        assert only == expected
+        seen.extend(r['name'] for r in only)
+        return []
+    monkeypatch.setattr(net, 'regression_test', regression)
+    original = store.all
+    def read(sql, *args):
+        assert not sql.startswith('SELECT * FROM functions WHERE project_id=? AND id IN'), 'one native row per affected body'
+        return original(sql, *args)
+    monkeypatch.setattr(store, 'all', read)
+    agent, _ = net.local_agent('you')
+    assert net.rename_symbol(agent,'game','old','new').startswith('✅')
+    assert seen == ['new','caller']
