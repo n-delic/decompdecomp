@@ -218,12 +218,15 @@ class Api(Agent):
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": result})
                     if s.options.get('task') == 'boundary' and name == 'suggest_boundary' and not result.startswith('error:'):
                         return True
-                    finishing |= name in FINISHING
+                    finishing |= name in FINISHING or (name in {"propose_asset_region","defer_asset_region"} and not result.startswith("error:"))
                 # Done with what it held (in a room the host holds the claim: nothing here says when): what led up
                 # to this turn folds into a line, and this turn stays whole (a fork's match shows the file's data to
                 # fix next) until the next fold
                 if not focused and finishing and s.slug not in net.links and not _holds_claim(net, agent.id, s.slug):
                     done += 1
+                    if s.options.get('task')=='assets':
+                        if done>=count:return True
+                        continue
                     turn = len(messages) - len(calls) - 1
                     if start < turn:
                         fold(messages, start, turn, done, _done_line(net, s.slug, messages[start:], done, count))
@@ -513,6 +516,11 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
     it = lambda desc: {"type": "integer", "description": desc}
     bo = lambda desc: {"type": "boolean", "description": desc}
     defs = {
+        "claim_asset_region": ("Claim/recover one asset region with evidence and prior attempts.",s()),
+        "inspect_asset_region": ("Read a held region and up to 4096 original bytes.",s(region=st("region ID",True),claim_token=st("claim token",True),offset=it("ROM offset"),length=it("1–4096 bytes"))),
+        "preview_asset_region": ("Compare textures, validate image/audio or test geometry; returns metadata, not base64.",s(region=st("region ID",True),claim_token=st("claim token",True),action=st("textures, preview or model"),options={"type":"object","description":"Source/offset, format, dimensions and palette or audio settings"},model_settings={"type":"object","description":"Vertex/index layout"})),
+        "propose_asset_region": ("Save an advisory asset proposal for user review.",s(region=st("region ID",True),claim_token=st("claim token",True),proposal={"type":"object","req":True,"description":"name,kind,confidence,evidence,counter,uncertainty,approach,citations [{offset,function?}],format_notes; optional start/end, related_regions, preview_settings, model_settings"})),
+        "defer_asset_region": ("Record a failed approach and continue the queue.",s(region=st("region ID",True),claim_token=st("claim token",True),approach=st("approach tried",True),findings=st("findings and missing evidence",True))),
         "get_boundary_evidence": ("Read original mapped boundary evidence, neighbours, direct edges, symbols and scan limits. No claim needed.", s(function=st("selected function", True))),
         "suggest_boundary": ("Save an advisory recommendation; no layout change. End the investigation after reporting.",
             s(function=st("selected function", True), action=st("delay_slot, join_previous, adjust, padding, data, keep, unclear", True),

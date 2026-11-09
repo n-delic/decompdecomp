@@ -679,3 +679,9 @@ def test_rom_explorer_navigation_jobs_sorting_and_annotations():
         pytest.skip('needs node to run the GUI scripts')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_explorer.js'))],check=True,
                    capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_asset_agent_queue_and_review_ui():
+    if not NODE:pytest.skip('node is not installed')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_asset_agents.js'))],check=True,
+                   capture_output=True,text=True,timeout=30)

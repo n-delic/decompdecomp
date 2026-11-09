@@ -46,7 +46,7 @@ function setupRomAsset(body,region,slug,imageHash,active) {
       const details=document.createElement('p');details.className='small muted';
       details.textContent=Object.entries(preview.details || {}).map(([key,value])=>`${key}: ${value}`).join(' · ')+(preview.decoded ? ` · ${preview.decoded.codec} → ${preview.decoded.bytes.toLocaleString()} bytes` : '');
       result.append(media,details);
-    }catch(error){if(active())showJobError(work,error.message);}finally{busy=false;body._romAssetBusy=false;finish();}
+    }catch(error){if(active())showJobError(work,error.message);}finally{busy=false;if(active())body._romAssetBusy=false;finish();}
   };
 }
 let romRoleEpoch=0;

@@ -79,9 +79,12 @@ def disabled(net):
 
 
 def visible(net, slug, names, agent=None):
-    from . import boundary_investigations
+    from . import asset_agents, boundary_investigations
     ensure(net)
     blocked = disabled(net)
+    if agent and asset_agents.scope(net,agent):
+        blocked.update(net.selection(slug,agent.name).get('disabled_tools',[]))
+        return [name for name in names if name in asset_agents.TOOLS and name not in blocked]
     if agent and boundary_investigations.scope(net,agent):
         return [name for name in names if name in boundary_investigations.TOOLS and name not in blocked]
     if agent:

@@ -170,7 +170,12 @@ def register(app: App) -> None:
                 finally:
                     agents.start_progress.reset(token)
             try:
-                return JSONResponse({'job':await app.control(lambda: jobs.start('Create agents',create))})
+                def reserve():
+                    if (data.get('options') or {}).get('task')!='assets':return jobs.start('Create agents',create,project=str(data.get('slug','')))
+                    with jobs._lock:
+                        old=next((job for job in jobs.jobs.values() if job['kind']=='Create asset discovery agents' and job['state']=='running' and job.get('activity_project')==data.get('slug')),None)
+                        return old['id'] if old else jobs.start('Create asset discovery agents',create,project=str(data.get('slug','')),cancel_message='Asset discovery agent creation was stopped.')
+                return JSONResponse({'job':await app.control(reserve)})
             except ValueError as error:
                 return fail(error)
         # Legacy callers keep the immediate response, but preparation must never block the event loop.
@@ -197,7 +202,7 @@ def register(app: App) -> None:
         requested_models = unique_models
         if given.get("multiple_models") and not requested_models:
             return fail(ValueError("choose at least one model"))
-        options = {k: v for k, v in given.items() if k in ("model", "per_session", "task", "selection", "focus_function", "focus_minutes", "boundary_function")}  # task: "readable" polishes
+        options = {k: v for k, v in given.items() if k in ("model", "per_session", "task", "selection", "focus_function", "focus_minutes", "boundary_function", "asset_scope", "asset_run")}  # task: "readable" polishes
         options.setdefault("per_session", settings.data.get("per_session", agents.PER_SESSION))
         count = max(1, min(int(data.get("count", 1)), agents.MAX_AT_ONCE))
         total = (len(requested_models) if requested_models else 1) * count
@@ -216,12 +221,12 @@ def register(app: App) -> None:
             if given.get("account_id"):
                 options.update(settings.account_options(kind, str(given["account_id"])))
             agents.report_start("Reading project metadata…")
-            if options.get('focus_function'):
+            if options.get('focus_function') or options.get('task')=='assets':
                 with net.progress.view():
                     net.project_row(slug)
             else:
                 net.project_row(slug)
-            if not options.get('focus_function') and options.get("task") not in {"readable", "boundary"}:
+            if not options.get('focus_function') and options.get("task") not in {"readable", "boundary", "assets"}:
                 net.warm_briefs_soon(slug)  # matching briefs and machine drafts are not polishing inputs
             if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
                 options["effort"] = given["effort"]

@@ -147,3 +147,44 @@ skinning, materials and proprietary model containers are not decoded.
 Drag or use arrow keys to rotate the fitted wireframe; wheel or +/− zooms, and Home or
 **Reset view** resets it. **Save notes** retains both texture and geometry layouts with the
 region annotation. These settings and previews do not modify bytes, symbols or matching.
+
+### Discover assets with agents
+
+Open **Discover assets with agents** above the maps. Choose all unknown/repeated regions,
+a ROM byte range, or an imported function whose direct/traced data you want investigated.
+**Discover assets** prepares the whole eligible queue, then opens the normal agent/model
+launcher. These use your selected providers and their ordinary costs. Discovery also appears
+as a task in the launcher for ROM projects; object-build projects need the planned image adapter.
+
+Workers lease one region at a time, inspect original bytes, neighbouring boundaries, symbols,
+references and loader chains, and try the existing texture/audio/geometry inspectors. They
+propose a descriptive name, type, format notes, preview layouts, advisory byte boundaries,
+related region IDs, citations, supporting/counter evidence and remaining uncertainty. Or they
+record an unsuccessful approach and continue. The app carries the queue across provider
+sessions; session size is not a per-run batch limit. Prior failed/rejected approaches and review
+feedback travel with later claims. Pending and accepted proposals are excluded from new passes.
+
+Stop retains the queue and findings. Resume selects agents again; **Choose a different scope**
+starts a separate pass without deleting old findings. Scope is fixed while a pass runs. Returning
+to the tab or reopening the window reads the existing server-owned pass; it never starts agents.
+App restart requeues claims from the old process. Claims expire after 15 minutes without an
+inspection/tool renewal, so stopped or disconnected workers cannot hold regions indefinitely.
+An agent stopping unexpectedly returns its region and records the interruption. A completed
+pass stops its workers; repeatedly unproductive sessions pause with an actionable explanation.
+
+The review list is paginated, newest first. Open any finding to compare its evidence and
+current interpretation, preview the proposed layout, and edit the name/type, evidence, format
+notes or boundaries. Accept and reject are human actions unavailable to workers. Reject with
+feedback to guide a later pass. Acceptance checks the frozen image/layout and the note version
+you reviewed, preserving existing notes. If the proposed subrange differs from the analysed
+region, its boundaries remain advisory and its type is not applied to the whole region. Accepted
+names are local labels; no linker symbols, source files, bytes, function extents or matching
+results change. Unknown and unreferenced bytes are never declared unused.
+
+Workers receive only discovery, original assembly and guide tools. They cannot claim/compile
+functions, edit symbols, accept their own work or install/run format decoders. Novel formats
+can be described as text, but executable decoder proposals need a future code review/test flow.
+Confidence means an agent's assessment, not proof. Static loader analysis, texture layout guesses
+and manual geometry retain all the limits described above. Proprietary game data stays local
+to the app’s files; selected agents receive inspection evidence through their configured provider,
+just as they receive assembly when decompiling.

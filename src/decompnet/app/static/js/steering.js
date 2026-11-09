@@ -59,6 +59,7 @@ function wireCopies(root) {
 /* The side panel for one task (decompiling together, the export, a rename...). `kind` says which, for what keeps it
    up to date while it's open. */
 function dialog(title, html, kind = "") {
+  $("dialogBody")._romAssetBusy=false;
   if(typeof stopRomAssetAudio=== "function")stopRomAssetAudio();
   $("dialogBody").classList.remove("rom-region-body");
   $("dialogTitle").textContent = title;

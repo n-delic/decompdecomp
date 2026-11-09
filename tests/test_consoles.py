@@ -303,5 +303,18 @@ def test_rom_explorer_reads_the_imported_image_without_changing_targets(demo):
         assert len(inspected['vertices'])==1 and not inspected['edges']
         guessed=rom_explorer.asset_inspect(net,slug,dict(region=row['id'],image_hash=report['image_hash'],action='textures',options=dict(offset=0,width=8,height=16)))
         assert guessed['candidates'] and len(guessed['candidates'])<=16
+        import threading
+        from types import SimpleNamespace
+
+        from decompnet.app import asset_agents
+        identity=asset_agents.prepare(net,slug,dict(mode='range',start=0,end=report['size']))
+        investigator,_=net.local_agent('demo-asset-investigator')
+        session=SimpleNamespace(id='demo-assets',slug=slug,label='Demo investigator',model='fixture',stop=threading.Event(),options=dict(task='assets',asset_run=identity))
+        asset_agents.bind(net,session,investigator)
+        packet=json.loads(asset_agents.claim(net,investigator,slug))
+        assert packet['region']['kind']!='code' and packet['claim_token']
+        asset_agents.defer(net,investigator,slug,packet['region']['id'],packet['claim_token'],'Inspect original bytes','Recorded demo-only evidence; no type inferred.')
+        asset_agents.stop(net,slug,SimpleNamespace(sessions={}))
+
 
         assert before==[tuple(r) for r in net.project_store(proj['id']).all('SELECT name,target,status FROM functions WHERE project_id=?',proj['id'])]

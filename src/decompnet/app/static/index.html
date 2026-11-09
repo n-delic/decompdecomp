@@ -425,6 +425,21 @@
   </section>
 
   <section class="ptab" data-pane="rom" hidden>
+    <details class="panel settings-disclosure" id="assetAgentPanel" hidden>
+      <summary class="panel-head"><h2>Discover assets with agents <span class="disclosure-context" id="assetAgentContext"></span></h2></summary>
+      <div class="pad">
+        <p>Ask agents to investigate data regions and propose names, formats and layouts, then review their evidence before accepting local labels.</p>
+        <label class="field"><span>Discovery scope</span><select id="assetAgentScope"><option value="unknown">All unknown or repeated regions</option><option value="range">Selected ROM range</option><option value="function">Regions used by a function</option></select></label>
+        <div id="assetAgentRange" class="rom-asset-fields" hidden><label class="field"><span>ROM start (hex or decimal)</span><input id="assetAgentStartOffset" value="0"></label><label class="field"><span>Exclusive ROM end</span><input id="assetAgentEndOffset"></label></div>
+        <label class="field" id="assetAgentFunctionField" hidden><span>Imported referencing function</span><input id="assetAgentFunction" spellcheck="false"></label>
+        <div class="row"><button id="assetAgentStart" type="button" class="primary small-btn">Discover assets</button><button id="assetAgentNewPass" type="button" class="ghost small-btn" hidden>Choose a different scope</button><button id="assetAgentStop" type="button" class="ghost small-btn" hidden>Stop discovery</button></div>
+        <p class="small muted">Uses your selected agents and their normal provider costs. Processes the whole eligible queue. Claims prevent duplicate work; unsuccessful approaches are saved for future passes. Unknown does not mean unused.</p>
+        <div id="assetAgentWork" role="status"></div><p id="assetAgentStatus" role="status"></p><div class="workbar counted" id="assetAgentBar" role="progressbar" aria-label="Asset discovery progress" hidden><i></i></div>
+        <div id="assetAgentWorkers" class="small muted"></div>
+        <div id="assetAgentItems" class="profile-failure-cards"></div>
+        <div class="row"><button type="button" class="ghost small-btn" id="assetAgentPrevious">Previous findings</button><span class="small muted" id="assetAgentPage"></span><button type="button" class="ghost small-btn" id="assetAgentNext">Next findings</button></div>
+      </div>
+    </details>
     <details class="panel settings-disclosure" id="romExplorerPanel" open>
       <summary class="panel-head"><h2>ROM Explorer <span class="disclosure-context" id="romContext"></span></h2></summary>
       <div class="pad">
@@ -1150,6 +1165,7 @@
 <script src="/assets/js/rom-assets.js"></script>
 <script src="/assets/js/rom-discovery.js"></script>
 <script src="/assets/js/rom-explorer.js"></script>
+<script src="/assets/js/asset-agents.js"></script>
 <script src="/assets/js/boundary-repairs.js"></script>
 <script src="/assets/js/repository-setup.js"></script>
 <script src="/assets/js/repository-push.js"></script>
