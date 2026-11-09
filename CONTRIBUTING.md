@@ -71,7 +71,8 @@ works on which platform: every — in it is a gap to fill.
 ### Every console gets every feature
 
 decompdecomp is one pipeline for every console: whatever helps agents on one console should work on all of them,
-in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When
+in ROM mode (N64, PS1, PS2, PS3, PSP, GBA, Android native ARMv7) and project mode
+(GameCube, Wii, PC, Xbox, DS, public decomps) alike. When
 you add a feature:
 
 1. Build the shared part where every console uses it: `app/` and `network.py` for the engine, `rom/` and `forks/`
@@ -94,6 +95,7 @@ through one file: the connector, `consoles/__init__.py`.
 | `consoles/ps2/` | PlayStation 2 | ROM | `elf.py` the game's program · `disc.py`, `chd.py` disc images · `overlays.py` code in the disc's other files · `syscalls.py` kernel calls · `symtab.py`, `mdebug.py`, `stabs.py`, `cheader.py`, `debuginfo.py` the game's own debug symbols · `guides/` |
 | `consoles/ps3/` | PlayStation 3 | ROM | `elf.py` the decrypted program, its descriptor and `.opd` · `split.py` the program's function list, calls and prologues · `imports.py`, `nids.py` imports and kernel calls named · `symbols.py` its own symbols · `guides/` (the processor: `arch/ppc64.py`) |
 | `consoles/gba/` | Game Boy Advance | ROM | `header.py` the cartridge header · `split.py` luvdis and the candidate finder, its editing and joining · `candidates.py`, `luvdis_run.py` · `export.py`, `export_build.py` · `guides/` |
+| `consoles/android/` | Android native ARMv7 | ROM | `package.py` APK/XAPK selection · `elf.py` sized ELF symbols · `drafts.py` Ghidra drafts · `split.py` ARM/Thumb editing |
 | `consoles/gc_wii/` | GameCube, Wii | PROJECT | `scratch.py` a dtk-template project for the game · `guides/` |
 | `consoles/pc/` | Windows PC | PROJECT | `scratch.py` Ghidra finds the functions, decompdecomp cuts them out of the .exe · `project_template/` · `guides/` |
 | `consoles/xbox/` | Xbox | PROJECT | `scratch.py` the XBE (or disc) made a Windows program, then the PC path · kernel import names · `guides/` |

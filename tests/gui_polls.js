@@ -148,6 +148,22 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
   }`, ctx);
   // the page's small pure helpers, for tests of their own
   const checks = vm.runInContext(`({
+    autopilotStatus: (() => {
+      const previous = document.getElementById, elements = new Map();
+      document.getElementById = (id) => {
+        if (!elements.has(id)) elements.set(id, {classList: {toggle() {}}, firstElementChild: {style: {}}});
+        return elements.get(id);
+      };
+      const base = {kind: "rom", functions: 10, matched: 0};
+      renderAutopilot({...base, autopilot: {state: "done", total: 0, tried: 0, matched: 0, near: 0, twins: 0, no_drafts: "Install Ghidra in Setup."}});
+      const missing = $("apSub").textContent;
+      renderAutopilot({...base, autopilot: {state: "running", phase: "drafts", total: 10, tried: 4, matched: 1, near: 1, twins: 0, compiled: 3, failed: 1}});
+      const running = $("apSub").textContent, bar = $("apBar").firstElementChild.style.width;
+      renderAutopilot({...base, autopilot: {state: "done", total: 10, tried: 10, matched: 2, near: 1, twins: 0, compiled: 8, failed: 2, error: "A draft could not compile."}});
+      const result = {missing, running, bar, done: $("apSub").textContent};
+      document.getElementById = previous;
+      return result;
+    })(),
     repo: ["", "hello", "git@github.com:zeldaret/oot.git", "https://example.com/owner/repo", "https://github.com/zeldaret/oot",
            "https://gitlab.com/owner/repo.git/"].map(repoProblem),
     invite: ["hello", "https://abc.trycloudflare.com/join/CODE1#room=game", "http://192.168.1.5:6481"].map(inviteProblem),
@@ -270,6 +286,17 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
                said: notSupported(self, { name: "EBOOT.BIN", size: 0x9400 }) };
     })(),
     // tests/test_ds.py's header, whose checksum (0xB4DE) the server's crc16 computed: the page agrees on what's a DS ROM
+    android: (() => {
+      const zip = new Uint8Array(0x200);
+      zip.set([0x50, 0x4b, 3, 4]);
+      const native = new Uint8Array(0x200), dv = new DataView(native.buffer);
+      native.set([0x7f, 0x45, 0x4c, 0x46, 1, 1]);
+      dv.setUint16(16, 3, true); dv.setUint16(18, 40, true);
+      return { apk: identifyHead(zip, {name: "game.apk", size: 1000})?.platform,
+        xapk: identifyHead(zip, {name: "game.xapk", size: 1000})?.platform,
+        zip: identifyHead(zip, {name: "game.zip", size: 1000}),
+        native: identifyHead(native, {name: "game.so", size: 1000})?.platform };
+    })(),
     nds: (() => {
       const h = new Uint8Array(0x200), dv = new DataView(h.buffer);
       [..."DEMOQUESTDS\0ADQE"].forEach((c, i) => { h[i] = c.charCodeAt(0); });

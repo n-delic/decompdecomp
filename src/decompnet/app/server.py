@@ -48,10 +48,19 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         jobs.logger.info("window closed; quitting")
         quit_app()
 
+    def stop_draft_workers() -> None:
+        for slug in list(net.autopilots):
+            net.stop_autopilot(slug)
+        for slug in list(net.drafter.jobs):
+            net.drafter.stop(slug)
+        from ..forks.ghidra_worker import close_all
+        close_all()
+
     def quit_app() -> None:
         """Quit means quit: the window, every helper with everything it started, then the server."""
         window.close_app()
         manager.shutdown()
+        stop_draft_workers()
         flush_progress()
         wine.stop()  # (its wine server would otherwise stay up to 10 minutes after the last compile)
         os._exit(0)
@@ -164,6 +173,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
 
     def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
         manager.shutdown()
+        stop_draft_workers()
         flush_progress()
 
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,

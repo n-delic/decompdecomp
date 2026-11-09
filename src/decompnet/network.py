@@ -21,7 +21,7 @@ from pathlib import Path
 from . import agents, scoring
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
-from .project import compiler_config, compiler_for
+from .project import compiler_config, compiler_for, function_settings
 from .store import Store
 
 CLAIM_TTL = 30 * 60
@@ -556,8 +556,8 @@ class Network:
     def _compile(self, proj, header: str, source: str, fn=None):
         """Compiled with the project's compiler, or for `fn` the one its address range is built with."""
         cfg = json.loads(proj["config"])
-        if fn is not None and cfg.get("compiler_ranges"):
-            cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"])}
+        if fn is not None:
+            cfg = {**cfg, "compiler": function_settings(cfg, fn)}
         return compile_source(compiler_config(Path(proj["root"]), cfg), header, source)
 
     def _evaluate(self, fn, proj, obj: bytes) -> tuple[FunctionObj | None, bool | None, list[str]]:
@@ -997,7 +997,7 @@ class Network:
                               f"{self._agent_name(fn['best_agent_id'])} ({fn['attempts']} attempts total) — "
                               f"start from this", "```c", fn["best_source"].strip(), "```"]
             elif fn["seed"]:
-                lines += ["", "### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
+                lines += ["", "### Machine draft: its control flow and arithmetic are usually right, its types "
                               "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]
         notes = self.notes_for_brief(fn)
         if notes:

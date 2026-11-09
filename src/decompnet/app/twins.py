@@ -300,8 +300,10 @@ class Twins:
     def _rom_prints(self, proj) -> dict[int, Print]:
         cfg = self.net.cfg(proj)
         syms = self.net.symbols(proj["id"])
-        return {r["id"]: rom_print(r, proj["arch"] or "mips", bool(cfg.get("big_endian", True)), syms.label) for r in self.net.store.all(
-            "SELECT id, target, relocs FROM functions WHERE project_id=? AND status!='asm'", proj["id"])}
+        console = self.net.console(proj)
+        return {r["id"]: rom_print(r, console.target_arch(dict(r)), bool(cfg.get("big_endian", True)), syms.label)
+                for r in self.net.store.all(
+                    "SELECT id, target, relocs, meta FROM functions WHERE project_id=? AND status!='asm'", proj["id"])}
 
     def _fork_prints(self, proj) -> dict[int, Print]:
         from ..forks.project import STATE, ForkError, ForkProject

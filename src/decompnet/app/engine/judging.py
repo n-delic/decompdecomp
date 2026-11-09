@@ -17,7 +17,10 @@ from .common import _AUTO_TOKEN, BATCH_INSNS
 class JudgeMixin:
     def _rom_target(self, fn):
         cfg = self.cfg(self.store.one("SELECT config FROM projects WHERE id=?", fn["project_id"]))
-        return consoles.of(cfg).target_from_row(fn, cfg)
+        console = consoles.of(cfg)
+        target = console.target_from_row(fn, cfg)
+        proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+        return console.link_target(target, self._rom(proj)[0])
 
     def _make_target(self, proj, rf, syms: SymbolTable):
         cfg = self.cfg(proj)
@@ -338,10 +341,10 @@ class JudgeMixin:
         """(matched, diff or None, log) for C built with this compiler and flags, judged like an attempt, recording
         nothing."""
         from ...compiler import compile_source
-        from ...project import compiler_config
+        from ...project import compiler_config, function_settings
 
         header = self._context(proj["id"], fn["unit"])["header"]
-        settings = {"toolchain": toolchain, "flags": flags, "timeout": 20}
+        settings = function_settings(self.cfg(proj), fn, {"toolchain": toolchain, "flags": flags, "timeout": 20})
         result = compile_source(compiler_config(Path(proj["root"]), {"compiler": settings}), header, source)
         if not result.ok:
             return False, None, result.log

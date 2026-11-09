@@ -1215,3 +1215,75 @@ subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
 # sha256 = "be179831ffde0bc185c68939dd43213d05afd4a502de6f56c8b6e6f5f3fc651c"
 # subdir = "ppu-lv2-gcc-2.7.0"
 # platforms = ["linux-x86_64"]
+
+["android-clang-3.5"]
+name = "Android Clang 3.5 (NDK r10e)"
+license = "Apache-2.0 / GPL-3.0 / LLVM"
+source = "Google Android NDK r10e (dl.google.com)"
+platform = "Android"
+arch = "arm"
+cplusplus = true
+description = "Period Android ARMv7 compiler. Intel Mac programs require Rosetta on Apple Silicon. This beta does not rebuild or sign APKs."
+flags = ["-O2", "-fPIC", "-march=armv7-a", "-mfloat-abi=softfp", "-mfpu=vfpv3-d16", "-mthumb"]
+cc = ["{tc}/llvm/bin/clang", "-target", "armv7-none-linux-androideabi", "-gcc-toolchain", "{tc}/gcc", "-c"]
+[["android-clang-3.5".parts]]
+url = "https://dl.google.com/android/repository/android-ndk-r10e-darwin-x86_64.zip"
+sha256 = "e205278fba12188c02037bfe3088eba34d8b5d96b1e71c8405f9e6e155a3bce4"
+subdir = "android-ndk-r10e"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+keep = { "toolchains/llvm-3.5/prebuilt/darwin-x86_64" = "llvm", "toolchains/arm-linux-androideabi-4.8/prebuilt/darwin-x86_64" = "gcc" }
+[["android-clang-3.5".parts]]
+url = "https://dl.google.com/android/repository/android-ndk-r10e-linux-x86_64.zip"
+sha256 = "ee5f405f3b57c4f5c3b3b8b5d495ae12b660e03d2112e4ed5c728d349f1e520c"
+subdir = "android-ndk-r10e"
+platforms = ["linux-x86_64"]
+keep = { "toolchains/llvm-3.5/prebuilt/linux-x86_64" = "llvm", "toolchains/arm-linux-androideabi-4.8/prebuilt/linux-x86_64" = "gcc" }
+
+["android-gcc-4.8"]
+name = "Android GCC 4.8 (NDK r10e)"
+license = "Apache-2.0 / GPL-3.0 / LLVM"
+source = "Google Android NDK r10e (dl.google.com)"
+platform = "Android"
+arch = "arm"
+cplusplus = true
+description = "Period Android ARMv7 compiler. Intel Mac programs require Rosetta on Apple Silicon. This beta does not rebuild or sign APKs."
+flags = ["-O2", "-fPIC", "-march=armv7-a", "-mfloat-abi=softfp", "-mfpu=vfpv3-d16", "-mthumb"]
+cc = ["{tc}/bin/arm-linux-androideabi-gcc", "-c"]
+[["android-gcc-4.8".parts]]
+url = "https://dl.google.com/android/repository/android-ndk-r10e-darwin-x86_64.zip"
+sha256 = "e205278fba12188c02037bfe3088eba34d8b5d96b1e71c8405f9e6e155a3bce4"
+subdir = "android-ndk-r10e"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+keep = { "toolchains/arm-linux-androideabi-4.8/prebuilt/darwin-x86_64" = "." }
+[["android-gcc-4.8".parts]]
+url = "https://dl.google.com/android/repository/android-ndk-r10e-linux-x86_64.zip"
+sha256 = "ee5f405f3b57c4f5c3b3b8b5d495ae12b660e03d2112e4ed5c728d349f1e520c"
+subdir = "android-ndk-r10e"
+platforms = ["linux-x86_64"]
+keep = { "toolchains/arm-linux-androideabi-4.8/prebuilt/linux-x86_64" = "." }
+
+["android-gcc-4.9"]
+name = "Android GCC 4.9 (NDK r10e)"
+license = "Apache-2.0 / GPL-3.0 / LLVM"
+source = "Google Android NDK r10e (dl.google.com)"
+platform = "Android"
+arch = "arm"
+cplusplus = true
+description = "Period Android ARMv7 compiler. Intel Mac programs require Rosetta on Apple Silicon. This beta does not rebuild or sign APKs."
+flags = ["-O2", "-fPIC", "-march=armv7-a", "-mfloat-abi=softfp", "-mfpu=vfpv3-d16", "-mthumb"]
+cc = ["{tc}/bin/arm-linux-androideabi-gcc", "-c"]
+[["android-gcc-4.9".parts]]
+url = "https://dl.google.com/android/repository/android-ndk-r10e-darwin-x86_64.zip"
+sha256 = "e205278fba12188c02037bfe3088eba34d8b5d96b1e71c8405f9e6e155a3bce4"
+subdir = "android-ndk-r10e"
+platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
+keep = { "toolchains/arm-linux-androideabi-4.9/prebuilt/darwin-x86_64" = "." }
+[["android-gcc-4.9".parts]]
+url = "https://dl.google.com/android/repository/android-ndk-r10e-linux-x86_64.zip"
+sha256 = "ee5f405f3b57c4f5c3b3b8b5d495ae12b660e03d2112e4ed5c728d349f1e520c"
+subdir = "android-ndk-r10e"
+platforms = ["linux-x86_64"]
+keep = { "toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64" = "." }

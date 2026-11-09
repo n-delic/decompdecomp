@@ -190,6 +190,10 @@ class Console:
     # flags search_flags tries on its games beyond what its compiler family's search does ("-mminimal-toc")
     flag_extras: tuple[str, ...] = ()
 
+    def function_flags(self, fn, flags: list[str]) -> list[str]:
+        """Flags implied by this function's instruction set, after compiler/range choices (Android: ARM or Thumb)."""
+        return flags
+
     def game_flags(self, cfg: dict, toolchain: str) -> list[str]:
         """More flags a game of it was built with, as its import read them from the program (cfg["rom"]): a PS3 game
         whose code keeps a minimal TOC. None by default."""
@@ -554,6 +558,27 @@ class Console:
         the path written, for a commit, or None."""
         return None
 
+    # ROM consoles can provide drafts where m2c has no suitable target. The engine owns caching and judging.
+    draft_provider = ""
+    draft_version = 0
+
+    def drafts_ready(self) -> bool:
+        return False
+
+    def draft_help(self) -> str:
+        return f"No machine draft provider is available for {self.name}."
+
+    def machine_draft(self, net, proj, fn, context: str, *, valid: bool = False) -> str | None:
+        return None
+
+    def exact_rom_drafts(self, fn, context: str) -> list[str]:
+        """Cheap C candidates for tiny instruction shapes, judged before the machine draft (ROM mode)."""
+        return []
+
+    def link_target(self, target, program: bytes):
+        """Attach the original program's linking facts when this console needs dynamic relocations."""
+        return target
+
     def exact_drafts(self, fp, symbol: str, known: str = "") -> list[tuple[str, str]]:
         """C for a function of one of the tiny shapes its compiler makes from a line of C, read from its code, as
         [(prelude, definition)]: autopilot tries them first. `known`: the header and file's text."""
@@ -591,6 +616,7 @@ class Console:
 
 
 def _registry() -> list[Console]:
+    from .android import ANDROID
     from .gba import GBA
     from .gc_wii import GAMECUBE, WII
     from .n64 import N64
@@ -606,7 +632,7 @@ def _registry() -> list[Console]:
     # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
     # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF; the Xbox before them all: a full Xbox disc dump
     # starts with a DVD video partition; the PS3 before the PS2 too, though the PS2 takes only 32-bit MIPS ELFs)
-    return [N64, XBOX, PSP, PS1, PS3, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    return [ANDROID, N64, XBOX, PSP, PS1, PS3, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()

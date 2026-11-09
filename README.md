@@ -224,6 +224,23 @@ What changed on the way:
   put native shortcuts on the Windows desktop and in Start. Setup installs WebView2 and .NET Framework 4.8 when missing;
   pywebview is installed with the app.
 
+## Android native beta
+
+Drop your own `.apk` or `.xapk`, or select its path. decompdecomp imports the largest
+`lib/armeabi-v7a/*.so` library; an extracted ARM32 shared `.so` can also be imported directly.
+Install Android Clang 3.5 from Setup (the pinned NDK r10e tools); GCC 4.8 and 4.9 are alternatives.
+On Apple Silicon these Intel Mac compilers need Rosetta. Windows uses the Linux tools through WSL 2.
+
+The progress percentage describes that native library only. The beta uses sized ELF symbols and refuses
+libraries without them. It supports agent attempts, exact judging, compiler trials, polishing and saved progress.
+Ghidra supplies background drafts and header-aware redrafts. Autopilot tries twins, tiny instruction shapes
+and compilable Ghidra drafts through the same judge, saving matches and useful near misses. Install Ghidra
+in Setup; on macOS its pinned bundled decompiler source needs Xcode Command Line Tools to build locally.
+Common PIC/GOT, PLT calls, Thumb-2 branches and MOVW/MOVT relocations are checked against the original
+symbols and data; unsupported forms, including TLS, fail explicitly. DEX/Java, other libraries, ARM64,
+assets and rebuilding/signing an APK are not supported yet. Keep the original package for its assets and DEX;
+matched C is saved in `progress/`. iOS is separate planned work. See ROADMAP.md for the feature table.
+
 ## Moving to another computer
 
 decompdecomp saves the work on each N64, PlayStation and PlayStation 2 project as plain files in the project's `progress/`
@@ -274,6 +291,7 @@ game's code is its rights holder's: keep it to yourself.
 | Windows PC games | Beta |
 | Nintendo DS | Beta |
 | Game Boy Advance | Beta |
+| Android APK / XAPK | Native ARMv7 beta: largest shared library with sized ELF symbols; NDK r10e Clang/GCC; no APK rebuild |
 | Original Xbox | Beta (from your default.xbe, .xiso or Redump .iso; needs Visual C++ 7.0/7.1 and Ghidra; wine for games built with link-time code generation; your own XDK, optional on Linux and macOS, sets its library code aside; on Windows a game of Visual C++ 7.1 builds with your XDK's own copy of it) |
 | 3DS, Switch, Xbox 360 | Community decomps only |
 

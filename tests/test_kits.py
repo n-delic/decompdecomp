@@ -358,7 +358,7 @@ def test_your_copy_of_a_packs_compiler_builds_the_same_object_from_your_folder(t
     monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(scratch))
     mine = tmp_path / "my compiler"
     shutil.copytree(toolchains.require(pack), mine, symlinks=True)
-    console = next(c for c in consoles.CONSOLES if any(x.id == pack for x in c.fixed_compilers))
+    console = next(c for c in consoles.CONSOLES if any(x.id == pack for x in getattr(c, 'fixed_compilers', c.compilers)))
     _add(console.kits[0], mine)
     own = next(c for c in kits.compilers(console.kits) if c.like == pack)
     assert own.version in [c.id for c in console.compilers]
