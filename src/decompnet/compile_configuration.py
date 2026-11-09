@@ -11,7 +11,12 @@ def resolve(root,cfg,build):
     session=compile_sessions.current()
     if session is None:return build(root,cfg)
     compiler=cfg['compiler'];tid=compiler.get('toolchain')
-    tc=toolchains._registered(tid)
+    # A source update can import this optional cache while the process still
+    # has the older registry module loaded. Resolve normally until a full reload;
+    # never turn an unavailable optimization into a compiler failure.
+    registered=getattr(toolchains,'_registered',None)
+    if registered is None:return build(root,cfg)
+    tc=registered(tid)
     if tc is None or compiler.get('cmd') or tc.local or tc.via_vm or tc.via_wsl or tc.wine:
         return build(root,cfg)
     # Read small install manifests exactly. Reinstalls, dependency changes, profile
