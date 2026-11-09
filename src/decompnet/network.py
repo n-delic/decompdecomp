@@ -2199,8 +2199,11 @@ class Network:
     def _matched_using(self, proj, unit: str) -> list:
         store = self.project_store(proj["id"])
         units = self._unit_contexts(proj["id"])
-        return [f for f in store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
-                if self._effective_unit(f, units) == unit]
+        # Filter effective headers before the packed-text view decodes bodies.
+        # Units without their own header use the shared header.
+        return store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND "
+                         "CASE WHEN unit IN (SELECT value FROM json_each(?)) THEN unit ELSE '' END=?",
+                         proj["id"], json.dumps(sorted(units)), unit)
 
     def regression_test(self, proj, header: str | None, sources: dict[int, str] | None = None,
                         only: list | None = None, header_for=None, progress=None) -> list[tuple[str, str]]:

@@ -474,7 +474,12 @@ class BriefMixin:
         used = sorted(x["uses"].get(fn["vram"], ()))
         if used:
             lines += ["", "### Data it uses (declare what you need as extern in your source, or in context.h)"]
-            prev = {r["name"]: r for r in self.project_store(proj['id']).all("SELECT name, kind, size, preview FROM symbols WHERE project_id=?", proj["id"])}
+            # Only the displayed data references need descriptions. Avoid reading
+            # previews for the game's entire symbol table on every brief.
+            names = list(dict.fromkeys(syms.name_at(a)[0] for a in used[:40]))
+            prev = {r["name"]: r for r in self.project_store(proj['id']).all(
+                "SELECT name,kind,size,preview FROM symbols WHERE project_id=? AND name IN "
+                "(SELECT value FROM json_each(?))", proj["id"], json.dumps(names))}
             for a in used[:40]:
                 name, off = syms.name_at(a)
                 r = prev.get(name)

@@ -104,7 +104,10 @@ def status(net, fn):
     if compiler_identity(compiler) != details['compiler_identity']: reasons.append('compiler installation/registry changed')
     if digest(fn['target'] or b'') != details['target_sha256'] or digest(fn['relocs'] or '') != details['relocations_sha256'] or fn['vram'] != details['vram']: reasons.append('target/address changed')
     if details.get('abi') != abi(proj,cfg): reasons.append('ABI/platform/game identity changed')
-    current_symbols = digest(repr([tuple(row) for row in store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',fn['project_id'])]))
+    from .metadata_rows import rows as metadata_rows
+    fields = ('name','address','size','kind')
+    current_symbols = digest(repr([tuple(row[field] for field in fields) for row in metadata_rows(
+        store, fields, 'SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',fn['project_id'])]))
     if details.get('symbols_sha256') != current_symbols: reasons.append('symbol table changed')
     if fn['unit'] != details['unit']: reasons.append('function unit changed')
     if details.get('imported'): reasons.append('historical record imported; verify locally before accepting it')

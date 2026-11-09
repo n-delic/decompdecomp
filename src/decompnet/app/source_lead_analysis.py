@@ -18,7 +18,10 @@ def destination(net, proj, fn):
         from ..candidate_scope import key
         return key(net,proj,fn)
     context=net._context(proj['id'],fn['unit']) or {'header':''}
-    symbols=[tuple(r) for r in net.project_store(proj['id']).all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])]
+    from ..metadata_rows import rows as metadata_rows
+    fields=('name','address','size','kind')
+    symbols=[tuple(row[field] for field in fields) for row in metadata_rows(net.project_store(proj['id']), fields,
+        'SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])]
     return hashlib.sha256(repr((compiler_for(cfg,fn['vram'], fn) if cfg.get('compiler') else {},cfg.get('gp'),proj['arch'],
                                fn['target'],fn['relocs'],fn['size'],fn['vram'],context['header'],symbols,build_state(proj))).encode()).hexdigest()
 
