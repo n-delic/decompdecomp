@@ -156,3 +156,33 @@ def test_jpeg_frame_and_scan_headers_must_agree():
     wrong=scan[:1]+b'\2'+scan[2:]
     with pytest.raises(asset_formats.AssetError,match='scan header'):asset_formats.identify(b'\xff\xd8'+segment(0xc0,frame)+segment(0xda,wrong)+b'\xff\xd9')
     with pytest.raises(asset_formats.AssetError,match='frame header'):asset_formats.identify(b'\xff\xd8'+segment(0xc0,frame[:-1])+segment(0xda,scan)+b'\xff\xd9')
+
+
+def mixed_bank():
+    short=bytes.fromhex('07c1')*16;full=bytes.fromhex('f801')*256
+    return indexed_set([bytes([0,1,3,3,255,0,0,0]),indexed_set([bytes([1])*64,bytes([200])*64]),indexed_set([short,full])])
+
+
+@pytest.mark.parametrize('pack',[lambda x:x,literal_block,literal2])
+def test_ci8_mixed_palettes_are_bounded_and_follow_frame_pairing(pack):
+    raw=mixed_bank();payload=pack(raw);image=bytes(31)+payload
+    found=textures.regions(image);assert len(found)==1
+    asset=found[0];assert asset['palette_entries']==[16,256]
+    data=textures.decode(payload)[0] if payload!=raw else image
+    for frame,color in [(0,bytes([0,255,0,255])),(1,bytes([255,0,0,255]))]:
+        result=textures.preview(data,asset,dict(frame=frame))
+        assert pixels(base64.b64decode(result['data_url'].split(',')[1]))==color*64
+        assert result['details']['palette_colours']==(16 if frame==0 else 256)
+    with pytest.raises(asset_formats.AssetError,match='matching palette'):textures.preview(data,asset,dict(frame=1,palette=0))
+    # Native short palettes also work at EOF, without borrowing bytes from another block.
+    short_only=indexed_set([bytes([0,1,3,3,255,0,0,0]),indexed_set([bytes([15])*64]),indexed_set([bytes.fromhex('07c1')*16])])
+    short_asset=textures.regions(short_only)[0]
+    assert textures.preview(short_only,short_asset,{})['details']['palette_colours']==16
+
+
+def test_ci8_rejects_missing_colours_and_unsupported_palette_extents():
+    raw=mixed_bank();layout=textures.bank_layout(raw)
+    for offset in (layout['frame_offsets'][0],):
+        broken=bytearray(raw);broken[offset]=16;assert textures.bank_layout(broken) is None
+    bad=indexed_set([bytes([0,1,3,3,255,0,0,0]),indexed_set([bytes(64)]),indexed_set([bytes(64)])])
+    assert textures.bank_layout(bad) is None

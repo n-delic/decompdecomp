@@ -3,7 +3,7 @@ function romTextureControlsHTML(region) {
   const detected=region.detected_asset;if(!detected || ['audio','model'].includes(detected.media))return '';
   const saved=region.annotation?.preview_settings || {},texture=Math.max(0,Math.min((detected.textures?.length||1)-1,Number(saved.texture)||0)),asset=detected.textures?.[texture]||detected,levels=asset.levels || [{width:asset.preview_settings.width,height:asset.preview_settings.height}];
   const select=(key,label,count,caption)=>`<label class="field"><span>${label}</span><select data-texture-${key}>${Array.from({length:count},(_,i)=>`<option value="${i}"${Number(saved[key] || 0)===i ? ' selected' : ''}>${caption(i)}</option>`).join('')}</select></label>`;
-  return `<div class="rom-asset-fields">${detected.textures?.length>1?select('texture','Texture',detected.textures.length,i=>{const s=detected.textures[i].preview_settings;return `${i+1} · ${s.width} × ${s.height} · ${s.format}`;}):''}${select('frame','Frame',asset.frames,i=>`${i+1} of ${asset.frames}`)}${select('palette','Palette',Math.max(1,asset.palettes),i=>asset.palettes ? `${i+1} of ${asset.palettes}` : 'Direct color (no palette)')}${select('mip','Mip level',levels.length,i=>`${i} · ${levels[i].width} × ${levels[i].height}`)}<label class="field"><span>Animation preview rate (1–24 frames/s)</span><input data-texture-rate type="number" min="1" max="24" value="8"></label></div><button type="button" class="ghost small-btn" data-texture-play${asset.frames<2 ? ' disabled' : ''}>Animate frames</button><p class="small muted" data-texture-status aria-live="polite">Select a frame, palette or mip level to preview it. Animation starts only when you press Animate frames; its rate is a preview setting.</p>`;
+  return `<div class="rom-asset-fields">${detected.textures?.length>1?select('texture','Texture',detected.textures.length,i=>{const s=detected.textures[i].preview_settings;return `${i+1} · ${s.width} × ${s.height} · ${s.format}`;}):''}${select('frame','Frame',asset.frames,i=>`${i+1} of ${asset.frames}`)}${select('palette','Palette',Math.max(1,asset.palettes),i=>asset.palettes ? `${i+1} of ${asset.palettes}${asset.palette_entries ? ' · '+asset.palette_entries[i]+' colours' : ''}` : 'Direct color (no palette)')}${select('mip','Mip level',levels.length,i=>`${i} · ${levels[i].width} × ${levels[i].height}`)}<label class="field"><span>Animation preview rate (1–24 frames/s)</span><input data-texture-rate type="number" min="1" max="24" value="8"></label></div><button type="button" class="ghost small-btn" data-texture-play${asset.frames<2 ? ' disabled' : ''}>Animate frames</button><p class="small muted" data-texture-status aria-live="polite">Select a frame, palette or mip level to preview it. Animation starts only when you press Animate frames; its rate is a preview setting.</p>`;
 }
 function setupRomTextureControls(body,region,active) {
   if(!region.detected_asset || ['audio','model'].includes(region.detected_asset.media))return;
@@ -22,13 +22,18 @@ function setupRomTextureControls(body,region,active) {
     body.querySelector('[data-asset-format]')?.onchange?.();
   };
   if(region.detected_asset.textures?.length>1)get('texture').onchange=()=>{
+    if(body._romAssetBusy || !active())return;
     stop();const asset=current();
     for(const [key,count] of [['frame',asset.frames],['palette',Math.max(1,asset.palettes)],['mip',1]]){
       get(key).innerHTML=Array.from({length:count},(_,i)=>`<option value="${i}">${key==='mip'?'0':key==='palette'&&!asset.palettes?'Direct color (no palette)':`${i+1} of ${count}`}</option>`).join('');get(key).value='0';
     }
     button.disabled=asset.frames<2;native();body._romPreviewFrame?.();
   };
-  for(const key of ['frame','palette','mip'])get(key).onchange=()=>{stop();native();body._romPreviewFrame?.();};
+  const framePalette=()=>{
+    const asset=current(),sizes=asset.palette_entries;
+    if(sizes?.length && new Set(sizes).size>1)get('palette').value=String(Number(get('frame').value)%asset.palettes);
+  };
+  for(const key of ['frame','palette','mip'])get(key).onchange=()=>{if(body._romAssetBusy || !active())return;stop();if(key==='frame')framePalette();native();body._romPreviewFrame?.();};
   get('rate').onchange=()=>stop();
   button.onclick=()=>{
     if(playing){stop();return;}
@@ -38,7 +43,7 @@ function setupRomTextureControls(body,region,active) {
     native();playing=true;const run=++generation;let next=Number(get('frame').value);button.textContent='Stop animation';
     const tick=async()=>{
       if(!playing || run!==generation || !active()){stop();return;}
-      get('frame').value=String(next);
+      get('frame').value=String(next);framePalette();
       status.textContent=`Playing frame ${Number(get('frame').value)+1} of ${current().frames} · ${rate} frames/s requested`;
       const rendered=await body._romPreviewFrame();
       if(!active()){stop();return;}

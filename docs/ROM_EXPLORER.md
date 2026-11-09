@@ -204,7 +204,7 @@ mapping remains planned before these tools can reach project-mode consoles.
 N64 scans recognize source-assisted indexed texture banks, including RNC methods 1 and 2.
 Recognition checks the nested offset tables, format, dimensions, every bitmap and palette
 extent, and both compression checksums. Supported variants are CI8/RGBA16, CI4/RGBA16, CI4/IA16, RGBA32 and a fixed
-six-level 32×32 RGBA16 mipmap layout. **Detect asset / bank** defaults to the first frame with its first palette;
+six-level 32×32 RGBA16 mipmap layout. CI8 banks may mix 16- and 256-colour palettes; each frame is checked against its cyclically paired palette. Palette controls show the colour count, and mixed banks follow the matching palette when changing or animating frames. An incompatible manually selected palette produces an error instead of reading adjacent bytes. **Detect asset / bank** defaults to the first frame with its first palette;
 the region shows dimensions and frame/palette counts. Frame, palette and mip selectors
 resolve validated offsets automatically, and saved preview settings retain those choices. Detection needs neither a source
 checkout nor release-specific ROM addresses. Generic data symbols retain their names and
@@ -336,3 +336,20 @@ has at most 4,096 vertices and 8,192 polygon commands. Invalid or unsupported la
 ordinary region evidence and manual inspection. Other native model formats and original-image
 adapters for project mode remain planned. Original-image integrity is checked before previews;
 all decoding stays local and never alters matching or the ROM.
+
+### What generalizes to other games
+
+Recognition uses headers, offset tables, payload sizes and checksums, not game titles or
+known ROM offsets. The supported indexed texture/model layouts and B1 sound banks can
+therefore be recognized in another N64 game using those same formats. RNC is a general
+compression format; the corrected method-1 reader also serves compressed-code importing
+and rebuild validation. Its tail-word prefetch is separate from physical control-bit and
+literal bounds, and both checksums remain mandatory.
+
+This is not a universal native-asset classifier. The source-assisted audit's animation,
+collision, grid/bounds, placement and demo categories depend on a specific directory
+schema; they are not yet classified automatically by the application. Its compressed
+music sequences also need a sequence reader and synthesizer, separately from existing
+sample-bank previews. Other games' native formats need their own validated rules; a generic
+compressed label alone does not establish its contents. The shared ROM inspector still
+recognizes supported standard media headers and provides explicit manual layouts.
