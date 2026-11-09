@@ -362,3 +362,21 @@ def test_idle_reviewer_waits_locally_for_a_peer_then_reviews_final_proposal(disc
     assert review['review_target']
     discovery.defer(net,other,'game',review['region']['id'],review['claim_token'],'Independent inspection','Not enough consumer evidence to agree.')
     assert discovery.status(net,'game')['run']['state']=='complete'
+
+
+def test_automatic_decompression_checks_use_original_verified_bytes(project):  # noqa: F811
+    import hashlib
+    import zlib
+
+    from decompnet.app.asset_validation import validate
+    net,pid,root=project
+    image=bytes(8)+zlib.compress(b'private synthetic asset'*20)+bytes(128)
+    (root/'game.rom').write_bytes(image)
+    with net.progress.view():cfg=json.loads(json.dumps(net.cfg(net.project_row('game'))))
+    cfg['rom']['sha1']=hashlib.sha1(image).hexdigest()
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
+    rom_explorer.run(net,'game',Log())
+    report=rom_explorer.listing(net,'game');row=next(r for r in report['regions'] if r['kind']=='compressed')
+    result=validate(net,'game',report,row['id'],dict(kind='compressed',start=row['start'],end=row['end']))
+    check=next(c for c in result['checks'] if c['check']=='Decompression')
+    assert check['status']=='pass' and check['evidence']['bytes']==460
