@@ -82,7 +82,10 @@ def register(app: App) -> None:
                         if policy is not None:policy.touch(slug)
                         return response(perform, started, JSONResponse, request.url.path)
                     finally:current_project.reset(token)
-                return await ((reader or call) if request.method == "GET" else call)(respond)
+                execute=(reader or call) if request.method=="GET" else call
+                if request.url.path=='/api/rom-explorer/discovery' and (request.query_params.get('view')=='activity' or data.get('action')=='stop'):
+                    execute=app.control  # Discovery admission/cancellation must not queue behind builds.
+                return await execute(respond)
             except (NetworkError, ValueError, toolchains.ToolchainError, OSError) as e:
                 return fail(e)
             finally:
