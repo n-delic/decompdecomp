@@ -291,8 +291,11 @@ class JudgeMixin:
             out.append(f"### {name}\n{res['text']}")
         return f"{matched} of {len(names)} matched.\n\n" + "\n\n".join(out)
 
-    def _yield_autopilot(self, function: str | None, project: str | None) -> None:
+    def _yield_autopilot(self, function: str | None, project: str | None, *, check_cancel=None) -> None:
         """The autopilot holds a function only while its draft compiles: an agent that wants it waits for that."""
+        # Saved verification already waited outside its verdict lock. Repeating
+        # that wait here can strand the autopilot waiting to publish under it.
+        if getattr(self._compile_ahead_local, 'strict', False):return
         if not function:
             return
         try:
@@ -301,6 +304,7 @@ class JudgeMixin:
         except NetworkError:
             return
         for _ in range(100):
+            if check_cancel is not None:check_cancel()
             held = self.project_store(fn['project_id']).one('SELECT agent_id FROM claims WHERE function_id=?', fid)
             identity = self.store.one('SELECT name FROM agents WHERE id=?', held['agent_id']) if held else None
             if not identity or identity['name'] != 'autopilot':

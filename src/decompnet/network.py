@@ -870,18 +870,23 @@ class Network:
                 fn["meta"], header, source)
 
     @contextmanager
-    def compiled_ahead(self, prepared):
+    def compiled_ahead(self, prepared, *, strict=False):
         """Offer one background compile to the ordinary attempt/judge on this thread only.
 
         A changed compiler, header, source or function identity falls back to a fresh compile.
+        Strict saved verification instead requests a compile outside its verdict lock
+        and retries the ordinary attempt against current inputs before recording.
         No claims, judging or result recording may run in the compile worker.
         """
         previous = getattr(self._compile_ahead_local, "prepared", None)
+        prior_strict = getattr(self._compile_ahead_local, "strict", False)
         self._compile_ahead_local.prepared = prepared
+        self._compile_ahead_local.strict = strict
         try:
             yield
         finally:
             self._compile_ahead_local.prepared = previous
+            self._compile_ahead_local.strict = prior_strict
 
     def _attempt_compilation(self, proj, header, source, fn):
         prepared = getattr(self._compile_ahead_local, "prepared", None)
@@ -889,6 +894,9 @@ class Network:
             snapshot, future = prepared
             if snapshot == self._compile_snapshot(proj, fn, header, source):
                 return future.result()
+        if getattr(self._compile_ahead_local, "strict", False):
+            from .saved_compilation import CompileAgain
+            raise CompileAgain(proj, header, source, fn, self._compile_snapshot(proj, fn, header, source))
         return self._compile(proj, header, source, fn)
 
     def _candidate_checks(self, fn, proj, obj: bytes) -> dict:
