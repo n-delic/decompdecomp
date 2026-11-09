@@ -357,6 +357,7 @@ async function refreshFn(first) {
     // The server follows old-name aliases after a rename (including names inferred by Autopilot).
     S.fn = d.name;
     S.fnDetail = d;
+    $("fnRomData").hidden=S.ov.kind=== "fork";
     loadDetails = !!d.details_pending;
     $("functionDetailsLoading").hidden = !d.details_pending;
     $("functionDetailsLoading").querySelector('.workbar').hidden = false;

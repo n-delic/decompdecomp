@@ -661,6 +661,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| ROM Explorer: whole analysis image, references, clues and notes | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — image adapter planned | — image adapter planned | — image adapter planned | — image adapter planned |
 | Automatic guarded-return diagnostic pairs | ✓ MIPS ROM | ✓ shared MIPS reader | ✓ shared MIPS reader | ✓ shared MIPS reader | — return-path reader | — return-path reader | — return-path reader | — immutable private diagnostics |
 | Reviewed diagnostic-root deep lane | ✓ local ROM | ✓ shared ROM lane | ✓ shared ROM lane | ✓ shared ROM lane | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot | — immutable file snapshot |
 | Typed later-local reuse and bounded residual follow-ups | ✓ | ✓ | ✓ 32-bit scalars | ✓ | ✓ 32-bit scalars | ✓ 32-bit scalars | ✓ | ✓ by target ABI |
@@ -909,6 +910,17 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### ROM Explorer
+
+A project tab maps every byte of an imported ROM analysis image, including unknown and
+unmapped ranges. Inspect recorded functions/data symbols, interior-address references,
+overlay ambiguity, bounded hex/text previews, sampled pointer chains, format signatures
+and bounded gzip/zlib validation. Save local labels and evidence notes. A user-started,
+project-scoped scan offers Stop, measured progress and reattachment in another window;
+a stopped rescan retains the previous complete map. Classification is separate from
+matching and never establishes that an unreferenced region is unused.
+
 
 - **Verified SDK assembly and independent display names.** Indexed local SDK objects
   can identify handwritten ROM routines through the ordinary MIPS code/data linker.
@@ -1406,6 +1418,23 @@ similar C through objdiff. Other processors need an instruction reader for this 
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### ROM Explorer: image adapters and deeper asset analysis
+
+Object-build projects need adapters from their original images and sections to units,
+relocations and runtime addresses (GameCube/Wii, PC, DS and public builds). Until those
+mappings exist, ROM Explorer explains the gap instead of guessing offsets from objdiff.
+Imported ROM analysis images can include expanded code; a separate physical-media view
+with verified expansion/container mappings is still needed. ROM mode's shared image
+adapter also serves other imported processors; demo validation currently covers the
+four MIPS ROM columns in the table.
+
+Trace DMA/file-ID/loader tables and follow buffers through decompression into consumers,
+with instruction-level evidence and explicit ambiguity. Indexed-load/stride analysis,
+console texture/palette/audio decoders and previews, additional bounded compression
+validators, and user-reviewed boundaries remain planned. Current pointer chains are
+sampled address leads, not proven data flow or inferred asset extents.
+
 
 ### Your own compiler for GameCube, Wii and DS
 

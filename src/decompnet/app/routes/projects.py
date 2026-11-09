@@ -69,7 +69,7 @@ def register(app: App) -> None:
                     # The per-function publisher uses current DB inputs with exact/revision
                     # guards. Let autosave export it rather than blocking the response on a full import.
                     function_profile = request.url.path == '/api/compiler' and data.get('function')
-                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
@@ -216,6 +216,30 @@ def register(app: App) -> None:
             res = net.export_rom(slug, log=log)
             return {k: v for k, v in res.items() if k != "log"} | {"log": res.get("log", "")[-1500:]}
         return {"job": jobs.start("export", work)}
+
+    def p_rom_explorer(slug, request, data):
+        with net.progress.view():
+            return rom_explorer_request(slug,request,data)
+
+    def rom_explorer_request(slug, request, data):
+        from .. import rom_explorer
+        if request.method == 'GET':
+            q = request.query_params
+            if q.get('view') == 'status':return rom_explorer.status(net,slug,jobs)
+            if q.get('region'):return rom_explorer.detail(net,slug,q['region'],q.get('image_hash',''))
+            return rom_explorer.listing(net,slug)
+        # Reserve discovery and start atomically: double clicks and two windows
+        # must attach to the same project job rather than launch duplicate scans.
+        with jobs._lock:
+            active = rom_explorer.status(net,slug,jobs)['job']
+            if active and active['state']=='running':return {'job':active['id']}
+            return {'job':jobs.start('rom-explorer',lambda log:rom_explorer.run(net,slug,log),project=slug,
+                                     cancel_message='ROM scan stopped. The previous completed map and notes are retained.')}
+
+    def p_rom_annotation(slug, request, data):
+        from ..rom_explorer import annotate
+        with net.progress.view():
+            return annotate(net,slug,data)
 
     def p_code_audit(slug, request, data):
         from .. import rom_gap_audit
@@ -859,6 +883,8 @@ def register(app: App) -> None:
         return measurements(net)
 
     routes = {
+        "/api/rom-explorer": (p_rom_explorer, ["GET", "POST"]),
+        "/api/rom-explorer/annotation": (p_rom_annotation, ["POST"]),
         "/api/boundary-evidence": (g_boundary_evidence, ["GET"]),
         "/api/boundary-investigations": (g_boundary_investigations, ["GET"]),
         "/api/boundary-repairs": (p_boundary_repairs, ["GET", "POST"]),

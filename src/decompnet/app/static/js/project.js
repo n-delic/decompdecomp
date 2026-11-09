@@ -149,6 +149,7 @@ function setTab(tab) {
   document.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = p.dataset.pane !== tab; });
   if (tab === "overview") { if (S.map.length) layoutMap(); renderOverview(); }
   if (tab === "functions") renderList();
+  if (tab === "rom") loadRomExplorer();
   if (tab === "agents") { renderSessions(S.sessions); renderLog(); loadStats(); }
   if (tab === "settings") renderProjectSettings();
   if ((tab === "overview" || tab === "functions") && S.primed &&

@@ -15,6 +15,7 @@ from decompnet import arch, consoles, toolchains
 from decompnet.app import tools
 from decompnet.app.engine import RomNetwork
 from decompnet.app.twins import object_prints
+from decompnet.network import NetworkError
 from decompnet.rom import RomError
 
 from .test_ps2_debug import (
@@ -270,3 +271,28 @@ def test_guided_boundary_evidence_reads_the_original_demo_without_claiming_or_ma
         with net.store.tx() as db:
             db.execute('UPDATE functions SET size=?,n_insns=?,target=? WHERE id=?',
                        (fn['size'],fn['n_insns'],fn['target'],fn['id']))
+
+
+def test_rom_explorer_reads_the_imported_image_without_changing_targets(demo):
+    from decompnet.app import rom_explorer
+
+    console,net,slug,game,_=demo
+    if console.mode!=consoles.ROM:
+        with net.progress.view(), pytest.raises(NetworkError,match='original-image mapping'):
+            rom_explorer.listing(net,slug)
+        return
+    class ScanLog:
+        def __call__(self,line):pass
+        def progress(self,value):pass
+        def check_cancel(self):pass
+    with net.progress.view():
+        proj=net.project_row(slug)
+        before=[tuple(r) for r in net.project_store(proj['id']).all('SELECT name,target,status FROM functions WHERE project_id=?',proj['id'])]
+        rom_explorer.run(net,slug,ScanLog())
+        report=rom_explorer.listing(net,slug)
+        assert report['available'] and not report['stale']
+        assert sum(r['size'] for r in report['regions'])==report['size']
+        assert report['regions'][0]['start']==0 and report['regions'][-1]['end']==report['size']
+        row=report['regions'][0]
+        assert rom_explorer.detail(net,slug,row['id'],report['image_hash'])['preview']
+        assert before==[tuple(r) for r in net.project_store(proj['id']).all('SELECT name,target,status FROM functions WHERE project_id=?',proj['id'])]

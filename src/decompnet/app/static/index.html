@@ -214,6 +214,7 @@
     <nav class="ptabs" id="ptabs" aria-label="This project">
       <a data-ptab="overview">Overview</a>
       <a data-ptab="functions">Functions <span class="count" id="fnTabCount"></span></a>
+      <a data-ptab="rom">ROM Explorer</a>
       <a data-ptab="agents">Agents <span class="count" id="agTabCount"></span></a>
       <a data-ptab="settings">Settings</a>
     </nav>
@@ -421,6 +422,26 @@
       <header class="panel-head"><h2>Waiting for you</h2><span class="muted small">what agents found and can't change themselves</span></header>
       <div class="pad" id="suggestList"></div>
     </section>
+  </section>
+
+  <section class="ptab" data-pane="rom" hidden>
+    <details class="panel settings-disclosure" id="romExplorerPanel" open>
+      <summary class="panel-head"><h2>ROM Explorer <span class="disclosure-context" id="romContext"></span></h2></summary>
+      <div class="pad">
+        <p>Explore the whole image to find data, see which functions reference it and record what the evidence suggests.</p>
+        <div class="row"><button class="primary small-btn" id="romScan" type="button">Scan ROM</button><button class="ghost small-btn" id="romStop" type="button" hidden>Stop</button><button class="ghost small-btn" id="romReload" type="button">Reload saved map</button></div>
+        <div id="romWork" role="status"></div>
+        <p id="romSummary" role="status"></p><p id="romStale" class="err-msg" hidden>The imported layout changed. Scan again before inspecting regions or saving notes.</p>
+        <canvas id="romMap" class="rom-image-map" role="img" aria-label="ROM byte map. Use the region table below for keyboard access."></canvas>
+        <div class="row"><span class="small muted" id="romMapRange"></span><button id="romResetZoom" type="button" class="ghost small-btn">Whole image</button></div>
+        <p class="rom-map-legend small"><span>Code</span><span>Data / strings</span><span>Format / table clues</span><span>Repeated bytes</span><span>Unknown</span></p>
+        <details><summary>Evidence and scan limits</summary><p class="small muted" id="romNotes"></p></details>
+        <label class="field"><span>Find regions</span><input type="search" id="romFilter" placeholder="Label, type, segment or offset range"></label>
+        <button id="romFunctionFilter" type="button" class="ghost small-btn" hidden></button>
+        <details id="romRuntime" hidden><summary>Runtime-only data (no ROM bytes)</summary><p class="small muted">Imported BSS symbols describe memory reserved at runtime. Their address references are leads; overlay ownership may be unresolved. These bytes are excluded from image totals.</p><div id="romRuntimeItems"></div></details>
+        <div id="romResult"></div>
+      </div>
+    </details>
   </section>
 
   <!-- settings -->
@@ -971,6 +992,7 @@
         <summary>Other projects and local SDKs</summary>
         <div class="collapsible-box-body"><div id="fnProjectPeersContent"></div></div>
       </details>
+      <button type="button" class="ghost small-btn" id="fnRomData">Explore referenced data</button>
       <details class="more" id="fnMachineDraft" hidden><summary>Starting C diagnostics</summary><pre class="small" id="fnMachineDraftReport"></pre></details>
       <details class="more" id="fnVerification" hidden>
         <summary>Last verified match</summary>
@@ -1115,6 +1137,7 @@
 <script src="/assets/js/compiler-progress.js"></script>
 <script src="/assets/js/compiler-groups.js"></script>
 <script src="/assets/js/code-audit.js"></script>
+<script src="/assets/js/rom-explorer.js"></script>
 <script src="/assets/js/boundary-repairs.js"></script>
 <script src="/assets/js/repository-setup.js"></script>
 <script src="/assets/js/repository-push.js"></script>

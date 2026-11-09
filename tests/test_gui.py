@@ -672,3 +672,10 @@ def test_score_commit_preferences_defaults_errors_and_project_switches():
 def test_function_attempt_stages_reattach_and_preserve_edits():
     subprocess.run([NODE, str(Path(__file__).with_name('gui_function_attempt.js'))], check=True,
                    cwd=Path(__file__).resolve().parents[1], timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_rom_explorer_navigation_jobs_sorting_and_annotations():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_explorer.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)

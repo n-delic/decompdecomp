@@ -29,6 +29,20 @@ a tenth of a second (1.4 s before), and agents restart by themselves after a cra
   stand-in for a model that hands in the demo's own C; the app compiles and judges every function for real.</sub>
 </p>
 
+## Explore the rest of a ROM
+
+Open a ROM project → **ROM Explorer** → **Scan ROM**. The map covers the entire imported
+analysis image, including unknown bytes. Click a region for hex/text previews, imported
+symbols, function references, sampled pointer chains and format evidence. Labels distinguish
+recorded import facts, validated compressed streams and tentative clues. Save your own
+labels and notes; **Explore referenced data** in a function opens its regions.
+
+Scans run locally without compilers or AI calls. Stop retains the previous complete map;
+returning to the tab or opening another window attaches to the same scan. Unknown or
+unreferenced bytes are never called unused. This is separate from exact code progress.
+Analysis images may contain expanded code; physical-media mapping and object-build
+adapters are planned, along with proven loader/consumer tracing and asset decoders.
+
 ## Match through the live app
 
 [Reviewed alternative seeds and compact search briefs](docs/REVIEWED_SEARCH_SEEDS.md) let deep search investigate promising diagnostic shapes without replacing the saved winner. Native GCC allocation evidence targets existing-operation repairs; signature changes stay diagnostic-only until ordinary review. For supported MIPS tail guards, deep search can now generate a diagnostic return/lifetime pair directly from the saved checkpoint; allocation-mapped middle quotients and compact next-experiment briefs reduce manual searching.
