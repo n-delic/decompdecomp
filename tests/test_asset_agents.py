@@ -380,3 +380,47 @@ def test_automatic_decompression_checks_use_original_verified_bytes(project):  #
     result=validate(net,'game',report,row['id'],dict(kind='compressed',start=row['start'],end=row['end']))
     check=next(c for c in result['checks'] if c['check']=='Decompression')
     assert check['status']=='pass' and check['evidence']['bytes']==460
+
+
+@pytest.mark.parametrize('task',['assets','boundary','matching'])
+def test_real_mcp_startup_checks_the_authenticated_tasks_tools(discovered,monkeypatch,task):
+    import socket
+    import time
+
+    import uvicorn
+
+    from decompnet.app import boundary_investigations
+    from decompnet.app.agents import Fatal, Manager, Session
+    from decompnet.app.server import build
+    from tests.test_agents import _no_agent_settings
+
+    net,pid,root,run,agent,_=discovered
+    _no_agent_settings(monkeypatch)
+    monkeypatch.setattr(Manager,'refresh_detected',lambda *a:None)
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+        with net.progress.view():mcp,manager,security,_=build(net,root/'.decomp',port,'scratch-secret')
+        options={'task':task,'asset_run':run,'boundary_until':time.time()+600,'boundary_function':'reader'}
+        session=Session('probe','codex','Probe','game',agent.name,options)
+        manager.sessions[session.id]=session
+        net.__dict__.pop('_asset_investigators',None)
+        discovery.bind(net,session,agent);boundary_investigations.bind(net,session,agent)
+        monkeypatch.setattr(manager,'project_of',lambda agent_id:'game')
+        _,token=net.local_agent(agent.name)
+        server=uvicorn.Server(uvicorn.Config(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),host='127.0.0.1',port=port,log_level='error'))
+        thread=threading.Thread(target=server.run,kwargs={'sockets':[sock]},daemon=True);thread.start()
+        try:
+            deadline=time.monotonic()+5
+            while not server.started and time.monotonic()<deadline:time.sleep(.02)
+            assert server.started
+            names=set(tools.project_tools(net,'game',agent))
+            if task!='matching':assert 'compile_and_diff' not in names and 'claim_function' not in names
+            assert manager._preflight_tools(token,session=session)
+            if task in ('assets','boundary'):
+                required='claim_asset_region' if task=='assets' else 'get_boundary_evidence'
+                with net.store.tx() as db:db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',('agent-disabled-tools',json.dumps([required])))
+                with pytest.raises(Fatal,match=required):manager._preflight_tools(token,session=session)
+            assert not net.store.all('SELECT * FROM claims') and not net.store.all('SELECT * FROM attempts')
+        finally:
+            server.should_exit=True;thread.join(timeout=5)
+            assert not thread.is_alive()

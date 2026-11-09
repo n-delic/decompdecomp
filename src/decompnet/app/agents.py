@@ -1963,8 +1963,10 @@ class Manager:
                         phase = 'listing tools'
                         tools = await client.list_tools()
                         names = {tool.name for tool in tools.tools}
-                        if not {"project_info", "claim_function", "compile_and_diff", "release_function"} <= names:
-                            raise Fatal('The decomp MCP server is missing required tools. Review tool settings before restarting this helper.')
+                        from .tool_policy import connection_required
+                        missing = connection_required(self.net, agent) - names
+                        if missing:
+                            raise Fatal('The decomp MCP server is missing required tools: '+', '.join(sorted(missing))+'. Review tool settings before restarting this helper.')
                         phase = 'authenticated project check'
                         result = await client.call_tool('project_info', {'detail': False})
                         if result.is_error:
@@ -1972,7 +1974,7 @@ class Manager:
                             raise Fatal('Authenticated tool check rejected: '+(message[:400] or 'project access was denied'))
                         phase = 'closing MCP transport'
         try:
-            self.net.authenticate(token)
+            agent = self.net.authenticate(token)
         except NetworkError as error:
             raise Fatal('Local helper authentication failed: '+connection_failure(error, token)+'. No model request was started.') from error
         try:

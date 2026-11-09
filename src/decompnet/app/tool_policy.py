@@ -20,6 +20,16 @@ PRESETS = {'full': ('All tools', None), 'matching': ('Matching essentials', MATC
                'get_claims','guide','get_context','edit_context','read_file','edit_file','file_status','search_code','add_note','find_similar'})}
 
 
+def connection_required(net, agent):
+    """Check the authenticated task's tools without granting advisory workers compiler access."""
+    from . import asset_agents, boundary_investigations
+    if agent is not None and asset_agents.scope(net,agent):
+        return asset_agents.TOOLS - {'get_assembly','guide'}
+    if agent is not None and boundary_investigations.scope(net,agent):
+        return boundary_investigations.TOOLS
+    return {'project_info','claim_function','compile_and_diff','release_function'}
+
+
 def preset_disabled(preset):
     from .tools import HANDLERS
     if not isinstance(preset, str) or preset not in PRESETS:

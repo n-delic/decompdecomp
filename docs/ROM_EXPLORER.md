@@ -155,6 +155,8 @@ a ROM byte range, or an imported function whose direct/traced data you want inve
 **Discover assets** prepares the whole eligible queue, then opens the normal agent/model
 launcher. These use your selected providers and their ordinary costs. Discovery also appears
 as a task in the launcher for ROM projects; object-build projects need the planned image adapter.
+Startup checks the tools for the selected task. Asset discovery needs its inspection/proposal
+tools, not function-claiming or compilation tools. A missing-tool error names the required tool.
 
 Workers lease one region at a time, inspect original bytes, neighbouring boundaries, symbols,
 references and loader chains, and try the existing texture/audio/geometry inspectors. They
