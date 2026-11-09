@@ -180,4 +180,12 @@ class Retention:
             if rules.get("automatic"):
                 database_storage.start(self.net,self.jobs,'prune',rules,foreground=False)
         value=saved(self.net)
-        if value.get('automatic') and eligible(self.net,value):start(self.net,self.jobs,value,foreground=False)
+        # A queued cleanup already owns this scan; polling must not repeat it
+        # while the job is waiting for the maintenance lane or deleting rows.
+        active=False
+        if self.jobs is not None:
+            with self.jobs._lock:
+                active=any(j['kind']=='Database transcript cleanup' and j['state']=='running'
+                           for j in self.jobs.jobs.values())
+        if value.get('automatic') and not active and eligible(self.net,value):
+            start(self.net,self.jobs,value,foreground=False)

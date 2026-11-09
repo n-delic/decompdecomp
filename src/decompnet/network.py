@@ -1568,7 +1568,7 @@ class Network:
                        (json.dumps({**meta, "reopened": True}), fn["id"]))
             self._event(db, fn["project_id"], None, "reopen", f"{fn['name']}: open again (you gave it back to the agents)")
 
-    def release_stopped(self, agent_ids, why: str) -> list[str]:
+    def release_stopped(self, agent_ids, why: str, *, project: str | None = None) -> list[str]:
         """The claims of agents whose process is gone, released at once with a note (`why`), instead of holding their
         functions until CLAIM_TTL runs out: after an update or a restart of the app, every open function looked held
         by helpers that had died with it. Not counted as giving up. Each function freed gets a 'freed' event (one
@@ -1580,11 +1580,18 @@ class Network:
         own = self._machine_agent_ids()
         names = {r['id']:r['name'] for r in self.store.all(
             'SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))', json.dumps(agent_ids))}
-        for store, projects in self.project_stores():
+        # A single helper belongs to one project. Stopping it must not open or
+        # write every idle project's operational database. Shutdown keeps the full sweep.
+        if project is not None:
+            proj = Network._project(self, project)
+            stores = [(self.project_store(proj['id']), [proj['id']])]
+        else:
+            stores = self.project_stores()
+        for store, projects in stores:
             with store.tx() as db:
                 for aid in agent_ids:
-                    scope = '' if store is self.store else ' AND f.project_id IN (SELECT value FROM json_each(?))'
-                    args = (aid,) if store is self.store else (aid, json.dumps(projects))
+                    scope = '' if project is None and store is self.store else ' AND f.project_id IN (SELECT value FROM json_each(?))'
+                    args = (aid,) if project is None and store is self.store else (aid, json.dumps(projects))
                     rows = db.execute("SELECT f.id,f.project_id,f.name FROM claims c JOIN functions f ON f.id=c.function_id "
                                       "WHERE c.agent_id=?" + scope, args).fetchall()
                     for r in rows:
@@ -1598,7 +1605,7 @@ class Network:
                     if not rows:
                         # Each independent queue needs its own run boundary, even
                         # when this worker held nothing there at shutdown.
-                        for pid in ([None] if store is self.store else projects):
+                        for pid in ([None] if project is None and store is self.store else projects):
                             self._event(db, pid, aid, 'freed', '')
         return freed
 

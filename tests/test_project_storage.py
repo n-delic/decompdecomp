@@ -1036,3 +1036,14 @@ def test_layout_symbols_in_base_network_preserve_overlay_units_without_catalog_r
     assert symbols['same_name']['unit']=='first-unit'
     assert symbols['other_copy']['unit']=='second-unit'
     assert 'unit' not in symbols['shared_data']
+
+
+def test_stopping_one_project_preserves_other_claims_and_idle_stores(scoped, monkeypatch):
+    net, stores = scoped
+    monkeypatch.setattr(net, 'project_stores', lambda: pytest.fail('Single-project stop must not enumerate stores'))
+    with stores[1].tx() as db:db.execute('INSERT INTO claims VALUES(10,1,1,9999999999)')
+    with stores[2].tx() as db:db.execute('INSERT INTO claims VALUES(20,1,1,9999999999)')
+    assert net.release_stopped([1], 'user stopped', project='first') == ['same_name']
+    assert not stores[1].one('SELECT 1 FROM claims')
+    assert stores[2].one('SELECT 1 FROM claims WHERE agent_id=1')
+    assert not stores[2].one("SELECT 1 FROM events WHERE kind='freed'")

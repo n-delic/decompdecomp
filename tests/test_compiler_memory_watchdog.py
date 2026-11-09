@@ -5,6 +5,7 @@ import sys
 import pytest
 
 from decompnet import limits
+from decompnet.hostenv import stop_process_tree
 
 
 def test_limit_configuration(monkeypatch):
@@ -16,7 +17,7 @@ def test_limit_configuration(monkeypatch):
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='macOS process tree watchdog')
 def test_watchdog_stops_memory_hungry_child_and_parent():
-    child = 'import time; a=bytearray(80*1024*1024); time.sleep(15)'
+    child = 'import time; a=bytearray([1])*(80*1024*1024); time.sleep(15)'
     parent = 'import subprocess,sys,time; subprocess.Popen([sys.executable,"-c",sys.argv[1]]); time.sleep(15)'
     proc = subprocess.Popen([sys.executable, '-c', parent, child], start_new_session=True)
     try:
@@ -42,7 +43,7 @@ def test_process_tree_parses_descendants(monkeypatch):
 def test_compiler_reports_memory_stop(tmp_path, monkeypatch):
     from decompnet.compiler import CompilerConfig, _exec
     monkeypatch.setenv('DECOMP_COMPILER_MEMORY_MB', '40')
-    script = 'import time; a=bytearray(80*1024*1024); time.sleep(15)'
+    script = 'import time; a=bytearray([1])*(80*1024*1024); time.sleep(15)'
     result = _exec(CompilerConfig(cmd=[]), tmp_path, [sys.executable, '-c', script], 10)
     assert result.returncode != 0
     assert 'exceeded the 40 MiB memory limit' in result.stderr
@@ -54,7 +55,7 @@ def test_imported_project_build_reports_memory_stop(tmp_path, monkeypatch):
     monkeypatch.setenv('DECOMP_COMPILER_MEMORY_MB', '40')
     monkeypatch.setattr(ForkProject, '_docker_only_macos', lambda _: False)
     project = ForkProject(tmp_path)
-    script = 'import time; a=bytearray(80*1024*1024); time.sleep(15)'
+    script = 'import time; a=bytearray([1])*(80*1024*1024); time.sleep(15)'
     ok, output = project.run([sys.executable, '-c', script])
     assert not ok
     assert 'exceeded the 40 MiB memory limit' in output
@@ -149,6 +150,111 @@ def test_denied_group_cleanup_preserves_cancellation_closes_pipes_and_unregister
     finally:
         # The same regression can be run against the broken cleanup implementation.
         for proc in processes:
-            compiler.stop_process_tree(proc)
+            stop_process_tree(proc)
             for stream in (proc.stdout,proc.stderr):
                 if stream is not None:stream.close()
+
+
+@pytest.mark.skipif(os.name=='nt',reason='POSIX isolated process groups')
+@pytest.mark.parametrize('cancelled',[False,True])
+def test_imported_build_denied_group_signal_still_reaps_child_and_preserves_cancel(tmp_path,monkeypatch,caplog,cancelled):
+    import errno
+    import logging
+
+    from decompnet import compiler_processes
+    from decompnet.forks.project import ForkProject
+    processes=[];popen=subprocess.Popen;removed=[]
+    def start(*args,**kwargs):
+        proc=popen(*args,**kwargs);processes.append(proc);return proc
+    monkeypatch.setattr(subprocess,'Popen',start)
+    def denied(*args):raise PermissionError(errno.EPERM,'private command text must not be logged')
+    monkeypatch.setattr(compiler_processes.os,'killpg',denied)
+    monkeypatch.setattr(compiler_processes,'untrack',removed.append)
+    def log(line):
+        if line=='ready' and cancelled:raise RuntimeError('Synthetic build cancellation')
+    try:
+        with caplog.at_level(logging.WARNING,logger='decompdecomp'):
+            with pytest.raises(RuntimeError if cancelled else PermissionError,match='Synthetic build cancellation' if cancelled else 'private command'):
+                ForkProject(tmp_path).run([sys.executable,'-c',"import time;print('ready',flush=True);"+('time.sleep(30)' if cancelled else 'pass')],log=log,platform='n64')
+        proc=processes[0]
+        assert proc.poll() is not None and proc.stdout.closed
+        assert removed==[proc.pid]
+        assert f'primary_failure={cancelled}' in caplog.text and 'stage=group_signal' in caplog.text
+        assert 'private command text' not in caplog.text
+    finally:
+        for proc in processes:
+            stop_process_tree(proc)
+            if proc.stdout:proc.stdout.close()
+
+
+@pytest.mark.skipif(os.name=='nt',reason='POSIX process tracking')
+@pytest.mark.parametrize('failed',[False,True])
+def test_registry_cleanup_error_does_not_hide_primary_failure(tmp_path,monkeypatch,caplog,failed):
+    import errno
+    import logging
+
+    from decompnet import compiler_processes
+    proc=subprocess.Popen([sys.executable,'-c','pass'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+    proc.communicate(timeout=5)
+    def denied(_):raise PermissionError(errno.EACCES,'sensitive registry path')
+    monkeypatch.setattr(compiler_processes,'untrack',denied)
+    with caplog.at_level(logging.WARNING,logger='decompdecomp'):
+        if failed:compiler_processes.finish(proc,failed=True)
+        else:
+            with pytest.raises(PermissionError):compiler_processes.finish(proc)
+    assert proc.stdout.closed and proc.stderr.closed
+    assert 'stage=untrack' in caplog.text and 'sensitive registry path' not in caplog.text
+
+
+@pytest.mark.skipif(os.name=='nt',reason='POSIX process groups')
+@pytest.mark.parametrize('reason',['timed_out','exceeded'])
+def test_imported_build_watchdog_failure_survives_denied_cleanup(tmp_path,monkeypatch,reason):
+    import errno
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from decompnet import compiler_processes
+    from decompnet.forks import project
+    status=SimpleNamespace(timed_out=reason=='timed_out',exceeded=reason=='exceeded',message=lambda:'Synthetic memory limit reached')
+    monkeypatch.setattr(project,'CompilerMemoryWatchdog',lambda *args,**kwargs:nullcontext(status))
+    def denied(*args):raise PermissionError(errno.EPERM,'Synthetic group signal denied')
+    monkeypatch.setattr(compiler_processes.os,'killpg',denied)
+    ok,message=project.ForkProject(tmp_path).run([sys.executable,'-c','pass'],platform='n64')
+    assert not ok
+    assert ('Build timed out' if reason=='timed_out' else 'Synthetic memory limit reached') in message
+
+
+@pytest.mark.skipif(os.name=='nt',reason='POSIX process groups')
+def test_imported_build_exit_failure_survives_denied_cleanup(tmp_path,monkeypatch):
+    import errno
+
+    from decompnet import compiler_processes
+    from decompnet.forks.project import ForkProject
+    def denied(*args):raise PermissionError(errno.EPERM,'Synthetic group signal denied')
+    monkeypatch.setattr(compiler_processes.os,'killpg',denied)
+    ok,message=ForkProject(tmp_path).run([sys.executable,'-c',"print('synthetic compiler error');raise SystemExit(3)"],platform='n64')
+    assert not ok and 'synthetic compiler error' in message
+
+
+@pytest.mark.skipif(sys.platform!='darwin',reason='macOS memory watchdog and POSIX groups')
+@pytest.mark.parametrize('reason',['timeout','memory'])
+def test_watchdog_denied_group_signal_stops_owned_child_without_closing_pipes(monkeypatch,caplog,reason):
+    import errno
+    import logging
+
+    proc=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+    def denied(*args):raise PermissionError(errno.EPERM,'private compiler arguments')
+    monkeypatch.setattr(limits.os,'killpg',denied)
+    monkeypatch.setattr(limits,'_process_memory_tree',lambda pid:[(pid,100)] if reason=='memory' else [])
+    try:
+        with caplog.at_level(logging.WARNING,logger='decompdecomp'):
+            with limits.CompilerMemoryWatchdog(proc,limit=50,timeout=.1 if reason=='timeout' else None) as watchdog:
+                proc.wait(timeout=5)
+        assert watchdog.timed_out if reason=='timeout' else watchdog.exceeded
+        assert proc.returncode!=0
+        assert not proc.stdout.closed and not proc.stderr.closed
+        assert 'Compiler watchdog group stop failed' in caplog.text
+        assert 'private compiler arguments' not in caplog.text
+    finally:
+        stop_process_tree(proc)
+        proc.stdout.close();proc.stderr.close()

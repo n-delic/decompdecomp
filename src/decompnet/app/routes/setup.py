@@ -179,7 +179,7 @@ def register(app: App) -> None:
             except ValueError as error:
                 return fail(error)
         # Legacy callers keep the immediate response, but preparation must never block the event loop.
-        return await call(create_agents, data)
+        return await app.control(create_agents, data)
 
     def create_agents(data):
         kind, slug = str(data.get("kind", "")), str(data.get("slug", ""))
@@ -355,14 +355,14 @@ def register(app: App) -> None:
             return bad
         data = await body(request)
         if data.get("remove"):
-            await call(manager.remove, str(data.get("id")))
+            await app.control(manager.remove, str(data.get("id")))
         elif data.get("remove_paused") and data.get("slug"):
-            removed = await call(manager.remove_paused, str(data["slug"]))
+            removed = await app.control(manager.remove_paused, str(data["slug"]))
             return JSONResponse({"ok": True, "removed": removed})
         elif data.get("slug"):
-            await call(manager.stop_project, str(data["slug"]))
+            await app.control(manager.stop_project, str(data["slug"]))
         elif data.get("id"):
-            await call(manager.stop, str(data["id"]))
+            await app.control(manager.stop, str(data["id"]))
         return JSONResponse({"ok": True})
 
     @mcp.custom_route("/api/agents/login", methods=["POST"])

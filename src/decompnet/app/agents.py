@@ -209,6 +209,8 @@ _NO_CREDIT = re.compile(r"insufficient[ _](?:balance|credits?|funds|quota)|excee
                         r"credit balance is too low|payment required|out of credits?|requires usage credits", re.I)
 # and when it's asked too much at once (HTTP 429): it works again in a while
 THROTTLED = re.compile(r"too many requests|rate[ _-]?limit|concurrency[ _-]?limit|\b429\b|overloaded", re.I)
+# A remote model-capacity refusal is not a failed local MCP handshake.
+PROVIDER_CAPACITY = re.compile(r"\bUNAVAILABLE\s*\(\s*code\s+503\b|\bno capacity available for model\b", re.I)
 # and when a subscription's allowance is used up for now (Claude Code: "usage limit reached", "You've hit your
 # session limit", Codex: "You've hit your usage limit", Antigravity: RESOURCE_EXHAUSTED, OpenCode Go: "quota
 # exceeded"): it resets by itself in hours, so a helper waits for it instead of stopping (a night's run lost most of
@@ -1650,8 +1652,11 @@ class Manager:
                 continue
             if s.throttled and throttles < THROTTLES_IN_A_ROW:  # the provider's limit, not the agent's failure
                 s.throttled, throttles = False, throttles + 1
-                self._wait(s, "the model's provider says too many requests at once", time.time() + THROTTLE_WAIT,
-                           "fewer agents at once on this account would wait less")
+                capacity = bool(PROVIDER_CAPACITY.search(s.error))
+                self._wait(s, "The model provider has no capacity available; retrying after backoff." if capacity
+                           else "the model's provider says too many requests at once", time.time() + THROTTLE_WAIT,
+                           "Provider availability must recover; this is not a local tool connection failure." if capacity
+                           else "fewer agents at once on this account would wait less")
                 continue
             throttles = 0
             if ok:
@@ -1706,7 +1711,7 @@ class Manager:
             except Exception:  # the host lets the claim expire
                 pass
         # its claims go now, with a note, rather than when their lease runs out; and its next run starts afresh
-        self.net.release_stopped([agent_id], (s.why or "it stopped")[:200])
+        self.net.release_stopped([agent_id], (s.why or "it stopped")[:200], project=s.slug)
 
     def _session_begin(self, s: Session) -> int:
         from .prompt_settings import effective
@@ -2145,8 +2150,12 @@ class Manager:
             raise Fatal("The helper lost access to the app's tools. Restart this helper to reconnect; repeated paid retries are paused.")
         if "Toolchain infrastructure failure" in everything:
             raise Fatal("The compiler/converter setup failed. Fix the toolchain before restarting this helper; repair retries are paused.")
-        if code != 0 and THROTTLED.search(everything):
+        capacity = PROVIDER_CAPACITY.search("\n".join([*errors, last_error]))
+        if code != 0 and (THROTTLED.search(everything) or capacity):
             s.throttled = True
+            if capacity:
+                s.error = 'No capacity available for model at the provider.'
+                s.push('info', 'Provider model capacity is unavailable; waiting before retrying.')
         if code != 0 and _SIGNED_OUT.search(everything):
             s.signed_out = True
             s.error = f"{k.name} isn't signed in on this computer. {k.signin_for(s.options)}"

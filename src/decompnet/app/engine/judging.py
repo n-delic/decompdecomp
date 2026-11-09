@@ -565,7 +565,8 @@ class JudgeMixin:
                 sp = cfg.setdefault("spend", {"usd": 0.0, "tokens": 0})
                 sp["usd"] = round(sp.get("usd", 0) + usd, 6)
                 sp["tokens"] = sp.get("tokens", 0) + tokens
-            self._update_cfg(slug, change)
+            # Usage changes no source files; never queue every agent behind a progress scan.
+            self._update_cfg(slug, change, synchronize=False)
 
     def spend(self, slug: str) -> dict | None:
         return self.cfg(self._project(slug)).get("spend")

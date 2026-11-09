@@ -127,7 +127,7 @@ def test_macos_docker_only_project_routes_make_through_container(tmp_path, monke
 
     # Dispatch only: process ownership and watchdogs have dedicated real-process tests.
     monkeypatch.setattr(compiler_processes,"track",lambda *args:None)
-    monkeypatch.setattr(compiler_processes,"finish",lambda *args:None)
+    monkeypatch.setattr(compiler_processes,"finish",lambda *args,**kwargs:None)
     monkeypatch.setattr(project_module,"CompilerMemoryWatchdog",
                         lambda *args,**kw:nullcontext(SimpleNamespace(timed_out=False,exceeded=False)))
 
@@ -942,7 +942,10 @@ def test_unit_diff_updates_improvement_date_without_a_local_check(tmp_path, monk
         db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,status,best_score,unit,meta,asm) "
                    "VALUES(1,7,'F',40,10,'open',900,'u','{\"symbol\": \"_F\"}','')")
     eng = ForkEngine.__new__(ForkEngine)
-    eng.net = SimpleNamespace(store=store)
+    def project_store(pid):
+        assert pid == 7
+        return store
+    eng.net = SimpleNamespace(store=store, project_store=project_store)
     monkeypatch.setattr("decompnet.app.forkengine.time.time", lambda: 42)
     eng._apply_scores({"id": 7, "root": str(tmp_path)}, "u", {"_F": 20.0})
     row = store.one("SELECT best_score,last_checked,last_improved FROM functions WHERE id=1")
