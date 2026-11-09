@@ -138,7 +138,10 @@ def state(net,proj,fn,shared=None):
     if fn['vram'] is not None:
         addresses.add(fn['vram'])
     def build_index():
-        rows = [tuple(r) for r in store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+        from .metadata_rows import rows as metadata_rows
+        fields = ('name','address','size','kind')
+        rows = [tuple(row[field] for field in fields) for row in metadata_rows(
+            store, fields, 'SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
         by_name, by_address = {}, {}
         for index, row in enumerate(rows):
             by_name.setdefault(row[0], []).append(index)

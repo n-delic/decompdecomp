@@ -678,14 +678,22 @@ class Network:
         one (#107 review); elsewhere the list is as it always was."""
         from .rom.symbols import AUTO_NAME
         store = self.project_store(pid)
+        from .metadata_rows import rows as metadata_rows
+        symbols = metadata_rows(store, ('name','address','size','kind'),
+                                'SELECT name,address,size,kind FROM symbols WHERE project_id=?', pid)
+        out = [row for row in symbols if not AUTO_NAME.match(row['name'])]
+        if not out:
+            return out
+        # Only exported names need overlay units. Auto-generated overlay names
+        # previously crossed the Python boundary just to be discarded afterwards.
         twins = {r["name"]: r["unit"] for r in store.all(
-            "SELECT name, unit FROM functions WHERE project_id=? AND vram IN "
-            "(SELECT vram FROM functions WHERE project_id=? GROUP BY vram HAVING COUNT(*) > 1)", pid, pid)}
-        out = []
-        for r in store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid):
-            if AUTO_NAME.match(r["name"]):
-                continue
-            out.append(dict(r) | ({"unit": twins[r["name"]]} if r["name"] in twins else {}))
+            "SELECT name,unit FROM functions WHERE project_id=? AND name IN "
+            "(SELECT value FROM json_each(?)) AND vram IN "
+            "(SELECT vram FROM functions WHERE project_id=? GROUP BY vram HAVING COUNT(*) > 1)",
+            pid, json.dumps([row['name'] for row in out]), pid)}
+        for row in out:
+            if row['name'] in twins:
+                row['unit'] = twins[row['name']]
         return out
 
     def _contexts(self, project_id: int, units):

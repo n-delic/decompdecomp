@@ -119,32 +119,48 @@ def portable(net, project_id):
     store = net.project_store(project_id)
     if not store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):
         return {}
-    # Group physical text/hash references before the detail view decodes them.
-    # In particular, a large shared header must not be fetched once per match.
-    # One statement keeps records and their distinct text in the same snapshot.
-    rows = store.all('''WITH selected AS MATERIALIZED (
-        SELECT b.function_id,f.name,
-            min(b.function_id) OVER (PARTITION BY b.source) AS source_id,
-            min(b.function_id) OVER (PARTITION BY b.header) AS header_id
-        FROM main.verified_matches b JOIN functions f ON f.id=b.function_id WHERE f.project_id=?)
-        SELECT 'match' AS kind,s.function_id,s.name,b.details AS value,s.source_id,s.header_id
-        FROM selected s JOIN verified_matches b ON b.function_id=s.function_id
-        UNION ALL
-        SELECT 'source',b.function_id,NULL,b.source,NULL,NULL FROM verified_matches b
-        JOIN (SELECT DISTINCT source_id FROM selected) s ON b.function_id=s.source_id
-        UNION ALL
-        SELECT 'header',b.function_id,NULL,b.header,NULL,NULL FROM verified_matches b
-        JOIN (SELECT DISTINCT header_id FROM selected) s ON b.function_id=s.header_id
-        ORDER BY kind,function_id''', project_id)
-    text = {'source':{}, 'header':{}}
-    for row in rows:
-        if row['kind'] != 'match':text[row['kind']][row['function_id']] = row['value']
+    # Carry raw packed references and their distinct compressed blobs in the same
+    # snapshot. Decode and verify outside SQLite: per-row Python UDF/GIL handoffs
+    # can dominate export time while background Python workers are busy. Legacy
+    # inline text remains text; this does not aggregate inflated C/header payloads.
+    from . import payload_storage
+    rows=store.all('''WITH selected AS MATERIALIZED (
+    SELECT b.function_id,f.name,b.details,b.source,b.header FROM main.verified_matches b
+    JOIN functions f ON f.id=b.function_id WHERE f.project_id=?),
+    refs AS (SELECT lower(hex(details)) AS hash FROM selected WHERE typeof(details)='blob'
+    UNION SELECT lower(hex(source)) FROM selected WHERE typeof(source)='blob'
+    UNION SELECT lower(hex(header)) FROM selected WHERE typeof(header)='blob'),
+    packets AS (
+    SELECT function_id AS position,'' AS hash,json_object('kind','match','function_id',function_id,'name',name,
+    'details',CASE WHEN typeof(details)='blob' THEN lower(hex(details)) ELSE details END,'details_ref',typeof(details)='blob',
+    'source',CASE WHEN typeof(source)='blob' THEN lower(hex(source)) ELSE source END,'source_ref',typeof(source)='blob',
+    'header',CASE WHEN typeof(header)='blob' THEN lower(hex(header)) ELSE header END,'header_ref',typeof(header)='blob') AS record
+    FROM selected
+    UNION ALL SELECT NULL,r.hash,json_object('kind','payload','hash',r.hash,'payload',CASE WHEN p.hash IS NOT NULL THEN hex(p.payload) END)
+    FROM refs r LEFT JOIN main.text_payloads p ON p.hash=r.hash),
+    numbered AS (SELECT record,row_number() OVER (ORDER BY position,hash) AS ordinal FROM packets)
+    SELECT json_group_array(json(record)) AS packet FROM numbered GROUP BY (ordinal-1)/128 ORDER BY min(ordinal)''',project_id)
+    decoded, records = {}, []
+    # Release encoded pages as they expand; large shared headers must not keep
+    # both their compressed transport and decoded text alive for the whole export.
+    while rows:
+        for row in json.loads(rows.pop()['packet']):
+            if row['kind'] == 'payload':
+                blob = bytes.fromhex(row['payload']) if row['payload'] is not None else None
+                decoded[row['hash']] = payload_storage.unpack(row['hash'], blob)
+            else:
+                records.append(row)
+    def text(row, key):
+        return decoded[row[key]] if row[key+'_ref'] else row[key]
+    # Aggregate input ordering is not a SQL guarantee. Preserve the old ID order
+    # for stable matches/source/header dictionary insertion order in saved files.
+    records.sort(key=lambda row: row['function_id'])
     sources, headers, matches = {}, {}, {}
-    for row in rows:
-        if row['kind'] != 'match':continue
-        details = json.loads(row['value'])
-        sources[details['source_sha256']] = text['source'][row['source_id']]
-        if details['header_sha256']: headers[details['header_sha256']] = text['header'][row['header_id']]
+    for row in records:
+        details = json.loads(text(row, 'details'))
+        sources[details['source_sha256']] = text(row, 'source')
+        if details['header_sha256']:
+            headers[details['header_sha256']] = text(row, 'header')
         matches[row['name']] = details
     return {'matches':matches,'sources':sources,'headers':headers} if matches else {}
 
