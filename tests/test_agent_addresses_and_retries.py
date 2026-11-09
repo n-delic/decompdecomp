@@ -66,15 +66,15 @@ def test_resolver_bounds_and_mcp_api_share_the_schema(tmp_path):
 def test_opencode_short_names_require_unique_discovery_and_preserve_full_ids():
     known=OPENCODE.read_models(['opencode/example-free','provider/deep/model','invalid/','provider//broken'])
     assert [r['id'] for r in known]==['opencode/example-free','provider/deep/model']
-    assert OPENCODE.resolve_model('example-free#high',known)=='opencode/example-free#high'
-    assert OPENCODE.resolve_model('other/custom-model',known)=='other/custom-model'
+    assert OPENCODE.resolve_known_model('example-free#high',known)=='opencode/example-free#high'
+    assert OPENCODE.resolve_known_model('other/custom-model',known)=='other/custom-model'
     assert OPENCODE.validate_model('opencode/example-free') is None
     for invalid in ('example-free','provider/','/model','provider//model','provider/model#','provider/.','provider/..'):
         assert OPENCODE.validate_model(invalid)
     with pytest.raises(ValueError,match='ambiguous'):
-        OPENCODE.resolve_model('example-free',known+[{'id':'other/example-free'}])
+        OPENCODE.resolve_known_model('example-free',known+[{'id':'other/example-free'}])
     with pytest.raises(ValueError,match='Refresh models'):
-        OPENCODE.resolve_model('not-discovered',known)
+        OPENCODE.resolve_known_model('not-discovered',known)
 
 
 def test_model_validation_precedes_project_preparation_and_worker_creation(tmp_path,monkeypatch):

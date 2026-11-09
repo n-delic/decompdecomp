@@ -447,6 +447,7 @@ class Session:
     cooldown_observed: float = 0
     provider_waiting: bool = False
     provider_retry_requested: bool = False
+    output_limit_retries: int = 0
     continuation_attempts: int = 0
     continuation_note: str = ""
     limit_until: float | None = None  # when the agent said that limit resets
@@ -903,6 +904,7 @@ class Manager:
         s.configuration_error = False
         s.cooldown_observed = 0
         s.continuation_attempts, s.continuation_note = 0, ""
+        s.output_limit_retries = 0
         s.started_at = time.time()
         if s.options.get('focus_id'):
             s.options.setdefault('focus_until',s.started_at+s.options['focus_minutes']*60)
@@ -2128,6 +2130,24 @@ class Manager:
             return False
         if s.throttled:
             return False  # provider concurrency backoff must not spend the handshake retry
+        if not s.limited and k.exit_reason(state) == 'output_limit':
+            from . import session_followups
+            if s.output_limit_retries:
+                raise Fatal('The model reached its output limit again after one recovery attempt. '
+                            'Automatic retries paused; saved candidates are retained. '
+                            'Review the transcript and use smaller edits or another model before pressing Start.')
+            s.output_limit_retries += 1
+            # A fresh prompt must not resume the same incomplete generation.
+            # Function handoffs and all saved transcript/candidate data remain.
+            s.options.pop('resume_conversation', None)
+            s.options.pop('focus_conversation', None)
+            self._save(s)
+            s.continuation_note = session_followups.OUTPUT_RECOVERY
+            s.error = 'The model response reached its output limit; the unfinished tool call was not confirmed.'
+            s.push('error', s.error)
+            s.push('info', 'One fresh-session recovery will request smaller edits and re-read the live candidate. '
+                   'A repeated output-limit failure pauses automatic retries.')
+            return False
         if (agent.id, s.slug) in pending and not s.limited and not s.auth_failed:
             s.tool_handshake_failures += 1
             message = 'CLI tool handshake was not completed: the server preflight passed, but this agent never successfully called project_info. No new function was handed over.'

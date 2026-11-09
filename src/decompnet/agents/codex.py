@@ -155,6 +155,9 @@ class Codex(Agent):
                 or 'unsupported_value' in error and 'reasoning.effort' in error
                 or bool(re.search(r"(?:unsupported value|not supported).*(?:reasoning|effort)|(?:reasoning|effort).*not supported", error, re.I)))
 
+    def exit_reason(self, state: dict) -> str:
+        return 'output_limit' if state.get('output_limit') else 'not reported'
+
     def estimate_cost(self, model: str, usage: dict) -> float | None:
         # Standard API USD / million tokens, checked 2026-10-26:
         # https://developers.openai.com/api/docs/pricing
@@ -232,6 +235,7 @@ class Codex(Agent):
             elif it == "error":
                 out.append(("error", str(item.get("message", ""))[:SAID_CHARS]))
         elif t == "turn.completed":  # its input tokens include the cached ones
+            state.pop('output_limit', None)  # The CLI completed a later turn itself.
             out.append(("info", "turn finished"))
             usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
             cached = number(usage, "cached_input_tokens")
@@ -239,6 +243,11 @@ class Codex(Agent):
                                   output=number(usage, "output_tokens"), turns=1))
         elif t in ("error", "turn.failed"):
             out.append(("error", error_text(event.get("error") or event.get("message"))[:SAID_CHARS]))
+        # Retain the explicit provider category even if later diagnostics or
+        # reasoning fill the bounded feed. A JSON parse error alone is not proof.
+        if any(kind == 'error' and re.search(r'\bIncomplete response returned,\s*reason:\s*max_output_tokens\b', text, re.I)
+               for kind, text in out):
+            state['output_limit'] = True
         return out
 
 

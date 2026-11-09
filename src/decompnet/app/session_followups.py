@@ -119,3 +119,11 @@ def investigation_outcome(net, agent, began, *, project=None):
     row = store.one("SELECT detail FROM events WHERE agent_id=? AND kind='investigation' AND created_at>=? ORDER BY id DESC LIMIT 1", agent.id, began)
     return {'report_boundary':'Boundary review submitted', 'report_data_region':'Data investigation completed',
             'report_candidate_issue':'Candidate concern submitted', 'suggest_boundary':'Boundary recommendation submitted'}.get(row['detail']) if row else None
+
+
+OUTPUT_RECOVERY = (
+    'The previous response reached the model output limit and an unfinished tool call may not have reached the app. '
+    'Recover live claims with get_claims and read the current candidate and revision with get_candidate before editing. '
+    'Use small compile_patch edits with exact anchors and focused edit_context changes. Keep the complete candidate '
+    'in the app and submit one bounded change per call. Compile through the ordinary judge after each change. '
+    'Report the specific blocker if a required edit cannot fit; saved work remains available.')
