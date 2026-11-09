@@ -146,3 +146,31 @@ def test_cancelled_admission_retains_candidate_and_does_not_release_other_owner(
     assert worker.verification_owner is None
     assert slot.acquire(blocking=False)
     slot.release()
+
+
+def test_verification_holder_phase_ignores_same_project_waiter_activity(project):  # noqa: F811
+    net, _, _ = project
+    worker = net.progress
+    with worker._project_lock('game'), worker._verification('game'):
+        worker._activity('game', phase='Compiling saved functions')
+        with ThreadPoolExecutor(1) as pool:
+            pool.submit(worker._activity, 'game', phase='Comparing saved files').result(timeout=2)
+        assert worker.status('game')['phase'] == 'Comparing saved files'
+        assert worker.verification_details['phase'] == 'Compiling saved functions'
+        assert worker.verification_details['thread'] == threading.current_thread().name
+    assert worker.verification_details is None
+
+
+def test_verification_holder_phase_tracks_saved_judge_child_and_clears_on_error(project, monkeypatch):  # noqa: F811
+    net, folder, _ = project
+    worker = net.progress
+    def judge(*args, **kwargs):
+        worker._activity('game', phase='Compiling changed saved inputs')
+        assert worker.verification_details['thread'] == 'saved-judge-game'
+        raise RuntimeError('synthetic judge failure')
+    monkeypatch.setattr(saves, '_judge_saved', judge)
+    with pytest.raises(RuntimeError, match='synthetic judge failure'):
+        with worker._project_lock('game'), worker._verification('game'):
+            worker._judge_saved('game', folder)
+    assert worker.verification_owner is None
+    assert worker.verification_details is None

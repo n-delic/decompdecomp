@@ -30,6 +30,7 @@ from pathlib import Path
 
 from .. import compiler, consoles, toolchains
 from ..hostenv import NO_WINDOW, stop_process_tree
+from ..metadata_rows import rows as metadata_rows
 from ..network import CLAIM_ORDERS, NetworkError
 from ..request_timing import phase
 from ..scoring import percent_text
@@ -474,7 +475,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
                        | {r['agent_id'] for r in note_rows if r['agent_id'] is not None})
     # Identities remain shared; project notes and functions need not join a copy
     # of the agent registry inside each operational database.
-    names = {r["id"]: r["name"] for r in net.store.all(
+    names = {r["id"]: r["name"] for r in metadata_rows(net.store, ("id", "name"),
         "SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))", json.dumps(agent_ids))}
     functions = {}
     for r in rows:
@@ -662,7 +663,7 @@ def _save_best(net, proj, folder: Path) -> dict:
                          "project_id=? AND status='open' AND best_source IS NOT NULL AND best_score IS NOT NULL "
                          "ORDER BY unit, name", proj["id"])
     agent_ids = sorted({r['best_agent_id'] for r in rows if r['best_agent_id'] is not None})
-    names = {r['id']: r['name'] for r in net.store.all(
+    names = {r['id']: r['name'] for r in metadata_rows(net.store, ("id", "name"),
         "SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))", json.dumps(agent_ids))}
     folder.mkdir(parents=True, exist_ok=True)
     files = {}

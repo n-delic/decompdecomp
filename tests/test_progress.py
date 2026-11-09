@@ -113,13 +113,16 @@ def test_repair_keeps_a_shortened_file_for_a_known_long_symbol(tmp_path):
     name = "lower_bound__" + "template_argument_" * 40
     file = saves._source_file(name)
 
-    class Store:
-        @staticmethod
-        def all(query, project_id):
-            return [{"name": name}]
-
-    disk = {saves.MANIFEST: json.dumps({"layout": [{"name": "g"}]}), f"src/{file}": "edited source"}
-    repaired = _repair(SimpleNamespace(store=Store()), 1, tmp_path, disk, lambda *_: None)
+    # Execute the real metadata query so this guard covers both direct and
+    # aggregate transport, rather than depending on a Store.all-only stub.
+    import sqlite3
+    with sqlite3.connect(':memory:') as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute('CREATE TABLE functions(project_id INTEGER, name TEXT)')
+        connection.execute('INSERT INTO functions VALUES(1,?)', (name,))
+        store = SimpleNamespace(one=lambda query, pid: connection.execute(query, (pid,)).fetchone())
+        disk = {saves.MANIFEST: json.dumps({"layout": [{"name": "g"}]}), f"src/{file}": "edited source"}
+        repaired = _repair(SimpleNamespace(store=store), 1, tmp_path, disk, lambda *_: None)
 
     assert f"src/{file}" in repaired
     assert not (tmp_path / "unlisted" / "src" / file).exists()
@@ -1506,6 +1509,7 @@ def test_metadata_pull_during_compile_does_not_discard_result(project,metadata):
 def test_verification_estimate_uses_completed_functions_and_hides_when_paused(monkeypatch):
     from decompnet.app import progress
     worker=Progress.__new__(Progress)
+    worker.local=threading.local()
     worker.activity={}
     worker.activity_lock=threading.Lock()
     now=[100.0]
