@@ -617,6 +617,13 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                          "but won't match.", s(function=st("function", True), compiler=st("another compiler"),
                                                 source=st("C (default: the best attempt)"))),
         "claim_readable": ("Take the next matched function that isn't readable yet.", s()),
+        "polish_function": ("Apply local renames, existing type aliases and a one-line comment without shifting source lines; "
+                            "kept only after an exact judge. reuse=true tests a unique verified identical-helper pattern.",
+                            s(function=st("function", True), renames=st("JSON object: old local name to new name"),
+                              comment=st("one-line description"), types=st("JSON object: old type to existing header type"),
+                              reuse=bo("use the suggested verified pattern"))),
+        "tidy_file": ("Remove duplicate includes/extern declarations through build verification and rollback; review semantic tidying before tidy_done.",
+                      s(path=st("source/header path", True))),
         "make_readable": ("A readable rewrite of a matched function (names, types, a comment); kept only if it still "
                           "matches byte for byte.", s(function=st("function", True), source=st("readable C", True))),
         "share_knowledge": ("Propose evidence-backed reusable discoveries now; do not wait for a second model before proposing. Reusable matching tips for the game/compiler across functions. NOT function-specific notes: use release_function(notes=...) or add_note(function=...). "

@@ -757,6 +757,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Small polish plans, prepared evidence and verified identical-helper reuse | ✓ shared path | ✓ shared path | ✓ shared path | ✓ shared path | ✓ shared path | ✓ shared path | ✓ shared path | ✓ shared path |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -1275,6 +1276,12 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   GCC's code with CodeWarrior's C library: the three with symbols had GCC's mark on 91-93% of their object files.
   The one that built most of the code is the game's, and SN's GCC is told from Sony's by its own code; the others'
   object files get their ranges at import, and Check again suggests them to older projects through the range check.
+- **Less mechanical work for polishing agents.** Small local/type/comment plans preserve physical lines,
+  prepared briefs supply existing declarations, calls, data and naming style, failed edits leave durable hints,
+  and unambiguous verified plans are tried on identical C shapes in the same project through the destination judge.
+  ROM failure suppression includes source/header/compiler/symbol inputs. Project builds keep their existing
+  candidate-file/harness repeat check. Exact duplicate externs and guarded local includes are tidied through
+  build verification and rollback before semantic file review; shared type extraction remains agent work.
 - **Polishing reaches every function, then tidies each file.** A floor of 8 instructions and a ceiling of 400 kept
   polishing off a game's smallest and biggest functions for good: every size comes now, the middle first, and a
   function three tries didn't make readable is left. Once a source file's functions are all readable, a helper tidies

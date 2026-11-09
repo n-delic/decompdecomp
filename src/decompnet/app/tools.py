@@ -25,6 +25,7 @@ from . import (
     claim_state,
     compiler_experiments,
     local_experiments,
+    polish_automation,
     reviewed_search_seeds,
     search_brief,
 )
@@ -138,13 +139,18 @@ functions, then stop:
 1. claim_readable() gives you the next matched function that isn't readable yet, with its matching C.
 2. Read the function, and get_function on the functions it calls, until you understand what it does.
 3. {names}
-4. make_readable(function, source): the same function with meaningful parameter and local names, the header's
+4. Prefer polish_function(function, renames='{{"arg0":"value"}}', comment="What it does") for local names and comments.
+   renames/types are JSON objects. Existing header type aliases can be substituted with types. The app applies the
+   plan without shifting physical lines, judges it, and learns verified patterns for identical helpers. reuse=true
+   tests a suggested pattern. Shared names still use rename_symbol. For complex scopes or restructuring use
+   make_readable(function, source): the same function with meaningful parameter and local names, the header's
    types and names, and one comment saying what it does. Keep the statements' shape (order, casts, temporaries):
    it's judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
    your last change and try a smaller one.
 
 Once every function in a source file is readable, claim_readable may give you the file to tidy instead (TIDY A
-FILE): follow its list with edit_file and rename_symbol, then tidy_done. A file counts as one of your {count}.
+FILE): duplicate declarations/includes have already had a guarded cleanup. Follow its list with edit_file and
+rename_symbol, use tidy_file(path) for another mechanical cleanup, then tidy_done. A file counts as one of your {count}.
 
 Write C people would write. Be brief in your messages: work, don't narrate.
 """
@@ -541,6 +547,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "search_flags": lambda net, agent, slug, function, compiler="", source="":
         net.search_flags(agent, slug, function, compiler, source),
     "claim_readable": lambda net, agent, slug: net.readability.claim(agent, slug),
+    "polish_function": lambda net, agent, slug, function, renames="{}", comment="", types="{}", reuse=False: polish_automation.structured(net.readability, agent, slug, function, renames, comment, types, reuse),
+    "tidy_file": lambda net, agent, slug, path: polish_automation.tidy(net.readability, agent, slug, path),
     "make_readable": lambda net, agent, slug, function, source: net.readability.submit(agent, slug, function, source),
     "tidy_done": lambda net, agent, slug, unit, summary: net.readability.tidy_done(agent, slug, unit, summary),
     "suggest": lambda net, agent, slug, text, compiler="", flags="", function="", ranges="", source="":
@@ -568,7 +576,7 @@ READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
 
 ROM_ONLY = {"review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
-FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done",
+FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
 
@@ -1091,6 +1099,20 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         """Take the next matched function that isn't readable yet: rename, type and comment it so people understand
         it, while it still matches byte for byte."""
         return await run(ctx, "claim_readable")
+
+    @tool
+    async def polish_function(ctx: Context, function: str, renames: str = "{}", comment: str = "", types: str = "{}", reuse: bool = False) -> str:
+        """Apply a small polish plan, judged byte for byte. renames and types are JSON objects mapping old to new
+        identifiers. Renames cover simple parameters/locals only; types must already exist in the header. comment
+        is one line. Physical source lines stay intact. reuse=true tests the unique verified identical-helper plan.
+        Use rename_symbol for shared names, make_readable for complex scopes or larger edits."""
+        return await run(ctx, "polish_function", function=function, renames=renames, comment=comment, types=types, reuse=reuse)
+
+    @tool
+    async def tidy_file(ctx: Context, path: str) -> str:
+        """Remove exact duplicate includes/extern declarations without shifting source lines. Uses edit_file's build,
+        full match protection and rollback. Does not mark the file tidied: review names/types, then tidy_done."""
+        return await run(ctx, "tidy_file", path=path)
 
     @tool
     async def make_readable(ctx: Context, function: str, source: str) -> str:

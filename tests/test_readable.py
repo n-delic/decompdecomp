@@ -169,3 +169,16 @@ def test_polishing_stats_count_only_accepted_functions_per_agent_and_project(tmp
     board = net.stats("first")["agents"]
     assert board == [{"agent": "polisher", "compiles": 0, "matched": 0, "polished": 1, "last": None, "improved": 0}]
     assert net.stats("second")["agents"][0]["polished"] == 1
+
+
+def test_small_polish_plan_passes_the_real_rom_judge_without_moving_lines(matched):
+    from decompnet.app.polish_automation import structured
+    net,slug,agent = matched
+    original = net._function('clamp_s32',slug)['matched_source']
+    answer = structured(net.readability,agent,slug,'clamp_s32',
+                        '{"v":"value","lo":"low","hi":"high"}', 'Clamp a value to the inclusive range.')
+    assert answer.startswith('✅')
+    fn = net._function('clamp_s32',slug)
+    assert fn['readable'] and fn['matched_source'].count('\n') == original.count('\n')
+    assert fn['unpolished_source'] == original
+    assert net.project_store(slug).one('SELECT 1 FROM polish_patterns WHERE function_id=?',fn['id'])

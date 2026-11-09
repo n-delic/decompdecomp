@@ -94,6 +94,15 @@ CREATE TABLE IF NOT EXISTS auto_match_commits(
  snapshot TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', commit_sha TEXT, error TEXT,
  retry_at REAL NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS idx_auto_match_pending ON auto_match_commits(project_id,state);
+CREATE TABLE IF NOT EXISTS polish_failures(
+    project_id INTEGER NOT NULL, function_id INTEGER NOT NULL, input_key TEXT NOT NULL,
+    candidate_key TEXT NOT NULL, result TEXT NOT NULL, created_at REAL NOT NULL, cacheable INTEGER NOT NULL,
+    PRIMARY KEY(project_id,function_id,input_key,candidate_key));
+CREATE TABLE IF NOT EXISTS polish_patterns(
+    project_id INTEGER NOT NULL, function_id INTEGER NOT NULL, shape TEXT NOT NULL,
+    plan TEXT NOT NULL, created_at REAL NOT NULL,
+    PRIMARY KEY(project_id,function_id,shape));
+CREATE INDEX IF NOT EXISTS polish_pattern_shape ON polish_patterns(project_id,shape);
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY, project_id INTEGER, agent_id INTEGER, kind TEXT, detail TEXT, created_at REAL);
 CREATE INDEX IF NOT EXISTS idx_functions_status ON functions(project_id, status, n_insns);

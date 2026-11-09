@@ -1,0 +1,338 @@
+"""Mechanical polishing cannot change a shared name, shift lines or bypass the destination judge."""
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from decompnet.app import polish_automation as auto
+from decompnet.app import polish_edits as edits
+from decompnet.network import NetworkError
+
+from .test_claims import _game
+
+SOURCE = 's32 f(s32 arg0) {\n    s32 var_v0;\n    var_v0 = arg0 * 3;\n    return var_v0;\n}'
+HEADER = 'typedef int s32; typedef int Count;\n'
+
+
+def test_small_edits_preserve_lines_literals_comments_and_members():
+    source = SOURCE.replace('return var_v0;', 'log("arg0", obj->arg0); /* arg0 */ return var_v0;')
+    result = edits.apply(source,'f',{'arg0':'value','var_v0':'total'},'Triple the value.',header=HEADER)
+    assert result.count('\n') == source.count('\n')
+    assert 'log("arg0", obj->arg0); /* arg0 */ return total;' in result
+    assert 's32 value' in result and 's32 total;' in result
+    assert result.startswith('/* Triple the value. */ s32 f(')
+
+
+@pytest.mark.parametrize('renames,comment', [({'f':'other'},''),({'missing':'value'},''),
+    ({'arg0':'var_v0'},''),({'arg0':'int'},''),({'arg0':'value','var_v0':'value'},''),
+    ({},'bad */ injected'),({},'two\nlines'),({},'splice\\')])
+def test_ambiguous_or_injected_plans_are_refused(renames,comment):
+    with pytest.raises(NetworkError):edits.apply(SOURCE,'f',renames,comment,header=HEADER)
+
+
+def test_shadowed_and_extern_names_are_not_mechanical_locals():
+    for source in ['int f(int x) { { int x; } return x; }','int f(void) { extern int x; return x; }',
+                   'int f(void) { static int x; return x; }']:
+        with pytest.raises(NetworkError):edits.apply(source,'f',{'x':'value'},header=HEADER)
+
+
+def test_existing_type_aliases_can_be_applied_but_values_cannot_be_retyped():
+    result = edits.apply(SOURCE,'f',{},types={'s32':'Count'},header=HEADER)
+    assert 'Count f(Count arg0)' in result and result.count('\n') == SOURCE.count('\n')
+    with pytest.raises(NetworkError):edits.apply(SOURCE,'f',{},types={'arg0':'Count'},header=HEADER)
+    with pytest.raises(NetworkError):edits.apply(SOURCE,'f',{},types={'s32':'Invented'},header=HEADER)
+
+
+def test_patterns_preserve_literals_types_members_and_shared_callees():
+    shape,_ = edits.signature(SOURCE,'f',HEADER)
+    assert shape == edits.signature(SOURCE.replace(' f(', ' g(').replace('arg0','input'),'g',HEADER)[0]
+    for variant in [SOURCE.replace('* 3','* 4'), SOURCE.replace('s32','float'),
+                    SOURCE.replace('arg0 * 3','foo(arg0)'),SOURCE.replace('arg0 * 3','bar(arg0)')]:
+        assert edits.signature(variant,'f',HEADER)[0] != shape
+    a = 'int f(int a) { return obj->a + a; }'
+    b = 'int g(int b) { return obj->b + b; }'
+    assert edits.signature(a,'f')[0] != edits.signature(b,'g')[0]
+
+
+def test_cleanup_only_removes_exact_duplicates_in_the_same_region_and_keeps_lines():
+    source = '#include "safe.h"\n#include "safe.h"\nextern int data;\nextern int data;\n#define X 2\nextern int data;\n'
+    updated = edits.cleanup(source,{'"safe.h"'})
+    assert updated.count('#include') == 1 and updated.count('extern int data;') == 2
+    assert updated.count('\n') == source.count('\n')
+    assert edits.cleanup('#include "x.inc"\n#include "x.inc"\n').count('#include') == 2
+    assert edits.cleanup('extern int data; /* first */\nextern int data; /* second */\n').count('extern') == 2
+    assert edits.guarded_header('/* title */\n#ifndef SAFE_H\n#define SAFE_H\n#endif')
+
+
+@pytest.fixture
+def game(tmp_path,monkeypatch):
+    net,pid = _game(tmp_path,[('f',20,'matched'),('g',20,'matched')])
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?',(json.dumps({'kind':'rom','compiler':{'toolchain':'gcc-2.7.2-kmc','flags':[]}}),))
+        for name in ('f','g'):
+            db.execute('UPDATE functions SET matched_source=?,vram=?,target=?,relocs=? WHERE name=?',
+                       (SOURCE.replace(' f(',f' {name}('),0x80001000+(name=='g')*0x100,b'code','[]',name))
+        db.execute('INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,1,?,?)',(pid,HEADER,''))
+    agent,_ = net.local_agent('polisher')
+    calls = []
+    def compile(proj,header,source,fn):
+        calls.append(source)
+        return SimpleNamespace(ok='BROKEN' not in source,obj=b'object',log='error: bad type')
+    monkeypatch.setattr(net,'_compile',compile)
+    monkeypatch.setattr(net,'_record',lambda *a,**k:None)
+    monkeypatch.setattr(net,'_evaluate',lambda *a:(object(),True,[]))
+    monkeypatch.setattr(net,'_target_obj',lambda *a:object())
+    monkeypatch.setattr('decompnet.app.readable.scoring.diff',lambda *a:SimpleNamespace(score=0,bytes_match=True))
+    monkeypatch.setattr(net,'xrefs',lambda *a:{'calls':{},'called_by':{},'uses':{}})
+    return net,agent,calls
+
+
+def test_a_verified_plan_is_reused_by_the_queue_but_rejudged_at_the_destination(game):
+    net,agent,calls = game
+    assert auto.structured(net.readability,agent,'game','f','{"arg0":"value","var_v0":"total"}',
+                           'Triple the value.').startswith('✅')
+    original = net._function('g','game')['matched_source']
+    answer = net.readability.claim(agent,'game')
+    assert 'Automatically polished 1' in answer
+    row = net._function('g','game')
+    assert row['readable'] and row['unpolished_source'] == original and 'total' in row['matched_source']
+    assert len(calls) == 2 and ' g(' in calls[1]
+    assert not net.store.one('SELECT 1 FROM claims')
+
+
+def test_failed_edits_are_durable_and_not_recompiled_until_inputs_change(game):
+    net,agent,calls = game
+    candidate = SOURCE.replace('s32','BROKEN')
+    assert 'COMPILE ERROR' in net.readability.submit(agent,'game','f',candidate)
+    assert net.readability.submit(agent,'game','f',candidate).startswith('🔁')
+    assert len(calls) == 1
+    row = net._function('f','game')
+    assert row['matched_source'] == SOURCE and not row['readable']
+    evidence = auto.brief(net,net._project('game'),row,SOURCE)
+    assert 'Failed edit:' in evidence and 'BROKEN' in evidence
+    with net.store.tx() as db:
+        db.execute('INSERT INTO context_versions(project_id,version,header,unit) VALUES(1,2,?,?)',(HEADER+'/* changed */',''))
+    net.readability.submit(agent,'game','f',candidate)
+    assert len(calls) == 2
+    net.bump_generation(1)
+    net.readability.submit(agent,'game','f',candidate)
+    assert len(calls) == 3
+
+
+def test_changed_global_bindings_and_flags_invalidate_failed_edits(game):
+    net,agent,calls = game
+    candidate = SOURCE.replace('s32','BROKEN')
+    net.readability.submit(agent,'game','f',candidate)
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=? WHERE id=1",(json.dumps({'kind':'rom','compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O1']}}),))
+    net.readability.submit(agent,'game','f',candidate)
+    assert len(calls) == 2
+    # A changed symbol binding in a candidate, even when absent from the baseline.
+    candidate += '\n/* global */'
+    syms = net.symbols(1)
+    net.readability.submit(agent,'game','f',candidate)
+    original = syms.resolve
+    syms.resolve = lambda name: 42 if name == 'BROKEN' else original(name)
+    net.readability.submit(agent,'game','f',candidate)
+    assert len(calls) == 4
+
+
+def test_ambiguous_patterns_and_another_agents_claim_are_respected(game):
+    net,agent,calls = game
+    auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple the value.')
+    other,_ = net.local_agent('other')
+    net.readability.claim(other,'game')  # automatic reuse would consume it, so reset for the held-claim test
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET readable=0,matched_source=? WHERE name='g'",(SOURCE.replace(' f(',' g('),))
+        fn = net._function('g','game')
+        db.execute('INSERT OR REPLACE INTO claims VALUES(?,?,?,?)',(fn['id'],other.id,0,9999999999))
+    with pytest.raises(NetworkError,match='held'):
+        auto.structured(net.readability,agent,'game','g','{"arg0":"input"}','Triple it.')
+    assert len(calls) == 2
+
+
+def test_prepared_briefs_include_existing_types_calls_data_names_and_failure_evidence(game,monkeypatch):
+    net,agent,_ = game
+    from decompnet.rom.symbols import Symbol, SymbolTable
+    syms = SymbolTable([Symbol('helper',0x80002000,16,'func'),Symbol('caller',0x80003000,16,'func'),
+                        Symbol('message',0x80004000,16,'data')])
+    monkeypatch.setattr(net,'symbols',lambda *a:syms)
+    monkeypatch.setattr(net,'xrefs',lambda *a:{'calls':{0x80001000:[0x80002000]},'called_by':{0x80001000:[0x80003000]},'uses':{0x80001000:[0x80004000]}})
+    monkeypatch.setattr(net,'read_data',lambda *a:'as a string: "hello"')
+    text = net.readability.claim(agent,'game')
+    assert all(word in text for word in ('typedef int s32','helper','caller','hello','Nearby naming style'))
+
+
+def test_project_cleanup_uses_edit_file_and_keeps_semantic_tidying_pending(tmp_path,monkeypatch):
+    net,pid = _game(tmp_path,[('f',20,'matched')])
+    with net.store.tx() as db:db.execute("UPDATE projects SET config=? WHERE id=?",(json.dumps({'kind':'fork'}),pid))
+    (tmp_path/'objdiff.json').write_text('{"units":[]}')
+    (tmp_path/'include').mkdir()
+    (tmp_path/'include'/'safe.h').write_text('#pragma once\nextern int data;\n')
+    path = tmp_path/'src.c'
+    path.write_text('#include "safe.h"\n#include "safe.h"\nextern int data;\nextern int data;\n')
+    tried = []
+    def edit(*args):
+        tried.append(args)
+        return '❌ REJECTED and undone: protected match lost'
+    monkeypatch.setattr(net.forks,'edit_file',edit)
+    agent,_ = net.local_agent('polisher')
+    assert 'REJECTED' in auto.tidy(net.readability,agent,'game','src.c')
+    assert path.read_text().count('#include') == 2  # all writes/rollback belong to edit_file
+    assert len(tried) == 1 and tried[0][4].count('#include') == 1
+    assert not net.store.one("SELECT 1 FROM events WHERE kind='tidied'")
+    with pytest.raises(NetworkError):auto.tidy(net.readability,agent,'game','../outside.c')
+
+
+def test_api_and_mcp_tools_offer_the_same_plans_in_both_modes():
+    from decompnet.agents.api import api_tool_schemas
+    from decompnet.app import tools
+    for fork in (False,True):
+        names = tools.tool_names(fork)
+        schemas = {r['function']['name']:r['function'] for r in api_tool_schemas(fork)}
+        assert 'polish_function' in names and 'polish_function' in schemas
+        assert ('tidy_file' in names) == fork
+        assert 'renames' in schemas['polish_function']['parameters']['properties']
+    assert 'polish_function' in tools.READABLE_PROMPT.format(title='Game',count=10,names=tools.READABLE_ROM)
+
+
+def test_conflicting_patterns_changed_donors_and_other_units_do_not_reuse(game):
+    net,agent,_ = game
+    auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple the value.')
+    proj,fn = net._project('game'),net._function('g','game')
+    assert auto.pattern(net,proj,fn,SOURCE.replace(' f(',' g('),HEADER)
+    with net.store.tx() as db:db.execute("UPDATE functions SET unit='elsewhere' WHERE name='g'")
+    fn = net._function('g','game')
+    assert auto.pattern(net,proj,fn,SOURCE.replace(' f(',' g('),HEADER) is None
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET unit='a' WHERE name='g'")
+        db.execute("UPDATE functions SET matched_source=matched_source || ' /* revised */' WHERE name='f'")
+    fn = net._function('g','game')
+    assert auto.pattern(net,proj,fn,SOURCE.replace(' f(',' g('),HEADER) is None
+
+
+def test_existing_full_rewrites_teach_patterns_without_a_new_agent_tool(game):
+    net,agent,calls = game
+    source = edits.apply(SOURCE,'f',{'arg0':'value','var_v0':'total'},'Triple it.',header=HEADER)
+    assert net.readability.submit(agent,'game','f',source).startswith('✅')
+    assert 'Automatically polished 1' in net.readability.claim(agent,'game')
+    assert len(calls) == 2
+
+
+def test_a_failed_destination_pattern_returns_the_function_for_agent_review(game,monkeypatch):
+    net,agent,calls = game
+    auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple it.')
+    monkeypatch.setattr(net,'_compile',lambda *a:SimpleNamespace(ok=False,log='destination compiler rejects this',obj=None))
+    answer = net.readability.claim(agent,'game')
+    assert 'MAKE READABLE: g' in answer and 'Previous failed edits' in answer
+    fn = net._function('g','game')
+    assert not fn['readable'] and fn['matched_source'] == SOURCE.replace(' f(',' g(')
+    assert len(calls) == 1
+    assert net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
+
+
+def test_changed_context_or_source_during_compile_cannot_be_promoted(game,monkeypatch):
+    net,agent,_ = game
+    def compile(*a):
+        net.bump_generation(1)
+        return SimpleNamespace(ok=True,obj=b'object')
+    monkeypatch.setattr(net,'_compile',compile)
+    with pytest.raises(NetworkError,match='context changed'):
+        auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple it.')
+    assert not net._function('f','game')['readable']
+    def compile_source(*a):
+        with net.store.tx() as db:db.execute("UPDATE functions SET matched_source=? WHERE name='f'",(SOURCE+' /* edited */',))
+        return SimpleNamespace(ok=True,obj=b'object')
+    monkeypatch.setattr(net,'_compile',compile_source)
+    with pytest.raises(NetworkError,match='source changed'):
+        auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple it.')
+    assert net._function('f','game')['matched_source'].endswith('/* edited */')
+
+
+@pytest.mark.parametrize('platform',['gc_wii','pc','nds'])
+def test_project_plans_use_the_ordinary_guarded_attempt_and_retain_failure_hints(tmp_path,monkeypatch,platform):
+    from decompnet.app.forkengine import ForkEngine
+    net,pid = _game(tmp_path,[('f',20,'matched')])
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps({'kind':'fork','platform':platform}),pid))
+        db.execute('UPDATE functions SET matched_source=? WHERE name=?',(SOURCE,'f'))
+    (tmp_path/'objdiff.json').write_text('{"units":[]}')
+    monkeypatch.setattr(ForkEngine,'_current_source',lambda *a,**k:None)
+    monkeypatch.setattr(auto,'header',lambda *a:HEADER)
+    calls = []
+    def attempt(self,agent,slug,function,source,**kwargs):
+        calls.append(source)
+        return {'matched':len(calls)>1,'text':'❌ protected neighbour would stop matching'}
+    monkeypatch.setattr(ForkEngine,'attempt',attempt)
+    agent,_ = net.local_agent('polisher')
+    args = (net.readability,agent,'game','f','{"arg0":"value"}','Triple it.')
+    assert 'protected neighbour' in auto.structured(*args)
+    assert not net._function('f','game')['readable']
+    assert auto.structured(*args).startswith('✅')
+    assert len(calls) == 2 and 's32 value' in calls[0]
+    assert net.store.one('SELECT result FROM polish_failures')['result'].startswith('❌')
+
+
+def test_transient_compiler_failures_are_recorded_but_remain_retryable(game,monkeypatch):
+    net,agent,calls = game
+    def compile(*args):
+        calls.append(args)
+        return SimpleNamespace(ok=False,obj=None,log='compiler timed out after 30s')
+    monkeypatch.setattr(net,'_compile',compile)
+    for _ in range(2):assert 'timed out' in net.readability.submit(agent,'game','f',SOURCE+' /* readable */')
+    assert len(calls) == 2
+    assert net.store.one('SELECT cacheable FROM polish_failures')['cacheable'] == 0
+
+
+def test_external_compiler_inputs_disable_failure_suppression(game):
+    net,agent,calls = game
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?',(json.dumps({'kind':'rom','compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-Iexternal']}}),))
+    for _ in range(2):net.readability.submit(agent,'game','f',SOURCE.replace('s32','BROKEN'))
+    assert len(calls) == 2
+
+
+def test_failure_records_survive_reopening_the_app_database(game):
+    from decompnet.app.engine import RomNetwork
+    net,agent,_ = game
+    candidate = SOURCE.replace('s32','BROKEN')
+    net.readability.submit(agent,'game','f',candidate)
+    # A fresh network has no in-memory failure cache.
+    from pathlib import Path
+    reopened = RomNetwork(net.store.path,Path(net.store.path).parent)
+    proj,fn = reopened._project('game'),reopened._function('f','game')
+    key = auto.input_key(reopened,proj,fn,SOURCE,candidate)
+    assert auto.failure(reopened,proj,fn,key,candidate).startswith('🔁')
+
+
+def test_disagreeing_verified_patterns_require_agent_review(game):
+    net,agent,_ = game
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,matched_source) VALUES(1,'h',80,20,'matched','a',?)",(SOURCE.replace(' f(',' h('),))
+    auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple it.')
+    auto.structured(net.readability,agent,'game','h','{"arg0":"input"}','Multiply by three.')
+    proj,fn = net._project('game'),net._function('g','game')
+    assert auto.pattern(net,proj,fn,fn['matched_source'],HEADER) is None
+
+
+def test_stop_prevents_another_automatic_claim(game):
+    import threading
+    net,agent,calls = game
+    stop = threading.Event();stop.set()
+    session = SimpleNamespace(agent_name=agent.name,slug='game',stop=stop)
+    net.project_activity = SimpleNamespace(manager=SimpleNamespace(sessions={'s':session}))
+    with pytest.raises(NetworkError,match='stopped'):net.readability.claim(agent,'game')
+    assert not calls and not net.store.one('SELECT 1 FROM claims')
+
+
+def test_conditional_or_partial_guards_do_not_make_an_include_safe_to_remove():
+    assert not edits.guarded_header('#if 0\n#pragma once\n#endif\nint value;')
+    assert not edits.guarded_header('#ifndef GUARD\n#define GUARD\n#endif\nSIDE_EFFECT()')
+    assert not edits.guarded_header('#ifndef GUARD\n#define GUARD\n#undef GUARD\n#endif')
+    assert edits.guarded_header('#ifndef GUARD\n#define GUARD\n#if OTHER\nextern int x;\n#endif\n#endif')
+
+
+def test_pattern_signatures_keep_the_exact_bytes_of_multiline_literals():
+    first = 'int f(int x) { return log("a' + chr(92) + '\nb", x); }'
+    other = 'int g(int x) { return log("a' + chr(92) + ' b", x); }'
+    assert edits.signature(first,'f')[0] != edits.signature(other,'g')[0]

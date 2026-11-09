@@ -1081,6 +1081,19 @@ name functions, globals and parameters, describe structs in the shared header an
 kept only when the function still matches byte for byte. Names are the agent's reading of the code: the bytes
 prove what a function does, not what its author called it.
 
+Polishing briefs include callers, callees, existing declarations, data previews and nearby naming styles.
+For small edits, helpers use `polish_function`: a JSON map of local names, existing type aliases and a short
+comment. The app applies the plan without moving physical source lines and checks the exact bytes. It remembers
+verified plans for identical C token shapes in the same project and tries an unambiguous plan on the next helper,
+judging it again before keeping it. Shared function and global names still use `rename_symbol`.
+
+Failed polish edits leave a bounded, durable record with the rejected change. ROM projects suppress identical
+failed candidates while their source, header, symbols and compiler context are unchanged; project builds retain
+their existing file/harness repeat check and always receive historical failure hints. Before handing out a file
+to tidy, the app tries removing exact repeated extern declarations and guarded local includes through `edit_file`'s
+build and rollback. `tidy_file` can repeat that cleanup. Moving shared types into headers, naming fields and removing
+unused declarations still need semantic review; only `tidy_done` marks that review complete.
+
 **Has a whole game been decompiled with it?** Not yet. Games get far (hundreds or thousands of matched functions),
 and the export rebuilds the game byte for byte from matched C plus assembly for what isn't matched yet. A game at
 100%, polished, is the goal, and the first one will be announced here.

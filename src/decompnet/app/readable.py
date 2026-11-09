@@ -82,6 +82,7 @@ class Readability:
     def __init__(self, net):
         self.net = net
         self._tidying: dict[tuple[int, str], tuple[int, float]] = {}  # (project, unit) -> (agent, until)
+        self._polish_locks = {}  # function id -> reentrant plan/submission lock
         self._tidy_lock = threading.Lock()  # (helpers claim at once: one file, one helper)
 
     def _untidy(self, proj) -> list[str]:
@@ -152,7 +153,15 @@ class Readability:
             self._tidying[(proj["id"], mine)] = (agent.id, now + CLAIM_SECONDS)
         fp = ForkProject(Path(proj["root"]))
         source = next((u.source for u in fp.units() if u.name == mine), None) or mine
-        return TIDY.format(unit=mine, source=source, data=self._data_held(agent, proj, fp, source)), left
+        from .polish_automation import tidy
+        if proj['slug'] in self.net.links:
+            cleanup = "Mechanical cleanup runs on the room host."
+        else:
+            try:cleanup = tidy(self, agent, proj['slug'], source)
+            except (NetworkError, OSError, UnicodeError) as error:
+                cleanup = f"Mechanical cleanup could not run: {error}. Review the file with read_file."
+        return (TIDY.format(unit=mine, source=source, data=self._data_held(agent, proj, fp, source))
+                + "\n\nMechanical cleanup: " + cleanup), left
 
     def _data_held(self, agent: Agent, proj, fp: ForkProject, source: str) -> str:
         """What the globals a source file declares hold in the original (read_data's summary of each), for its tidy
@@ -198,6 +207,18 @@ class Readability:
         return f"✅ {unit} is tidy. claim_readable for the next one."
 
     def claim(self, agent: Agent, slug: str) -> str:
+        # A reusable plan consumes ordinary claims, one function at a time. No recursion
+        # or fixed run-size cap: cancellation/revision checks remain in the normal judge.
+        automated = 0
+        while True:
+            from .polish_automation import check_stopped
+            check_stopped(self.net,agent,slug)
+            answer = self._claim(agent, slug)
+            if answer is not None:
+                return (f"Automatically polished {automated} identical helper(s), each verified here.\n\n" if automated else "") + answer
+            automated += 1
+
+    def _claim(self, agent: Agent, slug: str) -> str | None:
         """The next matched function that isn't readable yet, held for this agent, with what it needs to know."""
         proj = self.net._project(slug)
         fork = not self.net.is_rom(proj)
@@ -245,6 +266,11 @@ class Readability:
             return (given_up + "Every matched function is readable already (or was tried "
                     f"{POLISH_TRIES} times without staying matched), and every file tidy. 🎉 Stop here: nothing is "
                     "left to polish.")
+        from . import polish_automation
+        if polish_automation.reuse(self, agent, proj, fn):
+            return None
+        source = self._matching_c(proj, fn)
+        prepared = polish_automation.safe_brief(self.net, proj, fn, source)
         counts = self.counts(proj)
         where = f" at 0x{fn['vram']:08X}" if fn["vram"] is not None else f" in {fn['unit']}"
         names = ("- rename_symbol the function, and the globals and functions it uses, once their purpose is clear "
@@ -263,13 +289,14 @@ class Readability:
                 f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n"
                 f"claim_token: {lease}\n"
                 "Pass this claim_token to release_function if you leave this function for another helper.\n\n"
-                f"It matches today with this C:\n```c\n{self._matching_c(proj, fn).strip()}\n```\n\n"
-                "Make it readable without changing what the compiler makes of it:\n" + names +
+                f"It matches today with this C:\n```c\n{source.strip()}\n```\n\n"
+                + prepared + "\nMake it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
                 "- keep the statements' shape: the order, the casts and the temporaries that make it match.\n"
                 + ("- it's a big function: rename and comment in place, statement for statement; don't restructure it "
                    "(one slip anywhere in it and the rewrite is refused).\n" if fn["n_insns"] > BIG_INSNS else "") +
-                f"Then make_readable(\"{fn['name']}\", source). It's judged again: it must still match byte for byte, or "
+                "Prefer polish_function with a JSON local rename map and a one-line comment; it keeps physical lines intact. "
+                f"For a larger rewrite use make_readable(\"{fn['name']}\", source). It's judged again: it must still match byte for byte, or "
                 "it's refused and the matching C stays.")
 
     def _held_by_others(self, proj) -> str:
@@ -302,6 +329,11 @@ class Readability:
             return self._submit(agent, slug, function, source)
 
     def _submit(self, agent: Agent, slug: str, function: str, source: str) -> str:
+        fn = self.net._function(function, slug)
+        with self._polish_locks.setdefault(fn['id'], threading.RLock()):
+            return self._submit_locked(agent, slug, function, source)
+
+    def _submit_locked(self, agent: Agent, slug: str, function: str, source: str) -> str:
         proj = self.net._project(slug)
         fn = self.net._function(function, proj["slug"])
         if fn["status"] != "matched":
@@ -312,26 +344,41 @@ class Readability:
         original = self._matching_c(proj, fn)
         if " ".join(source.split()) == " ".join(original.split()):
             raise NetworkError("that's the C it has already: rename, type and comment it first")
+        from . import polish_automation
+        key = polish_automation.input_key(self.net, proj, fn, original, source)
+        cached = polish_automation.failure(self.net, proj, fn, key, source)
+        if cached:
+            return cached
+
+        def rejected(text, cacheable=False):
+            polish_automation.remember_failure(self.net, proj, fn, key, source, text, original, cacheable)
+            return text
+
         if not self.net.is_rom(proj):  # the project's own file, judged and committed (or put back) as any compile
             res = self.net.forks.attempt(agent, proj["slug"], fn["name"], source, comment=True)
             if not res.get("matched"):
-                return res["text"]
+                return rejected(res["text"])
             return self._readable(proj, fn, agent, source, original=original)
         ctx = self.net._context(proj["id"], fn["unit"])
         result = self.net._compile(proj, ctx["header"], source, fn)
         if not result.ok:
             self.net._record(fn, agent, None, source, ctx["version"])  # its compiles count, as a decompiling one's
-            return f"❌ COMPILE ERROR: the matching C stays.\n{result.log.strip()}"
+            return rejected(f"❌ COMPILE ERROR: the matching C stays.\n{result.log.strip()}",
+                            polish_automation.deterministic_error(result.log))
+        if key != polish_automation.current_key(self.net, proj, fn, original, source):
+            raise NetworkError("The compiler context changed while polishing. Read the function again and retry.")
         cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
         if cand is None:
             self.net._record(fn, agent, None, source, ctx["version"], compiled=True)
-            return f"❌ No function named `{fn['name']}` in it: keep its name (rename it with rename_symbol)."
+            return rejected(f"❌ No function named `{fn['name']}` in it: keep its name (rename it with rename_symbol).")
         d = scoring.diff(self.net._target_obj(fn, proj), cand)
         self.net._record(fn, agent, d.score, source, ctx["version"])  # not as a match: it was one already
         if not (d.bytes_match if verdict is None else verdict):
             note = "\n".join(f"- {p}" for p in problems)
-            return (f"❌ It no longer matches (score {d.score}): the matching C stays. Keep the statements' shape and "
-                    f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""))
+            return rejected(f"❌ It no longer matches (score {d.score}): the matching C stays. Keep the statements' shape and "
+                    f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""), cacheable=d.score > 0 and not problems)
+        if key != polish_automation.current_key(self.net, proj, fn, original, source):
+            raise NetworkError("The compiler context changed while polishing. Read the function again and retry.")
         return self._readable(proj, fn, agent, source, original=original)
 
     def _readable(self, proj, fn, agent: Agent, source: str, *, original=None) -> str:
@@ -341,6 +388,10 @@ class Readability:
         baseline = polish_detail(store,fn)['unpolished_source'] if fn['readable'] else original or fn['matched_source']
         with self.net.progress._project_lock(proj["slug"]), store.tx() as db:
             self.net.progress.check_result()
+            if self.net.is_rom(proj):
+                latest = store.one('SELECT name,status,matched_source FROM functions WHERE id=?',fn['id'])
+                if latest is None or latest['name'] != fn['name'] or latest['status'] != 'matched' or latest['matched_source'] != original:
+                    raise NetworkError("The matching source changed while polishing. Read the function again and retry.")
             db.execute("UPDATE functions SET unpolished_source=CASE WHEN readable=0 THEN ? "
                        "ELSE COALESCE(unpolished_source, ?) END, matched_source=?, best_source=?, readable=1 WHERE id=?",
                        (baseline, baseline, source, source, fn["id"]))
@@ -355,6 +406,8 @@ class Readability:
                     from . import match_commits
                     self.net.project_store(proj['id']).after_commit(
                         lambda: match_commits.enqueue(self.net, self.net.project_row(proj['slug']), fn['id'], polished=True))
+        from .polish_automation import learn
+        learn(self.net,proj,fn,baseline,source)
         counts = self.counts(proj)
         return (f"✅ {fn['name']} is readable now, and still matches byte for byte ({counts['readable']} of "
                 f"{counts['matched']} readable). claim_readable for the next one.")
