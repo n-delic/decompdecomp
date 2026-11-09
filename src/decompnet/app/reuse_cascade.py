@@ -1,6 +1,6 @@
 """Coalesce new matches into bounded, low-priority cross-project searches, with no model calls.
 
-One shared worker consumes one budget for the entire cascade. Engine-only uses stay inert until the server
+One shared worker consumes bounded general and similar-source budgets for the entire cascade. Engine-only uses stay inert until the server
 explicitly enables this service; experiments and tests must opt in. A stopped project stays paused until Run again.
 """
 
@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 
-from . import free_candidates, named_donors, purpose_work, similar_matches
+from . import free_candidates, named_donors, purpose_work, similar_phase
 from .twins import Job
 
 log = logging.getLogger('decompdecomp')
@@ -72,8 +72,12 @@ class Cascade:
             if intervals and start<=intervals[-1][1]:intervals[-1][1]=max(end,intervals[-1][1])
             else:intervals.append([start,end])
         names=[r['name'] for r in rows if r['status']=='matched' and named_donors.meaningful(r['name'])]
+        from .project_activity import active
         from .shared_reuse import compatible
-        projects=[p for p in compatible(self.net,donor,active_only=True) if self.net.project_store(p['id']).one(
+        candidates = list(compatible(self.net, donor, active_only=True))
+        if any(r['status'] == 'matched' for r in rows) and active(self.net, donor['slug']):
+            candidates.append(donor)  # A new verified sibling can unlock functions in its own project.
+        projects=[p for p in candidates if self.net.project_store(p['id']).one(
             "SELECT 1 FROM functions WHERE project_id=? AND status IN ('open','nosource') AND "
             "(name IN (SELECT value FROM json_each(?)) OR EXISTS(SELECT 1 FROM json_each(?) w "
             "WHERE size BETWEEN json_extract(w.value,'$[0]') AND json_extract(w.value,'$[1]'))) LIMIT 1",
@@ -83,51 +87,67 @@ class Cascade:
                 return
             self.pending.update(p['slug'] for p in projects if p['slug'] not in self.net.links
                                 and p['slug'] not in self.paused)
-            if self.running or not self.pending:
+        self.wake()
+
+    def wake(self, job=None):
+        with self.lock:
+            if not self.enabled or self.running or not self.pending:
                 return
             self.running = True
-        job = Job()
-        purpose_work.start('Cross-project match reuse', '', self.drain, job, stop=job.stop.set)
+        job = job or Job()
+        purpose_work.start('Automatic matched-source reuse', '', self.drain, job, stop=job.stop.set)
 
     def drain(self, job=None):
-        """One global budget, including any matches unlocked by this wave. No recursive worker launches."""
+        """Two wave-wide budgets, including new matches; no recursive worker per notification."""
         job = job or Job()
         failed = False
+        deferred = set()
         free_candidates.budget(job, self.seconds, self.attempts)
         with self.lock:
             self.active = job
         try:
-            while not free_candidates.exhausted(job):
+            while not self.exhausted(job):
                 with self.lock:
-                    if not self.enabled or not self.pending:
+                    available = self.pending - deferred
+                    if not self.enabled or not available:
                         break
-                    slug = sorted(self.pending)[0]
+                    slug = sorted(available)[0]
                     self.pending.remove(slug)
                     from .project_activity import active
                     if slug in self.paused or not active(self.net,slug):
                         continue
-                # An active autopilot already owns this project's pass. Its later matches can trigger another wave.
+                # Keep a notification until the owning pass finishes instead of silently dropping it.
                 with self.net.twins._lock:
-                    if self.net.twins._full_running(slug):
-                        continue
-                    self.net.twins.jobs[slug] = job
+                    busy = self.net.twins._full_running(slug)
+                    if not busy:
+                        self.net.twins.jobs[slug] = job
+                if busy:
+                    with self.lock:
+                        self.pending.add(slug)
+                    deferred.add(slug)
+                    continue
                 started = time.monotonic()
-                count, size, tries = job.reuse_matched, job.reuse_bytes, job.reuse_attempts
+                tries, count, size = similar_phase.totals(job)
                 try:
-                    job.matched += self.net.twins.across_games(slug, job)
-                    job.matched += named_donors.run(self.net.twins, slug, job)
-                    job.matched += free_candidates.run(self.net.twins, slug, job)
-                    job.matched += similar_matches.run(self.net.twins, slug, job)
+                    if not free_candidates.exhausted(job):
+                        job.matched += self.net.twins.across_games(slug, job)
+                    if not free_candidates.exhausted(job):
+                        job.matched += named_donors.run(self.net.twins, slug, job)
+                    if not free_candidates.exhausted(job):
+                        job.matched += free_candidates.run(self.net.twins, slug, job)
+                    job.matched += similar_phase.run(self.net.twins, slug, job)
                     proj = self.net.project_row(slug)
+                    total_tries, total_count, total_size = similar_phase.totals(job)
                     with self.net.project_store(proj['id']).tx() as db:
                         db.execute('INSERT INTO reuse_runs(project_id,attempts,matched,bytes,seconds,created_at) VALUES(?,?,?,?,?,?)',
-                                   (proj['id'], job.reuse_attempts - tries, job.reuse_matched - count,
-                                    job.reuse_bytes - size, time.monotonic() - started, time.time()))
+                                   (proj['id'], total_tries - tries, total_count - count,
+                                    total_size - size, time.monotonic() - started, time.time()))
                 finally:
                     with self.net.twins._lock:
                         # Keep a completed snapshot for the GUI, without making later projects look active here.
-                        snapshot = Job(state='stopped' if job.stop.is_set() else 'done', matched=job.reuse_matched - count,
-                                       cross_tried=job.reuse_attempts - tries)
+                        total_tries, total_count, _ = similar_phase.totals(job)
+                        snapshot = Job(state='stopped' if job.stop.is_set() else 'done', matched=total_count - count,
+                                       cross_tried=total_tries - tries)
                         snapshot.ordered.set()
                         self.net.twins.jobs[slug] = snapshot
         except Exception:  # an optional heuristic must not interrupt agents or the server
@@ -136,12 +156,25 @@ class Cascade:
         finally:
             job.state = 'stopped' if job.stop.is_set() else 'done'
             with self.lock:
-                again = bool(not failed and self.enabled and self.pending and not free_candidates.exhausted(job))
+                again = bool(not failed and self.enabled and self.pending - deferred and not self.exhausted(job))
                 if not again:
-                    self.pending.clear()  # cursors remain for Run again or the next new match
+                    # Deferred notifications are woken when the project's owning pass finishes.
+                    self.pending.intersection_update(deferred if not failed and self.enabled and not job.stop.is_set() else set())
                 self.active = None
-                self.running = again
+                self.running = False
             if again:
-                # A notification can arrive between the empty-queue check and cleanup. Keep the same budget.
                 job.state = 'running'
-                purpose_work.start('Cross-project match reuse', '', self.drain, job, stop=job.stop.set)
+                self.wake(job)
+            elif deferred and not failed and not job.stop.is_set():
+                # Close the race where the owning pass completed just before running became false.
+                with self.net.twins._lock:
+                    ready = any(not self.net.twins._full_running(slug) for slug in deferred)
+                if ready:
+                    self.wake()
+
+    @staticmethod
+    def exhausted(job):
+        if job.stop.is_set():
+            return True
+        phase = getattr(job, '_similar_budget', None)
+        return free_candidates.exhausted(job) and phase is not None and free_candidates.exhausted(phase)
