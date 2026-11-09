@@ -141,3 +141,29 @@ def test_project_include_symlink_retarget_invalidates_resolved_paths(tmp_path,co
         link.unlink();link.symlink_to(second,target_is_directory=True)
         compile_configuration.resolve(tmp_path,cfg,build)
         assert len(calls)==2
+
+
+def test_registry_without_new_private_lookup_uses_the_ordinary_compiler_builder(tmp_path,monkeypatch):
+    # Model the old loaded module, not the on-disk registry after a source update.
+    old_registry=SimpleNamespace(get=lambda tid:SimpleNamespace(id=tid))
+    monkeypatch.setattr(compile_configuration,'toolchains',old_registry)
+    calls=[]
+    cfg={'compiler':{'toolchain':'native','flags':['-O2']}}
+    def build(root,options):
+        assert root==tmp_path and options is cfg
+        calls.append(old_registry.get(options['compiler']['toolchain']).id)
+        return compiler.CompilerConfig(['synthetic-compiler','-O2'])
+    with compile_sessions.session() as session:
+        first=compile_configuration.resolve(tmp_path,cfg,build)
+        second=compile_configuration.resolve(tmp_path,cfg,build)
+        assert first.cmd==second.cmd==['synthetic-compiler','-O2']
+        assert not session.configurations
+    assert calls==['native','native']
+
+
+def test_old_registry_fallback_preserves_compiler_validation_failure(tmp_path,monkeypatch):
+    monkeypatch.setattr(compile_configuration,'toolchains',SimpleNamespace())
+    def build(*args):
+        raise ValueError('Synthetic compiler validation refused the selected inputs')
+    with compile_sessions.session(),pytest.raises(ValueError,match='validation refused'):
+        compile_configuration.resolve(tmp_path,{'compiler':{'toolchain':'native'}},build)
