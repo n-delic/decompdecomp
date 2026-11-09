@@ -10,6 +10,7 @@ single match.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -22,6 +23,7 @@ import threading
 import time
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
@@ -39,7 +41,7 @@ from ..forks import (
     unresolved,
 )
 from ..forks.objdiff import MappingConflict, ObjdiffError
-from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
+from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject, project_macro
 from ..hostenv import NO_WINDOW
 from ..network import (
     GAME_CODE,
@@ -193,6 +195,71 @@ class _TreeLock:
             with self._cond:
                 self._writer = None
                 self._cond.notify_all()
+
+
+BATCH_UNITS = 16  # units one run of a project's build takes at most
+
+
+class _UnitBuilds:
+    """One project's unit builds, which take turns (ninja's log is the tree's): the builds asked for while one runs
+    go together in the next run (ForkProject.build_units), as many as BATCH_UNITS. The four permuter workers and the
+    agents of a project took turns one unit at a time: on an x86 game's LTCG units 8 built one by one took 5.6 s,
+    in one run 1.3 s. A build asked for while a run is going waits for the next run: what that run builds may be
+    an older copy of its file. Whoever finds no run going builds the next batch, its own build among them or not."""
+
+    @dataclass(eq=False)
+    class _Ask:
+        unit: object
+        result: tuple[bool, str] | None = None
+        error: BaseException | None = None
+        shared: bool = False  # the error is the whole run's, raised in each of its threads
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._queue: list = []
+        self._running = False
+
+    def build(self, unit, run) -> tuple[bool, str]:
+        """`unit` built in the next run of `run` (units -> one (ok, log) each, in order)."""
+        ask = self._Ask(unit)
+        with self._cond:
+            self._queue.append(ask)
+        while True:
+            with self._cond:
+                while ask.result is None and ask.error is None and self._running:
+                    self._cond.wait()
+                if ask.result is not None or ask.error is not None:
+                    break
+                self._running = True
+                batch, self._queue = self._queue[:BATCH_UNITS], self._queue[BATCH_UNITS:]
+            try:
+                results = run([a.unit for a in batch])
+                if len(results) != len(batch):
+                    raise RuntimeError(f"a build of {len(batch)} units said {len(results)} results")
+                for a, r in zip(batch, results):
+                    if isinstance(r, BaseException):  # its own build raised (build_units): its caller's alone
+                        a.error, a.shared = r, False
+                    else:
+                        a.result = r
+            except BaseException as e:  # each of the batch hears it, as a build of its own would have raised it
+                for a in batch:
+                    a.error, a.shared = e, True
+            finally:
+                with self._cond:
+                    self._running = False
+                    self._cond.notify_all()
+        if ask.error is None:
+            return ask.result
+        if not ask.shared:
+            raise ask.error
+        # each thread raises a copy of its own: raising the one exception in every thread of the batch writes each
+        # one's frames into its traceback, side by side (one that can't be copied still is, but nothing else of it
+        # is changed)
+        try:
+            mine = copy.copy(ask.error)
+        except Exception:  # noqa: BLE001
+            raise ask.error  # noqa: B904
+        raise mine.with_traceback(None) from ask.error
 
 
 def _tail(log: str, lines: int = 14) -> str:
@@ -476,11 +543,14 @@ class ForkEngine:
         self._trees: dict[int, _TreeLock] = defaultdict(_TreeLock)  # project id -> its source tree's lock
         self._unit_locks: dict[tuple[int, str], threading.RLock] = defaultdict(threading.RLock)
         self._build_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)  # one build at a time per tree
+        self._unit_builds: dict[int, _UnitBuilds] = defaultdict(_UnitBuilds)  # project id -> its units' builds
         self._git_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
         self._mlock = threading.Lock()
         # (project id, unit) -> (sha1 of its source, base object mtime, {function: match %}): what objdiff said
         # the last time it measured the unit, so a compile doesn't need a second objdiff run to know the baseline
         self._scores: dict[tuple[int, str], tuple[str, int | None, dict]] = {}
+        # (project id, unit) -> whether its object is a try's now, for the units in a run of tries (trial_run)
+        self._trials: dict[tuple[int, str], bool] = {}
         self._index: dict[int, dict] = {}  # project id -> {unit: {"mtime", "order", "ops"}}
         self._indexing: set[int] = set()
         self._index_dirty: set[int] = set()  # projects whose index has entries index.json doesn't have yet
@@ -550,13 +620,46 @@ class ForkEngine:
             yield
 
     def _build_unit(self, proj, fp: ForkProject, unit) -> tuple[bool, str]:
-        """Build one unit's object. Builds share the tree's build files (ninja's log), so they take turns."""
-        with self._build_locks[proj["id"]]:
-            return fp.build_unit(unit)
+        """Build one unit's object. Builds share the tree's build files (ninja's log), so they take turns: together
+        with the others asked for meanwhile, in one run of the build (_UnitBuilds)."""
+        with self._mlock:  # (one per project: two first builds at once made two, and batched apart)
+            builds = self._unit_builds[proj["id"]]
+        return builds.build(unit, lambda units: self._build_units(proj, fp, units))
+
+    def _build_units(self, proj, fp: ForkProject, units: list) -> list[tuple[bool, str]]:
+        with self._build_locks[proj["id"]]:  # (and nothing changes the build's files meanwhile)
+            return fp.build_units(units)
 
     def _build_all(self, proj, fp: ForkProject, failed: list[str] | None = None) -> tuple[bool, str]:
         with self._build_locks[proj["id"]]:
             return fp.build_all(failed=failed)
+
+    @contextmanager
+    def trial_run(self, proj, unit_name: str):
+        """A run of tries at one unit's functions that aren't kept (the permuter's turn): the unit is held for the run,
+        and a try that isn't kept puts its file back without building it again, as the next try builds anyway. The
+        unit is built once at the end. On an LTCG unit a build is a whole-unit link of about 5 s, and every try
+        built twice: half the permuter's time went to rebuilding the file it had just put back. (A unit linked
+        into the game takes the tree alone for each try: such tries rebuild as before.)"""
+        fp = ForkProject(Path(proj["root"]))
+        try:
+            unit = fp.unit(unit_name)
+        except ForkError:
+            yield
+            return
+        if unit.complete and fp.linkable():
+            yield
+            return
+        key = (proj["id"], unit_name)
+        with self._tree(proj).shared(), self._unit_lock(proj, unit_name):
+            self._trials[key] = False
+            try:
+                yield
+            finally:
+                if self._trials.pop(key, False):  # the object is the last try's: the file's own again
+                    hit = self._scores.get(key)
+                    if self._build_unit(proj, fp, unit)[0] and hit and unit.base is not None and unit.base.exists():
+                        self._scores[key] = (hit[0], unit.base.stat().st_mtime_ns, hit[2])
 
     def _keep_scores(self, proj, unit, text: str, scores: dict) -> None:
         mtime = unit.base.stat().st_mtime_ns if unit.base is not None and unit.base.exists() else None
@@ -571,8 +674,8 @@ class ForkEngine:
         the file doesn't build or objdiff can't measure it."""
         hit = self._scores.get((proj["id"], unit.name))
         if (hit and unit.base is not None and unit.base.exists() and hit[0] == hashlib.sha1(text.encode()).hexdigest()
-                and hit[1] == unit.base.stat().st_mtime_ns):
-            return hit[2], True
+                and (hit[1] == unit.base.stat().st_mtime_ns or self._trials.get((proj["id"], unit.name)))):
+            return hit[2], True  # (in a run of tries the object is the last try's: the text's scores are these)
         ok, _ = self._build_unit(proj, fp, unit)  # the object may be older than the file
         if not ok or unit.base is None or not unit.base.exists():
             return None, False
@@ -2081,6 +2184,43 @@ class ForkEngine:
                 return n, span
         return None, None
 
+    @classmethod
+    def _seen_beside(cls, fp: ForkProject, text: str, span: tuple[int, int], hit: str,
+                     names: list[str]) -> tuple[int, int] | None:
+        """The definition the build sees after one an `#if` hides at `span`, or None: found by `hit`, then by the
+        function's other `names`. Only one at file scope counts: a call in another function's body followed by a
+        block reads as a definition (`y = f(x) * 2.0;` then `if (y) {`), and taken for it, that function was cut from
+        the call on and the try put inside it."""
+        for look in dict.fromkeys([hit, *names]):
+            at = span
+            while (later := csource.find(text[at[1]:], look)) is not None:
+                at = (at[1] + later[0], at[1] + later[1])
+                # (and only one that surely is a definition: at file scope too, find() takes a call for one, `static
+                # double bias = f(2.0) * 2.0;` up to the next definition's `{`, and the code between was replaced;
+                # and only one the build surely compiles: of `#ifdef _WIN32` and its `#else`, a macro the app can't
+                # tell, the try went into the first, maybe the branch the build leaves out, and never matched)
+                if csource.at_file_scope(text, at[0]) and csource.opens_body(text, at, look) and \
+                        cls._surely_compiled(fp, text, at[0]):
+                    return at
+        return None
+
+    @staticmethod
+    def _surely_compiled(fp: ForkProject, text: str, at: int) -> bool:
+        """Whether the code at `at` is compiled whatever the macros the project may define are (csource.
+        surely_compiled with the project's never-defined ones, _hidden's)."""
+        names = {n for n in csource.condition_names(text, at) if project_macro(n)}
+        return csource.surely_compiled(text, at, fp.never_defined(names) if names else set())
+
+    @staticmethod
+    def _hidden(fp: ForkProject, text: str, at: int) -> tuple[int, str] | None:
+        """(line, directive) of the `#if` branch that leaves the code at `at` of a source out of the build. The search
+        for definitions (a second or so in a big project) runs only when the code would be hidden with every macro
+        that may be the project's own undefined: knowing more macros undefined only ever hides more."""
+        names = {n for n in csource.condition_names(text, at) if project_macro(n)}
+        if csource.hidden_by(text, at, names) is None:
+            return None
+        return csource.hidden_by(text, at, fp.never_defined(names))
+
     def _held(self, proj, unit: str, text: str | None = None) -> set[str]:
         """Functions of a unit whose source is still the very text judged to load the wrong constants: objdiff's
         progress rules count them, decompdecomp doesn't (see forks/literals.py)."""
@@ -2124,10 +2264,12 @@ class ForkEngine:
     @staticmethod
     def _missing_note(unit, fn) -> str:
         """What to tell an agent whose compile built, but whose unit's object has no such function: with what the
-        build said about its address (an LTCG harness's <object>.ltcg.json `problems`)."""
+        build said about its address (an LTCG harness's <object>.ltcg.json `problems`). It names the symbol, not the
+        row: a name made unique with a trailing "'" sent agents after a symbol no C could make."""
         at = f"0x{fn['vram']:08X}" if "vram" in fn.keys() and fn["vram"] else None
         said = [p for p in objdiff.ltcg_problems(unit.base) if at and at.lower() in p.lower()]
-        note = (f"\n\nNOT IN YOUR BUILD: {unit.name} compiled, but its object doesn't define {fn['name']}, so there "
+        sym = ForkEngine._meta(fn).get("symbol") or fn["name"]
+        note = (f"\n\nNOT IN YOUR BUILD: {unit.name} compiled, but its object doesn't define {sym}, so there "
                 "is nothing to compare yet")
         if not said:
             return note + "."
@@ -2315,6 +2457,22 @@ class ForkEngine:
 
     DATA_LISTED = 12  # data symbols a brief describes
 
+    def permuter_name(self, slug: str, function: str, source: str) -> str:
+        """The name the function's definition has in `source`, which decomp-permuter looks it up by: a PC or Xbox
+        game's function is its mangled symbol (`?Update@@YAXH@Z`), which no C spells, so every turn on one ended
+        with "Function ... not found in base.c". The symbol itself when no spelling of it (_names) is defined. The
+        definition's own spelling, class and all: a method found by its bare name (`Func_E46D0`) may be defined on
+        a class the source calls something else than its symbol does (`C_vt_003AB500::Func_E46D0`), and the
+        bare name isn't the definition's (6 of 8 an Xbox game's turns lost that way)."""
+        fn = self._fn(slug, function)
+        names = [n for n in self._names(self._meta(fn), fn) if re.fullmatch(r"[\w:~]+", n)]
+        name, span = self._find(source, names)
+        if name is None:
+            return function
+        own = re.search(rf"(?<![\w:~])((?:[A-Za-z_]\w*\s*::\s*)*~?{re.escape(name.split('::')[-1])})\s*\(",
+                        source[span[0]:span[1]])
+        return re.sub(r"\s+", "", own.group(1)) if own else name
+
     def permuter_header(self, slug: str, function: str) -> str:
         """What decomp-permuter must read before a function of a fork: the headers its source file includes, then
         the file's own declarations. It got none, so it refused every DS function ("Syntax error in base.c": `u16`
@@ -2407,6 +2565,10 @@ class ForkEngine:
         _, span = self._find(src_text, self._names(meta, fn)) if src_text else (None, None)
         if span:
             lines += ["", "### Current source", "```c", src_text[span[0]:span[1]].strip(), "```"]
+            if hidden := self._hidden(fp, src_text, span[0]):
+                lines.append(f"⚠️ It's inside `{hidden[1]}` (line {hidden[0]} of {unit.source}), which the build leaves "
+                             "out: the state above is not this code's. compile_and_diff compiles yours where the build "
+                             "sees it, without that copy; kept, the function is visible from then on.")
         else:
             lines += ["", f"### Not in {unit.source or 'the source'} yet: compile_and_diff adds it at the end."]
         if fn["best_source"] and fn["status"] != "matched":
@@ -2744,9 +2906,9 @@ class ForkEngine:
 
     def _claim_in_room(self, link, agent: Agent, slug: str, function: str | None, strategy: str) -> str:
         """A member of a room: the host hands out functions (nobody does one twice); the brief comes from this copy."""
-        name = link.claim(agent, self._fn(slug, function)["name"] if function else None, strategy)
-        if name is None:
-            return "Nothing left to claim in this room: every function with a source file matches or someone is on it. 🎉"
+        name, why = link.claim(agent, self._fn(slug, function)["name"] if function else None, strategy)
+        if name is None:  # (the host's word: what's left and why, as its own agents hear it)
+            return why or "Nothing left to claim in this room: every function with a source file matches or someone is on it. 🎉"
         try:
             fn = self.net.claim_row(agent, slug, name, strategy)
         except NetworkError:  # the host has a newer tree (new files, a split): follow it, then claim here
@@ -2900,6 +3062,23 @@ class ForkEngine:
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = fn["status"] == "matched"
             hit, old_span = self._find(before, names)
+            base, carried = before, ""  # what the new definition goes into; what of the parked copy goes with it
+            parked = self._hidden(fp, before, old_span[0]) if old_span else None
+            if parked and (seen := self._seen_beside(fp, before, old_span, hit, names)):
+                # a draft parked in `#ifdef` before the build's own definition in its `#else`: the one the build sees
+                # is the one tried (the parked one taken out, a new one put in, the visible one stayed: defined twice)
+                old_span, parked = seen, None
+            if parked:
+                # parked in an #if branch the build leaves out: written there, the compile was judged on other code,
+                # and moved out with edit_file it was refused when it broke a matched neighbour (where whole-program
+                # optimisation couples them), so an agent could do nothing with it. It goes where the build sees it,
+                # without the parked copy: kept, the function is visible from then on; else the file is undone. Its
+                # annotation (`// FUNCTION: 0x...`, often with the notes of earlier tries) comes along, and its
+                # comment too unless the agent sent one
+                lo = csource.comment_above(before, old_span[0])
+                mark = csource.marker_above(before, lo)
+                carried = before[mark:lo] + ("" if commented else before[lo:old_span[0]])
+                base, old_span = before[:mark] + before[old_span[1]:], None
             pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
             if old_span:
                 lo, hi = old_span
@@ -2914,7 +3093,10 @@ class ForkEngine:
                     lo = wrapped
                 after = before[:lo] + pre + kept + code.rstrip("\n") + "\n" + post + before[hi:]
             else:
-                after = self._insert_in_order(proj, fp, unit, fn, before, pre + code.rstrip("\n") + "\n" + post)
+                placed = pre + carried + code.rstrip("\n") + "\n" + post
+                after = self._insert_in_order(proj, fp, unit, fn, base, placed)
+                if base is not before and (span := self._find(after, names)[1]) and self._hidden(fp, after, span[0]):
+                    after = base.rstrip("\n") + "\n\n" + placed  # (its neighbours are parked too: after them all)
             after = _with_includes(after, includes, prelude)
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
@@ -2935,7 +3117,11 @@ class ForkEngine:
 
             def unname() -> None:
                 """The config as it was: a name left behind would keep another function from being that class's
-                constructor (an agent's wrong address)."""
+                constructor (an agent's wrong address). Nothing renamed (nearly every try): no wait for the build
+                lock, which a run of the project's builds holds; each of the permuter's tries waited for the next
+                run here, writing nothing."""
+                if not renamed:
+                    return
                 with self._build_locks[proj["id"]]:
                     for p, t in renamed.items():
                         p.write_text(t, encoding="utf-8")
@@ -2955,6 +3141,9 @@ class ForkEngine:
             def undo() -> None:
                 _rewrite(path, before)
                 unname()
+                if (proj["id"], unit.name) in self._trials and scores is not None and not renamed:
+                    self._trials[(proj["id"], unit.name)] = True  # (a run of tries: built once, at its end)
+                    return
                 if self._build_unit(proj, fp, unit)[0] and scores is not None:
                     self._keep_scores(proj, unit, before, scores)
 
@@ -2989,12 +3178,33 @@ class ForkEngine:
             broken = sorted(n for n in protected if n and (d.unit_scores.get(n) or 0) < 100)
             if broken:
                 undo()
-                if quiet is None:
-                    self.net._record(fn, agent, None, code, 0, compiled=True)
-                return {"text": remembered(f"❌ REJECTED and undone: your change breaks matched function(s) "
-                                           f"{', '.join(broken[:8])}. Check you replaced the right definition "
-                                           "(overloads?) and didn't change shared code.", None),
-                        "score": None, "matched": False, "broken": broken}
+                # the function's own result still counts: where whole-program optimisation (or inlining) makes a
+                # function's code change how its neighbours compile, a draft short of exact breaks them, and without
+                # its score an x86 game's agents parked drafts behind #if flags and rebuilt by hand to measure them
+                own = None
+                if d.match_percent is not None:
+                    own = max(1, len(d.literals)) if d.literals else scaled(d.match_percent, fn["n_insns"])
+                if quiet is None:  # an attempt, never the best: release puts the best back in the file
+                    self.net._record(fn, agent, own, code, 0, compiled=True, best=False)
+                listed = ", ".join(broken[:8])
+                if own is None:
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. Check you "
+                            "replaced the right definition (overloads?) and didn't change shared code.")
+                elif d.matched:
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}, though "
+                            f"{fn['name']} itself matches. What changed them is how it's declared or what else you "
+                            "sent (its calling convention, static or inline, a shared declaration): check you "
+                            "replaced the right definition (overloads?).")
+                else:
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. {fn['name']} "
+                            f"itself came out at {percent_text(d.match_percent)} (score {own}): recorded as an "
+                            f"attempt, not kept in {unit.source}. If they changed only because of how {fn['name']} "
+                            "compiles into them (inlined, or whole-program optimisation choosing registers across "
+                            f"functions), they match again once {fn['name']} matches exactly: work from the diff "
+                            "below. Otherwise check you replaced the right definition (overloads?) and didn't change "
+                            f"shared code.\n{d.render()}")
+                return {"text": remembered(text, own), "score": None, "held_score": own, "matched": False,
+                        "broken": broken}
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
                 if quiet is None:

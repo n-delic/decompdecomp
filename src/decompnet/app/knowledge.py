@@ -5,7 +5,9 @@ wrote reached all the others, its guesses too ("it's this compiler", then "no, i
 (share_knowledge), and a proposal counts only when helpers running two different models back it on their own: two
 Claude Opus sessions agreeing are one opinion; Claude Opus and GPT agreeing are two. That's also why running
 helpers of several models pays: they check each other. An agreed proposal reaches every agent's prompt once the
-user accepts it, or at once when the project adds agreed knowledge by itself (its setting).
+user accepts it, or at once when the project adds agreed knowledge by itself (its setting). The user can also be
+the second opinion and accept a proposal one model backs: on an x86 game worked by one model only, 55 proposals
+waited for a second model that never came, and every session found the same things out again.
 
 Compiler questions don't belong here: which compiler built what is settled by the compiler map and range checks,
 with evidence, not by agents agreeing.
@@ -117,7 +119,8 @@ class Knowledge:
                              (proj["id"], text, PROPOSED, time.time())).lastrowid
         self._support(agent, proj, kid)
         return (f"Proposed as #{kid}. It reaches every agent once a helper running another model backs it "
-                f"(and the user accepts it, unless the project adds agreed knowledge by itself).")
+                f"(and the user accepts it, unless the project adds agreed knowledge by itself), or once the user "
+                f"gives it to agents.")
 
     def _support(self, agent: Agent, proj, kid: int) -> str:
         row = self.net.store.one("SELECT * FROM knowledge WHERE id=? AND project_id=?", kid, proj["id"])
@@ -143,7 +146,8 @@ class Knowledge:
                                   proj["id"], PROPOSED)
 
     def decide(self, slug: str, kid: int, accept: bool) -> None:
-        """The user accepts an agreed proposal, or rejects (or takes back) one."""
+        """The user accepts a proposal (agreed by two models, or one model's that the user vouches for), or rejects
+        (or takes back) one."""
         proj = self.net._project(slug)
         with self.net.store.tx() as db:
             db.execute("UPDATE knowledge SET status=?, decided_at=? WHERE id=? AND project_id=?",
@@ -180,7 +184,8 @@ class Knowledge:
                 break
             out.append(f"- {r['text']}")
             used += len(r["text"])
-        text = ("What agents learned about this game (agreed by different models):\n" + "\n".join(out)) if out else ""
+        text = ("What agents learned about this game (agreed by different models, or checked by the user):\n"
+                + "\n".join(out)) if out else ""
         open_ = self._open(proj)[:OPEN_SHOWN]
         if open_:
             text += ("\n\nProposals waiting for a second model (back one with share_knowledge(supports=N) only when "
