@@ -46,7 +46,10 @@ class Opencode(Agent):
     def read_models(self, lines: list[str]) -> list[dict]:
         """`opencode models`: "<provider>/<model>" per model."""
         rows = [r for r in lines if not self.validate_model(r) and r]
-        return [{"id": r, "name": r.split("/", 1)[1], "note": r.split("/", 1)[0]} for r in rows]
+        labels = {'opencode':'OpenCode', 'opencode-go':'OpenCode Go'}
+        return [{"id": r, "name": r.split("/", 1)[1],
+                 "note": labels.get(r.split("/", 1)[0], r.split("/", 1)[0]),
+                 "group": labels.get(r.split("/", 1)[0], r.split("/", 1)[0])} for r in rows]
 
     def resolve_known_model(self, model: str, known: list[dict]) -> str:
         model = model.strip()

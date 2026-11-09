@@ -121,3 +121,19 @@ def test_stop_answers_while_default_workers_are_saturated(app, monkeypatch):  # 
                 release.set()
                 limiter.total_tokens = previous
     anyio.run(run)
+
+
+def test_model_change_route_targets_only_the_selected_worker(app, monkeypatch):  # noqa: F811
+    client, _, manager = app
+    calls = []
+    monkeypatch.setattr(manager, 'change_model', lambda *args: calls.append(args) or ['replacement'])
+    payload = {'kind':'opencode', 'slug':'game', 'replace':'selected', 'count':1,
+               'options':{'model':'opencode-go/example', 'task':'ignored'}}
+    response = client.post('/api/agents/start', headers={'X-Decomp':'1'}, json=payload)
+    assert response.status_code == 200
+    assert response.json() == {'started':['replacement']}
+    assert calls == [('selected', 'game', 'opencode', 'opencode-go/example')]
+    payload['count'] = 2
+    response = client.post('/api/agents/start', headers={'X-Decomp':'1'}, json=payload)
+    assert response.status_code == 400
+    assert len(calls) == 1

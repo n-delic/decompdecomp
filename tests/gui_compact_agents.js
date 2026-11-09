@@ -22,7 +22,7 @@ let html=elements.get('sessions').html;
 assert(html.indexOf('data-result-kind="matched"')<html.indexOf('class="state'));
 assert(html.indexOf('data-result-kind="improved"')<html.indexOf('class="state'));
 const menu=html.slice(html.indexOf('class="agent-menu"'),html.indexOf('</details>'));
-for(const action of ['data-rename','data-queue','data-log','data-reset-metrics'])assert(menu.includes(action));
+for(const action of ['data-rename','data-change-model','data-queue','data-log','data-reset-metrics'])assert(menu.includes(action));
 assert(menu.includes('What it said and did'));
 assert(html.includes('51.5M reported tokens'));assert(html.includes('API-equivalent'));
 assert(!html.includes('total tokens used'));assert.equal((html.match(/1506 compiles/g)||[]).length,1);assert(html.includes('8 functions/session'));

@@ -275,7 +275,7 @@ function renderSessions(sessions, refreshCosts = true) {
     return `${head}<div class="session${rowTint(s.agent)}" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
         ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>` : s.configuration_error ? `<button class="ghost" data-change-model="${id}" type="button">Choose another model</button>` : `<button class="ghost" data-again="${id}" type="button">Start again</button>`}
         <details class="agent-menu" data-agent-menu="${id}" ${agentMenusOpen.has(s.id) ? 'open' : ''}><summary aria-label="Actions for ${esc(s.label)}" title="Agent actions">⋮</summary><div class="agent-menu-items">
-          <button data-rename="${id}" type="button">Rename</button><button data-queue="${id}" type="button">Work settings</button><button data-agent-prompts="${id}" type="button">Prompts</button><button data-agent-tools="${id}" type="button">Tools</button>
+          <button data-rename="${id}" type="button">Rename</button>${!S.st?.agents?.find(a=>a.id===s.kind)?.uses_endpoints ? `<button data-change-model="${id}" type="button">Change model</button>` : ""}<button data-queue="${id}" type="button">Work settings</button><button data-agent-prompts="${id}" type="button">Prompts</button><button data-agent-tools="${id}" type="button">Tools</button>
           <button data-log="${id}" type="button" aria-pressed="${S.logFor === s.id}">${S.logFor === s.id ? 'Back to everything' : 'What it said and did'}</button>
           ${["readable","boundary","assets"].includes(s.task) ? "" : `<button data-retry-paused="${id}" type="button">Retry paused functions</button>`}
           <button data-reset-metrics="${id}" type="button" class="agent-menu-reset">Reset metrics</button>
@@ -362,9 +362,10 @@ function renderSessions(sessions, refreshCosts = true) {
   }; });
   box.querySelectorAll('[data-change-model]').forEach(button => { button.onclick = () => {
     const session = sessions.find(s => s.id === button.dataset.changeModel);
-    LZ.kind = session.kind; LZ.model = ''; LZ.customModel = false; LZ.multiple = false; LZ.count = 1;
+    prepareModelChoice(session);
+    if (S.st.agents.find(a=>a.id===session.kind)?.uses_endpoints) LZ.replacement = null;
     showLaunch();
-    toast('Choose a model available to this account. The paused worker and its history are kept.');
+    toast(LZ.replacement ? 'Choose a model, then Replace agent. Its history and work settings are kept.' : 'Choose a model for a new agent. The original and its history are kept.');
   }; });
   box.querySelectorAll("[data-login]").forEach(button => { button.onclick = async () => {
     button.disabled = true;
@@ -488,12 +489,35 @@ function launcherInit() {
   LZ.models = LZ.models.filter((m) => typeof m === "string" || (m && live.has(m.endpoint)));
   if (LZ.apiSingleModel && !live.has(LZ.apiSingleModel.endpoint)) LZ.apiSingleModel = null;
 }
+function prepareModelChoice(session) {
+  LZ.replacement = {id:session.id,slug:session.slug || S.slug,label:session.label};
+  LZ.kind = session.kind; LZ.model = ''; LZ.customModel = false; LZ.multiple = false;
+  LZ.models = []; LZ.count = 1; LZ.task = session.task || '';
+  LZ.effort = (session.model || '').split('#')[1] || '';
+  LZ.account = session.account_id || ''; LZ.per = session.per_session || 0;
+}
+function groupedModelOptions(options, selected) {
+  let group = '', html = '';
+  for (const option of options) {
+    const next = option.group || '';
+    if (next !== group) {
+      if (group) html += '</optgroup>';
+      if (next) html += `<optgroup label="${esc(next)}">`;
+      group = next;
+    }
+    html += `<option value="${esc(option.id)}" ${selected(option) ? 'selected' : ''}>${esc(option.name)}${option.note ? ` — ${esc(option.note)}` : ''}</option>`;
+  }
+  return html + (group ? '</optgroup>' : '');
+}
+function modelChoiceList(models, selected) {
+  return models.map((model, index) => `${model.group && model.group !== models[index - 1]?.group ? `<div class="small muted"><b>${esc(model.group)}</b></div>` : ''}<label class="check inline"><input type="checkbox" data-model-choice="${esc(model.id)}" ${selected.includes(model.id) ? 'checked' : ''}><span><b>${esc(model.name)}</b>${model.note ? ` <span class="muted small">${esc(model.note)}</span>` : ''}</span></label>`).join('');
+}
 function modelOptions(a) {
   const recent = (S.st.settings.recent_models || {})[a.id] || [];
-  const opts = [{ id: "", name: a.uses_accounts && LZ.account ? "Account’s default" : a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
-  for (const m of a.models || []) opts.push({ id: m.id, name: m.name, note: m.note || "" });
+  const opts = [{ id: "", name: LZ.replacement ? "Choose a model…" : a.uses_accounts && LZ.account ? "Account’s default" : a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
+  for (const m of a.models || []) opts.push({ id: m.id, name: m.name, note: m.note || "", group: m.group || "" });
   for (const r of recent) if (!opts.some((o) => o.id === r)) opts.push({ id: r, name: r, note: "used before" });
-  opts.push({ id: "__multiple", name: "Multiple models", note: "" });
+  if (!LZ.replacement) opts.push({ id: "__multiple", name: "Multiple models", note: "" });
   opts.push({ id: "__other", name: "Another model…", note: "" });
   return opts;
 }
@@ -523,6 +547,7 @@ function modelName(a, model) {
   return m ? m.name : model;
 }
 function launchLabel(a, model, count, models = []) {
+  if (LZ.replacement) return "Replace agent";
   let label;
   if (models.length) {
     const total = models.length * count;
@@ -548,6 +573,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
   if (agentCreation) return toast("Agent creation is already running. Reopen Add agents to see its progress.", "err");
   agentCreation = {slug:S.slug,task:LZ.task,lines:[],status:"Waiting for the app to accept the request…",stage:"Waiting for the app to accept the request…"};
   renderSessions(S.sessions || [], false);
+  const replacement = LZ.replacement;
   const slug = S.slug, panel = btn?.closest(".lz-body");
   const log = panel?.querySelector('[data-start-log]');
   if (log) {log.hidden = false; log.textContent = ""; showJobError(log, "");}
@@ -565,6 +591,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
   };
   const elapsedTimer = setInterval(updateStatus, 1000);
   try {
+    if (replacement && !model.trim()) throw new Error("Choose a model before replacing this agent.");
     const options = { ...extra };
     if (a.uses_accounts && LZ.account) options.account_id = LZ.account;
     if (models.length) options.models = models;
@@ -574,7 +601,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     else if (effortOf(a) && !model && !models.length) throw new Error("pick a model to set its effort");
     if (LZ.per) options.per_session = LZ.per;
     if (LZ.task) options.task = LZ.task;
-    if(LZ.task==='assets'){
+    if(LZ.task==='assets' && !replacement){
       const scope=LZ.assetSlug===slug?LZ.assetScope:{mode:'unknown'};
       let run=LZ.assetSlug===slug?LZ.assetRun:'';
       if(!run){const prepared=await api('/api/rom-explorer/discovery',{method:'POST',body:{slug,action:'prepare',scope}});run=prepared.run;}
@@ -582,7 +609,9 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     }
     if (!LZ.task) options.selection = btn?.closest(".lz-body")?.querySelector("[data-selection-strategy]")
       ? readSelection(btn.closest(".lz-body")) : LZ.selection;
-    const result = await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug, count, options, background: true } });
+    if (replacement && replacement.slug !== slug) throw new Error("Reopen Change model in the agent's project.");
+    const result = await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug, count:replacement?1:count,
+      options:replacement?{model:withEffort(a,model)}:options, ...(replacement?{replace:replacement.id}:{}), background: true } });
     if (result.job) await followJob(result.job, log, (lines) => {
       agentCreation.lines = lines;
       agentCreation.stage = lines.at(-1) || "Waiting for preparation to start…";
@@ -601,7 +630,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     }
     if (S.slug === slug) hideLaunch();
     const total = LZ.multiple ? models.length * count : count;
-    toast(`${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : LZ.task==="assets" ? "Review discoveries in ROM Explorer" : "Watch the map fill in"}; Agents says what each one does.`, "match");
+    toast(replacement ? "Agent replaced. The original history and saved work are kept." : `${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : LZ.task==="assets" ? "Review discoveries in ROM Explorer" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     if(LZ.task==='assets'&&S.slug===slug&&S.tab==='rom')loadAssetAgents();
     poll(false);
     loadNav();
@@ -633,7 +662,7 @@ function renderLauncher(box, compact = true) {
   }
   if (!box || !S.st) return;
   launcherInit();
-  const list = [...S.st.agents].sort((x, y) => y.recommended - x.recommended);
+  const list = S.st.agents.filter(a=>!LZ.replacement || a.id===LZ.kind).sort((x, y) => y.recommended - x.recommended);
   const a = list.find((x) => x.id === LZ.kind) || list[0];
   const kinds = list.map((x) => `<button type="button" class="lz-kind ${x.id === a.id ? "on" : ""}" data-k="${esc(x.id)}">
       <b>${esc(x.name)}</b><span>${x.uses_endpoints ? `${x.recommended ? "Recommended · " : ""}any model with an API key` : x.installed ? esc(x.version ? x.version.replace(/\s*\(.*\)/, "") : x.vendor) : "not installed"}</span>
@@ -677,14 +706,14 @@ function renderLauncher(box, compact = true) {
     const known = opts.some((o) => o.id === LZ.model);
     const custom = LZ.customModel || (!known && !!LZ.model);
     LZ.models = LZ.models.filter((id) => available.some((m) => m.id === id));
-    body = `<label class="field"><span>Model <button type="button" class="link-btn small" data-act="detect">Refresh models</button></span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${(!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple") ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}</select></label>
-      ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${available.map((m) => `<label class="check inline"><input type="checkbox" data-model-choice="${esc(m.id)}" ${LZ.models.includes(m.id) ? "checked" : ""}><span><b>${esc(m.name)}</b>${m.note ? ` <span class="muted small">${esc(m.note)}</span>` : ""}</span></label>`).join("")}</div>
+    body = `<label class="field"><span>Model <button type="button" class="link-btn small" data-act="detect">Refresh models</button></span><select data-f="model">${groupedModelOptions(opts, (o) => (!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple"))}</select></label>
+      ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${modelChoiceList(available, LZ.models)}</div>
       <span class="muted small" data-model-limit>Each selected model gets ${LZ.count} session${LZ.count === 1 ? "" : "s"}.</span>
       ${!(a.models || []).length ? `<div class="row"><input data-f="manual-model" class="mono" placeholder="Model name"><button type="button" class="ghost small-btn" data-act="add-cli-model">Add model</button></div>` : ""}</div>` : ""}
       <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${custom ? esc(LZ.model) : ""}" ${custom ? "" : "hidden"}>
       ${effortField(a)}`;
   }
-  if (a.uses_accounts && a.installed) {
+  if (a.uses_accounts && a.installed && !LZ.replacement) {
     const accounts = (S.st.settings.agent_accounts || []).filter((p) => p.kind === a.id);
     const missing = LZ.account && !accounts.some((p) => p.id === LZ.account);
     body = `<label class="field"><span>Account</span><select data-f="account"><option value="" ${!LZ.account ? "selected" : ""}>Default sign-in</option>
@@ -695,17 +724,17 @@ function renderLauncher(box, compact = true) {
   const ready = a.installed;
   // helpers can also polish matched C (app/readable.py), once half the game matches
   const availableTasks=TASKS.filter(([key])=>!key || key==='readable'&&polishOffered(S.ov) || key==='assets'&&!!S.ov&&S.ov.kind!=='fork');
-  if(!availableTasks.some(([key])=>key===LZ.task))LZ.task="";
-  const tasks = availableTasks.length>1 ?`<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
+  if(!LZ.replacement && !availableTasks.some(([key])=>key===LZ.task))LZ.task="";
+  const tasks = !LZ.replacement && availableTasks.length>1 ?`<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
     availableTasks.map(([k, label, what]) => `<button type="button" role="radio" aria-checked="${LZ.task === k}" class="${LZ.task === k ? "on" : ""}" data-task="${k}" title="${what}">${label}</button>`).join("")}</div>
     <span class="muted small">${esc(TASKS.find(([k]) => k === LZ.task)[2])}</span></div>` : "";
-  if (!tasks) LZ.task = "";
-  box.innerHTML = `${tasks}<div class="lz-kinds">${kinds}</div>
+  if (!tasks && !LZ.replacement) LZ.task = "";
+  box.innerHTML = `${LZ.replacement ? `<p>Replace <b>${esc(LZ.replacement.label)}</b> with the chosen model. Its task, account and work settings are kept. The original stops after the replacement is created; its history stays in Agents.</p>` : `${tasks}<div class="lz-kinds">${kinds}</div>`}
     <div class="lz-body">${body}
-      ${ready && !LZ.task ? `<details data-launch-selection><summary>Work selection (for these agents)</summary>${selectionFields(LZ.selection)}</details>` : ""}
+      ${ready && !LZ.task && !LZ.replacement ? `<details data-launch-selection><summary>Work selection (for these agents)</summary>${selectionFields(LZ.selection)}</details>` : ""}
       ${ready ? `<div class="lz-row">
-        <div class="field"><span>How many</span><span class="stepper"><button type="button" data-step="-1">−</button><output>${LZ.count}</output><button type="button" data-step="1">+</button></span></div>
-        <label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="${MAX_PER_SESSION}" value="${LZ.per || S.st.settings.per_session}"></label>
+        ${LZ.replacement ? "" : `<div class="field"><span>How many</span><span class="stepper"><button type="button" data-step="-1">−</button><output>${LZ.count}</output><button type="button" data-step="1">+</button></span></div>
+        <label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="${MAX_PER_SESSION}" value="${LZ.per || S.st.settings.per_session}"></label>`}
         <span class="grow"></span>
         <button class="primary" data-act="start" type="button">${esc(launchLabel(a, LZ.model, LZ.count, LZ.models))}</button></div>
         <pre class="joblog" data-start-log hidden></pre>
@@ -900,6 +929,7 @@ function showLaunch() {
 function hideLaunch(back = false) {
   if ($("launchPop").hidden) return;
   $("launchPop").hidden = true;
+  LZ.replacement = null;
   $("phStart").setAttribute("aria-expanded", "false");
   if (back) $("phStart").focus();
 }
