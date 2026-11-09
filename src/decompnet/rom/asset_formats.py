@@ -107,7 +107,7 @@ def _rgba(raw,fmt,count):
 def _bits(fmt):return {'rgba8888':32,'rgb888':24,'rgba5551-be':16,'rgb565-le':16,'rgb565-be':16,'ia16':16,'ia4':4,'i4':4,'ci4':4}.get(fmt,8)
 
 
-def texture(data,options):
+def texture_pixels(data,options):
     """Decode row-major packed pixels; no guessed dimensions, swizzling or palettes."""
     fmt=options['format'];palette_only=fmt.startswith('palette-')
     width=integer(options.get('width',16 if palette_only else 32),'Width',1,MAX_DIMENSION)
@@ -131,8 +131,13 @@ def texture(data,options):
                 idx=row[x] if fmt=='ci8' else (row[x//2]>>(4 if x%2==0 else 0))&15
                 pixels.extend(palette[idx*4:idx*4+4])
     else:pixels=b''.join(_rgba(raw[y*row_bytes:(y+1)*row_bytes],fmt,width) for y in range(height))
-    return _png(width,height,bytes(pixels)),dict(width=width,height=height,format=options['format'],bytes=row_bytes*height,
+    return bytes(pixels),dict(width=width,height=height,format=options['format'],bytes=row_bytes*height,
                                                 note='Manual row-major interpretation. Dimensions, palette and format do not establish the original asset type.')
+
+
+def texture(data,options):
+    pixels,details=texture_pixels(data,options)
+    return _png(details['width'],details['height'],pixels),details
 
 
 def pcm(data,options):

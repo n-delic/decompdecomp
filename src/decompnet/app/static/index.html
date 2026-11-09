@@ -437,7 +437,8 @@
         <p class="rom-map-legend small"><span>Code</span><span>Data / strings</span><span>Format / table clues</span><span>Repeated bytes</span><span>Unknown</span></p>
         <div id="romTypeMapPanel" hidden>
           <h3>Regions by type</h3>
-          <p class="small muted">One box per analysed region, in ROM order. Hover for details, click to inspect, or use arrow keys and Enter.</p>
+          <p class="small muted">One box per analysed region or evidence-based group, in ROM order. Hover for details, click to inspect, or use arrow keys and Enter.</p>
+          <label class="small"><input id="romGroupAssets" type="checkbox" checked> Group regions with shared boundaries (ungroup to see individual types) <span id="romGroupCount"></span></label>
           <div id="romTypeLegend" class="rom-type-legend small"></div>
           <canvas id="romTypeMap" class="rom-type-map" tabindex="0" role="img" aria-label="ROM regions by type. Arrow keys select a region; Enter opens details. The region table below is also available." aria-describedby="romTypeStatus"></canvas>
           <p id="romTypeStatus" class="small muted" aria-live="polite"></p>
@@ -1147,6 +1148,7 @@
 <script src="/assets/js/compiler-groups.js"></script>
 <script src="/assets/js/code-audit.js"></script>
 <script src="/assets/js/rom-assets.js"></script>
+<script src="/assets/js/rom-discovery.js"></script>
 <script src="/assets/js/rom-explorer.js"></script>
 <script src="/assets/js/boundary-repairs.js"></script>
 <script src="/assets/js/repository-setup.js"></script>

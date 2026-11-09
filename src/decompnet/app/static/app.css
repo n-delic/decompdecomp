@@ -2159,3 +2159,14 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .rom-type-legend { display:flex; flex-wrap:wrap; gap:8px 18px; }
 .rom-type-legend > span { display:inline-flex; align-items:center; gap:6px; }
 #romTypeStatus { min-height:2.5em; overflow-wrap:anywhere; }
+
+.rom-texture-discovery, .rom-model-inspection { margin-top:18px; padding-top:12px; border-top:1px solid var(--line); }
+.rom-texture-gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr)); gap:12px; margin-top:12px; }
+.rom-texture-gallery > p { grid-column:1/-1; }
+.rom-texture-candidate { height:auto; min-height:190px; display:flex; flex-direction:column; gap:8px; align-items:center; padding:10px; white-space:normal; overflow-wrap:anywhere; }
+.rom-texture-candidate img { width:128px; height:128px; max-width:100%; object-fit:contain; image-rendering:pixelated; background:var(--line); }
+.rom-model-canvas { display:block; width:100%; height:320px; margin:12px 0; touch-action:none; }
+.rom-model-canvas:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
+
+.rom-texture-candidate > img { flex:none; }
+.rom-texture-candidate > span { line-height:1.4; max-width:100%; }

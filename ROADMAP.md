@@ -937,7 +937,12 @@ similar C through objdiff. Other processors need an instruction reader for this 
 ### ROM Explorer
 
 The byte strip also has a rounded-square region type map using the function map renderer,
-with image/audio evidence and local 3D model classifications.
+with image/audio evidence and local 3D model classifications. Evidence-based grouping joins
+display pages by imported data symbols or loader extents, with an ungroup control. A texture
+comparison gallery tries common row-major formats/dimensions and palettes; a linked usage
+summary separates address references, loaders and buffer consumers. A fitted, rotatable
+wireframe viewer supports manual integer/float vertex layouts and optional index buffers.
+Texture and geometry settings persist as local annotations.
 
 A project tab maps every byte of an imported ROM analysis image, including unknown and
 unmapped ranges. Inspect recorded functions/data symbols, interior-address references,
@@ -1464,8 +1469,8 @@ four MIPS ROM columns in the table.
 Extend the current block-local loader/buffer evidence through indexed file-ID tables,
 mutable memory, cross-branch paths and arbitrary interprocedural consumers. Establish
 asynchronous DMA completion before presenting runtime guarantees. Add console texture
-tilings, automatic raw-image dimensions/palette inference and more audio/compression
-formats. Current source groups and named contracts are static evidence, not runtime
+tilings, stronger raw-image dimension/palette inference beyond the current comparison
+gallery, display-list/model-container decoding and more audio/compression formats. Current source groups and named contracts are static evidence, not runtime
 proof; raw preview choices remain manual interpretations.
 
 

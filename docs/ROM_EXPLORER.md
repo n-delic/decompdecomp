@@ -108,3 +108,42 @@ Each square is one analysed region in ROM order, regardless of byte size; the st
 Hover for type, offsets and size, or use arrow keys and Enter to inspect a region. The table remains a keyboard-accessible alternative.
 Image and audio labels use the existing format evidence. A local **3d model** classification is available in region notes;
 there is no automatic 3D model detector yet. Saved classifications recolour the map without changing matching status.
+
+### Texture discovery, usage and geometry
+
+Open a region's **Asset preview → Find texture layouts** to compare up to 16 thumbnails.
+The search tries RGBA 5551, RGB 565 in both byte orders, RGBA 8888, intensity, intensity/alpha
+and indexed CI4/CI8 layouts. It compares common dimensions plus your selected dimensions
+(capped at 128×128), reading at most 64 KiB from **Data offset**. Opening discovery exposes
+palette controls above; indexed guesses try that offset as RGBA 5551, IA16 and RGBA 8888.
+Click a thumbnail to copy its settings and open the full preview. The continuity/diversity/visibility
+score ranks guesses; it is not a probability that bytes are a texture. Uniform bytes rank zero.
+Row-major layouts are supported; tiled/swizzled layouts remain planned. Decompressed sources
+use the existing 4 MiB decoder limits. No discovery result automatically changes a region's type.
+
+**Used by** summarises direct address references, loader callers, copy/DMA helpers,
+decompressors, buffer consumers and reads. Each known function is linked, with original
+instruction addresses and evidence. Indirect callees are retained in detailed flow evidence;
+unknown identities do not become function links. Tracing remains static and block-local;
+passing a buffer does not establish successful loading or rendering.
+
+The square map defaults to **Group regions with shared boundaries**. A group joins two or
+more display regions covered exactly by one imported data symbol or loader source extent.
+Imported symbols take precedence over overlapping loader hypotheses; groups never swallow
+known code or infer shared assets merely from adjacency. The byte strip and raw region table
+keep their existing boundaries. Inspect a group to see its basis, member links and **Use group
+start for previews**. Ungroup to see individual types; mixed-type groups appear as data.
+A symbol or transfer can contain several assets, so grouped extents remain evidence, not a
+claim of a complete asset format.
+
+**Inspect 3D geometry** reads a manual vertex/index layout using **Source** and **Data offset**
+above. Choose signed 16-bit or float32 XYZ positions, byte order, vertex stride, position offset
+within each record and count. Optional unsigned 8/16/32-bit indices use an absolute offset in
+the same source (ROM or decompressed bytes). Triangles, strips, lines and points are supported;
+limits are 4,096 vertices and 8,192 triangles. Invalid indices, non-finite coordinates, truncated
+buffers and unsupported controls produce actionable errors. Display lists, primitive restart,
+skinning, materials and proprietary model containers are not decoded.
+
+Drag or use arrow keys to rotate the fitted wireframe; wheel or +/− zooms, and Home or
+**Reset view** resets it. **Save notes** retains both texture and geometry layouts with the
+region annotation. These settings and previews do not modify bytes, symbols or matching.

@@ -284,6 +284,12 @@ def test_preview_routes_enforce_window_origin_write_header_and_stale_inputs(proj
     assert client.post(path,json={**request,'image_hash':'stale'},headers={'X-Decomp':'1'}).status_code==400
     invalid={**request,'options':dict(format='ci4',width=4096,height=1)}
     assert client.post(path,json=invalid,headers={'X-Decomp':'1'}).status_code==400
+    inspection='/api/rom-explorer/inspect'
+    packet={**request,'action':'model','model_settings':{'count':1}}
+    assert client.post(inspection,json=packet,headers={'User-Agent':'outside'}).status_code==401
+    assert client.post(inspection,json=packet).status_code==403
+    assert client.post(inspection,json=packet,headers={'X-Decomp':'1'}).status_code==200
+    assert client.post(inspection,json={**packet,'image_hash':'bad'},headers={'X-Decomp':'1'}).status_code==400
     roles='/api/rom-explorer/loaders'
     assert client.get(roles+'?slug=game').status_code==200
     response=client.post(roles,json=dict(slug='game',function='reader',role='dma',domain='rom',source=0,destination=1,length=2),headers={'X-Decomp':'1'})

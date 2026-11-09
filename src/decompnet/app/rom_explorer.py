@@ -82,7 +82,8 @@ def listing(net, slug):
                 'direct_users':len(users[r['id']][0]),'traced_users':len(users[r['id']][1]),
                 'function_refs':sorted(users[r['id']][0] | users[r['id']][1])}
                for r in report['regions']]
-    return {k:v for k,v in report.items() if k!='regions'} | dict(available=True,stale=report['revision']!=_revision(net,proj),regions=regions)
+    from ..rom.asset_inspection import groups
+    return {k:v for k,v in report.items() if k!='regions'} | dict(available=True,stale=report['revision']!=_revision(net,proj),regions=regions,asset_groups=groups({**report,'regions':regions}))
 
 
 def run(net, slug, log):
@@ -160,10 +161,14 @@ def detail(net, slug, region_id, image_hash):
     lines = [f'{lo+i:08X}  '+sample[i:i+16].hex(' ').ljust(47)+'  '+''.join(chr(v) if 32<=v<127 else '.' for v in sample[i:i+16]) for i in range(0,len(sample),16)]
     # A chain is only imported function -> table region -> sampled pointer word.
     # Do not invent loader/decompressor semantics from a suggestive function name.
+    from ..rom.asset_inspection import groups, usage
+    flow={**state['report'].get('loader_flow',{}),
+          'chains':[state['report']['loader_flow']['chains'][int(i)] for i in row.get('loader_chains',[])]}
+    asset_groups=[group for group in groups(state['report']) if region_id in group['region_ids']]
     return dict(row,annotation=state['annotations'].get(region_id,{}),preview='\n'.join(lines),
                 strings=[m.group()[:-1].decode('ascii')[:160] for m in re.finditer(rb'[\x20-\x7e]{8,}\x00',text_sample)][:20],
-                image_hash=image_hash,loader_flow={**state['report'].get('loader_flow',{}),
-                    'chains':[state['report']['loader_flow']['chains'][int(i)] for i in row.get('loader_chains',[])]})
+                image_hash=image_hash,loader_flow=flow,usage=usage(row,flow),asset_groups=asset_groups)
+
 
 
 def annotate(net, slug, data):
@@ -171,13 +176,17 @@ def annotate(net, slug, data):
     name,notes = data.get('name',''),data.get('notes','')
     kind=data.get('kind','')
     preview_settings=_preview_settings(data.get('preview_settings',{}))
+    from ..rom.asset_formats import AssetError
+    from ..rom.asset_inspection import model_settings
+    try:geometry_settings=model_settings(data.get('model_settings',{}))
+    except AssetError as exc:raise NetworkError(str(exc)) from None
     if not isinstance(kind,str) or kind not in KINDS:raise NetworkError('Choose a listed region type or keep the automatic label.')
     if not isinstance(name,str) or not isinstance(notes,str) or len(name)>120 or len(notes)>4000:
         raise NetworkError('Use a label up to 120 characters and notes up to 4,000 characters.')
     proj = _project(net,slug)
     with net.project_store(proj['id']).tx():
         proj,state,row = _current(net,slug,data.get('region'),data.get('image_hash'))
-        state['annotations'][row['id']] = dict(name=name.strip(),notes=notes.strip(),kind=kind,preview_settings=preview_settings,updated_at=time.time())
+        state['annotations'][row['id']] = dict(name=name.strip(),notes=notes.strip(),kind=kind,preview_settings=preview_settings,model_settings=geometry_settings,updated_at=time.time())
         _write(net,proj,state)
     return dict(saved=True,annotation=state['annotations'][row['id']])
 
@@ -232,7 +241,12 @@ def asset_preview(net,slug,data):
 
 
 def _asset_preview(net,slug,data):
-    """Serve a bounded local image/audio data URL, leaving the ROM and saved code alone."""
+    from ..rom.asset_formats import preview
+    return _asset_read(net,slug,data,lambda image,options:preview(image,options))
+
+
+def _asset_read(net,slug,data,read):
+    """Verify and read a bounded interpretation from the original or decoded image."""
     from ..rom import asset_formats
     proj,state,row=_current(net,slug,data.get('region'),data.get('image_hash'))
     options=_preview_settings(data.get('options',{}))
@@ -247,9 +261,23 @@ def _asset_preview(net,slug,data):
             block=offset if auto_decode else asset_formats.integer(options.get('block_offset',row['start']),'Compressed block offset',0,len(image)-1)
             raw,codec=asset_formats.unpack(image[block:block+asset_formats.MAX_BYTES])
             selected={**options,'offset':0 if auto_decode else options.get('offset',0)}
-            result=asset_formats.preview(raw,selected)
+            result=read(raw,selected)
             result['decoded']=dict(codec=codec,bytes=len(raw),block_offset=block)
         else:
-            result=asset_formats.preview(image,{**options,'offset':options.get('offset',row['start'])})
+            result=read(image,{**options,'offset':options.get('offset',row['start'])})
     result['settings']=options
     return result
+
+
+def asset_inspect(net,slug,data):
+    """Bounded texture comparisons and manual geometry share preview integrity checks."""
+    from ..rom import asset_inspection
+    from ..rom.asset_formats import AssetError
+    action=data.get('action')
+    if action not in ('textures','model'):raise NetworkError('Choose texture discovery or a model preview.')
+    try:
+        def read(image,options):
+            if action=='model':return asset_inspection.model(image,options,data.get('model_settings',{}))
+            return asset_inspection.textures(image,options)
+        return _asset_read(net,slug,data,read)
+    except AssetError as exc:raise NetworkError(str(exc)) from None
