@@ -49,6 +49,8 @@ vertex/index buffers as a rotatable wireframe. N64 scans also recognize supporte
 including RNC-compressed banks, direct-color RGBA32 and supported RGBA16 mipmaps.
 Open **Texture browser** for a thumbnail gallery, format/dimension filters and reference links.
 Select any frame, palette or mip level in a bank; animate frames at a chosen preview rate.
+N64 scans also recognize supported B1 sound banks and their sample tables. Open an audio
+region to choose a sample and prepare a local WAV preview; playback starts only with Play.
 Use **Discover assets with agents** to investigate unknown data, a ROM range or a function’s
 referenced regions. Agents claim regions, retain failed approaches and propose names, formats
 and layouts for your review. Accepting updates local annotations; symbols and matching stay untouched.

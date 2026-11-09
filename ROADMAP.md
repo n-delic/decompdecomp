@@ -695,6 +695,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Automatic texture banks (CI4/CI8, RGBA32, RGBA16 mipmaps, RNC 1/2) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Automatic B1 audio banks, table evidence and mono VADPCM/PCM16 previews | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Native frame/palette/mip selection and explicit animation | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Image, texture/palette and audio previews | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Agent asset discovery, automatic checks, independent review and similar regions | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -984,6 +985,10 @@ matching and never establishes that an unreferenced region is unused.
 
 Loader source groups now retain complete source extents and block-local call/load evidence,
 including named DMA/copy/decompression contracts, small wrappers and user-declared roles.
+N64 B1 sound-bank detection now validates control graphs, ADPCM books and sample-table
+evidence, with sample selection and explicit-play mono VADPCM/PCM16 previews. Uncorroborated
+adjacency stays tentative; unresolved tables never classify waveform bytes.
+
 Raw texture/palette previews, PNG/JPEG images, PCM WAVE/standard mono VAGp playback and
 bounded gzip/zlib/Yaz0/MIO0/Yay0 decoding share one local preview panel. Unchanged inputs
 reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and limits.
@@ -1506,7 +1511,7 @@ Extend the current block-local loader/buffer evidence through indexed file-ID ta
 mutable memory, cross-branch paths and arbitrary interprocedural consumers. Establish
 asynchronous DMA completion before presenting runtime guarantees. Extend native texture-bank
 recognition to other consoles and additional direct-color/mipmapped layouts. Add console texture tilings, stronger raw-image dimension/palette inference beyond the current comparison
-gallery, display-list/model-container decoding and more audio/compression formats. Current source groups and named contracts are static evidence, not runtime
+gallery, display-list/model-container decoding, other audio banks/compression formats, compressed B1 control graphs, alternate ADPCM book orders and music-sequence synthesis. Current source groups and named contracts are static evidence, not runtime
 proof; raw preview choices remain manual interpretations.
 
 

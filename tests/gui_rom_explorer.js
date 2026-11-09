@@ -33,7 +33,7 @@ function setup(){
     assert.match(html,/Detected CI4 texture bank/);
     assert.match(html,/32 × 16/);
     assert.match(html,/2 frame/);
-    assert.match(html,/Detect asset \/ texture bank/);
+    assert.match(html,/Detect asset \/ bank/);
   }
 
   // A start acknowledges before the network returns, prevents duplicate starts,

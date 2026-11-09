@@ -18,7 +18,7 @@ from ..rom.explorer import analyse
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=4
+ANALYSIS_REVISION=5
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'font', 'container', 'repeated bytes')
 
 
@@ -37,7 +37,7 @@ def _revision(net, proj):
     syms = store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])
     cfg=net.cfg(proj)
     stat=(Path(proj['root'])/cfg['rom']['file']).stat()
-    layout={key:cfg.get(key) for key in ('rom','segments','platform','big_endian')}
+    layout={key:cfg.get(key) for key in ('rom','segments','platform','big_endian','gp')}
     return hashlib.sha256(json.dumps([ANALYSIS_REVISION,layout,proj['big_endian'],(stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns),[tuple(r) for r in rows],[tuple(r) for r in syms],_contracts(net,proj)],sort_keys=True).encode()).hexdigest()
 
 
@@ -76,6 +76,7 @@ def listing(net, slug):
             chain=flow['chains'][int(identity)]
             traced.add(chain['function'])
             traced.update(step['callee'] for step in chain['steps'] if step.get('callee_known'))
+        traced.update(ref['function'] for ref in (row.get('detected_asset') or {}).get('loader_refs',[]))
         users[row['id']]=(direct,traced-direct)
     regions = [{k:v for k,v in r.items() if k not in ('references','pointers')} |
                {'annotation':state['annotations'].get(r['id'],{}),'used_by':len(users[r['id']][0] | users[r['id']][1]),
@@ -120,7 +121,7 @@ def _run(net, slug, log):
                               check=log.check_cancel,progress=log.progress)
         report = analyse(image,cfg['segments'],functions,symbols,big_endian=bool(proj['big_endian']),
                          progress=log.progress,check=log.check_cancel,ranges=[c['source'] for c in flow['chains']],
-                         assets=console.asset_regions(image,check=log.check_cancel,progress=log.progress))
+                         assets=console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=cfg['segments'],gp=cfg.get('gp',0)),check=log.check_cancel,progress=log.progress))
         asset_flow.attach(report,flow)
     log.check_cancel()
     if revision!=_revision(net,proj):raise NetworkError('The project layout changed during the scan. Scan again to use the current mappings.')
@@ -226,7 +227,7 @@ def loader_contracts(net,slug,data=None):
 def _preview_settings(options):
     from ..rom.asset_formats import FORMATS, PALETTES
     if not isinstance(options,dict):raise NetworkError('Preview settings must be named fields.')
-    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip'}
+    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample'}
     if set(options)-allowed:raise NetworkError('Use only the listed preview controls.')
     if options.get('format','auto') not in FORMATS or options.get('palette_format','rgba5551-be') not in PALETTES:
         raise NetworkError('Choose a listed preview format and palette format.')
@@ -260,14 +261,14 @@ def _asset_read(net,slug,data,read, *, detect=False):
         selection=dict(options)
         options=dict(detected['preview_settings'])
         original_read=read
-        read=lambda image,settings:net.console(proj).asset_texture_preview(image,detected,selection) or original_read(image,settings)
+        read=lambda image,settings:net.console(proj).asset_preview(image,detected,selection) or original_read(image,settings)
     path=Path(proj['root'])/net.cfg(proj)['rom']['file']
     with path.open('rb') as stream,mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ) as image:
         if hashlib.sha256(image).hexdigest()!=data['image_hash']:raise NetworkError('The image changed. Reopen ROM Explorer before previewing assets.')
         offset=asset_formats.integer(options.get('offset',row['start']),'Data offset',0,len(image)-1) if options.get('source','rom')=='rom' else row['start']
         header=image[offset:offset+4]
         compressed=header in (b'Yaz0',b'Yay0',b'MIO0',b'RNC\x01',b'RNC\x02') or header.startswith(b'\x1f\x8b\x08') or len(header)>=2 and header[0]==0x78 and int.from_bytes(header[:2],'big')%31==0
-        auto_decode=options.get('source','rom')=='rom' and options.get('format','auto')=='auto' and compressed
+        auto_decode=not using_detected and options.get('source','rom')=='rom' and options.get('format','auto')=='auto' and compressed
         if options.get('source','rom')=='decoded' or auto_decode:
             block=offset if auto_decode else asset_formats.integer(options.get('block_offset',row['start']),'Compressed block offset',0,len(image)-1)
             block_data=image[block:block+asset_formats.MAX_BYTES]
