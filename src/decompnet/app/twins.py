@@ -611,7 +611,7 @@ class Twins:
             job.state = "running"  # run() finishes its local pass; cross-project work is still cancellable
             report(job, 'Searching other games and local SDKs')
             job.matched += self.across_games(slug, job)
-            from . import free_candidates, named_donors, similar_matches
+            from . import free_candidates, named_donors, similar_phase
 
             free_candidates.budget(job, self.net.cascades.seconds, self.net.cascades.attempts)
             started = time.monotonic()
@@ -620,11 +620,10 @@ class Twins:
             report(job, 'Checking reusable source candidates')
             job.matched += free_candidates.run(self, slug, job)
             report(job, 'Checking similar matched functions')
-            job.matched += similar_matches.run(self, slug, job)
+            job.matched += similar_phase.run(self, slug, job)
             with self.net.project_store(slug).tx() as db:
                 db.execute('INSERT INTO reuse_runs(project_id,attempts,matched,bytes,seconds,created_at) VALUES(?,?,?,?,?,?)',
-                           (proj['id'], job.reuse_attempts, job.reuse_matched,
-                            job.reuse_bytes, time.monotonic() - started, time.time()))
+                           (proj['id'], *similar_phase.totals(job), time.monotonic() - started, time.time()))
             report(job, 'Repairing near matches')
             job.matched += self.net.permuter.repair_pass(slug, job.stop).matched
             from .iterative_repairs import optional_phase
@@ -639,6 +638,7 @@ class Twins:
             job.ordered.set()
             if job.state == "running":  # (it failed before the pass)
                 job.state = "stopped" if job.stop.is_set() else "done"
+            self.net.cascades.wake()
         return job
 
     def source_for(self, proj, a, b, includes: bool = False) -> str | None:
