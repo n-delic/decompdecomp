@@ -401,13 +401,36 @@ def _knowledge_store(net, project):
     return service(net)._store(project)
 
 
+def _note_rows(store, pid):
+    """Transport note metadata in bounded pages without per-row SQLite/GIL handoffs."""
+    batches = store.all("""WITH numbered AS (
+        SELECT n.id,n.text,n.created_at,n.score_before,n.score_after,n.agent_id,f.name AS fn,
+               row_number() OVER (ORDER BY n.id) AS ordinal
+        FROM notes n LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=?)
+        SELECT json_group_array(json_object(
+            'id',id,'text',text,'created_at',CASE WHEN typeof(created_at)='real'
+                THEN printf('%!.17g',created_at) ELSE created_at END,
+            'real_time',typeof(created_at)='real','score_before',score_before,
+            'score_after',score_after,'agent_id',agent_id,'fn',fn)) AS batch
+        FROM numbered GROUP BY (ordinal-1)/128 ORDER BY min(ordinal)""", pid)
+    rows = []
+    while batches:
+        rows.extend(json.loads(batches.pop()['batch']))
+    # Aggregate input ordering is not guaranteed. Keep the original note ID order,
+    # and preserve the full double timestamp (SQLite JSON otherwise rounds it).
+    rows.sort(key=lambda row: row['id'])
+    for row in rows:
+        row.pop('id')
+        if row.pop('real_time'):
+            row['created_at'] = float(row['created_at'])
+    return rows
+
+
 def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
     """The progress manifest and its function index from function rows (with or without their source text)."""
     store = _knowledge_store(net, proj['id'])
     pid = proj["id"]
-    note_rows = store.all(
-        "SELECT n.text,n.created_at,n.score_before,n.score_after,n.agent_id,f.name AS fn "
-        "FROM notes n LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)
+    note_rows = _note_rows(store, pid)
     agent_ids = sorted({r[k] for r in rows for k in ('matched_agent_id', 'best_agent_id') if r[k] is not None}
                        | {r['agent_id'] for r in note_rows if r['agent_id'] is not None})
     # Identities remain shared; project notes and functions need not join a copy
