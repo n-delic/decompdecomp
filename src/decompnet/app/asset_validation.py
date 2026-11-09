@@ -29,6 +29,9 @@ def validate(net,slug,report,region,proposal):
         packet=dict(region=region,image_hash=report['image_hash'],options={})
         try:
             if proposal.get('kind')=='compressed' or row['kind']=='compressed':
+                # Imported symbols can split a validated compressed stream into display regions.
+                clue=next((c for c in row.get('evidence',[]) if c.get('kind')=='compressed' and c.get('confidence')=='validated' and 'offset' in c),None)
+                if clue:packet['options']=dict(source='decoded',block_offset=clue['offset'],offset=0)
                 decoded=rom_explorer._asset_read(net,slug,packet,lambda image,options:dict(bytes=len(image)))
                 checks.append(dict(check='Decompression',status='pass' if decoded.get('decoded') else 'unchecked',evidence=decoded.get('decoded','No supported compression header at the region start.')))
             else:
