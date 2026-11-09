@@ -1995,3 +1995,25 @@ def test_failed_metric_reset_preserves_previous_boundary(tmp_path, quiet, monkey
     monkeypatch.setattr(manager,'_save',fail_save)
     with pytest.raises(OSError,match='save failed'):manager.reset_metrics(sid)
     assert manager.sessions[sid].options['_metrics'] is previous
+
+
+@pytest.mark.parametrize('version', ['1.19.5', 'opencode v2.0.28'])
+@pytest.mark.parametrize('variant', ['', 'high', 'max'])
+def test_opencode_reasoning_variant_uses_installed_cli_syntax(tmp_path, monkeypatch, version, variant):
+    monkeypatch.setitem(kinds.known_versions, 'opencode', (0, version))
+    manager=_manager(tmp_path,monkeypatch,'opencode')
+    model='opencode/synthetic-model'+('#'+variant if variant else '')
+    session=agents.Session('synthetic','opencode','o','demo','synthetic',{'model':model})
+    cmd,env,_=manager._command(session,'private-token',tmp_path)
+    legacy=version.startswith('1.')
+    assert cmd[cmd.index('-m')+1]==('opencode/synthetic-model' if legacy else model)
+    if legacy and variant:
+        assert cmd[cmd.index('--variant')+1]==variant
+    else:assert '--variant' not in cmd
+    assert ('--standalone' in cmd) is (not legacy)
+    assert env['OPENCODE_DB']==str((tmp_path/'opencode.db').resolve())
+    assert session.options['model']==model
+    assert 'private-token' not in str(cmd)
+    config=json.loads((tmp_path/'opencode.json').read_text())
+    servers=config['mcp'] if legacy else config['mcp']['servers']
+    assert servers['decompdecomp']['headers']['Authorization']=='Bearer private-token'

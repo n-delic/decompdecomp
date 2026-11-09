@@ -41,7 +41,7 @@ class Opencode(Agent):
     signin = "Run `opencode auth login` once to add a provider (DeepSeek, OpenRouter, ...)."
     docs = "https://opencode.ai"
     models_args = ("models",)
-    takes_effort = True  # opencode 2 picks a model's reasoning effort as a variant of it: provider/model#high
+    takes_effort = True  # stored as provider/model#high; the CLI syntax depends on its major version
 
     def read_models(self, lines: list[str]) -> list[dict]:
         """`opencode models`: "<provider>/<model>" per model."""
@@ -86,10 +86,11 @@ class Opencode(Agent):
     def session_command(self, exe: str, workdir: Path, mcp_url: str, token: str, model: str) -> tuple[list[str], dict]:
         # "deny" takes the tools out of the request, and OpenCode Zen's free models then refuse it ("can only be
         # used from within OpenCode"). "ask" keeps the usual tools, and `opencode run` rejects every ask itself.
+        standalone = self.standalone(exe)
         zen = (model or self.config_model() or ZEN).startswith(ZEN)
         never = "ask" if zen else "deny"
         headers = {"Authorization": f"Bearer {token}"}
-        if self.standalone(exe):
+        if standalone:
             # opencode 2: Mario Kart 64's helpers read the user's home and fetched a public decomp's code. Its own
             # format, since the old one loses `codemode`: off, the app's tools are the model's own, and `execute` (a
             # JavaScript runner whose fetch() reaches the internet, and which only "deny" removes) can go, with
@@ -116,11 +117,17 @@ class Opencode(Agent):
         # --print-logs: opencode's JSON error only says "Unexpected server error"; the log line says what failed.
         # (No --dir: it runs in workdir, and OpenCode before 1.4 stops at the flag. No --log-level either: before
         # 2.0 it took only ERROR, from 2.0 only error, and either stops the other at once.)
-        cmd = [exe, "run", *(["--standalone"] if self.standalone(exe) else []), "--format", "json", "--print-logs"]
+        cmd = [exe, "run", *(["--standalone"] if standalone else []), "--format", "json", "--print-logs"]
         # Concurrent helpers otherwise write OpenCode's one user database: a busy writer can end a prompt with
         # "database is locked" before it calls an app tool. Reuse one database per helper across its sessions.
         # Override only the database, not HOME/XDG_DATA_HOME: provider sign-in and MCP auth stay in their usual place.
-        return cmd + (["-m", model] if model else []), {"OPENCODE_DB": str((workdir / "opencode.db").resolve())}
+        model_args = ["-m", model] if model else []
+        if model and '#' in model and not standalone:
+            # OpenCode 1 interprets #high as part of the literal model ID. Keep
+            # the saved selection, but pass effort through its separate flag.
+            base, _, variant = model.partition('#')
+            model_args = ["-m", base, "--variant", variant]
+        return cmd + model_args, {"OPENCODE_DB": str((workdir / "opencode.db").resolve())}
 
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")
