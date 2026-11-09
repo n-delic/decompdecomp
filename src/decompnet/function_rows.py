@@ -28,7 +28,9 @@ def selected(store, project_id, ids, *, columns=None, matched_only=False):
     # round-trips the native double; integers remain exact JSON integers.
     values = ','.join(f"json_array(typeof({c}),CASE typeof({c}) WHEN 'blob' THEN hex({c}) "
                       f"WHEN 'real' THEN printf('%!.17g',{c}) ELSE {c} END)" for c in columns)
-    refs = ' UNION '.join(f"SELECT lower(hex({c})) AS hash FROM chosen WHERE typeof({c})='blob'"
+    # UNION deduplicates across fields; one selected body needs its own DISTINCT.
+    distinct = 'DISTINCT ' if len(packed)==1 else ''
+    refs = ' UNION '.join(f"SELECT {distinct}lower(hex({c})) AS hash FROM chosen WHERE typeof({c})='blob'"
                           for c in sorted(packed)) or 'SELECT NULL AS hash WHERE 0'
     batches = store.all(f"""WITH chosen AS MATERIALIZED (
         SELECT {','.join(columns)} FROM main.functions WHERE project_id=?
