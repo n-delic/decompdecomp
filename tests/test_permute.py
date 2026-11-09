@@ -319,3 +319,75 @@ def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, m
     assert caplog.records[-1].exc_info is None
     # the same best attempt is refused every time: its other turns go too
     assert net.store.one("SELECT permuted FROM functions WHERE id=1")["permuted"] == permute.MAX_TURNS
+
+def test_scheduling_probes_cross_a_worse_intermediate_before_random_search(monkeypatch):
+    from decompnet.call_scheduling import variants
+    source = """typedef struct { int count; } Item;
+void send(Item *, float, float);
+void f(Item *p)
+{
+    p->count++;
+    send(p, 9.25f, 2.5f);
+}
+"""
+    net = FakeNet()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source=?,best_score=10 WHERE id=1", (source,))
+    candidates = variants(source, "f", HEADER)
+    winner = candidates[-1]
+    p = ScriptedPermuter(net, {c: (0 if c == winner else 50) for c in candidates})
+    jobs = batches(monkeypatch, ["random"])
+    st = State()
+    p._permute(AGENT, net.project_row("game"), net.function(), st)
+    assert p.judged == candidates
+    assert not jobs
+    assert st.variants == 4 and st.matched == 1
+    assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
+
+
+def test_scheduling_probes_respect_cancellation(monkeypatch):
+    net = FakeNet()
+    p = ScriptedPermuter(net, {})
+    monkeypatch.setattr(permute, "available", lambda: False)
+    def probes(*args):
+        st.stop.set()
+        return ["never compiled"]
+    monkeypatch.setattr(permute.call_scheduling, "variants", probes)
+    st = State()
+    p._permute(AGENT, net.project_row("game"), net.function(), st)
+    assert not p.judged
+    assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
+
+def test_scheduling_probes_work_without_the_external_generator(monkeypatch):
+    from decompnet.call_scheduling import variants
+    source = """typedef struct { int count; } Item;
+void send(Item *, float, float);
+void f(Item *p)
+{
+    p->count++;
+    send(p, 9.25f, 2.5f);
+}
+"""
+    net = FakeNet()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source=? WHERE id=1", (source,))
+    candidates = variants(source, "f", HEADER)
+    p = ScriptedPermuter(net, {candidates[-1]: 0})
+    monkeypatch.setattr(permute, "available", lambda: False)
+    st = State()
+    p._permute(AGENT, net.project_row("game"), net.function(), st)
+    assert p.judged == candidates and st.matched == 1
+
+
+def test_project_mode_keeps_its_single_definition_submission_contract(monkeypatch):
+    net = FakeNet()
+    monkeypatch.setattr(net, "fork_slug", lambda slug: "fork")
+    monkeypatch.setattr(permute, "available", lambda: False)
+    monkeypatch.setattr(permute, "mutate", lambda *args: "normal variant")
+    def unexpected_probe(*args):
+        raise AssertionError("project attempts cannot insert helper definitions")
+    monkeypatch.setattr(permute.call_scheduling, "variants", unexpected_probe)
+    p = ScriptedPermuter(net, {"normal variant": 0})
+    st = State()
+    p._permute(AGENT, net.project_row("game"), net.function(), st)
+    assert p.judged == ["normal variant"] and st.matched == 1

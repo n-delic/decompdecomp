@@ -77,6 +77,12 @@ one claim; one function back is normal.)
    helper)? release_function(needs=that one) hands it to you. Sure that
    no C makes its code at all (hand-written assembly): not_c=true, saying why.
 
+For a stalled call/register mismatch, verify argument values against the target and callee before trusting
+the lowest score. Try a bounded inline-return experiment that moves an existing adjacent side effect into
+an argument-producing helper, preserving sequencing of other arguments. Judge the complete function.
+An empty-body compile is not a meaningful stall experiment or claim completion. Failed variants do not
+prove that no C solution exists or that a backend change is required; report the exact tested hypotheses.
+
 Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project
 (another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief
 in your messages: work, don't narrate.
@@ -158,6 +164,14 @@ neighbours may come along in one claim; one function back is normal.)
    becomes one whole function. Very large functions: get the structure right first; a near miss
    is worth the extra compiles. Another function of the game it needs done first (a callee, an inlined
    helper): release_function(needs=that one) hands it to you.
+
+For a stalled call/register mismatch, verify argument values against the target and callee before trusting
+the lowest score. Try a bounded inline-return experiment that moves an existing adjacent side effect into
+an argument-producing helper, preserving sequencing of other arguments. Judge the complete function.
+An empty-body compile is not a meaningful stall experiment or claim completion. Failed variants do not
+prove that no C solution exists or that a backend change is required; report the exact tested hypotheses.
+
+In project mode, add any helper with edit_file and its match-preserving checks before testing the caller.
 
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build
 scripts (the tools refuse). Never fetch or copy code from outside this project (another repository, a

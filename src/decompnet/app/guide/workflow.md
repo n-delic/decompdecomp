@@ -7,7 +7,7 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
 2. Read `get_context`: the shared header every compile includes (types, structs, prototypes).
 3. Write the function, then `compile_and_diff`. Your object is linked at the function's real address
    and compared with the ROM. Score 0 = byte-identical = matched and saved.
-4. Iterate. Change one thing at a time and watch the score; keep what lowers it.
+4. Iterate. Change one thing at a time and watch the score; retain the lowest score, but keep a separate semantically justified hypothesis even when its score is worse.
 5. Matched: add what you learned to the codebase so others benefit:
    - prototypes and structs you worked out -> `edit_context` (accepted only if every matched function
      still matches);
@@ -30,3 +30,20 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
 ## Priorities
 Get the instruction count and control flow right first, then operands, then register allocation.
 Plausible original code beats contortions: games were written by people, quickly.
+
+
+## A stalled call-argument mismatch
+First map each target argument register to its value and check the callee's parameter use. A lower score
+can come from reversed arguments; a corrected call can initially score worse because its loads move too.
+
+Try a small, named experiment: move an existing adjacent increment into a static inline helper that returns
+one literal argument, then use that helper in the call. For example, `p->count++; send(p, 2.5f, 9.25f);`
+can be tested as `send(p, 2.5f, next_value(p));`, where `next_value` increments the count and returns 9.25f.
+Test each literal position independently. Other arguments must not read the modified field or have side
+effects whose ordering changes. This may alter compiler scheduling even when ordinary local temporaries
+do not. No assembly or pragma is needed. In project mode, insert helpers with `edit_file`, not in the
+single-function submission. The ROM permuter tries a bounded subset of these shapes automatically.
+
+Compile the complete candidate and use the strict judge. Do not replace it with an empty body to satisfy a
+claim budget. Record the source shape, compiler, result and remaining diff; failed variants establish only
+that those variants failed, not that C cannot match or that the compiler backend needs changing.
