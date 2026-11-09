@@ -32,6 +32,10 @@ def test_credentials_are_scoped_persistent_and_revocable(tmp_path):
     assert manual_mcp.project_for(net, Settings(settings.path), agent.id) is None
     with pytest.raises(NetworkError, match='invalid API token'):
         net.authenticate(first['token'])
+    retired = net.store.one('SELECT origin FROM agents WHERE id=?', agent.id)
+    assert retired['origin'] == 'manual-mcp:revoked'
+    replacement = manual_mcp.create(net, restored, 'one')
+    assert replacement['id'] != agent.id
     assert manual_mcp.project_for(net, restored, second['id']) == 'two'
     with net.store.tx() as db:
         db.execute('DELETE FROM projects WHERE slug=?', ('two',))

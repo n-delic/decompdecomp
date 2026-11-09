@@ -1,5 +1,6 @@
 """Editable prompt templates: built-in, global, then per-helper overrides."""
 import json
+import logging
 from string import Formatter
 
 from ..network import NetworkError
@@ -42,7 +43,13 @@ def global_overrides(net):
 
 
 def effective(net, options):
-    return defaults() | global_overrides(net) | validate(options.get('prompts') or {})
+    inherited = defaults() | global_overrides(net)
+    custom = options.get('prompts') or {}
+    try:
+        return inherited | validate(custom)
+    except NetworkError as error:
+        logging.getLogger(__name__).warning('Ignoring invalid helper prompt override: %s', error)
+        return inherited
 
 
 def for_session(net, session):

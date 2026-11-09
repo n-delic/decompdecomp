@@ -37,7 +37,6 @@ def ensure(net):
     if getattr(net, '_tool_policy_ready', False):
         return
     with net.store.tx() as db:
-        db.execute('CREATE TABLE IF NOT EXISTS agent_tool_usage(name TEXT PRIMARY KEY,calls INTEGER NOT NULL,last_used REAL)')
         if not db.execute("SELECT 1 FROM settings WHERE key='tool-usage-started'").fetchone():
             exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='helper_messages'").fetchone()
             if exists:

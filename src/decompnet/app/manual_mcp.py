@@ -1,4 +1,5 @@
 """User-created MCP credentials: one project per connection, no plaintext tokens saved."""
+import secrets
 import uuid
 
 from ..network import NetworkError
@@ -37,6 +38,9 @@ def revoke(net, settings, agent_id):
         raise NetworkError('That MCP connection no longer exists.')
     net.release_stopped([agent_id], 'manual MCP connection revoked')
     with net.store.tx() as db:
-        db.execute('DELETE FROM agents WHERE id=? AND origin=?', (agent_id, 'manual-mcp'))
+        # Retain the identity so its notes, attempts and matches cannot be
+        # attributed to a later agent if SQLite reuses the row ID.
+        db.execute('UPDATE agents SET token_hash=?, origin=? WHERE id=? AND origin=?',
+                   ('revoked:' + secrets.token_hex(16), 'manual-mcp:revoked', agent_id, 'manual-mcp'))
     settings.data['manual_mcp'] = [item for item in connections(settings) if item['id'] != agent_id]
     settings.save()

@@ -35,6 +35,7 @@ def test_prompt_overrides_validate_inherit_and_snapshot(tmp_path, monkeypatch):
                   {'initial_rom': '{title.__class__}'}, {'initial_rom': '{'}):
         with pytest.raises(NetworkError):
             prompt_settings.validate(value)
+    assert prompt_settings.effective(net, {'prompts': {'initial_rom': '{removed}'}})['initial_rom'] == 'Global {title}: {count}'
 
 
 def test_stopped_helper_keeps_its_prompts_and_disabled_tools_on_restart(tmp_path):
