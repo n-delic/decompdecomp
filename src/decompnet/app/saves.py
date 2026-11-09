@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import weakref
 from collections import deque
 from contextlib import closing, nullcontext
 from pathlib import Path
@@ -198,6 +199,11 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
             progress.local.busy = was_busy
 
 
+# Progress objects that want to know when the app itself writes a progress folder (`publish_begin(folder)`, then
+# `publish_end(folder)`): a recheck tells its own saves from an outside edit.
+publish_watchers: "weakref.WeakSet" = weakref.WeakSet()
+
+
 @phase('progress_publish')
 def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | None = None,
              expected: dict[str, str] | None = None, *, chosen: bool = False) -> bool:
@@ -230,16 +236,23 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
             current = path.read_text(encoding="utf-8") if path.exists() else None
             if current != expected.get(name):
                 return False  # git or an editor wrote while the database was being rendered: read it next time
-    for name in (previous or {}).keys() - files.keys():
-        (folder / name).unlink(missing_ok=True)
-    for name, text in files.items():
-        path = folder / name
-        if path.exists() and path.read_text(encoding="utf-8") == text:
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(path.name + ".tmp")
-        temporary.write_text(text, encoding="utf-8")
-        temporary.replace(path)
+    watchers = list(publish_watchers)
+    for watcher in watchers:
+        watcher.publish_begin(folder)
+    try:
+        for name in (previous or {}).keys() - files.keys():
+            (folder / name).unlink(missing_ok=True)
+        for name, text in files.items():
+            path = folder / name
+            if path.exists() and path.read_text(encoding="utf-8") == text:
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(path.name + ".tmp")
+            temporary.write_text(text, encoding="utf-8")
+            temporary.replace(path)
+    finally:
+        for watcher in watchers:
+            watcher.publish_end(folder)
     return True
 
 
@@ -1639,7 +1652,10 @@ class Autosave:
                 continue
             try:
                 deep = force or time.monotonic() >= self.deep_check_after.get(row["slug"], 0)
-                if self.net.progress.sync(row["slug"], force=deep, retry=False, **({"logger": logger} if logger else {})):  # (a failed one waits: RETRY_FAILED_SECONDS)
+                # (the periodic check publishes database-only changes every few seconds, not on each attempt: Progress.deferring)
+                with nullcontext() if force else self.net.progress.deferring():
+                    wrote = self.net.progress.sync(row["slug"], force=deep, retry=False, **({"logger": logger} if logger else {}))  # (a failed one waits: RETRY_FAILED_SECONDS)
+                if wrote:
                     saved.append(row["slug"])
                 if deep:
                     self.deep_check_after[row["slug"]] = time.monotonic() + 15

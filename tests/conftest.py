@@ -43,3 +43,14 @@ def pytest_sessionfinish(session, exitstatus):
 
         wine.stop(Path(WINE_PREFIX))
         shutil.rmtree(WINE_PREFIX, ignore_errors=True)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_progress_wait(monkeypatch):
+    """A tool call disturbed by a save waits up to 90 s for it (tools.PROGRESS_RETRY_SECONDS); tests that expect the
+    disturbance as an error would wait that long, so they get none. Tests of the wait set their own."""
+    from decompnet.app import tools
+    monkeypatch.setattr(tools, "PROGRESS_RETRY_SECONDS", 0)

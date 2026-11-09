@@ -6858,3 +6858,155 @@ The pinned compiler and flags remain KMC GCC 2.7.2,
 path (the private fixture also supplies `platform`). It builds a temporary analysis
 image/database from the fixture targets, never a playable ROM or live app connection.
 CI uses a homemade compiled sibling pair; no game source or bytes are committed.
+
+## KMC GCC 2.7.2: register accesses and guard shapes agents repaired by hand (9 November 2026)
+
+Evidence level: controlled regression replay of repairs that Haiku-lane agents made in
+an N64 game, not new game matches. The profile is `-G0 -mips3 -mgp32 -mfp32 -O2`. Replay
+(`app/repair_replay.py`, 24-32 trials, no model calls) of 21 agent repairs reproduced
+2 before this change and 10 of 20 after it (the 21st, already reproduced, fell outside
+the default 20-example limit). Each replay reaches the agent's compiler output; it is
+not a linked or objdiff verdict.
+
+- **Literal register accesses.** m2c writes `*(s32 *)0xA4040010`. The original source
+  accessed the register through a volatile type, most often unsigned
+  (`*(volatile u32 *)0xA4040010`); a store used `vs32`. Without volatile the compiler
+  schedules and merges the access differently. `mmio_repairs.variants` now offers every
+  KSEG1 (`0xA0000000`-`0xBFFFFFFF`) literal access as volatile with the same type and with
+  the opposite signedness. Six replays (loads, a store and a masked test) recover on the
+  first trial.
+- **Early return versus else.** For a void function, m2c's `if (p == NULL) { A; return; } REST`
+  matched as `if (p != NULL) { REST } else { A }` (`guard_shape_repairs`).
+- **Entry guard plus do-while versus while.** m2c's `if (p == NULL) return V; do { ... } while (p != NULL); return V;`
+  matched as one `while (p != NULL) { ... }`. Both rewrites require the exact inverse test
+  and the same returned value, and refuse gotos and labels.
+
+Not yet reproduced (the replay still fails; unchanged by this work): stack buffers that
+m2c declares as one scalar but the original made arrays (`sp10[16]` for a 64-byte matrix),
+a struct standing in for packed stack locals, a statement-order swap of two stores, and
+a pointer-walk rewrite of indexed matrix stores.
+
+### KMC GCC 2.7.2: global declarations agents retyped by hand (9 November 2026, second batch)
+
+Evidence level: controlled regression replay of 40 further agent repairs from the same N64
+game and profile; 0 were reproduced before, 10 after (24-32 trials, no model calls; compiler
+output only, not linked or objdiff verdicts). `global_array_repairs` adds:
+
+- `global_table_index`: `extern M2C_UNK T; ... *(&T + (i * 4))` -> `extern f32 T[]; ... T[i]` (float,
+  signed and unsigned word elements). Recovered four float-table functions.
+- `byte_table_signedness`: `extern char T[];` -> `u8`/`s8`. Plain `char` is signed here, so this
+  changes every widening load.
+- `global_address_table`: a global used only as `&T` -> `extern u8 T[];` with `T`. Recovered the
+  byte-record accessors that add `index * 100` to the table base.
+- `global_scalar_type`: another width or signedness for a scalar global, singly and for all
+  globals of one declared type together.
+
+Not reproduced (still manual): a group retype where the joint change compiled with errors or
+ranked behind other families inside 32 trials (`s32` -> `s8` on two registers, seven `M2C_UNK`
+-> `u32`); call hoisting (`temp = f(1)` moved one line up); struct/typedef replacement of stack
+locals; and constants that differ only by data address.
+
+### KMC GCC 2.7.2: inlining a once-set temporary at one read (9 November 2026, third batch)
+
+Evidence level: controlled regression replay of 7 further agent repairs. `local_inline_repairs`
+(`single_use_inline`) replaces one use, or every use, of a pure once-assigned local with its
+expression (`off = (a & 0xFFFF) * 100;` then `T[(a & 0xFFFF) * 100] = 2;` while the other reads keep
+`off`). It recovered the one function whose only edit was this (trial 24 of 32, so it ranks late).
+The table families from the second batch recovered a second (`func_80148230`). Tried and not kept:
+pairing the byte-table rewrite with m2c field-macro expansion improved `func_8015DC9C` but did not
+reach the agent's output, which also retyped its locals; a struct slot array, a symbol rename and
+array-to-scalar flips were not automated.
+
+### KMC GCC 2.7.2: fourth batch of agent repairs (9 November 2026)
+
+Evidence level: controlled regression replay of 9 further agent repairs; 0 reproduced before and
+0 after (24-32 trials), so nothing here is a new match. `local_inline_repairs` now also handles
+pointer temporaries, `T local; ... local = e;` assignments apart from the declaration, and the
+constant address of a game global (not of a local), and `global_address_table` accepts `extern u8 T;`
+and is followed by that inlining. For `func_800DF138` the chained variant is generated but is not
+the agent's output, which also introduced an `off` local; the difference in codegen is not yet
+understood. Not automated: an `if/else if` chain reordered by comparison value, a 100-byte record
+table (`Slot D[]` with a `flags` field, seen in three batches; needs a layout from the stride and
+field offsets), function-prototype return-type changes, and whole-function rewrites.
+
+### KMC GCC 2.7.2: initializer placement, guard-first returns, word global as address (9 November 2026, fifth batch)
+
+Evidence level: controlled regression replay of 6 further agent repairs; 0 reproduced before, 3
+after (32 trials, no model calls; compiler output only, not linked or objdiff verdicts).
+
+- `initializer_placement`: `s32 i = 0;` at the top becomes `s32 i;` plus `i = 0;` after one of the
+  next eight plain leading statements, never past a read of `i` or into control flow. The agent
+  put it below the fifth call (recovered on trial 5).
+- `guard_shape` (value-returning case): `if (c) { A; return X; } return Y;` becomes
+  `if (!c) { return Y; } A; return X;`, the reverse of the void early-return rewrite, and only when
+  `Y` is a plain name or constant (recovered on trial 6).
+- `global_value_address`: `*p = D_x;` for a word global becomes `*p = (s32)&D_x;` because m2c read
+  the value where the code took the address (recovered on trial 12; the 18-variant cap had hidden it
+  behind the bulk scalar retypes, so the specific families now come before those).
+
+Not reproduced: the byte-table retype with m2c field macros and typed locals (third time seen), a
+reordered call/compare pair in `osEepromRead`, and a rewritten symbol table in `viMgrMain`.
+
+### KMC GCC 2.7.2: byte-table reads that were halfword fields (9 November 2026, sixth batch)
+
+Evidence level: controlled regression replay of 13 further agent repairs; 0 reproduced before, 4 after
+(32 trials, no model calls; compiler output only, not linked or objdiff verdicts). Four functions that
+read a 16-bit field of a 100-byte record through a byte table differed only in
+`*(D + off)` -> `*(u16 *)(D + off)` (m2c typed the table `char` from its first use and loads a byte).
+`global_array_repairs` now offers that as `table_read_width` for `char`/`u8`/`s8` tables: every site as
+`u16`, every site as `s16`, then each site alone. Dereferences only; `a * (T + n)` is left alone.
+All four recovered on trial 11 of 32 (it ranks behind the table retypes).
+
+Not reproduced: the struct-typed record tables (`S0`/`S4`/`S2`, now seen in four batches), a
+rewrite that inlines a halfword local at three reads of a memory load (not safe in general: the load
+can see intervening stores), a pointer assignment moved below a branch, an added alias pointer, a
+prototype/symbol rename, and reshaped nested if/else.
+
+### KMC GCC 2.7.2: a call temporary inlined into its only store (9 November 2026, seventh batch)
+
+Evidence level: controlled regression replay of 8 further agent repairs; 1 was already reproduced
+(`func_80232360`, dropped), 0 of the other 7 before and 1 after (32 trials, no model calls; compiler
+output only, not linked or objdiff verdicts).
+
+- `single_use_inline` now also inlines `x = E;` into the very next statement when that statement is
+  the only reader of `x` and only stores (no call or step of its own that could swap order with `E`),
+  so `E` may contain calls: `t2 = f(..) * 127.0f + 127.0f; *(u8 *)(p + 0xC) = (u32)t2;` becomes
+  `*(u8 *)(p + 0xC) = (u32)(f(..) * 127.0f + 127.0f);`. Recovered `func_80143B68` on trial 7.
+- `parameter_mask` (new, `param_mask_repairs.py`): `u16`/`u8` parameter -> `s32` with `(x & 0xFFFF)`
+  at every read, optionally followed by the index-temporary inlining. Unit-tested but NOT confirmed:
+  the one example that motivated it (`func_8013AF08`) is still not reproduced, because the agent also
+  inlined its index temporary at only the last of 13 reads and widening the chain did not reach it.
+
+Not reproduced: a struct-typed record table (`SlotE`, fifth batch running), a hand-written `ENTRY`
+macro that rewrote a goto-heavy function, restructured `if` chains, and a changed prototype.
+
+### KMC GCC 2.7.2: all byte tables widened together; narrow results promoted to int (9 November 2026, eighth batch)
+
+Evidence level: controlled regression replay of 2 further agent repairs; 0 reproduced before, 2 after
+(32 trials, no model calls; compiler output only, not linked or objdiff verdicts).
+
+- `table_read_width` now also tries every byte table in the function as `u16` (then `s16`) at once, ahead
+  of the per-table variants and the signedness flips that crowded the 20-variant cap. An agent had widened
+  the reads and read-modify-writes of six tables together (`*(D + t) = *(D + t) | 0x20` ->
+  `*(u16 *)(D + t) = ...`); recovered on trial 3.
+- `width_promotion` (new, `width_promotion_repairs.py`): a `u8`/`s8`/`u16`/`s16` return type becomes `int`,
+  with its same-typed locals, alone or together. m2c narrows the whole variable-length-number reader
+  (`var = (var << 7) + (b & 0x7F)`) to `u8`; as `int` the compiler drops the byte masking after each step.
+  Recovered `func_800381F8` on trial 27, late, because many other families are tried first.
+
+### KMC GCC 2.7.2: fixed-stride record tables (9-10 November 2026, ninth batch)
+
+Evidence level: controlled regression replay of 1 further agent repair plus the 4 earlier record-table
+repairs (seen in six batches); compiler output only, not linked or objdiff verdicts. Of those 5,
+`record_slot_table` (new, `record_slot_repairs.py`) recovers 1 (`func_800DF100`, trial 2) and
+improves the new case's score without reaching it; the other four need more than the table.
+
+`*(u16 *)(D + (i & 0xFFFF) * 100) |= 0x10`, or `off = i * 0x64; *(&D + off) = *(&D + off) | 8`, becomes
+`typedef struct { u16 f0; u8 pad[98]; } Slot_D; extern Slot_D D[];` and `D[i].f0 |= 0x10`. Only offset 0
+is recovered; the field type comes from the cast, or is tried as u16, u8 and u32 when uncast. Every use
+of the table in the function must be such an access with one stride of at least 8, and the index must
+be plain (no calls, steps or assignment).
+
+Not reproduced for the new case (`func_801973D0`): the agent also changed float-bit arguments
+(`0x42B40000`) to float literals (`90.0f`) with a prototype parameter retyped to `f32`, and retyped
+four `u16` result globals; the table rewrite alone only improved it.

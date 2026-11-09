@@ -356,6 +356,13 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
     return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
 
 
+def drop_saved_register_reads(source: str) -> str:
+    """m2c writes `var_s0 = saved_reg_s0;` where the code reads a callee-saved register before it sets it (a value it
+    only conditionally replaces). `saved_reg_s0` is declared nowhere, so no draft with one compiles; the local simply
+    stays unset, which is what the original register did."""
+    return re.sub(r"^[ \t]*\w+ = saved_reg_\w+;[ \t]*\n", "", source, flags=re.M)
+
+
 MAX_REASON_CHARS = 600  # of m2c's reason for a failure, passed on to an agent
 
 
@@ -363,7 +370,12 @@ def _failure(res: subprocess.CompletedProcess) -> str:
     """m2c's reason for a failed run: its "Decompilation failure" note, else the end of what it printed."""
     out = res.stdout or ""
     note = out[out.find("Decompilation failure"):] if "Decompilation failure" in out else (res.stderr or out)
-    return note.strip().strip("*/").strip()[-MAX_REASON_CHARS:] or f"m2c stopped with code {res.returncode}"
+    reason = note.strip().strip("*/").strip()[-MAX_REASON_CHARS:] or f"m2c stopped with code {res.returncode}"
+    if "jump table is not provided" in reason:
+        # (Penny Racers: 32 functions whose overlay data was never imported; nothing here can invent the case targets)
+        reason += (" The imported game data has no bytes at the table's address, so no draft is possible until they are"
+                   " added to the project (memory_regions.json for an overlay); the switch can be worked out by hand.")
+    return reason
 
 
 def _execute_m2c(argv, timeout):
@@ -429,4 +441,4 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             if strict:
                 raise DraftError(reason or (_failure(res) if out or res.stderr or res.returncode else 'm2c produced no C for this function.'))
             return None
-        return out
+        return drop_saved_register_reads(out) if valid else out

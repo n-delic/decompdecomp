@@ -242,3 +242,61 @@ def test_inline_helpers_ignore_comments_strings_and_body_storage():
     expected = source.replace('\tinline', '\tstatic inline')
     assert m2cfix.static_helpers(source) == expected
     assert m2cfix.static_helpers(expected) == expected
+
+
+# Drafts that did not compile on a 636-function N64 game (122 of them had C): each test below is one cause, small.
+_NOP_ASM = "glabel f\njr $ra\nnop\nendlabel f\n"
+
+
+def test_unknown_types_become_whole_type_names_never_a_mashup():
+    out = m2cfix.refine_draft("M2C_UNK32 g;\nM2C_UNK8 h;\nM2C_UNK16 i;\nM2C_UNK j;\nvoid f(void) {\n}\n", "f", _NOP_ASM)
+    assert "s32 g;" in out and "s8 h;" in out and "s16 i;" in out and "s32 j;" in out
+    assert "s3232" not in out and "s328" not in out
+
+
+def test_every_prototype_m2c_guessed_loses_its_arguments_not_only_the_games_functions():
+    draft = ("s32 osVirtualToPhysical(u32, u32, s32);             /* extern */\n"
+             "void *real(void *);\n"
+             "void f(void) {\n    osVirtualToPhysical(1, 2, 3);\n    osVirtualToPhysical(4);\n}\n")
+    out = m2cfix.refine_draft(draft, "f", _NOP_ASM)
+    assert "s32 osVirtualToPhysical();" in out
+    assert "void *real(void *);" in out  # a prototype m2c did not guess (the header's) stays
+
+
+def test_the_address_of_an_array_global_is_the_array_so_arithmetic_on_it_compiles():
+    draft = ("extern M2C_UNK D_80001000;\nvoid f(s32 arg0) {\n"
+             "    s32 a;\n    a = (arg0 * 4) + &D_80001000;\n    a = a & D_80001000;\n}\n")
+    out = m2cfix.refine_draft(draft, "f", _NOP_ASM)
+    assert "extern char D_80001000[];" in out
+    assert "(arg0 * 4) + D_80001000;" in out
+    assert "a & D_80001000;" in out  # a binary & is not an address
+
+
+def test_a_global_the_draft_retypes_is_declared_once():
+    draft = ("extern M2C_UNK D_80001000;\nvoid f(void *arg0) {\n"
+             "    M2C_FIELD(&D_80001000, f32 *, 0) = 1.0f;\n}\n")
+    out = m2cfix.refine_draft(draft, "f", _NOP_ASM)
+    assert out.count("D_80001000;") + out.count("D_80001000[];") == 1
+
+
+def test_a_function_calling_itself_declares_what_it_passes_and_completes_shorter_calls():
+    draft = "void f(s32 arg0) {\n    f(arg0, 1, 2);\n    f(arg0);\n}\n"
+    out = m2cfix.refine_draft(draft, "f", _NOP_ASM)
+    assert "void f(s32 arg0, s32 arg1, s32 arg2) {" in out
+    assert "f(arg0, 1, 2);" in out and "f(arg0, arg1, arg2);" in out
+
+
+def test_a_callee_saved_register_read_before_it_is_set_is_left_unset():
+    from decompnet import seeds
+    source = "s8 f(void) {\n    s8 var_s0;\n\n    var_s0 = saved_reg_s0;\n    if (g()) {\n        var_s0 = 1;\n    }\n    return var_s0;\n}\n"
+    out = seeds.drop_saved_register_reads(source)
+    assert "saved_reg_" not in out and "var_s0 = 1;" in out and "return var_s0;" in out
+
+
+def test_a_jump_table_nobody_imported_says_what_is_missing():
+    import subprocess
+    from decompnet import seeds
+    done = subprocess.CompletedProcess([], 1, "/* Decompilation failure in function f:\n\nFound jr instruction at f.s line 8, "
+                                       "but the corresponding jump table is not provided.  Please include it. */", "")
+    reason = seeds._failure(done)
+    assert "no bytes at the table's address" in reason and reason.startswith("Decompilation failure")

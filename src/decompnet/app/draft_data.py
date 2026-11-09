@@ -1,10 +1,31 @@
 """Bounded original ROM data for m2c, resolved through the selected function's overlay reader."""
 import re
 import struct
+from types import SimpleNamespace
 
 MAX_SYMBOLS = 16
 MAX_BYTES = 4096
 MAX_TOTAL = 16384
+MAX_CASES = 256
+
+
+def jump_table_extent(name, reader, instruction_addresses, endian):
+    """(address, size) of a jump table the symbol list doesn't have: its address is in its name (`jtbl_800E1DE8`)
+    and it runs as long as its words are addresses of this function's own instructions. Nothing is invented: a word
+    that is not a case target ends the table, and fewer than two cases is not a table. m2c can't resolve a `jr`
+    without it, so a function whose table was missing from the symbols (Penny Racers: 40 of its 50 functions without
+    a draft) got no draft at all."""
+    match = re.fullmatch(r'jtbl_([0-9A-Fa-f]{8})', name)
+    if not match:
+        return None
+    address = int(match[1], 16)
+    cases = 0
+    while cases < MAX_CASES:
+        word = reader(address + 4 * cases, 4)
+        if word is None or len(word) != 4 or struct.unpack(endian + 'I', word)[0] not in instruction_addresses:
+            break
+        cases += 1
+    return (address, 4 * cases) if cases >= 2 else None
 
 
 def read(net, proj, fn):
@@ -19,6 +40,11 @@ def read(net, proj, fn):
     endian = '>' if net.cfg(proj).get('big_endian', True) else '<'
     for name in names:
         symbol = syms.by_name.get(name)
+        if (not symbol or not symbol.size) and name.startswith('jtbl_'):
+            if reader is None:
+                reader = net.reader(proj, fn)
+            if extent := jump_table_extent(name, reader, instruction_addresses, endian):
+                symbol = SimpleNamespace(address=extent[0], size=extent[1], kind='jtbl')
         if not symbol:
             continue
         table = name.startswith('jtbl_') or symbol.kind == 'jtbl'

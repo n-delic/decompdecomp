@@ -61,3 +61,17 @@ def test_current_compiler_uses_function_range_flags(tmp_path,monkeypatch):
     assert 'compiler ID: range' in brief
     full=net._brief(fn,agent,'FUNCTION')
     assert 'line79' in full and 'EXTRA DETAILS' in full
+
+
+def test_mmio_literal_addresses_become_volatile_in_both_signednesses():
+    # Agents repaired m2c's `*(s32 *)0xA4040010` by hand into `*(volatile u32 *)0xA4040010`.
+    source = 's32 f(void) {\n    return (*(s32 *)0xA4040010 & 0x1C) != 0;\n}\n'
+    out = mmio_repairs.variants(source,'f','mips')
+    assert out == [source.replace('*(s32 *)','*(volatile s32 *)'), source.replace('*(s32 *)','*(volatile u32 *)')]
+    store = 'void g(s32 a) {\n    *(s32 *)0xA4040010 = a;\n    *(s32 *)0x80000000 = a;\n}\n'
+    assert mmio_repairs.variants(store,'g','mips')[0].count('volatile')==1
+    assert not mmio_repairs.variants(source.replace('0xA4040010','0x80040010'),'f','mips')
+    assert not mmio_repairs.variants(source.replace('s32 *','volatile s32 *'),'f','mips')
+    assert not mmio_repairs.variants(source,'f','x86')
+    # an already-unsigned type has no second signedness to try beyond the volatile one
+    assert len(mmio_repairs.variants(source.replace('s32 *','u32 *'),'f','mips'))==2

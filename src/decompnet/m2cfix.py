@@ -154,8 +154,31 @@ def _declare_arguments(body: str, name: str, written: set[int] | None) -> str | 
     count = max(have) + 1 if have else 0
     if written:
         count = max(count, min(written))
+    # (a call to itself passes what the original declared, even where nothing else reads it: `too many arguments`)
+    for call in re.finditer(r"\b%s\(" % re.escape(name), body[m.end():]):
+        inner = body[m.end() + call.end():_closing(body, m.end() + call.end()) - 1]
+        count = max(count, min(4, len(_split_top_level(inner)) if inner.strip() else 0))
     params = [have.get(i, f"s32 arg{i}") for i in range(count)]
-    return body[:m.start(2)] + (", ".join(params) if params else "void") + body[m.end(2):]
+    body = body[:m.start(2)] + (", ".join(params) if params else "void") + body[m.end(2):]
+    return _complete_own_calls(body, name, count)
+
+
+def _complete_own_calls(body: str, name: str, count: int) -> str:
+    """Calls the function makes to itself with fewer arguments than it takes pass the rest on untouched (`argN`): the
+    registers the call didn't set still hold the caller's, as in the original."""
+    m = _definition(body, name)
+    out, position = body[:m.end()], m.end()
+    for call in re.finditer(r"\b%s\(" % re.escape(name), body[m.end():]):
+        start = m.end() + call.end()
+        end = _closing(body, start)
+        inner = body[start:end - 1]
+        given = len(_split_top_level(inner)) if inner.strip() else 0
+        if given < count:
+            extra = ", ".join(f"arg{i}" for i in range(given, count))
+            inner = inner + (", " if inner.strip() else "") + extra
+        out += body[position:start] + inner
+        position = end - 1
+    return out + body[position:]
 
 
 def _byte_field_loads(source: str, name: str, asm: str) -> str:
@@ -256,12 +279,22 @@ def refine_draft(draft: str, name: str, asm: str) -> str | None:
         return label
 
     body = re.sub(r"M2C_FIELD\(&(D_[0-9A-F]{8}), (\w+) \*, (%s)\)" % _NUMBER, own_variable, body)
+    for label in globals_:  # (m2c declared this address itself, with another type: two declarations don't compile)
+        body = re.sub(r"^extern [\w ]+? \**%s(?:\[\d*\])?;[ \t]*\n" % label, "", body, flags=re.M)
     body = "".join(f"extern {ctype} {label};\n" for label, ctype in globals_.items()) + body
     body = re.sub(r"extern M2C_UNK (D_\w+);", r"extern char \1[];", body)
+    # (`&D` of a `char D[]` points to an array of unknown size, which GCC won't do arithmetic on; the array already
+    # is the address m2c meant. A unary `&` follows an operator or opening bracket, never an operand.)
+    for label in re.findall(r"^extern char (D_\w+)\[\];", body, re.M):
+        body = re.sub(r"(^|[(,=+\-*/%<>!?:|^~{;]|\breturn)([ \t]*)&" + label + r"\b(?!\s*\[)", r"\1\2" + label, body, flags=re.M)
     body = re.sub(r"M2C_FIELD\(&(D_\w+), ([^,]+?) ?\*, (%s)\)" % _NUMBER, r"*(\2 *)(\1 + \3)", body)
     body = re.sub(r"&(D_\w+) \+ ", r"\1 + ", body)
     # (calls to functions of the game take whatever the code passes: unprototyped, as the game's headers were)
     body = re.sub(r"^((?:\w+ ?\*?) ?(?!%s\b)func_\w+)\([^)]*\);.*$" % re.escape(name), r"\1();", body, flags=re.M)
+    # (m2c also guesses a prototype for a library function from its first call, `osVirtualToPhysical(u32, u32, s32)`
+    # when another call passes one argument: the header's own declarations are never marked `/* extern */`)
+    body = re.sub(r"^((?:\w+ ?\*?) ?(?!%s\b)\w+)\((?!void\))[^)]*\);[ \t]*/\* extern \*/[ \t]*$" % re.escape(name),
+                  r"\1();", body, flags=re.M)
     body = re.sub(r"(M2C_FIELD\([^;]*?, )s8( \*, %s\) = (?:0x[89A-Fa-f][0-9A-Fa-f]|1[3-9]\d|2\d\d)U?;)" % _NUMBER,
                   r"\1u8\2", body)
     body = re.sub(r"(M2C_FIELD\([^;]*?\)) = (?:\(\w+\) )?\(\1 ([&|^+-]) ([^;]+?)\);", r"\1 \2= \3;", body)
@@ -272,12 +305,15 @@ def refine_draft(draft: str, name: str, asm: str) -> str | None:
             body = body.replace(decl.group(0), "\0DECL\0", 1)
             body = re.sub(r"\*%s\b(?!\s*[+-]=)" % re.escape(var), "*(%s *)%s" % (ctype, var), body)
             body = body.replace("\0DECL\0", decl.group(0).replace(ctype + " *", "char *"), 1)
-    body = body.replace("M2C_UNK", "s32")
+    # (whole names only: a plain replace made `M2C_UNK32` into `s3232`, a type no compiler knows)
+    body = re.sub(r"\bM2C_UNK(8|16|32)?\b", lambda m: {"8": "s8", "16": "s16"}.get(m.group(1), "s32"), body)
     written = argument_registers_written(asm)
     body = _declare_arguments(body, name, written)
     if body is None:
         return None
-    return _pass_arguments_through(body, name, written) if written else body
+    body = _pass_arguments_through(body, name, written) if written else body
+    from .m2c_integer_derefs import typed_dereferences
+    return typed_dereferences(body, name)
 
 
 def static_helpers(source: str) -> str:

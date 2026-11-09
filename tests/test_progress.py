@@ -1,7 +1,9 @@
 """A collaborator's files take precedence over SQLite, without an import button or a second on-disk copy."""
 
+import contextlib
 import errno
 import json
+import os
 import shutil
 import threading
 import time
@@ -3233,3 +3235,51 @@ def test_import_batches_function_identity_metadata(project, monkeypatch):
     assert net.progress.sync('game', force=True)
     assert judged == [('f', 'good imported')]
     assert net._function('f', 'game')['matched_source'] == 'good imported'
+def test_signature_ignores_the_apps_temporary_save_files_and_files_that_vanish(project, monkeypatch):
+    """A save writes `<file>.tmp` and renames it: a check that listed the folder meanwhile saw a different folder
+    (or lost the whole directory when the temporary file vanished before its stat), and failed agents' calls."""
+    net, folder, _ = project
+    (folder / "best").mkdir(exist_ok=True)
+    (folder / "best/f.c").write_text("int f;\n")
+    before = Progress._signature(folder)
+    stray = folder / "best/g.c.tmp"
+    stray.write_text("half written")
+    files = lambda signature: [item for item in signature if item[0].startswith('best/')]
+    assert files(Progress._signature(folder)) == files(before)
+    real = os.scandir
+    def vanishing(path):
+        entries = list(real(path))
+        for entry in entries:
+            if entry.name == "f.c":
+                (folder / "best/f.c").unlink()
+        return contextlib.nullcontext(iter(entries))
+    monkeypatch.setattr(os, "scandir", vanishing)
+    after = Progress._signature(folder)
+    assert not any(item[1] is None for item in after if item[0] == "best") and files(after) == []
+
+
+def test_deferring_publishes_database_only_changes_at_most_every_few_seconds(project, monkeypatch):
+    """Eight agents rewrote the multi-megabyte manifest about once a second for attempts nobody had read yet."""
+    net, folder, _ = project
+    path = folder / saves.MANIFEST
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    def attempt(score):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source='int f;',best_score=? WHERE name='f'", (score,))
+    attempt(50)
+    with net.progress.deferring():
+        assert net.progress.sync("game", force=True)
+    first = path.read_text()
+    for score in (40, 30):
+        attempt(score)
+        clock[0] += 1
+        with net.progress.deferring():
+            assert not net.progress.sync("game", force=True)
+        assert path.read_text() == first  # (not rewritten yet)
+    clock[0] += 10
+    with net.progress.deferring():
+        assert net.progress.sync("game", force=True)
+    assert path.read_text() != first  # (after the wait, the latest attempts are published together)
+    attempt(20)
+    assert net.progress.sync("game", force=True)  # (an explicit sync, a save or shutdown never waits)

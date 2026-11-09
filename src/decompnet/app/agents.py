@@ -1634,6 +1634,8 @@ class Manager:
             no_progress = (task not in {'boundary', 'readable'} and ok and not investigation
                            and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0
                            and not (s.limited or s.throttled or s.auth_failed or s.signed_out))
+            if getattr(self.net, '_progress_disturbed', {}).pop(agent.id, 0):
+                no_progress = False  # saves and rechecks kept its tools from working: not a reason to pause it
             no_progress_sessions = no_progress_sessions + 1 if no_progress else 0
             if ok and not investigation and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
                 s.error = "The discovery session ended without a structured finding or unsuccessful approach." if task=="assets" else "the session ended without compiling anything (its messages are in its details)"

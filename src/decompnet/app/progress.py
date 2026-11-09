@@ -422,6 +422,15 @@ def affected_functions(old, new, changed, rows):
     return affected
 
 
+# How long tool calls leave a database-only change unpublished (see Progress.deferring).
+DEFER_SECONDS = 10
+
+
+class ProgressMoved(NetworkError):
+    """The saved files changed under a call (a save, a pull, a recheck) before it changed anything. Nothing was recorded, so
+    the call is safe to run again once the project settles: tools do that for the agent (tools._invoke)."""
+
+
 @dataclass
 class _Recheck:
     folder: Path
@@ -453,6 +462,9 @@ class Progress:
         self.revisions: dict[str, int] = {}
         self.project_locks: dict[str, threading.RLock] = {}
         self.rechecking: dict[str, _Recheck] = {}
+        self.last_write: dict[str, float] = {}  # slug -> when a database-only change was last published
+        self.publishing: dict[Path, tuple] = {}  # folder -> (app saves running now, rechecks they keep valid)
+        saves.publish_watchers.add(self)
         self.errors: dict[str, str] = {}
         self.signatures: dict[str, tuple] = {}  # slug -> every file's stat after the last acknowledged sync
         self.stamps: dict[str, tuple] = {}  # slug -> the cheap directory/manifest stat a non-forced check compares
@@ -480,9 +492,13 @@ class Progress:
                 items.append((name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
                 if deep and stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
                     with os.scandir(path) as entries:
-                        children = sorted(entries, key=lambda entry: entry.name)
+                        # (a save writes `<file>.tmp` and renames it: that file is the app's own, not progress)
+                        children = sorted((e for e in entries if not e.name.endswith(".tmp")), key=lambda entry: entry.name)
                     for child in children:
-                        info = child.stat(follow_symlinks=False)
+                        try:
+                            info = child.stat(follow_symlinks=False)
+                        except FileNotFoundError:
+                            continue  # removed since the listing (a pull, an editor): the next check sees it gone
                         items.append((f"{name}/{child.name}", info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
             except OSError:
                 items.append((name, None))
@@ -808,6 +824,23 @@ class Progress:
             return bool(self.batches.get(slug))
 
     @contextmanager
+    def deferring(self):
+        """Tool calls sync before and after every call, and each one rewrote the whole manifest (megabytes) for the
+        attempt the last call recorded: eight agents rewrote it about once a second, with nothing new to say.
+        Inside this, a change only the database has is published at most every DEFER_SECONDS; the autosave worker
+        and shutdown publish what is left, and changes in the folder are still read at once."""
+        previous = getattr(self.local, "deferring", False)
+        self.local.deferring = True
+        try:
+            yield
+        finally:
+            self.local.deferring = previous
+
+    def _defer_publish(self, slug: str, config_changed: bool) -> bool:
+        return (getattr(self.local, "deferring", False) and not config_changed
+                and time.monotonic() - self.last_write.get(slug, -DEFER_SECONDS) < DEFER_SECONDS)
+
+    @contextmanager
     def foreground(self):
         """Explicit judges, candidate/target reads and notes may use already-imported recheck inputs."""
         previous = getattr(self.local, 'foreground', False)
@@ -826,10 +859,33 @@ class Progress:
                 active.foreground = True
                 if name:active.functions.add(name)
 
+    def publish_begin(self, folder: Path):
+        """The app is about to write `folder`; rechecks of it that no outside edit has touched so far will expect
+        what the save leaves (saves running at once share one set)."""
+        signature = self._signature(folder)
+        with self.activity_lock:
+            depth, clean = self.publishing.get(folder, (0, set()))
+            clean = clean | {id(r) for r in self.rechecking.values() if r.folder == folder and r.signature == signature}
+            self.publishing[folder] = (depth + 1, clean)
+
+    def publish_end(self, folder: Path) -> None:
+        """The app has written `folder`. The rechecks kept their fingerprint through every save, so an edit that
+        arrived before a save began still fails them; one made within the few milliseconds of a save is not seen."""
+        now = self._signature(folder)
+        with self.activity_lock:
+            depth, clean = self.publishing[folder]
+            if depth > 1:
+                self.publishing[folder] = (depth - 1, clean)
+                return
+            del self.publishing[folder]
+            for recheck in self.rechecking.values():
+                if id(recheck) in clean and recheck.folder == folder:
+                    recheck.signature = now
+
     def _check_rechecking_files(self, slug):
         pending = self.rechecking.get(slug)
         if pending and self._signature(pending.folder) != pending.signature:
-            raise NetworkError('Saved files changed during the recheck. Wait for synchronization, then read the function and retry.')
+            raise ProgressMoved('Saved files changed during the recheck. Wait for synchronization, then read the function and retry.')
 
     @phase('progress_saved_judge')
     def _judge_saved(self, slug, *args, **kwargs):
@@ -902,7 +958,7 @@ class Progress:
         if pending and not self.applying:
             self._check_rechecking_files(pending[0])
         if not self.applying and pending and self.revisions.get(pending[0], 0) != pending[1]:
-            raise NetworkError("Progress changed while this attempt compiled. Read the function again and retry with the updated project.")
+            raise ProgressMoved("Progress changed while this attempt compiled. Read the function again and retry with the updated project.")
 
     def flush(self, *, notify=None) -> dict[str, str]:
         """Publish pending ROM changes without rereading untouched projects on shutdown."""
@@ -1168,8 +1224,13 @@ class Progress:
                             verified_signature = cached_signature = signature
                             if logger is not None:getattr(logger, "check_cancel", lambda: None)()
                             self._check_paused(slug)
-                            result = (self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
-                                      if changed_db else False)
+                            config_changed = state is not None and (state.config_key is None or config_key != state.config_key)
+                            if changed_db and self._defer_publish(slug, config_changed):
+                                result = False  # (the next check after DEFER_SECONDS publishes it: Progress.deferring)
+                            else:
+                                result = (self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
+                                          if changed_db else False)
+                                if result:self.last_write[slug] = time.monotonic()
                             if result is not None:self.blocked.pop(slug, None)
                 if result is None:
                     # Compare files and plan the merge before borrowing the shared
@@ -1437,16 +1498,22 @@ class Progress:
         if baseline is not None and self.signatures.get(slug) == signature:
             if not db_changed and not config_changed:
                 return False
+            if self._defer_publish(slug, config_changed):
+                return False
             result = self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
             if result is not None:
+                self.last_write[slug] = time.monotonic()
                 return result
         disk = _read(folder,cache=self.file_cache)
         snapshot = _Snapshot.of(disk)
         if baseline is not None and snapshot.files == baseline.disk.files:
             if not db_changed and not config_changed:
                 return False
+            if self._defer_publish(slug, config_changed):
+                return False
             result = self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
             if result is not None:
+                self.last_write[slug] = time.monotonic()
                 return result
             disk = _read(folder)
             snapshot = _Snapshot.of(disk)

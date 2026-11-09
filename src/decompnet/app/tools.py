@@ -677,7 +677,36 @@ def _tool_foreground(net, agent, slug, name, args):
             if notes and progress is not None:progress.foreground_changed(slug)
 
 
+# How long a tool call waits for a save or recheck to settle before the agent is told (agents were handed "Saved files
+# changed during the recheck" hundreds of times a night by the app's own saves, and gave up on their function).
+PROGRESS_RETRY_SECONDS = 90
+
+
+def _undisturbed(net: RomNetwork, agent: Agent, slug: str, run: Callable[[], str]) -> str:
+    """One tool call. Saves, pulls and rechecks of the project are the app's business: a call they disturb waits for
+    them (holding no lock) and runs again, so the agent never sees them. Every way in (MCP, the built-in agent) uses it."""
+    from .progress import ProgressMoved
+    deadline = time.monotonic() + PROGRESS_RETRY_SECONDS
+    progress = getattr(net, 'progress', None)
+    while True:
+        try:
+            with progress.deferring() if progress is not None else nullcontext():
+                return run()
+        except ProgressMoved:
+            if time.monotonic() >= deadline:
+                disturbed = net.__dict__.setdefault('_progress_disturbed', {})
+                disturbed[agent.id] = disturbed.get(agent.id, 0) + 1  # (the helper's runner: not this session's fault)
+                raise
+            while progress is not None and slug in progress.rechecking and time.monotonic() < deadline:
+                time.sleep(0.1)
+            time.sleep(0.05)
+
+
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
+    return _undisturbed(net, agent, slug, lambda: _invoke_once(net, agent, slug, name, args))
+
+
+def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Work tools see pulled changes; the pending compact connection handshake reads saved metadata."""
     if asset_agents.scope(net,agent):
         with net.progress.view():return _dispatch(net,agent,slug,name,args)
@@ -802,8 +831,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                     else:
                         # Name resolution also reads the project before the engine
                         # judge enters its own foreground scope.
-                        with _tool_foreground(net, agent, slug, name, args):
-                            result=_dispatch(net,agent,slug,name,args,count_usage=True)
+                        def once():
+                            with _tool_foreground(net, agent, slug, name, args):
+                                return _dispatch(net,agent,slug,name,args,count_usage=True)
+                        result=_undisturbed(net, agent, slug, once)
                 except Exception as exc:
                     error=exc
                 elapsed=time.monotonic()-dispatch

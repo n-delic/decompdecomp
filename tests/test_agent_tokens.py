@@ -131,7 +131,7 @@ def test_compact_project_facts_never_trim_user_instructions(monkeypatch):
     monkeypatch.setattr(tools, '_project_info', lambda *args: 'facts '*1000)
     monkeypatch.setattr(tools, '_compact_project_info', lambda *args: 'Compact saved metadata.')
     wish = 'Mandatory user instructions ' * 200
-    net=SimpleNamespace(instructions=lambda slug:wish, overview=lambda slug:{}, fork_slug=lambda slug:None,
+    net=SimpleNamespace(instructions=lambda slug:wish, overview=lambda slug:{}, fork_slug=lambda slug:None, claim_order=lambda slug:'',
                         knowledge=SimpleNamespace(for_prompt=lambda slug:''))
     compact=tools.project_info(net,'game')
     assert wish in compact and len(compact)<len(tools.project_info(net,'game',detail=True))

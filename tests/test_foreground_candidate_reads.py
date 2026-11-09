@@ -142,3 +142,73 @@ def test_unready_recheck_wait_has_its_own_timing_until_evidence_is_installed(pro
             assert metrics.get('progress_import',0)==0
         finally:
             with worker._project_lock('game'):worker.rechecking.pop('game',None)
+def test_apps_own_publish_during_recheck_does_not_reject_agents_but_an_outside_edit_still_does(project,monkeypatch):
+    """The app saves every agent's progress all the time; with eight agents the manifest changed every second, and each
+    save during a recheck failed every agent's next call ("Saved files changed during the recheck") for any function."""
+    net,folder,_=project;worker=net.progress
+    agent,_=net.local_agent('reader')
+    worker.rechecking['game']=_Recheck(folder,worker._signature(folder),ready=True)
+    monkeypatch.setattr(tools,'_dispatch',lambda *a:'read ready')
+    try:
+        saves._publish(folder,{'best/other.c':'int other;\n',saves.MANIFEST:'{"revision": 9}\n'})
+        assert tools.call(net,agent,'game','get_candidate',{'function':'f'})=='read ready'
+        (folder/'best/f.c').write_text('an editor wrote this')
+        assert 'Saved files changed during the recheck' in tools.call(net,agent,'game','get_candidate',{'function':'f'})
+        saves._publish(folder,{'best/other.c':'int other2;\n'})  # (after an outside edit, no save can hide it)
+        assert 'Saved files changed during the recheck' in tools.call(net,agent,'game','get_candidate',{'function':'f'})
+    finally:worker.rechecking.pop('game',None)
+
+
+def test_a_call_disturbed_by_a_recheck_waits_for_it_and_runs_again(project,monkeypatch):
+    """Agents are not told about saves and rechecks: the call waits for the project to settle and then runs."""
+    net,folder,_=project;worker=net.progress
+    agent,_=net.local_agent('reader')
+    worker.rechecking['game']=_Recheck(folder,worker._signature(folder),ready=True)
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('changed during recheck')
+    monkeypatch.setattr(tools,'PROGRESS_RETRY_SECONDS',30)
+    monkeypatch.setattr(tools,'_dispatch',lambda *a:'read ready')
+    with ThreadPoolExecutor(1) as pool:
+        future=pool.submit(tools.call,net,agent,'game','get_candidate',{'function':'f'})
+        with pytest.raises(TimeoutError):future.result(timeout=.3)  # (waiting, not an error)
+        with worker._project_lock('game'):worker.rechecking.pop('game',None)
+        assert future.result(timeout=5)=='read ready'
+
+
+def test_a_call_still_disturbed_after_the_wait_reports_it(project,monkeypatch):
+    net,folder,_=project;worker=net.progress
+    agent,_=net.local_agent('reader')
+    monkeypatch.setattr(tools,'PROGRESS_RETRY_SECONDS',0.2)
+    worker.rechecking['game']=_Recheck(folder,worker._signature(folder),ready=True)
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('changed during recheck')
+    monkeypatch.setattr(tools,'_dispatch',lambda *a:pytest.fail('stale context reached the handler'))
+    try:
+        assert 'Saved files changed during the recheck' in tools.call(net,agent,'game','get_candidate',{'function':'f'})
+    finally:worker.rechecking.pop('game',None)
+
+
+def test_a_call_the_app_kept_from_running_is_noted_so_its_helper_is_not_paused(project,monkeypatch):
+    net,folder,_=project;worker=net.progress
+    agent,_=net.local_agent('reader')
+    monkeypatch.setattr(tools,'PROGRESS_RETRY_SECONDS',0)
+    worker.rechecking['game']=_Recheck(folder,worker._signature(folder),ready=True)
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('changed during recheck')
+    try:
+        assert tools.call(net,agent,'game','get_candidate',{'function':'f'}).startswith('error: Saved files changed')
+    finally:worker.rechecking.pop('game',None)
+    assert net._progress_disturbed[agent.id]==1
+
+
+def test_every_way_into_the_tools_retries_a_call_the_app_disturbed(project,monkeypatch):
+    """The MCP server (what CLI agents use) does not go through tools._invoke: both share _undisturbed."""
+    from decompnet.app.progress import ProgressMoved
+    net,folder,_=project
+    agent,_=net.local_agent('reader')
+    monkeypatch.setattr(tools,'PROGRESS_RETRY_SECONDS',5)
+    tries=[]
+    def run():
+        tries.append(1)
+        if len(tries)<3:raise ProgressMoved('Saved files changed during the recheck.')
+        return 'done'
+    assert tools._undisturbed(net,agent,'game',run)=='done' and len(tries)==3
+    import inspect
+    assert '_undisturbed' in inspect.getsource(tools.build_mcp)
