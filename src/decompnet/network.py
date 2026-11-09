@@ -641,8 +641,21 @@ class Network:
             "SELECT DISTINCT f.name FROM functions f JOIN events e ON e.project_id=f.project_id AND e.detail=f.name "
             "WHERE f.project_id=? AND f.status='open' AND e.agent_id=? AND e.kind='release' AND e.created_at > ? "
             "AND f.id NOT IN (SELECT function_id FROM claims) ORDER BY f.name", proj["id"], agent.id, cutoff)
+        waiting = self.awaiting_verdict(proj)
+        yours = [name for name, said in waiting.items() if agent.name in said]
+        mine = [r for r in mine if r["name"] not in yours]  # (said below: a release of its own it may take back)
         lines = [f"Nothing to claim in {proj['slug']} right now: {n_open} function{'s' * (n_open != 1)} "
                  f"{'are' if n_open != 1 else 'is'} open, but none is free for you."]
+        if yours:
+            lines.append(f"{len(yours)} you said no C makes: {', '.join(yours[:10])}{', ...' if len(yours) > 10 else ''}. "
+                         f"Your verdict is counted; each is set aside once {NOT_C_AGENTS} agents of {NOT_C_MODELS} "
+                         "models agree, or when the user sets it aside. Don't claim them again.")
+        if not held and len(yours) == n_open:  # (its own verdict on each: another's, an agent that only released
+            # them for now is still the second opinion they wait for)
+            self._tell_user_verdicts_wait(proj, waiting)
+            lines.append("Every open function is waiting on that verdict, and the user has been told: there's nothing "
+                         "left for you here. Stop working on this project.")
+            return "\n".join(lines)
         if held:
             shown = ", ".join(f"{r['name']} ({r['agent'] or '?'}, {max(0, int(r['expires_at'] - now)) // 60} min left)"
                               for r in held[:10])
@@ -654,6 +667,31 @@ class Network:
                          f"{', '.join(names[:10])}{', ...' if len(names) > 10 else ''}. They come back to you later. "
                          f"To take one now, call claim_function with function=\"{names[0]}\".")
         return "\n".join(lines)
+
+    def awaiting_verdict(self, proj) -> dict[str, dict]:
+        """The open functions agents said no C makes, short of the agreement that sets them aside (NOT_C_AGENTS of
+        NOT_C_MODELS): name -> their verdicts by agent."""
+        out = {}
+        for r in self.store.all("SELECT name, meta FROM functions WHERE project_id=? AND status='open' AND "
+                                "json_extract(meta, '$.not_c') IS NOT NULL", proj["id"]):
+            out[r["name"]] = json.loads(r["meta"])["not_c"]
+        return out
+
+    def _tell_user_verdicts_wait(self, proj, waiting: dict[str, dict]) -> None:
+        """Tell the user (a notification, once per function) that agents have nothing left but functions they said no
+        C makes, which wait for the user's Set aside or another model's agreement. Agents of one model never reach
+        NOT_C_MODELS, and two such agents claimed an x86 demo's last function, a hand-written float-to-int helper, a
+        dozen times between them, each time writing the same note."""
+        with self.store.tx() as db:
+            for name, said in waiting.items():
+                if db.execute("SELECT 1 FROM events WHERE project_id=? AND kind='not_c' AND detail LIKE ?",
+                              (proj["id"], f"{name}: waiting for you%")).fetchone():
+                    continue
+                models = sorted({v.get("model", "?") for v in said.values()})
+                self._event(db, proj["id"], None, "not_c",
+                            f"{name}: waiting for you. {len(said)} agent{'s' * (len(said) != 1)} "
+                            f"({', '.join(models)}) found no C makes it and nothing else is left: set it aside in its "
+                            f"panel, or let an agent of another model look")
 
     def claim_row(self, agent: Agent, project: str | None = None, function: str | None = None,
                   strategy: str = "easiest"):
@@ -696,7 +734,8 @@ class Network:
                 tried = db.execute("SELECT SUM(status = 'matched') AS won, SUM(status = 'matched' OR attempts > 0) "
                                    "AS tried FROM functions WHERE project_id=? AND status != 'asm'", (proj["id"],)).fetchone()
                 overall = (tried["won"] or 0) / tried["tried"] if tried["tried"] else 0.5
-                # not what this agent released lately (see SELF_RELEASE_WINDOW); what it released before that last
+                # not what this agent released lately (see SELF_RELEASE_WINDOW), nor what it said no C makes (its
+                # verdict is counted: the same agent again only says it again); what it released before that last
                 # functions waiting for another to match come last (WAITING); the ones they wait for, and those whose
                 # wait is over, first (after what the release rules put back, before model routing's escalations)
                 query = (
@@ -705,6 +744,7 @@ class Network:
                         AND f.id NOT IN (SELECT function_id FROM claims)
                         AND f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
                                            AND kind='release' AND created_at > :mine)
+                        AND json_extract(f.meta, '$.not_c.' || json_quote(:name)) IS NULL
                         ORDER BY f.id IN ({WAITING}),
                                  f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
                                             AND kind='release'),
@@ -717,7 +757,8 @@ class Network:
                                  f.id IN ({READY}) DESC, f.id IN ({WANTED}) DESC,
                                  :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
                 escalate = self._escalation(db, proj["id"]) if route else ESCALATE_AFTER
-                args = {"pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
+                args = {"pid": proj["id"], "agent": agent.id, "name": agent.name, "kin": json.dumps(kin),
+                        "cooled": now - RELEASE_COOLDOWN,
                         "overall": overall, "escalate": escalate, "weak": route == "weak", "strong": route == "strong",
                         "mine": self._own_release_cutoff(db, agent.id, now)}
                 fn = db.execute(query, args).fetchone()
@@ -1190,14 +1231,16 @@ class Network:
                 f"claim_function(function=\"{rows[0]['name']}\") takes one next.")
 
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
-                compiled: bool | None = None, via: str = "agent"):
+                compiled: bool | None = None, via: str = "agent", best: bool = True):
+        """An attempt. `best`: False for one whose code can't stay in the source (it breaks matched neighbours), so
+        it never becomes the best that briefs offer and a release puts back."""
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         with self.store.tx() as db:
             db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
                        "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via))
             db.execute("UPDATE functions SET attempts=attempts+1,last_checked=? WHERE id=?", (now, fn["id"]))
-            if score is not None:
+            if score is not None and best:
                 db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=?, "
                            "last_improved=CASE WHEN ? < COALESCE(n_insns,0)*100 THEN ? ELSE last_improved END "
                            "WHERE id=? AND status='open' AND (best_score IS NULL OR best_score > ?)",
