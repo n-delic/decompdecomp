@@ -3844,7 +3844,7 @@ class ForkEngine:
             "compiler": {"toolchain": "project", "name": "Project's own build", "flags": [], "installed": True,
                          "proprietary": False, "supported": True},
             "compilers": [],
-            **(self._compiler_facts(fp, cfg) if cfg.get("ready") else {}),
+            **(self._compiler_facts(fp, cfg) if cfg.get("ready") else {"compiler_map": False, "mips": False}),
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
             "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
             "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
@@ -3896,12 +3896,16 @@ class ForkEngine:
         return own, parts
 
     def _compiler_facts(self, fp: ForkProject, cfg: dict) -> dict:
-        """The overview's compiler fields, as a ROM project's: the Settings panel and its dropdown work the same."""
+        """The overview's compiler fields, as a ROM project's: the Settings panel and its dropdown work the same.
+        `compiler_map` says whether there is a map at all: a project each of whose source files has a compiler has
+        one (app/filecompilers.py); another project's build decides, and its page says so instead of offering a
+        survey that can never run."""
         found = self._file_parts(fp, cfg)
         if found is None:
-            return {}
+            return {"compiler_map": False, "mips": False}
         own, parts = found
-        return {"compiler": {"toolchain": own, "name": consoles.compiler_name(own), "flags": [], "installed": True,
+        return {"compiler_map": True, "mips": True,
+                "compiler": {"toolchain": own, "name": consoles.compiler_name(own), "flags": [], "installed": True,
                              "proprietary": False, "supported": True},
                 "compilers": [c.id for c in consoles.get(cfg.get("platform")).project_compilers(fp)],
                 "compiler_ranges": parts}
@@ -3918,7 +3922,9 @@ class ForkEngine:
         elsewhere = [r for r in files.build(slug).runs if r.differs()]
         survey, state = cfg.get("file_survey") or {}, files.surveys.get(slug) or {}
         checks = cfg.get("file_checks") or []
-        return {"compiler": consoles.compiler_name(own), "flags": "", "mips": True, "unit": "source file",
+        has_map = files.applies(slug)  # (`mips` is what older pages called this fact)
+        return {"compiler": consoles.compiler_name(own), "flags": "", "compiler_map": has_map,
+                "mips": has_map, "unit": "source file",
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": consoles.compiler_name(r.label[0]),
                                "functions": r.functions, "confirmed": r.confirmed} for r in elsewhere[:12]],
                 "elsewhere_count": len(elsewhere),

@@ -61,6 +61,29 @@ def test_each_source_file_can_have_its_own_codewarrior(tmp_path):
         NDS.set_file_compiler(ForkProject(tmp_path / "public"), "src/a.c", "DS/1.2/sp4")
 
 
+def test_the_survey_tries_the_projects_codewarriors_when_the_program_names_none(tmp_path):
+    """A DS ROM's program names no compiler (no Rich header there): the survey used to try only each file's own, so a
+    game the project builds with another CodeWarrior could never be found. It tries the project's versions instead,
+    nearest to its own first, and keeps that bounded."""
+    root = tmp_path / "game"
+    arm9 = root / "config" / "game" / "arm9"
+    arm9.mkdir(parents=True)
+    (root / ".decomp.wtf.json").write_text(json.dumps({"version": "game", "compiler": "DS/2.0/sp1p5"}))
+    (arm9 / "file_compilers.json").write_text("{}\n")
+    (arm9 / "delinks.txt").write_text(
+        "src/auto/main_02000000.c:\n    .text start:0x02000000 end:0x02000400\n")
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                   ("game", "Game", "", "arm", 0, str(root),
+                    json.dumps({"kind": "fork", "platform": "nds", "ready": True})))
+    assert NDS.program_compilers(net.forks.get("game")[1]) == []  # (the ROM says nothing)
+    candidates = net.filecompilers.candidates("game")
+    assert candidates[0] == "DS/2.0/sp1p5" and len(candidates) > 1
+    assert {"DS/2.0/sp1p6", "DS/2.0/sp1p2"} <= set(candidates)  # the nearest versions, before the rest
+    assert len(candidates) <= 6  # (SURVEY_COMPILERS bounds a run)
+
+
 def test_a_call_to_code_dsd_found_no_function_for_is_analysed_again(tmp_path, monkeypatch):
     """A DS game calls 0x0206135C, which dsd's analysis didn't take for a function ("Local
     function call ... leads to no function"): the analysis runs again with dsd's option for such calls."""

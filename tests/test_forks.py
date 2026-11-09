@@ -888,6 +888,18 @@ def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
     assert net.store.conn.total_changes - before < functions
 
 
+def test_a_projects_overview_says_when_it_has_no_compiler_map(tmp_path):
+    """The Settings answer used to call every fork's map MIPS, so GameCube/Wii/DS showed the survey's wording even
+    where the project's build decides its compilers and there is no map to run. The overview's fact says so."""
+    from types import SimpleNamespace
+
+    root = tmp_path / "game"
+    root.mkdir()
+    fp = SimpleNamespace(root=root, manifest={}, units=lambda: [])
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    assert net.forks._compiler_facts(fp, {"platform": "gc"})["compiler_map"] is False
+
+
 def test_the_overview_reads_a_projects_file_compilers_again_only_when_a_file_changed(tmp_path, monkeypatch):
     """The overview goes with every live poll (each second): a PC game's 1,300 source files' compilers were read
     again each time (300-400 ms a poll). They're read again when one of the files they come from changed."""

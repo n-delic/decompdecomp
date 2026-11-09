@@ -49,7 +49,8 @@ def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
 def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
     """A poll that brought one better score redrew all of a big game's map (28,900 cells), and every frame of the
     working functions' pulse copied the whole canvas; the project list's asks piled up behind a slow one, and the live
-    poll went on in a minimised window (tests/gui_map.js)."""
+    poll went on in a minimised window. The compiler answer says a project without a map has none, and not that it
+    reads MIPS code only (tests/gui_map.js)."""
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_map.js"))], check=True,
