@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
+from contextlib import nullcontext
 
 from .. import compiler, scoring
 from ..candidate_work import scope as candidate_work_scope
@@ -822,6 +823,12 @@ class Search(Permuter):
         return result
 
     def _prime_trials(self, agent, proj, fn, sources, fork):
+        # Advisory history lookups must not synchronize the saved tree for every source.
+        # Compiler snapshots and publication guards still capture/check fresh DB inputs.
+        with self.net.progress.view() if hasattr(self.net, "progress") else nullcontext():
+            return self._prime_trial_inputs(agent, proj, fn, sources, fork)
+
+    def _prime_trial_inputs(self, agent, proj, fn, sources, fork):
         # Scope each candidate exactly as the single-candidate path does. The map
         # lives for one generated chunk and never authorizes a winner.
         keys = []

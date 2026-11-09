@@ -4,9 +4,11 @@ This is not a C parser. Unknown declarations, macros, C++ and indirect calls sta
 Only an unambiguous plain prototype can rule out a direct call's argument count.
 """
 import re
+from functools import lru_cache
 
 from ..forks.csource import _COMMENT_OR_STRING, find
 
+MAX_CACHED_HEADER_CHARS = 1024*1024
 _IDENT = r'[A-Za-z_]\w*'
 _TYPE = r'(?:void|char|short|int|long|float|double|signed|unsigned|const|volatile|struct\s+\w+|u(?:8|16|32|64)|s(?:8|16|32|64))'
 _PROTO = re.compile(rf'(?:^|(?<=[;}}]))\s*(?:extern\s+|static\s+)?(?:{_TYPE}\s+|\*\s*)+({_IDENT})\s*\(([^(){{}};]*)\)\s*;', re.M)
@@ -26,18 +28,7 @@ def arguments(text):
     return count
 
 
-def invalid_call(source, name, header=''):
-    """Explain a provable arity error, otherwise let the ordinary compiler decide."""
-    text = clean(header+'\n'+source)
-    # Conditional declarations and macro expansion need the real preprocessor. Even object macros can
-    # expand to commas, so skip rather than guess. Included files may define macros too.
-    if re.search(r'^\s*#', text, re.M) or re.search(r'::|\b(?:class|template|namespace)\b', text):
-        return ''
-    span = find(source, name)
-    if not span:
-        return ''
-    body = clean(source[span[0]:span[1]])
-    body = body[body.find('{')+1:]
+def _prototypes(text):
     prototypes = {}
     for match in _PROTO.finditer(text):
         params = match[2].strip()
@@ -48,6 +39,40 @@ def invalid_call(source, name, header=''):
             prototypes.setdefault(match[1], set()).add(None)
             continue  # typedefs and old-style names may need macro expansion
         prototypes.setdefault(match[1], set()).add(0 if params == 'void' else arguments(params))
+    return {name:frozenset(counts) for name,counts in prototypes.items()}
+
+
+@lru_cache(maxsize=4)
+def _header(header):
+    text = clean(header)
+    unknown = bool(re.search(r'^\s*#', text, re.M) or re.search(r'::|\b(?:class|template|namespace)\b', text))
+    # Complete declarations cannot continue into the candidate. Preserve the old combined
+    # scan for unusual fragments rather than guessing across the header/source boundary.
+    complete = not text.strip() or text.rstrip().endswith((';', '}'))
+    return text, unknown, complete, _prototypes(text) if complete and not unknown else {}
+
+
+def invalid_call(source, name, header=''):
+    """Explain a provable arity error, otherwise let the ordinary compiler decide."""
+    # Bound retained headers independently of the number of concurrently searched functions.
+    # Parsing is pure: cache keys are exact text, never a project or revision assumption.
+    text, unknown, complete, declared = (_header(header) if len(header)<=MAX_CACHED_HEADER_CHARS else _header.__wrapped__(header))
+    if unknown:return ''
+    body_text = clean(source)
+    if not complete:
+        text = clean(header+'\n'+source)
+    else:
+        text = body_text
+    if re.search(r'^\s*#', text, re.M) or re.search(r'::|\b(?:class|template|namespace)\b', text):
+        return ''
+    span = find(source, name)
+    if not span:
+        return ''
+    body = clean(source[span[0]:span[1]])
+    body = body[body.find('{')+1:]
+    prototypes = dict(declared) if complete else {}
+    for callee, counts in _prototypes(text).items():
+        prototypes[callee] = prototypes.get(callee, frozenset()) | counts
     for call in re.finditer(rf'(?<![\w.>])({_IDENT})\s*\(', body):
         if call[1] not in prototypes or len(prototypes[call[1]]) != 1 or None in prototypes[call[1]]:
             continue

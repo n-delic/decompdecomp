@@ -34,3 +34,29 @@ def test_draft_generation_removes_invalid_arity_before_bounded_selection():
     from decompnet.app.draft_repairs import variants
     source = 'int send(int x,int y); int f(int x) { return send(x, 7); }'
     assert all('return send(x);' not in candidate for candidate in variants(source, 'f', 'mips'))
+
+
+def test_cached_header_keeps_candidate_declarations_and_shadows_independent():
+    header = 'int send(int);'
+    assert invalid_call('int f(void){return send();}', 'f', header)
+    assert not invalid_call('int send(); int f(void){return send();}', 'f', header)
+    assert not invalid_call('int f(int (*send)()){return send();}', 'f', header)
+    assert invalid_call('int f(void){return send();}', 'f', header)
+    assert not invalid_call('int f(void){return send();}', 'f', 'int send(void);')
+
+
+def test_header_fragments_keep_the_combined_scan():
+    assert invalid_call('int); int f(void){return send();}', 'f', 'int send(')
+    assert not invalid_call('*/ int f(void){return send();}', 'f', '/* int send(int);')
+    assert not invalid_call('#define ARG 1,2\nint f(void){return send(ARG);}', 'f', 'int send(int,int);')
+
+
+def test_header_cache_is_bounded_and_large_headers_are_not_retained():
+    from decompnet.app import repair_preflight
+    repair_preflight._header.cache_clear()
+    for i in range(8):
+        assert invalid_call('int f(void){return send();}', 'f', f'int send(int value{i});')
+    assert repair_preflight._header.cache_info().currsize == 4
+    before = repair_preflight._header.cache_info()
+    assert invalid_call('int f(void){return send();}', 'f', ' '*repair_preflight.MAX_CACHED_HEADER_CHARS+'int send(int);')
+    assert repair_preflight._header.cache_info() == before

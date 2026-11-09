@@ -1,5 +1,10 @@
 # Roadmap
 
+- Done: deep/permutation candidate scoring and history priming read captured database
+  inputs without per-candidate saved-tree synchronization. The active-project watcher
+  owns file synchronization; revision and saved-file recheck guards remain in the judge.
+  Plain-call preflight reuses bounded exact-header parses across candidates.
+
 - Done: balanced deep searches generate broad local repairs in bounded background
   subprocesses too, so parallel functions do not serialize that work in the app
   interpreter. Candidate order, cancellation and the ordinary judge are preserved.

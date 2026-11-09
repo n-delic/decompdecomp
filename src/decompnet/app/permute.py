@@ -823,7 +823,10 @@ class Permuter:
     @trial
     def _score(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
         """A variant's score; recorded (as the function's best attempt, or its match) only when it beats `best`."""
-        with self.net.progress.judging(proj["slug"]) if hasattr(self.net, "progress") else nullcontext():
+        # Search uses captured DB inputs; the active-project watcher imports/exports files.
+        # Keep revision/recheck guards without two forced tree scans per candidate.
+        with (self.net.progress.view() if hasattr(self.net, "progress") else nullcontext()), \
+                (self.net.progress.judging(proj["slug"], synchronize=False) if hasattr(self.net, "progress") else nullcontext()):
             from .experiment_evidence import measured
             return measured(self, agent, proj, fn, source, best, fork)
 

@@ -2765,3 +2765,74 @@ def test_finished_saved_judge_releases_lane_before_export_and_preserves_next_own
     assert worker.verification_slot.acquire(blocking=False)
     worker.verification_slot.release()
     assert net.project_store('game').one("SELECT matched_source FROM functions WHERE name='f'")[0] == 'good imported source'
+
+
+@pytest.mark.parametrize('changed', [False, True])
+def test_permuter_uses_database_reads_without_tree_sync_and_keeps_result_guard(project, monkeypatch, changed):
+    from decompnet.app import experiment_evidence
+    from decompnet.app.permute import Permuter
+    net, *_ = project
+    proj = net.project_row('game')
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:pytest.fail('per-candidate tree sync'))
+    def measured(*args):
+        assert net.progress.viewing
+        assert net.project_row('game')['id'] == proj['id']
+        assert net.progress.local.judging[0] == 'game'
+        if changed:net.progress.revisions['game'] = net.progress.revisions.get('game',0)+1
+        net.progress.check_result()
+        return 1
+    monkeypatch.setattr(experiment_evidence, 'measured', measured)
+    if changed:
+        with pytest.raises(NetworkError, match='Progress changed'):
+            Permuter(net)._score(None, proj, None, '', 1, None)
+    else:assert Permuter(net)._score(None, proj, None, '', 1, None) == 1
+    assert not net.progress.viewing and net.progress.local.judging is None
+
+
+def test_permuter_keeps_saved_file_recheck_guard(project, monkeypatch):
+    from decompnet.app import experiment_evidence
+    from decompnet.app.permute import Permuter
+    net, *_ = project
+    proj = net.project_row('game')
+    def changed(slug):raise NetworkError('Saved files changed during the recheck.')
+    monkeypatch.setattr(net.progress, '_check_rechecking_files', changed)
+    monkeypatch.setattr(experiment_evidence, 'measured', lambda *args:net.progress.check_result())
+    with pytest.raises(NetworkError, match='Saved files changed'):
+        Permuter(net)._score(None, proj, None, '', 1, None)
+    assert not net.progress.viewing and net.progress.local.judging is None
+
+
+def test_deep_history_priming_does_not_sync_the_tree_per_candidate(project, monkeypatch):
+    from decompnet.app import agent_tokens, deep_permuter
+    from tests.test_deep_permuter import Log
+    net, *_ = project
+    proj = net.project_row('game')
+    fn = net.store.one('SELECT * FROM functions WHERE project_id=? LIMIT 1', proj['id'])
+    search = deep_permuter.Search(net, 1, 10, Log(), fn)
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:pytest.fail('history priming synchronized files'))
+    monkeypatch.setattr(search, '_recent_key', lambda *a:('revision','key'))
+    def scope(*args):
+        assert net.progress.viewing
+        assert net.project_row('game')['id'] == proj['id']
+        return 'scope'
+    monkeypatch.setattr(agent_tokens, 'target_scope', scope)
+    search._prime_trials(None, proj, fn, ['int f(void){return 1;}'], None)
+    assert search._primed_scopes[('revision','key')] == 'scope'
+    assert not net.progress.viewing
+
+
+def test_deep_policy_reads_around_the_judge_do_not_sync_saved_files(project, monkeypatch):
+    from decompnet.app import deep_permuter
+    from tests.test_deep_permuter import Log
+    net, *_ = project
+    proj = net.project_row('game')
+    fn = net.store.one('SELECT * FROM functions WHERE project_id=? LIMIT 1', proj['id'])
+    search = deep_permuter.Search(net, 1, 10, Log(), fn)
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:pytest.fail('policy read synchronized files'))
+    def score(*args):
+        assert net.progress.viewing
+        assert net.project_row('game')['id'] == proj['id']
+        return 1
+    monkeypatch.setattr(search, '_score_current', score)
+    assert search._score(None, proj, fn, fn['best_source'], 1, None) == 1
+    assert not net.progress.viewing and search._ahead_current is None

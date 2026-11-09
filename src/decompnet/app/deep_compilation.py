@@ -5,7 +5,7 @@ import queue
 import threading
 import time
 from concurrent.futures import CancelledError, Future
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from .. import compile_sessions, compile_sharing, compile_timing, compiler
 
@@ -181,7 +181,11 @@ def prepared(function):
         ticket = getattr(self, '_ahead', {}).get(source)
         if ticket is not None and ticket.counted:ticket = None
         self._ahead_current = ticket
-        try:return function(self, agent, proj, fn, source, best, fork)
+        try:
+            # Policy/history reads around the judge use the same DB snapshot semantics;
+            # they must not trigger saved-tree synchronization before each candidate.
+            with self.net.progress.view() if hasattr(self.net, "progress") else nullcontext():
+                return function(self, agent, proj, fn, source, best, fork)
         finally:self._ahead_current = previous
     return run
 
