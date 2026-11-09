@@ -383,7 +383,7 @@ def run(twins, slug: str, job) -> int:
         if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', b['id']):
             continue
         rows = donors.candidates(pb.size, max(MIN_BYTES, int(pb.size * .9)), min(MAX_BYTES, int(pb.size / .9)),
-                                 pb.key, twins._compiler_key(compiler_for(cfg, b['vram'], b)), MAX_POOL)
+                                 pb.key, twins._compiler_key(compiler_for(cfg, b['vram'], b)), MAX_POOL, near=b['vram'])
         layout = [(o, t) for o, t, _ in relocations(b)]
         rows = [a for a in rows if a['project_id'] in others and a['matched_source']
                 and ([(o, t) for o, t, _ in relocations(a)] == layout or maps[a['project_id']])

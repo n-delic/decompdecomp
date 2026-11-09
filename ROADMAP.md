@@ -3473,3 +3473,11 @@ suggest a bounded group of C parameter edits before broad repairs. All trials st
 use the destination's ordinary byte judge. Other reciprocal forms and processors need
 instruction readers; project-mode object relocation/context adaptation remains planned
 alongside the existing automatic-similar-C gap in the feature table.
+
+Similar-source ROM searches now have a separate bounded budget in both manual full
+passes and automatic reuse waves. New verified matches can propagate to their own
+active project; busy projects defer their notification until the owning pass finishes.
+A bounded nearby-sibling reservation precedes the global donor shortlist cap. The
+MIPS arithmetic reader's supported reciprocal forms and the project-mode gaps above
+remain unchanged. Full discovery/adoption replay is available for self-contained
+private fixtures and a synthetic real-compiler regression.

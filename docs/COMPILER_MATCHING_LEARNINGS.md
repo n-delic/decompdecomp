@@ -6826,3 +6826,35 @@ To repeat a local/private replay, keep its fixture outside Git and run
 `PYTHONPATH=src TMPDIR=/path/on/data-volume python tools/replay_parameter_transfer.py /private/fixture.json`.
 The tool's docstring describes the fixture schema. It calls the ordinary compiler/link
 judge without an app connection; fixtures with referenced data need a future data-reader adapter.
+
+### Scheduling complete sibling discovery and adoption (2026-11-09)
+
+The coordinated-parameter recipe now has an independent similar-source phase budget
+(default 120 seconds / 128 attempts). Named/SDK/template searches cannot consume it.
+An automatic propagation wave shares that budget across projects and newly unlocked
+matches; it does not reset per project or notification. Phase progress shows its own
+limits, while saved reuse totals include both budgets. Cancellation remains shared.
+
+Before the 400-donor shortlist cap, reserve up to 32 slots for same-project donors
+nearest the destination's address within the eligible size window. The remaining
+slots retain global donor ordering. This avoids excluding a useful late-ID sibling
+before instruction evidence can rank it; proximity alone is never match evidence.
+
+A newly verified match also queues its own active project in the existing debounced
+reuse cascade. Pause/disable/Stop and claimed-function exclusions remain authoritative.
+Notifications arriving while a full pass owns the project wait until it finishes;
+failed trials use the existing content/context-sensitive cache.
+
+**Private full-path reproduction:** with the original 476-byte target, its pre-match
+saved C, and the verified sibling's source and original relocation metadata, an
+isolated two-function checkpoint ran the normal Autopilot pass. It discovered,
+adapted, compiled, linked, judged and saved the exact match with one similar-source
+attempt and no general attempts, in approximately 0.73 seconds. This is an existing
+match reproduced on a scoped fixture, not a whole-library benchmark or new progress.
+The pinned compiler and flags remain KMC GCC 2.7.2,
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
+`tools/replay_parameter_transfer.py --autopilot /private/fixture.json` repeats the full
+path (the private fixture also supplies `platform`). It builds a temporary analysis
+image/database from the fixture targets, never a playable ROM or live app connection.
+CI uses a homemade compiled sibling pair; no game source or bytes are committed.
