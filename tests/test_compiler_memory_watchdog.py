@@ -222,3 +222,39 @@ def test_imported_build_watchdog_failure_survives_denied_cleanup(tmp_path,monkey
     ok,message=project.ForkProject(tmp_path).run([sys.executable,'-c','pass'],platform='n64')
     assert not ok
     assert ('Build timed out' if reason=='timed_out' else 'Synthetic memory limit reached') in message
+
+
+@pytest.mark.skipif(os.name=='nt',reason='POSIX process groups')
+def test_imported_build_exit_failure_survives_denied_cleanup(tmp_path,monkeypatch):
+    import errno
+
+    from decompnet import compiler_processes
+    from decompnet.forks.project import ForkProject
+    def denied(*args):raise PermissionError(errno.EPERM,'Synthetic group signal denied')
+    monkeypatch.setattr(compiler_processes.os,'killpg',denied)
+    ok,message=ForkProject(tmp_path).run([sys.executable,'-c',"print('synthetic compiler error');raise SystemExit(3)"],platform='n64')
+    assert not ok and 'synthetic compiler error' in message
+
+
+@pytest.mark.skipif(sys.platform!='darwin',reason='macOS memory watchdog and POSIX groups')
+@pytest.mark.parametrize('reason',['timeout','memory'])
+def test_watchdog_denied_group_signal_stops_owned_child_without_closing_pipes(monkeypatch,caplog,reason):
+    import errno
+    import logging
+
+    proc=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+    def denied(*args):raise PermissionError(errno.EPERM,'private compiler arguments')
+    monkeypatch.setattr(limits.os,'killpg',denied)
+    monkeypatch.setattr(limits,'_process_memory_tree',lambda pid:[(pid,100)] if reason=='memory' else [])
+    try:
+        with caplog.at_level(logging.WARNING,logger='decompdecomp'):
+            with limits.CompilerMemoryWatchdog(proc,limit=50,timeout=.1 if reason=='timeout' else None) as watchdog:
+                proc.wait(timeout=5)
+        assert watchdog.timed_out if reason=='timeout' else watchdog.exceeded
+        assert proc.returncode!=0
+        assert not proc.stdout.closed and not proc.stderr.closed
+        assert 'Compiler watchdog group stop failed' in caplog.text
+        assert 'private compiler arguments' not in caplog.text
+    finally:
+        stop_process_tree(proc)
+        proc.stdout.close();proc.stderr.close()

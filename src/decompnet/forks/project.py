@@ -641,6 +641,7 @@ class ForkProject:
         from .. import compiler_processes
         compiler_processes.track(proc.pid)
         primary_failure = False
+        code = None
         watchdog = None
         try:
             with CompilerMemoryWatchdog(proc, timeout=timeout) as watchdog:
@@ -665,7 +666,7 @@ class ForkProject:
             primary_failure = True
             raise
         finally:
-            compiler_processes.finish(proc, failed=primary_failure or bool(
+            compiler_processes.finish(proc, failed=primary_failure or code not in (None, 0) or bool(
                 watchdog and (watchdog.timed_out or watchdog.exceeded)))
         if watchdog.timed_out:
             return False, f"Build timed out after {timeout}s; its compiler processes were stopped."
