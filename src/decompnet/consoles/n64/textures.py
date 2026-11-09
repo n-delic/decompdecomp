@@ -47,8 +47,7 @@ def bank_layout(data):
     levels = [dict(width=width,height=height,offset=0)]
     if fmt in (0,1,3):
         size = width*height if fmt == 0 else ((width+1)//2)*height
-        entries = 256 if fmt == 0 else 16
-        if not palettes or any(end-start != entries*2 for start,end in palettes):return None
+        if not palettes or any(end-start not in ((32,512) if fmt==0 else (32,)) for start,end in palettes):return None
         pixel_format = 'ci8' if fmt == 0 else 'ci4'
     else:
         if palettes:return None
@@ -60,10 +59,15 @@ def bank_layout(data):
     # Indexed sets pad blocks to eight bytes. A one-pixel row is legal.
     padded_size = (size+7)//8*8
     if any(end-start != padded_size for start,end in frames):return None
+    palette_entries=[(end-start)//2 for start,end in palettes]
+    # The loader cycles frames and palettes independently using the same frame
+    # number. A short CI8 palette is valid only when its paired frame fits it.
+    if fmt==0 and any(palette_entries[i%len(palettes)]==16 and max(data[start:start+size])>=16
+                     for i,(start,end) in enumerate(frames)):return None
     settings = dict(format=pixel_format,width=width,height=height,offset=frames[0][0])
     if palettes:settings.update(palette_offset=palettes[0][0],palette_format='ia16' if fmt == 3 else 'rgba5551-be')
     return dict(preview_settings=settings,frames=len(frames),palettes=len(palettes),
-                frame_offsets=[start for start,end in frames],palette_offsets=[start for start,end in palettes],
+                palette_entries=palette_entries,frame_offsets=[start for start,end in frames],palette_offsets=[start for start,end in palettes],
                 levels=levels,layout='mipmap-rgba16' if fmt == 4 else 'row-major',playback_speed=speed)
 
 
@@ -78,7 +82,7 @@ def preview(data, asset, selection):
     """Resolve frame/palette/LOD indices from validated metadata, never arbitrary offsets."""
     from ...rom import asset_formats as formats
     frame = formats.integer(selection.get('frame',0),'Frame',0,asset['frames']-1)
-    palette = formats.integer(selection.get('palette',0),'Palette',0,max(0,asset['palettes']-1))
+    palette = formats.integer(selection.get('palette',frame%max(1,asset['palettes'])),'Palette',0,max(0,asset['palettes']-1))
     levels = asset.get('levels',[dict(width=asset['preview_settings']['width'],height=asset['preview_settings']['height'],offset=0)])
     mip = formats.integer(selection.get('mip',0),'Mip level',0,len(levels)-1)
     level = levels[mip]
@@ -86,7 +90,19 @@ def preview(data, asset, selection):
     options.update(offset=asset.get('frame_offsets',[options['offset']])[frame]+level['offset'],
                    width=level['width'],height=level['height'])
     if asset['palettes']:options['palette_offset']=asset.get('palette_offsets',[options['palette_offset']])[palette]
-    if asset.get('layout')=='mipmap-rgba16':
+    if options['format'] in ('ci4','ci8'):
+        expected=256 if options['format']=='ci8' else 16
+        entries=asset.get('palette_entries',[expected]*asset['palettes'])[palette]
+        bitmap=formats._take(data,options['offset'],((options['width']*(8 if expected==256 else 4)+7)//8)*options['height'])
+        colors=formats._take(data,options['palette_offset'],entries*2)
+        if expected==256 and max(bitmap)>=entries:
+            raise formats.AssetError(f'This frame uses colours outside the selected {entries}-colour palette. Choose its matching palette or select another frame.')
+        # The common raw reader expects a full palette. Fill only unused entries;
+        # never read past a short palette into the next native block.
+        raw=bitmap+colors+bytes(max(0,(expected-entries)*2))
+        result=formats.preview(raw,{**options,'offset':0,'palette_offset':len(bitmap)})
+        result['details']['palette_colours']=entries
+    elif asset.get('layout')=='mipmap-rgba16':
         raw = bytearray()
         for y in range(level['height']):
             row = formats._take(data,options['offset']+y*level['stride'],level['stride'])

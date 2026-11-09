@@ -61,5 +61,15 @@ const row=(n=0)=>({id:'r'+n,kind:'image',start:128+n*200,detected_asset:{...asse
   active=false;const timer=[...t.timers.values()][0];timer();await tick();assert.equal(requests,2,'Navigation stops before another frame request');
   assert.match(get('status').textContent,/stopped/);
  }
+ {
+  const t=setup({}),body=element(),get=key=>body.querySelector(`[data-texture-${key}]`);let requests=0;
+  const mixed={...asset,palette_entries:[16,256]};Object.assign(t.context,{body,region:{start:128,detected_asset:mixed},active:()=>true});
+  body._romPreviewFrame=async()=>{requests++;return true;};get('rate').value='8';
+  assert.match(t.run('romTextureControlsHTML(region)'),/16 colours/);assert.match(t.run('romTextureControlsHTML(region)'),/256 colours/);
+  t.run('setupRomTextureControls(body,region,active)');get('frame').value='1';get('frame').onchange();assert.equal(get('palette').value,'1');assert.equal(requests,1);
+  get('palette').value='0';get('palette').onchange();assert.equal(get('palette').value,'0','An explicit alternate palette remains available');
+  body._romAssetBusy=true;get('frame').onchange();assert.equal(requests,2,'Do not start duplicate requests while preparing a frame');body._romAssetBusy=false;
+  get('play').onclick();await tick();assert.equal(get('palette').value,'1','Animation selects the matching palette');get('play').onclick();
+ }
  console.log('Texture browser paging, usage, cancellation and playback passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

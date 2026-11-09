@@ -46,7 +46,9 @@ class Literal:
 
 class _Bits:
     def __init__(self, payload: bytes):
-        self.data = payload + b"\0\0"
+        # A final control value can prefetch another word past the payload. Keep
+        # that lookahead separate from take()'s physical input-bit bound.
+        self.data = payload + bytes(4)
         self.end = len(payload)
         self.pos = 0
         self.buffer = self.word(0)
@@ -64,6 +66,8 @@ class _Bits:
             return self.take(16) | self.take(count - 16) << 16
         if not count:
             return 0
+        if self.pos * 8 - self.left + count > self.end * 8:
+            raise RncError("truncated RNC control bits")
         value = self.buffer & ((1 << count) - 1)
         if count > self.left:
             self.buffer >>= self.left

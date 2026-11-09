@@ -3,7 +3,7 @@ function romTextureControlsHTML(region) {
   const asset=region.detected_asset;if(!asset || ['audio','model'].includes(asset.media))return '';
   const saved=region.annotation?.preview_settings || {},levels=asset.levels || [{width:asset.preview_settings.width,height:asset.preview_settings.height}];
   const select=(key,label,count,caption)=>`<label class="field"><span>${label}</span><select data-texture-${key}>${Array.from({length:count},(_,i)=>`<option value="${i}"${Number(saved[key] || 0)===i ? ' selected' : ''}>${caption(i)}</option>`).join('')}</select></label>`;
-  return `<div class="rom-asset-fields">${select('frame','Frame',asset.frames,i=>`${i+1} of ${asset.frames}`)}${select('palette','Palette',Math.max(1,asset.palettes),i=>asset.palettes ? `${i+1} of ${asset.palettes}` : 'Direct color (no palette)')}${select('mip','Mip level',levels.length,i=>`${i} · ${levels[i].width} × ${levels[i].height}`)}<label class="field"><span>Animation preview rate (1–24 frames/s)</span><input data-texture-rate type="number" min="1" max="24" value="8"></label></div><button type="button" class="ghost small-btn" data-texture-play${asset.frames<2 ? ' disabled' : ''}>Animate frames</button><p class="small muted" data-texture-status aria-live="polite">Select a frame, palette or mip level to preview it. Animation starts only when you press Animate frames; its rate is a preview setting.</p>`;
+  return `<div class="rom-asset-fields">${select('frame','Frame',asset.frames,i=>`${i+1} of ${asset.frames}`)}${select('palette','Palette',Math.max(1,asset.palettes),i=>asset.palettes ? `${i+1} of ${asset.palettes}${asset.palette_entries ? ' · '+asset.palette_entries[i]+' colours' : ''}` : 'Direct color (no palette)')}${select('mip','Mip level',levels.length,i=>`${i} · ${levels[i].width} × ${levels[i].height}`)}<label class="field"><span>Animation preview rate (1–24 frames/s)</span><input data-texture-rate type="number" min="1" max="24" value="8"></label></div><button type="button" class="ghost small-btn" data-texture-play${asset.frames<2 ? ' disabled' : ''}>Animate frames</button><p class="small muted" data-texture-status aria-live="polite">Select a frame, palette or mip level to preview it. Animation starts only when you press Animate frames; its rate is a preview setting.</p>`;
 }
 function setupRomTextureControls(body,region,active) {
   if(!region.detected_asset || ['audio','model'].includes(region.detected_asset.media))return;
@@ -20,7 +20,11 @@ function setupRomTextureControls(body,region,active) {
     for(const [key,value] of [['source','rom'],['format','auto'],['offset','0x'+region.start.toString(16)]]){const field=body.querySelector(`[data-asset-${key}]`);if(field)field.value=value;}
     body.querySelector('[data-asset-format]')?.onchange?.();
   };
-  for(const key of ['frame','palette','mip'])get(key).onchange=()=>{stop();native();body._romPreviewFrame?.();};
+  const framePalette=()=>{
+    const sizes=region.detected_asset.palette_entries;
+    if(sizes?.length && new Set(sizes).size>1)get('palette').value=String(Number(get('frame').value)%region.detected_asset.palettes);
+  };
+  for(const key of ['frame','palette','mip'])get(key).onchange=()=>{if(body._romAssetBusy || !active())return;stop();if(key==='frame')framePalette();native();body._romPreviewFrame?.();};
   get('rate').onchange=()=>stop();
   button.onclick=()=>{
     if(playing){stop();return;}
@@ -30,7 +34,7 @@ function setupRomTextureControls(body,region,active) {
     native();playing=true;const run=++generation;let next=Number(get('frame').value);button.textContent='Stop animation';
     const tick=async()=>{
       if(!playing || run!==generation || !active()){stop();return;}
-      get('frame').value=String(next);
+      get('frame').value=String(next);framePalette();
       status.textContent=`Playing frame ${Number(get('frame').value)+1} of ${region.detected_asset.frames} · ${rate} frames/s requested`;
       const rendered=await body._romPreviewFrame();
       if(!active()){stop();return;}
