@@ -73,7 +73,7 @@ async function openAssetFinding(identity){
     const similarButton=body.querySelector('[data-finding-similar]');
     if(similarButton)similarButton.onclick=async()=>{
       if(body._romAssetBusy||!active())return;body._romAssetBusy=true;
-      const work=body.querySelector('[data-finding-work]'),done=beginWork(work,'Comparing data regions',[similarButton],'Region comparison ready.');showJobError(work,'');
+      const work=body.querySelector('[data-finding-work]'),done=beginWork(work,'Comparing data regions',[...body.querySelectorAll('input,select,button,textarea')],'Region comparison ready.');showJobError(work,'');
       try{const result=await api('/api/rom-explorer/discovery',{method:'POST',body:{slug,action:'similar',finding:identity,edits:{page:body._similarPage||0}}});if(!active())return;
         const target=body.querySelector('[data-finding-similar-results]');target.innerHTML=`<p class="small muted">${esc(result.note)} ${result.total} candidates from ${result.examined} data regions.</p>${result.matches.map(m=>`<p><button type="button" class="link-btn" data-similar-region="${esc(m.region)}">${esc(m.region)}</button> · ${esc(m.kind)}<br>${m.reasons.map(esc).join(' · ')}</p>`).join('')}${result.total>50?'<button type="button" class="ghost small-btn" data-similar-next>Next page</button>':''}`;
         target.querySelectorAll('[data-similar-region]').forEach(b=>b.onclick=()=>openRomRegion(b.dataset.similarRegion));const next=target.querySelector('[data-similar-next]');if(next)next.onclick=()=>{body._similarPage=((body._similarPage||0)+1)*50>=result.total?0:(body._similarPage||0)+1;similarButton.click();};
@@ -101,7 +101,7 @@ for(const [id,delta] of [['assetAgentPrevious',-1],['assetAgentNext',1]])$(id).o
 $('assetAgentNewPass').onclick=()=>{const view=assetAgentView();view.newPass=true;view.scope={mode:'unknown'};renderAssetAgents(view);};
 
 function assetValidationHTML(validation,critiques){
-  return `<div class="asset-validation"><h3>Automatic checks</h3>${validation?`<p class="small muted">${esc(validation.note)}</p>${validation.checks.map(c=>`<p><b>${esc(c.check)} · ${esc(c.status)}</b><br>${esc(assetCheckEvidence(c.evidence))}</p>`).join('')}`:'<p>No byte validation recorded.</p>'}<h3>Independent agent review</h3>${critiques.length?critiques.map(c=>`<p><b>${esc(c.body.verdict)}</b> · ${esc(c.author)} · ${esc(c.model)}${c.body.same_model?' · Same model, different worker':''}<br>${esc(c.body.evidence)}</p>`).join(''):'<p class="small muted">Awaiting a different worker. Add another discovery agent to challenge this proposal. You can still make your own acceptance decision.</p>'}</div>`;
+  return `<div class="asset-validation"><h3>Automatic checks</h3>${validation?`<p class="small muted">${esc(validation.note)}</p>${validation.checks.map(c=>`<p><b>${esc(c.check)} · ${esc(c.status)}</b><br>${esc(assetCheckEvidence(c.evidence))}</p>`).join('')}`:'<p>No byte validation recorded.</p>'}<h3>Independent agent review</h3>${critiques.length?critiques.map(c=>`<p><b>${esc(c.body.verdict)}</b> · ${esc(c.author)} · ${esc(c.model)}${c.body.same_model?' · Same model, different worker':''}<br>${esc(c.body.evidence)}<br><span class="small muted">Citations: ${(c.body.citations||[]).map(v=>hex8(v.offset)).join(' · ')||'None'}</span></p>`).join(''):'<p class="small muted">Awaiting a different worker. Add another discovery agent to challenge this proposal. You can still make your own acceptance decision.</p>'}</div>`;
 }
 
 function assetCheckEvidence(value){
