@@ -36,7 +36,7 @@ def cli(tmp_path,monkeypatch,event,code=1,recovered=False):
     claim=net.claim_row(agent,'game')
     def command(s,*args):
         net.__dict__.setdefault('_pending_tool_handshakes',set()).discard((agent.id,s.slug))
-        events=[event]+[{'type':'item.completed','item':{'type':'agent_message','text':'synthetic diagnostic'}} for _ in range(24)]
+        events=[{'type':'thread.started','thread_id':'f8b3947c-58fa-4f2a-9f54-f1647c062d3c'},event]+[{'type':'item.completed','item':{'type':'agent_message','text':'synthetic diagnostic'}} for _ in range(24)]
         if recovered:events.append({'type':'turn.completed','usage':{}})
         script='import sys,json\nsys.stdin.read()\n'+''.join('print('+repr(json.dumps(x))+')\n' for x in events)+'raise SystemExit('+str(code)+')'
         return [sys.executable,'-c',script],dict(os.environ),'synthetic prompt'
@@ -65,6 +65,10 @@ def test_real_child_limit_failure_keeps_work_and_bounds_recovery(tmp_path,monkey
     with pytest.raises(agents.Fatal,match='after one recovery attempt'):
         manager._run_cli(s,token,tmp_path)
     assert s.output_limit_retries==1
+    assert 'resume_conversation' not in s.options and 'focus_conversation' not in s.options
+    persisted=json.loads(net.store.one('SELECT options FROM helpers WHERE id=?',int(s.id))['options'])
+    assert 'resume_conversation' not in persisted and 'focus_conversation' not in persisted
+    assert persisted['resume_functions']==[claim['name']]
     assert dict(net.store.one('SELECT * FROM functions WHERE id=?',claim['id']))==before
 
 

@@ -2132,16 +2132,16 @@ class Manager:
             return False  # provider concurrency backoff must not spend the handshake retry
         if not s.limited and k.exit_reason(state) == 'output_limit':
             from . import session_followups
+            # Clear every incomplete conversation, including the one that pauses
+            # retries, so a later manual Start also begins from saved app state.
+            s.options.pop('resume_conversation', None)
+            s.options.pop('focus_conversation', None)
+            self._save(s)
             if s.output_limit_retries:
                 raise Fatal('The model reached its output limit again after one recovery attempt. '
                             'Automatic retries paused; saved candidates are retained. '
                             'Review the transcript and use smaller edits or another model before pressing Start.')
             s.output_limit_retries += 1
-            # A fresh prompt must not resume the same incomplete generation.
-            # Function handoffs and all saved transcript/candidate data remain.
-            s.options.pop('resume_conversation', None)
-            s.options.pop('focus_conversation', None)
-            self._save(s)
             s.continuation_note = session_followups.OUTPUT_RECOVERY
             s.error = 'The model response reached its output limit; the unfinished tool call was not confirmed.'
             s.push('error', s.error)
