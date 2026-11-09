@@ -27,7 +27,7 @@ import capstone
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 
-from ..rom.link import LinkResult, significant
+from ..rom.link import LinkResult, record_mismatch, significant
 
 R_PPC64_ADDR32, R_PPC64_ADDR16, R_PPC64_ADDR16_LO, R_PPC64_ADDR16_HI, R_PPC64_ADDR16_HA = 1, 3, 4, 5, 6
 R_PPC64_REL24, R_PPC64_REL32, R_PPC64_ADDR64 = 10, 26, 38
@@ -453,13 +453,14 @@ def link(obj: bytes, name: str, target: PpcTarget, symbols, read) -> LinkResult:
                 tgt = int.from_bytes(tcode[field_at:field_at + length], "big")
                 code[field_at:field_at + length] = ((cand & ~mask) | (tgt & mask)).to_bytes(length, "big")
 
-    _verify_own(elf, name, shndx, start, target, symbols, read, own, problem)
+    mismatches = []
+    _verify_own(elf, name, shndx, start, target, symbols, read, own, problem, mismatches)
     placements: dict[str, dict[int, int]] = {}
     for (sec_idx, offset), original in own.items():
         placements.setdefault(elf.get_section(sec_idx).name, {})[offset] = original
     linked = bytes(code)
     exact = not problems and linked == tcode
-    return LinkResult(FunctionObj(name, "ppc64", True, linked, []), exact, problems, placements)
+    return LinkResult(FunctionObj(name, "ppc64", True, linked, []), exact, problems, placements, mismatches)
 
 
 def _toc_slot(elf, slots, sym, addend, ref, target, read, same, expected_for, problem, tcode, insn) -> bool:
@@ -495,7 +496,7 @@ def _toc_slot(elf, slots, sym, addend, ref, target, read, same, expected_for, pr
 
 
 def _verify_own(elf: ELFFile, name: str, fn_shndx: int, fn_start: int, target: PpcTarget, symbols, read,
-                own: dict, problem) -> None:
+                own: dict, problem, mismatches) -> None:
     """The data the candidate defines itself (strings, tables) must be the original's: placed where the original's
     code points, each datum compared up to the next one, pointers inside it followed to where the original's point."""
     symtab = elf.get_section_by_name(".symtab")
@@ -579,6 +580,8 @@ def _verify_own(elf: ELFFile, name: str, fn_shndx: int, fn_start: int, target: P
         n = significant(bytes(mine), addr, None, next_start)
         theirs = read(addr, n)
         if theirs is not None and theirs != bytes(mine[:n]):
+            record_mismatch(mismatches, symbols.label(addr), addr, theirs, bytes(mine[:n]),
+                            bool(sec["sh_flags"] & 4))
             problem(f"your {sec.name} data at +0x{off:X} differs from the original's at 0x{addr:08X} "
                     f"({symbols.label(addr)}): yours {bytes(mine[:min(n, 24)]).hex(' ')}"
                     f"{'…' if n > 24 else ''}, original {theirs[:24].hex(' ')}{'…' if n > 24 else ''}")

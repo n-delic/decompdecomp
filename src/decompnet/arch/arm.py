@@ -13,7 +13,7 @@ import capstone
 from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 
-from ..rom.link import LinkResult, significant
+from ..rom.link import LinkResult, record_mismatch, significant
 
 RELOC_MASKS = {  # relocation type -> (byte offset from r_offset, length, little-endian bitmask to clear)
     28: (0, 4, 0x00FFFFFF),  # R_ARM_CALL
@@ -305,18 +305,19 @@ def link(obj: bytes, name: str, target: ArmTarget, symbols, read) -> LinkResult:
             else:
                 problem(f"relocation type {rtype} isn't supported yet")
 
-    _verify_own(elf, symtab_all, name, shndx, start, target, symbols, read, own, problem)
+    mismatches = []
+    _verify_own(elf, symtab_all, name, shndx, start, target, symbols, read, own, problem, mismatches)
     placements: dict[str, dict[int, int]] = {}
     for (sec_idx, offset), original in own.items():
         placements.setdefault(elf.get_section(sec_idx).name, {})[offset] = original
     linked = bytes(code)
     exact = not problems and linked == tcode[:len(linked)] and len(linked) == len(tcode)
     return LinkResult(FunctionObj(name, "thumb" if target.thumb else "arm", False, linked, []), exact, problems,
-                      placements)
+                      placements, mismatches)
 
 
 def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, target: ArmTarget, symbols,
-                read, own: dict, problem) -> None:
+                read, own: dict, problem, mismatches) -> None:
     """The data the candidate defines itself must be the original's: placed where the original's code points, each
     datum compared up to the next one (after every place is known), pointers inside it (a table of strings)
     followed to where the original's pointers point."""
@@ -401,6 +402,8 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
         n = significant(bytes(mine), addr, None, next_start)
         rom = read(addr, n)
         if rom is not None and rom != bytes(mine[:n]):
+            record_mismatch(mismatches, symbols.label(addr), addr, rom, bytes(mine[:n]),
+                            bool(sec["sh_flags"] & 4))
             problem(f"your {sec.name} data at +0x{off:X} differs from the original's at 0x{addr:08X} "
                     f"({symbols.label(addr)}): yours {bytes(mine[:min(n, 24)]).hex(' ')}"
                     f"{'…' if n > 24 else ''}, original {rom[:24].hex(' ')}{'…' if n > 24 else ''}")

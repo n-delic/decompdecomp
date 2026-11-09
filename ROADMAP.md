@@ -835,3 +835,12 @@ The answer goes here: build it, build part of it, or not, and why.
 - **A Flatpak** on the GNOME runtime.
 - **macOS signed/notarized** distribution and a menu bar tray icon.
 - **macOS memory, CPU and file-size caps** for compiler processes (Linux currently uses systemd scopes).
+
+
+### Operator-controlled match diagnostics
+
+Settings has an optional **Recheck stalled-match blockers** flag (off by default). It takes effect on
+subsequent tool calls, adds bounded linked helper/data mismatch windows in ROM judging (MIPS, ARM/Thumb,
+PowerPC64), and marks older blocker notes for revalidation after activation or a judge update. Notes and
+strict match verdicts are unchanged. Project-mode briefs also receive note markers; their existing objdiff
+feedback remains the source of byte-level evidence. No extra compiles or model escalation run automatically.

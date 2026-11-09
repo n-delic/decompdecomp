@@ -242,6 +242,7 @@ async function showSettingsPage() {
   $("setAgents").innerHTML = `
     <label class="field"><span>Functions per agent session (a fresh session keeps the agent's context small)</span><input id="perSession" type="number" min="1" max="20" value="${st.settings.per_session}"></label>
     <label class="field"><span>Budget: stop helper agents when a project's agents have spent this much (US dollars, as the agents report it; 0 = no limit)</span><input id="budgetSet" type="number" min="0" step="0.5" value="${st.settings.budget_usd || 0}"></label>
+    <label class="check"><input type="checkbox" id="matchDiagnosticsSet" ${st.settings.match_diagnostics ? "checked" : ""}><span><b>Recheck stalled-match blockers</b>: show detailed ROM helper/data mismatches and flag older blocker notes for fresh verification. Applies to subsequent tool calls; does not change match rules or delete notes.</span></label>
     <label class="check"><input type="checkbox" id="autopilotSet" ${st.settings.autopilot !== false ? "checked" : ""}><span><b>Autopilot after each import</b>: try every function's machine draft first, so free matches cost no agent time.</span></label>`;
   const theme = savedTheme();
   $("setComputer").innerHTML = `
@@ -289,6 +290,7 @@ async function showSettingsPage() {
     } catch (e) { toast(esc(e.message), "err"); }
   };
   $("perSession").onchange = () => save({ per_session: Number($("perSession").value) }, "Saved.");
+  $("matchDiagnosticsSet").onchange = () => save({ match_diagnostics: $("matchDiagnosticsSet").checked }, "Diagnostics setting saved.");
   $("autopilotSet").onchange = () => save({ autopilot: $("autopilotSet").checked }, "Saved.");
   $("budgetSet").onchange = () => save({ budget_usd: Number($("budgetSet").value) || 0 }, "Budget saved.");
 }
