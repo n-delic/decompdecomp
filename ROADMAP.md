@@ -14,6 +14,10 @@ local Linux runner, SN Systems EE-GCC and CodeWarrior through wibo. Physical Int
 Mac and retail-game verification remain planned; Apple Silicon checks use the
 homemade PS2 demo. Arbitrary imported Make/Ninja builds in the VM remain planned.
 
+Compiler probes and suggestions preserve quoted multi-word arguments, including CodeWarrior's checked
+integer-division option. PS2 flag search tests `divbyzerocheck on/off`; this never changes a compiler route
+without the existing suggestion and range checks. Search results describe only the bounded variants tested.
+
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to

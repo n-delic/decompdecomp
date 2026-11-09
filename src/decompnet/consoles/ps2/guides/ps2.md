@@ -43,3 +43,19 @@ Small data is `$gp`-relative (-G8 typical), so declare externs with their real s
 
 Libraries: Sony's libgraph, libdma, libpad, libcdvd, libkernl, libsd and libvu0 are linked as
 libraries; their prototypes are in the project's headers.
+
+## Checked integer division in CodeWarrior
+
+A target may have `bnez`, a `div` in its delay slot, and `break 0,7`, while the same C compiles to `div` and
+padding nops. Test the compiler setting before rewriting the arithmetic:
+
+```
+try_compiler(function="your_function", compiler="mwcps2-2.3.3",
+             flags="-O3,p -sdatathreshold 8 -pragma 'divbyzerocheck on'")
+```
+
+The pragma name and value are one argument. Keep the quotes when passing flags to `try_compiler` or `suggest`.
+`search_flags` tests both checked and unchecked division for CodeWarrior PS2. Its search is bounded; failure to
+find a match does not prove that all compiler options were exhausted. The source validator still rejects
+pragmas and inline assembly in ROM submissions; this is a compiler setting, subject to the usual range checks.
+Do not enable it for an entire game merely because one function matches with it.

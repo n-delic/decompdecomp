@@ -1,4 +1,32 @@
 "use strict";  // each script is strict on its own (see base.js)
+// Compiler flags use shell-style quoting, but are never evaluated as shell commands.
+function parseCompilerFlags(text) {
+  const args = [];
+  let value = "", quote = "", started = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote === "'") {
+      if (c === "'") quote = ""; else value += c;
+    } else if (c === "\\") {
+      if (++i === text.length) throw new Error("Invalid compiler flags: trailing escape.");
+      if (quote === '"' && !['"', "\\"].includes(text[i])) value += "\\";
+      value += text[i]; started = true;
+    } else if (quote) {
+      if (c === quote) quote = ""; else value += c;
+    } else if (c === "'" || c === '"') {
+      quote = c; started = true;
+    } else if (" \t\r\n".includes(c)) {
+      if (started) { args.push(value); value = ""; started = false; }
+    } else { value += c; started = true; }
+  }
+  if (quote) throw new Error("Invalid compiler flags: close the quoted argument.");
+  if (started) args.push(value);
+  return args;
+}
+function quoteCompilerFlags(args) {
+  return args.map((arg) => /^[A-Za-z0-9_@%+=:,./-]+$/.test(arg) ? arg : "'" + arg.replaceAll("'", "'\"'\"'") + "'").join(" ");
+}
+
 /* ------------------------------------------------------------------ drawers, keys */
 /* A drawer (the function, a dialog) takes the keyboard while it's open and gives it back where it was when it closes:
    whoever works with the keyboard isn't left at the top of the page. */
@@ -124,7 +152,7 @@ function suggestionHtml(s) {
   const ok = s.check && s.check.includes("matches the game");
   return `<div class="note">${saidHead(s.agents.length > 1 ? `${s.agents.length} agents agree` : "suggested", s.agents, s.t, true)}${saidText(s.text)}
     ${s.check ? `<p class="said-check${ok ? " ok" : ""}">${ok ? "✓ " : ""}${esc(s.check)}</p>` : ""}
-    <div class="row">${s.toolchain ? `<button class="primary small-btn" type="button" data-apply="${s.id}">Use ${esc(tcName(s.toolchain))} ${esc(s.flags.join(" "))}${(s.ranges || []).length ? ` for ${plural(s.ranges.length, "part")}` : ""}</button>` : ""}<button class="ghost small-btn" type="button" data-dismiss="${s.id}">${s.toolchain ? "Not now" : "Dismiss"}</button></div></div>`;
+    <div class="row">${s.toolchain ? `<button class="primary small-btn" type="button" data-apply="${s.id}">Use ${esc(tcName(s.toolchain))} ${esc(quoteCompilerFlags(s.flags))}${(s.ranges || []).length ? ` for ${plural(s.ranges.length, "part")}` : ""}</button>` : ""}<button class="ghost small-btn" type="button" data-dismiss="${s.id}">${s.toolchain ? "Not now" : "Dismiss"}</button></div></div>`;
 }
 $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
   const cut = e.target.closest("button[data-bapply], button[data-bdismiss]");
@@ -394,14 +422,14 @@ async function renderProjectSettings() {
   if (!$("compilerPanel").hidden) {
     if (!S.st) await loadState();
     fillCompilers($("setTc"), ov.compiler.toolchain, ov.platform, fork ? ov.compilers : null);
-    $("setFlags").value = ov.compiler.flags.join(" ");
+    $("setFlags").value = quoteCompilerFlags(ov.compiler.flags);
     $("autoAdjust").checked = !!ov.auto_compiler;
     $("setRanges").value = "";
     renderCompilerWaiting(ov);
     loadCompilerAnswer();
   }
   const facts = [["Platform", ov.platform_name], ["Game", ov.rom?.title || ov.title], [fork ? "Version" : "Game code", ov.rom?.game_code || ov.version],
-    !fork && ov.rom?.region ? ["Region", ov.rom.region] : null, fork ? ["Layout", ov.origin === "scratch" ? (ov.layout || "decomp") + " (from scratch)" : ov.fork_kind] : ["Compiler", `${ov.compiler.name} ${ov.compiler.flags.join(" ")}`],
+    !fork && ov.rom?.region ? ["Region", ov.rom.region] : null, fork ? ["Layout", ov.origin === "scratch" ? (ov.layout || "decomp") + " (from scratch)" : ov.fork_kind] : ["Compiler", `${ov.compiler.name} ${quoteCompilerFlags(ov.compiler.flags)}`],
     fork && ov.repo_url ? ["Repository", ov.repo_url.replace(/^https?:\/\//, "")] : null,
     ["Functions", `${ov.functions.toLocaleString()} (${bytes(ov.bytes || 0)} of code)`], ["Folder", ov.folder]].filter(Boolean);
   $("projFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v || "—")}</dd></div>`).join("");
@@ -492,7 +520,7 @@ $("setTcSave").onclick = async () => {
   if (wholeProject) showJobError($("setTcLog"), "");
   try {
     const flags = $("setFlags").value.trim();
-    const r = await api("/api/compiler", { method: "POST", body: { slug: S.slug, toolchain: $("setTc").value, flags: flags ? flags.split(/\s+/) : null, ranges: $("setRanges").value.trim() } });
+    const r = await api("/api/compiler", { method: "POST", body: { slug: S.slug, toolchain: $("setTc").value, flags: flags ? parseCompilerFlags(flags) : null, ranges: $("setRanges").value.trim() } });
     let said = r.said || "Compiler settings saved.";
     if (r.job) {  // the whole game, where each source file has a compiler: every file is tried in turn
       $("setTcLog").hidden = false;
