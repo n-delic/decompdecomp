@@ -360,14 +360,6 @@ def _function_rows(net, project_id: int, *, sources: bool, names: list[str] | No
                "r.best_agent_id, r.readable, r.meta, "
                "CASE WHEN r.matched_source IS NOT NULL AND r.matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
                "CASE WHEN r.best_source IS NOT NULL AND r.best_source != '' THEN 1 ELSE 0 END AS has_best")
-    join = ""
-    if sources:
-        # CASE short-circuits unused payloads, but selected C still uses the normal
-        # checksum-validated detail view in the same read snapshot as its metadata.
-        columns += (f", CASE WHEN {matched} THEN f.matched_source END AS matched_source, "
-                    f"CASE WHEN {matched} THEN NULL WHEN r.best_score IS NOT NULL "
-                    "THEN f.best_source END AS best_source")
-        join = " JOIN functions f ON f.id=r.id"
     selected = "" if names is None else " AND r.name IN (SELECT value FROM json_each(?))"
     params = (project_id,) if names is None else (project_id, json.dumps(names))
     if not sources:
@@ -390,8 +382,55 @@ def _function_rows(net, project_id: int, *, sources: bool, names: list[str] | No
         # including SQLite's NULL-first ordering, after expanding the pages.
         rows.sort(key=lambda row: (row['vram'] is not None, row['vram']))
         return rows
-    return store.all(f"SELECT {columns} FROM main.functions r{join} WHERE r.project_id=?{selected} ORDER BY r.vram",
-                     *params)
+    # Keep source selection and compressed payloads in one snapshot. Expanding C
+    # in SQLite invokes Python once per row; under background CPU work those GIL
+    # handoffs can hold the progress project lock for seconds. Decode distinct
+    # selected payloads outside SQLite, never transporting unused source bodies.
+    import sqlite3
+    import zlib
+
+    from .. import payload_storage
+    batches = store.all(f"""WITH selected AS MATERIALIZED (
+        SELECT {columns},r.id,
+        CASE WHEN {matched} THEN r.matched_source
+             WHEN r.best_score IS NOT NULL THEN r.best_source END AS source
+        FROM main.functions r WHERE r.project_id=?{selected}),
+        refs AS (SELECT DISTINCT lower(hex(source)) AS hash FROM selected WHERE typeof(source)='blob'),
+        packets AS (
+        SELECT id AS position,'' AS hash,json_object(
+            'kind','function','id',id,'name',name,'unit',unit,'vram',vram,'size',size,'status',status,
+            'matched_agent_id',matched_agent_id,'best_score',best_score,'best_agent_id',best_agent_id,
+            'readable',readable,'meta',meta,'has_matched',has_matched,'has_best',has_best,
+            'source',CASE WHEN typeof(source)='blob' THEN lower(hex(source)) ELSE source END,
+            'source_ref',typeof(source)='blob') AS record FROM selected
+        UNION ALL SELECT NULL,r.hash,json_object('kind','payload','hash',r.hash,
+            'payload',CASE WHEN p.hash IS NOT NULL THEN hex(p.payload) END)
+        FROM refs r LEFT JOIN main.text_payloads p ON p.hash=r.hash),
+        numbered AS (SELECT record,row_number() OVER (ORDER BY position,hash) AS ordinal FROM packets)
+        SELECT json_group_array(json(record)) AS batch FROM numbered
+        GROUP BY (ordinal-1)/128 ORDER BY min(ordinal)""", *params)
+    decoded, rows = {}, []
+    while batches:
+        for row in json.loads(batches.pop()['batch']):
+            if row.pop('kind') == 'payload':
+                blob = bytes.fromhex(row['payload']) if row['payload'] is not None else None
+                try:
+                    decoded[row['hash']] = payload_storage.unpack(row['hash'], blob)
+                except (ValueError, UnicodeError, zlib.error) as error:
+                    # Retain the detail view's failure contract for damaged storage.
+                    raise sqlite3.OperationalError('user-defined function raised exception') from error
+            else:
+                rows.append(row)
+    rows.sort(key=lambda row: (row['vram'] is not None, row['vram'], row['id']))
+    for row in rows:
+        row.pop('id')
+        source = row.pop('source')
+        if row.pop('source_ref'):
+            source = decoded[source]
+        chosen_match = row['status'] == 'matched' and row['has_matched']
+        row['matched_source'] = source if chosen_match else None
+        row['best_source'] = None if chosen_match else source
+    return rows
 
 
 def _knowledge_store(net, project):
