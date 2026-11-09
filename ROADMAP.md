@@ -3459,3 +3459,13 @@ label propagation. Parser success and static references remain evidence rather
 than proof of intended use. Human acceptance is unchanged. These features share
 the ROM Explorer adapter on all supported ROM consoles; project-mode object/data
 mapping remains planned before these tools can reach project-mode consoles.
+
+### Coordinated sibling parameter transfers
+
+The similar-code ROM pass can reuse current matched siblings within a project as well
+as compatible imported ROM projects. Aligned MIPS register/control-flow shapes with a
+positive signed-division reciprocal, threshold and negative coefficient adjustment can
+suggest a bounded group of C parameter edits before broad repairs. All trials still
+use the destination's ordinary byte judge. Other reciprocal forms and processors need
+instruction readers; project-mode object relocation/context adaptation remains planned
+alongside the existing automatic-similar-C gap in the feature table.

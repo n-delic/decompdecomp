@@ -279,6 +279,7 @@ def run(twins, slug: str, job) -> int:
     cfg = net.cfg(proj)
     from .shared_reuse import compatible
     others = {p['id']:p for p in compatible(net, proj) if net.is_rom(p)}
+    others[proj['id']] = proj  # Matched siblings are donors too, without another imported region.
     from . import free_candidates
     free_candidates.budget(job, MAX_SECONDS, MAX_ATTEMPTS)
     deadline = job.reuse_deadline
@@ -292,8 +293,8 @@ def run(twins, slug: str, job) -> int:
     symbol_state = [(r['name'], r['address']) for r in net.project_store(proj['id']).all(
         'SELECT name,address FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     source_cache, ops_cache = {}, {}
-    from . import address_repairs, regional_layouts, reuse_donors
-    donors = reuse_donors.Donors(net, proj)
+    from . import address_repairs, parameter_transfers, regional_layouts, reuse_donors
+    donors = reuse_donors.Donors(net, proj, include_self=True)
     layouts = {pid: regional_layouts.learn(net, proj, other) for pid, other in others.items()}
     maps = {pid: regional_names(twins, proj, other) for pid, other in others.items()}
     saved = net.project_store(proj['id']).one('SELECT function_id FROM reuse_cursors WHERE project_id=?', proj['id'])
@@ -335,7 +336,8 @@ def run(twins, slug: str, job) -> int:
         else:
             outcome, why = twins._attempt_twin(agent, proj, a, b, candidate,
                 origin=f" in {other['name']}", similar=True, feedback=feedback, mapping=names)
-        reason = f'similar code ({score:.0%}); {kind}; ' + (why or outcome)
+        donor_hash = hashlib.sha256(a['matched_source'].encode()).hexdigest()
+        reason = f'similar code ({score:.0%}); {kind}; donor source {donor_hash}; ' + (why or outcome)
         with net.project_store(proj['id']).tx() as db:
             db.execute('INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,'
                        'source_function_id,outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)',
@@ -397,10 +399,17 @@ def run(twins, slug: str, job) -> int:
         by_id = {str(a['id']): a for a in rows}
         ranked = similarity.rank(ops, {key: ops_cache[a['id']] for key, a in by_id.items()},
                                  top=MAX_POOL, floor=MIN_SIMILARITY)
-        ranked.sort(key=lambda item: ([(o, t) for o, t, _ in relocations(by_id[item[0]])] != layout, -item[1]))
+        ranked.sort(key=lambda item: (not parameter_transfers.scale_changes(by_id[item[0]], b, bool(proj['big_endian'])),
+                                      [(o, t) for o, t, _ in relocations(by_id[item[0]])] != layout, -item[1]))
         ranked = ranked[:MAX_CANDIDATES]
         for key, score in ranked:
             a = by_id[key]
+            # Re-read authoritative source after ranking: donors can be polished during a pass.
+            fresh = net.project_store(a['project_id']).one(
+                "SELECT * FROM functions WHERE id=? AND status='matched'", a['id'])
+            if fresh is None or not fresh['matched_source'] or fresh['target'] != a['target']:
+                continue
+            a = {**a, **dict(fresh)}
             other = others[a['project_id']]
             if other['id'] not in source_cache:
                 source_cache[other['id']] = (twins.prints(other), net.symbols(other['id']),
@@ -420,9 +429,14 @@ def run(twins, slug: str, job) -> int:
             header_b = net._context(proj['id'], b['unit'])['header']
             prelude = _declared(header_a, header_b, names, a['name'])
             source = apply(a['matched_source'], names)
+            parameter_sources = parameter_transfers.variants(source, a, b, bool(proj['big_endian']))
+            destination = b['best_source'] or b['seed'] or ''
+            parameter_sources = list(dict.fromkeys([parameter_transfers.destination_signature(v, b['name'], destination)
+                                                    for v in parameter_sources] + parameter_sources))
             own = compiler_for(cfg, b['vram'], b)
             donor = json.loads(a['compiler'])
-            variants = [(v, own, 'transfer') for v in
+            variants = [(v, own, 'parameter transfer') for v in parameter_sources]
+            variants += [(v, own, 'transfer') for v in
                         [source, *literal_variants(source, a, b, bool(proj['big_endian'])),
                          *regional_layouts.variants(source, a, b, layouts[other['id']], bool(proj['big_endian']))]]
             # Only a compiler already installed and proven on the donor; no downloads or flag brute force.
@@ -440,7 +454,7 @@ def run(twins, slug: str, job) -> int:
                 # Easy transfers get the first pass through the budget. Then repair the closest compiled misses.
                 close = re.fullmatch(r'score (\d+)', why or '')
                 percent = feedback.get('percent', 100 * (1 - int(close[1]) / max(1, (b['n_insns'] or 0) * 100)) if close else 0)
-                if kind == 'transfer' and outcome == 'miss' and close and percent >= REPAIR_PERCENT:
+                if kind in ('transfer', 'parameter transfer') and outcome == 'miss' and close and percent >= REPAIR_PERCENT:
                     pair = (a['id'], b['id'])
                     if pair not in repairs or int(close[1]) < repairs[pair][0]:
                         repairs[pair] = (int(close[1]), a, b, other, score, prelude, variant, settings, names, header_b, dict(feedback))

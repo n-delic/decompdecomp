@@ -293,7 +293,9 @@ def _fork(net: RomNetwork, slug: str, what: str) -> str:
 def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
     wish = net.instructions(slug)
     if not detail:
-        return _compact_project_info(net,slug) + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
+        order = net.claim_order(slug)
+        steering = f"\nThe project's owner chose the order helpers take functions in: {CLAIM_ORDERS[order]}." if order else ''
+        return _compact_project_info(net,slug) + steering + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
     text = _project_info(net, slug, detail)
     open_ = net.overview(slug).get("suggestions") or []
     if open_ and not detail:

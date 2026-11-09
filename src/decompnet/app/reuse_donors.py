@@ -10,10 +10,11 @@ MAX_BODIES = 1024
 
 
 class Donors:
-    def __init__(self, net, proj):
+    def __init__(self, net, proj, *, include_self=False):
         self.net = net
         self.rows = []
-        for project in net.store.all('SELECT id FROM projects WHERE id!=?', proj['id']):
+        for project in net.store.all('SELECT id FROM projects' + ('' if include_self else ' WHERE id!=?'),
+                                     *(() if include_self else (proj['id'],))):
             store = net.project_store(project['id'])
             other = store.one('SELECT id,arch,big_endian FROM projects WHERE id=?', project['id'])
             if other is None:raise ValueError('Donor project metadata is missing from its database.')
