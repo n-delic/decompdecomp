@@ -693,7 +693,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
-| Automatic texture banks (CI4/CI8, RGBA32, RGBA16 mipmaps, RNC 1/2) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
+| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Automatic indexed model geometry and local mesh wireframes (raw, RNC 1/2) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Automatic B1 audio banks, table evidence and mono VADPCM/PCM16 previews | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |

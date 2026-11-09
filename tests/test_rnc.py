@@ -133,3 +133,30 @@ def test_rebuild_uses_linked_payload_and_preserves_prefix_changes():
     changed = b'EDIT' + analysis[4:]
     assert rnc.rebuild_cartridge(changed, original, mapping)[:4] == b'EDIT'
     assert rnc.rebuild_cartridge(original + b'hello world', original, mapping) == original
+
+
+def tail_lookahead_block():
+    """An invented stream ending in one control byte, with a final match/run code."""
+    raw=bytes(range(1,65));w=Writer();w.put(0,2)
+    w.tree([1]+[0]*6+[1]);w.tree([1]);w.tree([1]);w.put(2,16)
+    w.put(1,1);w.put(0,6);w.data+=raw
+    w.put(0,1);w.put(0,1);w.put(0,1)
+    assert w.data[-1]==0
+    w.data=w.data[:-1]  # unused high control byte need not be stored
+    return w.container(raw+raw[-1:]*2),raw+raw[-1:]*2
+
+
+def test_final_control_byte_allows_prefetch_but_not_consumption_past_input():
+    block,expected=tail_lookahead_block()
+    assert rnc.unpack(block)==expected
+    assert rnc.unpack(rnc.repack_like(expected,block))==expected
+    bits=rnc._Bits(b'\x00\x00')
+    assert bits.take(16)==0
+    with pytest.raises(rnc.RncError,match='truncated'):bits.take(1)
+    # Checksums alone must not make a physically shortened control stream valid.
+    for removed in (1,2,3,8):
+        shortened=bytearray(block[:-removed]);struct.pack_into('>I',shortened,8,len(shortened)-18)
+        struct.pack_into('>H',shortened,14,rnc.crc16(shortened[18:]))
+        with pytest.raises(rnc.RncError):rnc.unpack(shortened)
+    corrupted=bytearray(block);corrupted[-1]^=1
+    with pytest.raises(rnc.RncError,match='packed checksum'):rnc.unpack(corrupted)

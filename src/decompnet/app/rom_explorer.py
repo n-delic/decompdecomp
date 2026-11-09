@@ -18,7 +18,7 @@ from ..rom.explorer import analyse
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=6
+ANALYSIS_REVISION=7
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'font', 'container', 'repeated bytes')
 
 
