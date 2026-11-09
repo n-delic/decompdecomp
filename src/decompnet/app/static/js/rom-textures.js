@@ -1,12 +1,12 @@
 /* Detected banks share the guarded preview API. No game data leaves this page. */
 function romTextureControlsHTML(region) {
-  const asset=region.detected_asset;if(!asset || asset.media==='audio')return '';
+  const asset=region.detected_asset;if(!asset || ['audio','model'].includes(asset.media))return '';
   const saved=region.annotation?.preview_settings || {},levels=asset.levels || [{width:asset.preview_settings.width,height:asset.preview_settings.height}];
   const select=(key,label,count,caption)=>`<label class="field"><span>${label}</span><select data-texture-${key}>${Array.from({length:count},(_,i)=>`<option value="${i}"${Number(saved[key] || 0)===i ? ' selected' : ''}>${caption(i)}</option>`).join('')}</select></label>`;
   return `<div class="rom-asset-fields">${select('frame','Frame',asset.frames,i=>`${i+1} of ${asset.frames}`)}${select('palette','Palette',Math.max(1,asset.palettes),i=>asset.palettes ? `${i+1} of ${asset.palettes}` : 'Direct color (no palette)')}${select('mip','Mip level',levels.length,i=>`${i} · ${levels[i].width} × ${levels[i].height}`)}<label class="field"><span>Animation preview rate (1–24 frames/s)</span><input data-texture-rate type="number" min="1" max="24" value="8"></label></div><button type="button" class="ghost small-btn" data-texture-play${asset.frames<2 ? ' disabled' : ''}>Animate frames</button><p class="small muted" data-texture-status aria-live="polite">Select a frame, palette or mip level to preview it. Animation starts only when you press Animate frames; its rate is a preview setting.</p>`;
 }
 function setupRomTextureControls(body,region,active) {
-  if(!region.detected_asset || region.detected_asset.media==='audio')return;
+  if(!region.detected_asset || ['audio','model'].includes(region.detected_asset.media))return;
   const get=key=>body.querySelector(`[data-texture-${key}]`),button=get('play'),status=get('status');
   let playing=false,timer=null,generation=0;
   const stop=(cancel=true)=>{
@@ -48,7 +48,7 @@ function romTextureBanks(report) {
   const banks=new Map();
   for(const row of report?.regions || []) {
     const asset=row.detected_asset || row.evidence?.find(e=>e.kind==='image' && e.size);
-    if(!asset || asset.media==='audio' || row.kind==='code')continue;
+    if(!asset || ['audio','model'].includes(asset.media) || row.kind==='code')continue;
     const key=`${asset.offset}:${asset.size}`;
     if(!banks.has(key))banks.set(key,{key,region:row.id,offset:asset.offset,size:asset.size,asset,
       name:row.annotation?.name || row.symbols?.[0]?.name || asset.label || 'Texture bank',direct:new Set(),traced:new Set()});

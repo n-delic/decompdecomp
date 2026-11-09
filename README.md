@@ -51,6 +51,9 @@ Open **Texture browser** for a thumbnail gallery, format/dimension filters and r
 Select any frame, palette or mip level in a bank; animate frames at a chosen preview rate.
 N64 scans also recognize supported B1 sound banks and their sample tables. Open an audio
 region to choose a sample and prepare a local WAV preview; playback starts only with Play.
+Supported indexed N64 geometry is detected automatically, including RNC-compressed models.
+Open a model region, select a mesh and press **Preview asset** for a rotatable wireframe.
+Meshes use local coordinates; skeleton poses, animation and textured rendering remain planned.
 Use **Discover assets with agents** to investigate unknown data, a ROM range or a function’s
 referenced regions. Agents claim regions, retain failed approaches and propose names, formats
 and layouts for your review. Accepting updates local annotations; symbols and matching stay untouched.

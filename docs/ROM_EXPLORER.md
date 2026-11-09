@@ -106,8 +106,7 @@ Reference implementations used for validation:
 The rounded-square map below the byte strip uses the function map's shared layout and cell renderer.
 Each square is one analysed region in ROM order, regardless of byte size; the strip still shows byte proportions.
 Hover for type, offsets and size, or use arrow keys and Enter to inspect a region. The table remains a keyboard-accessible alternative.
-Image and audio labels use the existing format evidence. A local **3d model** classification is available in region notes;
-there is no automatic 3D model detector yet. Saved classifications recolour the map without changing matching status.
+Image, audio and supported native **3d model** labels use format evidence. A local **3d model** classification is also available in region notes. Saved classifications recolour the map without changing matching status.
 
 ### Texture discovery, usage and geometry
 
@@ -142,7 +141,7 @@ within each record and count. Optional unsigned 8/16/32-bit indices use an absol
 the same source (ROM or decompressed bytes). Triangles, strips, lines and points are supported;
 limits are 4,096 vertices and 8,192 triangles. Invalid indices, non-finite coordinates, truncated
 buffers and unsupported controls produce actionable errors. Display lists, primitive restart,
-skinning, materials and proprietary model containers are not decoded.
+skinning and materials are not decoded by the manual inspector. Supported native containers use the automatic preview described below.
 
 Drag or use arrow keys to rotate the fitted wireframe; wheel or +/− zooms, and Home or
 **Reset view** resets it. **Save notes** retains both texture and geometry layouts with the
@@ -297,3 +296,27 @@ compressed/relocated controls, other book orders, custom streaming codecs or seq
 recognition may be incomplete. These gaps and project-mode image adapters remain planned in
 ROADMAP.md. Detector revision 5 automatically refreshes old saved maps. Source and game bytes
 remain private; only format rules and homemade fixtures are committed.
+
+### Automatic native model geometry
+
+The N64 adapter recognizes a source-assisted indexed geometry format in raw and RNC 1/2
+blocks. It checks every nested node/part/section table, child and part index, 24-byte
+material extent, byte-plane vertex stream and polygon stream. Triangle commands index a
+32-slot cache: the decoder loads the first 32 vertices, then alternates 16-slot replacements.
+Every reference must resolve to a loaded vertex; every run must terminate and consume the
+complete stream. Positions alone never establish a model. Empty containers are not labelled
+as models. Compressed candidates must pass both RNC checksums.
+
+Open a model region, choose **Model mesh**, then **Preview asset**. Changing the mesh prepares
+its wireframe. The selector shows node, part and section identity; **Save notes** retains the
+selection. Drag/arrow keys rotate, wheel/+/- zoom and Home resets. Each section is shown in
+local coordinates; skeleton transforms, animation poses, textures and material shading are
+not applied. A container can contain alternative parts rather than one assembled character.
+Detection validates the storage layout, not runtime rendering or a semantic object name.
+
+Limits: 4 MiB per container, 64 MiB attempted decompression per scan, 16,384 candidates,
+2,048 sections per container, 65,536 total vertices and 131,072 polygon commands. Each mesh
+has at most 4,096 vertices and 8,192 polygon commands. Invalid or unsupported layouts retain
+ordinary region evidence and manual inspection. Other native model formats and original-image
+adapters for project mode remain planned. Original-image integrity is checked before previews;
+all decoding stays local and never alters matching or the ROM.
