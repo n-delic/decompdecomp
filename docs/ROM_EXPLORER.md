@@ -205,7 +205,7 @@ mapping remains planned before these tools can reach project-mode consoles.
 N64 scans recognize source-assisted indexed texture banks, including RNC methods 1 and 2.
 Recognition checks the nested offset tables, format, dimensions, every bitmap and palette
 extent, and both compression checksums. Supported variants are CI8/RGBA16, CI4/RGBA16, CI4/IA16, RGBA32 and a fixed
-six-level 32×32 RGBA16 mipmap layout. **Detect asset / texture bank** defaults to the first frame with its first palette;
+six-level 32×32 RGBA16 mipmap layout. **Detect asset / bank** defaults to the first frame with its first palette;
 the region shows dimensions and frame/palette counts. Frame, palette and mip selectors
 resolve validated offsets automatically, and saved preview settings retain those choices. Detection needs neither a source
 checkout nor release-specific ROM addresses. Generic data symbols retain their names and
@@ -254,3 +254,46 @@ swap; all six levels are independently previewable. No palette is invented for d
 Native decoding and selection remain console hooks. Other consoles share the browser for
 recognized images, with native formats and project-mode original-image adapters planned in
 ROADMAP.md. No source checkout, external image library or proprietary fixture is shipped.
+
+### Automatic N64 audio
+
+ROM scans recognize unrelocated libultra **B1** sound-bank control graphs. The detector checks
+bank/instrument/sound pointers, nominal rates, key maps, envelopes, loop bounds and ADPCM
+predictor books. Each waveform descriptor is mono: order-2 N64 VADPCM (nine-byte frames,
+one zero even-byte pad allowed) or big-endian PCM16. Pointers in the control graph are relative
+to its header; waveform offsets are relative to a separate sample table.
+
+Named `alBnkfNew` calls supply static sample-table arguments through the shared MIPS reader,
+including call delay slots. A table is associated only when the complete bounds and every
+ADPCM frame selector validate and exactly one candidate fits. The named helper is a static
+contract, not proof of its implementation or runtime execution. Without that evidence, a
+unique adjacent aligned ADPCM table remains **tentative**; raw PCM cannot establish its own
+location by looking like arbitrary bytes. If placement is ambiguous or invalid, only the
+validated control graph is labelled audio; sample bytes remain unclassified and automatic
+preview explains the unresolved placement. No source checkout or release-specific address
+is needed at runtime. Other consoles retain their existing shared audio detection/previews.
+
+Open the control region to choose among its sample descriptors, or open a detected waveform
+region directly. **Detect asset / bank** resolves the descriptor and predictor book; **Preview
+asset** prepares PCM WAVE locally. Sample selection prepares another preview and stops any
+playing sample. Audio uses controls with no autoplay and no preloading; Play is always a
+separate user action. Saved settings retain the sample index. Static loader-argument links
+are separate from recorded address references, and audio banks never enter the texture gallery.
+
+Preview decodes a single pass from zero history using the bank's nominal sample rate. Pitch,
+mixing, effects, sequence synthesis and loop playback are not recreated. It returns at most
+30 seconds / 4 MiB of WAV output and reports truncation while preserving the original sample
+count. VADPCM arithmetic is checked against the equations in the
+[vgmstream decoder](https://github.com/vgmstream/vgmstream/blob/master/src/coding/vadpcm_decoder.c);
+it is a preview rather than a cycle-accurate audio microcode emulator. PCM16 and nonzero
+predictor feedback have independent homemade regression vectors. Private ROM validation
+exercised the VADPCM path; PCM16 was validated with synthetic fixtures and the source layout.
+
+The audio pass caps plausible B1 graphs at 128, each graph at 1 MiB, sounds at 4,096,
+unique wavetable/rate pairs at 2,048, table candidates per bank at 32 and total frame-header
+checks at 4,194,304. Individual encoded samples are capped at 4 MiB. It checks cancellation
+while following graphs, reading callers and validating frames. Beyond these limits, or for
+compressed/relocated controls, other book orders, custom streaming codecs or sequenced music,
+recognition may be incomplete. These gaps and project-mode image adapters remain planned in
+ROADMAP.md. Detector revision 5 automatically refreshes old saved maps. Source and game bytes
+remain private; only format rules and homemade fixtures are committed.

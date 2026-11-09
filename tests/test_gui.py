@@ -692,3 +692,10 @@ def test_texture_browser_paging_usage_cancellation_and_explicit_animation():
         pytest.skip('needs node to run the GUI scripts')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_textures.js'))],check=True,
                    capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_native_audio_choices_show_evidence_and_do_not_autoplay():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_audio.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)

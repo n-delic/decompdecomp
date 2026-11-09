@@ -146,11 +146,11 @@ class Console:
 
     # ------------------------------------------------------------------ starting a project from the user's game
 
-    def asset_regions(self, image, *, check=lambda: None, progress=lambda _: None):
+    def asset_regions(self, image, *, context=None, check=lambda: None, progress=lambda _: None):
         return []  # consoles can recognize structurally validated native asset containers
 
-    def asset_texture_preview(self, data, asset, selection):
-        return None  # native layouts can resolve validated frame/palette/mip selections
+    def asset_preview(self, data, asset, selection):
+        return None  # native assets can resolve validated texture or audio selections
 
     def asset_decode(self, data):
         return None  # None delegates to the common preview codecs
