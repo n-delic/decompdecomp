@@ -116,11 +116,12 @@ def test_saved_map_preview_annotations_staleness_and_no_progress_side_effects(pr
         assert report['available'] and not report['stale']
         row=next(r for r in report['regions'] if r['kind']=='strings')
         assert row['used_by']==1 and row['function_refs']==['reader']
-        packet=dict(region=row['id'],image_hash=report['image_hash'],name='Greeting',notes='Read by the reader.')
+        packet=dict(region=row['id'],image_hash=report['image_hash'],name='Greeting',notes='Read by the reader.',kind='3d model')
         rom_explorer.annotate(net,'game',packet)
         assert 'hello world' in rom_explorer.detail(net,'game',row['id'],report['image_hash'])['preview']
         rom_explorer.run(net,'game',Log())
         assert next(r for r in rom_explorer.listing(net,'game')['regions'] if r['id']==row['id'])['annotation']['name']=='Greeting'
+        assert rom_explorer.detail(net,'game',row['id'],report['image_hash'])['annotation']['kind']=='3d model'
         # Bookkeeping and compiler changes do not invalidate the byte map.
         proj=net.project_row('game');cfg=dict(net.cfg(proj));cfg['progress_revision']='new';cfg['compiler']={'toolchain':'other'}
         with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))

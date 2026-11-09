@@ -100,3 +100,11 @@ Reference implementations used for validation:
   for independent homemade back-reference fixtures when installed.
 - [vgmstream's PS-ADPCM decoder](https://github.com/vgmstream/vgmstream/blob/master/src/coding/psx_decoder.c)
   and [VAG container reader](https://github.com/vgmstream/vgmstream/blob/master/src/meta/vag.c).
+
+### Region type map
+
+The rounded-square map below the byte strip uses the function map's shared layout and cell renderer.
+Each square is one analysed region in ROM order, regardless of byte size; the strip still shows byte proportions.
+Hover for type, offsets and size, or use arrow keys and Enter to inspect a region. The table remains a keyboard-accessible alternative.
+Image and audio labels use the existing format evidence. A local **3d model** classification is available in region notes;
+there is no automatic 3D model detector yet. Saved classifications recolour the map without changing matching status.

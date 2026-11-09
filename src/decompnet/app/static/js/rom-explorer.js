@@ -1,7 +1,7 @@
 /* Explicit, local image exploration. Server-owned jobs survive navigation/windows. */
 const romViews=new Map();
 let romEpoch=0, romDetailEpoch=0;
-const ROM_COLORS={code:'var(--color-status-info-fill)',data:'var(--color-status-success-fill)',strings:'var(--color-status-success-fill)',compressed:'var(--color-status-warning-fill)',image:'var(--color-status-warning-fill)',audio:'var(--color-status-warning-fill)',container:'var(--color-status-warning-fill)','pointer table':'var(--color-status-warning-fill)','repeated bytes':'var(--muted)',unknown:'var(--line)'};
+const ROM_COLORS={code:'var(--color-status-info-fill)',data:'var(--color-status-success-fill)',strings:'var(--color-status-success-fill)',compressed:'var(--color-status-warning-fill)',image:'var(--color-status-warning-fill)',audio:'var(--color-status-warning-fill)','3d model':'var(--color-status-warning-fill)',container:'var(--color-status-warning-fill)','pointer table':'var(--color-status-warning-fill)','repeated bytes':'var(--muted)',unknown:'var(--line)'};
 function romView(slug=S.slug) {
   if(!romViews.has(slug))romViews.set(slug,{sort:'start',direction:1,limit:100,query:'',function:'',report:null,job:null,busy:false});
   return romViews.get(slug);
@@ -19,7 +19,7 @@ function romControls(view) {
 async function loadRomExplorer() {
   const slug=S.slug, epoch=++romEpoch, view=romView(slug), log=romWorkLog();
   view.busy=true;romControls(view);
-  $('romResult').replaceChildren();$('romSummary').textContent='';$('romMap').hidden=true;$('romMapRange').textContent='';$('romStale').hidden=true;$('romNotes').textContent='';$('romRuntime').hidden=true;$('romRuntimeItems').replaceChildren();$('romLoaderGroups').hidden=true;$('romLoaderItems').replaceChildren();
+  $('romTypeMapPanel').hidden=true;$('romTypeStatus').textContent='';$('romResult').replaceChildren();$('romSummary').textContent='';$('romMap').hidden=true;$('romMapRange').textContent='';$('romStale').hidden=true;$('romNotes').textContent='';$('romRuntime').hidden=true;$('romRuntimeItems').replaceChildren();$('romLoaderGroups').hidden=true;$('romLoaderItems').replaceChildren();
   const roles=$('romLoaderRoleBody');if(roles.dataset.slug!==slug){roles.replaceChildren();roles.dataset.slug=slug;}
   showJobError(log,'');
   const finish=beginWork(log,'Finding ROM scans',[],'ROM Explorer ready.');
@@ -123,7 +123,7 @@ function renderRomExplorer(view=romView()) {
   host.querySelectorAll('[data-rom-sort]').forEach(b=>b.onclick=()=>{if(view.sort===b.dataset.romSort)view.direction*=-1;else{view.sort=b.dataset.romSort;view.direction=view.sort==='size' || view.sort==='used_by' ? -1 : 1;}renderRomExplorer(view);});
   host.querySelectorAll('[data-rom-region]').forEach(b=>b.onclick=()=>openRomRegion(b.dataset.romRegion));
   const more=host.querySelector('[data-rom-more]');if(more)more.onclick=()=>{view.limit+=100;renderRomExplorer(view);};
-  drawRomMap(view);
+  drawRomMap(view);drawRomTypeMap(view);
 }
 function drawRomMap(view=romView()) {
   const canvas=$('romMap'),report=view.report;if(!report?.available)return;
@@ -149,7 +149,7 @@ async function openRomRegion(id) {
   try {
     const r=await api(`/api/rom-explorer?slug=${encodeURIComponent(slug)}&region=${id}&image_hash=${report.image_hash}`);if(!active())return;
     finish();body.classList.add('rom-region-body');
-    body.innerHTML=`<p><b>${hex8(r.start)}–${hex8(r.end)}</b> · ${r.size.toLocaleString()} bytes · ${esc(r.kind)} (${esc(r.confidence)})</p><p class="small muted">${esc(r.mappings.map(m=>m.segment+' at '+hex8(m.address)).join(' · ') || 'No known runtime address')}</p><button type="button" class="ghost small-btn" data-rom-zoom>Zoom map to this region</button><h3>Evidence</h3>${r.evidence.map(e=>`<p><b>${esc(e.label)}</b> · ${esc(e.confidence)}<br>${esc(e.reason)}${e.expanded_size!=null ? ' Expanded size: '+e.expanded_size.toLocaleString()+' bytes.' : ''}</p>`).join('') || '<p>No format evidence found.</p>'}<p class="small muted">Sample entropy: ${r.entropy} bits per byte over ${r.sampled_bytes} bytes. Region boundaries may be display pages.</p><h3>Functions referencing this region</h3><p class="small muted">Imported address references; runtime execution and access length are not established.</p>${r.references.map(ref=>`<p><button type="button" class="link-btn" data-rom-function="${esc(ref.function)}">${esc(ref.function)}</button> at <code>${hex8(ref.instruction)}</code> → <code>${hex8(ref.target)}</code> · ${esc(ref.segment)} · ${esc(ref.confidence)}<br><span class="small muted">${esc(ref.reason)}</span></p>`).join('') || '<p>No references found. This does not establish that the bytes are unused.</p>'}<details><summary>Pointer chains (${r.pointers.length} sampled words)</summary><p class="small muted">Referencing function → this region → pointer word → possible destination. These are leads; a load or decompressor data flow has not been proven. At most 32 pointer words are shown.</p>${r.pointers.map(p=>`<p><code>${hex8(p.at)}</code> → ${hex8(p.target)} ${p.destinations.map(d=>`<button type="button" class="link-btn" data-rom-destination="${d.region}">${esc(d.segment)} ROM ${hex8(d.rom)}</button>`).join(' · ')}</p>`).join('') || '<p>No sampled pointers into known mappings.</p>'}</details>${romFlowHTML(r.loader_flow)}${romAssetHTML(r)}<details open><summary>Hex and text preview (first 256 bytes)</summary><pre>${esc(r.preview)}</pre>${r.strings.map(s=>`<p class="mono">${esc(s)}</p>`).join('')}</details><h3>Your interpretation</h3><p class="small muted">Labels and notes are local annotations; they do not change symbols, bytes or matching status.</p><label class="field"><span>Label</span><input data-rom-label maxlength="120" value="${esc(r.annotation.name || '')}"></label><label class="field"><span>Your classification (optional)</span><select data-rom-kind>${['','unknown','code','data','strings','pointer table','compressed','image','palette','audio','font','container','repeated bytes'].map(kind=>`<option value="${kind}"${kind===(r.annotation.kind || '') ? ' selected' : ''}>${kind || 'Keep automatic label'}</option>`).join('')}</select></label><label class="field"><span>Evidence / next steps</span><textarea data-rom-notes maxlength="4000" rows="4">${esc(r.annotation.notes || '')}</textarea></label><button type="button" class="primary small-btn" data-rom-save>Save notes</button><pre data-rom-save-work></pre>`;
+    body.innerHTML=`<p><b>${hex8(r.start)}–${hex8(r.end)}</b> · ${r.size.toLocaleString()} bytes · ${esc(r.kind)} (${esc(r.confidence)})</p><p class="small muted">${esc(r.mappings.map(m=>m.segment+' at '+hex8(m.address)).join(' · ') || 'No known runtime address')}</p><button type="button" class="ghost small-btn" data-rom-zoom>Zoom map to this region</button><h3>Evidence</h3>${r.evidence.map(e=>`<p><b>${esc(e.label)}</b> · ${esc(e.confidence)}<br>${esc(e.reason)}${e.expanded_size!=null ? ' Expanded size: '+e.expanded_size.toLocaleString()+' bytes.' : ''}</p>`).join('') || '<p>No format evidence found.</p>'}<p class="small muted">Sample entropy: ${r.entropy} bits per byte over ${r.sampled_bytes} bytes. Region boundaries may be display pages.</p><h3>Functions referencing this region</h3><p class="small muted">Imported address references; runtime execution and access length are not established.</p>${r.references.map(ref=>`<p><button type="button" class="link-btn" data-rom-function="${esc(ref.function)}">${esc(ref.function)}</button> at <code>${hex8(ref.instruction)}</code> → <code>${hex8(ref.target)}</code> · ${esc(ref.segment)} · ${esc(ref.confidence)}<br><span class="small muted">${esc(ref.reason)}</span></p>`).join('') || '<p>No references found. This does not establish that the bytes are unused.</p>'}<details><summary>Pointer chains (${r.pointers.length} sampled words)</summary><p class="small muted">Referencing function → this region → pointer word → possible destination. These are leads; a load or decompressor data flow has not been proven. At most 32 pointer words are shown.</p>${r.pointers.map(p=>`<p><code>${hex8(p.at)}</code> → ${hex8(p.target)} ${p.destinations.map(d=>`<button type="button" class="link-btn" data-rom-destination="${d.region}">${esc(d.segment)} ROM ${hex8(d.rom)}</button>`).join(' · ')}</p>`).join('') || '<p>No sampled pointers into known mappings.</p>'}</details>${romFlowHTML(r.loader_flow)}${romAssetHTML(r)}<details open><summary>Hex and text preview (first 256 bytes)</summary><pre>${esc(r.preview)}</pre>${r.strings.map(s=>`<p class="mono">${esc(s)}</p>`).join('')}</details><h3>Your interpretation</h3><p class="small muted">Labels and notes are local annotations; they do not change symbols, bytes or matching status.</p><label class="field"><span>Label</span><input data-rom-label maxlength="120" value="${esc(r.annotation.name || '')}"></label><label class="field"><span>Your classification (optional)</span><select data-rom-kind>${['','unknown','code','data','strings','pointer table','compressed','image','3d model','palette','audio','font','container','repeated bytes'].map(kind=>`<option value="${kind}"${kind===(r.annotation.kind || '') ? ' selected' : ''}>${kind || 'Keep automatic label'}</option>`).join('')}</select></label><label class="field"><span>Evidence / next steps</span><textarea data-rom-notes maxlength="4000" rows="4">${esc(r.annotation.notes || '')}</textarea></label><button type="button" class="primary small-btn" data-rom-save>Save notes</button><pre data-rom-save-work></pre>`;
     setupRomAsset(body,r,slug,report.image_hash,active);
     body.querySelectorAll('[data-rom-function]').forEach(b=>b.onclick=()=>{closeDialog();openFn(b.dataset.romFunction);});
     body.querySelectorAll('[data-rom-destination]').forEach(b=>b.onclick=()=>openRomRegion(b.dataset.romDestination));
@@ -174,8 +174,49 @@ $('romFilter').oninput=()=>{const view=romView();view.query=$('romFilter').value
 $('romFunctionFilter').onclick=()=>{romView().function='';renderRomExplorer();};
 $('romResetZoom').onclick=()=>{romView().zoom=null;drawRomMap();};
 $('fnRomData').onclick=romFromFunction;
-window.addEventListener('resize',()=>{if(S.tab==='rom')drawRomMap();});
+window.addEventListener('resize',()=>{if(S.tab==='rom'){drawRomMap();drawRomTypeMap();}});
 
-new MutationObserver(()=>{if(S.tab==='rom')drawRomMap();}).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+new MutationObserver(()=>{if(S.tab==='rom'){drawRomMap();drawRomTypeMap();}}).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 
 $('romLoaderRoles').addEventListener('toggle',()=>{if($('romLoaderRoles').open && S.tab==='rom')loadRomLoaderRoles();});
+
+// This map keeps the whole image visible even when the byte strip is zoomed.
+const ROM_TYPES=[['code','Function','--cc-1'],['data','Data','--cc-0'],['unknown','Unknown','--muted'],['image','Image','--cc-2'],['audio','Audio','--cc-3'],['3d model','3D model','--cc-4'],['compressed','Compressed','--cc-5'],['strings','Strings','--cc-6'],['other','Other data','--cc-7']];
+function romRegionType(row) {
+  const kind=row.annotation?.kind || row.kind;
+  return ROM_TYPES.find(t=>t[0]===kind) || ROM_TYPES[8];
+}
+function drawRomTypeMap(view=romView()) {
+  const report=view.report,panel=$('romTypeMapPanel');
+  panel.hidden=!report?.available;if(panel.hidden)return;
+  const canvas=$('romTypeMap'),rows=[...report.regions].sort((a,b)=>a.start-b.start),width=canvas.clientWidth || 800;
+  if(!rows.length){panel.hidden=true;return;}
+  const layout=squareMapLayout(width,rows.length),ratio=window.devicePixelRatio || 1,style=getComputedStyle(document.documentElement);
+  const counts=new Map();for(const row of rows){const key=romRegionType(row)[0];counts.set(key,(counts.get(key)||0)+1);}
+  $('romTypeLegend').innerHTML=ROM_TYPES.map(([key,label,color])=>`<span><i class="sw" data-rom-color="${color}"></i>${label} (${counts.get(key)||0})</span>`).join('');
+  $('romTypeLegend').querySelectorAll('[data-rom-color]').forEach(node=>{node.style.background=`var(${node.dataset.romColor})`;});
+  view.typeSelection=Math.max(0,Math.min(rows.length-1,view.typeSelection || 0));
+  const describe=i=>{const row=rows[i];return `${romRegionType(row)[1]} · ${hex8(row.start)}–${hex8(row.end)} · ${row.size.toLocaleString()} bytes · ${row.annotation?.name || row.functions?.[0] || row.symbols?.[0]?.name || row.confidence}${row.annotation?.kind ? ' · Your annotation' : ''}`;};
+  const paint=()=>{
+    canvas.width=Math.round(width*ratio);canvas.height=Math.round(layout.h*ratio);canvas.style.height=layout.h+'px';
+    const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);
+    rows.forEach((row,i)=>{ctx.fillStyle=style.getPropertyValue(romRegionType(row)[2]).trim();squareMapCell(ctx,layout,i);});
+    const i=view.typeSelection,x=i%layout.cols*(layout.size+layout.gap),y=Math.floor(i/layout.cols)*(layout.size+layout.gap);
+    ctx.strokeStyle=style.getPropertyValue('--ink').trim();ctx.lineWidth=1.5;ctx.strokeRect(x-.5,y-.5,layout.size+1,layout.size+1);
+    $('romTypeStatus').textContent=describe(i)+(report.stale ? ' · Refresh to inspect this changed image.' : '');
+  };
+  const hit=event=>{
+    const rect=canvas.getBoundingClientRect(),x=(event.clientX-rect.left)*width/rect.width,y=(event.clientY-rect.top)*layout.h/rect.height,step=layout.size+layout.gap;
+    if(x<0 || y<0 || x%step>=layout.size || y%step>=layout.size)return -1;
+    const col=Math.floor(x/step),i=Math.floor(y/step)*layout.cols+col;
+    return col<layout.cols && i<rows.length ? i : -1;
+  };
+  canvas.onmousemove=event=>{const i=hit(event);canvas.title=i<0 ? '' : describe(i);};
+  canvas.onclick=event=>{const i=hit(event);if(i<0)return;view.typeSelection=i;paint();if(!report.stale)openRomRegion(rows[i].id);};
+  canvas.onkeydown=event=>{
+    const moves={ArrowLeft:-1,ArrowRight:1,ArrowUp:-layout.cols,ArrowDown:layout.cols,Home:-rows.length,End:rows.length};
+    if(event.key in moves){event.preventDefault();view.typeSelection=Math.max(0,Math.min(rows.length-1,view.typeSelection+moves[event.key]));paint();}
+    else if(event.key==='Enter' || event.key===' '){event.preventDefault();if(!report.stale)openRomRegion(rows[view.typeSelection].id);}
+  };
+  paint();
+}

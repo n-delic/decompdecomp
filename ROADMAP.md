@@ -930,6 +930,9 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ### ROM Explorer
 
+The byte strip also has a rounded-square region type map using the function map renderer,
+with image/audio evidence and local 3D model classifications.
+
 A project tab maps every byte of an imported ROM analysis image, including unknown and
 unmapped ranges. Inspect recorded functions/data symbols, interior-address references,
 overlay ambiguity, bounded hex/text previews, sampled pointer chains, format signatures

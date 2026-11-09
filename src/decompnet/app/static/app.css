@@ -2153,3 +2153,9 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 @media (max-width:600px) { .rom-asset-fields { grid-template-columns:minmax(0,1fr); } }
 #dialogBody.rom-region-body pre { max-width:100%; overflow:auto; }
 #dialogBody.rom-region-body details { min-width:0; }
+
+.rom-type-map { display:block; width:100%; margin-top:12px; }
+.rom-type-map:focus-visible { outline:2px solid var(--ink); outline-offset:4px; }
+.rom-type-legend { display:flex; flex-wrap:wrap; gap:8px 18px; }
+.rom-type-legend > span { display:inline-flex; align-items:center; gap:6px; }
+#romTypeStatus { min-height:2.5em; overflow-wrap:anywhere; }

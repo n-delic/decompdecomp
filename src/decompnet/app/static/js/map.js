@@ -85,16 +85,27 @@ $("mapView").addEventListener("click", (ev) => {
 const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
 const rgb = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
-function layoutMap() {
-  const wrap = $("mapWrap"), canvas = $("map");
-  if (!wrap.clientWidth) return;  // not on screen: laid out when the overview shows
-  const w = Math.max(200, wrap.clientWidth - 32), n = Math.max(1, S.map.length);
+// Shared by the function map and ROM region map: equal rounded squares in reading order.
+function squareMapLayout(w, n) {
   let size = Math.floor(Math.sqrt((w * 300) / n));
   size = Math.max(5, Math.min(26, size));
   const gap = size >= 12 ? 3 : 2;
   const cols = Math.max(1, Math.floor((w + gap) / (size + gap)));
   const rows = Math.ceil(n / cols);
   const h = rows * (size + gap) - gap;
+  return {size, gap, cols, h};
+}
+function squareMapCell(ctx, layout, i) {
+  const {size, gap, cols}=layout;
+  const x=(i%cols)*(size+gap),y=Math.floor(i/cols)*(size+gap);
+  ctx.beginPath();ctx.roundRect(x,y,size,size,size>=10 ? 2.5 : size>=7 ? 1.5 : 1);ctx.fill();
+}
+
+function layoutMap() {
+  const wrap = $("mapWrap"), canvas = $("map");
+  if (!wrap.clientWidth) return;  // not on screen: laid out when the overview shows
+  const w = Math.max(200, wrap.clientWidth - 32), n = Math.max(1, S.map.length);
+  const { size, gap, cols, h } = squareMapLayout(w, n);
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
   canvas.style.height = h + "px";
@@ -147,7 +158,7 @@ function drawCell(ctx, i) {
   if (f.status === "working") return;
   const [c, a] = cellColor(f);
   ctx.fillStyle = rgb(c, a);
-  ctx.beginPath(); ctx.roundRect(x, y, size, size, r); ctx.fill();
+  squareMapCell(ctx, geo, i);
   if (S.mapView === "compiler" && f.ccx) {
     ctx.strokeStyle = rgb(colors.ink, 1); ctx.lineWidth = size >= 10 ? 1.5 : 1;
     ctx.beginPath(); ctx.roundRect(x + 0.75, y + 0.75, size - 1.5, size - 1.5, r); ctx.stroke();
@@ -208,7 +219,7 @@ function drawMap() {
     const [x, y] = at(i);
     if (!whole) restore(i, 1);
     ctx.fillStyle = rgb(S.map[i].analysis_state === "boundary_review" ? colors.boundary : colors.work, 0.55 + 0.45 * Math.sin(now / 260 + i));
-    ctx.beginPath(); ctx.roundRect(x, y, size, size, r); ctx.fill();
+    squareMapCell(ctx, geo, i);
   }
   for (const [name, fl] of S.flash) {
     const i = S.byName && S.byName.get(name), t = (now - fl) / 1600;
