@@ -62,7 +62,9 @@ def input_key(net, proj, fn, original, candidate=''):
     explain prior work, but never suppress a fresh build here; ForkEngine has its own
     repeat-compile check against the complete candidate file and harness.
     """
-    config = net.cfg(proj)
+    # Publishing saved files changes this receipt, never the compiler input.
+    # Keep every other configuration field and the generation/header/symbol guards.
+    config = {key:value for key,value in net.cfg(proj).items() if key != 'progress_revision'}
     parts = [str(POLISH_REVISION), original, json.dumps(config, sort_keys=True), str(fn['id']), str(fn['target']), str(fn['relocs']),
              str(fn['vram']), str(fn['meta']), str(net._generation.get(proj['id'], 0))]
     if net.is_rom(proj):

@@ -336,3 +336,29 @@ def test_pattern_signatures_keep_the_exact_bytes_of_multiline_literals():
     first = 'int f(int x) { return log("a' + chr(92) + '\nb", x); }'
     other = 'int g(int x) { return log("a' + chr(92) + ' b", x); }'
     assert edits.signature(first,'f')[0] != edits.signature(other,'g')[0]
+
+
+@pytest.mark.parametrize('changed',['progress_revision','compiler','header','target'])
+def test_polishing_save_receipt_change_does_not_invalidate_verified_compile(game,monkeypatch,changed):
+    net,agent,calls=game
+    original=net._compile
+    def compile(*args):
+        result=original(*args)
+        with net.store.tx() as db:
+            if changed=='progress_revision':
+                db.execute("UPDATE projects SET config=json_set(config,'$.progress_revision',42)")
+            elif changed=='compiler':
+                db.execute("UPDATE projects SET config=json_set(config,'$.compiler.flags',json('[\"-O2\"]'))")
+            elif changed=='header':
+                db.execute("INSERT INTO context_versions(project_id,version,header,unit) VALUES(1,2,?,'')",(HEADER+'extern int added;',))
+            else:db.execute("UPDATE functions SET target=X'00' WHERE name='f'")
+        return result
+    monkeypatch.setattr(net,'_compile',compile)
+    if changed=='progress_revision':
+        assert auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple it.').startswith('✅')
+        assert net._function('f','game')['readable']
+    else:
+        with pytest.raises(NetworkError,match='context changed'):
+            auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple it.')
+        assert not net._function('f','game')['readable']
+    assert len(calls)==1
