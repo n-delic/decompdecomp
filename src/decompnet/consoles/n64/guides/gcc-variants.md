@@ -72,3 +72,14 @@ proved safe. After an exact result, bounded private recipe reduction can remove
 unnecessary edits; preserve exact linked/objdiff and allocated-object output,
 including debug-sensitive line breaks. The frozen checkpoint CLI provides
 `--macro-analysis` and `--minimize-recipe TRIALS`; see the benchmark guide.
+
+
+For KMC register-only near misses, a pure local `(word & mask) == mask`
+predicate can be extracted into a fully inlined helper. Bounded single-pass
+scopes around its real return can alter allocation priority. Retune scope depth
+after an improvement; do not assume deeper is better. Preserve alternative roots
+with useful operation ordering even if their register score is worse. The local
+repair search tries these forms on proved native C32 invocations, using the normal
+judge. A frozen known checkpoint recovered exact in four builds; an earlier
+ordering-mismatch checkpoint did not improve with the helper alone. See
+`docs/COMPILER_MATCHING_LEARNINGS.md` for the limits of that evidence.

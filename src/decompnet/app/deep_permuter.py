@@ -360,9 +360,9 @@ class Search(Permuter):
         from . import prepared_call_repairs
         pending_call = bool(diagnosis['return_copy_rotation'] and any(
             candidate not in self.local_seen for _,candidate in prepared_call_repairs.variants(source,fn['name'],header,proj['arch'])))
-        if not fork and proj['slug'] not in self.net.links and self.net.is_rom(proj):
+        if not fork and proj['slug'] not in self.net.links and getattr(self.net,'is_rom',lambda _:False)(proj):
             evidence = allocation_search.saved(self.net,proj,fn,source)
-            if ((diagnosis['register_cycles'] or diagnosis['return_copy_rotation']) and evidence is None and self.allocation_captures < 2 and self.tested+2 < self.limit
+            if ((diagnosis['register_only'] or diagnosis['scheduling'] or diagnosis['allocation_schedule'] or diagnosis['return_copy_rotation']) and evidence is None and self.allocation_captures < 2 and self.tested+2 < self.limit
                     and (not diagnosis['return_copy_rotation'] or (self.allocation_trials > 0 and not pending_call))
                     and time.monotonic()+40 < self.deadline):
                 self.allocation_captures += 1
@@ -446,10 +446,19 @@ class Search(Permuter):
             from . import frame_plateau
             frame_choices = [(family,child) for family,child in frame_plateau.proposals(source,fn['name'],header,rows,proj['arch']) if child not in self.local_seen]
             frame_pass = bool(frame_choices)
-            cleanup_pass = bool(cleanup) and not frame_pass
+            from . import bit_predicate_repairs
+            shape=allocation_evidence.diagnose(rows,proj['arch'])
+            bit_choices = [(family,child) for family,child in bit_predicate_repairs.variants(
+                source,fn['name'],header,proj['arch'],**options['entry_scope'])
+                if child not in self.local_seen] if (shape['register_only'] or shape['scheduling'] or shape['allocation_schedule']) else []
+            bit_pass = bool(bit_choices) and not frame_pass
+            cleanup_pass = bool(cleanup) and not frame_pass and not bit_pass
             if frame_pass:
                 choices = [child for _,child in frame_choices]
                 labels.update({child:family for family,child in frame_choices})
+            elif bit_pass:
+                choices = [child for _,child in bit_choices]
+                labels.update({child:family for family,child in bit_choices})
             elif cleanup_pass:
                 choices = [child for _, child in cleanup]
                 labels.update({child: family for family, child in cleanup})
@@ -507,7 +516,7 @@ class Search(Permuter):
                     choices.append(candidate)
             def prepare_choices(choices,labels=labels,feedback=feedback,source=source,rows=rows,
                                 proj=proj,fn=fn,lineage=lineage,path=path,header=header,
-                                source_locations=source_locations,branch_frames=branch_frames,loan=loan):
+                                source_locations=source_locations,branch_frames=branch_frames,loan=loan,bit_pass=bit_pass):
                 for candidate in choices:self.efficiency.generated(labels.get(candidate,'local_repair'),candidate)
                 families = list(dict.fromkeys(labels.get(c, 'local_repair') for c in choices))
                 from . import region_repairs
@@ -522,12 +531,12 @@ class Search(Permuter):
                     priority={family:index for index,family in enumerate(ranked)}
                     choices.sort(key=lambda c: (labels.get(c,'local_repair') not in preferred, priority[labels.get(c,'local_repair')]))
 
-                choices,allocation_lane = self.allocation_choices(proj,fn,source,rows,choices,labels,header,fork)
+                choices,allocation_lane = (choices,set()) if bit_pass else self.allocation_choices(proj,fn,source,rows,choices,labels,header,fork)
                 if not fork:
                     from . import compiler_phase_routing
                     phase_evidence=allocation_search.saved(self.net,proj,fn,source) or {}
                     choices=[c for _,c in compiler_phase_routing.order(source,
-                        [(labels.get(c,'local_repair'),c) for c in choices],phase_evidence.get('value_trace'),header)]
+                        [(labels.get(c,'local_repair'),c) for c in choices],phase_evidence.get('value_trace'),header,allocation=phase_evidence.get('allocation'))]
 
                 from . import repair_localisation
                 localised=repair_localisation.proposals(source,[(labels.get(c,'local_repair'),c) for c in choices],source_locations.get(source))
@@ -703,7 +712,7 @@ class Search(Permuter):
                             self.winner_diff = None
                         break
                 else:
-                    if cleanup_pass or frame_pass:
+                    if cleanup_pass or frame_pass or bit_pass:
                         # All inverses were measured/cache-checked. Resume the broad page once;
                         # do not treat a failed cleanup as exhaustion of ordinary repair families.
                         continue

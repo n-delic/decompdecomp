@@ -85,6 +85,8 @@ def order(families, rows):
     elif diagnosis['scheduling'] or diagnosis['delay_slot']:
         preferred = ('debug_statement_boundary',) + preferred
     preferred=('hazard_statement_lines','known_zero_mask','post_call_narrow_capture')+preferred
+    if diagnosis['register_only'] or diagnosis['scheduling'] or diagnosis['allocation_schedule']:
+        preferred=('inline_bit_predicate','masked_role_sequence','staged_bit_predicate','operation_scope_merge','operation_scope_unwrap','operation_scope_depth')+preferred
 
     # These families only exist after a narrow target/source guard. Generic delay-slot
     # or register-shape heuristics must not spend the whole budget before that operation.

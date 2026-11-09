@@ -20,11 +20,16 @@ def constants(texts, name):
             'note':'Constants present in initial RTL and absent after first CSE; not a variable identity or proof that a family is exhausted.'}
 
 
-def order(source, proposals, trace, header=''):
+def order(source, proposals, trace, header='', *, allocation=None):
     if (not trace or trace.get('truncated') or trace.get('source_sha256')!=hashlib.sha256(source.encode()).hexdigest()
             or trace.get('header_sha256')!=hashlib.sha256(header.encode()).hexdigest()):
         return proposals
     removed=set(trace.get('early_constants',{}).get('removed_before_allocation',[]))
+    if allocation and not allocation.get('truncated') and allocation.get('values'):
+        # Real candidate allocation counts justify a short structural lane. Source/hash
+        # checks above prevent an earlier source or header from guiding this input.
+        preferred={'inline_bit_predicate','masked_role_sequence','operation_scope_merge','operation_scope_unwrap'}
+        proposals=sorted(proposals,key=lambda p:p[0] not in preferred)
     if not removed:return proposals
     original=[t for t in tokens(source) if not t.isspace()]
     def tiny_constant_edit(candidate):

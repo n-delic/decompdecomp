@@ -6688,3 +6688,40 @@ recovered score 22 to exact in one compiler trial, before broad proposal generat
 All 1,004 ordinary linked bytes agree. This reproduces an already accepted match;
 it is not another game-function match, a complete-cartridge build, or a measured
 cross-game speedup. No production app or project was changed during replay.
+
+
+### KMC: pure bit predicates, scope topology and separate search axes (2026-11-09)
+
+A private 323-instruction N64 racing-game function matched with pinned
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Extracting a pure
+`(word & mask) == mask` test into a fully inlined unsigned-word helper, with
+five nested single-pass scopes enclosing its actual return, recovered the
+remaining register-only differences. There was no compiler-setting change,
+assembly, fixed register, dummy arithmetic or emitted helper function.
+
+Verified GCC dumps showed the affected SI word pseudo's weighted references
+change from 5 to 10 while its lifetime remained 22. Earlier allocation gave it
+the needed argument register. This is evidence for this compiler/input, not a
+universal rule that five scopes produce a particular register. Scope boundaries
+can change allocation priorities even when the optimized operations are unchanged.
+
+The shared repair generator recovered the frozen score-55 checkpoint in four
+ordinary original-address linked builds: 55, 55, 20, then exact. This is controlled
+recovery of a known match, not four builds to discover the original solution.
+A separate earlier score-180 checkpoint did not improve with fourteen extracted
+helper variants. Its operation ordering also needed repair; extraction alone is
+insufficient. Independent ordinary and diagnostic relinks reproduced all 1,292
+target bytes. No game data or extracted source is included here.
+
+Implementation: native proved C32 invocations get bounded pure predicate extraction
+and masked-bit staging; operation scopes can be added, unwrapped or merged without
+changing statement order or lexical visibility. Masked staging composes with the
+existing CFG-checked storage reuse. Deep search retunes its generated helper after
+an intermediate improvement, before broad generation or optional GCC captures.
+Allocation and operation-order alternatives retain separate bounded frontier slots.
+Cached unchanged GCC dumps can prioritize structural families; they never establish
+a match. Normal byte/object judges, compile budgets and cancellation remain in charge.
+
+External PROJECT commands and C++ without proved invocation semantics remain
+ineligible for these new source transformations. Cross-function/compiler transfer
+and model-token savings have not been measured.

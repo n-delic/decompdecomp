@@ -11,6 +11,12 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'inline_bit_predicate': ('operation_scope_unwrap','operation_scope_merge','operation_scope_depth'),
+    'staged_bit_predicate': ('masked_role_sequence','scalar_storage_reuse','operation_scope_merge'),
+    'masked_role_sequence': ('inline_bit_predicate','operation_scope_depth'),
+    'operation_scope_merge': ('inline_bit_predicate','staged_bit_predicate'),
+    'operation_scope_unwrap': ('inline_bit_predicate','masked_role_sequence'),
+    'operation_scope_depth': ('inline_bit_predicate','scalar_storage_reuse'),
     'narrow_carrier_sequence': ('parameter_carriers','narrow_load_subtraction','one_shot_scope'),
     'loop_test_snapshot': ('scalar_storage_reuse','staged_scalar_arithmetic','explicit_loop_backedge','loop_constant_snapshot'),
     'staged_scalar_arithmetic': ('targeted_debug_layout','unscaled_address_snapshot','loop_test_snapshot'),

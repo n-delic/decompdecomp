@@ -1,5 +1,14 @@
 # Roadmap
 
+- Done: bounded pure bit-predicate helpers, masked-bit staging, CFG-checked storage
+  reuse composition and operation-scope topology repairs share the local repair pipeline.
+  Deep search retunes extracted helpers before broad generation; its fixed-width frontier
+  preserves allocation and ordering alternatives. Cached GCC phase evidence can guide
+  structural ordering. A frozen known score-55 checkpoint recovered exact in four builds;
+  fourteen helper variants did not improve an earlier score-180 checkpoint.
+  Planned: proved external PROJECT/C++ invocation support and distinct-function/compiler
+  transfer measurements; model-token savings remain unmeasured.
+
 - Done: distinct-function frozen holdout selection is available from the replay CLI,
   with repair applicability/decline coverage. Fresh connected-prefix costs inform
   advisory ordering; scratch guards explain declined proposals. Target-site recovery

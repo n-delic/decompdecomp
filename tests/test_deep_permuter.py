@@ -751,3 +751,35 @@ def test_exact_local_match_skips_followup_feedback(monkeypatch, imported):
     assert search.local_repairs(AGENT, net.project_row('game'), net.function(), 40,
                                 'fork' if imported else None) == (0, 'exact')
     assert search.local_status['reason'] == 'matched'
+
+
+@pytest.mark.parametrize('imported',[False,True])
+def test_predicate_lane_retunes_improvement_before_any_broad_generation(monkeypatch,imported):
+    from decompnet.app import bit_predicate_repairs, promoted_entry_repairs
+    from tests.test_bit_predicate_repairs import SOURCE
+
+    net=setup(monkeypatch,imported)
+    with net.store.tx() as db:db.execute('UPDATE functions SET best_source=?,best_score=55 WHERE id=1',(SOURCE,))
+    net._context=lambda *a:{'header':'','version':1}
+    net.forks.permuter_header=lambda *a:''
+    rows=[(' ','addiu $sp, $sp, -0x20','addiu $sp, $sp, -0x20'),
+          ('r','move $s0, $a0','move $s1, $a0'),(' ','jr $ra','jr $ra')]
+    net._last_diffs={(AGENT.id,1):(rows,'')}
+    monkeypatch.setattr(promoted_entry_repairs,'scope',lambda *a:dict(language='c',int_bits=32))
+    monkeypatch.setattr(deep_permuter.Search,'_repair_preflight',lambda self,agent,proj,fn,best,fork:best)
+    monkeypatch.setattr(draft_repairs,'variants',lambda *a,**k:pytest.fail('Focused predicate page must precede broad generation'))
+    tested=[]
+    def judge(self,agent,proj,fn,source,best,fork):
+        span=bit_predicate_repairs.find(source,'__repair_bit_predicate')
+        depth=source[span[0]:span[1]].count('do{');tested.append(depth)
+        score={0:55,1:55,3:20,5:0}[depth]
+        net._last_diffs[agent.id,fn['id']]=(rows,'')
+        if score<best:
+            with net.store.tx() as db:db.execute('UPDATE functions SET best_source=?,best_score=?,status=? WHERE id=1',
+                                                 (source,score,'matched'if score==0 else'open'))
+        return score
+    monkeypatch.setattr(Permuter,'_score',judge)
+    search=deep_permuter.Search(net,1,8,Log(),net.function())
+    best,_=search.local_repairs(AGENT,net.project_row('game'),net.function(),55,'fork'if imported else None)
+    assert best==0 and tested==[0,1,3,5] and search.tested==4
+    assert search.allocation_diagnostic_compiles==0

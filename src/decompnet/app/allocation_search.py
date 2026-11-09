@@ -14,9 +14,10 @@ CHAIN_LIMIT = 8
 def allowance(diagnosis):
     """Local acyclic chains get a short lane; cycles retain their existing allowance."""
     if diagnosis.get("return_copy_rotation"):return CHAIN_LIMIT
+    if diagnosis.get("scheduling") or diagnosis.get("allocation_schedule"):return CHAIN_LIMIT
     if (not diagnosis["register_only"] or diagnosis["target_instructions"]!=diagnosis["candidate_instructions"]
             or diagnosis["target_frame"]!=diagnosis["candidate_frame"]):return 0
-    return LIMIT if diagnosis["register_cycles"] else CHAIN_LIMIT if diagnosis["register_chains"] else 0
+    return LIMIT if diagnosis["register_cycles"] else CHAIN_LIMIT
 
 
 def key(net, proj, fn, source):
@@ -82,7 +83,7 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     extra += value_trace_repairs.variants(source,name,trace,rows,header)
     for family,candidate in extra:
         labels[candidate] = family
-    allowed = {*later_local_repairs.FAMILIES,'split_integer_phase','paired_integer_lifetimes','split_narrow_lifetime','narrow_definition_lifetime',
+    allowed = {'inline_bit_predicate','staged_bit_predicate','masked_role_sequence','operation_scope_depth','operation_scope_merge','operation_scope_unwrap',*later_local_repairs.FAMILIES,'split_integer_phase','paired_integer_lifetimes','split_narrow_lifetime','narrow_definition_lifetime',
                'merge_integer_lifetimes','split_integer_lifetime','value_lifetime','loop_weight_scope',
                'allocation_initialization_order','local_declaration_order','declaration_order',
                'value_trace_bundle','existing_identity_lifetime','pointer_local_reuse','pointer_load_inline',
@@ -111,7 +112,8 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     # A real selector/pointer/sentinel bundle needs no optional compiler capture.
     # Reserve its finite prefix inside this lane's existing compile allowance.
     scratch=[(labels[c],c) for c in choices if labels.get(c)=='scratch_role_reuse'] if diagnosis['register_only'] else []
-    return list(dict.fromkeys(scratch+selected))[:budget]
+    predicates=[(labels[c],c) for c in choices if labels.get(c)=='inline_bit_predicate'][:7]
+    return list(dict.fromkeys(predicates+scratch+selected))[:budget]
 
 
 def brief(net, proj, fn, source, rows):

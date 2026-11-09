@@ -85,3 +85,17 @@ def test_register_alternative_beyond_numeric_cutoff_remains_explorable():
     frontier.offer('lifetime-step',390,alternate,baseline=rows,baseline_score=275)
     assert {'saved','lifetime-step'} <= {n['source'] for n in frontier.nodes}
     assert any(frontier.choose(i,'saved')=='lifetime-step' for i in range(search_frontier.WIDTH))
+
+
+def test_separate_register_and_order_axes_survive_a_crowded_numeric_beam():
+    prefix=[(' ','addiu $sp, $sp, -0x20','addiu $sp, $sp, -0x20')]
+    baseline=prefix+[('o','addu $a0, $t0, $t1','sll $v0, $v1, 1'),('o','sll $v0, $v1, 1','addu $a0, $t0, $t1')]
+    ordered=prefix+[('r','addu $a0, $t0, $t1','addu $a1, $t0, $t1'),(' ','sll $v0, $v1, 1','sll $v0, $v1, 1')]
+    assert search_frontier.shape_axes(baseline)==(0,1)
+    assert search_frontier.shape_axes(ordered)==(1,0)
+    f=search_frontier.Frontier()
+    f.offer('registers-right',10,baseline,arch='mips',baseline=baseline,baseline_score=10)
+    f.offer('order-right',30,ordered,arch='mips',baseline=baseline,baseline_score=10)
+    for i in range(15):f.offer('copy'+str(i),11+i,baseline,arch='mips',baseline=baseline,baseline_score=10)
+    assert {'registers-right','order-right'} <= {n['source'] for n in f.nodes}
+    assert len(f.nodes)<=search_frontier.WIDTH

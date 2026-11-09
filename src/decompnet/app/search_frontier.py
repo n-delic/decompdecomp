@@ -128,6 +128,19 @@ def pipeline_recovery(before, after, arch=None):
                 and structure(rows)<structure(before))
 
 
+def shape_axes(rows):
+    """Independent register-content/order clues; both still need the normal judge."""
+    rows=permuter_focus.normalized(rows)
+    if not rows or any(not isinstance(r,(list,tuple)) or len(r)!=3 or not all(isinstance(v,str)for v in r)for r in rows):return None
+    target=[r[1] for r in rows if r[1]];candidate=[r[2] for r in rows if r[2]]
+    normalized=lambda items:[allocation_evidence.REGISTER.sub('$reg',v)for v in items]
+    a,b=normalized(target),normalized(candidate)
+    if len(a)>512 or Counter(a)!=Counter(b):return None
+    order=len(a)-sum(block.size for block in SequenceMatcher(None,a,b,autojunk=False).get_matching_blocks())
+    registers=sum((Counter(target)-Counter(candidate)).values())
+    return registers,order
+
+
 class Frontier:
     def __init__(self):
         self.nodes = []
@@ -151,12 +164,23 @@ class Frontier:
                 'allocation': allocation_evidence.signature(rows,arch),
                 'region_gain': region_repairs.gain(region_repairs.snapshot(baseline,arch),region_repairs.snapshot(rows,arch)),
                 'damage': region_repairs.damage(region_repairs.snapshot(baseline,arch), region_repairs.snapshot(rows,arch)),
+                'axes':shape_axes(rows),
                 'output': hashlib.sha256(repr(rows or source).encode()).hexdigest()}
         pool = [n for n in self.nodes if n['source'] != source]+[node]
         numeric = sorted(pool, key=lambda n: (n['score'], n['fitness'], n['frame_distance']))
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        # Allocation and ordering are separate search lanes. Keep an order recovery
+        # even if its numeric score rises; it never replaces the saved winner.
+        axes=shape_axes(baseline)
+        if axes:
+            for axis in (0,1):
+                eligible=[n for n in pool if n.get('axes') is not None and n['axes'][axis]<axes[axis]
+                          and baseline_score is not None and n['score']<=baseline_score*4]
+                if eligible:
+                    candidate=min(eligible,key=lambda n:(n['axes'][axis],n['score']))
+                    if candidate not in selected:selected.append(candidate)
         # One body-correct root survives even a 2 -> 22 score regression. Width and
         # ordinary depth/compile budgets stay unchanged; this never replaces the saved best.
         frames=[n for n in pool if frame_plateau.gap(n['rows'],arch)]

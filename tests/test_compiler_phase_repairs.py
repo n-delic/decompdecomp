@@ -163,3 +163,17 @@ def test_synthetic_variants_compile_with_the_pinned_compiler(tmp_path):
             assert result.ok,(family,result.log)
             families.add(family)
     assert {'loop_test_snapshot','staged_scalar_arithmetic','unscaled_address_snapshot','loop_constant_snapshot'}<=families
+
+
+def test_cached_allocation_counts_route_predicates_without_early_constant_evidence():
+    import hashlib
+
+    from decompnet.app import compiler_phase_routing
+    source='int f(void){return 1;}'
+    trace={'source_sha256':hashlib.sha256(source.encode()).hexdigest(),'header_sha256':hashlib.sha256(b'').hexdigest()}
+    proposals=[('constant_local',source+' '),('inline_bit_predicate',source+'\n')]
+    allocation={'values':[{'references':10,'live_insns':22}]}
+    result=compiler_phase_routing.order(source,proposals,trace,allocation=allocation)
+    assert result[0][0]=='inline_bit_predicate'
+    assert compiler_phase_routing.order(source+' ',proposals,trace,allocation=allocation)==proposals
+    assert compiler_phase_routing.order(source,proposals,trace,allocation={'truncated':True,'values':[{}]})==proposals
