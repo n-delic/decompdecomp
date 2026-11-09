@@ -119,7 +119,7 @@ async function simpleSetupRegression() {
  assert.equal(get('repositoryDestination').hidden,false);assert.equal(get('repositoryFolder').value,'/repo');
  assert.match(get('saveFolderHint').textContent,/Build repository detected/);
  await context.prepareRepositoryCommits('game',get('repositoryAutoCommitLog'));
- assert.deepEqual(actions,['init','checkpoint']);assert.equal(vm.runInContext('repositorySaveRoot',context),'/repo');
+ assert.deepEqual(actions,['checkpoint']);assert.equal(vm.runInContext('repositorySaveRoot',context),'/repo');
  assert.equal(get('saveGo').disabled,false);assert.equal(get('repositorySetupStop').hidden,true);
  actions.length=0;context.renderRepositorySetup({...state,repository:false,checkpoint:false,linked:false,root:'',build_folder:''});
  await context.prepareRepositoryCommits('game',get('repositoryAutoCommitLog'));assert.deepEqual(actions,['init','checkpoint']);
@@ -130,6 +130,8 @@ async function simpleSetupRegression() {
  await assert.rejects(context.prepareRepositoryCommits('game',get('repositoryAutoCommitLog')),/Project changed/);
  assert.equal(get('repositorySetupStop').hidden,true);
  // Exercise the actual checkbox handler together with the preparation jobs.
+ // Status refresh is covered separately; keep its GET out of mutation assertions.
+ context.refreshRepositorySetup=async()=>{};
  context.S.slug='game';failure=false;projectSwitch=false;actions.length=0;
  context.renderRepositorySetup(state);
  for(const id of ['repositoryAutoCommitState'])get(id).classList={toggle(){}};
@@ -142,10 +144,33 @@ async function simpleSetupRegression() {
  const steering=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/steering.js'),'utf8');
  vm.runInContext(steering.slice(steering.indexOf('let repositoryAutoCommitBusy'),steering.indexOf('// Imported saves already remember')),context);
  context.renderRepositoryAutoCommit({enabled:false});get('repositoryAutoCommit').checked=true;
- await get('repositoryAutoCommit').onchange();assert.deepEqual(actions,['init','checkpoint','enable']);
+ await get('repositoryAutoCommit').onchange();assert.deepEqual(actions,['checkpoint','enable']);
  assert.equal(get('repositoryAutoCommit').checked,true);
+ // An existing portable repository already commits matches. Polishing must only
+ // save its preference, even with a legacy backend lacking rebuildable metadata.
+ actions.length=0;
+ context.renderRepositorySetup({...state,linked:true,rebuildable:false});
+ context.renderRepositoryAutoCommit({enabled:true,polished_enabled:false});
+ let finishPreference;
+ context.api=async(url,options)=>{
+   assert.equal(url,'/api/repository-auto-commit','no setup/upgrade job for a linked checkpoint');
+   assert.equal(options.body.kind,'polished');assert.equal(options.body.enabled,true);
+   actions.push('polished');
+   return await new Promise(resolve=>{finishPreference=resolve;});
+ };
+ get('repositoryPolishedCommit').checked=true;
+ const polishing=get('repositoryPolishedCommit').onchange();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(actions,['polished']);
+ finishPreference({enabled:true,polished_enabled:true,pending:2});await polishing;
+ assert.equal(get('repositoryPolishedCommit').checked,true);
+ assert.equal(get('repositoryAutoCommit').checked,true);
+ context.api=async(url,options)=>{
+   if(url==='/api/repository-setup'){actions.push(options.body.action);return{job:'setup'};}
+   actions.push('enable');return{enabled:true,pending:0};
+ };
  actions.length=0;failure=true;context.renderRepositorySetup(state);get('repositoryAutoCommit').checked=true;
- await get('repositoryAutoCommit').onchange();assert.deepEqual(actions,['init']);
+ await get('repositoryAutoCommit').onchange();assert.deepEqual(actions,['checkpoint']);
  assert.equal(get('repositoryAutoCommit').checked,false,'failed preparation never enables automatic commits');
 }
 

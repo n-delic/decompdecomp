@@ -174,14 +174,16 @@ async function prepareRepositoryCommits(slug, log) {
   let state = repositorySetupState;
   if (!state || repositorySaveEdited) throw new Error("Save the selected folder before enabling automatic commits.");
   if (!state.portable) throw new Error("Automatic commits are available for saved ROM projects.");
-  if (state.repository && state.rebuildable && state.checkpoint && state.linked) return;
+  // Per-function commits need a linked Git checkpoint, not a rebuildable export.
+  // In particular, enabling polishing must not upgrade an already working match repository.
+  if (state.repository && state.checkpoint && state.linked) return;
   if (repositorySetupBusy) throw new Error("Repository setup is already running. Wait for it to finish.");
   repositorySetupBusy = true;
   const controls = [$("saveGo"), $("saveFolder"), $("repositoryCheckpoint"), $("repositoryInit")];
   const disabled = controls.map(field => field.disabled);
   controls.forEach(field => { field.disabled = true; });
   try {
-    for (const action of state.repository && state.rebuildable ? ["checkpoint"] : ["init", "checkpoint"]) {
+    for (const action of state.repository ? ["checkpoint"] : ["init", "checkpoint"]) {
       const {job} = await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:""}});
       repositorySetupJob = job;
       if (S.slug === slug) $("repositorySetupStop").hidden = false;
