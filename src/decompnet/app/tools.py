@@ -845,7 +845,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def propose_asset_region(ctx: Context, region: str, claim_token: str, proposal: dict) -> str:
-        """Submit an advisory name/type, evidence, counter, uncertainty, approach, citations and optional layouts/boundaries. User review is required."""
+        """Submit an advisory name/type, evidence, counter, uncertainty, approach, citations and optional layouts/boundaries. For review_target claims instead submit verdict (agree/disagree/uncertain), evidence and inspected ROM citations. Human acceptance remains separate."""
         return await run(ctx,"propose_asset_region",region=region,claim_token=claim_token,proposal=proposal)
 
     @tool
