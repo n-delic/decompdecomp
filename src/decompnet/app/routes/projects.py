@@ -69,17 +69,21 @@ def register(app: App) -> None:
             "nonmatches": lambda log: trial.run(net, slug, data.get("profile"), log, nonmatches=True),
             "replace": lambda log: trial.replace_default(net, slug, data.get("profile"), log),
             "apply-matches": lambda log: trial.apply_matches(net, slug, data.get("profile"), data.get("functions"), log),
-            "apply-safe-range": lambda log: trial.apply_matches(net, slug, data.get("profile"), data.get("functions"), log, safe_ranges=True),
-            "check-affected": lambda log: trial.check_affected(net, slug, data.get("profile"), data.get("functions"), log),
         }
         if action not in handlers:
             raise NetworkError("Choose a compiler profile action from the list.")
-        key = (slug, action, json.dumps(data.get("profile"), sort_keys=True))
+        key = (slug, action, json.dumps(data.get("profile"), sort_keys=True),
+               json.dumps(data.get("functions"), sort_keys=True))
         with jobs._lock:
+            for old, jid in list(profile_jobs.items()):
+                if jobs.jobs.get(jid, {}).get("state") != "running":
+                    profile_jobs.pop(old, None)
             previous = profile_jobs.get(key)
             if previous and jobs.jobs.get(previous, {}).get("state") == "running":
                 return {"job": previous}
-            profile_jobs[key] = jobs.start("Test compiler profile as default", handlers[action])
+            titles = {"test": "Test compiler profile as default", "nonmatches": "Test non-matching functions",
+                      "replace": "Replace default compiler", "apply-matches": "Apply verified matches"}
+            profile_jobs[key] = jobs.start(titles[action], handlers[action])
             return {"job": profile_jobs[key]}
 
     def p_compiler_cleanup(slug, request, data):

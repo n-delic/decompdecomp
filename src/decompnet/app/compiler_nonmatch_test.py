@@ -41,22 +41,23 @@ def run(net, slug, selected, log=print):
         except (NetworkError, toolchains.ToolchainError, OSError) as error:
             return fn['name'], False, str(error), 'verification'
     report(dict(state, phase='Testing non-matches'))
-    pending = [net._pool.submit(check, f) for f in rows]
-    try:
-        for future in as_completed(pending):
-            cancel()
-            name, ok, reason, category = future.result()
-            state['checked'] += 1
-            state['passed' if ok else 'failed'] += 1
-            state['function'] = name
-            if ok:
-                state['matches'].append(name)
-            else:
-                state['failures'].append({'function': name, 'reason': reason, 'category': category})
-            report({**state, 'matches': list(state['matches']), 'failures': list(state['failures']), 'phase': 'Testing non-matches'})
-    finally:
-        for future in pending:
-            future.cancel()
+    for offset in range(0, len(rows), 32):
+        pending = [net._pool.submit(check, item) for item in rows[offset:offset + 32]]
+        try:
+            for future in as_completed(pending):
+                cancel()
+                name, ok, reason, category = future.result()
+                state['checked'] += 1
+                state['passed' if ok else 'failed'] += 1
+                state['function'] = name
+                if ok:
+                    state['matches'].append(name)
+                else:
+                    state['failures'].append({'function': name, 'reason': reason, 'category': category})
+                report({**state, 'matches': list(state['matches']), 'failures': list(state['failures']), 'phase': 'Testing non-matches'})
+        finally:
+            for future in pending:
+                future.cancel()
     current = net.store.one('SELECT config FROM projects WHERE id=?', proj['id'])
     latest = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id", proj['id'])
     state['stale'] = (not current or json.loads(current['config']) != cfg or [tuple(f) for f in latest] != [tuple(f) for f in rows]
@@ -65,7 +66,7 @@ def run(net, slug, selected, log=print):
     return state
 
 
-def apply(net, slug, selected, functions, log=print, receipt=None):
+def apply(net, slug, selected, functions, log=print):
     selected = selected_profile(selected)
     cancel = getattr(log, 'check_cancel', lambda: None)
     report = getattr(log, 'progress', lambda value: None)
@@ -89,13 +90,21 @@ def apply(net, slug, selected, functions, log=print, receipt=None):
                     raise NetworkError('The saved C no longer matches this compiler profile.')
                 cfg = copy.deepcopy(net.cfg(proj))
                 end = min([fn['vram'] + fn['size']] + [f['vram'] for f in rows if f['vram'] > fn['vram']])
+                # This is an exact proof for this function only, not evidence that
+                # adjacent code shares the compiler. Never widen the override.
                 replace_range(cfg, fn['vram'], end, profile(selected))
+                original = net.cfg(proj)
                 commit_config(net, proj, cfg, log)
-                agent, _ = net.local_agent('autopilot')
-                fresh = net._function(name, slug)
-                result = net.try_quietly(agent, net._project(slug), fresh, source)
-                if not result.get('matched'):
-                    raise NetworkError('The function changed during application. Retest before applying again.')
+                try:
+                    agent, _ = net.local_agent('autopilot')
+                    fresh = net._function(name, slug)
+                    result = net.try_quietly(agent, net._project(slug), fresh, source)
+                    if not result.get('matched'):
+                        raise NetworkError('The function changed during application. Retest before applying again.')
+                except Exception:
+                    # A successful range change must never outlive a failed match.
+                    commit_config(net, net._project(slug), original, log)
+                    raise
                 state['passed'] += 1
                 state['matches'].append(name)
         except (NetworkError, toolchains.ToolchainError, OSError) as error:

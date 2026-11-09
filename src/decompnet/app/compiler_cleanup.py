@@ -27,10 +27,12 @@ def replace_range(config, start, end, target):
 
 def cleanup(net, slug, rare_limit=3, log=print, source_profile=None):
     net._rom_only(slug, 'compiler profile cleanup')
+    if source_profile is None:
+        raise NetworkError('Choose a compiler profile to compare with the project default.')
     if not 1 <= rare_limit <= 25:
         raise NetworkError('Choose a rare-profile limit between 1 and 25 functions.')
     check_cancel = getattr(log, 'check_cancel', lambda: None)
-    # Serialize with drafts and progress imports; read-only UI remains responsive.
+    # Check saved matches before changing their compiler settings.
     with net.progress.judging(slug):
         proj = net._project(slug)
         config = net.cfg(proj)
@@ -109,8 +111,9 @@ def commit_config(net, proj, proposed, log=print):
     rows = net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
     affected = [f for f in rows if compiler_for(before, f['vram']) != compiler_for(proposed, f['vram'])]
     trial = dict(proj) | {'config': json.dumps(proposed)}
-    contexts = [tuple(r) for r in net.store.all('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', proj['id'])]
-    symbols = [tuple(r) for r in net.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+    units = {fn['unit'] for fn in affected}
+    contexts = [tuple(r) for r in net.store.all('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', proj['id'])
+                if r['unit'] in units]
     check_cancel = getattr(log, 'check_cancel', lambda: None)
     report = getattr(log, 'progress', lambda value: None)
     scores = {}
@@ -127,10 +130,11 @@ def commit_config(net, proj, proposed, log=print):
     check_cancel()
     with net.progress._project_lock(proj['slug']), net.store.tx() as db:
         current = json.loads(db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()['config'])
-        latest = db.execute('SELECT * FROM functions WHERE project_id=? ORDER BY id', (proj['id'],)).fetchall()
-        headers = [tuple(r) for r in db.execute('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', (proj['id'],))]
-        latest_symbols = [tuple(r) for r in db.execute('SELECT * FROM symbols WHERE project_id=? ORDER BY name', (proj['id'],))]
-        if any(current.get(k) != before.get(k) for k in ('compiler', 'compiler_ranges', 'gp', 'big_endian', 'rom', 'platform')) or [tuple(f) for f in latest] != [tuple(f) for f in rows] or headers != contexts or latest_symbols != symbols:
+        latest = [db.execute('SELECT * FROM functions WHERE id=?', (fn['id'],)).fetchone() for fn in affected]
+        headers = [tuple(r) for r in db.execute('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', (proj['id'],))
+                   if r['unit'] in units]
+        if (any(current.get(k) != before.get(k) for k in ('compiler', 'compiler_ranges', 'gp', 'big_endian', 'rom', 'platform'))
+                or any(now is None or tuple(now) != tuple(fn) for fn, now in zip(affected, latest)) or headers != contexts):
             raise NetworkError('Code or settings changed during verification. Retry after the other work finishes.')
         for fn in affected:
             if fn['status'] == 'open' and db.execute('SELECT 1 FROM claims WHERE function_id=?', (fn['id'],)).fetchone():

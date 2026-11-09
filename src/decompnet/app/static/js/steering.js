@@ -668,16 +668,13 @@ async function compareProfileWithDefault(button) {
 }
 function profileFailureGroups(failures) {
   const groups = new Map();
-  const titles = {affected_matches:"Other matches affected by this compiler range", busy:"Functions currently claimed", overlay:"Shared overlay addresses", no_source:"No saved C", changed:"Inputs or status changed", verification:"Verification or compiler error"};
   const link = name => `<button type="button" class="link mono" data-profile-function="${esc(name)}">${esc(name)}</button>`;
   for (const failure of failures || []) {
-    const key = failure.category || (failure.reason?.startsWith('Different bytes') ? 'Different compiled bytes' : failure.reason || 'Verification failed');
+    const key = failure.category || failure.reason || 'Verification failed';
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(failure);
   }
-  return [...groups].map(([key, rows]) => `<details class="panel settings-disclosure profile-failure-group" open><summary class="panel-head"><h3>${esc(titles[key] || key)} <span class="disclosure-context">— ${rows.length}</span></h3></summary><div class="profile-failure-body">
-    ${key==='affected_matches' ? `<div class="profile-range-toolbar"><p class="small muted">Narrow each override to its function. Existing matches keep their profiles and are protected by verification. Affected functions are not necessarily callers.</p><button class="primary small-btn" type="button" data-safe-profile-ranges="${esc(JSON.stringify(rows.map(f=>f.function)))}">Fix all ${rows.length} ranges &amp; apply matches</button></div>` : ''}
-    <div class="profile-failure-cards">${rows.map(f => `<article class="profile-failure-card"><div class="profile-failure-heading">${link(f.function)}<span class="small muted">${f.blockers?.length ? 'Range blocked' : 'Needs review'}</span></div>${f.blockers?.length ? `<p class="small muted">Protect these existing matches</p><div class="profile-related-functions">${f.blockers.map(b=>link(b.function)).join('')}</div><div class="profile-failure-actions"><button class="primary small-btn" type="button" data-safe-profile-range="${esc(f.function)}">Fix range &amp; apply match</button><button class="ghost small-btn" type="button" data-check-profile-blockers="${esc(JSON.stringify(f.blockers.map(b=>b.function)))}">Check affected functions</button></div><div data-blocker-result class="small" role="status"></div>` : `<p class="small muted">${esc(f.reason)}</p>`}</article>`).join('')}</div></div></details>`).join('');
+  return [...groups].map(([key, rows]) => `<details class="panel settings-disclosure profile-failure-group" open><summary class="panel-head"><h3>${esc(key)} <span class="disclosure-context">— ${rows.length}</span></h3></summary><div class="profile-failure-body"><div class="profile-failure-cards">${rows.map(f => `<article class="profile-failure-card"><div class="profile-failure-heading">${link(f.function)}</div><p class="small muted">${esc(f.reason)}</p></article>`).join('')}</div></div></details>`);
 }
 
 async function testProfileAsDefault(button, action="test") {
@@ -733,51 +730,13 @@ async function testProfileAsDefault(button, action="test") {
     if (work._workBar) work._workBar.hidden = true;
     showJobError(work, error.message);
   };
-  let rangeBusy=false, currentResult=null;
-  body.addEventListener('click', async event=>{
-    const fn=event.target.closest('[data-profile-function]');
-    if(fn){hideDrawer('dialog');openFn(fn.dataset.profileFunction);return;}
-    const fix=event.target.closest('[data-safe-profile-range], [data-safe-profile-ranges]');
-    if(fix){
-      if(rangeBusy)return;
-      rangeBusy=true;
-      const functions=fix.dataset.safeProfileRanges ? JSON.parse(fix.dataset.safeProfileRanges) : [fix.dataset.safeProfileRange];
-      const controls=[...body.querySelectorAll('[data-safe-profile-range], [data-safe-profile-ranges], [data-check-profile-blockers]')];
-      const done=startWork(`Fixing ${functions.length} compiler ranges`,controls);
-      try{
-        const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-safe-range',functions}});
-        const saved=await followTest(job,(_lines,state)=>{
-          if(!active() || !state.progress)return;
-          const p=state.progress;
-          get('[data-default-status]').textContent=`Repairing ranges · ${p.checked || 0} / ${p.total || functions.length} checked`;
-          get('[data-default-bar]').max=p.total || functions.length;get('[data-default-bar]').value=p.checked || 0;
-          get('[data-default-bar]').hidden=false;if(work._workBar)work._workBar.hidden=true;
-        });
-        if(saved && active()){
-          const successful=new Set(saved.matches || []), attempted=new Set(functions);
-          const failures=[...(currentResult?.failures || []).filter(f=>!successful.has(f.function) && !attempted.has(f.function)),...(saved.failures || [])];
-          const previous=currentResult || {total:saved.total,checked:saved.total,passed:0,matches:[]};
-          render({...previous,passed:previous.passed+saved.passed,failed:failures.length,failures,matches:[...(previous.matches || []),...(saved.matches || [])]});
-          get('[data-default-verdict]').textContent=`${saved.passed} matches saved by range repair. ${saved.failed} could not be repaired; remaining issues are listed below. Existing matches remain protected.`;
-        }
-        if(saved?.passed && S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();}
-      }catch(error){if(active())fail(error);}finally{done();rangeBusy=false;}
-      return;
-    }
-    const check=event.target.closest('[data-check-profile-blockers]');
-    if(!check || rangeBusy)return;
-    const result=check.parentElement.querySelector('[data-blocker-result]');
-    const done=beginWork(result,'Checking affected functions',[check],'Read-only check complete; no settings changed.');
-    try{
-      const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'check-affected',functions:JSON.parse(check.dataset.checkProfileBlockers)}});
-      const checked=await followTest(job);
-      if(checked)result.appendChild(Object.assign(document.createElement('p'),{textContent:checked.results.map(r=>`${r.function}: ${r.reason}`).join(' ')}));
-    }catch(error){showJobError(result,error.message);}finally{done();}
+  body.addEventListener('click', event => {
+    const fn = event.target.closest('[data-profile-function]');
+    if (fn) { hideDrawer('dialog'); openFn(fn.dataset.profileFunction); }
   });
   const finish=startWork(nonmatches ? 'Preparing non-matching functions' : 'Preparing default-profile matches',[button]);
   const render=p=>{
     if(!p)return;
-    if(p.checked!==undefined)currentResult=p;
     const checked = p.checked ?? p.done ?? 0, counted = Number.isFinite(p.total) && p.total > 0;
     get('[data-default-status]').textContent = p.phase || (p.total === 0 ? 'No functions to test' : p.applied ? 'Applying matches' : nonmatches ? 'Testing non-matches' : 'Testing default-profile matches');
     get('[data-default-count]').textContent = counted ? `${checked.toLocaleString()} / ${p.total.toLocaleString()} · ${Math.round(100*checked/p.total)}%` : '';
@@ -803,14 +762,14 @@ async function testProfileAsDefault(button, action="test") {
     if(out.replaced){get('[data-default-status]').textContent='Default compiler replaced';get('[data-default-verdict]').textContent=`Default replaced. ${out.preserved} functions kept their previous compiler profile. All existing matches remain verified.`; if(S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();await loadCompilerAnswer();} return;}
     render(out);
     get('[data-default-status]').textContent=out.total ? 'Test complete' : 'No functions to test';
-    if(nonmatches){get('[data-default-verdict]').textContent=out.stale ? `${out.changed_matches?.length || 0} passing functions changed during testing. Selected functions will be rechecked; only functions that still match will be saved.` : `${out.passed} of ${out.total} non-matching functions match this compiler profile. No settings or saved matches changed.`;
+    if(nonmatches){get('[data-default-verdict]').textContent=out.stale ? 'Inputs changed during testing. Selected functions will be rechecked before they are saved.' : `${out.passed} of ${out.total} non-matching functions match this compiler profile. No settings or saved matches changed.`;
       if(out.matches?.length){
         get('[data-apply-matches]').hidden=false;
         const apply=get('[data-apply-matches-button]');apply.textContent=out.stale ? `Recheck & apply ${out.matches.length} matches` : `Apply ${out.matches.length} matches`;
         apply.onclick=async()=>{
           const done=startWork('Rechecking and applying matches',[apply]);
           try{
-            const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-matches',functions:out.matches,receipt:out.receipt}});
+            const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-matches',functions:out.matches}});
             const saved=await followTest(job,(_lines,state)=>{if(active())render(state.progress);});
             if(!active() || !saved)return;
             render(saved);get('[data-default-status]').textContent='Matches saved';get('[data-default-verdict]').textContent=`${saved.passed} new matches saved. ${saved.failed} functions skipped or could not be applied; see the results below.`;

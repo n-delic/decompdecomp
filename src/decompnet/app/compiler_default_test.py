@@ -54,24 +54,25 @@ def run(net, slug, selected, log=print, nonmatches=False):
             return fn, ok, reason
         except (NetworkError, toolchains.ToolchainError, OSError) as error:
             return fn, False, str(error)[:300]
-    pending = [net._pool.submit(check, fn) for fn in candidates]
-    try:
-        for future in as_completed(pending):
-            cancel()
-            fn, ok, reason = future.result()
-            state['function'] = fn['name']
-            state['checked'] += 1
-            state['passed' if ok else 'failed'] += 1
-            if ok:
-                state['matches'].append(fn['name'])
-            if not ok:
-                state['failures'].append({'function':fn['name'], 'reason':reason})
-            publish()
-            if state['checked'] % 25 == 0 or state['checked'] == state['total']:
-                log(f"{state['checked']}/{state['total']} checked: {state['passed']} passed, {state['failed']} did not pass.")
-    finally:
-        for future in pending:
-            future.cancel()
+    for offset in range(0, len(candidates), 32):
+        pending = [net._pool.submit(check, item) for item in candidates[offset:offset + 32]]
+        try:
+            for future in as_completed(pending):
+                cancel()
+                fn, ok, reason = future.result()
+                state['function'] = fn['name']
+                state['checked'] += 1
+                state['passed' if ok else 'failed'] += 1
+                if ok:
+                    state['matches'].append(fn['name'])
+                if not ok:
+                    state['failures'].append({'function':fn['name'], 'reason':reason})
+                publish()
+                if state['checked'] % 25 == 0 or state['checked'] == state['total']:
+                    log(f"{state['checked']}/{state['total']} checked: {state['passed']} passed, {state['failed']} did not pass.")
+        finally:
+            for future in pending:
+                future.cancel()
     cancel()
     current = net.store.one('SELECT config FROM projects WHERE id=?', proj['id'])
     current_cfg = json.loads(current['config']) if current else None
@@ -113,7 +114,7 @@ def replace_default(net, slug, selected, log=print):
         return {'replaced':True, 'preserved':len(failures)}
 
 
-def apply_matches(net, slug, selected, functions, log=print, safe_ranges=False, receipt=None):
+def apply_matches(net, slug, selected, functions, log=print):
     """Recheck selected trial successes and save through the ordinary compiler/match path."""
     net._rom_only(slug, 'applying compiler profile matches')
     if (not isinstance(functions, list) or not functions or len(functions) > 100000
@@ -124,32 +125,4 @@ def apply_matches(net, slug, selected, functions, log=print, safe_ranges=False, 
         raise NetworkError('Choose a compiler profile from the current list.')
     selected={'toolchain':selected['toolchain'],'flags':list(selected['flags'])}
     from .compiler_nonmatch_test import apply
-    return apply(net,slug,selected,list(dict.fromkeys(functions)),log,receipt)
-
-
-def check_affected(net, slug, selected, functions, log=print):
-    """Read-only check of affected matches with the selected profile, never inferred callers."""
-    net._rom_only(slug, 'checking affected compiler-profile functions')
-    if (not isinstance(selected, dict) or not isinstance(selected.get('toolchain'), str)
-            or not isinstance(selected.get('flags'), list) or not all(isinstance(f, str) for f in selected['flags'])
-            or not isinstance(functions, list) or not functions or len(functions) > 10000
-            or not all(isinstance(name, str) for name in functions)):
-        raise NetworkError('Choose affected functions and a compiler profile to check.')
-    results = []
-    names = list(dict.fromkeys(functions))
-    for index, name in enumerate(names, 1):
-        getattr(log, 'check_cancel', lambda:None)()
-        try:
-            proj = net._project(slug)
-            fn = net._function(name, slug)
-            source = fn['matched_source'] if fn['status'] == 'matched' else net._source_of(fn)
-            if not source:
-                raise NetworkError('No saved C is available.')
-            ok, _, _ = net._judge_with(proj, fn, selected['toolchain'], selected['flags'], source)
-            result = {'function':name, 'passed':ok, 'reason':'Matches this profile byte for byte.' if ok else 'Does not match this profile.'}
-        except (NetworkError, toolchains.ToolchainError, OSError) as error:
-            result = {'function':name, 'passed':False, 'reason':str(error)}
-        results.append(result)
-        getattr(log, 'progress', lambda value:None)({'done':index, 'total':len(names), 'phase':'Checking affected functions'})
-        log(f"{index}/{len(names)}: {name}: {result['reason']}")
-    return {'results':results, 'passed':sum(r['passed'] for r in results), 'total':len(results)}
+    return apply(net,slug,selected,list(dict.fromkeys(functions)),log)

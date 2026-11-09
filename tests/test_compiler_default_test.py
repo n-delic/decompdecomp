@@ -190,6 +190,50 @@ def test_cleanup_moves_only_exact_matches_and_keeps_neighbour_settings(net, monk
     assert compiler_for(cfg, 0x80001030)['flags'] == ['-O1']
 
 
+def test_cleanup_requires_a_selected_profile(net):
+    from decompnet.app.compiler_cleanup import cleanup
+
+    before = net._project('game')['config']
+    with pytest.raises(NetworkError, match='Choose a compiler profile'):
+        cleanup(net, 'game')
+    assert net._project('game')['config'] == before
+
+
+def test_commit_ignores_unrelated_function_and_symbol_updates(net, monkeypatch):
+    from decompnet.app.compiler_cleanup import commit_config
+
+    proposed = copy.deepcopy(net.cfg(net._project('game')))
+    proposed['compiler'] = dict(PROFILE)
+
+    def judge(*args):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_score=17 WHERE name='f2'")
+            db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address) VALUES(1,'unrelated',?)",
+                       (0x80009000,))
+        return True, NS(score=0), ''
+
+    monkeypatch.setattr(net, '_judge_with', judge)
+    commit_config(net, net._project('game'), proposed)
+    assert net.cfg(net._project('game'))['compiler']['flags'] == ['-O1']
+
+
+def test_failed_apply_restores_original_compiler_range(net, monkeypatch):
+    from decompnet.project import compiler_for
+
+    monkeypatch.setattr(net, '_judge_with', lambda *args: (True, NS(score=0), ''))
+    def near_match(*args):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_score=7 WHERE name='f3'")
+        return {'matched': False}
+
+    monkeypatch.setattr(net, 'try_quietly', near_match)
+    before = net._project('game')['config']
+    out = trial.apply_matches(net, 'game', PROFILE, ['f3'])
+    assert out['passed'] == 0 and out['failed'] == 1
+    assert net._project('game')['config'] == before
+    assert compiler_for(net.cfg(net._project('game')), 0x80001030)['flags'] == ['-O1']
+
+
 def test_apply_rechecks_and_skips_claimed_functions(net, monkeypatch):
     agent, _ = net.local_agent('you')
     with net.store.tx() as db:
