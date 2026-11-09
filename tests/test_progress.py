@@ -3050,3 +3050,107 @@ def test_publication_does_not_defer_import_from_new_progress_destination(project
     assert (folder/saves.MANIFEST).read_bytes()==before
     assert net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'"))['instructions']=='destination contribution'
     assert json.loads((destination/saves.MANIFEST).read_text())['instructions']=='destination contribution'
+
+
+@pytest.mark.parametrize('race',['none','settings','foreground_match','cancel'])
+@pytest.mark.parametrize('prefetched',[True,False])
+def test_stale_saved_compile_retries_without_holding_project_lock(project,monkeypatch,race,prefetched):
+    from concurrent.futures import Future, ThreadPoolExecutor
+
+    net,folder,judged=project
+    waiting,release=threading.Event(),threading.Event()
+    calls=[]
+    def compile(proj,header,text,fn):
+        calls.append(net._compile_snapshot(proj,fn,header,text))
+        if len(calls)==1:
+            waiting.set()
+            assert release.wait(5)
+        return SimpleNamespace(snapshot=net._compile_snapshot(proj,fn,header,text))
+    monkeypatch.setattr(net,'_compile',compile)
+    original=net.attempt
+    def attempt(agent,name,text,slug):
+        fn=net._function(name,slug);proj=net.project_row(slug);ctx=net._context(proj['id'],fn['unit'])
+        result=net._attempt_compilation(proj,ctx['header'],text,fn)
+        assert result.snapshot==net._compile_snapshot(proj,fn,ctx['header'],text), 'Stale compiler result reached the judge'
+        return original(agent,name,text,slug)
+    monkeypatch.setattr(net,'attempt',attempt)
+    def checks(net,proj,folder,files,by_name,by_vram,saved,judge_code,check_cancel):
+        ready=Future();ready.set_result(None)
+        for name in saved:
+            yield name,saved[name],'src',files['src/'+name+'.c'],name,('stale snapshot',ready) if prefetched else None
+    monkeypatch.setattr(saves,'_saved_checks',checks)
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('good saved f')
+    def read_or_edit():
+        with net.progress.foreground():
+            net.progress.sync('game',force=True)
+            if race=='settings':
+                proj=net.project_row('game');cfg=json.loads(proj['config']);cfg['instructions']='concurrent setting'
+                with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+            elif race=='foreground_match':
+                with net.progress._project_lock('game'):
+                    original(net.local_agent('foreground')[0],'f','good foreground','game')
+                    net.progress.foreground_changed('game','f')
+            elif race=='cancel':net.progress.pause('game')
+    with ThreadPoolExecutor(2) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True)
+        try:
+            assert waiting.wait(3)
+            other=pool.submit(read_or_edit)
+            other.result(timeout=2)
+        finally:release.set()
+        if race=='cancel':
+            with pytest.raises(NetworkError,match='paused'):pending.result(timeout=5)
+        else:pending.result(timeout=5)
+    assert len(calls)==(2 if race=='settings' else 1)
+    if race=='foreground_match':assert net._function('f','game')['matched_source']=='good foreground'
+    elif race!='cancel':assert ('f','good saved f') in judged
+    assert not net.progress.rechecking
+
+
+@pytest.mark.parametrize('cancel',[False,True])
+def test_saved_autopilot_claim_wait_leaves_project_lock_available(project,monkeypatch,cancel):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import MethodType
+
+    net,folder,_=project;waiting=threading.Event();stopped=threading.Event()
+    def report(_):pass
+    def check_cancel():
+        if stopped.is_set():raise RuntimeError('Synthetic stop')
+    report.check_cancel=check_cancel
+    autopilot=net.local_agent('autopilot')[0]
+    real_yield=MethodType(RomNetwork._yield_autopilot,net)
+    def wait(function,slug,**kwargs):
+        if not getattr(net._compile_ahead_local,'strict',False):waiting.set()
+        return real_yield(function,slug,**kwargs)
+    monkeypatch.setattr(net,'_yield_autopilot',wait)
+    original=net.attempt
+    def attempt(agent,name,text,slug):
+        net._yield_autopilot(name,slug)
+        return original(agent,name,text,slug)
+    monkeypatch.setattr(net,'attempt',attempt)
+    fn=net._function('f','game')
+    def checks(*args):
+        with net.store.tx() as db:db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],autopilot.id,time.time(),time.time()+60))
+        yield 'f',{'vram':fn['vram'],'matched_by':'synthetic'},'src','good saved','f',None
+    monkeypatch.setattr(saves,'_saved_checks',checks)
+    def run():
+        net.progress.local.busy=True
+        try:return saves._judge_saved(net,'game',folder,{}, {'f':fn},{'f':{'vram':fn['vram'],'matched_by':'synthetic'}},report,files={'src/f.c':'good saved'})
+        finally:net.progress.local.busy=False
+    def finish_autopilot():
+        if cancel:
+            stopped.set()
+            return
+        with net.progress._project_lock('game'),net.store.tx() as db:
+            db.execute('DELETE FROM claims WHERE agent_id=?',(autopilot.id,))
+    with ThreadPoolExecutor(2) as pool:
+        pending=pool.submit(run)
+        try:
+            assert waiting.wait(3)
+            pool.submit(finish_autopilot).result(timeout=2)
+        finally:
+            # A baseline failure must not leave a 20s owned-claim wait behind.
+            with net.store.tx() as db:db.execute('DELETE FROM claims WHERE agent_id=?',(autopilot.id,))
+        if cancel:
+            with pytest.raises(RuntimeError,match='Synthetic stop'):pending.result(timeout=2)
+        else:assert pending.result(timeout=5)['matched']==1

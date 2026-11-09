@@ -1194,65 +1194,92 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                 while not prepared[1].done():
                     check_cancel()
                     time.sleep(0.01)
-            with verdict_lock:
-                now = time.monotonic()
-                if judge_code or now - last_update >= 0.1:
-                    update(phase="Verifying saved functions" if judge_code else "Reading saved function records",
-                           done=index, total=len(saved), function=old_name, matched=matched, best=best, lost=len(lost))
-                    last_update = now
-                check_cancel()
-                if judge_code:
-                    log(f"checking {old_name}")
-                if name is None or text is None:
-                    lost.append(old_name) if kind == "src" else None
-                    continue
-                current = (_saved_current(store, pid, name, kind) if judge_code else current_rows[name])
-                if current["status"] == "matched":
-                    matched += kind == "src"
-                    continue
-                if judge_code and kind == "best" and current["best_source"] == text:
-                    best += 1
-                    continue
-                if not judge_code:
-                    # A pull that changed only the manifest's metadata applies its settings, notes and layout, but does not
-                    # compile every saved attempt again (the folder's C did not change).
-                    if kind == "src":
-                        matched += current["status"] == "matched"
-                    else:
-                        best += 1
-                    continue
-                author=info.get("matched_by") or info.get("best_by") or "restored"
-                if author not in credits:credits[author]=net.attribution_agent(author)
-                credit=credits[author]
-                if judge_agent is None:judge_agent=net.local_agent("progress-judge")[0]
-                agent=judge_agent
+            from ..saved_compilation import CompileAgain
+            yielded_autopilot = False
+            wait_autopilot = None
+            while True:
+                if wait_autopilot is not None:
+                    update(phase="Waiting for an active draft",done=index,total=len(saved),function=old_name)
+                    wait_autopilot(name, slug, check_cancel=check_cancel)
+                    wait_autopilot = None
                 try:
-                    with net.compiled_ahead(prepared):
-                        result = net.attempt(agent, name, text, slug)
-                except (NetworkError, toolchains.ToolchainError) as e:
-                    check_cancel()  # A paused/cancelled check is not a failed match; abort and roll back instead.
-                    # A compiler that isn't here (an unknown one can never be installed) must not stop the other saved work
-                    # from coming back; the function stays open for when the user picks one (#118).
-                    log(f"{name}: {e}")
-                    result = {"matched": False}
-                finally:
-                    with store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
-                        db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN "
-                                   "(SELECT id FROM functions WHERE project_id=? AND name=?)", (agent.id, pid, name))
-                with store.tx() as db:
-                    db.execute("UPDATE functions SET matched_agent_id=? WHERE project_id=? AND name=? AND matched_agent_id=?",
-                               (credit.id, pid, name, agent.id))
-                    db.execute("UPDATE functions SET best_agent_id=? WHERE project_id=? AND name=? AND best_agent_id=?",
-                               (credit.id, pid, name, agent.id))
-                if kind == "src":
-                    if result.get("matched") and info.get("readable"):  # its polished C matched again: it stays polished
+                    with verdict_lock:
+                        check_cancel()
+                        current = (None if name is None or text is None else
+                                   _saved_current(store, pid, name, kind) if judge_code else current_rows[name])
+                        needs_attempt = (judge_code and current is not None and current['status'] != 'matched'
+                                         and not (kind == 'best' and current['best_source'] == text))
+                        if needs_attempt and not yielded_autopilot:
+                            # Only entries needing a verdict may wait for a claim.
+                            # Leave the lock first, then recheck eligibility: the
+                            # autopilot can finish publishing while we wait.
+                            yielded_autopilot = True
+                            wait_autopilot = getattr(net, '_yield_autopilot', None)
+                            if wait_autopilot is not None:continue
+                        now = time.monotonic()
+                        if judge_code or now - last_update >= 0.1:
+                            update(phase="Verifying saved functions" if judge_code else "Reading saved function records",
+                                   done=index, total=len(saved), function=old_name, matched=matched, best=best, lost=len(lost))
+                            last_update = now
+                        check_cancel()
+                        if judge_code:
+                            log(f"checking {old_name}")
+                        if name is None or text is None:
+                            lost.append(old_name) if kind == "src" else None
+                            break
+                        if current["status"] == "matched":
+                            matched += kind == "src"
+                            break
+                        if judge_code and kind == "best" and current["best_source"] == text:
+                            best += 1
+                            break
+                        if not judge_code:
+                            # A pull that changed only the manifest's metadata applies its settings, notes and layout, but does not
+                            # compile every saved attempt again (the folder's C did not change).
+                            if kind == "src":
+                                matched += current["status"] == "matched"
+                            else:
+                                best += 1
+                            break
+                        author=info.get("matched_by") or info.get("best_by") or "restored"
+                        if author not in credits:credits[author]=net.attribution_agent(author)
+                        credit=credits[author]
+                        if judge_agent is None:judge_agent=net.local_agent("progress-judge")[0]
+                        agent=judge_agent
+                        try:
+                            with net.compiled_ahead(prepared, strict=True):
+                                result = net.attempt(agent, name, text, slug)
+                        except (NetworkError, toolchains.ToolchainError) as e:
+                            check_cancel()  # A paused/cancelled check is not a failed match; abort and roll back instead.
+                            # A compiler that isn't here (an unknown one can never be installed) must not stop the other saved work
+                            # from coming back; the function stays open for when the user picks one (#118).
+                            log(f"{name}: {e}")
+                            result = {"matched": False}
+                        finally:
+                            with store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
+                                db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN "
+                                           "(SELECT id FROM functions WHERE project_id=? AND name=?)", (agent.id, pid, name))
                         with store.tx() as db:
-                            db.execute("UPDATE functions SET readable=1 WHERE project_id=? AND name=?", (pid, name))
-                    matched += bool(result.get("matched"))
-                    if not result.get("matched"):
-                        lost.append(name)
-                else:
-                    best += 1
+                            db.execute("UPDATE functions SET matched_agent_id=? WHERE project_id=? AND name=? AND matched_agent_id=?",
+                                       (credit.id, pid, name, agent.id))
+                            db.execute("UPDATE functions SET best_agent_id=? WHERE project_id=? AND name=? AND best_agent_id=?",
+                                       (credit.id, pid, name, agent.id))
+                        if kind == "src":
+                            if result.get("matched") and info.get("readable"):  # its polished C matched again: it stays polished
+                                with store.tx() as db:
+                                    db.execute("UPDATE functions SET readable=1 WHERE project_id=? AND name=?", (pid, name))
+                            matched += bool(result.get("matched"))
+                            if not result.get("matched"):
+                                lost.append(name)
+                        else:
+                            best += 1
+                    break
+                except CompileAgain as request:
+                    # No verdict was recorded. Inputs may have changed while a
+                    # prefetched compile ran, or an entry may now need a compile.
+                    # Compile without the project lock; retry against fresh rows.
+                    update(phase="Compiling changed saved inputs",done=index,total=len(saved),function=old_name)
+                    prepared = request.prepare(net, check_cancel)
     update(done=len(saved), total=len(saved), function=None, matched=matched, best=best, lost=len(lost))
     log(f"restored: {matched} matched functions, {best} best attempts" + (f"; {len(lost)} no longer match" if lost else ""))
     return {"matched": matched, "best": best, "lost": lost}
