@@ -2017,3 +2017,46 @@ def test_opencode_reasoning_variant_uses_installed_cli_syntax(tmp_path, monkeypa
     config=json.loads((tmp_path/'opencode.json').read_text())
     servers=config['mcp'] if legacy else config['mcp']['servers']
     assert servers['decompdecomp']['headers']['Authorization']=='Bearer private-token'
+
+
+@pytest.mark.parametrize('channel', ['stdout', 'stderr'])
+def test_opencode_privacy_refusal_is_fatal_before_retry(tmp_path, monkeypatch, channel):
+    manager=agents.Manager(RomNetwork(tmp_path/'app.db',tmp_path),tmp_path,'http://127.0.0.1:9/mcp')
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *args,**kwargs:True)
+    monkeypatch.setattr(manager.net,'selection_counts',lambda *args,**kwargs:{'available':1})
+    _,token=manager.net.local_agent('synthetic-opencode')
+    message='This Go model trains on request data. Turn on "Allow paid endpoints that train on request data" to use it.'
+    output=json.dumps({'type':'error','error':{'name':'APIError','data':{'message':message}}}) if channel=='stdout' else message
+    code=f'import sys; print({output!r},file=sys.{channel}); raise SystemExit(1)'
+    monkeypatch.setattr(manager,'_command',lambda *args:([sys.executable,'-c',code],dict(os.environ),''))
+    session=agents.Session('synthetic-opencode','opencode','synthetic','game','synthetic-opencode',{'model':'opencode/synthetic'})
+    with pytest.raises(agents.Fatal,match='trains on request data'):
+        manager._run_cli(session,token,tmp_path)
+    assert session.options['model']=='opencode/synthetic'
+
+
+def test_opencode_privacy_refusal_pauses_same_configuration_siblings(tmp_path, monkeypatch):
+    from decompnet.app import session_followups
+    _no_agent_settings(monkeypatch)
+    manager=agents.Manager(_game(tmp_path),tmp_path,URL)
+    first=manager._record('game','opencode','one','one',{'model':'opencode/synthetic'})
+    second=manager._record('game','opencode','two','two',{'model':'opencode/synthetic'})
+    reason='APIError: This Go model trains on request data. Review provider privacy settings.'
+    def rejected(*args):raise agents.Fatal(reason)
+    monkeypatch.setattr(manager,'_run_cli',rejected)
+    manager._run(first)
+    assert first.state=='paused' and first.runs==1 and first.configuration_error
+    monkeypatch.setattr(manager,'_run_cli',lambda *args:pytest.fail('A known policy refusal must not launch another request'))
+    manager._run(second)
+    assert second.state=='paused' and second.runs==0 and second.configuration_error
+    assert 'Choose another model' in second.todo
+    changed=manager._record('game','opencode','three','three',{'model':'opencode/different'})
+    assert session_followups.configuration_error(manager,changed) is None
+
+
+def test_opencode_temporary_failures_do_not_become_privacy_refusals():
+    agent=kinds.get('opencode')
+    for message in ('APIError: 503 no capacity available, try again later',
+                    'Connection reset while sending request data',
+                    'A training request timed out', 'Rate limit exceeded'):
+        assert not agent.fatal(message)
