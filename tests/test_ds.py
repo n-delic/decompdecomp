@@ -8,6 +8,8 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -919,3 +921,95 @@ def test_a_symbol_of_the_game_is_renamed_in_its_config(tmp_path):
     (gc / "symbols.txt").write_text("fn_80003100 = .text:0x80003100; // type:function size:0x40\n")
     consoles.get("gc").rename_symbol(fp, "v2", "fn_80003100", "OSInit")
     assert (gc / "symbols.txt").read_text() == "OSInit = .text:0x80003100; // type:function size:0x40\n"
+
+
+# ---------------------------------------------------------------------------------------------- autopilot
+
+DEMO_DS = ROOT / "projects" / "demo-ds"
+
+
+@pytest.fixture(scope="module")
+def ds_demo(tmp_path_factory):
+    """projects/demo-ds, built and imported: a real ds-decomp project (skips without its tools)."""
+    missing = []
+    for tool in NDS.demo_tools:
+        try:
+            if toolchains.installed(tool) is None:
+                missing.append(tool)
+        except toolchains.ToolchainError:
+            missing.append(tool)
+    if not (ROOT / "projects" / "zlib-n64" / "original").exists():
+        missing.append("zlib (projects/zlib-n64/prepare.py)")
+    if missing:
+        pytest.skip(f"the DS demo needs {', '.join(missing)}")
+    key = DEMO_DS / "build" / "demo.json"
+    if not key.exists():
+        subprocess.run([sys.executable, str(DEMO_DS / "build.py")], check=True)
+    built = json.loads(key.read_text())
+    work = tmp_path_factory.mktemp("demo-ds")
+    net = RomNetwork(work / "app.db", work)
+    slug = net.import_rom(DEMO_DS / "build" / built["game"], confirmed=True, log=lambda *_: None)
+    return net, slug, Path(net.project_row(slug)["root"])
+
+
+def test_autopilot_refuses_a_project_with_no_assembly_and_writes_no_macros(ds_demo):
+    """A ds-decomp project's sources are comments over the delinked code: m2c has no assembly to read. Autopilot used
+    to return every open function, fail each, and commit the M2C macros for nothing (#232). It says why instead,
+    before anything is written; the automatic start after an import records that calmly, as the other refusals are."""
+    net, slug, root = ds_demo
+    header = root / "include" / "common.h"
+    before = header.read_text()
+    with pytest.raises(NetworkError) as said:
+        net.forks.autopilot_prepare(slug)
+    assert "no assembly for m2c to read" in str(said.value) and "helpers still work on it" in str(said.value)
+    assert header.read_text() == before and "M2C_DEFINES" not in header.read_text()
+    state = net.start_autopilot(slug)  # what routes/state.py does after an import
+    assert state["no_drafts"] == str(said.value) and state["total"] == 0
+    for _ in range(200):
+        if net.autopilot_status(slug)["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert header.read_text() == before
+
+
+def _fake_fork(tmp_path, asm: str | None = None):
+    """A from-scratch project with one open function and, with `asm`, its assembly where m2c reads it (dtk's
+    build/<version>/asm/<unit>.s): no compiler or real game needed."""
+    root = tmp_path / "ws" / "game"
+    (root / "include").mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / "include" / "common.h").write_text("#ifndef COMMON_H\n#define COMMON_H\n#endif\n")
+    (root / "src" / "main.c").write_text('#include "common.h"\n')
+    (root / "objdiff.json").write_text(json.dumps({"units": [
+        {"name": "main", "path": "main", "metadata": {"source_path": "src/main.c"}}]}))
+    if asm:
+        (root / asm).parent.mkdir(parents=True)
+        (root / asm).write_text(".text\n")
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    cfg = {"kind": "fork", "origin": "scratch", "platform": "gc" if asm else "nds", "version": "v", "ready": True}
+    net.forks._register("p", "P", "fork", root, cfg, "made")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(1,?,8,2,'open','main')",
+                   ("func_02000000",))
+    return net, root
+
+
+def test_autopilot_without_assembly_refuses_before_the_macros(tmp_path, monkeypatch):
+    net, root = _fake_fork(tmp_path)
+    commits = []
+    monkeypatch.setattr(net.forks, "_commit", lambda *a, **k: commits.append(a))
+    header = root / "include" / "common.h"
+    before = header.read_text()
+    with pytest.raises(NetworkError, match="no assembly for m2c to read"):
+        net.forks.autopilot_prepare("p")
+    assert header.read_text() == before and "M2C_DEFINES" not in header.read_text() and not commits
+
+
+def test_autopilot_with_assembly_still_returns_the_open_functions(tmp_path, monkeypatch):
+    net, root = _fake_fork(tmp_path, asm="build/v/asm/main.s")
+    monkeypatch.setattr(toolchains, "installed", lambda tool: object() if tool == "m2c" else None)
+    commits = []
+    monkeypatch.setattr(net.forks, "_commit", lambda *a, **k: commits.append(a))
+    ids = net.forks.autopilot_prepare("p")
+    assert ids == [net.store.one("SELECT id FROM functions WHERE project_id=1")["id"]]
+    assert "M2C_DEFINES" in (root / "include" / "common.h").read_text() and len(commits) == 1
