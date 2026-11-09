@@ -94,11 +94,13 @@ def test_inventory_reuses_source_tokens_but_invalidates_changed_and_deleted_sour
     net,_=prepare(tmp_path,monkeypatch)
     with net.store.tx() as db:
         db.execute("UPDATE functions SET matched_source=matched_source || ?",(' /*'+' large '*200+'*/',))
+    from decompnet import payload_storage
     proj=net.project_row('game');store=net.project_store(proj['id']);reads=[];original=store.one
-    def read(sql,*args):
-        if sql.startswith('SELECT matched_source FROM functions'):reads.append(args[0])
-        return original(sql,*args)
-    monkeypatch.setattr(store,'one',read)
+    unpack=payload_storage.unpack
+    def read(digest,payload):
+        reads.append(digest)
+        return unpack(digest,payload)
+    monkeypatch.setattr(payload_storage,'unpack',read)
     first=inventory(net,proj);assert len(reads)==3
     assert inventory(net,proj)==first and len(reads)==3
     caller=original("SELECT matched_source FROM functions WHERE name='caller'")[0]
@@ -190,3 +192,86 @@ def test_targeted_builtin_guard_preserves_flag_order_and_existing_profile(tmp_pa
     cfg=net.cfg(net.project_row('game'))
     fn=net._function('caller','game')
     assert compiler_for(cfg,fn['vram'],fn)['flags']==original+['-fno-builtin-bzero']
+
+
+def test_inventory_snapshot_batches_and_preserves_changed_source_identity(tmp_path, monkeypatch):
+    from decompnet.app.rename_scope import inventory
+    net,_=prepare(tmp_path,monkeypatch)
+    store=net.store;proj=net.project_row('game')
+    with store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=matched_source || ?",(' /*'+' large '*200+'*/',))
+    original=store.all;queries=[]
+    def read(sql,*args):
+        queries.append(sql)
+        rows=original(sql,*args)
+        # A later writer must not pair an old digest with a newer source body.
+        source=store.one("SELECT matched_source FROM functions WHERE name='caller'")[0]
+        with store.tx() as db:
+            db.execute("UPDATE functions SET matched_source=? WHERE name='caller'",(source+' laterToken',))
+        return rows
+    monkeypatch.setattr(store,'all',read)
+    first=inventory(net,proj)
+    assert len(queries)==1
+    assert not any('laterToken' in words for _,words in first)
+    monkeypatch.setattr(store,'all',original)
+    second=inventory(net,proj)
+    assert any('laterToken' in words for _,words in second)
+    assert all('laterToken' not in words for row,words in second if row['name']!='caller')
+
+
+def test_inventory_rejects_missing_or_corrupt_changed_payload(tmp_path, monkeypatch):
+    import sqlite3
+
+    import pytest
+
+    from decompnet import payload_storage
+    from decompnet.app.rename_scope import inventory
+    net,_=prepare(tmp_path,monkeypatch)
+    body='int broken(void) { return missing; }'+' /* large */'*200
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=? WHERE name='caller'",(body,))
+        db.execute("UPDATE text_payloads SET payload=X'00' WHERE hash=?",(payload_storage.digest(body),))
+    with pytest.raises(sqlite3.OperationalError,match='user-defined function'):
+        inventory(net,net.project_row('game'))
+    with net.store.tx() as db:
+        db.execute('DELETE FROM text_payloads WHERE hash=?',(payload_storage.digest(body),))
+    with pytest.raises(sqlite3.OperationalError,match='user-defined function'):
+        inventory(net,net.project_row('game'))
+
+
+def test_inventory_shares_identical_tokens_and_retains_nullable_metadata(tmp_path, monkeypatch):
+    from decompnet import payload_storage
+    from decompnet.app.rename_scope import inventory
+    net,_=prepare(tmp_path,monkeypatch)
+    proj=net.project_row('game');body='int sharedToken(void){return 0;}'+' /* padding */'*200
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=?,unit='',vram=NULL",(body,))
+    calls=[];unpack=payload_storage.unpack
+    def decode(digest,blob):
+        calls.append(digest)
+        return unpack(digest,blob)
+    monkeypatch.setattr(payload_storage,'unpack',decode)
+    first=inventory(net,proj)
+    assert len(first)==3 and len(calls)==1
+    assert all(row['unit']=='' and row['vram'] is None and 'sharedToken' in words for row,words in first)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,status,matched_source) VALUES(?,'added','matched',?)",(proj['id'],body))
+    second=inventory(net,proj)
+    assert len(second)==4 and len(calls)==1
+    with net.store.tx() as db:db.execute('UPDATE functions SET matched_source=NULL')
+    assert all(not words for _,words in inventory(net,proj))
+    with net.store.tx() as db:db.execute("UPDATE functions SET status='open'")
+    assert inventory(net,proj)==[]
+    assert net._rename_source_words[proj['id']]=={}
+
+
+def test_inventory_cancellation_before_payload_decode_keeps_cache_empty(tmp_path, monkeypatch):
+    import pytest
+
+    from decompnet.app.rename_scope import inventory
+    net,_=prepare(tmp_path,monkeypatch)
+    proj=net.project_row('game')
+    def cancel(_):raise InterruptedError('cancelled')
+    with pytest.raises(InterruptedError,match='cancelled'):
+        inventory(net,proj,cancel)
+    assert net._rename_source_words[proj['id']]=={}
