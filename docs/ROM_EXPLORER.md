@@ -227,6 +227,16 @@ browser. Saved scans refresh automatically after this detector update.
 RNC method-2 token grammar was checked against the
 [ScummVM decoder](https://github.com/scummvm/scummvm/blob/master/common/compression/rnc_deco.cpp).
 
+### Files inside embedded ZIP archives
+
+Every console's scan reads an embedded ZIP's own directory and names each file's bytes by
+its path in the archive (the Name column, sorting and the search box use it). A deflated
+file is **compressed**, a stored one **data**; either is validated only when its data
+expands to the declared size and CRC32, within 256 MiB of expansion per scan, and stays
+tentative past that budget. A file whose data fails is rejected evidence and leaves its
+bytes unclassified. Folder entries and the central directory with its end record are
+labelled as the archive's **container**. The limits below apply.
+
 ### Texture packs inside embedded ZIP archives
 
 N64 scans also recognize trailer-count texture packs inside embedded ZIP archives,
