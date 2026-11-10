@@ -767,6 +767,20 @@ logs and arbitrary HTTP errors do not qualify. The persisted failure is a fixed
 category, without raw provider content, credentials or request bodies. This
 recovers the app's retry loop; it cannot restore remote inference capacity.
 
+### CLI tool connection diagnostics
+
+OpenCode can also report `server unavailable` for the app's remote MCP server at
+WARN level and continue making model requests without its tools. Previously the
+stderr cleaner discarded that warning; later denied shell attempts then replaced
+the useful startup evidence in the final handshake error. The connector now
+recognizes only the app server's structured failed-remote warning and returns a
+fixed diagnostic. The runner saves and logs each distinct category once per CLI
+(at most four categories), retaining it separately from the ordinary stderr tail
+for a failed handshake. URLs, credentials, raw error bodies and model content are
+not copied. A warning alone does not terminate a CLI, retry it, or mark a recovered
+handshake as failed. This improves diagnosis; it does not repair the underlying
+MCP connection or establish the cause of a timeout.
+
 ### Recheck validation during app saves
 
 A save may advance a ready recheck's saved-file signature only after verifying

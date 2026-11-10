@@ -2115,9 +2115,15 @@ class Manager:
         from .provider_retries import Retries
         provider_retries = Retries()
         retry_failure = getattr(k, 'stderr_retry', None)
+        connection_diagnostics: list[str] = []
+        connection_diagnostic = getattr(k, 'stderr_connection', None)
 
         def drain_err():
             for line in proc.stderr:
+                diagnostic = connection_diagnostic(line) if connection_diagnostic is not None else ''
+                if diagnostic and diagnostic not in connection_diagnostics and len(connection_diagnostics) < 4:
+                    connection_diagnostics.append(diagnostic)
+                    s.push('info', 'CLI tool connection diagnostic: '+diagnostic)
                 failure = k.stderr_failure(line, s.model)
                 if not failure and retry_failure is not None:
                     failure = provider_retries.observe(retry_failure(line, s.model))
@@ -2250,6 +2256,7 @@ class Manager:
         if (agent.id, s.slug) in pending and not s.limited and not s.auth_failed:
             s.tool_handshake_failures += 1
             message = 'CLI tool handshake was not completed: the server preflight passed, but this agent never successfully called project_info. No new function was handed over.'
+            if connection_diagnostics:message += ' '+' '.join(connection_diagnostics)
             if errors:message += ' CLI startup diagnostics: '+ ' · '.join(list(errors)[-3:])[-600:]
             if s.tool_handshake_failures <= 1:
                 raise ToolConnectionUnavailable(message+' Reconnecting once; this requires another model request.')

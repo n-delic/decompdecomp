@@ -303,6 +303,14 @@ class Agent:
         """
         return ""
 
+    def stderr_connection(self, line: str) -> str:
+        """A fixed, redacted local tool connection diagnostic worth retaining.
+
+        This is evidence, not a request to terminate or retry the process. Do not
+        return raw log fields, request bodies, credentials or provider content.
+        """
+        return ""
+
     def stderr_retry(self, line: str, model: str = "") -> str:
         """A selected primary stream's retryable provider failure, as a safe category.
 
