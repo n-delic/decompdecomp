@@ -25,6 +25,9 @@ NEIGHBOURS = 8
 FAILURES_KEPT = 64
 MAX_PATTERN_DONORS = 64
 POLISH_REVISION = 1
+INPUT_COMPONENTS = ('policy', 'source', 'configuration', 'function', 'target',
+                    'relocations', 'address', 'metadata', 'generation',
+                    'header', 'header_version', 'symbols')
 
 
 def digest(value):
@@ -55,7 +58,7 @@ def header(net, proj, fn):
     return '\n'.join(texts)
 
 
-def input_key(net, proj, fn, original, candidate=''):
+def input_key(net, proj, fn, original, candidate='', *, receipt=None):
     """Failures are evidence only for the same source and judge inputs, never a matching verdict.
 
     Project builds can consume arbitrary external dependencies. Their stored failures
@@ -75,14 +78,34 @@ def input_key(net, proj, fn, original, candidate=''):
         declarations = net._header_index(proj['id'],ctx,for_m2c=False).used(roots)
         referenced = roots | set(polish_edits.IDENT.findall(_blank('\n'.join(d.text for d in declarations))))
         parts.append(str([(name,syms.resolve(name)) for name in sorted(referenced)]))
+    if receipt is not None:
+        receipt.update((name, digest(value)) for name, value in zip(INPUT_COMPONENTS, parts))
     return digest('\0'.join(parts))
 
 
-def current_key(net, proj, fn, original, source):
+def current_key(net, proj, fn, original, source, *, receipt=None):
     store = net.project_store(proj['id'])
     current = store.one('SELECT * FROM functions WHERE id=?',fn['id'])
     project = store.one('SELECT * FROM projects WHERE id=?',proj['id'])
-    return input_key(net,project,current,original,source) if current is not None and project is not None else None
+    return input_key(net,project,current,original,source,receipt=receipt) if current is not None and project is not None else None
+
+
+def check_inputs(net, proj, fn, original, source, key, receipt, phase):
+    """Keep the exact guard, reporting only fixed categories when its inputs drift.
+
+    Neither component hashes nor input values belong in logs or agent replies.
+    The old combined key remains authoritative, including every prior field.
+    """
+    current = {}
+    latest = current_key(net, proj, fn, original, source, receipt=current)
+    if key == latest:return
+    changed = [name for name in INPUT_COMPONENTS if receipt.get(name) != current.get(name)] if latest is not None else ['record_removed']
+    detail = ', '.join(changed) or 'unclassified'
+    logging.getLogger('decompdecomp').warning(
+        'Polishing input changed after %s: project_id=%s function_id=%s components=%s',
+        phase, proj['id'], fn['id'], detail)
+    raise NetworkError('The compiler context changed while polishing. Read the function again and retry. '
+                       'Changed inputs: '+detail+'.')
 
 
 def cacheable_inputs(net, proj, fn, candidate):

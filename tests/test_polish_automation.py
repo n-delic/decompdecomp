@@ -362,3 +362,58 @@ def test_polishing_save_receipt_change_does_not_invalidate_verified_compile(game
             auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple it.')
         assert not net._function('f','game')['readable']
     assert len(calls)==1
+
+
+@pytest.mark.parametrize('phase', ['compile', 'judge'])
+@pytest.mark.parametrize('component', ['configuration', 'target', 'relocations', 'address', 'metadata',
+                                       'generation', 'header', 'header_version', 'symbols', 'record_removed'])
+def test_input_drift_diagnostics_are_causal_redacted_and_keep_the_guard(game,monkeypatch,caplog,phase,component):
+    from decompnet.rom.symbols import Symbol
+
+    net,agent,_ = game
+    private = 'PRIVATE_CONTENT_DO_NOT_LOG'
+    def change():
+        if component == 'generation':
+            net.bump_generation(1)
+        elif component == 'symbols':
+            net.symbols(1).alias(Symbol('s32', 12345))
+        else:
+            with net.store.tx() as db:
+                if component == 'configuration':
+                    db.execute("UPDATE projects SET config=json_set(config,'$.private_setting',?)",(private,))
+                elif component == 'header':
+                    db.execute('UPDATE context_versions SET header=?',(HEADER+'/* '+private+' */',))
+                elif component == 'header_version':
+                    db.execute('UPDATE context_versions SET version=2')
+                elif component == 'record_removed':
+                    db.execute("DELETE FROM functions WHERE name='f'")
+                else:
+                    column,value = {'target':('target',private.encode()),'relocations':('relocs','[] '+private),
+                                    'address':('vram',12345),'metadata':('meta',json.dumps({'private':private}))}[component]
+                    db.execute('UPDATE functions SET '+column+"=? WHERE name='f'",(value,))
+    original = net._compile if phase == 'compile' else net._evaluate
+    def operation(*args):
+        result = original(*args)
+        change()
+        return result
+    monkeypatch.setattr(net, '_compile' if phase == 'compile' else '_evaluate', operation)
+    with pytest.raises(NetworkError,match='Changed inputs: '+component) as error:
+        auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Triple it.')
+    assert 'Polishing input changed after '+phase in caplog.text
+    assert 'components='+component in caplog.text
+    assert private not in caplog.text and private not in str(error.value)
+    assert SOURCE not in caplog.text and HEADER not in caplog.text
+    current = net.store.one("SELECT matched_source,readable FROM functions WHERE name='f'")
+    if current is not None:
+        assert not current['readable'] and current['matched_source'] == SOURCE
+
+
+def test_component_receipts_are_hashes_and_do_not_change_the_combined_key(game):
+    net,_,_ = game
+    proj,fn = net._project('game'),net._function('f','game')
+    key = auto.input_key(net,proj,fn,SOURCE,'candidate')
+    receipt = {}
+    assert auto.input_key(net,proj,fn,SOURCE,'candidate',receipt=receipt) == key
+    assert set(receipt) == set(auto.INPUT_COMPONENTS)
+    assert all(len(value)==64 and int(value,16)>=0 for value in receipt.values())
+    assert not auto.check_inputs(net,proj,fn,SOURCE,'candidate',key,receipt,'compile')
