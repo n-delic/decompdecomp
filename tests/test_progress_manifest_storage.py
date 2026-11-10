@@ -222,3 +222,41 @@ def test_compaction_covers_each_project_database(tmp_path):
         catalog._pool.shutdown()
         for store in {catalog.store, *leaves.values()}:
             store.conn.close()
+
+
+def test_offline_compaction_opens_project_databases_with_their_namespace(tmp_path, monkeypatch):
+    """tools/compact_databases.py on a real layout: project databases carry an identifier namespace and need the
+    catalog's repair archive, as the app opens them (it crashed on the first project database before)."""
+    import importlib.util
+    import sqlite3
+    import sys
+
+    from decompnet.shard_ids import KEY
+    from decompnet.store import Store
+    internal = tmp_path / '.decomp'
+    (internal / 'project-databases').mkdir(parents=True)
+    catalog = Network(internal / 'decomp.db')
+    try:
+        leaf = Store(internal / 'project-databases' / '7.sqlite3', project_namespace=7,
+                     repair_archive=catalog.store.conn.repair_archive)
+        with leaf.tx() as db:
+            db.execute('CREATE TABLE scratch(payload BLOB)')
+            db.execute('INSERT INTO scratch VALUES(randomblob(2000000))')
+        with leaf.tx() as db:
+            db.execute('DELETE FROM scratch')
+        leaf.conn.close()
+    finally:
+        catalog._pool.shutdown()
+        catalog.store.conn.close()
+    before = (internal / 'project-databases' / '7.sqlite3').stat().st_size
+    spec = importlib.util.spec_from_file_location(
+        'compact_databases', Path(__file__).parents[1] / 'tools' / 'compact_databases.py')
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    monkeypatch.setattr(sys, 'argv', ['compact_databases.py', str(tmp_path)])
+    assert tool.main() == 0
+    path = internal / 'project-databases' / '7.sqlite3'
+    assert path.stat().st_size < before - 1000000
+    with sqlite3.connect(path) as db:
+        assert db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+        assert db.execute('SELECT value FROM settings WHERE key=?', (KEY,)).fetchone()[0] == '7'
