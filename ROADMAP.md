@@ -777,6 +777,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
+| Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
 | Create full verified rebuildable repository with nested app progress | ✓ | ✓ | ✓ | ✓ | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned |
@@ -1733,6 +1734,16 @@ The export rebuilds the game byte for byte; mods need code that can move. Build 
 and report every address that is still hard-coded ("93% movable, 41 addresses left"). The matching build stays as
 it is. A Windows PC project's rebuild puts each function back at the game's address in the user's copy
 (tools/rebuild.py): moving code there needs its data delinked too, and a linker that lays the program out.
+
+### Ports: a native build of a finished game
+
+A matched, polished game rebuilds for its console; the next step people want is a port. Plan in docs/PORTING.md:
+a readiness report (extending the modding-ready check above), data migrated to C and kept only while the ROM stays
+byte-identical, ROM Explorer's asset map written as a Torch config (offsets and types, no game bytes), a Port export
+(CMake, libultraship and Torch pinned in `toolchains.toml`, glue for the main loop, input, saves, DMA and audio),
+and a port-fix task for agents judged twice: the console build still matches and the port still compiles. N64
+first (`Console.port_kit`), PS1 next on PsyCross; the rest "—" until a kit exists. First check: libultraship's
+S2DEX coverage, then a hand port of one N64 game's boot, title screen and one track.
 
 ### Browser room contributions
 
