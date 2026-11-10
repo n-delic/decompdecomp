@@ -459,3 +459,77 @@ def test_push_poll_exclusion_keeps_other_configuration_guards(game, monkeypatch,
     with pytest.raises(NetworkError, match='Changed inputs: configuration'):
         auto.structured(net.readability, agent, 'game', 'f', '{}', 'Triple it.')
     assert not net._function('f', 'game')['readable']
+
+
+# What a machine draft looks like when it matches: a banner, m2c's defines and the callees' declarations
+# around the function. Small polish plans were refused for every one of these.
+DRAFT = ('/* machine draft (m2c) for gcc-2.7.2-kmc -O2 */\n#ifndef M2C_DEFINES\n#define M2C_DEFINES\n'
+         'typedef s32 M2C_UNK;\n#define M2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))\n'
+         '#endif\n\nM2C_UNK helper(s32);                         /* extern */\nextern s32 D_800C6F0C;\n\n'
+         + SOURCE.replace('var_v0 = arg0 * 3;', 'var_v0 = helper(arg0) + D_800C6F0C;') + '\n')
+
+
+def test_machine_drafts_take_small_plans_inside_the_function_only():
+    result = edits.apply(DRAFT,'f',{'arg0':'value','var_v0':'total'},'Adds the bias.',header=HEADER)
+    preamble = DRAFT[:DRAFT.index('s32 f(')]
+    assert result.startswith(preamble) and result.count('\n') == DRAFT.count('\n')
+    assert '/* Adds the bias. */ s32 f(s32 value) {' in result
+    assert 'total = helper(value) + D_800C6F0C;' in result
+    assert edits.locals_in(DRAFT,'f',HEADER) == ['arg0','var_v0']
+    # A local declared with the draft's own typedef is a local too.
+    unknown = DRAFT.replace('    s32 var_v0;', '    M2C_UNK var_v0;')
+    assert 'M2C_UNK total;' in edits.apply(unknown,'f',{'var_v0':'total'},header=HEADER)
+    # Type aliases change the function, never the draft's own typedefs or declarations.
+    retyped = edits.apply(DRAFT,'f',{},types={'s32':'Count'},header=HEADER)
+    assert retyped.startswith(preamble) and 'Count f(Count arg0)' in retyped
+
+
+def test_a_local_named_outside_the_function_stays_with_make_readable():
+    # Renaming arg0 inside the function would break the macro that also names it.
+    source = '#define FIRST arg0\n' + SOURCE.replace('arg0 * 3', 'FIRST * 3')
+    assert edits.locals_in(source,'f',HEADER) == ['var_v0']
+    with pytest.raises(NetworkError,match='simple parameters'):
+        edits.apply(source,'f',{'arg0':'value'},header=HEADER)
+    assert edits.apply(source,'f',{'var_v0':'total'},header=HEADER).startswith('#define FIRST arg0\n')
+    # A directive inside the definition is still a full rewrite.
+    inside = SOURCE.replace('    return var_v0;', '#ifdef DEBUG\n    var_v0++;\n#endif\n    return var_v0;')
+    with pytest.raises(NetworkError):edits.apply(inside,'f',{'var_v0':'total'},header=HEADER)
+    assert edits.signature(inside,'f',HEADER) == (None,[])
+
+
+def test_machine_draft_patterns_match_the_same_draft_shape():
+    shape,local = edits.signature(DRAFT,'f',HEADER)
+    assert shape and local == ['arg0','var_v0']
+    assert shape == edits.signature(DRAFT.replace(' f(',' g('),'g',HEADER)[0]
+    assert shape != edits.signature(DRAFT.replace('D_800C6F0C;\n\n','D_800C6F10;\n\n').replace('+ D_800C6F0C','+ D_800C6F10'),'f',HEADER)[0]
+
+
+def test_a_polished_machine_draft_is_learned_without_its_banner(game):
+    net,agent,calls = game
+    with net.store.tx() as db:
+        for name in ('f','g'):
+            db.execute('UPDATE functions SET matched_source=? WHERE name=?',(DRAFT.replace(' f(',f' {name}('),name))
+    assert auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Adds the bias.').startswith('✅')
+    answer = net.readability.claim(agent,'game')
+    assert 'Automatically polished 1' in answer
+    polished = net._function('g','game')['matched_source']
+    assert '/* Adds the bias. */ s32 g(s32 value)' in polished and polished.count('Adds the bias') == 1
+    assert polished.startswith('/* machine draft (m2c)')
+
+
+@pytest.mark.parametrize('phase', ['compile', 'judge'])
+@pytest.mark.parametrize('setting,value', [('spend', {'usd': 1.5, 'tokens': 1000}),
+                                           ('range_checks', {'0x80001000': 'checked'}),
+                                           ('priority', ['g'])])
+def test_spending_and_advice_do_not_invalidate_polishing(game, monkeypatch, phase, setting, value):
+    # Every agent's usage report updates "spend": it refused about a fifth of an N64 game's polishes.
+    net, agent, calls = game
+    original = net._compile if phase == 'compile' else net._evaluate
+    def operation(*args):
+        result = original(*args)
+        with net.store.tx() as db:
+            db.execute('UPDATE projects SET config=json_set(config, ?, json(?))', ('$.'+setting, json.dumps(value)))
+        return result
+    monkeypatch.setattr(net, '_compile' if phase == 'compile' else '_evaluate', operation)
+    assert auto.structured(net.readability, agent, 'game', 'f', '{"arg0":"value"}', 'Triple it.').startswith('✅')
+    assert net._function('f', 'game')['readable'] and len(calls) == 1

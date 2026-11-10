@@ -9,16 +9,20 @@ from .permuter_inputs import build_state
 IDENTITY = ('id', 'project_id', 'name', 'unit', 'vram', 'size', 'rom_offset', 'n_insns', 'target', 'relocs', 'meta')
 
 
+# Project settings that record work, spending, advice or where things are saved: none is a compiler input.
+# Polishing's input guard ignores them too (polish_automation.input_key).
+WORKFLOW_SETTINGS = ('suggestions', 'knowledge_auto', 'range_checks', 'compiler_survey', 'progress_revision',
+                     'progress_folder', 'save_folder', 'instructions', 'priority', 'draft_generation', 'spend',
+                     'autopilot', 'auto_commit_matches', 'auto_commit_folder', 'auto_commit_branch',
+                     'score_commits', 'checked', 'export')
+
+
 def destination(proj, fn):
     cfg = json.loads(proj['config'])
     identity = abi(proj, cfg)
     # Freeze unknown build settings too. Only known workflow metadata is excluded;
     # the selected compiler and exact header are preserved separately below.
-    for key in ('compiler', 'compiler_ranges', 'function_compilers', 'boundaries', 'suggestions',
-                'knowledge_auto', 'range_checks', 'compiler_survey', 'progress_revision', 'progress_folder',
-                'save_folder', 'instructions', 'priority', 'draft_generation', 'spend', 'autopilot',
-                'auto_commit_matches', 'auto_commit_folder', 'auto_commit_branch', 'auto_push',
-                'score_commits', 'checked', 'export'):
+    for key in ('compiler', 'compiler_ranges', 'function_compilers', 'boundaries', 'auto_push') + WORKFLOW_SETTINGS:
         cfg.pop(key, None)
     return (tuple(fn[key] for key in IDENTITY), proj['root'], identity,
             json.dumps(cfg, sort_keys=True), build_state(proj))
