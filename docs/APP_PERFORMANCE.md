@@ -781,6 +781,21 @@ not copied. A warning alone does not terminate a CLI, retry it, or mark a recove
 handshake as failed. This improves diagnosis; it does not repair the underlying
 MCP connection or establish the cause of a timeout.
 
+### Polishing input drift diagnostics
+
+A rejected polish now identifies which fixed input categories changed after its
+compile or judge: configuration, generation, target, relocations, address,
+metadata, header/version, or referenced symbols. A removed function/project has
+its own category. The app logs the phase and numeric project/function IDs, and
+the saved agent error includes the categories. Input values, source, credentials
+and even component hashes are excluded from both outputs.
+
+The combined input key and every rejection guard remain unchanged; per-component
+hashes exist only for the current submission's comparison. Six bounded ROM and
+project-mode key fixtures produce identical keys before and after this change.
+This supplies missing evidence for repeated rejected polishing attempts; it does
+not identify or repair the underlying live input drift by itself.
+
 ### Similarity target selection
 
 Similarity search queues open target IDs and names through the scalar metadata

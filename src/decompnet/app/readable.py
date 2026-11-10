@@ -345,7 +345,8 @@ class Readability:
         if " ".join(source.split()) == " ".join(original.split()):
             raise NetworkError("that's the C it has already: rename, type and comment it first")
         from . import polish_automation
-        key = polish_automation.input_key(self.net, proj, fn, original, source)
+        receipt = {}
+        key = polish_automation.input_key(self.net, proj, fn, original, source, receipt=receipt)
         cached = polish_automation.failure(self.net, proj, fn, key, source)
         if cached:
             return cached
@@ -365,8 +366,7 @@ class Readability:
             self.net._record(fn, agent, None, source, ctx["version"])  # its compiles count, as a decompiling one's
             return rejected(f"❌ COMPILE ERROR: the matching C stays.\n{result.log.strip()}",
                             polish_automation.deterministic_error(result.log))
-        if key != polish_automation.current_key(self.net, proj, fn, original, source):
-            raise NetworkError("The compiler context changed while polishing. Read the function again and retry.")
+        polish_automation.check_inputs(self.net, proj, fn, original, source, key, receipt, 'compile')
         cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
         if cand is None:
             self.net._record(fn, agent, None, source, ctx["version"], compiled=True)
@@ -377,8 +377,7 @@ class Readability:
             note = "\n".join(f"- {p}" for p in problems)
             return rejected(f"❌ It no longer matches (score {d.score}): the matching C stays. Keep the statements' shape and "
                     f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""), cacheable=d.score > 0 and not problems)
-        if key != polish_automation.current_key(self.net, proj, fn, original, source):
-            raise NetworkError("The compiler context changed while polishing. Read the function again and retry.")
+        polish_automation.check_inputs(self.net, proj, fn, original, source, key, receipt, 'judge')
         return self._readable(proj, fn, agent, source, original=original)
 
     def _readable(self, proj, fn, agent: Agent, source: str, *, original=None) -> str:
