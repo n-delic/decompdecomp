@@ -6,6 +6,7 @@ import sys
 import pytest
 
 from decompnet.agents.codex import CODEX
+from decompnet.agents.opencode import OPENCODE
 from decompnet.app import agents, session_followups
 from tests.test_agents import URL, _game, _no_agent_settings
 
@@ -26,12 +27,12 @@ def test_connector_retains_explicit_limit_but_not_parse_error_or_quoted_prose():
         assert CODEX.exit_reason(other)=='not reported'
 
 
-def cli(tmp_path,monkeypatch,event,code=1,recovered=False):
+def cli(tmp_path,monkeypatch,event,code=1,recovered=False,provider='codex'):
     _no_agent_settings(monkeypatch)
     net=_game(tmp_path);manager=agents.Manager(net,tmp_path,URL)
     monkeypatch.setattr(manager,'_preflight_tools',lambda *a,**k:True)
     monkeypatch.setattr(manager,'prepare_session',lambda *a,**k:None)
-    session=manager._record('game','codex','codex-test','codex-test',{})
+    session=manager._record('game',provider,provider+'-test',provider+'-test',{})
     agent,token=net.local_agent(session.agent_name)
     claim=net.claim_row(agent,'game')
     def command(s,*args):
@@ -44,10 +45,12 @@ def cli(tmp_path,monkeypatch,event,code=1,recovered=False):
     return net,manager,session,agent,token,claim
 
 
+@pytest.mark.parametrize('provider',['codex','opencode'])
 @pytest.mark.parametrize('exit_code',[0,1])
-def test_real_child_limit_failure_keeps_work_and_bounds_recovery(tmp_path,monkeypatch,exit_code):
-    event={'type':'error','message':LIMIT}
-    net,manager,s,agent,token,claim=cli(tmp_path,monkeypatch,event,exit_code)
+def test_real_child_limit_failure_keeps_work_and_bounds_recovery(tmp_path,monkeypatch,exit_code,provider):
+    event=({'type':'step_finish','part':{'reason':'length','tokens':{'output':32000}}} if provider=='opencode'
+           else {'type':'error','message':LIMIT})
+    net,manager,s,agent,token,claim=cli(tmp_path,monkeypatch,event,exit_code,provider=provider)
     source='int synthetic_saved_candidate(void){return 7;}'
     with net.store.tx() as db:db.execute('UPDATE functions SET best_source=? WHERE id=?',(source,claim['id']))
     before=dict(net.store.one('SELECT * FROM functions WHERE id=?',claim['id']))
@@ -104,3 +107,15 @@ def test_cli_recovered_turn_does_not_spend_app_retry(tmp_path,monkeypatch):
     _,manager,s,_,token,_=cli(tmp_path,monkeypatch,{'type':'error','message':LIMIT},0,recovered=True)
     assert manager._run_cli(s,token,tmp_path) is True
     assert s.output_limit_retries==0 and not s.continuation_note
+
+
+def test_opencode_normalizes_length_and_retains_recovered_step_reason():
+    state = {}
+    OPENCODE.parse({'type':'text','part':{'text':'The response reason was length.'}},state)
+    assert OPENCODE.exit_reason(state) == 'not reported'
+    OPENCODE.parse({'type':'step_finish','part':{'reason':'length'}},state)
+    assert OPENCODE.exit_reason(state) == 'output_limit'
+    OPENCODE.parse({'type':'step_finish','part':{'reason':'stop'}},state)
+    assert OPENCODE.exit_reason(state) == 'stop'
+    OPENCODE.parse({'type':'step_finish','part':{'reason':'tool-calls'}},state)
+    assert OPENCODE.exit_reason(state) == 'tool-calls'
