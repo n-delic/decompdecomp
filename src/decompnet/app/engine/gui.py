@@ -52,6 +52,7 @@ class GuiMixin:
 
     def overview(self, slug: str) -> dict:
         proj = self._project(slug)
+        missing = self.project_missing(proj)
         last = self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj["id"])["t"]
         cfg = self.cfg(proj)
         # matches by the helper agents the app runs (their spend is what `spend` counts)
@@ -69,6 +70,7 @@ class GuiMixin:
                        "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
                        "claim_order": cfg.get("claim_order") if cfg.get("claim_order") in CLAIM_ORDERS else "",
                        "priority": cfg.get("priority", []), "save_folder": str(saves.save_folder(self, slug)),
+                       "missing": missing,
                        # (a suggestion its own check disproved isn't one: older ones were filed)
                        "suggestions": [s for s in cfg.get("suggestions", []) if s["status"] == "open"
                                        and not re.search(r"does not match|doesn't compile", s["check"] or "")],
@@ -119,6 +121,7 @@ class GuiMixin:
         cfg = self.cfg(proj)
         agg = self.store.one(f"SELECT {PROGRESS_COLUMNS} FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
         console = self.console(proj)
+        missing = self.project_missing(proj)
         if cfg.get("kind") == "fork":
             about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),
                      "ready": bool(cfg.get("ready")), "rom": {"game_code": cfg.get("version") or "", "region": console.name},
@@ -134,7 +137,7 @@ class GuiMixin:
                                                 proj["id"])["t"],
                 "room": (self._room_info(slug) or {}).get("role"),
                 "autopilot": (self.autopilot_status(slug) or {}).get("state"),
-                "progress_error": self.progress.errors.get(slug)} | about
+                "progress_error": self.progress.errors.get(slug), "missing": missing} | about
 
     def _room_info(self, slug: str) -> dict | None:
         if slug in self.links:

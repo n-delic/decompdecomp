@@ -90,6 +90,18 @@ def gui():
     return result
 
 
+def test_a_project_whose_folder_is_missing_says_so_and_can_be_removed(gui):
+    """A project the user deleted from disk used to have no way to its Settings: its home card now says the folder is
+    missing and removes its database records (never a folder that isn't there) after a confirmation."""
+    missing = gui["checks"]["missingProject"]
+    assert 'data-remove-project="gone"' in missing["html"] and "Gone &lt;Game&gt;" in missing["html"]
+    assert "folder is missing" in missing["html"]
+    assert missing["title"] == "Remove project" and "Gone &lt;Game&gt;" in missing["text"] and "records" in missing["text"]
+    assert missing["calls"][0] == ["/api/delete", {"method": "POST", "body": {"slug": "gone"}}]
+    assert ["home"] in missing["calls"] and ["nav"] in missing["calls"]
+    assert missing["notes"] == ["Project removed from decompdecomp."]
+
+
 def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     nds = gui["checks"]["nds"]
     assert nds["good"] == ["nds", "ADQE", "DEMOQUESTDS"]

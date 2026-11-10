@@ -4091,10 +4091,31 @@ class ForkEngine:
 
     def overview(self, slug: str) -> dict:
         proj, fp, cfg = self.get(slug)
-        if cfg.get("ready"):
-            self._preflight_once(slug)
         agg = self.net.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
                                  f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
+        if missing := self.net.project_missing(proj):
+            # Nothing here reads the tree (it isn't there): what the database knows, and why it can't be opened.
+            return {
+                "slug": slug, "title": proj["name"], "description": proj["description"], "kind": "fork",
+                **consoles.get(cfg.get("platform")).project_facts(),
+                "repo_url": cfg.get("repo_url"), "fork_kind": cfg.get("fork_kind"), "version": cfg.get("version"),
+                "origin": cfg.get("origin"), "compiler_name": cfg.get("compiler"), "versions": [],
+                "ready": bool(cfg.get("ready")), "needs": None,
+                "rom": {"game_code": cfg.get("version") or "", "region": consoles.name(cfg.get("platform")),
+                        "title": proj["name"]},
+                "compiler": {"toolchain": "project", "name": "Project's own build", "flags": [], "installed": True,
+                             "proprietary": False, "supported": True},
+                "compilers": [],
+                "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
+                "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
+                "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
+                "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
+                "measures": cfg.get("measures") or {}, "uncovered": None, "rebuild": None,
+                "reimports": cfg.get("origin") == "scratch" and consoles.get(cfg.get("platform")).reimports,
+                "build_problem": None, "missing": missing,
+            }
+        if cfg.get("ready"):
+            self._preflight_once(slug)
         m = cfg.get("measures") or {}
         need = fp.needs(cfg.get("version")) if not cfg.get("ready") else None
         return {

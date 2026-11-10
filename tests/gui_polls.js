@@ -406,6 +406,30 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       document.getElementById = original;
     }
   })()`, ctx);
+  // a project whose folder was deleted: its home card says so and Remove sends its database records away
+  checks.missingProject = await vm.runInContext(`(async () => {
+    const was = { projects: S.projects, dialog, api, showHome, loadNav, toast };
+    const go = { onclick: null }, body = { title: "", text: "" }, calls = [], notes = [];
+    const original = document.getElementById;
+    document.getElementById = (id) => (id === "rmMissingGo" ? go : original(id));
+    try {
+      S.projects = [{ slug: "gone", title: "Gone <Game>", platform_short: "N64",
+        missing: "Its folder is missing: /tmp/gone. Put it back where it was, or remove the project from decompdecomp." }];
+      const html = missingProjectHtml(S.projects[0]);
+      dialog = (title, text) => { body.title = title; body.text = text; return body; };
+      api = async (url, options) => { calls.push([url, options]); return { ok: true }; };
+      showHome = async () => { calls.push(["home"]); };
+      loadNav = () => { calls.push(["nav"]); };
+      toast = (html) => notes.push(String(html));
+      removeMissingProject(S.projects[0]);
+      await go.onclick();
+      return { html, title: body.title, text: body.text, calls, notes };
+    } finally {
+      S.projects = was.projects; dialog = was.dialog; api = was.api;
+      showHome = was.showHome; loadNav = was.loadNav; toast = was.toast;
+      document.getElementById = original;
+    }
+  })()`, ctx);
   // a 2017 game's program dropped before the page's state arrived (review of #138): pickFile waits for the state,
   // whose PC table names the pack (it was offered 6.0-7.1's), and the import's dialog lists that 32-bit program's
   // own compilers, never the 64-bit one (setupCompilers, compilerFits)

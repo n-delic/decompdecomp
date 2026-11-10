@@ -32,6 +32,14 @@ async function showHome() {
   $("home").classList.toggle("returning", projects.length > 0);
   for (const p of projects) {
     const pct = codePct(p);
+    if (p.missing) {
+      const card = document.createElement("article");
+      card.className = "card missing";
+      card.innerHTML = missingProjectHtml(p);
+      card.querySelector("[data-remove-project]").onclick = () => removeMissingProject(p);
+      box.append(card);
+      continue;
+    }
     const a = document.createElement("a");
     a.className = "card";
     a.href = `#/p/${p.slug}`;
@@ -51,6 +59,28 @@ async function showHome() {
     box.append(a);
     requestAnimationFrame(() => { a.querySelector(".meter i").style.width = pct + "%"; });
   }
+}
+
+/* A project whose folder was deleted from the computer: its database records can still be removed here. */
+function missingProjectHtml(p) {
+  return `<div class="cc-top"><span class="plat">${esc(p.platform_short || p.platform_name || "?")}</span><span class="grow"></span><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span></div>
+    <div><h4>${esc(p.title)}</h4><p class="meta err-text">${esc(p.missing)}</p></div>
+    <div class="row"><button class="ghost small-btn" type="button" data-remove-project="${esc(p.slug)}">Remove project…</button></div>`;
+}
+
+function removeMissingProject(p) {
+  dialog("Remove project", `<p>Remove <b>${esc(p.title)}</b> from decompdecomp? Its folder is missing, so only decompdecomp's records of it (its matches and notes) are deleted.</p>
+    <p class="muted small">${esc(p.missing || "")}</p>
+    <div class="row"><button class="primary" id="rmMissingGo" type="button">Remove</button><button class="ghost" data-close type="button">Cancel</button></div>`);
+  $("rmMissingGo").onclick = async () => {
+    try {
+      await api("/api/delete", { method: "POST", body: { slug: p.slug } });
+      closeDialog();
+      await showHome();
+      loadNav();
+      toast("Project removed from decompdecomp.");
+    } catch (e) { toast(esc(e.message), "err"); }
+  };
 }
 
 function resetDrop() {
