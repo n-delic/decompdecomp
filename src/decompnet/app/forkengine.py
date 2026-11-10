@@ -3442,16 +3442,50 @@ class ForkEngine:
         if not cfg.get("ready"):
             raise NetworkError("finish setting the project up first")
         console = consoles.get(cfg.get("platform"))
+        rows = self.net.store.all("SELECT id, name, unit, meta FROM functions WHERE project_id=? AND status='open' "
+                                  "ORDER BY n_insns, id", proj["id"])
         if console.own_drafts:
             if (rel := console.prepare_drafts(fp)):
                 self._commit(proj, fp, rel, "Add the types machine drafts use\n\nWritten by decompdecomp's autopilot.")
-        elif not drafts.supported(cfg.get("platform") or "") or toolchains.installed("m2c") is None:
-            raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
-        elif drafts.add_m2c_macros(fp.root / "include" / "common.h"):  # projects made before autopilot ran on them
-            self._commit(proj, fp, "include/common.h", "Add the macros machine drafts use\n\nWritten by decompdecomp's autopilot.")
-        rows = self.net.store.all("SELECT id FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns, id",
-                                  proj["id"])
+        else:
+            if not drafts.supported(cfg.get("platform") or ""):
+                raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
+            # m2c reads the assembly a project keeps for its undecompiled functions. A ds-decomp project has none: its
+            # sources are the delinked code as comments, so every draft would fail and autopilot would still commit
+            # the macros (#232). Say so before writing anything, and let the helpers have the project.
+            if rows and self._draft_asm(fp, rows) is None:
+                raise NetworkError("Autopilot needs machine drafts, and this project keeps no assembly for m2c to read "
+                                   "(a ds-decomp project): helpers still work on it.")
+            if toolchains.installed("m2c") is None:
+                raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
+            if drafts.add_m2c_macros(fp.root / "include" / "common.h"):  # projects made before autopilot ran on them
+                self._commit(proj, fp, "include/common.h", "Add the macros machine drafts use\n\nWritten by decompdecomp's autopilot.")
         return [r["id"] for r in rows]
+
+    def _draft_asm(self, fp: ForkProject, rows) -> Path | None:
+        """The assembly file of the first of these open functions that has one (forks/drafts.py's lookup), or None
+        when the project keeps no assembly for m2c to read."""
+        sources: dict[str | None, str | None] = {}
+        unit_of = getattr(fp, "unit", None)  # (a project whose objdiff.json isn't there to read yet)
+        for fn in rows:
+            unit_name, source = fn["unit"], None
+            if unit_of is not None:
+                try:
+                    unit = unit_of(unit_name)
+                except ForkError:  # (not in objdiff.json any more: its assembly may still be in asm/)
+                    unit = None
+                if unit is not None:
+                    unit_name, source = unit.name, unit.source
+            if source not in sources:
+                try:
+                    sources[source] = ((fp.root / source).read_text(errors="replace", encoding="utf-8")
+                                       if source else None)
+                except OSError:
+                    sources[source] = None
+            if (asm := drafts.find_asm(fp.root, unit_name, self._meta(fn).get("symbol") or fn["name"],
+                                       sources[source])) is not None:
+                return asm
+        return None
 
     def _known(self, fp: ForkProject, unit) -> str:
         """The project's headers and a unit's source file, as one text: what drafts take declarations from."""
