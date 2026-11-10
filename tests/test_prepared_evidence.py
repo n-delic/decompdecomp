@@ -216,7 +216,7 @@ def test_reverified_bundle_ignores_only_nonbuild_progress(monkeypatch,change):
         return SimpleNamespace(ok=True,obj=b'object',effective_settings={'compiler':settings})
     net._compile=compile;net._evaluate=lambda *a:(object(),True,[])
     monkeypatch.setattr(compiler_context,'acceptable',lambda *a:True)
-    if change in ('range_checks','compiler_survey'):
+    if change in ('range_checks','compiler_survey','compiler'):
         # publish_profile expects range-check lists; use a genuine progress structure.
         original=compile
         def compile_valid(*args):
@@ -233,4 +233,4 @@ def test_reverified_bundle_ignores_only_nonbuild_progress(monkeypatch,change):
         with pytest.raises(NetworkError):
             evidence.promote_measured(net,proj,fn,'exact C','private types',settings,Agent(1,'autopilot',None),expected)
         assert net._function('f','game')['status']=='open'
-    assert len(calls)==1
+    assert len(calls)==(2 if change=='compiler' else 1)
