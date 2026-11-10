@@ -402,6 +402,16 @@ def test_the_definition_the_build_sees_beside_a_parked_one_is_found_by_its_annot
     text = text.replace("#endif\n", "#else\nint F(void) { return 1; }\n#endif\n")
     seen = ForkEngine._seen_beside(fp, text, csource.find(text, key), key, [key, "func_00011000"])
     assert seen is not None and text[seen[0]:seen[1]] == "int F(void) { return 1; }\n"
+    # and past any macro written the same way, not a list of known ones: `MY_ATTR(1) int F(void)` read as MY_ATTR
+    text = ("#define MY_ATTR(x)\n#ifdef PARKED\nMY_ATTR(1) int F(void) { return 2; }\n#endif\n"
+            "MY_ATTR(1) int H(void) { return 3; }\n")
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "F"), "F", ["F"]) is None
+    for head, name in (("MY_ATTR(1, (2)) static int F(int a) const", "F"), ("__declspec(align(16)) int F(void)", "F"),
+                       ("__attribute__((format(printf, 1, 2))) int P(const char *f, ...)", "P"),
+                       ("void __attribute__((noinline)) G(int a)", "G"), ("int (*Pick(int a))(int b)", "Pick"),
+                       ("CFoo::CFoo(int a) : m_a(a), m_b(0)", "CFoo::CFoo"), ("int Get() const throw()", "Get"),
+                       ("void Car::operator()(int)", "Car::operator()"), ("int f(a, b)\nint a; int b;\n", "f")):
+        assert csource.defined_name(head + " {\n}\n", (0, len(head) + 4)) == name, head
 
 
 def test_csource_takes_no_macro_written_prototype_for_a_definition():

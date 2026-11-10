@@ -45,8 +45,10 @@ def test_adding_a_helper_or_call_site_says_to_check_the_convention_again():
 def test_the_xbox_up_front_material_is_lean_and_x86_only_material_stays_on_x86():
     """An Xbox LTCG helper's first prompt was 19 KB, with GameCube material and repetition in the Xbox guide."""
     assert len(tools.guide_text("xbox", "xbox").encode()) < 8000
-    # (the shared fork, objdiff and x86 guides it's made of: 14.6 KB on main as of 2026-11)
-    assert len(tools.up_front("xbox", "fork", "").encode()) < 15000
+    # up front, only the shared fork, objdiff and x86 guides (main's, which grow: a size bound on them went stale at
+    # 15 KB, then 16 KB), never another console's
+    assert tools.up_front("xbox", "fork", "") == "\n\n".join(tools.guide_text(t, "xbox")
+                                                              for t in ("fork", "objdiff", "x86"))
     assert "Struct_00011570" in tools.guide_text("cpp", "xbox")
     assert "Struct_00011570" not in tools.guide_text("cpp", "gc")
     text = _xbox()

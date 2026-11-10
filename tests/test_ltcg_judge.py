@@ -278,6 +278,10 @@ def test_an_inline_helper_in_the_map_isnt_judged_as_the_annotated_function(tmp_p
     text = "// FUNCTION: 0x11000\n__declspec(noinline)\nvoid G(int a)\n{\n}\n"
     decl = dll2coff.definition(text, dll2coff._blank(text), at, len(text), ["_func_00011000"])
     assert decl == "void G(" and dll2coff.symbol_hint(decl) == "?G@@"
+    text = "// FUNCTION: 0x11000\nMY_ATTR(1, (2))\nvoid G(int a)\n{\n}\n"  # any macro, not a list of known ones
+    assert dll2coff.definition(text, dll2coff._blank(text), at, len(text), ["_func_00011000"]) == "void G("
+    text = "// FUNCTION: 0x11000\nint\nmain(void)\n{\n}\n"  # (a line of one call alone is the definition's)
+    assert dll2coff.definition(text, dll2coff._blank(text), at, len(text), ["_func_00011000"]) == "main("
 
 
 @pytest.mark.parametrize("text,app,judge", [

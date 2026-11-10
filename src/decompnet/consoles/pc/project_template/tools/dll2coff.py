@@ -64,8 +64,8 @@ def _blank(text: str) -> str:
 
 
 _INLINE_HEAD = re.compile(r"\b(?:inline|__inline|__forceinline)\b")
-# what's written before a declaration with parentheses of its own (the app's csource skips the same)
-_DECLARATION_MACROS = re.compile(r"\b(?:__declspec|__attribute__|__attribute|alignas|_Alignas)\s*\((?:[^()]|\([^()]*\))*\)")
+# what's written before a declaration with parentheses of its own (`__declspec(noinline)`, `MY_ATTR(1)`), alone on a line
+_ONLY_CALLS = re.compile(r"\s*(?:\w+\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)\s*)+")  # a line of `NAME(...)`s alone
 
 
 def _past(clean: str, brace: int) -> int:
@@ -135,15 +135,19 @@ def _definition_lines(text: str, clean: str, pos: int, bound: int):
         if "(" not in head or re.match(r"\s*(?:typedef\s+)?(?:struct|class|union|enum|namespace)\b", head):
             pos = _past(clean, brace)  # past the type (or initialiser)
             continue
-        at, found = head_at, None
-        for ln in clean[head_at:brace].split("\n"):  # its first line: the one with the "(" (not a #pragma, nor a line
-            # of only `__declspec(noinline)`: a definition written over two lines was cut as `?__declspec@@`)
-            if "(" in _DECLARATION_MACROS.sub("", ln) and not ln.lstrip().startswith("#"):
-                start = at + len(ln) - len(ln.lstrip())
-                # up to its last "(" (`__declspec(noinline) bool A::F(`); the real text: extern "C" keeps its "C"
-                found = text[start:at + ln.rindex("(") + 1]
-                break
+        at, lines = head_at, []
+        for ln in clean[head_at:brace].split("\n"):  # its lines with a "(" (not a #pragma)
+            if "(" in ln and not ln.lstrip().startswith("#"):
+                lines.append((at, ln))
             at += len(ln) + 1
+        # its first line: the first of them that isn't only macro calls (`__declspec(noinline)`, `MY_ATTR(1)` on a line
+        # of its own: a definition written over two lines was cut as `?__declspec@@`), else the last (`main(void)`)
+        at, ln = next(((a, s) for a, s in lines if not _ONLY_CALLS.fullmatch(s)), lines[-1] if lines else (0, ""))
+        found = None
+        if lines:
+            start = at + len(ln) - len(ln.lstrip())
+            # up to its last "(" (`__declspec(noinline) bool A::F(`); the real text: extern "C" keeps its "C"
+            found = text[start:at + ln.rindex("(") + 1]
         if found is None:
             return
         yield found, bool(_INLINE_HEAD.search(head))

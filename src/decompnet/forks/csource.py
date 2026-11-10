@@ -110,19 +110,48 @@ def _definitions(text: str, clean: str, pos: int, bound: int):
 
 
 # what's written before a declaration with parentheses of its own, never the function's name
-_DECLARATION_MACROS = {"__declspec", "__attribute__", "__attribute", "alignas", "_Alignas", "__pragma", "_Pragma"}
 _NAME_THEN_PAREN = re.compile(  # (not `int (*Pick(int a))(int b)`'s `int (*`: a declarator's parenthesis)
     r"(?<![\w~:<>])((?:[\w~<>]+::)*operator\s*(?:\(\)|[^\s(]+)|(?:[\w~<>]+::)*~?\w+)\s*\((?!\s*[*&^])")
+_GROUP = r"\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"  # a parenthesised group, two levels deep
+# what can come between a parameter list and the body: qualifiers and an exception specification, then a
+# constructor's initialisers, a trailing return type, or a declarator's closing `)`. Not another `NAME(...)`: in a
+# definition, attributes and macros like them come before the declarator, and `MY_ATTR(1) int F(void)`'s F is the
+# name only once MY_ATTR's own group isn't taken for its parameter list
+_AFTER_PARAMETERS = re.compile(
+    rf"(?:\s|const\b|volatile\b|override\b|final\b|&&?|(?:throw|noexcept|__attribute__)\s*{_GROUP}|noexcept\b)*"
+    r"(?:(?::|->|\)).*)?", re.S)
 
 
 def defined_name(text: str, span: tuple[int, int]) -> str | None:
     """The name a definition gives its function (`CAIBehaviour::Update` for `void CAIBehaviour::Update(int)`): the
-    name right before its parameter list, past `__declspec(noinline)` and `__attribute__((...))`, which were taken
-    for it (a parked draft's `__declspec(noinline) int F(void)` read as `__declspec`, and the next function written
-    the same way was taken for its visible copy)."""
-    clean = _blank(text[span[0]:span[1]])
-    return next((m.group(1) for m in _NAME_THEN_PAREN.finditer(clean.split("{", 1)[0])
-                 if m.group(1) not in _DECLARATION_MACROS), None)
+    name whose parameter list the body follows (after qualifiers, `throw()`, attributes, initialisers). The name
+    before the first `(` was taken for it, and of a parked draft written `__declspec(noinline) int F(void)` (or with
+    any macro, `MY_ATTR(1) int F(void)`) the next function written the same way was taken for its visible copy. A K&R
+    definition's declarations come before its body too (a `;` there)."""
+    head = _blank(text[span[0]:span[1]]).split("{", 1)[0]
+    found = [m for m in _NAME_THEN_PAREN.finditer(head) if _in_declarator(head, m.start())]
+    for m in found:
+        depth, k = 0, m.end() - 1
+        while k < len(head):
+            depth += (head[k] == "(") - (head[k] == ")")
+            k += 1
+            if depth == 0:
+                break
+        if ";" in head[k:] or _AFTER_PARAMETERS.fullmatch(head[k:]):
+            return m.group(1)
+    return found[0].group(1) if found else None
+
+
+def _in_declarator(head: str, at: int) -> bool:
+    """True when `at` isn't inside another call's parentheses: at the top, or only in a declarator's own (`(*`), as
+    `Pick` is in `int (*Pick(int a))(int b)`. `align` in `__declspec(align(16))` is an argument."""
+    opened = []
+    for k, c in enumerate(head[:at]):
+        if c == "(":
+            opened.append(re.match(r"\(\s*[*&^]", head[k:]) is not None)
+        elif c == ")" and opened:
+            opened.pop()
+    return all(opened)
 
 
 def _unbalanced(between: str) -> bool:
