@@ -362,7 +362,8 @@ class Service:
             if self.revisions.get(project["id"]) == now:
                 return
             self.revisions[project["id"]] = now
-            for cache in ("_syms", "_xrefs", "_roms", "_sym_override", "_asm_names", "_generation"):
+            for cache in ("_syms", "_xrefs", "_roms", "_sym_override", "_asm_names", "_generation",
+                          "_rename_generation"):
                 getattr(self.net, cache, {}).pop(project["id"], None)
 
     def call(self, headers: dict, name: str, args: dict) -> str:

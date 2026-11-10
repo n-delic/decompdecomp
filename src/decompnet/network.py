@@ -482,6 +482,7 @@ class Network:
         self.repair_feedback = RepairFeedback(self)
         self._last_diffs: dict[tuple[int, int], tuple[list, str]] = {}
         self._generation: dict[int, int] = {}  # project id -> changes compiles depend on (bump_generation)
+        self._rename_generation: dict[int, int] = {}  # how many of those bumps were renames (polishing's guard)
         self._context_rejections = OrderedDict()
         self._context_trial_locks = {}
         self._compiled: OrderedDict[str, dict] = OrderedDict()  # compile_key -> result, for repeat_of
@@ -826,6 +827,8 @@ class Network:
                    (project_id, agent_id, kind, detail, time.time()))
         if kind in GENERATION_EVENTS and project_id is not None:
             self.bump_generation(project_id)
+            if kind == "rename":
+                self._rename_generation[project_id] = self._rename_generation.get(project_id, 0) + 1
 
     # ------------------------------------------------------- repeat compiles
 

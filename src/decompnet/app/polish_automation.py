@@ -76,8 +76,15 @@ def input_key(net, proj, fn, original, candidate='', *, receipt=None):
     # Copy the nested mapping: Engine.cfg returns a shared immutable-by-convention cache.
     if isinstance(config.get('auto_push'), dict):
         config['auto_push'] = {key:value for key,value in config['auto_push'].items() if key != 'next_check'}
+    generation = net._generation.get(proj['id'], 0)
+    if net.is_rom(proj):
+        # Agents rename constantly while polishing (80 in a quarter of an hour on an N64 game), and each rename
+        # bumped the generation, refusing every polish in flight. A ROM rename that reaches this function shows
+        # in the components below anyway: its own or a used name's address (symbols), its unit's header, its
+        # compiler profile (configuration). Fork projects have none of those, so every rename still counts there.
+        generation -= net._rename_generation.get(proj['id'], 0)
     parts = [str(POLISH_REVISION), original, json.dumps(config, sort_keys=True), str(fn['id']), str(fn['target']), str(fn['relocs']),
-             str(fn['vram']), str(fn['meta']), str(net._generation.get(proj['id'], 0))]
+             str(fn['vram']), str(fn['meta']), str(generation)]
     if net.is_rom(proj):
         ctx = net._context(proj['id'], fn['unit'])
         parts += [ctx['header'], str(ctx['version'])]
