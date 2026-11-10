@@ -46,3 +46,6 @@ scripts/
 
 # Local development launcher
 launch-dev.ps1
+
+# the MCP gateway's cargo build (gateway/)
+/gateway/target/
