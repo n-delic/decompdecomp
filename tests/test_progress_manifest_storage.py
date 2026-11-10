@@ -224,9 +224,11 @@ def test_compaction_covers_each_project_database(tmp_path):
             store.conn.close()
 
 
-def test_offline_compaction_opens_project_databases_with_their_namespace(tmp_path, monkeypatch):
+def test_offline_compaction_opens_project_databases_with_their_namespace(tmp_path, monkeypatch, capsys):
     """tools/compact_databases.py on a real layout: project databases carry an identifier namespace and need the
-    catalog's repair archive, as the app opens them (it crashed on the first project database before)."""
+    catalog's repair archive, as the app opens them (it crashed on the first project database before). A deleted
+    project's database is fenced against writes and never opened by the app, so it is compacted only (opening an old
+    one upgraded its schema and hit the fence)."""
     import importlib.util
     import sqlite3
     import sys
@@ -245,6 +247,12 @@ def test_offline_compaction_opens_project_databases_with_their_namespace(tmp_pat
         with leaf.tx() as db:
             db.execute('DELETE FROM scratch')
         leaf.conn.close()
+        # A deleted project's database stays on disk fenced against writes (project_files.Files._mark_removed).
+        from decompnet.project_files import Files
+        gone = Store(internal / 'project-databases' / '8.sqlite3', project_namespace=8,
+                     repair_archive=catalog.store.conn.repair_archive)
+        Files._mark_removed(None, gone)
+        gone.conn.close()
     finally:
         catalog._pool.shutdown()
         catalog.store.conn.close()
@@ -260,3 +268,7 @@ def test_offline_compaction_opens_project_databases_with_their_namespace(tmp_pat
     with sqlite3.connect(path) as db:
         assert db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         assert db.execute('SELECT value FROM settings WHERE key=?', (KEY,)).fetchone()[0] == '7'
+    with sqlite3.connect(internal / 'project-databases' / '8.sqlite3') as db:
+        assert db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+    out = capsys.readouterr().out
+    assert out.split('8.sqlite3:')[1].splitlines()[1].strip() == 'a deleted project: compacted only'

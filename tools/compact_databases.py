@@ -46,12 +46,17 @@ def files(internal):
 
 def open_store(path, catalog):
     """A database opened as the app opens it: a project database with its own identifier namespace (the marker it
-    stores) and the catalog's shared repair archive."""
+    stores) and the catalog's shared repair archive. None for a deleted project's database: the app fences it against
+    writes and never opens it again, so it is compacted only."""
     from decompnet.shard_ids import KEY
     from decompnet.store import Store
     with sqlite3.connect(f'file:{path}?mode=ro', uri=True) as db:
         has_settings = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").fetchone()
         marker = db.execute('SELECT value FROM settings WHERE key=?', (KEY,)).fetchone() if has_settings else None
+        removed = has_settings and db.execute(
+            "SELECT 1 FROM settings WHERE key='project-storage-removed'").fetchone()
+    if removed:
+        return None
     if marker is None:
         return Store(path)
     if catalog is None:
@@ -90,11 +95,14 @@ def main():
                 from decompnet import payload_links
                 catalog = catalog or open_store(internal / 'decomp.db', None)
                 store = catalog if path == internal / 'decomp.db' else open_store(path, catalog)
-                try:
-                    print('    removed', payload_links.collect(store, Log()), 'unused shared payloads')
-                finally:
-                    if store is not catalog:
-                        store.conn.close()
+                if store is None:
+                    print('    a deleted project: compacted only')
+                else:
+                    try:
+                        print('    removed', payload_links.collect(store, Log()), 'unused shared payloads')
+                    finally:
+                        if store is not catalog:
+                            store.conn.close()
             if shutil.disk_usage(path.parent).free < 2 * before:
                 print('    skipped compaction: free at least twice this file\'s size on its drive')
                 continue
