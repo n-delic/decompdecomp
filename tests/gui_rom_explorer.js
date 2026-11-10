@@ -177,6 +177,22 @@ function setup(){
     t.run('romView().report.stale=true;drawRomTypeMap()');canvas.onkeydown({key:'Enter',preventDefault(){}});assert.equal(opened.length,2);
     t.run('romView().report=null;drawRomTypeMap()');assert.equal(t.context.$('romTypeMapPanel').hidden,true);
   }
+  // The byte strip and the grid draw the same rows in the same colours, and
+  // grouping changes both.
+  {
+    const t=setup(),strip=[],grid=[];
+    const map=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/map.js'),'utf8');
+    vm.runInContext(map.slice(map.indexOf('function squareMapLayout('),map.indexOf('function layoutMap(')),t.context);
+    t.context.getComputedStyle=()=>({getPropertyValue:name=>name});
+    const paint=(log,cell)=>{const ctx={scale(){},beginPath(){},fill(){},strokeRect(){},roundRect(){log.push(ctx.fillStyle);},fillRect(){log.push(ctx.fillStyle);}};return ()=>ctx;};
+    t.context.$('romMap').getContext=paint(strip);t.context.$('romMap').clientWidth=200;
+    t.context.$('romTypeMap').getContext=paint(grid);t.context.$('romTypeMap').clientWidth=200;
+    t.run("romView().report={available:true,size:40,regions:[{id:'a',start:0,end:10,size:10,kind:'code'},{id:'b',start:10,end:20,size:10,kind:'image'},{id:'c',start:20,end:30,size:10,kind:'image'},{id:'d',start:30,end:40,size:10,kind:'repeated bytes'}],asset_groups:[{id:'g',start:10,end:30,size:20,region_ids:['b','c']}]};drawRomMap();drawRomTypeMap()");
+    assert.deepEqual(strip,['--cc-1','--cc-2','--muted']);assert.deepEqual(grid,strip);
+    assert.match(t.context.$('romTypeLegend').innerHTML,/Image \(1\)/);assert.equal(t.context.$('romMapKey').hidden,false);
+    strip.length=0;grid.length=0;t.context.$('romGroupAssets').checked=false;t.context.$('romGroupAssets').onchange();
+    assert.equal(strip.length,4);assert.deepEqual(grid,strip);assert.match(t.context.$('romTypeLegend').innerHTML,/Image \(2\)/);
+  }
   // Discovery shares the preview lock and retains errors through delayed requests.
   {
     const t=setup(),body=element(),pending=deferred();t.context.body=body;
