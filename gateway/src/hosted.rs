@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path as UrlPath, Query, State};
@@ -42,6 +42,11 @@ const PROTOCOL_FALLBACK: &str = "2025-06-18";
 const LEASE_SECONDS: f64 = 10.0 * 60.0;
 /// Verifiers that couldn't judge a submission this many times: it is marked unverifiable.
 const MAX_TRIES: i64 = 3;
+/// How long the server trusts what it remembers of users, access and its policy: changes made from the command line
+/// (another process) apply within this; changes over HTTP at once.
+const REMEMBER: Duration = Duration::from_secs(10);
+/// Tool calls a user may make a minute, unless `serve --rate` says otherwise.
+pub const RATE: f64 = 600.0;
 
 const PROJECT_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS claims(function_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, user_name TEXT NOT NULL,
@@ -60,6 +65,8 @@ CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY AUTOINCREMENT, function_
 const SERVER_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
     token_hash TEXT NOT NULL UNIQUE, role TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS access(user_id INTEGER NOT NULL, slug TEXT NOT NULL, PRIMARY KEY(user_id, slug));
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS verifiers(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL,
     projects TEXT NOT NULL, toolchains TEXT NOT NULL, slots INTEGER NOT NULL, version TEXT NOT NULL,
     registered_at REAL NOT NULL, last_seen REAL NOT NULL, UNIQUE(user_id, name));
@@ -779,7 +786,13 @@ pub struct Hosted {
     dir: PathBuf,
     server: Mutex<Connection>,
     /// token hash -> user, so a request doesn't wait on the users' file (a new user is found on the first miss).
-    known: Mutex<HashMap<String, User>>,
+    known: Mutex<HashMap<String, (User, Instant)>>,
+    /// (user, project) -> may use it; and "open" or "invite" (settings 'access').
+    access: Mutex<HashMap<(i64, String), (bool, Instant)>>,
+    policy: Mutex<Option<(String, Instant)>>,
+    /// user -> (calls left, when counted): `rate` calls a minute each.
+    buckets: Mutex<HashMap<i64, (f64, Instant)>>,
+    pub rate: f64,
     projects: Mutex<HashMap<String, Arc<Project>>>,
     users: Mutex<HashMap<i64, Arc<Semaphore>>>,
 }
@@ -797,6 +810,10 @@ impl Hosted {
             dir: dir.to_path_buf(),
             server: Mutex::new(server),
             known: Mutex::new(HashMap::new()),
+            access: Mutex::new(HashMap::new()),
+            policy: Mutex::new(None),
+            buckets: Mutex::new(HashMap::new()),
+            rate: RATE,
             projects: Mutex::new(HashMap::new()),
             users: Mutex::new(HashMap::new()),
         })
@@ -825,8 +842,10 @@ impl Hosted {
             return None;
         }
         let hashed = hash_token(token);
-        if let Some(user) = self.known.lock().unwrap().get(&hashed) {
-            return Some(user.clone());
+        if let Some((user, at)) = self.known.lock().unwrap().get(&hashed) {
+            if at.elapsed() < REMEMBER {
+                return Some(user.clone());
+            }
         }
         let user = self
             .server
@@ -836,9 +855,168 @@ impl Hosted {
                 Ok(User { id: r.get(0)?, name: r.get(1)?, role: r.get(2)? })
             })
             .optional()
-            .ok()??;
-        self.known.lock().unwrap().insert(hashed, user.clone());
-        Some(user)
+            .ok()?;
+        let mut known = self.known.lock().unwrap();
+        match user {
+            Some(user) => {
+                known.insert(hashed, (user.clone(), Instant::now()));
+                Some(user)
+            }
+            None => {
+                known.remove(&hashed); // removed, or its token replaced
+                None
+            }
+        }
+    }
+
+    fn forget(&self) {
+        self.known.lock().unwrap().clear();
+        self.access.lock().unwrap().clear();
+        *self.policy.lock().unwrap() = None;
+    }
+
+    /// "open" (every user may use every project) or "invite" (agents and verifiers only the projects granted them).
+    pub fn policy(&self) -> String {
+        if let Some((policy, at)) = self.policy.lock().unwrap().clone() {
+            if at.elapsed() < REMEMBER {
+                return policy;
+            }
+        }
+        let policy: String = self
+            .server
+            .lock()
+            .unwrap()
+            .query_row("SELECT value FROM settings WHERE key='access'", [], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "open".into());
+        *self.policy.lock().unwrap() = Some((policy.clone(), Instant::now()));
+        policy
+    }
+
+    pub fn set_policy(&self, policy: &str) -> Result<(), String> {
+        if !matches!(policy, "open" | "invite") {
+            return Err(format!("access is open or invite, not {policy:?}"));
+        }
+        self.server
+            .lock()
+            .unwrap()
+            .execute("INSERT OR REPLACE INTO settings VALUES('access',?)", [policy])
+            .map_err(|e| e.to_string())?;
+        self.forget();
+        Ok(())
+    }
+
+    pub fn allowed(&self, user: &User, slug: &str) -> bool {
+        if user.role == "admin" || self.policy() == "open" {
+            return true;
+        }
+        let key = (user.id, slug.to_string());
+        if let Some((allowed, at)) = self.access.lock().unwrap().get(&key) {
+            if at.elapsed() < REMEMBER {
+                return *allowed;
+            }
+        }
+        let allowed = self
+            .server
+            .lock()
+            .unwrap()
+            .query_row("SELECT 1 FROM access WHERE user_id=? AND slug=?", params![user.id, slug], |_| Ok(()))
+            .optional()
+            .ok()
+            .flatten()
+            .is_some();
+        self.access.lock().unwrap().insert(key, (allowed, Instant::now()));
+        allowed
+    }
+
+    /// One tool call against the user's budget of `rate` a minute.
+    pub fn spend(&self, user: &User) -> bool {
+        let mut buckets = self.buckets.lock().unwrap();
+        let (left, at) = buckets.entry(user.id).or_insert((self.rate, Instant::now()));
+        *left = (*left + at.elapsed().as_secs_f64() * self.rate / 60.0).min(self.rate);
+        *at = Instant::now();
+        if *left < 1.0 {
+            return false;
+        }
+        *left -= 1.0;
+        true
+    }
+
+    fn user_id(&self, name: &str) -> Result<i64, String> {
+        self.server
+            .lock()
+            .unwrap()
+            .query_row("SELECT id FROM users WHERE name=?", [name], |r| r.get(0))
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("no user {name:?}"))
+    }
+
+    /// The user and everything theirs on the server (access, verifier entries); their claims run out.
+    pub fn remove_user(&self, name: &str) -> Result<(), String> {
+        let id = self.user_id(name)?;
+        {
+            let db = self.server.lock().unwrap();
+            for sql in ["DELETE FROM access WHERE user_id=?", "DELETE FROM verifiers WHERE user_id=?", "DELETE FROM users WHERE id=?"] {
+                db.execute(sql, [id]).map_err(|e| e.to_string())?;
+            }
+        }
+        self.forget();
+        Ok(())
+    }
+
+    /// A new token for a user; the old one stops working.
+    pub fn rotate(&self, name: &str) -> Result<String, String> {
+        let id = self.user_id(name)?;
+        let token = format!("dd_{}", new_token(24));
+        self.server
+            .lock()
+            .unwrap()
+            .execute("UPDATE users SET token_hash=? WHERE id=?", params![hash_token(&token), id])
+            .map_err(|e| e.to_string())?;
+        self.forget();
+        Ok(token)
+    }
+
+    pub fn grant(&self, name: &str, slug: &str, allow: bool) -> Result<(), String> {
+        if !valid_slug(slug) {
+            return Err(format!("{slug:?} isn't a project name"));
+        }
+        let id = self.user_id(name)?;
+        let sql = if allow { "INSERT OR IGNORE INTO access VALUES(?,?)" } else { "DELETE FROM access WHERE user_id=? AND slug=?" };
+        self.server.lock().unwrap().execute(sql, params![id, slug]).map_err(|e| e.to_string())?;
+        self.forget();
+        Ok(())
+    }
+
+    pub fn users_list(&self) -> Result<Value, String> {
+        let db = self.server.lock().unwrap();
+        let mut statement = db
+            .prepare(
+                "SELECT u.name,u.role,u.created_at,(SELECT json_group_array(slug) FROM access a WHERE a.user_id=u.id) \
+                 FROM users u ORDER BY u.name",
+            )
+            .map_err(|e| e.to_string())?;
+        let users: Vec<Value> = statement
+            .query_map([], |r| {
+                Ok(json!({"name": r.get::<_, String>(0)?, "role": r.get::<_, String>(1)?,
+                          "created_at": r.get::<_, f64>(2)?,
+                          "projects": serde_json::from_str::<Value>(&r.get::<_, String>(3)?).unwrap_or(Value::Null)}))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(json!({"access": self.policy_now(&db), "users": users}))
+    }
+
+    fn policy_now(&self, db: &Connection) -> String {
+        db.query_row("SELECT value FROM settings WHERE key='access'", [], |r| r.get(0))
+            .optional()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "open".into())
     }
 
     pub fn project(&self, slug: &str) -> Option<Arc<Project>> {
@@ -906,7 +1084,11 @@ impl Hosted {
         )?;
         let id: i64 =
             db.query_row("SELECT id FROM verifiers WHERE user_id=? AND name=?", params![user.id, name], |r| r.get(0))?;
-        let served: Vec<&String> = projects.iter().filter(|s| self.dir.join("projects").join(format!("{s}.sqlite3")).is_file()).collect();
+        drop(db);
+        let served: Vec<&String> = projects
+            .iter()
+            .filter(|s| self.dir.join("projects").join(format!("{s}.sqlite3")).is_file() && self.allowed(user, s))
+            .collect();
         Ok(json!({"verifier": id, "projects": served}))
     }
 
@@ -922,7 +1104,10 @@ impl Hosted {
             .optional()?;
         let Some((projects, toolchains)) = found else { return problem("register this verifier first (POST /v1/verifiers)") };
         db.execute("UPDATE verifiers SET last_seen=? WHERE id=?", params![now(), id])?;
-        Ok((serde_json::from_str(&projects).unwrap_or_default(), serde_json::from_str(&toolchains).unwrap_or_default()))
+        drop(db);
+        let projects: Vec<String> = serde_json::from_str(&projects).unwrap_or_default();
+        let projects = projects.into_iter().filter(|slug| self.allowed(user, slug)).collect();
+        Ok((projects, serde_json::from_str(&toolchains).unwrap_or_default()))
     }
 
     /// Up to `max` submissions for a verifier, across the projects it registered for.
@@ -1032,6 +1217,11 @@ async fn one(hosted: &Arc<Hosted>, project: &Arc<Project>, user: &User, message:
         "tools/call" => {
             let tool = message.pointer("/params/name").and_then(Value::as_str).unwrap_or("").to_string();
             let args = message.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
+            if !hosted.spend(user) {
+                return Some(rpc_result(&id, text_result(format!(
+                    "Too many calls: this server allows {} a minute. Wait a few seconds, then repeat this call.",
+                    hosted.rate as i64), true)));
+            }
             let Ok(_permit) = hosted.lane(user).try_acquire_owned() else {
                 return Some(rpc_result(&id, text_result(format!("You have {PER_USER} calls running: wait for them."), true)));
             };
@@ -1060,6 +1250,9 @@ async fn mcp(State(hosted): State<Arc<Hosted>>, UrlPath(slug): UrlPath<String>, 
     let Some(project) = hosted.project(&slug) else {
         return json_response(StatusCode::NOT_FOUND, rpc_error(&Value::Null, -32004, "no such project"));
     };
+    if !hosted.allowed(&user, &slug) {
+        return json_response(StatusCode::FORBIDDEN, rpc_error(&Value::Null, -32003, "this server hasn't given you this project"));
+    }
     let parsed: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => return json_response(StatusCode::BAD_REQUEST, rpc_error(&Value::Null, -32700, &e.to_string())),
@@ -1093,10 +1286,11 @@ async fn mcp_other() -> Response {
 }
 
 async fn projects(State(hosted): State<Arc<Hosted>>, headers: HeaderMap) -> Response {
-    if hosted.user(&headers).is_none() {
+    let Some(user) = hosted.user(&headers) else {
         return json_response(StatusCode::UNAUTHORIZED, json!({"error": "a valid API token is required"}));
-    }
-    json_response(StatusCode::OK, json!({"projects": hosted.slugs()}))
+    };
+    let mine: Vec<String> = hosted.slugs().into_iter().filter(|s| hosted.allowed(&user, s)).collect();
+    json_response(StatusCode::OK, json!({"projects": mine}))
 }
 
 fn verifier(hosted: &Hosted, headers: &HeaderMap) -> Result<User, Response> {
@@ -1253,6 +1447,71 @@ async fn create_user(State(hosted): State<Arc<Hosted>>, headers: HeaderMap, body
     }
 }
 
+/// GET /v1/users (admins): every user, its role and projects, and the server's access policy.
+async fn list_users(State(hosted): State<Arc<Hosted>>, headers: HeaderMap) -> Response {
+    if let Err(denied) = admin(&hosted, &headers) {
+        return denied;
+    }
+    match hosted.users_list() {
+        Ok(users) => json_response(StatusCode::OK, users),
+        Err(e) => json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": e})),
+    }
+}
+
+/// DELETE /v1/users/{name} (admins)
+async fn remove_user(State(hosted): State<Arc<Hosted>>, UrlPath(name): UrlPath<String>, headers: HeaderMap) -> Response {
+    if let Err(denied) = admin(&hosted, &headers) {
+        return denied;
+    }
+    match hosted.remove_user(&name) {
+        Ok(()) => json_response(StatusCode::OK, json!({"removed": name})),
+        Err(e) => json_response(StatusCode::NOT_FOUND, json!({"error": e})),
+    }
+}
+
+/// POST /v1/users/{name}/token (admins): a new token; the old one stops working.
+async fn rotate(State(hosted): State<Arc<Hosted>>, UrlPath(name): UrlPath<String>, headers: HeaderMap) -> Response {
+    if let Err(denied) = admin(&hosted, &headers) {
+        return denied;
+    }
+    match hosted.rotate(&name) {
+        Ok(token) => json_response(StatusCode::OK, json!({"name": name, "token": token})),
+        Err(e) => json_response(StatusCode::NOT_FOUND, json!({"error": e})),
+    }
+}
+
+/// POST /v1/users/{name}/access {project, allow} (admins)
+async fn grant(State(hosted): State<Arc<Hosted>>, UrlPath(name): UrlPath<String>, headers: HeaderMap, body: Bytes) -> Response {
+    if let Err(denied) = admin(&hosted, &headers) {
+        return denied;
+    }
+    let body = match json_body(&body) {
+        Ok(b) => b,
+        Err(bad) => return bad,
+    };
+    let project = body.get("project").and_then(Value::as_str).unwrap_or("").to_string();
+    let allow = body.get("allow").and_then(Value::as_bool).unwrap_or(true);
+    match hosted.grant(&name, &project, allow) {
+        Ok(()) => json_response(StatusCode::OK, json!({"name": name, "project": project, "allow": allow})),
+        Err(e) => json_response(StatusCode::BAD_REQUEST, json!({"error": e})),
+    }
+}
+
+/// POST /v1/policy {access: open|invite} (admins)
+async fn policy(State(hosted): State<Arc<Hosted>>, headers: HeaderMap, body: Bytes) -> Response {
+    if let Err(denied) = admin(&hosted, &headers) {
+        return denied;
+    }
+    let body = match json_body(&body) {
+        Ok(b) => b,
+        Err(bad) => return bad,
+    };
+    match hosted.set_policy(body.get("access").and_then(Value::as_str).unwrap_or("")) {
+        Ok(()) => json_response(StatusCode::OK, json!({"access": hosted.policy()})),
+        Err(e) => json_response(StatusCode::BAD_REQUEST, json!({"error": e})),
+    }
+}
+
 async fn health() -> Response {
     json_response(StatusCode::OK, json!({"ok": true, "mode": "hosted"}))
 }
@@ -1267,7 +1526,11 @@ pub fn router(hosted: Arc<Hosted>, max_body: usize) -> Router {
         .route("/v1/verifiers", post(register).get(list_verifiers))
         .route("/v1/work/lease", post(lease))
         .route("/v1/work/release", post(release_work))
-        .route("/v1/users", post(create_user))
+        .route("/v1/users", post(create_user).get(list_users))
+        .route("/v1/users/{name}", axum::routing::delete(remove_user))
+        .route("/v1/users/{name}/token", post(rotate))
+        .route("/v1/users/{name}/access", post(grant))
+        .route("/v1/policy", post(policy))
         .route("/health", get(health))
         .layer(DefaultBodyLimit::max(max_body))
         .with_state(hosted)
@@ -1278,6 +1541,7 @@ pub async fn main(args: Vec<String>) -> i32 {
     let mut args = args.into_iter();
     let command = args.next().unwrap_or_default();
     let (mut dir, mut listen, mut name, mut role) = (None, "127.0.0.1:8080".to_string(), None, "agent".to_string());
+    let (mut project, mut access, mut rate) = (None, None, RATE);
     while let Some(flag) = args.next() {
         let value = args.next();
         match (flag.as_str(), value) {
@@ -1285,6 +1549,15 @@ pub async fn main(args: Vec<String>) -> i32 {
             ("--listen", Some(v)) => listen = v,
             ("--name", Some(v)) => name = Some(v),
             ("--role", Some(v)) => role = v,
+            ("--project", Some(v)) => project = Some(v),
+            ("--access", Some(v)) => access = Some(v),
+            ("--rate", Some(v)) => match v.parse::<f64>() {
+                Ok(r) if r >= 1.0 => rate = r,
+                _ => {
+                    eprintln!("decomp-mcp-gateway hosted: --rate is calls a minute (at least 1)");
+                    return 2;
+                }
+            },
             (other, _) => {
                 eprintln!("decomp-mcp-gateway hosted: unknown or incomplete option {other}");
                 return 2;
@@ -1296,12 +1569,45 @@ pub async fn main(args: Vec<String>) -> i32 {
         return 2;
     };
     let hosted = match Hosted::open(&dir) {
-        Ok(h) => Arc::new(h),
+        Ok(mut h) => {
+            h.rate = rate;
+            Arc::new(h)
+        }
         Err(e) => {
             eprintln!("decomp-mcp-gateway hosted: {e}");
             return 3;
         }
     };
+    let report = |result: Result<String, String>| match result {
+        Ok(text) => {
+            println!("{text}");
+            0
+        }
+        Err(e) => {
+            eprintln!("decomp-mcp-gateway hosted {command}: {e}");
+            1
+        }
+    };
+    let named = || name.clone().ok_or_else(|| "--name is required".to_string());
+    match command.as_str() {
+        "remove-user" => return report(named().and_then(|n| hosted.remove_user(&n).map(|_| format!("removed {n}")))),
+        "rotate-token" => return report(named().and_then(|n| hosted.rotate(&n))),
+        "list-users" => return report(hosted.users_list().map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())),
+        "grant" | "revoke" => {
+            let allow = command == "grant";
+            return report(named().and_then(|n| {
+                let p = project.clone().ok_or("--project is required")?;
+                hosted.grant(&n, &p, allow).map(|_| format!("{n} {} {p}", if allow { "may use" } else { "may no longer use" }))
+            }));
+        }
+        "policy" => {
+            return report(match access.clone() {
+                Some(a) => hosted.set_policy(&a).map(|_| format!("access: {a}")),
+                None => Ok(format!("access: {}", hosted.policy())),
+            })
+        }
+        _ => {}
+    }
     match command.as_str() {
         "add-user" => {
             let Some(name) = name else {
@@ -1339,7 +1645,10 @@ pub async fn main(args: Vec<String>) -> i32 {
             0
         }
         other => {
-            eprintln!("decomp-mcp-gateway hosted: commands are serve and add-user, not {other:?}");
+            eprintln!(
+                "decomp-mcp-gateway hosted: commands are serve, add-user, remove-user, rotate-token, list-users, grant, \
+                 revoke and policy, not {other:?}"
+            );
             2
         }
     }
