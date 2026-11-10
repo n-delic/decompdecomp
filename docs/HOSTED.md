@@ -55,20 +55,57 @@ The MCP endpoint is `/p/<slug>/mcp`, with `Authorization: Bearer <token>`. It is
 - A function is named by name, `name@unit` or address.
 - Each user may have 16 calls running at once.
 
-## Verifying
+## Verifying: compiler servers
 
-Verifiers use plain JSON endpoints, with a `verifier` or `admin` token:
+A verifier is a compiler server: any computer with decompdecomp, the game imported and its compilers installed.
+The app's exact judge links each function at its address with the whole project's symbols and the ROM, so a
+verifier needs the full project, not just the hosted file. Several can serve one hosted server; each judges only
+the projects and compilers it has.
 
-- `GET /v1/p/<slug>/pending?limit=50`: submissions waiting, each with its function, compiler, source and reported
-  score.
-- `POST /v1/p/<slug>/verdicts` with `{"id": 12, "score": 0, "detail": "..."}`. Send `"score": null` when it didn't
-  compile.
-  - A verified score at or below the reported one is accepted.
-  - A verified 0 marks the function matched, stores its C and ends its claim.
-  - A worse score or a failed compile marks the submission rejected and changes nothing.
-- `GET /v1/p/<slug>/matches?since=<time>`: verified matches, for the desktop app that owns the full project to take
-  in.
-- `GET /v1/projects` lists the projects, for any user.
+```sh
+# on the server, or remotely by an admin: POST /v1/users {"name": "mac-studio", "role": "verifier"}
+decomp-mcp-gateway hosted add-user --dir /srv/decomp --name mac-studio --role verifier
+# on the compiler server (DECOMP_HOME: the home with the games imported)
+decomp-mcp-gateway verifier --server https://decomp.example --token dd_... --name mac-studio --slots 4
+```
+
+`decomp-mcp-gateway verifier` (gateway/src/verifier.rs) does the following:
+- It runs one judge process per slot, `decomp judge-worker` by default (src/decompnet/hosted_judge.py), or another
+  program given with `--judge PROGRAM --judge-arg ARG`. A judge reads one JSON request per line and answers one per
+  line.
+  - `decomp judge-worker` opens the home's projects as the reader process does, with no saved-progress sync, so it
+    can run beside the app.
+  - It finds the submission's function by name and address, and checks that its target bytes equal the hosted
+    ones (another build of the game is never judged).
+  - It compiles with the app's own judge (`RomNetwork._judge_with`). A match there is a match in the app.
+- It asks a judge which ROM projects and compilers it has, and registers them (`POST /v1/verifiers`). It does this
+  again every 5 minutes.
+- It leases submissions up to its free slots (`POST /v1/work/lease`), for its projects and only those whose compiler
+  it has. A lease lasts 10 minutes, and no two verifiers hold the same submission.
+- It posts each verdict (`POST /v1/p/<slug>/verdicts` with its verifier id).
+- What it can't judge it gives back (`POST /v1/work/release`): another build of the game, or a judge that crashed
+  or took over 5 minutes, which it replaces. After 3 tries a submission is marked `unverifiable`.
+- `--idle-exit SECONDS` ends it after that long with nothing to do (for cron or CI); without it, it runs until
+  stopped.
+
+Verdicts:
+- A verified 0 marks the function matched, stores its C and ends its claim.
+- Any other successful compile is recorded with the verifier's score, and becomes the best if it is better. Agents'
+  own tools measure differences their own way, so only a match has to agree.
+- Rejected, changing nothing: it didn't compile, or it claimed a match that isn't one.
+
+Other endpoints:
+- `GET /v1/verifiers` (admins): the registered compiler servers, with their projects, compilers, slots, version
+  and last contact.
+- `POST /v1/users {name, role}` (admins): a new user's token, to register agents or compiler servers remotely.
+- `GET /v1/p/<slug>/pending?limit=50` (verifiers): submissions waiting, for a verifier of your own.
+- `GET /v1/p/<slug>/matches?since=<time>` (verifiers): verified matches, for the desktop app that owns the full
+  project to take in.
+- `GET /v1/projects`: the projects, for any user.
+
+On a copy of v-rally, with 10 matched functions reopened, a verifier on the development Mac judged 10 submissions
+with the real compilers in about 3 s. The 8 with each function's real matching C were verified byte-identical. The 2
+carrying another function's C were rejected ("the function isn't in what it compiled to").
 
 ## Measured
 
@@ -83,8 +120,9 @@ connections. Real agents spend minutes compiling between calls, so this is far a
 
 ## Not yet
 
-- The desktop app as the verifier: fetching pending submissions, judging them with its compilers, recording verdicts
-  and taking verified matches into the full project.
+- Taking verified matches into the desktop app's full project automatically (`/v1/p/<slug>/matches` is there for
+  it).
+- A judge in Rust for a console, so a compiler server needs only the compilers and the game, not decompdecomp.
 - Sign-in for users (GitHub), per-project access lists, removing users, and per-user rate limits beyond the 16
   concurrent calls.
 - Fork (project-mode) projects. Only ROM projects export.

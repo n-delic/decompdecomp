@@ -321,6 +321,11 @@ def hosted_export(args) -> int:
     return export(args.slug, args.dir, home_dir())
 
 
+def judge_worker(args) -> int:
+    from ..hosted_judge import main as judge
+    return judge(home_dir())
+
+
 def install_info(args) -> int:
     """Remember how decompdecomp was installed (by the installers): where its updates come from."""
     from . import updates
@@ -402,6 +407,7 @@ def main(argv: list[str] | None = None) -> int:
     he = sub.add_parser("hosted-export", help="write a project as a small hosted file, for decomp-mcp-gateway hosted serve")
     he.add_argument("slug", help="the project's slug")
     he.add_argument("dir", help="the hosted server's folder (writes DIR/projects/SLUG.sqlite3; again to update it)")
+    sub.add_parser("judge-worker", help=argparse.SUPPRESS)  # a verifier's judge (hosted_judge.py)
     ii = sub.add_parser("install-info", help=argparse.SUPPRESS)  # the installers: where updates come from
     ii.add_argument("--channel", choices=["release", "branch"], default="release")
     ii.add_argument("--branch", default="")
@@ -413,7 +419,8 @@ def main(argv: list[str] | None = None) -> int:
     limits.raise_open_file_limit()
     limits.no_core_dumps()
     return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd,
-            "install-info": install_info, "hosted-export": hosted_export}.get(args.cmd, run)(args)
+            "install-info": install_info, "hosted-export": hosted_export,
+            "judge-worker": judge_worker}.get(args.cmd, run)(args)
 
 
 if __name__ == "__main__":
