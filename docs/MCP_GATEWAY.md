@@ -14,7 +14,8 @@ with their work.
 | `ping` | at once | Answered by the gateway. |
 | notifications | at once | 202; the app keeps no MCP session behind the gateway, so there is nothing to deliver. |
 
-- **A repeat never runs twice.** A call with the same helper token, tool and arguments (key order ignored) as one
+- **A repeat never runs twice.** A call with the same helper token, tool and arguments (key order ignored; the rest
+  of `params`, such as the new `_meta.progressToken` clients send with every request, doesn't count) as one
   still running, or finished but not yet delivered, waits for that run. Once delivered, the same call again is a
   new run. Undelivered results are kept 15 minutes.
 - **Waiting is free.** Helpers pay for answers, not time: the gateway holds a call open up to its deadline, and

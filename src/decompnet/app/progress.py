@@ -511,6 +511,7 @@ class Progress:
         self.project_locks: dict[str, threading.RLock] = {}
         self.rechecking: dict[str, _Recheck] = {}
         self.last_write: dict[str, float] = {}  # slug -> when a database-only change was last published
+        self.publish_tried: dict[str, float] = {}  # slug -> when a tool call last tried to publish one
         self.publishing: dict[Path, list[_Publication]] = {}
         saves.publish_watchers.add(self)
         self.errors: dict[str, str] = {}
@@ -917,17 +918,27 @@ class Progress:
         """Tool calls sync before and after every call, and each one rewrote the whole manifest (megabytes) for the
         attempt the last call recorded: eight agents rewrote it about once a second, with nothing new to say.
         Inside this, a change only the database has is published at most every DEFER_SECONDS; the autosave worker
-        and shutdown publish what is left, and changes in the folder are still read at once."""
+        and shutdown publish what is left, and changes in the folder are still read at once.
+        A call reads the folder once per project: every engine lookup syncs, and a rename made a dozen lookups, each
+        checking every saved file under the project lock while other agents' calls queued for it."""
         previous = getattr(self.local, "deferring", False)
+        previous_synced = getattr(self.local, "synced", None)
         self.local.deferring = True
+        if not previous:
+            self.local.synced = set()
         try:
             yield
         finally:
             self.local.deferring = previous
+            self.local.synced = previous_synced
 
     def _defer_publish(self, slug: str, config_changed: bool) -> bool:
+        # Counted from the last try, not only the last success: while agents keep changing the database a
+        # publication is often discarded (its inputs changed while it rendered), and every tool call then rendered
+        # the whole project again, one after another, for minutes.
+        last = max(self.last_write.get(slug, -DEFER_SECONDS), self.publish_tried.get(slug, -DEFER_SECONDS))
         return (getattr(self.local, "deferring", False) and not config_changed
-                and time.monotonic() - self.last_write.get(slug, -DEFER_SECONDS) < DEFER_SECONDS)
+                and time.monotonic() - last < DEFER_SECONDS)
 
     @contextmanager
     def foreground(self):
@@ -1272,6 +1283,22 @@ class Progress:
             lease[1]()
 
     def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
+        """See _sync_checked. Inside a tool call (deferring) only the first ordinary sync of a project runs."""
+        synced = getattr(self.local, "synced", None) if getattr(self.local, "deferring", False) else None
+        if synced is not None and not force and slug in synced:
+            return False
+        if synced is None or self._batching(slug) or self.applying or in_transaction():
+            return self._sync_checked(slug, force=force, logger=logger, retry=retry)
+        first = slug not in synced
+        synced.add(slug)  # (before: the sync's own project lookup syncs again inside it)
+        try:
+            return self._sync_checked(slug, force=force, logger=logger, retry=retry)
+        except BaseException:
+            if first:
+                synced.discard(slug)
+            raise
+
+    def _sync_checked(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
         """Read contributions first, then publish only work changed locally since the last synchronization.
 
         A no-op non-forced check stats the manifest and the three folders; a forced check stats every file too, so an
@@ -1309,9 +1336,11 @@ class Progress:
                 # The publisher revalidates its receipt before writing; after
                 # it finishes, this waiter takes the ordinary disk/import path.
                 # Foreground callers still validate their own current inputs.
-                if getattr(self.local, 'foreground', False) or self.viewing:
-                    # Only DB-to-disk preparation is in flight. Foreground work can
-                    # use the current DB; explicit saves/checkpoints wait for it.
+                if (getattr(self.local, 'foreground', False) or getattr(self.local, 'deferring', False)
+                        or self.viewing):
+                    # Only DB-to-disk preparation is in flight. Foreground work and
+                    # tool calls (Progress.deferring) use the current DB; the renderer
+                    # publishes it. Explicit saves/checkpoints wait for it.
                     return False
                 if logger is not None:getattr(logger, 'check_cancel', lambda: None)()
                 self._check_paused(slug)
@@ -1376,6 +1405,8 @@ class Progress:
                             if changed_db and self._defer_publish(slug, config_changed):
                                 result = False  # (the next check after DEFER_SECONDS publishes it: Progress.deferring)
                             else:
+                                if changed_db and getattr(self.local, "deferring", False):
+                                    self.publish_tried[slug] = time.monotonic()
                                 result = (self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
                                           if changed_db else False)
                                 if result:self.last_write[slug] = time.monotonic()

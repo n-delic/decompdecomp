@@ -3293,3 +3293,69 @@ def test_deferring_publishes_database_only_changes_at_most_every_few_seconds(pro
     assert path.read_text() != first  # (after the wait, the latest attempts are published together)
     attempt(20)
     assert net.progress.sync("game", force=True)  # (an explicit sync, a save or shutdown never waits)
+
+
+def test_tool_calls_do_not_wait_for_another_calls_publication(project):
+    """Every engine lookup syncs, and a tool call waited at each one for whatever render another agent's call had in
+    flight: with eight agents renaming, one rename_symbol took minutes. A tool call uses the current database; the
+    renderer publishes it."""
+    net, folder, _ = project
+    net.progress.sync("game", force=True)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='int f;' WHERE name='f'")
+    net.progress.rendering["game"] = (folder, Progress._signature(folder))  # another call's render, still running
+    answers = []
+    def tool_call():
+        with net.progress.deferring():
+            answers.append(net.progress.sync("game", force=True))
+    call = threading.Thread(target=tool_call, daemon=True)
+    call.start()
+    call.join(3)
+    waited = call.is_alive()
+    net.progress.rendering.pop("game", None)  # (lets a waiting call finish)
+    call.join(5)
+    assert not waited, "a tool call waited for another call's render"
+    assert answers == [False]
+
+
+def test_a_discarded_publication_still_counts_for_the_deferral(project, monkeypatch):
+    """While agents kept changing the database each publication was discarded (its inputs changed while it
+    rendered), so the deferral never started and every tool call rendered the whole project again."""
+    net, folder, _ = project
+    net.progress.sync("game", force=True)
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    tries = []
+    monkeypatch.setattr(net.progress, "_publish_changes", lambda *args: tries.append(1) or False)
+    for score in (50, 40, 30):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source='int f;',best_score=? WHERE name='f'", (score,))
+        with net.progress.deferring():
+            net.progress.sync("game", force=True)
+        clock[0] += 1
+    assert len(tries) == 1
+    clock[0] += 10
+    with net.progress.deferring():
+        net.progress.sync("game", force=True)
+    assert len(tries) == 2
+
+
+def test_a_tool_call_reads_the_folder_once_per_project(project, monkeypatch):
+    """Every engine lookup syncs: a rename made a dozen lookups, each checking every saved file under the project
+    lock. Inside one tool call only the first runs; the next call, a retry and an explicit sync check again."""
+    net, folder, _ = project
+    runs = []
+    checked = net.progress._sync_checked
+    monkeypatch.setattr(net.progress, "_sync_checked", lambda *a, **k: runs.append(1) or checked(*a, **k))
+    with net.progress.deferring():
+        for _ in range(3):
+            net.progress.sync("game")
+        assert len(runs) == 1
+        net.progress.sync("game", force=True)
+        assert len(runs) == 2
+    with net.progress.deferring():
+        net.progress.sync("game")
+    assert len(runs) == 3
+    net.progress.sync("game")
+    net.progress.sync("game")
+    assert len(runs) >= 5  # (outside a tool call every sync runs, and its own lookup syncs again)
