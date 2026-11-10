@@ -32,7 +32,8 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - name: appimagetool checks the apps-menu entry with desktop-file-validate; rpmbuild makes the .rpm
-        run: sudo apt-get install -y --no-install-recommends desktop-file-utils rpm
+        # (musl-tools: the gateway's static build compiles SQLite, gateway/src/native.rs)
+        run: sudo apt-get install -y --no-install-recommends desktop-file-utils rpm musl-tools
       - name: build the .deb, the .rpm and the AppImage
         run: packaging/linux/build.sh
       - name: the MCP gateway on its own, for installs from source (decomp setup downloads it)

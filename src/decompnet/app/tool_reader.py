@@ -225,10 +225,20 @@ def routes(net, manager, settings) -> dict:
     budgets = getattr(net, "_session_budgets", {})
     spent = [agent for (agent, _slug), budget in list(budgets.items())
              if isinstance(budget, Budget) and (budget.calls >= budget.tool_limit or budget.chars >= budget.char_limit)]
+    assignments = {str(agent): slug for agent, slug in list(manager.assignments.items())}
+    manual = {str(item["id"]): item["slug"] for item in manual_mcp.connections(settings)}
+    try:
+        pairings = {str(r["agent_id"]): r["project"]
+                    for r in net.store.all("SELECT agent_id,project FROM pairings WHERE state='approved'")}
+    except Exception:  # (no pairing yet: the table comes with the first)
+        pairings = {}
     return {
         "at": time.time(),
-        "assignments": {str(agent): slug for agent, slug in list(manager.assignments.items())},
-        "manual": {str(item["id"]): item["slug"] for item in manual_mcp.connections(settings)},
+        "catalog": str(net.store.path),
+        "assignments": assignments,
+        "pairings": pairings,
+        "manual": manual,
+        "projects": _projects(net, {*assignments.values(), *pairings.values(), *manual.values()}),
         "app_only": sorted({agent for agent, _slug in getattr(net, "_pending_tool_handshakes", set())}
                            | set(getattr(net, "_asset_investigators", {}))
                            | set(getattr(net, "_boundary_investigators", {})) | set(spent)),
@@ -291,6 +301,28 @@ def watch(net, changed) -> None:
         net.__dict__[name] = WatchedDict(getattr(net, name, {}), changed)
 
 
+def _projects(net, slugs) -> dict:
+    """For the gateway's own answers (gateway/src/native.rs): each active project's database and the saved parts of
+    its compact project_info. Read without the engine's project lookup, which would recheck saved progress."""
+    from ..network import CLAIM_ORDERS, Network
+    from .tools import COMPACT_NEXT, compact_info_head, compact_info_steering
+    out = {}
+    for slug in slugs:
+        try:
+            proj = Network._project(net, slug)
+            cfg = net.cfg(proj)
+            # (net.instructions and net.claim_order read these same settings)
+            order = cfg.get("claim_order") or ""
+            tail = COMPACT_NEXT + compact_info_steering(cfg.get("instructions") or "",
+                                                        order if order in CLAIM_ORDERS else "")
+            out[slug] = {"id": proj["id"], "db": str(net.project_store(proj["id"]).path),
+                         "fork": cfg.get("kind") == "fork", "info_head": compact_info_head(net, proj),
+                         "info_tail": tail}
+        except Exception:  # a project removed meanwhile: the app answers its helpers
+            continue
+    return out
+
+
 def apply_report(net, manager, message: dict) -> None:
     """Keep what the app keeps for a call the reader served: transcript, session budget, tool usage, activity."""
     call = message.get("call")
@@ -313,7 +345,9 @@ def apply_report(net, manager, message: dict) -> None:
         net.project_activity.touch(slug)
     except Exception:
         pass
-    timings = dict(call.get("timings") or {}, reader=True)
+    timings = dict(call.get("timings") or {})
+    if not timings.get("gateway"):
+        timings["reader"] = True
     manager.record_agent(agent, slug, "tool_request", {"name": name, "arguments": call.get("arguments") or {},
                                                        "call_id": call["call_id"]})
     payload = {"name": name, "call_id": call["call_id"], "timings": timings}
