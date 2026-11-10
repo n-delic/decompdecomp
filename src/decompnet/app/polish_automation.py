@@ -66,8 +66,13 @@ def input_key(net, proj, fn, original, candidate='', *, receipt=None):
     repeat-compile check against the complete candidate file and harness.
     """
     # Publishing saved files changes this receipt, never the compiler input.
-    # Keep every other configuration field and the generation/header/symbol guards.
+    # Retain the generation/header/symbol guards and all other settings below.
     config = {key:value for key,value in net.cfg(proj).items() if key != 'progress_revision'}
+    # The automatic Git push poll advances next_check even when nothing is pushed.
+    # It schedules network work; it cannot change compiler, source or judge inputs.
+    # Copy the nested mapping: Engine.cfg returns a shared immutable-by-convention cache.
+    if isinstance(config.get('auto_push'), dict):
+        config['auto_push'] = {key:value for key,value in config['auto_push'].items() if key != 'next_check'}
     parts = [str(POLISH_REVISION), original, json.dumps(config, sort_keys=True), str(fn['id']), str(fn['target']), str(fn['relocs']),
              str(fn['vram']), str(fn['meta']), str(net._generation.get(proj['id'], 0))]
     if net.is_rom(proj):

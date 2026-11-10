@@ -2484,7 +2484,8 @@ def test_saved_import_reports_request_phases_without_changing_verdict(project):
 
 
 @pytest.mark.parametrize('transport', ['direct','mcp'])
-@pytest.mark.parametrize('tool', ['compile_and_diff','compile_patch','compile_variants','add_note','release_function'])
+@pytest.mark.parametrize('tool', ['compile_and_diff','compile_patch','compile_variants','add_note','release_function',
+                                  'claim_readable','polish_function','make_readable'])
 def test_tool_entry_uses_foreground_lane_during_saved_verification(project,monkeypatch,tool,transport):
     from concurrent.futures import Future, ThreadPoolExecutor
     from types import MethodType
@@ -2515,7 +2516,9 @@ def test_tool_entry_uses_foreground_lane_during_saved_verification(project,monke
         'compile_patch':{'revision':'synthetic','old':'saved','new':'foreground'},
         'compile_variants':{'revision':'synthetic','patches':[]},
         'add_note':{'text':'fresh foreground findings'},
-        'release_function':{'notes':'fresh foreground findings'}}[tool]}
+        'release_function':{'notes':'fresh foreground findings'},
+        'claim_readable':{}, 'polish_function':{'comment':'Describe the function.'},
+        'make_readable':{'source':'good foreground'}}[tool]}
     def invoke():return tools.call(net,agent,'game',tool,arguments)
     if transport=='mcp':
         import anyio

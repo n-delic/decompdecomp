@@ -417,3 +417,45 @@ def test_component_receipts_are_hashes_and_do_not_change_the_combined_key(game):
     assert set(receipt) == set(auto.INPUT_COMPONENTS)
     assert all(len(value)==64 and int(value,16)>=0 for value in receipt.values())
     assert not auto.check_inputs(net,proj,fn,SOURCE,'candidate',key,receipt,'compile')
+
+
+@pytest.mark.parametrize('phase', ['compile', 'judge'])
+def test_automatic_push_poll_does_not_invalidate_polishing(game, monkeypatch, phase):
+    from decompnet.app import auto_push, repository_git, repository_push
+
+    net, agent, calls = game
+    with net.store.tx() as db:
+        cfg = json.loads(db.execute('SELECT config FROM projects').fetchone()['config'])
+        cfg['auto_push'] = dict(enabled=True, token='poll', folder='/synthetic', branch='main',
+                                ref='refs/heads/main', origin='synthetic', threshold=10, error='', phase='')
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+    monkeypatch.setattr(repository_push, 'checkout', lambda *a: '/synthetic')
+    monkeypatch.setattr(repository_push, 'destination', lambda *a: ('main', 'refs/heads/main'))
+    monkeypatch.setattr(repository_push, 'describe', lambda *a: {'unpushed': 0})
+    monkeypatch.setattr(repository_git, 'git', lambda *a, **k: 'synthetic')
+    original = net._compile if phase == 'compile' else net._evaluate
+    def operation(*args):
+        result = original(*args)
+        auto_push.process(net, 'game')
+        return result
+    monkeypatch.setattr(net, '_compile' if phase == 'compile' else '_evaluate', operation)
+    assert auto.structured(net.readability, agent, 'game', 'f', '{}', 'Triple it.').startswith('✅')
+    assert net._function('f', 'game')['readable'] and len(calls) == 1
+    assert net.cfg(net.project_row('game'))['auto_push']['next_check'] > 0
+
+
+@pytest.mark.parametrize('field', ['enabled', 'threshold', 'token', 'folder', 'branch', 'ref',
+                                  'origin', 'unknown_build_setting'])
+def test_push_poll_exclusion_keeps_other_configuration_guards(game, monkeypatch, field):
+    net, agent, _ = game
+    original = net._compile
+    def compile(*args):
+        result = original(*args)
+        with net.store.tx() as db:
+            db.execute("UPDATE projects SET config=json_set(config, ?, 'changed')",
+                       ('$.auto_push.' + field,))
+        return result
+    monkeypatch.setattr(net, '_compile', compile)
+    with pytest.raises(NetworkError, match='Changed inputs: configuration'):
+        auto.structured(net.readability, agent, 'game', 'f', '{}', 'Triple it.')
+    assert not net._function('f', 'game')['readable']

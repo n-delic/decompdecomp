@@ -652,7 +652,10 @@ def _tool_foreground(net, agent, slug, name, args):
     function_read = name == 'get_function' and args.get('section', 'summary') in {
         'summary', 'brief', 'candidate', 'source', 'draft', 'matched', 'all', 'full',
         'warnings', 'quality', 'history', 'notes', 'declarations', 'compiler', 'layouts'}
-    allowed = function_read or name in {'compile_and_diff','compile_patch','compile_variants','add_note','get_assembly'} or (
+    # Polishing also judges current DB inputs and rechecks source/header/target
+    # receipts before publication; claims may reuse such a verified plan.
+    allowed = function_read or name in {'compile_and_diff','compile_patch','compile_variants','add_note','get_assembly',
+                                       'claim_readable','polish_function','make_readable'} or (
         name == 'get_candidate' and args.get('base','current') == 'current') or (
         name == 'release_function' and not args.get('needs','').strip() and not args.get('not_c',False))
     notes = allowed and name in {'add_note','release_function'}
