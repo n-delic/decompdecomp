@@ -238,6 +238,21 @@ class Agent:
         default doesn't switch the helper (#204)."""
         return None
 
+    def limit_scope(self, model: str) -> tuple[str, ...]:
+        """Extra cooldown-key parts separating one sign-in's usage limits from another's. Most connectors have
+        one subscription, so a limit pauses the whole account. opencode signs in to each provider separately
+        and gives some models their own allowance: a refusal there belongs to one account and one model, and
+        must not pause every other helper on the connector."""
+        return ()
+
+    def account_label(self, model: str) -> str:
+        """Which sign-in/account a model uses, shown when choosing models and on a helper's card; "" for one."""
+        return ""
+
+    def limit_wait_why(self) -> str:
+        """Why helpers wait out a published usage-limit cooldown, given the connector's limit scope."""
+        return "This provider account's usage limit is reached"
+
     def resolve_model(self, model: str, path: str | None) -> str:
         """`model`, a name the agent's own settings hold, as the model id its own command line takes; "" when that
         can't be told without running its program. Then a helper started on that default isn't pinned to it: it

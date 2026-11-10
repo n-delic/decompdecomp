@@ -1670,6 +1670,10 @@ still planned. A window that shows, for each agent you use, what's left of its l
 and Codex, and a monthly limit or the credit left on an API key where the provider says it. Helpers already wait for a
 usage limit to reset; this shows it before they hit it, so you can pick which agents to start.
 
+- Done: a usage limit is scoped to its own signed-in account and model. opencode signs in to each provider
+  separately (the Zen console and the Go API), and some models have their own allowance, so a refusal there
+  no longer pauses helpers on another account or model. The launcher and helper cards name the account.
+
 ### Big functions for every model
 
 In a DS game at 58%, functions under 400 instructions were mostly matched, and 25 of the 29 over 400 were open:

@@ -476,8 +476,10 @@ class Session:
             log.info("helper %s (%s): %s", self.agent_name, self.slug, text[:500])
 
     def snapshot(self, since: int = 0) -> dict:
-        return {"id": self.id, "kind": self.kind, "kind_name": agents.get(self.kind).name, "can_login": agents.get(self.kind).supports_login, "label": self.label,
+        kind = agents.get(self.kind)
+        return {"id": self.id, "kind": self.kind, "kind_name": kind.name, "can_login": kind.supports_login, "label": self.label,
                 "account_id": self.options.get("account_id") or "", "account_name": self.options.get("account_name") or "",
+                "account_label": kind.account_label(self.model),
                 "selection": self.options.get("selection") or {},
                 "boundary_function":self.options.get("boundary_function"), "boundary_until":self.options.get("boundary_until"),
                 "focus_function":self.options.get("focus_function"), "focus_until":self.options.get("focus_until"),
@@ -1546,8 +1548,8 @@ class Manager:
                 break
             if (shared_until := session_followups.cooldown(self, s)) is not None:
                 s.cooldown_observed = shared_until
-                self._wait(s, "This provider account's usage limit is reached", shared_until + session_followups.stagger(s),
-                           "Helpers using this account resume automatically after reset.", wall_clock=True)
+                self._wait(s, agents.get(s.kind).limit_wait_why(), shared_until + session_followups.stagger(s),
+                           "Helpers on the same account or model resume automatically after reset.", wall_clock=True)
                 continue
             s.runs += 1
             with self._lock:

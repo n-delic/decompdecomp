@@ -267,7 +267,8 @@ function renderSessions(sessions, refreshCosts = true) {
     const claim = S.claims.find((c) => c.agent === s.agent);
     const dot = s.state === "paused" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
     const live = LIVE.includes(s.state), id = esc(s.id), b = s.metrics || board.get(s.agent);
-    const facts = [s.task === "assets" ? `<b>discovering assets</b>` : s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), s.account_name ? `account: ${esc(s.account_name)}` : "", s.model ? esc(s.model) : "its default model", s.task === "readable" ? helperResults(b, s.task) : "", b ? `${plural(b.compiles, "compile")} submitted by this agent` : "",
+    const account = s.account_label || s.account_name;
+    const facts = [s.task === "assets" ? `<b>discovering assets</b>` : s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), account ? `account: ${esc(account)}` : "", s.model ? esc(s.model) : "its default model", s.task === "readable" ? helperResults(b, s.task) : "", b ? `${plural(b.compiles, "compile")} submitted by this agent` : "",
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" && !s.configuration_error ? " Then press Start again." : ""}` : "";
@@ -515,7 +516,7 @@ function modelChoiceList(models, selected) {
 function modelOptions(a) {
   const recent = (S.st.settings.recent_models || {})[a.id] || [];
   const opts = [{ id: "", name: LZ.replacement ? "Choose a model…" : a.uses_accounts && LZ.account ? "Account’s default" : a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
-  for (const m of a.models || []) opts.push({ id: m.id, name: m.name, note: m.note || "", group: m.group || "" });
+  for (const m of a.models || []) opts.push({ id: m.id, name: m.name, note: m.note || "", group: m.group || "", account: m.account || "" });
   for (const r of recent) if (!opts.some((o) => o.id === r)) opts.push({ id: r, name: r, note: "used before" });
   if (!LZ.replacement) opts.push({ id: "__multiple", name: "Multiple models", note: "" });
   opts.push({ id: "__other", name: "Another model…", note: "" });
@@ -544,7 +545,7 @@ function selectableModels(a) {
 function modelName(a, model) {
   if (!model) return "";
   const m = (a.models || []).find((x) => x.id === model);
-  return m ? m.name : model;
+  return m ? `${m.name}${m.account ? ` · ${m.account}` : ""}` : model;
 }
 function launchLabel(a, model, count, models = []) {
   if (LZ.replacement) return "Replace agent";
@@ -706,7 +707,9 @@ function renderLauncher(box, compact = true) {
     const known = opts.some((o) => o.id === LZ.model);
     const custom = LZ.customModel || (!known && !!LZ.model);
     LZ.models = LZ.models.filter((id) => available.some((m) => m.id === id));
-    body = `<label class="field"><span>Model <button type="button" class="link-btn small" data-act="detect">Refresh models</button></span><select data-f="model">${groupedModelOptions(opts, (o) => (!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple"))}</select></label>
+    const chosen = (a.models || []).find((m) => m.id === LZ.model);
+    const accountLine = chosen && chosen.account ? `<span class="muted small" data-account-label>Account · ${esc(chosen.account)}. Usage limits are isolated to this account and model.</span>` : "";
+    body = `<label class="field"><span>Model <button type="button" class="link-btn small" data-act="detect">Refresh models</button></span><select data-f="model">${groupedModelOptions(opts, (o) => (!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple"))}</select>${accountLine}</label>
       ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${modelChoiceList(available, LZ.models)}</div>
       <span class="muted small" data-model-limit>Each selected model gets ${LZ.count} session${LZ.count === 1 ? "" : "s"}.</span>
       ${!(a.models || []).length ? `<div class="row"><input data-f="manual-model" class="mono" placeholder="Model name"><button type="button" class="ghost small-btn" data-act="add-cli-model">Add model</button></div>` : ""}</div>` : ""}
