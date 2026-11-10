@@ -3158,3 +3158,78 @@ def test_saved_autopilot_claim_wait_leaves_project_lock_available(project,monkey
         if cancel:
             with pytest.raises(RuntimeError,match='Synthetic stop'):pending.result(timeout=2)
         else:assert pending.result(timeout=5)['matched']==1
+
+
+@pytest.mark.parametrize('change', ['none', 'external', 'cancel'])
+def test_publication_waiter_scans_once_per_renderer(project, monkeypatch, change):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, judged = project
+    worker = net.progress
+    (folder/'src').mkdir(exist_ok=True)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared, release = threading.Event(), threading.Event()
+    polls = []
+    scans = []
+    render = saves._render_partial
+    signature = worker._signature
+    def held(*args, **kwargs):
+        result = render(*args, **kwargs)
+        prepared.set()
+        assert release.wait(5)
+        return result
+    def traced(path):
+        if threading.current_thread().name == 'publication-waiter':scans.append(1)
+        return signature(path)
+    class Cancelled(Exception):pass
+    class Logger:
+        def __call__(self, line):pass
+        def check_cancel(self):
+            polls.append(1)
+            if len(polls) == 5:
+                if change == 'external':
+                    (folder/'src/f.c').write_text('good external')
+                if change == 'cancel':raise Cancelled()
+                enough.set()
+    enough = threading.Event()
+    def wait():
+        threading.current_thread().name = 'publication-waiter'
+        return worker.sync('game', force=True, logger=Logger())
+    monkeypatch.setattr(saves, '_render_partial', held)
+    monkeypatch.setattr(worker, '_signature', traced)
+    with ThreadPoolExecutor(2) as pool:
+        publisher = pool.submit(worker.sync, 'game', force=True)
+        assert prepared.wait(3)
+        waiter = pool.submit(wait)
+        try:
+            if change == 'cancel':
+                with pytest.raises(Cancelled):waiter.result(timeout=2)
+            else:
+                assert enough.wait(2)
+                assert not waiter.done()
+            assert len(scans) == 1, 'A waiting save repeatedly scanned every file'
+            assert not (folder/'best/f.c').exists()
+        finally:release.set()
+        publisher.result(timeout=5)
+        if change != 'cancel':waiter.result(timeout=5)
+    assert not worker.rendering
+    if change == 'external':
+        assert net._function('f', 'game')['matched_source'] == 'good external'
+        assert ('f', 'good external') in judged
+        assert (folder/'src/f.c').read_text().strip() == 'good external'
+    else:assert (folder/'best/f.c').read_text() == 'good pending\n'
+
+
+def test_import_batches_function_identity_metadata(project, monkeypatch):
+    net, folder, judged = project
+    store = net.project_store('game')
+    original = store.all
+    def read(query, *args):
+        assert not query.startswith('SELECT name,unit,vram,rom_offset FROM functions'), 'Unbatched function identities'
+        return original(query, *args)
+    monkeypatch.setattr(store, 'all', read)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good imported')
+    assert net.progress.sync('game', force=True)
+    assert judged == [('f', 'good imported')]
+    assert net._function('f', 'game')['matched_source'] == 'good imported'

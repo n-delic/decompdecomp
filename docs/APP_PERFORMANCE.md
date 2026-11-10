@@ -728,3 +728,25 @@ compressed bodies reduced index-count payload callbacks from 513 to zero, with i
 count/latest values (7.17 to 0.047 ms median). These are component measurements, not
 end-to-end runtime speedups. Regressions keep a saved compiler future unresolved while
 reading current function data, then complete the same ordinary saved judgment afterward.
+
+
+### Publication wait scans and import metadata
+
+Explicit saves waiting for an off-lock renderer compare its disk signature once
+per renderer, rather than once per 100 ms cancellation poll. The publisher still
+checks the complete receipt before writing. The waiter checks current disk inputs
+after preparation finishes; an edit arriving during the wait remains an ordinary
+import. New foreground callers still validate the current signature before using
+the database. Cancellation continues to be checked on each poll.
+
+A bounded held-render regression reduced four complete scans to one before its
+fifth cancellation check. An isolated 1,024-file signature scan measured median
+4.19 ms idle and 619.85 ms with one Python competitor bounded to one second (three
+trials). These are scan-component measurements, not live request latency. The
+remaining necessary scans still carry their original file identity checks.
+
+Import planning also batches function name/unit/address/ROM-offset metadata into
+one SQLite JSON result. For 2,001 synthetic rows, the native row boundary fell
+from 2,001 to one, with identical nullable/Unicode values. Three-trial medians were
+2.02 to 1.89 ms idle and 496.89 to 9.94 ms with one Python competitor bounded to
+two seconds. This excludes compiler time and does not establish a live speedup.
