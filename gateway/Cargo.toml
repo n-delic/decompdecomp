@@ -1,0 +1,21 @@
+[package]
+name = "decomp-mcp-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "The agents' MCP endpoint for decompdecomp, in its own small process that always answers"
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-std", "io-util", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

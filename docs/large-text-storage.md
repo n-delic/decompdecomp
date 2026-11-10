@@ -2,9 +2,19 @@
 
 Large text (512 bytes and above) in function assembly and C, reuse feedback,
 compiler trial evidence, agent messages, per-attempt compiler settings/provenance,
-repair frontiers/reports, verified match inputs and progress manifests shares the
+repair frontiers/reports and verified match inputs shares the
 checksummed `text_payloads` store with attempt source and repair evidence. Identical
-text, including the disk/projected copies of a manifest, has one compressed payload.
+text has one compressed payload.
+
+Progress manifests are the exception. Each publish writes a new revision, so the
+manifest (13 MB on a big game) is new text every time. In the shared store every
+sync left the previous manifest behind as an unused payload: one big game's
+database held 17 GB of them. Now `progress_manifests` keeps one zlib-compressed row
+per project (the last published database manifest, the base of a three-way merge).
+It is compressed before the writer transaction, replaced in place, and not written
+again while unchanged. The folder's own manifest is not stored: it is on disk.
+Rows from older versions (`progress_state.disk_manifest`/`projected_manifest`)
+are still read. The first write empties those columns and releases their payloads.
 Small text, metadata, keys, scores, target bytes and foreign keys remain in place.
 No source, evidence, conversations or lifetime metrics are discarded by compression.
 The independent match library keeps fingerprints, compiler metadata and project/name/address references.
@@ -24,7 +34,8 @@ a single larger record is handled alone. Compression/hashing takes place outside
 the writer transaction, and conditional updates preserve concurrent edits.
 
 Compression makes old pages reusable. **Compact database files…** returns unused
-pages to disk in the main database and match library. Run it when workers are idle:
+pages to disk in the main database, the match library, repair evidence, and each
+project database (`project-databases/*.sqlite3`) and its transcripts, one file at a time. Run it when workers are idle:
 other writers wait, readers remain available, and each SQLite VACUUM is atomic and
 interruptible. Stopping between files keeps the first completed compaction. Free
 space must accommodate twice the larger file size. There is no automatic VACUUM
@@ -45,7 +56,23 @@ older builds do not understand the new text references.
 Do not use physical compressed columns for SQL string/JSON transformations in
 UPDATE expressions: load exact text through Store and bind the replacement. Copies
 between compressed columns may retain the same reference. Garbage collection
-checks every registered compressed column under writer admission. Missing or
-corrupt content fails checksum verification; it is never treated as empty source.
-Decompression caches at most 32 texts of at most 256 KiB each; large manifests are
-not retained in that cache.
+checks every registered compressed column under writer admission.
+
+`payload_links` indexes every reference. The first storage task in Settings
+backfills it (`payload_links.collect`). Once every column's backfill is done,
+`payload_links.indexed` is true for that file, and two automatic paths start:
+- `payload_links.release` deletes a payload that a writer just stopped using,
+  inside that transaction, when no link names it. It uses indexed lookups only.
+- Every 6 hours (not in the first 30 minutes after start), a background job runs
+  the full collection on each indexed file. It runs in the paced maintenance lane,
+  in the same 256-row transactions.
+Before the index is complete, neither path deletes anything; collection stays a
+Settings task. Deleting rows does not shrink a file. There is still no automatic
+VACUUM: run Compact database files, or `tools/compact_databases.py` with the app closed. Missing or
+corrupt content fails; it is never treated as empty source. A damaged stream fails
+zlib's own checksum on every read. Each process also checks a payload's SHA-256 the
+first time it reads that payload (known by its hash, compressed length and CRC-32),
+so a different payload stored under a hash fails too, without hashing every read.
+Decompression caches up to 64 MiB of text, at most 4 MiB per text; large manifests
+are not retained in that cache. Text over 1 MiB is compressed at zlib's fastest
+level; every level reads back the same way.

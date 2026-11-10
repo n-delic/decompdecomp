@@ -1,6 +1,7 @@
-"""SQLite persistence. One file; writes through one connection and one lock, reads on a connection of each thread's
-own. The write-ahead log (WAL) lets reads run beside a write: with everything on one connection and one lock, 16
-agents on two games made every GUI request wait behind the others (the GUI's poll took 2.2-2.7 s instead of 14 ms)."""
+"""SQLite persistence. One file; writes through one connection and one lock, reads on connections each Store keeps
+in a small pool and lends to a thread for one read. The write-ahead log (WAL) lets reads run beside a write: with
+everything on one connection and one lock, 16 agents on two games made every GUI request wait behind the others
+(the GUI's poll took 2.2-2.7 s instead of 14 ms)."""
 
 from __future__ import annotations
 
@@ -360,6 +361,27 @@ END;
 # 90 MB beside a 172 MB database, and every start read through it.
 WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 IN_MEMORY = ":memory:"  # a database only its own connection sees: reads go through the writer's connection
+# Every connection: WAL makes synchronous=NORMAL durable against app crashes (only an OS crash or power loss can
+# drop the last commits, never corrupt), sorts and temporary indexes stay in memory, and pages are read through a
+# memory map instead of being copied into each connection's own 2 MB cache.
+CONNECTION_PRAGMAS = ("PRAGMA synchronous=NORMAL", "PRAGMA temp_store=MEMORY", f"PRAGMA mmap_size={256 * 1024 * 1024}")
+WRITER_CACHE_KIB = 32 * 1024
+READER_CACHE_KIB = 8 * 1024
+# Idle reading connections each Store keeps. Busier moments open more and close them when done: one connection
+# per thread for ever left ~2,700 open, each with a cold cache and its functions registered again.
+READERS_KEPT = 8
+# Bounds the statistics PRAGMA optimize gathers per index at startup (SQLite's suggested value): a project
+# that was never analyzed is analyzed approximately in milliseconds, not by reading every row.
+ANALYSIS_LIMIT = 400
+# Tables smaller than this keep no statistics: measured near-empty (a new project, a table that fills during the
+# session), the planner would scan them for the whole session even after they grow. Without statistics SQLite
+# assumes a large table and uses its indexes, as it always has.
+STATISTICS_MIN_ROWS = 10_000
+
+
+def tune(conn, cache_kib):
+    for pragma in CONNECTION_PRAGMAS + (f"PRAGMA cache_size=-{cache_kib}",):
+        sqlite3.Connection.execute(conn, pragma).close()
 
 
 class _ThreadReader:
@@ -378,6 +400,7 @@ class _ThreadReader:
                 from .repair_archive import register
                 register(self.conn)
             header_codec.register(self.conn)
+            tune(self.conn, READER_CACHE_KIB)
             self.conn.execute("PRAGMA query_only=1").close()
         except BaseException:
             self.conn.close()
@@ -400,6 +423,8 @@ class Store:
         self.require_existing = require_existing
         self.repair_archive = repair_archive
         self.project_namespace, self.stable_ids = project_namespace,stable_ids
+        self._readers = []  # idle reading connections, the most recently used last
+        self._readers_lock = threading.Lock()
         if project_namespace is not None:
             from .shard_ids import bounds
             bounds(project_namespace)
@@ -440,6 +465,7 @@ class Store:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute(f"PRAGMA journal_size_limit={WAL_SIZE_LIMIT_BYTES}")
         self.conn.execute("PRAGMA foreign_keys=ON")
+        tune(self.conn, WRITER_CACHE_KIB)
         self.conn.executescript(SCHEMA)
         added = set()
         for table, column, ddl in MIGRATIONS:
@@ -645,8 +671,24 @@ class Store:
         install_large_text(self.conn)
         from .shard_ids import remember
         remember(self.conn)
+        self._optimize()
         self.lock = threading.RLock()
-        self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
+        self._local = threading.local()  # per thread: the reading connection it borrowed, and whether it's inside tx()
+
+    def _optimize(self):
+        """Statistics for the query planner, gathered once when the process opens the database: no project
+        database had any (never ANALYZEd), so SQLite guessed at every index. Bounded by ANALYSIS_LIMIT, and
+        never a reason not to open: a busy or read-only file just keeps its old statistics."""
+        try:
+            self.conn.execute(f"PRAGMA analysis_limit={ANALYSIS_LIMIT}").close()
+            self.conn.execute("PRAGMA optimize=0x10002").close()
+            if sqlite3.Connection.execute(self.conn, "SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'").fetchone():
+                cursor = sqlite3.Connection.execute(self.conn, "DELETE FROM sqlite_stat1 WHERE CAST(stat AS INTEGER) < ?",
+                                                    (STATISTICS_MIN_ROWS,))
+                if cursor.rowcount:
+                    sqlite3.Connection.execute(self.conn, "ANALYZE sqlite_schema").close()  # reload what is left
+        except sqlite3.OperationalError as error:
+            logging.getLogger('decompdecomp').info('Database statistics not updated: %s', error)
 
     def _track_reads(self, table, kind, columns=None, condition=None):
         """Internal schema names only. Revisions commit/roll back with their source changes."""
@@ -782,16 +824,42 @@ class Store:
             callback()
 
     def _reader(self) -> sqlite3.Connection | None:
-        """This thread's own connection for reading, or None: inside tx() (a read there must see what the transaction
-        wrote) and for an in-memory database, reads go through the writer's connection."""
+        """A connection for reading, borrowed by this thread until _release_reader(), or None: inside tx() (a read
+        there must see what the transaction wrote) and for an in-memory database, reads go through the writer's
+        connection. A read made while the thread already has one (a SQL function reading again) shares it."""
         if self.path == IN_MEMORY or getattr(self._local, "in_tx", False):
             return None
         reader = getattr(self._local, "reader", None)
         if reader is None:
-            reader = _ThreadReader(self.path,self.header_codec,self.conn.repair_archive)
+            with self._readers_lock:
+                reader = self._readers.pop() if self._readers else None
+            if reader is None:
+                reader = _ThreadReader(self.path,self.header_codec,self.conn.repair_archive)
             self._local.reader = reader
-        reader.conn.detail_tables=set(self.conn.detail_tables)
+        self._local.readers = getattr(self._local, "readers", 0) + 1
+        # Shared, not copied: detail_tables is an immutable set that connections only ever replace.
+        reader.conn.detail_tables=self.conn.detail_tables
         return reader.conn
+
+    def _release_reader(self):
+        """Give the borrowed connection back when the thread's outermost read ends."""
+        self._local.readers -= 1
+        if self._local.readers:
+            return
+        reader = self._local.reader
+        self._local.reader = None
+        with self._readers_lock:
+            if len(self._readers) < READERS_KEPT:
+                self._readers.append(reader)
+                return
+        reader.conn.close()
+
+    def close_readers(self):
+        """Close the idle reading connections (the writer's is closed by its owner)."""
+        with self._readers_lock:
+            readers, self._readers = self._readers, []
+        for reader in readers:
+            reader.conn.close()
 
     def _read(self, sql: str, args: tuple, single: bool):
         started = time.monotonic()
@@ -823,6 +891,15 @@ class Store:
             conn = self._reader()
         finally:
             phases['connection'] = time.perf_counter() - started
+        if conn is not None and getattr(self._local, "readers", 0):
+            try:
+                return self._query(conn, sql, args, single)
+            finally:
+                self._release_reader()
+        return self._query(conn, sql, args, single)
+
+    def _query(self, conn, sql, args, single):
+        phases = self._local.read_phases
         def query(connection):
             executing = time.perf_counter()
             try:

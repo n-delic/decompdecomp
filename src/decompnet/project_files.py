@@ -15,6 +15,7 @@ class Files:
         self.net,self.catalog = net,net.store
         self.lock = threading.RLock()
         self.opened = {}
+        self.removed = set()
         from .writer_gate import WriterGate
         self.publication = WriterGate(str(self.catalog.path)+'.project-publication')
         self.recover()
@@ -35,6 +36,11 @@ class Files:
             finally:self.catalog._migration_admin = previous
 
     def get(self,project):
+        # An open project needs no catalog read: this is asked on nearly every request and tool call.
+        # A removed project (_unpublish) is asked of the catalog again, which no longer has it.
+        if type(project) is int:
+            with self.lock:cached = None if project in self.removed else self.opened.get(project)
+            if cached is not None:return cached
         row = self.catalog.one('SELECT id,slug FROM projects WHERE '+('id=?' if type(project) is int else 'slug=?'),project)
         if row is None:
             from .network import NetworkError
@@ -183,6 +189,7 @@ class Files:
             db.execute('DELETE FROM projects WHERE id=?',(pid,))
             save(self.catalog,journal)
             db.execute('DELETE FROM settings WHERE key=?',('project-removal:'+str(pid),))
+        with self.lock:self.removed.add(pid)
 
     def remove(self,project):
         store = self.get(project['id'])

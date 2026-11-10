@@ -24,6 +24,7 @@ import re
 import stat
 import threading
 import time
+import zlib
 from contextlib import ExitStack, contextmanager
 from contextvars import copy_context
 from dataclasses import dataclass, field
@@ -46,6 +47,27 @@ CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare p
 # claimed a function anew. A user's action or a compile (forced) always tries again: a compiler installed meanwhile.
 RETRY_FAILED_SECONDS = 60
 PARTIAL_FUNCTIONS = 256  # more changed functions than this: one full query beats this many per-name lookups
+# Saved-progress verifications (one per project) that compile at the same time. One shared lane made a small
+# game's import wait 40 s behind a big game's check. Compiling is already capped for the whole app by
+# compiler.py's slots (background work never takes the last one), so a second lane shares those compilers; it does
+# not add any. DECOMP_VERIFICATION_PROJECTS changes it (1: one project at a time, as before).
+VERIFICATION_PROJECTS = 2
+
+
+def verification_projects() -> int:
+    try:
+        requested = int(os.environ.get('DECOMP_VERIFICATION_PROJECTS', '0'))
+    except ValueError:
+        requested = 0
+    return max(1, min(16, requested)) if requested > 0 else VERIFICATION_PROJECTS
+# The last published database manifest, the base of a three-way merge, kept apart from the shared compressed text
+# store. Each publish has a new revision, so the manifest (13 MB on a big game) is new text every time: in
+# progress_state's compressed columns every sync left the previous one behind as an unused payload (a big game's
+# database grew by 17 GB of them) and hashed and compressed it inside the writer transaction. One row per project,
+# compressed here before the transaction and replaced in place, reuses its own pages and leaves nothing behind.
+MANIFEST_SCHEMA = ("CREATE TABLE IF NOT EXISTS progress_manifests("
+                   "project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, manifest BLOB NOT NULL)")
+MANIFEST_LEVEL = 1  # zlib level: a 13 MB manifest compresses about as well at 1 and several times faster than at 6
 
 
 def _hash(text: str | None) -> str | None:
@@ -91,6 +113,25 @@ class _Baseline:
     projected: _Snapshot
     dirty_token: str | None = None
     config_key: str | None = None
+    # The projected manifest is the one in progress_manifests, so an unchanged one need not be written again. False
+    # for a baseline read from the older compressed columns (or none): its next write moves the manifest over.
+    stored: bool = False
+
+
+def _pack_manifest(baseline: _Baseline, old: _Baseline | None):
+    """What `_write_state` stores for the projected manifest, compressed before the writer transaction starts:
+    ... (Ellipsis) when the stored one is already this text, None when there is none."""
+    manifest = baseline.projected.manifest
+    if old is not None and old.stored and old.projected.manifest == manifest:
+        return ...
+    return None if manifest is None else zlib.compress(manifest.encode("utf-8"), MANIFEST_LEVEL)
+
+
+def _stored_manifest(store, project_id: int) -> str | None:
+    if store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='progress_manifests'") is None:
+        return None
+    row = store.one("SELECT manifest FROM progress_manifests WHERE project_id=?", project_id)
+    return None if row is None else zlib.decompress(row["manifest"]).decode("utf-8")
 
 
 @dataclass
@@ -456,9 +497,10 @@ class Progress:
         self.paused: set[str] = set()
         self.batches: dict[str, int] = {}
         self.rendering: dict[str, tuple[Path, tuple]] = {}
-        self.verification_slot = threading.Semaphore(1)
-        self.verification_owner: tuple[str, float] | None = None
-        self.verification_details: dict | None = None
+        self.verification_slot = threading.Semaphore(verification_projects())
+        # slug -> its verification's lease, admission time and phase (under activity_lock): a project holds one
+        # lane at most, so its own checks still run one at a time
+        self.verification_holders: dict[str, dict] = {}
         from .progress_file_cache import FileCache
         self.file_cache = FileCache()
         self.disk: dict[str, dict[str, str]] = {}
@@ -606,32 +648,41 @@ class Progress:
         store = self.net.project_store(project_id)
         if project_id in self.baselines:
             return self.baselines[project_id]
-        row = store.one(
-            "SELECT format,disk,projected,disk_manifest,projected_manifest,config_key,dirty_token "
-            "FROM progress_state WHERE project_id=?", project_id)
+        row = store.one("SELECT format,config_key,dirty_token FROM progress_state WHERE project_id=?", project_id)
         if row is None:
             self.baselines[project_id] = None
             return None
         if (row["format"] or 1) < 2:
             # The first release stored both full file sets as JSON (23 MB at 18,000 functions). Read that row once,
-            # keep the manifests the merge needs, and convert the files to hashes so later syncs stay small.
-            disk = _Snapshot.of(json.loads(row["disk"]))
-            projected = _Snapshot.of(json.loads(row["projected"]))
+            # keep the manifest the merge needs, and convert the files to hashes so later syncs stay small.
+            legacy = store.one("SELECT disk,projected FROM progress_state WHERE project_id=?", project_id)
+            disk = _Snapshot.of(json.loads(legacy["disk"]))
+            projected = _Snapshot.of(json.loads(legacy["projected"]))
             baseline = _Baseline(disk, projected, row["dirty_token"], row["config_key"])
+            packed = _pack_manifest(baseline, None)
             with store.tx() as db:
                 db.execute("DELETE FROM progress_files WHERE project_id=?", (project_id,))
                 self._write_side(db, project_id, "disk", None, disk)
                 self._write_side(db, project_id, "projected", None, projected)
-                db.execute("UPDATE progress_state SET disk='{}',projected='{}',format=2,disk_manifest=?,"
-                           "projected_manifest=? WHERE project_id=?",
-                           (disk.manifest, projected.manifest, project_id))
+                self._write_state(db, project_id, baseline, packed)
+            baseline.stored = True
         else:
             files: dict[str, dict[str, str]] = {"disk": {}, "projected": {}}
             for r in store.all("SELECT side,name,hash FROM progress_files WHERE project_id=?", project_id):
                 files.setdefault(r["side"], {})[r["name"]] = r["hash"]
-            baseline = _Baseline(_Snapshot(files["disk"], row["disk_manifest"]),
-                                 _Snapshot(files["projected"], row["projected_manifest"]),
-                                 row["dirty_token"], row["config_key"])
+            # Only the projected manifest is ever read back (the merge's base, the README's key); the folder's own
+            # copy is on disk. A manifest an older version left in the compressed columns is newer than any
+            # progress_manifests row: this version empties those columns whenever it writes one.
+            legacy = store.one("SELECT projected_manifest IS NOT NULL AS present FROM main.progress_state "
+                               "WHERE project_id=?", project_id)
+            if legacy is not None and legacy["present"]:
+                manifest = store.one("SELECT projected_manifest FROM progress_state WHERE project_id=?",
+                                     project_id)["projected_manifest"]
+                stored = False
+            else:
+                manifest, stored = _stored_manifest(store, project_id), True
+            baseline = _Baseline(_Snapshot(files["disk"], None), _Snapshot(files["projected"], manifest),
+                                 row["dirty_token"], row["config_key"], stored)
         self.baselines[project_id] = baseline
         self.states[project_id] = _State(baseline.dirty_token, baseline.config_key)
         return baseline
@@ -668,15 +719,33 @@ class Progress:
                            (project_id, side, name, fingerprint))
 
     @staticmethod
-    def _write_state(db, project_id: int, baseline: _Baseline) -> None:
+    def _write_state(db, project_id: int, baseline: _Baseline, packed) -> None:
+        """Record the baseline's bookkeeping and its projected manifest (`packed`, from `_pack_manifest`).
+
+        The older compressed manifest columns are emptied; the payloads they named are released at once when
+        nothing else uses them (payload_links.release), else left to garbage collection."""
+        from ..payload_links import release
+        legacy = db.execute(
+            "SELECT CASE WHEN typeof(disk_manifest)='blob' THEN lower(hex(disk_manifest)) END AS disk,"
+            "CASE WHEN typeof(projected_manifest)='blob' THEN lower(hex(projected_manifest)) END AS projected "
+            "FROM main.progress_state WHERE project_id=? AND (disk_manifest IS NOT NULL OR projected_manifest IS NOT NULL)",
+            (project_id,)).fetchone()
         db.execute(
             "INSERT INTO progress_state(project_id,disk,projected,updated_at,format,disk_manifest,"
-            "projected_manifest,config_key,dirty_token) VALUES(?,'{}','{}',?,2,?,?,?,?) "
+            "projected_manifest,config_key,dirty_token) VALUES(?,'{}','{}',?,2,NULL,NULL,?,?) "
             "ON CONFLICT(project_id) DO UPDATE SET disk='{}',projected='{}',updated_at=excluded.updated_at,"
-            "format=2,disk_manifest=excluded.disk_manifest,projected_manifest=excluded.projected_manifest,"
+            "format=2,disk_manifest=NULL,projected_manifest=NULL,"
             "config_key=excluded.config_key,dirty_token=excluded.dirty_token",
-            (project_id, time.time(), baseline.disk.manifest, baseline.projected.manifest,
-             baseline.config_key, baseline.dirty_token))
+            (project_id, time.time(), baseline.config_key, baseline.dirty_token))
+        if packed is not ...:
+            db.execute(MANIFEST_SCHEMA)
+            if packed is None:
+                db.execute("DELETE FROM progress_manifests WHERE project_id=?", (project_id,))
+            else:
+                db.execute("INSERT INTO progress_manifests(project_id,manifest) VALUES(?,?) "
+                           "ON CONFLICT(project_id) DO UPDATE SET manifest=excluded.manifest", (project_id, packed))
+        if legacy is not None:
+            release(db, [legacy["disk"], legacy["projected"]])
 
     @staticmethod
     def _ack_dirty(db, project_id: int, token: str | None, tokens: list[str]) -> None:
@@ -697,11 +766,13 @@ class Progress:
         old = self.baselines.get(project_id)
         if old is None:
             old = self._baseline(project_id)
+        packed = _pack_manifest(baseline, old)
         with store.tx() as db:
             self._write_side(db, project_id, "disk", old.disk if old else None, baseline.disk)
             self._write_side(db, project_id, "projected", old.projected if old else None, baseline.projected)
-            self._write_state(db, project_id, baseline)
+            self._write_state(db, project_id, baseline, packed)
             self._ack_dirty(db, project_id, dirty_token, dirty_tokens)
+        baseline.stored = True
         self.baselines[project_id] = baseline
         self.states[project_id] = _State(dirty_token, config_key)
 
@@ -714,11 +785,13 @@ class Progress:
             return
         baseline = _Baseline(old.disk.changed(changes, manifest), old.projected.changed(changes, manifest),
                              dirty_token, config_key)
+        packed = _pack_manifest(baseline, old)
         with store.tx() as db:
             self._write_side_changes(db, project_id, "disk", changes, old.disk)
             self._write_side_changes(db, project_id, "projected", changes, old.projected)
-            self._write_state(db, project_id, baseline)
+            self._write_state(db, project_id, baseline, packed)
             self._ack_dirty(db, project_id, dirty_token, dirty_tokens)
+        baseline.stored = True
         self.baselines[project_id] = baseline
         self.states[project_id] = _State(dirty_token, config_key)
 
@@ -1055,10 +1128,10 @@ class Progress:
                 current.update(rate_started=now, rate_done=fields["done"])
             current.update(fields, updated=now)
             lease = getattr(self.local, 'verification_activity', None)
-            details = getattr(self, 'verification_details', None)
+            details = getattr(self, 'verification_holders', {}).get(slug)
             # Same-project waiters also update the UI activity. Only the owning
             # lease (including its saved-judge child) may describe the lane holder.
-            if details is not None and details['lease'] is lease and self.verification_owner[0] == slug:
+            if details is not None and details['lease'] is lease:
                 if 'phase' in fields and fields['phase'] != details['phase']:
                     details.update(phase=fields['phase'], phase_started=now)
                 details['thread'] = threading.current_thread().name
@@ -1098,9 +1171,35 @@ class Progress:
         # Judging and edits also hold the project lock; they are not a saved-progress check.
         return self.status(slug) is not None
 
+    def verification_owner_of(self, slug: str) -> tuple[str, float] | None:
+        """(project, admitted at) of the verification `slug` waits behind: its own project's other check, else
+        the one that has run longest. Called under activity_lock."""
+        holders = list(self.verification_holders.items())
+        if not holders:
+            return None
+        owner, details = next(((name, d) for name, d in holders if name == slug),
+                              min(holders, key=lambda item: item[1]['since']))
+        return owner, details['since']
+
+    @property
+    def verification_owner(self) -> tuple[str, float] | None:
+        """(project, admitted at) of the longest-running verification, or None while no project verifies."""
+        holders = list(self.verification_holders.items())
+        if not holders:
+            return None
+        name, details = min(holders, key=lambda item: item[1]['since'])
+        return name, details['since']
+
+    @property
+    def verification_details(self) -> dict | None:
+        """The longest-running verification's lease, phase and thread, or None."""
+        owner = self.verification_owner
+        return None if owner is None else self.verification_holders.get(owner[0])
+
     @contextmanager
     def _verification(self, slug: str, logger=None):
-        """Wait for the shared compiler lane without monopolizing this project's lock.
+        """Wait for a verification lane (VERIFICATION_PROJECTS, one per project) without monopolizing this
+        project's lock.
 
         Condition.wait releases every recursive acquisition, including an outer batch.
         The caller reloads project and disk inputs once the lane is acquired; another
@@ -1118,16 +1217,22 @@ class Progress:
                     self._check_rechecking_files(slug)
                     acquired = False
                     break
-                if self.verification_slot.acquire(blocking=False):
-                    acquired = True
+                with self.activity_lock:
+                    # this project's own other check, else whichever lane is free
+                    acquired = slug not in self.verification_holders and self.verification_slot.acquire(blocking=False)
+                    if acquired:
+                        self.verification_holders[slug] = {'lease': object(), 'since': time.monotonic(),
+                                                           'phase': 'Verification admitted',
+                                                           'phase_started': time.monotonic(),
+                                                           'thread': threading.current_thread().name}
+                if acquired:
                     break
                 now = time.monotonic()
                 if now >= next_report:
                     with self.activity_lock:
-                        owner = self.verification_owner
-                        details = self.verification_details
-                        phase = (details['phase'] if details is not None else
-                                 self.activity.get(owner[0], {}).get('phase', 'unknown') if owner else 'unknown')
+                        owner = self.verification_owner_of(slug)
+                        details = self.verification_holders.get(owner[0]) if owner else None
+                        phase = details['phase'] if details is not None else 'unknown'
                         thread = details['thread'] if details is not None else 'unknown'
                         phase_elapsed = now-details['phase_started'] if details is not None else 0.
                     saves.log.warning('Saved verification admission wait project=%s wait=%.3fs owner=%s owner_elapsed=%.3fs phase=%s owner_thread=%s phase_elapsed=%.3fs',
@@ -1140,24 +1245,20 @@ class Progress:
             # Use the ordinary foreground guards without borrowing its compiler lane.
             yield False
             return
-        with self.activity_lock:
-            self.verification_owner = (slug, time.monotonic())
         released = False
         def release():
             nonlocal released
             if released:return
             released = True
             with self.activity_lock:
-                self.verification_owner = None
-                self.verification_details = None
+                self.verification_holders.pop(slug, None)
             self.verification_slot.release()
         previous = getattr(self.local, 'verification', None)
         self.local.verification = (slug, release)
         previous_activity = getattr(self.local, 'verification_activity', None)
         self.local.verification_activity = release
         with self.activity_lock:
-            self.verification_details = {'lease':release, 'phase':'Verification admitted',
-                                         'phase_started':time.monotonic(), 'thread':threading.current_thread().name}
+            self.verification_holders[slug]['lease'] = release
         try:
             yield True
         finally:

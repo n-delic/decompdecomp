@@ -1,5 +1,4 @@
 """Warmed draft generators must agree with the CLI and stop with their owner."""
-import subprocess
 import sys
 import threading
 import time
@@ -37,12 +36,12 @@ def test_warmed_generator_matches_cli_across_inputs_and_reuses_process():
 
 def test_stop_terminates_stuck_generator(tmp_path,monkeypatch):
     tool=tmp_path/'m2c';tool.write_text('test')
-    original=subprocess.Popen
+    original=m2c_sessions.spawner.Popen
     processes=[]
     def launch(*args,**kwargs):
         proc=original([sys.executable,'-c','import time; time.sleep(30)'],**kwargs)
         processes.append(proc);return proc
-    monkeypatch.setattr(m2c_sessions.subprocess,'Popen',launch)
+    monkeypatch.setattr(m2c_sessions.spawner,'Popen',launch)
     enabled=threading.Event();enabled.set()
     stop=threading.Event()
     def check():

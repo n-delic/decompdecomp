@@ -796,6 +796,19 @@ def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str
 ALWAYS_LOAD = agents.TOOL_META
 
 
+# Tools that read, claim or note without compiling: they share a lane no compile can fill.
+QUICK_TOOLS = frozenset({
+    'guide', 'project_info', 'get_claims', 'list_functions', 'get_function', 'get_assembly', 'get_context',
+    'last_diff', 'search_notes', 'read_file', 'search_code', 'file_status', 'get_class', 'compiler_map',
+    'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
+    'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function',
+    'add_note', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
+    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary',
+})
+QUICK_LANE = 16
+WORK_LANE = 32
+
+
 def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]], observe=None) -> MCPServer:
     """MCP server for CLI agents. `agent_of` maps a request to (agent, project slug)."""
     from .tool_policy import ensure
@@ -803,6 +816,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     mcp = MCPServer(name="decomp", title="decompdecomp", instructions=INSTRUCTIONS, version=__version__)
 
     health_limiter = anyio.CapacityLimiter(2)
+    # Tool calls have threads of their own, apart from the window's (anyio's shared default of 40), and quick
+    # tools have their own lane: a burst of compiles can't make guide or get_claims wait (MCP error -32001).
+    quick_limiter = anyio.CapacityLimiter(QUICK_LANE)
+    work_limiter = anyio.CapacityLimiter(WORK_LANE)
     async def run(ctx: Context, name: str, **args) -> str:
         queued=time.monotonic()
         try:
@@ -862,7 +879,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
             if error:
                 raise error
             return result
-        return await anyio.to_thread.run_sync(execute,limiter=health_limiter if checking else None)
+        lane = health_limiter if checking else quick_limiter if name in QUICK_TOOLS else work_limiter
+        return await anyio.to_thread.run_sync(execute,limiter=lane)
 
     def tool(fn):
         full = " ".join((fn.__doc__ or "").split())

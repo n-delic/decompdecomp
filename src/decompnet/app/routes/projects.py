@@ -13,15 +13,22 @@ import time
 from contextlib import nullcontext
 from pathlib import Path
 
+import anyio
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from ... import consoles, hostenv, toolchains
 from ...forks.project import SCOPES
 from ...network import NetworkError
 from .. import compiler_cleanup, saves, window
 from ..engine import parse_ranges
+from ..live_sections import changed, message
 from . import App
+
+STREAM_CHECK_SECONDS = 0.5  # how often /api/stream compares the live feed's change counters
+STREAM_PING_SECONDS = 15
+STREAM_SECONDS = 300  # a stream's longest life; EventSource reconnects on its own
+STREAM_LIMIT = 16  # open streams at once, for every window and browser together
 
 
 def register(app: App) -> None:
@@ -72,7 +79,9 @@ def register(app: App) -> None:
                     if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/rom-explorer/preview", "/api/rom-explorer/loaders", "/api/rom-explorer/inspect", "/api/rom-explorer/discovery", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
-                reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
+                reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
+                if request.url.path == '/api/live':
+                    reader = app.live_call or app.fast_call
                 response, = await app.imports('decompnet.request_timing', ('response',))
                 def respond():
                     from ..project_activity import current_project
@@ -148,16 +157,21 @@ def register(app: App) -> None:
         return overview
 
     def p_live(slug, request, data):
+        from ..live_sections import compact, parse_sections
         q = request.query_params
-        out = net.live(slug, int(q.get("e", 0) or 0), int(q.get("a", 0) or 0))
-        try:
-            since = json.loads(q.get("s") or "{}")
-        except ValueError:
-            since = {}
-        out["sessions"] = manager.snapshot(since, project=slug)
+        # `only`: the sections /api/stream said moved (feed, claims, overview, sessions); the rest isn't read
+        sections = parse_sections(q.get('only'))
+        out = net.live(slug, int(q.get("e", 0) or 0), int(q.get("a", 0) or 0), sections=sections)
+        if sections is None or 'sessions' in sections:
+            try:
+                since = json.loads(q.get("s") or "{}")
+            except ValueError:
+                since = {}
+            out["sessions"] = manager.snapshot(since if isinstance(since, dict) else {}, project=slug)
         if q.get('compact') == '1':
-            from ..live_sections import compact
             out = compact(out, q.get('v'))
+        else:
+            out.pop('versions', None)
         return out
 
     def p_transcript(slug, request, data):
@@ -981,5 +995,60 @@ def register(app: App) -> None:
     }
     for path, (fn, methods) in routes.items():
         mcp.custom_route(path, methods=methods)(with_project(fn))
+
+    from ..live_sections import Watcher
+    watcher = Watcher(net, manager)
+    streams = {'open': 0}
+
+    @mcp.custom_route('/api/stream', methods=['GET'])
+    async def api_stream(request: Request) -> Response:
+        """Server-sent events for the open project's page: "changed" names the live feed's sections that moved
+        (feed, claims, overview, sessions, map) with the newest event's id, and the page asks /api/live for only
+        those. Checked by the same rules as every GUI read (guard: the window's secret in its user agent, or a
+        signed-in browser session; EventSource sends both). Between checks the stream holds no worker thread, only
+        an asyncio sleep; it ends when the page goes, the app shuts down, or after STREAM_SECONDS (the browser
+        reconnects by itself)."""
+        if (bad := guard(request)):
+            return bad
+        slug = request.query_params.get('slug', '')
+        if streams['open'] >= STREAM_LIMIT:
+            return JSONResponse({'error': 'Too many live streams are open; the page polls instead.'}, status_code=429)
+        check = app.stream_call or call
+        try:
+            first = await check(watcher.signature, slug)
+        except (NetworkError, ValueError) as e:
+            return fail(e)
+
+        async def events():
+            streams['open'] += 1
+            began = last_sent = time.monotonic()
+            seen = first
+            try:
+                yield 'retry: 3000\n\n' + message('hello', {'sections': sorted(k for k in first if k != 'event'),
+                                                            'event': first.get('event', 0)})
+                while time.monotonic() - began < STREAM_SECONDS and not getattr(net, 'shutting_down', False):
+                    await anyio.sleep(STREAM_CHECK_SECONDS)
+                    if await request.is_disconnected():
+                        return
+                    try:
+                        now = await check(watcher.signature, slug)
+                    except (NetworkError, ValueError) as e:  # (the project was removed or renamed)
+                        yield message('gone', {'error': str(e)})
+                        return
+                    except Exception:  # a busy database: the next check tries again
+                        continue
+                    moved = changed(seen, now)
+                    if moved:
+                        seen = now
+                        last_sent = time.monotonic()
+                        yield message('changed', {'sections': moved, 'event': now.get('event', 0)})
+                    elif time.monotonic() - last_sent >= STREAM_PING_SECONDS:
+                        last_sent = time.monotonic()
+                        yield ': ping\n\n'  # (a comment: keeps proxies and the webview from closing an idle stream)
+            finally:
+                streams['open'] -= 1
+
+        return StreamingResponse(events(), media_type='text/event-stream',
+                                 headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})
 
     app.with_project = with_project

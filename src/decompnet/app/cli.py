@@ -233,11 +233,16 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         log.exception('Database corruption prevented startup')
         print(str(error), file=sys.stderr, flush=True)
         return 1
-    mcp, manager, security, quit_app = build(net, internal, port, secret, **({"headless":True} if headless else {}))
+    from . import mcp_gateway
+    gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port")
+    mcp, manager, security, quit_app = build(net, internal, port, secret, mcp_url=gateway.url if gateway else None,
+                                             **({"headless":True} if headless else {}))
     if restarted and restarted.get('switch_home'):
         from .data_directories import remember
         remember(home,selected=True)
-    app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
+    # Behind the gateway the app's MCP keeps no sessions: either side can restart without breaking the other.
+    app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1",
+                                  stateless_http=gateway is not None, json_response=gateway is not None)
     from ..mcp_acknowledgments import Acknowledgments
     from ..ui_diagnostics import Diagnostics
     app = Acknowledgments(Diagnostics(app, stack_path=internal / "logs" / "event-loop-stacks.log"))
@@ -256,6 +261,8 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         log.exception("the server stopped")
         traceback.print_exc()
     finally:
+        if gateway is not None:
+            gateway.stop()
         quit_app()
     return 0
 

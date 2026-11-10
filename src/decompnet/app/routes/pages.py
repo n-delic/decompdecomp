@@ -41,7 +41,7 @@ def register(app: App) -> None:
         page=(await app.call(static_file, "index.html")).decode()
         if revisions:
             page=page.replace('</head>', f'<meta name="decomp-live-reload" data-css="{revisions["css"]}" data-page="{revisions["page"]}"></head>')
-            page=page.replace('</body>', '<script src="/assets/js/live-reload.js"></script></body>')
+            page=page.replace('</body>', '<script defer src="/assets/js/live-reload.js"></script></body>')
         if app.web_login and not secrets.compare_digest(window.request_token(request), secret):
             page=page.replace("form-action 'none'", "form-action 'self'").replace('<body>', '<body data-server-mode="1">')
             page=page.replace('</aside>', '<form class="web-session" method="post" action="/logout"><span>Server mode</span><button type="submit">Sign out</button></form></aside>', 1)

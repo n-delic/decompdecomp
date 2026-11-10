@@ -145,7 +145,7 @@ tool and the class lines of `get_function`),
 `Arch.field_accesses`, MIPS: `arch/mips_fields.py`, x86: `arch/x86_fields.py`; the `guess_struct` tool and the brief's lines, `app/engine/layouts.py`),
 `compilermap.py` (which compiler built each part of a MIPS game; the judge's survey is `engine.survey_compilers`;
 `app/rangecheck.py` tests a suggested range on its neighbours before it applies), `app/tools.py` (the MCP
-tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts), `app/window.py`
+tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts; helpers reach it through the MCP gateway, `gateway/` (Rust) started by `app/mcp_gateway.py`, which answers every request within a deadline: docs/MCP_GATEWAY.md), `app/window.py`
 + `app/gtkwindow.py` + `app/macwindow.py` + `app/tray.py` (the window: Linux uses system GTK/WebKitGTK, macOS uses
 Cocoa/WebKit through the app's Python; the page answers only a window with the secret in its user agent; Linux and
 Windows have a tray icon; tests set `DECOMP_WINDOW=0` and
