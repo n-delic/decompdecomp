@@ -40,21 +40,27 @@ CLAIM_SECONDS = 30 * 60
 SMALL_INSNS, BIG_INSNS = 8, 400
 ORDER = (f"boost DESC, CASE WHEN n_insns > {BIG_INSNS} THEN 1 WHEN n_insns < {SMALL_INSNS} THEN 2 ELSE 0 END, "
          f"CASE WHEN n_insns > {BIG_INSNS} THEN n_insns ELSE -n_insns END")
-POLISH_TRIES = 3  # a function taken up this often since it was last made readable, and still not readable, is skipped
+POLISH_TRIES = 3  # hand-outs whose rewrite failed (polish_failed) since it was last made readable: then it's skipped
+# Hand-outs that ended without a judged rewrite: a helper whose session ended, or that let it go, says nothing about
+# the function. Counting each as a try gave up on 199 of an N64 game's last 207 functions, only 8 of which any
+# rewrite had failed on: most tries had gone to polishes refused for reasons since fixed, or never submitted.
+# A function nobody finishes is still let go after this many.
+POLISH_CLAIMS = 10
 # what polishing takes (claim) and what a polishing helper's session counts as left (agents.Manager._left): the game's
 # own matched code that isn't readable yet and isn't given up on: one no rewrite kept matching was handed out again
 # and again, to every helper, being the biggest. (TODO and GIVEN_UP each take one ?, the project's id, after the
 # caller's own)
-GIVEN_UP = ("SELECT p.detail FROM events p WHERE p.project_id=? AND p.kind='polish' AND p.id > COALESCE((SELECT "
-            "MAX(r.id) FROM events r WHERE r.project_id=p.project_id AND r.kind='readable' AND r.detail=p.detail), 0) "
-            f"GROUP BY p.detail HAVING COUNT(*) >= {POLISH_TRIES}")
+GIVEN_UP = ("SELECT p.detail FROM events p WHERE p.project_id=? AND p.kind IN ('polish','polish_failed') AND p.id > "
+            "COALESCE((SELECT MAX(r.id) FROM events r WHERE r.project_id=p.project_id AND r.kind='readable' "
+            "AND r.detail=p.detail), 0) "
+            f"GROUP BY p.detail HAVING SUM(p.kind='polish_failed') >= {POLISH_TRIES} OR SUM(p.kind='polish') >= {POLISH_CLAIMS}")
 TODO = f"status='matched' AND readable=0 AND {GAME_CODE} AND name NOT IN ({GIVEN_UP})"
 
 
 def _left_as_it_is(name: str, without: str) -> str:
-    """What a helper is told of a function or file it held that has had its tries: POLISH_TRIES counts every helper's
-    tries, not this one's, so it says it was tried rather than you tried it (#108)."""
-    return f"You held {name}; it was tried {POLISH_TRIES} times without {without}, so it's left as it is now.\n\n"
+    """What a helper is told of a function or file it held that has had its tries: they count every helper's tries,
+    not this one's, so it says it was tried rather than you tried it (#108)."""
+    return f"You held {name}; it has had its tries without {without}, so it's left as it is now.\n\n"
 
 
 TIDY = """\
@@ -263,9 +269,8 @@ class Readability:
                     return given_up + job
             if self.left(proj):  # what's left is held by other helpers
                 return given_up + self._held_by_others(proj)
-            return (given_up + "Every matched function is readable already (or was tried "
-                    f"{POLISH_TRIES} times without staying matched), and every file tidy. 🎉 Stop here: nothing is "
-                    "left to polish.")
+            return (given_up + "Every matched function is readable already (or has had its tries without "
+                    "staying matched), and every file tidy. 🎉 Stop here: nothing is left to polish.")
         from . import polish_automation
         if polish_automation.reuse(self, agent, proj, fn):
             return None
@@ -351,8 +356,10 @@ class Readability:
         if cached:
             return cached
 
-        def rejected(text, cacheable=False):
+        def rejected(text, cacheable=False, tried=True):
             polish_automation.remember_failure(self.net, proj, fn, key, source, text, original, cacheable)
+            if tried:
+                self._failed(proj, fn, agent)
             return text
 
         if not self.net.is_rom(proj):  # the project's own file, judged and committed (or put back) as any compile
@@ -370,7 +377,9 @@ class Readability:
         cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
         if cand is None:
             self.net._record(fn, agent, None, source, ctx["version"], compiled=True)
-            return rejected(f"❌ No function named `{fn['name']}` in it: keep its name (rename it with rename_symbol).")
+            # the helper renamed it: its own slip, which says nothing about the function
+            return rejected(f"❌ No function named `{fn['name']}` in it: keep its name (rename it with rename_symbol).",
+                            tried=False)
         d = scoring.diff(self.net._target_obj(fn, proj), cand)
         self.net._record(fn, agent, d.score, source, ctx["version"])  # not as a match: it was one already
         if not (d.bytes_match if verdict is None else verdict):
@@ -379,6 +388,15 @@ class Readability:
                     f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""), cacheable=d.score > 0 and not problems)
         polish_automation.check_inputs(self.net, proj, fn, original, source, key, receipt, 'judge')
         return self._readable(proj, fn, agent, source, original=original)
+
+    def _failed(self, proj, fn, agent: Agent) -> None:
+        """A judged rewrite didn't compile or stopped matching: its hand-out counts as a try (POLISH_TRIES), once."""
+        with self.net.project_store(proj['id']).tx() as db:
+            latest = db.execute("SELECT MAX(id) FROM events WHERE project_id=? AND kind='polish' AND detail=?",
+                                (proj["id"], fn["name"])).fetchone()[0] or 0
+            if not db.execute("SELECT 1 FROM events WHERE project_id=? AND kind='polish_failed' AND detail=? AND id>?",
+                              (proj["id"], fn["name"], latest)).fetchone():
+                self.net._event(db, proj["id"], agent.id, "polish_failed", fn["name"])
 
     def _readable(self, proj, fn, agent: Agent, source: str, *, original=None) -> str:
         """A rewrite that still matches: it's the function's C now, and the function counts as readable."""

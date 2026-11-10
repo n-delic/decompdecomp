@@ -1012,6 +1012,7 @@ function eventHtml(ev) {
     case "claim": return `${who} started ${fnLink(d)}`;
     case "polish": return `${who} started polishing ${fnLink(d)} ${POLISH_TAG}`;
     case "readable": return `<span class="ok">✎</span> ${who} polished ${fnLink(d)} ${POLISH_TAG}`;
+    case "polish_failed": return `${who}'s rewrite of ${fnLink(d)} didn't keep it matching ${POLISH_TAG}`;
     // a source file tidied once its functions are polished (app/readable.py: its types, names and declarations)
     case "tidy": return `${who} started tidying ${esc(d)} ${POLISH_TAG}`;
     case "tidied": return `<span class="ok">✎</span> ${who} tidied ${esc(d)} ${POLISH_TAG}`;

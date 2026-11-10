@@ -54,7 +54,8 @@ def test_a_readable_rewrite_that_still_matches_is_kept(matched):
         assert detail["source"] == READABLE
     # its own kinds, so the feed says polishing (not a computer's colour) and routing counts decompiling claims only
     kinds = [r["kind"] for r in net.store.all("SELECT kind FROM events WHERE detail='clamp_s32' ORDER BY id")]
-    assert kinds[-2:] == ["polish", "readable"]
+    # the rewrite that stopped matching used up one of its tries (POLISH_TRIES), once for that hand-out
+    assert kinds[-3:] == ["polish", "polish_failed", "readable"]
 
 
 def test_the_same_c_again_is_no_rewrite(matched):
