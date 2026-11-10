@@ -241,7 +241,7 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         reader.stop()
         reader = None
     mcp, manager, security, quit_app = build(net, internal, port, secret, mcp_url=gateway.url if gateway else None,
-                                             reader=reader, **({"headless":True} if headless else {}))
+                                             reader=reader, gateway=gateway, **({"headless":True} if headless else {}))
     if restarted and restarted.get('switch_home'):
         from .data_directories import remember
         remember(home,selected=True)

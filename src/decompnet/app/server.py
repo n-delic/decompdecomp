@@ -47,7 +47,7 @@ from .support import Jobs, Settings, session_options
 
 
 def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool = False, mcp_url: str | None = None,
-          reader=None):
+          reader=None, gateway=None):
     from .permuter_worker import PermuterWorker
     net.permuter = PermuterWorker(net)
     # The helpers' address: the MCP gateway's when it runs (app/mcp_gateway.py), else this server's own /mcp.
@@ -239,11 +239,15 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     threading.Thread(target=resume_work, daemon=True, name="resume-work").start()
 
     mcp = tools.build_mcp(net, agent_of, observe=manager.record_agent)
-    if reader is not None:  # read-only tools in their own process (app/tool_reader.py)
+    # Read-only tools answered outside this process: by the gateway itself (gateway/src/native.rs) and the reader
+    # process (app/tool_reader.py). Both learn which helper works which project, and report what they answered.
+    served_elsewhere = [side for side in (gateway, reader) if side is not None]
+    if served_elsewhere:
         from . import tool_reader
-        tool_reader.watch(net, reader.changed)
-        reader.attach(lambda: tool_reader.routes(net, manager, settings),
-                      lambda message: tool_reader.apply_report(net, manager, message))
+        tool_reader.watch(net, lambda: [side.changed() for side in served_elsewhere])
+        for side in served_elsewhere:
+            side.attach(lambda: tool_reader.routes(net, manager, settings),
+                        lambda message: tool_reader.apply_report(net, manager, message))
 
     mcp_metadata_limiter = anyio.CapacityLimiter(2)
 

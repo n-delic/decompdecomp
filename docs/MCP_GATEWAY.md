@@ -24,6 +24,30 @@ with their work.
   running and the gateway 256. The deadlines sit under every client's own limit (Claude Code's MCP SDK: 60 s;
   Codex and Kimi: 180 s, set by the app).
 
+## Tools the gateway answers itself
+
+The first step towards serving the tools without the Python app: `gateway/src/native.rs` answers `get_claims`,
+`list_functions` and the compact `project_info` straight from the SQLite databases, read-only, with exactly the
+reply the app's handlers give (the same SQL, Python's number formatting and `json.dumps`, the same claim tokens).
+`tests/test_gateway_native.py` compares the two byte for byte. On a copy of a real project they agreed on all 23
+calls tried, and the gateway answered in about 1 ms.
+
+- The app sends what only it knows over the gateway's standard input every second, and at once when a handshake
+  or investigation starts (`app/tool_reader.py` routes):
+  - which project each helper works;
+  - the helpers with app-only state;
+  - the projects it is rechecking or sharing;
+  - each active project's database, and the saved parts of its project_info.
+- Each call it answers goes back to the app on standard output, so the app keeps the transcript, session budget,
+  tool usage and activity (`apply_report`). It doesn't update the helper's advisory last-seen time.
+- Whatever it isn't sure of goes on to the reader and then the app:
+  - a helper or project the app hasn't described, or routes older than 5 s;
+  - fork projects;
+  - `project_info(detail=true)`;
+  - a missing row, or any database error.
+- Claims, releases, notes and everything that compiles stay with the app. They move once projects have their slim
+  hosted format, with the gateway as the only thing that claims.
+
 ## Read-only tools in their own process
 
 `src/decompnet/app/tool_reader.py` runs a second, small Python process (about 90 MB) that opens the same databases
@@ -68,7 +92,7 @@ from the reader and 357 ms in the app, and its answers to 155 real calls were id
 
 ```sh
 cd gateway && cargo build --release   # a checkout finds gateway/target/release/decomp-mcp-gateway
-uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tests/test_tool_reader.py && (cd gateway && cargo test)
+uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tests/test_tool_reader.py tests/test_gateway_native.py && (cd gateway && cargo test)
 ```
 
 - Every package carries it: the macOS app, the Linux .deb/.rpm/AppImage and the Windows setup and portable ZIP run

@@ -15,7 +15,10 @@
 //! The app runs its MCP server stateless behind this gateway, so the gateway keeps no MCP sessions either. It never
 //! holds a lock across an await, bounds every wait, and exits when the app closes its standard input.
 
+mod native;
+
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -28,7 +31,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncReadExt;
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
 
 const PROTOCOL_FALLBACK: &str = "2025-06-18";
@@ -132,6 +135,10 @@ struct Gateway {
     /// Calls the reader answered, and calls it passed to the app.
     read: AtomicU64,
     declined: AtomicU64,
+    /// Tools answered here, from the databases (native.rs), and how many.
+    native: Arc<native::Native>,
+    answered: AtomicU64,
+    reports: AtomicU64,
 }
 
 fn log(message: impl AsRef<str>) {
@@ -239,6 +246,34 @@ impl Gateway {
     async fn send(&self, message: &Value, headers: &HeaderMap, limit: Duration) -> Upstream {
         let upstream = self.config.upstream.clone();
         self.send_to(&upstream, message, headers, limit).await
+    }
+
+    /// The gateway's own answer (native.rs), or None. The app hears of it on standard output, to keep the
+    /// helper's transcript, session budget and tool usage as for its own calls (app/tool_reader.py apply_report).
+    async fn from_here(&self, message: &Value, headers: &HeaderMap, tool: &str) -> Option<Value> {
+        if !native::TOOLS.contains(&tool) {
+            return None;
+        }
+        let id = message.get("id").cloned().unwrap_or(Value::Null);
+        let arguments = message.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
+        let (auth, tool_name, native) = (bearer(headers), tool.to_string(), self.native.clone());
+        let started = Instant::now();
+        let work = tokio::task::spawn_blocking(move || native.answer(&auth, &tool_name, &arguments).map(|s| (s, arguments)));
+        let (served, arguments) = tokio::time::timeout(Duration::from_secs(10), work).await.ok()?.ok()??;
+        self.answered.fetch_add(1, Ordering::Relaxed);
+        let call_id = format!("gw{:x}{:x}", std::process::id(), self.reports.fetch_add(1, Ordering::Relaxed));
+        let report = json!({"call": {
+            "agent_id": served.agent_id, "agent_name": served.agent_name, "slug": served.slug, "name": tool,
+            "arguments": arguments, "call_id": call_id, "content": served.text,
+            "timings": {"dispatch_ms": (started.elapsed().as_secs_f64() * 1000.0 * 100.0).round() / 100.0, "gateway": true},
+        }});
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "{report}");
+        let _ = out.flush();
+        Some(json!({"jsonrpc": "2.0", "id": id, "result": {
+            "content": [{"type": "text", "text": served.text}],
+            "structuredContent": {"result": served.text},
+            "isError": false}}))
     }
 
     /// The reader's answer to a read-only call, or None: the app answers it (not a reader tool, declined,
@@ -372,7 +407,10 @@ impl Gateway {
                         tokio::spawn(async move {
                             let _permits = permits;
                             let limit = gateway.config.upstream_limit;
-                            let read = gateway.from_reader(&message, &headers, &tool).await;
+                            let mut read = gateway.from_here(&message, &headers, &tool).await;
+                            if read.is_none() {
+                                read = gateway.from_reader(&message, &headers, &tool).await;
+                            }
                             let reply = match read {
                                 Some(reply) => Upstream::Reply(reply),
                                 None => gateway.send_patiently(&message, &headers, limit).await,
@@ -534,6 +572,7 @@ async fn health(State(gateway): State<Arc<Gateway>>) -> Response {
         "reader": gateway.config.reader.is_some(),
         "read_by_reader": gateway.read.load(Ordering::Relaxed),
         "passed_to_app": gateway.declined.load(Ordering::Relaxed),
+        "answered_by_gateway": gateway.answered.load(Ordering::Relaxed),
     }))
 }
 
@@ -548,14 +587,15 @@ async fn sweep(gateway: Arc<Gateway>) {
     }
 }
 
-/// The app holds our standard input open; when it closes (the app quit or crashed) the gateway ends too.
-async fn until_parent_leaves() {
-    let mut stdin = tokio::io::stdin();
-    let mut buffer = [0u8; 256];
-    loop {
-        match stdin.read(&mut buffer).await {
-            Ok(0) | Err(_) => return,
-            Ok(_) => {}
+/// The app holds our standard input open and writes its routes there (native.rs), one JSON line each; when it
+/// closes (the app quit or crashed) the gateway ends too.
+async fn until_parent_leaves(native: Arc<native::Native>) {
+    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        if let Ok(message) = serde_json::from_str::<Value>(&line) {
+            if let Some(routes) = message.get("routes").and_then(native::Routes::parse) {
+                native.set_routes(routes);
+            }
         }
     }
 }
@@ -587,6 +627,9 @@ async fn main() {
         reachable: AtomicBool::new(true),
         read: AtomicU64::new(0),
         declined: AtomicU64::new(0),
+        native: Arc::new(native::Native::new()),
+        answered: AtomicU64::new(0),
+        reports: AtomicU64::new(0),
     });
     let app = Router::new()
         .route("/mcp", post(mcp_post).get(mcp_other).delete(mcp_other))
@@ -604,10 +647,11 @@ async fn main() {
     let address = listener.local_addr().expect("bound address");
     // The app reads this line to learn the port.
     println!("LISTENING {}", address.port());
+    let native = gateway.native.clone();
     tokio::spawn(sweep(gateway));
     let server = axum::serve(listener, app).with_graceful_shutdown(async {
         tokio::select! {
-            _ = until_parent_leaves() => {},
+            _ = until_parent_leaves(native) => {},
             _ = tokio::signal::ctrl_c() => {},
         }
     });

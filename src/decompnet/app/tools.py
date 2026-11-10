@@ -291,11 +291,9 @@ def _fork(net: RomNetwork, slug: str, what: str) -> str:
 
 
 def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
-    wish = net.instructions(slug)
     if not detail:
-        order = net.claim_order(slug)
-        steering = f"\nThe project's owner chose the order helpers take functions in: {CLAIM_ORDERS[order]}." if order else ''
-        return _compact_project_info(net,slug) + steering + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
+        return _compact_project_info(net, slug) + compact_info_steering(net.instructions(slug), net.claim_order(slug))
+    wish = net.instructions(slug)
     text = _project_info(net, slug, detail)
     open_ = net.overview(slug).get("suggestions") or []
     if open_ and not detail:
@@ -315,20 +313,35 @@ def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
     return text + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
 
 
-def _compact_project_info(net, slug):
-    """Indexed totals and saved metadata only: no overview, SDK, room or build scans."""
-    proj=net._project(slug)
+COMPACT_NEXT = ('Compact saved metadata; each claim uses its own effective compiler profile. '
+                'project_info(detail=true) loads full facts, knowledge and suggestions. Next: get_claims() to recover held work, or claim_function().')
+
+
+def compact_info_head(net, proj):
+    """project_info(detail=false) before its progress line: saved settings only. The MCP gateway answers that call
+    itself from these parts and the database's totals (gateway/src/native.rs)."""
     cfg=net.cfg(proj)
-    totals=net.project_store(slug).one('SELECT total,matched,attempts FROM project_totals WHERE project_id=?',proj['id'])
     profile=cfg.get('compiler') or {}
     platform=consoles.get(cfg.get('platform'))
     compiler=profile.get('toolchain') or 'set by the project build'
     known=', '.join(c.id for c in platform.compilers)
-    return (f"{proj['name']} ({slug})\ncompiler: {compiler} {' '.join(profile.get('flags',[]))}\n"
-            + (f"this platform's compilers (for try_compiler): {known}\n" if known else '')
+    return (f"{proj['name']} ({proj['slug']})\ncompiler: {compiler} {' '.join(profile.get('flags',[]))}\n"
+            + (f"this platform's compilers (for try_compiler): {known}\n" if known else ''))
+
+
+def compact_info_steering(wish, order):
+    """What project_info(detail=false) adds after the compact facts: the owner's claim order and instructions."""
+    steering = f"\nThe project's owner chose the order helpers take functions in: {CLAIM_ORDERS[order]}." if order else ''
+    return steering + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
+
+
+def _compact_project_info(net, slug):
+    """Indexed totals and saved metadata only: no overview, SDK, room or build scans."""
+    proj=net._project(slug)
+    totals=net.project_store(slug).one('SELECT total,matched,attempts FROM project_totals WHERE project_id=?',proj['id'])
+    return (compact_info_head(net, proj)
             + (f"progress: {totals['matched']}/{totals['total']} functions matched; {totals['attempts']} compiles\n" if totals else 'Progress totals unavailable; no project scan performed.\n')
-            + 'Compact saved metadata; each claim uses its own effective compiler profile. '
-              'project_info(detail=true) loads full facts, knowledge and suggestions. Next: get_claims() to recover held work, or claim_function().')
+            + COMPACT_NEXT)
 
 
 def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:

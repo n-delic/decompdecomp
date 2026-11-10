@@ -17,6 +17,7 @@ again on the same port, so the helpers' MCP settings stay right.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -33,6 +34,7 @@ CALL_DEADLINE = 45.0
 META_DEADLINE = 15.0
 MAX_BODY = 16 * 1024 * 1024
 START_SECONDS = 10.0
+ROUTES_SECONDS = 1.0
 
 
 def program() -> Path | None:
@@ -145,7 +147,12 @@ class Gateway:
         self.process: subprocess.Popen | None = None
         self.stopping = threading.Event()
         self.lock = threading.Lock()
+        self.pipe = threading.Lock()  # held only to write routes: a helper starting never waits for a restart
         self.restarts = 0
+        # The app's routes (app/tool_reader.py routes) for the tools the gateway answers itself (native.rs), and
+        # what to do with its reports of those calls.
+        self.routes = None
+        self.report = None
 
     @property
     def url(self) -> str:
@@ -178,7 +185,50 @@ class Gateway:
             process.wait(timeout=5)
             raise RuntimeError(f"the MCP gateway didn't start (exit {process.poll()}, said {line!r})")
         self.process = process
+        threading.Thread(target=self._reports, args=(process,), daemon=True, name="gateway-reports").start()
+        self._send_routes()
         return int(line.split()[1])
+
+    def attach(self, routes, report) -> None:
+        """Let the gateway answer some reads itself: `routes()` is sent every second and at `changed()`; each
+        call it answers comes back to `report`."""
+        self.routes, self.report = routes, report
+        self._send_routes()
+        threading.Thread(target=self._push, daemon=True, name="gateway-routes").start()
+
+    def changed(self) -> None:
+        self._send_routes()
+
+    def _push(self) -> None:
+        while not self.stopping.wait(ROUTES_SECONDS):
+            self._send_routes()
+
+    def _send_routes(self) -> None:
+        if self.routes is None:
+            return
+        try:
+            line = (json.dumps({"routes": self.routes()}) + "\n").encode()
+        except Exception:  # the gateway stops answering itself once its routes are stale; the app answers
+            log.exception("MCP gateway routes failed")
+            return
+        with self.pipe:
+            process = self.process
+            if process is None or process.poll() is not None or process.stdin is None:
+                return
+            try:
+                process.stdin.write(line)
+                process.stdin.flush()
+            except OSError:
+                pass
+
+    def _reports(self, process: subprocess.Popen) -> None:
+        for line in process.stdout:
+            if self.report is None:
+                continue
+            try:
+                self.report(json.loads(line))
+            except Exception:
+                log.exception("MCP gateway report failed")
 
     def start(self, preferred: int = 0) -> str:
         with self.lock:
