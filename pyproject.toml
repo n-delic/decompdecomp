@@ -41,6 +41,8 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-xdist>=3.6",
+    "pytest-timeout>=2.3",
     "ruff==0.14.0",
 ]
 
@@ -58,6 +60,14 @@ select = ["F", "I", "E9", "B006", "B008", "B023"]
 known-first-party = ["decompnet"]
 
 [tool.pytest.ini_options]
+# ~10,000 tests: run them in parallel. loadscope keeps a module's tests on one worker, so its
+# module-scoped fixtures are built once instead of once per worker. Override with `-n 0` for a
+# single process when debugging a test that needs it.
+addopts = "-n auto --dist loadscope --timeout 1200"
+# A cap on a stuck test (deadlocked Event.wait, hung tool). 1200 s leaves room for the demo builds
+# that already pass timeout=900 to build.py; tighten it once those are marked and given their own cap.
+markers = ["slow: needs a real toolchain, a demo build or a long wait (CI installs the tools)",
+           "tools: needs a compiler or decompiler installed on this machine"]
 # the room tests drive the room server through Starlette's TestClient, which warns about the timeouts real clients use.
 # A background thread that raises fails its test: pytest only warned when a project's indexing thread called a
 # test's stand-in with an argument it didn't take (PR #139)
