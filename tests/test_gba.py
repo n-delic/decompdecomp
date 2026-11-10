@@ -120,6 +120,19 @@ def test_gba_candidates_ignore_prologue_shaped_data_far_from_the_code():
         [hex(address) for address in found if address >= header.BASE + 0x4000]
 
 
+def test_gba_candidates_keep_leaf_callbacks_in_a_table_known_code_loads():
+    """A callback table's address is even, so the literal load alone doesn't look like a code pointer. Its entries
+    are the pointers: a distant `movs r0, #1; bx lr` callback must stay a candidate even without a prologue."""
+    rom = bytearray(0x5000)
+    # Known function: ldr r0, [pc, #4]; ldr r0, [r0]; bx lr; nop, then the table's address as its literal.
+    rom[0xC0:0xC8] = bytes.fromhex("014800687047c046")
+    rom[0xC8:0xCC] = (header.BASE + 0x1000).to_bytes(4, "little")
+    rom[0x1000:0x1004] = (header.BASE + 0x4001).to_bytes(4, "little")
+    rom[0x4000:0x4004] = bytes.fromhex("01207047")  # movs r0, #1; bx lr (a leaf callback)
+    found = candidates.candidates(bytes(rom), [header.BASE + 0xC0])
+    assert header.BASE + 0x4000 in found
+
+
 def test_the_gba_tools_are_pinned_free_builds():
     agbcc, luvdis = toolchains.get("agbcc"), toolchains.get("luvdis")
     assert agbcc.license == "GPL-2.0" and not agbcc.proprietary and agbcc.requires == ["arm-gnu"]
