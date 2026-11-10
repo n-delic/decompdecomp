@@ -198,7 +198,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     from .database_cleanup import Retention
     net.database_retention = Retention(net,jobs)
     net.autosave = saves.Autosave(net, settings)
-    net.autosave.start()  # follow work and contributions in each ROM project's authoritative progress folder
+    net.autosave.start()
+    from .hosted_sync import Sync
+    net.hosted_sync = Sync(net, home)  # verified matches from linked hosted servers (docs/HOSTED.md)
+    net.hosted_sync.start()  # follow work and contributions in each ROM project's authoritative progress folder
 
     def options_now(kind: str, options: dict) -> dict | None:
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the

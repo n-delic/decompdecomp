@@ -755,8 +755,11 @@ impl Project {
 
     fn matches_on(&self, db: &Connection, since: f64) -> Result<Value, Problem> {
         let mut statement = db.prepare_cached(
+            // Matches verified here: not the ones the project came with (hosted_export.py).
             "SELECT id,name,unit,vram,matched_source,matched_by,matched_at FROM functions \
-             WHERE status='matched' AND matched_at>? ORDER BY matched_at LIMIT 1000",
+             WHERE status='matched' AND matched_at>? AND id IN \
+             (SELECT function_id FROM submissions WHERE state='verified' AND verified_score=0) \
+             ORDER BY matched_at LIMIT 1000",
         )?;
         let rows: Vec<Value> = statement
             .query_map([since], |r| {

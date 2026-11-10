@@ -321,6 +321,11 @@ def hosted_export(args) -> int:
     return export(args.slug, args.dir, home_dir())
 
 
+def hosted_link(args) -> int:
+    from .hosted_sync import main as link
+    return link(args, home_dir() / ".decomp")
+
+
 def judge_worker(args) -> int:
     from ..hosted_judge import main as judge
     return judge(home_dir())
@@ -408,6 +413,12 @@ def main(argv: list[str] | None = None) -> int:
     he.add_argument("slug", help="the project's slug")
     he.add_argument("dir", help="the hosted server's folder (writes DIR/projects/SLUG.sqlite3; again to update it)")
     sub.add_parser("judge-worker", help=argparse.SUPPRESS)  # a verifier's judge (hosted_judge.py)
+    hl = sub.add_parser("hosted-link", help="take verified matches from a hosted server into a project")
+    hl.add_argument("slug", help="the project's slug here")
+    hl.add_argument("--server", help="the hosted server's address, https://...")
+    hl.add_argument("--token", help="a verifier's token on that server")
+    hl.add_argument("--remote", help="the project's slug on the server (default: the same)")
+    hl.add_argument("--remove", action="store_true", help="stop taking matches from it")
     ii = sub.add_parser("install-info", help=argparse.SUPPRESS)  # the installers: where updates come from
     ii.add_argument("--channel", choices=["release", "branch"], default="release")
     ii.add_argument("--branch", default="")
@@ -420,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
     limits.no_core_dumps()
     return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd,
             "install-info": install_info, "hosted-export": hosted_export,
-            "judge-worker": judge_worker}.get(args.cmd, run)(args)
+            "judge-worker": judge_worker, "hosted-link": hosted_link}.get(args.cmd, run)(args)
 
 
 if __name__ == "__main__":
