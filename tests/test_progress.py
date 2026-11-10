@@ -21,6 +21,9 @@ from decompnet.rom import split
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
+    # One verification lane: these tests stand in for "every lane is busy" by taking the slot themselves.
+    # Several lanes: tests/test_progress_import_admission.py.
+    monkeypatch.setenv("DECOMP_VERIFICATION_PROJECTS", "1")
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     cfg = {"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"}, "instructions": "old"}
     with net.store.tx() as db:
@@ -2699,11 +2702,15 @@ def test_slow_verification_wait_reports_actual_owner_phase_and_clears_owner(proj
         def release(self):self.available = True
     slot = Slot()
     monkeypatch.setattr(worker, 'verification_slot', slot)
-    worker.verification_owner = ('other', 0.)
+    worker.verification_holders['other'] = {'lease': object(), 'since': 0., 'thread': 'other-thread',
+                                            'phase': 'Verification admitted', 'phase_started': 0.}
     worker._activity('other', phase='Preparing saved verification')
+    worker.verification_holders['other']['phase'] = 'Preparing saved verification'
     class Condition:
         def __init__(self, lock):pass
-        def wait(self, *, timeout):slot.available = True
+        def wait(self, *, timeout):
+            worker.verification_holders.pop('other')
+            slot.available = True
     monkeypatch.setattr('decompnet.app.progress.threading.Condition', Condition)
     with worker._project_lock('game'), caplog.at_level('WARNING'):
         with worker._verification('game') as acquired:

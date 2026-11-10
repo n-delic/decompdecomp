@@ -461,7 +461,57 @@ def _knowledge_store(net, project):
     return service(net)._store(project)
 
 
+# Every manifest render reads all of a project's notes (28,000 notes, 12 MB on a big game: the largest part of its
+# manifest and the slowest read of a render), though they rarely change between two publishes. Keep the last rows of
+# a few projects, valid while the notes' own revision (`read_progress_notes`, a Store read-revision trigger installed
+# on first use) and the function-name revision (`read_naming`: a note shows its function's name) are unchanged.
+NOTE_CACHE_PROJECTS = 4
+NOTE_COLUMNS = "project_id,function_id,agent_id,text,created_at,score_before,score_after"
+_note_cache: dict = {}
+_note_lock = threading.Lock()
+
+
+def _notes_revision(store, pid):
+    """What the project's note rows depend on, read before the rows (so a write in between is seen next time), or
+    None when it can't be known yet: the triggers aren't installed and the writer isn't free to install them."""
+    from ..store import in_transaction
+    trigger = store.one("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='read_progress_notes_notes_update'")
+    if trigger is None:
+        if in_transaction():
+            return None
+        with store.try_tx() as db:
+            if db is None:
+                return None
+            store._track_reads("notes", "progress_notes", NOTE_COLUMNS)
+    # The count and newest ID guard against a database replaced underneath (its counters start again).
+    shape = store.one("SELECT count(*) AS n,max(id) AS newest FROM notes WHERE project_id=?", pid)
+    return (store.read_version("progress_notes", pid), store.read_version("naming", pid), shape["n"], shape["newest"])
+
+
 def _note_rows(store, pid):
+    """A project's notes for its manifest: the cached rows while nothing they show changed (read-only to callers)."""
+    import sqlite3
+    try:
+        revision = _notes_revision(store, pid)
+    except (AttributeError, sqlite3.Error):  # a store without read revisions (a bare test double): no cache
+        revision = None
+    key = (id(store), str(getattr(store, "path", "")), pid)
+    if revision is not None:
+        with _note_lock:
+            cached = _note_cache.get(key)
+            if cached is not None and cached[0] == revision:
+                return cached[1]
+    rows = _read_note_rows(store, pid)
+    if revision is not None:
+        with _note_lock:
+            _note_cache.pop(key, None)
+            _note_cache[key] = (revision, rows)
+            while len(_note_cache) > NOTE_CACHE_PROJECTS:
+                _note_cache.pop(next(iter(_note_cache)))
+    return rows
+
+
+def _read_note_rows(store, pid):
     """Transport note metadata in bounded pages without per-row SQLite/GIL handoffs."""
     batches = store.all("""WITH numbered AS (
         SELECT n.id,n.text,n.created_at,n.score_before,n.score_after,n.agent_id,f.name AS fn,
@@ -882,6 +932,9 @@ def restore(net, source: str, game: Path | None = None, log=print) -> dict:
                         if not same_linked_save:
                             with net.project_store(slug).tx() as db:
                                 db.execute("DELETE FROM progress_state WHERE project_id=?", (project_id,))
+                                from .progress import MANIFEST_SCHEMA
+                                db.execute(MANIFEST_SCHEMA)
+                                db.execute("DELETE FROM progress_manifests WHERE project_id=?", (project_id,))
                             progress.baselines.pop(project_id, None)
                         progress.disk.pop(slug, None)
                         progress.projected.pop(slug, None)

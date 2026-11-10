@@ -2,6 +2,9 @@
 
 The OS releases a crashed worker's advisory lock. Never unlink the sidecar: another
 process may already have it open. Readers do not acquire this lock.
+
+Within one process, writers of a file queue on a thread lock first, so only the thread at the front polls the file
+lock: every waiter polling it every 10 ms let whichever woke first win and kept a core busy.
 """
 import errno
 import os
@@ -11,6 +14,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 _ACTIVE=threading.local()
+_QUEUES={}
+_QUEUES_LOCK=threading.Lock()
+WAIT_SECONDS=.05  # how often a queued writer reports to `wait`, which may cancel it
 
 
 class WriterGate:
@@ -18,6 +24,9 @@ class WriterGate:
         self.path=None if str(path)==':memory:' else Path(str(Path(path).resolve())+'.writer.lock')
         self.local=threading.local()
         self.memory=threading.RLock()
+        if self.path is None:self.queue=self.memory
+        else:
+            with _QUEUES_LOCK:self.queue=_QUEUES.setdefault(self.path,threading.Lock())
 
     @contextmanager
     def hold(self,*,blocking=True,wait=None):
@@ -32,14 +41,20 @@ class WriterGate:
                 yield False
                 return
             raise RuntimeError('A second connection cannot recursively write the same database.')
-        fd=None;acquired=False
+        fd=None;acquired=False;queued=False
         try:
-            if self.path is not None:
-                fd=os.open(self.path,os.O_CREAT|os.O_RDWR,0o600)
+            if not blocking:queued=self.queue.acquire(blocking=False)
+            else:
+                while not (queued:=self.queue.acquire(timeout=WAIT_SECONDS)):
+                    if wait is not None:wait()
+            if not queued:
+                yield False
+                return
+            if self.path is None:acquired=True
+            else:fd=os.open(self.path,os.O_CREAT|os.O_RDWR,0o600)
             while not acquired:
                 try:
-                    if fd is None:acquired=self.memory.acquire(blocking=False)
-                    elif os.name=='nt':
+                    if os.name=='nt':
                         import msvcrt
                         os.lseek(fd,0,os.SEEK_SET)
                         # CRT region locks may extend past EOF; no racy initialization write.
@@ -66,13 +81,15 @@ class WriterGate:
                 if self.path is not None:held.remove(self.path)
         finally:
             try:
-                if acquired:
-                    if fd is None:self.memory.release()
-                    elif os.name=='nt':
+                if acquired and fd is not None:
+                    if os.name=='nt':
                         import msvcrt
                         os.lseek(fd,0,os.SEEK_SET);msvcrt.locking(fd,msvcrt.LK_UNLCK,1)
                     else:
                         import fcntl
                         fcntl.flock(fd,fcntl.LOCK_UN)
             finally:
-                if fd is not None:os.close(fd)
+                try:
+                    if fd is not None:os.close(fd)
+                finally:
+                    if queued:self.queue.release()

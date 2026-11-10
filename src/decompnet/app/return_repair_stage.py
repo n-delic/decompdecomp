@@ -156,6 +156,7 @@ def verify(net, state, updates, files, directory, log):
         staged._pool.shutdown(wait=True)
         reader=getattr(staged.store._local,'reader',None)
         if reader is not None:reader.conn.close()
+        staged.store.close_readers()
         staged.store.conn.close()
         # No files in the user's project or checkout were written.
         shutil.rmtree(root,ignore_errors=True)

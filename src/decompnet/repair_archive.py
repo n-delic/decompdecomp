@@ -5,6 +5,7 @@ unreferenced archive cases, but can never publish a reference before its case is
 """
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -29,23 +30,44 @@ class Archive:
         self.path=str(Path(path).resolve()) if str(path)!=':memory:' else ':memory:'
         self.gate=WriterGate(self.path)
         self.lock=threading.RLock()
+        self.read_lock=threading.RLock()
+        self.reader=self.writer=None  # (connection, the file's identity when it was opened)
         self.memory=sqlite3.connect(':memory:',check_same_thread=False) if self.path==':memory:' else None
         if self.memory:self.memory.executescript(SCHEMA)
 
     @contextmanager
     def connection(self,write=False):
+        """The archive's one reading or one writing connection, kept open and used by one thread at a time: a
+        new connection for every repair_archive_read in a query (each a SQL function call) cost more than the read."""
         if self.memory:
             with self.lock:yield self.memory
             return
-        if not write and not Path(self.path).is_file():raise ValueError('Repair evidence database is missing. Restore it from backup.')
-        conn=sqlite3.connect(self.path if write else Path(self.path).as_uri()+'?mode=ro',uri=not write,timeout=5)
-        try:
-            if write:
-                if conn.execute('PRAGMA user_version').fetchone()[0] not in (0,1):raise ValueError('Repair evidence database requires a newer app.')
-                conn.execute('PRAGMA journal_mode=WAL')
-                conn.executescript(SCHEMA)
-            yield conn
-        finally:conn.close()
+        try:opened=os.stat(self.path)
+        except FileNotFoundError:opened=None
+        if not write and opened is None:raise ValueError('Repair evidence database is missing. Restore it from backup.')
+        with self.lock if write else self.read_lock:
+            kept=self.writer if write else self.reader
+            # A restored archive is another file at the same path: reopen rather than read the old one.
+            if kept is not None and (opened is None or kept[1]!=(opened.st_dev,opened.st_ino)):
+                kept[0].close();kept=None
+            if kept is None:
+                conn=sqlite3.connect(self.path if write else Path(self.path).as_uri()+'?mode=ro',uri=not write,timeout=5,check_same_thread=False)
+                try:
+                    if write:
+                        if conn.execute('PRAGMA user_version').fetchone()[0] not in (0,1):raise ValueError('Repair evidence database requires a newer app.')
+                        conn.execute('PRAGMA journal_mode=WAL')
+                        conn.executescript(SCHEMA)
+                        opened=os.stat(self.path)
+                except BaseException:
+                    conn.close()
+                    raise
+                kept=(conn,(opened.st_dev,opened.st_ino))
+                if write:self.writer=kept
+                else:self.reader=kept
+            try:yield kept[0]
+            finally:
+                # What a caller left uncommitted is discarded, as closing a connection of its own did.
+                if kept[0].in_transaction:kept[0].rollback()
 
     def put(self,record,snapshot):
         shared={}

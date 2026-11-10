@@ -64,7 +64,7 @@ def _install(conn, tables=None):
                     f'AFTER {event}'+(f' OF {field}' if event=='UPDATE' else '')+f' ON {table} '
                     f'WHEN {condition} BEGIN '+put+
                     f'UPDATE {table} SET {field}=unhex(payload_digest(NEW.{field})) WHERE rowid=NEW.rowid; END')
-        if isinstance(conn,Connection):conn.detail_tables=set(conn.detail_tables)|{table}
+        if isinstance(conn,Connection):conn.detail_tables=frozenset(conn.detail_tables)|{table}
 
 
 def references(store):

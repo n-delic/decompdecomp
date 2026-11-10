@@ -405,6 +405,42 @@ def stall_line(since: int, after: int) -> str:
     return f"no better in {since}/{after} compiles (move on at {after})"
 
 
+def claim_query(strategy: str) -> str:
+    """The automatic claim's query for one order (STRATEGIES): open functions nobody holds, the release rules'
+    exclusions and preferences first, then the order. Named arguments: Network._claim_plan."""
+    # not what this agent released lately (see SELF_RELEASE_WINDOW); what it released before that last
+    # functions waiting for another to match come last (WAITING); the ones they wait for, and those whose
+    # wait is over, first (after what the release rules put back, before model routing's escalations)
+    return (f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
+            WHERE f.project_id=:pid AND f.status='open' AND (:weak = 0 OR f.abandons < :escalate)
+            AND (:batch_unit IS NULL OR (f.unit=:batch_unit AND f.n_insns<=:batch_limit AND f.boost>=0
+                 AND f.id NOT IN ({WAITING})))
+            AND f.id NOT IN (SELECT value FROM json_each(:batch_sdk))
+            AND (:below IS NULL OR f.best_score IS NULL OR
+                 MAX(0.0, 100.0 * (1.0 - CAST(f.best_score AS REAL) / MAX(1, f.n_insns * 100))) < :below)
+            AND (:tries IS NULL OR (SELECT COUNT(*) FROM attempts a
+                 WHERE a.function_id=f.id AND a.agent_id=:agent) < :tries)
+            AND ({int(strategy != 'no_compiling_c')} OR (f.best_score IS NULL AND NOT EXISTS (
+                 SELECT 1 FROM attempts compiled_attempt WHERE compiled_attempt.function_id=f.id AND compiled_attempt.compiled=1)))
+            AND f.id NOT IN (SELECT function_id FROM claims)
+            AND f.id NOT IN (SELECT value FROM json_each(:stalled))
+            AND f.id NOT IN (SELECT value FROM json_each(:model_tried))
+            AND (f.id IN (SELECT value FROM json_each(:retry_grants)) OR f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
+                               AND kind='release' AND created_at > :mine))
+            ORDER BY CASE WHEN :custom THEN 0 ELSE f.id IN (SELECT value FROM json_each(:sdk)) END,
+                     CASE WHEN :custom THEN 0 ELSE f.id IN ({WAITING}) END,
+                     CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
+                                AND kind='release') END,
+                     CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
+                                AND agent_id IN (SELECT value FROM json_each(:kin)) AND created_at >
+                                COALESCE((SELECT MAX(created_at) FROM events WHERE project_id=:pid
+                                          AND kind IN ('context', 'compiler')), 0)) END,
+                     CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
+                                AND created_at > :cooled) END,
+                     CASE WHEN :custom THEN 0 ELSE f.id IN ({READY}) END DESC, CASE WHEN :custom THEN 0 ELSE f.id IN ({WANTED}) END DESC,
+                     :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
+
+
 def _ago(ts: float | None) -> str:
     if not ts:
         return "never"
@@ -415,6 +451,7 @@ def _ago(ts: float | None) -> str:
 class Network:
     def __init__(self, db_path: str | Path, claim_ttl: int = CLAIM_TTL, *, repair_archive=None, project_databases=False):
         self._project_files = None
+        self._function_owners: dict[int, int] = {}  # function ID -> its project (function_store)
         self.store = Store(db_path,repair_archive=repair_archive)
         try:
             from .project_migration import state, upgrade
@@ -495,12 +532,28 @@ class Network:
             yield row if store is self.store else store.one('SELECT * FROM projects WHERE id=?',row['id'])
 
     def function_store(self, function_id):
-        """Resolve old ID-only provenance through indexed owner discovery, never SQL routing."""
+        """Resolve old ID-only provenance through indexed owner discovery, never SQL routing.
+
+        A project database allocates its rows in its catalog ID's range (shard_ids.BLOCK), so a function ID from
+        that range is looked up in that one database first, and an ID found by a search of every database is
+        remembered: each lookup opened and read all 74 project databases of a big library. Both are checked by
+        the row itself before use, so a removed function or project searches again."""
+        if self._project_files is not None:
+            from .shard_ids import BLOCK
+            for pid in dict.fromkeys(p for p in (self._function_owners.get(function_id), function_id // BLOCK) if p):
+                try:
+                    store = self.project_store(pid)
+                except (NetworkError, ValueError):  # not (or no longer) a project in the catalog
+                    continue
+                if store.one('SELECT 1 FROM functions WHERE id=?', function_id):
+                    return store
         found = None
-        for store, _ in self.project_stores():
+        for store, ids in self.project_stores():
             if store.one('SELECT 1 FROM functions WHERE id=?', function_id):
                 if found is not None:raise NetworkError('A function ID exists in several project databases. Restore a consistent backup.')
                 found = store
+                if store is not self.store and ids:
+                    self._function_owners[function_id] = ids[0]
         return found
 
     # ------------------------------------------------------------------ agents
@@ -962,11 +1015,12 @@ class Network:
                 "your claim on it, not a new one. Compile the next step; release_function goes through once you've "
                 "compiled it, when you ask again.\n\n")
 
-    def _own_release_cutoff(self, db, agent_id: int, now: float, proj=None) -> float:
+    def _own_release_cutoff(self, store, agent_id: int, now: float, proj=None) -> float:
         """Releases by this agent after this time keep it off those functions: the last SELF_RELEASE_WINDOW, and
-        only since its run started (its last 'freed' event, release_stopped's, or 'stopped', a helper's own)."""
-        row = db.execute("SELECT MAX(created_at) AS t FROM events WHERE agent_id=? AND kind IN ('freed', 'stopped')",
-                         (agent_id,)).fetchone()
+        only since its run started (its last 'freed' event, release_stopped's, or 'stopped', a helper's own).
+        Two seeks in idx_events_agent_kind_time, not a walk over every agent's 'freed' events."""
+        row = store.one("SELECT MAX(created_at) AS t FROM events WHERE agent_id=? AND kind IN ('freed', 'stopped')",
+                        agent_id)
         from .pause_scope import cooldown_start
         worker=self.store.one('SELECT id,name FROM agents WHERE id=?',agent_id)
         boundary=cooldown_start(self,proj,worker) if proj is not None and worker else 0
@@ -987,8 +1041,7 @@ class Network:
             proj["id"])
         from .app.project_labels import label
         held = label(self, held, {'agent':'agent_id'})
-        with self.project_store(proj['id']).tx() as db:
-            cutoff = self._own_release_cutoff(db, agent.id, now, proj)
+        cutoff = self._own_release_cutoff(self.project_store(proj['id']), agent.id, now, proj)
         mine = self.project_store(proj['id']).all(
             "SELECT DISTINCT f.name FROM functions f JOIN events e ON e.project_id=f.project_id AND e.detail=f.name "
             "WHERE f.project_id=? AND f.status='open' AND e.agent_id=? AND e.kind='release' AND e.created_at > ? "
@@ -1263,11 +1316,24 @@ class Network:
         now = time.time()
         from .app.local_claims import expiry_ids
         identities = expiry_ids(self, store)
+        # The automatic pick reads the claim and release history; it reads it here, from a snapshot, not while
+        # holding the project's writer: on a game with 48,000 claim events it took 60-900 ms, and every other
+        # worker's claim, compile and release queued behind it. The transaction below re-checks the one function
+        # picked (still open, still free) and picks again under the writer when it wasn't, so two workers never
+        # hold one function.
+        plan = candidate = None
+        if not function and (batch_from is not None or
+                             store.one("SELECT 1 FROM claims WHERE agent_id=?", agent.id) is None):
+            plan = self._claim_plan(store, proj, agent, strategy, now, blocked=blocked,
+                                    retry_grants=retry_grants, sdk=sdk, batch_from=batch_from)
+            candidate = self._claim_pick(lambda sql, args: store._read(sql, args, single=True), *plan)
         with store.tx() as db:
             self.ensure_agent_active(agent)
             region_blocked = data_blocked(self,proj) if proj is not None else []
             blocked = list(set(blocked) | set(region_blocked))
+            changes = db.total_changes
             self._expire_claims(db, **identities)
+            expired = db.total_changes != changes
             held = db.execute("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                               (agent.id,)).fetchone()
             if batch_from is not None:
@@ -1321,60 +1387,19 @@ class Network:
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
             else:
-                policy = self.selection(proj["slug"], agent.name)
-                from .model_checks import tried as model_tried
-                excluded = model_tried(self, proj['slug'], agent) if policy.get('model_untried') else set()
-                custom = bool(policy.get("strategy"))
-                strategy = policy.get("strategy") or strategy
-                # Explicit user ordering wins over adaptive routing and release penalties. Leases and the
-                # agent's recent-release exclusion still prevent two workers or a tight retry loop.
-                route = None if custom else self._route(db, proj["id"], agent, now)
-                family = model_family(agent.name)
-                kin = [r["id"] for r in db.execute("SELECT id, name FROM agents") if model_family(r["name"]) == family]
-                tried = db.execute("SELECT SUM(status = 'matched') AS won, SUM(status = 'matched' OR attempts > 0) "
-                                   "AS tried FROM functions WHERE project_id=? AND status != 'asm'", (proj["id"],)).fetchone()
-                overall = (tried["won"] or 0) / tried["tried"] if tried["tried"] else 0.5
-                # not what this agent released lately (see SELF_RELEASE_WINDOW); what it released before that last
-                # functions waiting for another to match come last (WAITING); the ones they wait for, and those whose
-                # wait is over, first (after what the release rules put back, before model routing's escalations)
-                query = (
-                    f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
-                        WHERE f.project_id=:pid AND f.status='open' AND (:weak = 0 OR f.abandons < :escalate)
-                        AND (:batch_unit IS NULL OR (f.unit=:batch_unit AND f.n_insns<=:batch_limit AND f.boost>=0
-                             AND f.id NOT IN ({WAITING})))
-                        AND f.id NOT IN (SELECT value FROM json_each(:batch_sdk))
-                        AND (:below IS NULL OR f.best_score IS NULL OR
-                             MAX(0.0, 100.0 * (1.0 - CAST(f.best_score AS REAL) / MAX(1, f.n_insns * 100))) < :below)
-                        AND (:tries IS NULL OR (SELECT COUNT(*) FROM attempts a
-                             WHERE a.function_id=f.id AND a.agent_id=:agent) < :tries)
-                        AND ({int(strategy != 'no_compiling_c')} OR (f.best_score IS NULL AND NOT EXISTS (
-                             SELECT 1 FROM attempts compiled_attempt WHERE compiled_attempt.function_id=f.id AND compiled_attempt.compiled=1)))
-                        AND f.id NOT IN (SELECT function_id FROM claims)
-                        AND f.id NOT IN (SELECT value FROM json_each(:stalled))
-                        AND f.id NOT IN (SELECT value FROM json_each(:model_tried))
-                        AND (f.id IN (SELECT value FROM json_each(:retry_grants)) OR f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
-                                           AND kind='release' AND created_at > :mine))
-                        ORDER BY CASE WHEN :custom THEN 0 ELSE f.id IN (SELECT value FROM json_each(:sdk)) END,
-                                 CASE WHEN :custom THEN 0 ELSE f.id IN ({WAITING}) END,
-                                 CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
-                                            AND kind='release') END,
-                                 CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
-                                            AND agent_id IN (SELECT value FROM json_each(:kin)) AND created_at >
-                                            COALESCE((SELECT MAX(created_at) FROM events WHERE project_id=:pid
-                                                      AND kind IN ('context', 'compiler')), 0)) END,
-                                 CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
-                                            AND created_at > :cooled) END,
-                                 CASE WHEN :custom THEN 0 ELSE f.id IN ({READY}) END DESC, CASE WHEN :custom THEN 0 ELSE f.id IN ({WANTED}) END DESC,
-                                 :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
-                escalate = self._escalation(db, proj["id"]) if route else ESCALATE_AFTER
-                args = {"retry_grants":json.dumps(retry_grants), "batch_sdk": json.dumps(batch_from.get("deferred",[]) if batch_from is not None else []), "batch_unit": batch_from["unit"] if batch_from is not None else None,
-                        "batch_limit": batch_from["limit"] if batch_from is not None else None, "model_tried": json.dumps(list(excluded)), "stalled":json.dumps(blocked), "sdk": json.dumps(list(sdk)), "pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
-                        "overall": overall, "escalate": escalate, "weak": route == "weak", "strong": route == "strong",
-                        "mine": self._own_release_cutoff(db, agent.id, now, proj), "custom": custom,
-                        "below": policy.get("match_below"), "tries": policy.get("max_tries")}
-                fn = db.execute(query, args).fetchone()
-                if fn is None and route == "weak":  # only what stronger models are for is left: better tried than idle
-                    fn = db.execute(query, args | {"weak": False}).fetchone()
+                if plan is None:  # its claim ran out (or a batch started) since the look before the transaction
+                    plan = self._claim_plan(store, proj, agent, strategy, now, blocked=blocked,
+                                            retry_grants=retry_grants, sdk=sdk, batch_from=batch_from)
+                    candidate, expired = None, True
+                plan[1]["stalled"] = json.dumps(blocked)
+                fn = None
+                if candidate is not None and candidate["id"] not in blocked:
+                    fn = db.execute("SELECT * FROM functions WHERE id=? AND status='open' AND id NOT IN "
+                                    "(SELECT function_id FROM claims)", (candidate["id"],)).fetchone()
+                # the function picked outside was taken meanwhile, or leases ran out that may free a better one:
+                # pick again under the writer, as every claim did before
+                if fn is None and (candidate is not None or expired):
+                    fn = self._claim_pick(lambda sql, args: db.execute(sql, args).fetchone(), *plan)
                 if fn is None:
                     return None
                 if fn['id'] in retry_grants and fn['id'] not in claim_stalls.grants(self,proj,agent):
@@ -1387,33 +1412,75 @@ class Network:
                        "WHERE status='matched')", (fn["id"],))
         return fn
 
+    def _claim_plan(self, store, proj, agent: Agent, strategy: str, now: float, *, blocked, retry_grants, sdk,
+                    batch_from):
+        """The automatic claim's query and its named arguments, and the agent's model route. Only reads, through
+        `store` (a snapshot outside the transaction, or the writer's own connection inside it): what it reads orders
+        and filters the queue, and the claim transaction re-checks the function it takes."""
+        policy = self.selection(proj["slug"], agent.name)
+        from .model_checks import tried as model_tried
+        excluded = model_tried(self, proj['slug'], agent) if policy.get('model_untried') else set()
+        custom = bool(policy.get("strategy"))
+        strategy = policy.get("strategy") or strategy
+        # agents are registered in the catalog: a project database's own agents table is empty, and routing and
+        # the kin preference read it there, so neither ran once projects had databases of their own
+        names = {r["id"]: r["name"] for r in self.store.all("SELECT id, name FROM agents")}
+        # Explicit user ordering wins over adaptive routing and release penalties. Leases and the
+        # agent's recent-release exclusion still prevent two workers or a tight retry loop.
+        route = None if custom else self._route(store, proj["id"], agent, now, names)
+        family = model_family(agent.name)
+        kin = [agent_id for agent_id, name in names.items() if model_family(name) == family]
+        tried = store.one("SELECT SUM(status = 'matched') AS won, SUM(status = 'matched' OR attempts > 0) "
+                          "AS tried FROM functions WHERE project_id=? AND status != 'asm'", proj["id"])
+        overall = (tried["won"] or 0) / tried["tried"] if tried["tried"] else 0.5
+        escalate = self._escalation(store, proj["id"]) if route else ESCALATE_AFTER
+        args = {"retry_grants": json.dumps(retry_grants),
+                "batch_sdk": json.dumps(batch_from.get("deferred", []) if batch_from is not None else []),
+                "batch_unit": batch_from["unit"] if batch_from is not None else None,
+                "batch_limit": batch_from["limit"] if batch_from is not None else None,
+                "model_tried": json.dumps(list(excluded)), "stalled": json.dumps(blocked), "sdk": json.dumps(list(sdk)),
+                "pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
+                "overall": overall, "escalate": escalate, "weak": route == "weak", "strong": route == "strong",
+                "mine": self._own_release_cutoff(store, agent.id, now, proj), "custom": custom,
+                "below": policy.get("match_below"), "tries": policy.get("max_tries")}
+        return claim_query(strategy), args, route
+
     @staticmethod
-    def _escalation(db, project_id: int) -> int:
+    def _claim_pick(read, query: str, args: dict, route: str | None):
+        """The function the claim query puts first, through `read(sql, named_args)`; a weak model that finds only
+        what stronger models are for takes it anyway: better tried than idle."""
+        fn = read(query, args)
+        if fn is None and route == "weak":
+            fn = read(query, args | {"weak": False})
+        return fn
+
+    @staticmethod
+    def _escalation(store, project_id: int) -> int:
         """How many give-ups make an open function the strongest model's (model routing): ESCALATE_AFTER, until every
         open function has had that many; then more than the median open function has, so a weak model keeps the
         less tried half. On an Xbox game whose 1,146 open functions had all been given up on 5 or more times, the
         weak model fell back to the whole queue: 3,183 claims and $138 for 10 matches in a night, while the strong
         model matched 27 of its 138."""
-        given_up = sorted(r[0] for r in db.execute("SELECT abandons FROM functions WHERE project_id=? AND "
-                                                   "status='open'", (project_id,)))
+        given_up = sorted(r[0] for r in store.all("SELECT abandons FROM functions WHERE project_id=? AND "
+                                                  "status='open'", project_id))
         if not given_up or given_up[0] < ESCALATE_AFTER:
             return ESCALATE_AFTER
         return given_up[(len(given_up) - 1) // 2] + 1
 
-    def _route(self, db, project_id: int, agent: Agent, now: float) -> str | None:
+    def _route(self, store, project_id: int, agent: Agent, now: float, names: dict[int, str]) -> str | None:
         """"weak" for a model at work in the project well behind the strongest one at work, "strong" for that one
         while a weak one works too (see ESCALATE_AFTER), None otherwise: no routing until both are told apart by
-        ROUTE_MIN_CLAIMS claims each."""
-        names = {r["id"]: r["name"] for r in db.execute("SELECT id, name FROM agents")}
+        ROUTE_MIN_CLAIMS claims each. `names`: agent ID -> name, from the catalog."""
         claims, won, busy = collections.Counter(), collections.Counter(), {model_of(agent.name)}
-        for r in db.execute("SELECT agent_id, COUNT(*) AS n, MAX(created_at) AS last FROM events WHERE project_id=? "
-                            "AND kind='claim' GROUP BY agent_id", (project_id,)):
+        # idx_events_agent_kind_time answers this from the index, in agent order (no sort of every claim event)
+        for r in store.all("SELECT agent_id, COUNT(*) AS n, MAX(created_at) AS last FROM events WHERE project_id=? "
+                           "AND kind='claim' GROUP BY agent_id", project_id):
             if names.get(r["agent_id"], MACHINE_AGENTS[0]) not in MACHINE_AGENTS:
                 claims[model_of(names[r["agent_id"]])] += r["n"]
                 if r["last"] > now - ROUTE_ACTIVE_SECONDS:
                     busy.add(model_of(names[r["agent_id"]]))
-        for r in db.execute("SELECT matched_agent_id AS id, COUNT(*) AS n FROM functions WHERE project_id=? "
-                            "AND status='matched' GROUP BY matched_agent_id", (project_id,)):
+        for r in store.all("SELECT matched_agent_id AS id, COUNT(*) AS n FROM functions WHERE project_id=? "
+                           "AND status='matched' GROUP BY matched_agent_id", project_id):
             if names.get(r["id"], MACHINE_AGENTS[0]) not in MACHINE_AGENTS:
                 won[model_of(names[r["id"]])] += r["n"]
         overall = sum(won.values()) / sum(claims.values()) if sum(claims.values()) else 0.5

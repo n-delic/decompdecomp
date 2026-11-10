@@ -19,7 +19,8 @@ def snapshot() -> dict[int, tuple[int, str]]:
     if os.name == 'nt':
         return {}
     try:
-        out = subprocess.run(['ps', '-axo', 'pid=,pgid=,lstart='], capture_output=True, text=True, timeout=2)
+        from .spawner import run
+        out = run(['ps', '-axo', 'pid=,pgid=,lstart='], capture_output=True, text=True, timeout=2)
         rows = {}
         for line in out.stdout.splitlines():
             parts = line.split(None, 2)

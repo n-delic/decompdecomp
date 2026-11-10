@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from .. import toolchains
+from .. import spawner, toolchains
 from ..network import NetworkError
 
 KIND_MARK = {None: " ", "DIFF_NONE": " ", "DIFF_REPLACE": "|", "DIFF_DELETE": "<", "DIFF_INSERT": ">",
@@ -46,7 +45,8 @@ def judge_options(project_options: dict | None = None, unit_options: dict | None
 
 
 def _run(args: list[str], cwd: Path, timeout: float = 600) -> str:
-    res = subprocess.run([_exe(), "--no-color", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout,
+    # Judged once per unit: started without forking the app (spawner.py)
+    res = spawner.run([_exe(), "--no-color", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout,
                          encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     if res.returncode != 0:
         raise ObjdiffError((res.stderr or res.stdout).strip()[-1500:] or f"objdiff-cli exited with {res.returncode}")

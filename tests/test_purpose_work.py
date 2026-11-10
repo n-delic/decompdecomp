@@ -132,3 +132,86 @@ def test_parent_stop_reaches_running_child_verification():
             assert entered.wait(5)
             cancelled.set();release.set()
             with pytest.raises(RuntimeError,match='Parent cancelled'):future.result()
+
+
+def test_operations_reuse_the_shared_threads_instead_of_starting_their_own():
+    """#perf: a pool per operation started threads all day, and each new thread opened its own database readers."""
+    seen=set()
+    for _ in range(20):
+        with purpose_work.Executor(2,purpose='Reused work') as pool:
+            for future in [pool.submit(lambda:seen.add(threading.get_ident())) for _ in range(4)]:future.result()
+    assert len(seen)<=4
+
+
+def test_a_group_keeps_its_width_and_names_on_shared_threads():
+    running,peak,lock=[0],[0],threading.Lock()
+    release=threading.Event()
+    names=set()
+    def work():
+        with lock:
+            running[0]+=1;peak[0]=max(peak[0],running[0])
+            names.add(threading.current_thread().name)
+        release.wait(.05)
+        with lock:running[0]-=1
+    with purpose_work.Executor(3,purpose='Width check',thread_name_prefix='width-check') as pool:
+        for future in [pool.submit(work) for _ in range(12)]:future.result()
+    assert peak[0]==3 and names<={'width-check_0','width-check_1','width-check_2'}
+
+
+def test_nested_groups_on_shared_threads_cannot_deadlock():
+    """A task that waits for its own nested group's tasks never waits for a thread: the lanes grow on demand."""
+    def outer(depth):
+        if not depth:return 1
+        with purpose_work.Executor(2,purpose='Nested') as inner:
+            return sum(f.result(10) for f in [inner.submit(outer,depth-1) for _ in range(2)])
+    with purpose_work.Executor(2,purpose='Outer') as pool:
+        assert sum(f.result(20) for f in [pool.submit(outer,3) for _ in range(2)])==16
+
+
+def test_work_starts_with_a_fresh_context_and_scheduling_on_a_reused_thread():
+    from contextvars import ContextVar
+    marker=ContextVar('marker',default='fresh')
+    def leak():
+        marker.set('leaked')
+        compiler.background_thread()
+    with purpose_work.Executor(1,purpose='Leak') as pool:pool.submit(leak).result()
+    with purpose_work.Executor(1,purpose='Read') as pool:
+        value,background=pool.submit(lambda:(marker.get(),getattr(compiler._SCHEDULING,'background',False))).result()
+    assert value=='fresh' and not background
+
+
+def test_a_thread_whose_work_lowered_its_priority_is_not_reused_for_normal_work(monkeypatch):
+    from decompnet.app import thread_lanes, workers
+    monkeypatch.setattr(workers.sys,'platform','test')
+    monkeypatch.setattr(workers.os,'nice',lambda value:None)
+    with purpose_work.Executor(1,purpose='Lowers itself') as pool:
+        lowered=pool.submit(lambda:(workers.lower_priority(),threading.get_ident())[1]).result()
+    with purpose_work.Executor(4,purpose='Normal') as pool:
+        idents={f.result() for f in [pool.submit(lambda:(threading.Event().wait(.02),threading.get_ident(),
+                                                          thread_lanes.priority_lowered())) for _ in range(4)]}
+    assert all(not low for _,ident,low in idents) and lowered not in {ident for _,ident,_ in idents}
+
+
+def test_lower_priority_lowers_a_thread_only_once(monkeypatch):
+    from decompnet.app import workers
+    calls=[]
+    monkeypatch.setattr(workers.sys,'platform','test')
+    monkeypatch.setattr(workers.os,'name','posix')
+    monkeypatch.setattr(workers.os,'nice',calls.append)
+    def twice():
+        workers.lower_priority();workers.lower_priority()
+    thread=threading.Thread(target=twice);thread.start();thread.join()
+    assert calls==[workers.NICE]
+
+
+def test_shutdown_without_waiting_cancels_queued_work_only():
+    entered,release=threading.Event(),threading.Event()
+    pool=purpose_work.Executor(1,purpose='Cancel queued')
+    def block():
+        entered.set();assert release.wait(5);return 'ran'
+    running=pool.submit(block);assert entered.wait(5)
+    queued=pool.submit(lambda:'never')
+    pool.shutdown(wait=False,cancel_futures=True)
+    release.set()
+    assert running.result(5)=='ran' and queued.cancelled()
+    with pytest.raises(RuntimeError):pool.submit(lambda:None)
