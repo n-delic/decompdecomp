@@ -139,6 +139,34 @@ class Console:
         return self.own_features | arch.get(self.arch).features
 
     @property
+    def joins_functions(self) -> bool:
+        """Whether its projects can join functions (PC and DS): Console.join_functions is its own."""
+        return type(self).join_functions is not Console.join_functions
+
+    @property
+    def reports_boundaries(self) -> bool:
+        """Whether its projects can report where a function ends (PC): function_extent and cut_function are its own.
+        A ROM project's boundary reports are its processor's (arch.BOUNDARIES in features)."""
+        return (type(self).function_extent is not Console.function_extent
+                and type(self).cut_function is not Console.cut_function)
+
+    @property
+    def reads_classes(self) -> bool:
+        """Whether its processor's code has C++ classes to read (arch.CLASSES: MIPS and x86)."""
+        return arch.CLASSES in self.features
+
+    @property
+    def reads_structs(self) -> bool:
+        """Whether its processor's code has struct layouts to read (arch.STRUCTS: MIPS and x86)."""
+        return arch.STRUCTS in self.features
+
+    @property
+    def file_compilers(self) -> bool:
+        """Whether its projects' source files each have a compiler (PC, DS, GameCube and Wii): Console.file_compiler is
+        its own."""
+        return type(self).file_compiler is not Console.file_compiler
+
+    @property
     def judge(self) -> str:
         return JUDGES.get(self.mode, "objdiff")
 

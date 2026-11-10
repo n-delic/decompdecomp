@@ -257,3 +257,25 @@ def test_rejected_heartbeat_does_not_count_as_contact(connection, status):
     link.stop()
     assert link.last_contact == 0
     assert link.status()["state"] == "offline"
+
+
+@pytest.mark.parametrize("fork", [False, True])
+def test_a_guest_with_nothing_to_claim_says_what_the_host_says(connection, fork, monkeypatch):
+    """The host says why nothing is left (Network.nothing_to_claim); a ROM room's and a project room's guest pass it
+    on, and an older host that doesn't say still gets the bare "nothing left"."""
+    from decompnet.app.engine import judging
+    from decompnet.app.forkengine import ForkEngine
+
+    why = {"why": "1 you said no C makes: f. Stop working on this project."}
+    link = connection(lambda request: httpx.Response(200, json={"function": None, "vram": None, **why}), fork)
+    agent = SimpleNamespace(name="claude-1")
+    assert link.claim(agent, None, "easiest") == (None, why["why"])
+    if fork:
+        engine = ForkEngine.__new__(ForkEngine)
+        said = engine._claim_in_room(link, agent, "game", None, "easiest")
+    else:
+        net = SimpleNamespace(fork_slug=lambda _: None, _link=lambda _: link)
+        said = judging.JudgeMixin.claim(net, agent, "game", None, "easiest")
+    assert said == why["why"]
+    why = {}  # (an older host)
+    assert link.claim(agent, None, "easiest") == (None, "")
