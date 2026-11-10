@@ -226,3 +226,46 @@ def test_native_resources_do_not_consume_the_generic_signature_budget(monkeypatc
     asset=dict(offset=0,size=8,kind='data',label='Native record',confidence='validated')
     report=analyse(image,[],[],[],assets=[asset])
     assert any(r['kind']=='compressed' and r['confidence']=='validated' for r in report['regions'])
+
+
+def _zip_image(files, *, before=1000, after=500):
+    import io
+    import zipfile
+    buffer=io.BytesIO()
+    with zipfile.ZipFile(buffer,'w') as archive:
+        for name,data,method in files:archive.writestr(name,data,compress_type=method)
+    return b'\xff'*before+buffer.getvalue()+bytes(after)
+
+
+def test_zip_members_are_named_by_their_path_and_validated_by_checksum():
+    import zipfile
+    stage=bytes(range(256))*300
+    image=_zip_image([('Stages/',b'',zipfile.ZIP_STORED),('Stages/stage1.V3S',stage,zipfile.ZIP_DEFLATED),
+                      ('scripts/start.ini',b'[race]\nlaps=3\n',zipfile.ZIP_STORED)])
+    rows=analyse(image,[],[],[])['regions']
+    named={r['archive_path']:r for r in rows if r['archive_path']}
+    assert set(named)=={'Stages/','Stages/stage1.V3S','scripts/start.ini'}
+    assert named['Stages/']['kind']=='container'
+    # Every archive byte is named: the folder, both files and the central directory with its end record.
+    archive=[r for r in rows if 1000<=r['start']<len(image)-500]
+    assert archive and all(r['kind']!='unknown' for r in archive)
+    assert any(e['label']=='ZIP central directory (3 entries)' for r in archive for e in r['evidence'])
+    assert named['Stages/stage1.V3S']['kind']=='compressed' and named['Stages/stage1.V3S']['confidence']=='validated'
+    assert named['scripts/start.ini']['kind']=='data' and named['scripts/start.ini']['confidence']=='validated'
+    member=next(e for e in named['Stages/stage1.V3S']['evidence'] if e.get('archive_path'))
+    assert member['label']=='ZIP member: Stages/stage1.V3S' and member['expanded_size']==len(stage)
+    assert image[named['Stages/stage1.V3S']['start']:][:4]==b'PK\x03\x04'  # the span starts at the local header
+
+
+def test_damaged_or_unexpanded_zip_members_are_not_validated(monkeypatch):
+    import zipfile
+
+    import decompnet.rom.explorer as module
+    image=bytearray(_zip_image([('demo.dmo',b'recorded inputs '*8,zipfile.ZIP_STORED)]))
+    image[image.index(b'recorded inputs')]^=0xff  # the payload no longer matches its checksum
+    rows=analyse(bytes(image),[],[],[])['regions']
+    assert not any(r['archive_path'] for r in rows)
+    assert any(e.get('archive_path')=='demo.dmo' and e['confidence']=='rejected' for r in rows for e in r['evidence'])
+    monkeypatch.setattr(module,'MAX_ARCHIVE_EXPANSION',0)
+    rows=analyse(_zip_image([('demo.dmo',b'recorded inputs '*8,zipfile.ZIP_STORED)]),[],[],[])['regions']
+    assert [r['confidence'] for r in rows if r['archive_path']]==['tentative']

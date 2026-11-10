@@ -257,5 +257,12 @@ function setup(){
     t.run("romView().report={regions:[{id:'anim',kind:'animation',symbols:[],mappings:[],functions:[],detected_asset:region.detected_asset}]};romView().query='object[9]'");
     assert.equal(t.run('romRows(romView()).length'),1);assert.equal(t.run('romRegionType({kind:"animation"})[1]'),'Animation');
   }
+  {
+    // A ZIP member's path names its region, and searching for the file finds it.
+    const t=setup();
+    t.run("romView().report={regions:[{id:'b',kind:'compressed',symbols:[],mappings:[],functions:[],archive_path:'Stages/stage2.V3S'},{id:'a',kind:'compressed',symbols:[],mappings:[],functions:[],archive_path:'Stages/stage1.V3S'},{id:'c',kind:'unknown',symbols:[],mappings:[],functions:[]}]};romView().sort='name';romView().direction=1");
+    assert.equal(t.run("romRows(romView()).map(r=>r.id).join(',')"),'c,a,b');
+    t.run("romView().query='stage2.v3s'");assert.equal(t.run("romRows(romView()).map(r=>r.id).join(',')"),'b');
+  }
   console.log('ROM Explorer lifecycle, sorting and notes passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});
