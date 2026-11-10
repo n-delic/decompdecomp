@@ -39,6 +39,15 @@ def test_saved_project_dialog_preserves_state_and_cancels_pending_requests():
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_a_removed_compiler_range_can_be_reverted_where_it_was_listed():
+    """The Remove button left no way back; the part stays greyed in the list with a Revert that adds the same range,
+    compiler and flags again, and says the functions it reopened stay open for agents."""
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_compiler.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
@@ -54,6 +63,16 @@ def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_map.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_the_function_view_opens_on_best_and_switches_to_latest_after_a_manual_compile():
+    """A DS game's function drawer had no latest/best switch: every fork's function was hidden from it. It shows
+    wherever a best attempt differs from the source now, opens on the best (what someone fixing a function builds
+    on), and switches to the source now after their own compile (tests/gui_function.js)."""
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_function.js"))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 

@@ -46,3 +46,8 @@ __all__ = ["RomNetwork", "COMPILERS", "TOOLS", "parse_ranges"]
 class RomNetwork(ImportMixin, JudgeMixin, BriefMixin, LayoutMixin, CompilerMixin, EditMixin, RoomMixin, GuiMixin,
                  AutopilotMixin, Core):
     """A ROM project engine: Network's claims, attempts and notes, for games split from their ROM (see above)."""
+
+    # Whether its projects can join functions (#192): app/tools.py offers join_functions to ROM projects when this is
+    # True or when this class has a join_functions handler. #192's EditMixin.join_functions is enough on its own; an
+    # engine whose handler has another name sets this True here, one line.
+    joins_functions = False

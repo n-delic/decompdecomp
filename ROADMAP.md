@@ -631,6 +631,7 @@ The original Xbox is a beta PROJECT-mode console: decompdecomp reads your defaul
 makes it a Windows program at the same addresses, and from there it is the PC path (Ghidra, COFF objects, objdiff,
 `ninja rebuild`, which writes your default.xbe back byte for byte). With your own XDK set up in Setup (a kit:
 `kits/`), its library code in .text is set aside and a game of an early XDK builds with that XDK's own Visual C++.
+On Windows a game of Visual C++ 7.1 needs your XDK: the msvc pack's 7.1 doesn't start there, the XDK's copy does.
 Three retail games imported and rebuilt byte for byte (thousands of functions each). All three were built with
 link-time code generation (/GL, /LTCG), as most Xbox games were: the import tells it from the program (or the import
 dialog says), units build in harness mode (`tools/ltcg.py`: the unit, a driver calling its functions as the game's
@@ -799,6 +800,13 @@ The export rebuilds the game byte for byte; mods need code that can move. Build 
 and report every address that is still hard-coded ("93% movable, 41 addresses left"). The matching build stays as
 it is. A Windows PC project's rebuild puts each function back at the game's address in the user's copy
 (tools/rebuild.py): moving code there needs its data delinked too, and a linker that lays the program out.
+
+### A failed build step counts against its unit in make-built forks too
+
+In a fork built with ninja, a unit whose build fails at a step before its object (objects linked into one, a
+generated source) counts as not building: `ninja -t query` says what each failed step goes into. A make-built fork
+has no such query, so only the failed target itself is counted, and an edit that breaks such a step there can still
+be kept as breaking nothing. Make's own dry run (`make -n -W <file>`) or its database (`make -p`) could say the same.
 
 ### A list of open rooms (to investigate)
 
