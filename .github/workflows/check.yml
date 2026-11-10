@@ -141,6 +141,11 @@ jobs:
           key: ghidra-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/decompnet/toolchains.toml') }}
       - name: Ghidra (on a Mac its decompiler is built), for tests/test_ghidra.py
         run: uv run python -c "from decompnet import toolchains; toolchains.install('ghidra')"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The MCP gateway (gateway/), so tests/test_mcp_gateway.py runs against it
+        run: |
+          cargo test --locked --manifest-path gateway/Cargo.toml
+          cargo build --release --locked --manifest-path gateway/Cargo.toml
       - run: uv run pytest -q -rs
         env:
           DECOMP_TRAY: "0"

@@ -24,6 +24,34 @@ with their work.
   running and the gateway 256. The deadlines sit under every client's own limit (Claude Code's MCP SDK: 60 s;
   Codex and Kimi: 180 s, set by the app).
 
+## Read-only tools in their own process
+
+`src/decompnet/app/tool_reader.py` runs a second, small Python process (about 90 MB) that opens the same databases
+and answers a few read-only tools with the app's own handlers (`READER_TOOLS`: get_claims, list_functions,
+project_info, get_function's database sections, ...). It has its own interpreter lock, so these calls don't wait
+for the app's saves, sweeps and other helpers' compiles, and they answer while the app is stalled. On a copy of a
+real project, with the app's process kept busy, get_function / get_claims / list_functions took 17 ms (median)
+from the reader and 357 ms in the app, and its answers to 155 real calls were identical to the app's.
+
+- The gateway sends those tools there first (`--reader`, `--read-tools`) and to the app when the reader declines,
+  isn't running, fails or takes over 20 s. A read changes nothing, so asking the app after is safe.
+- It answers only as the app would, and declines otherwise:
+  - tools whose output comes from what the app keeps in memory (last diffs, search evidence, the helper's
+    selected candidate, compile warnings);
+  - helpers with app-only state: a pending connection handshake, an asset or boundary investigation, a used-up
+    session budget;
+  - projects the app is rechecking or sharing in a room;
+  - any unexpected error.
+- The app sends it that state every second, and at once when a handshake or investigation starts.
+- It never synchronizes saved progress folders. It reads what the app has put in the database, and drops its own
+  symbol caches when the database's revisions say the app renamed, split or imported something.
+- Its databases open with `store.ATTACH_ONLY`: no schema upgrade, checkpoint or ANALYZE, and no writer gate. It
+  leaves the app's leases, project moves and repair analyses alone.
+- For each call it serves it reports back, and the app keeps the transcript, session budget, tool usage and
+  project activity as for its own calls.
+- Its log is `.decomp/logs/tool-reader.log`. It starts in the background with the app and again if it ends.
+  `DECOMP_TOOL_READER=0` turns it off; it never runs without the gateway.
+
 ## How it fits
 
 - The app picks the gateway's port once and keeps it in `.decomp/mcp-gateway.port`, so helpers connected by hand
@@ -36,16 +64,22 @@ with their work.
 - Inside the app, tool calls have thread lanes of their own (`tools.QUICK_TOOLS` and the rest), apart from the
   window's, so a burst of compiles can't make `guide` or `get_claims` wait.
 
-## Building and turning it off
+## Building, installing and turning it off
 
 ```sh
 cd gateway && cargo build --release   # a checkout finds gateway/target/release/decomp-mcp-gateway
-uv run pytest -q tests/test_mcp_gateway.py && (cd gateway && cargo test)
+uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tests/test_tool_reader.py && (cd gateway && cargo test)
 ```
 
-A packaged install looks for `src/decompnet/bin/decomp-mcp-gateway[.exe]`. Without the program, or with
-`DECOMP_MCP_GATEWAY=0`, helpers connect to the app's `/mcp` as before; `DECOMP_MCP_GATEWAY=<path>` names another
-build. The test suite turns it off (`tests/conftest.py`) except in `tests/test_mcp_gateway.py`.
-
-Not yet: prebuilt binaries for each platform in releases (until then installs fall back to the app's own endpoint),
-and answering read-only tools from SQLite in the gateway itself while the app is stalled.
+- Every package carries it: the macOS app, the Linux .deb/.rpm/AppImage and the Windows setup and portable ZIP run
+  `packaging/build_gateway.py` before building the wheel, which puts it in `decompnet/bin/`, and their smoke tests
+  fail without it (`DECOMP_BUILD_GATEWAY=0` packages without it). Linux builds link it statically with musl,
+  Windows with a static C runtime.
+- Every release also carries `decomp-mcp-gateway-<platform>` and its `.sha256` (macOS arm64 and x86_64, Linux
+  x86_64, Windows x86_64). An install from source (`site/public/install.sh`, `uv tool install`) has no Rust build:
+  `decomp setup`, which the installer and every update run, downloads the one for this computer and checks it
+  against its checksum. It tries this version's release, then the latest.
+- The app uses the newest of the package's copy and a checkout's cargo build, else the downloaded one.
+- Without any of them, or with `DECOMP_MCP_GATEWAY=0`, helpers connect to the app's `/mcp` as before;
+  `DECOMP_MCP_GATEWAY=<path>` names another build. The test suite turns it off (`tests/conftest.py`) except in
+  `tests/test_mcp_gateway.py`. The Linux CI job builds it, so those tests run there.

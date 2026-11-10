@@ -28,18 +28,23 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0  # setup-uv has published no major tags since v7
       - name: the version in the tag is the version in the code
         run: test "v$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/decompnet/__init__.py)" = "$TAG"
+      - uses: dtolnay/rust-toolchain@stable  # the MCP gateway (packaging/build_gateway.py), static with musl
+        with:
+          targets: x86_64-unknown-linux-musl
       - name: appimagetool checks the apps-menu entry with desktop-file-validate; rpmbuild makes the .rpm
         run: sudo apt-get install -y --no-install-recommends desktop-file-utils rpm
       - name: build the .deb, the .rpm and the AppImage
         run: packaging/linux/build.sh
+      - name: the MCP gateway on its own, for installs from source (decomp setup downloads it)
+        run: uv run --no-project --python 3.12 packaging/build_gateway.py --asset dist --no-package
       - name: attach them to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/*.deb dist/*.rpm dist/*.AppImage --clobber
+            gh release upload "$TAG" dist/*.deb dist/*.rpm dist/*.AppImage dist/decomp-mcp-gateway-* --clobber
           else
-            gh release create "$TAG" dist/*.deb dist/*.rpm dist/*.AppImage --generate-notes --latest
+            gh release create "$TAG" dist/*.deb dist/*.rpm dist/*.AppImage dist/decomp-mcp-gateway-* --generate-notes --latest
           fi
 
   windows:
@@ -57,12 +62,18 @@ jobs:
         run: |
           $version = (Select-String '^__version__ = "(.*)"' src/decompnet/__init__.py).Matches.Groups[1].Value
           if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG does not match project version $version" }
+      - uses: dtolnay/rust-toolchain@stable  # the MCP gateway (packaging/build_gateway.py)
       - name: Check portable launcher argument forwarding
         shell: pwsh
         run: uv run pytest tests/test_windows_portable.py -q
       - name: Build Windows setup and portable downloads
         shell: pwsh
         run: packaging/windows/build.ps1
+      - name: The MCP gateway on its own, for installs from source (decomp setup downloads it)
+        shell: pwsh
+        run: |
+          uv run --no-project --python 3.12 packaging/build_gateway.py --asset dist --no-package
+          if ($LASTEXITCODE -ne 0) { throw "The MCP gateway asset failed with exit code $LASTEXITCODE" }
       - name: Attach it to the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,11 +83,13 @@ jobs:
           if (-not $installer) { throw 'Windows setup bundle was not created.' }
           $portable = (Get-ChildItem dist -Filter '*-windows-x64-portable.zip' | Select-Object -First 1).FullName
           if (-not $portable) { throw 'Windows portable ZIP was not created.' }
+          $gateway = (Get-ChildItem dist -Filter 'decomp-mcp-gateway-*').FullName
+          if (-not $gateway) { throw 'The MCP gateway asset was not created.' }
           gh release view $env:TAG 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $installer $portable --clobber
+            gh release upload $env:TAG $installer $portable @gateway --clobber
           } else {
-            gh release create $env:TAG $installer $portable --generate-notes --latest
+            gh release create $env:TAG $installer $portable @gateway --generate-notes --latest
           }
 
   macos:
@@ -91,14 +104,22 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
       - name: the version in the tag is the version in the code
         run: test "v$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/decompnet/__init__.py)" = "$TAG"
+      - uses: dtolnay/rust-toolchain@stable  # the MCP gateway (packaging/build_gateway.py)
+        with:
+          targets: x86_64-apple-darwin
       - name: build and smoke test the macOS app
         run: packaging/macos/build.sh
+      - name: the MCP gateway on its own for both Mac architectures, for installs from source (decomp setup downloads it)
+        run: |
+          uv run --no-project --python 3.12 packaging/build_gateway.py --asset dist --no-package
+          uv run --no-project --python 3.12 packaging/build_gateway.py --asset dist --no-package \
+            --target x86_64-apple-darwin --platform macos-x86_64
       - name: attach the app to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/*macos*.zip --clobber
+            gh release upload "$TAG" dist/*macos*.zip dist/decomp-mcp-gateway-* --clobber
           else
-            gh release create "$TAG" dist/*macos*.zip --generate-notes --latest
+            gh release create "$TAG" dist/*macos*.zip dist/decomp-mcp-gateway-* --generate-notes --latest
           fi

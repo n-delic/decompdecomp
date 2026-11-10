@@ -233,10 +233,15 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         log.exception('Database corruption prevented startup')
         print(str(error), file=sys.stderr, flush=True)
         return 1
-    from . import mcp_gateway
-    gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port")
+    from . import mcp_gateway, tool_reader
+    # Read-only tools in a process of their own, behind the gateway (it sends them there first).
+    reader = tool_reader.start(net, internal) if mcp_gateway.program() else None
+    gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port", reader=reader)
+    if gateway is None and reader is not None:
+        reader.stop()
+        reader = None
     mcp, manager, security, quit_app = build(net, internal, port, secret, mcp_url=gateway.url if gateway else None,
-                                             **({"headless":True} if headless else {}))
+                                             reader=reader, **({"headless":True} if headless else {}))
     if restarted and restarted.get('switch_home'):
         from .data_directories import remember
         remember(home,selected=True)
@@ -337,6 +342,11 @@ def setup(args) -> int:
             toolchains.install(tid, log=lambda line: print(f"  {line}"))
         except Exception as e:  # keep going: the app shows what's missing
             print(f"  ! {tc.name}: {e}")
+    from . import mcp_gateway
+    try:
+        mcp_gateway.install(log=lambda line: print(f"  {line}"))
+    except Exception as e:  # the app falls back to its own endpoint
+        print(f"  ! MCP gateway: {e}")
     print("  IDO (most first-party games) is proprietary: install it from the app if you accept its license.")
     if why := window.missing():
         print(f"  ! {why}")

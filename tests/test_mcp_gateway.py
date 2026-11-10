@@ -146,3 +146,56 @@ def test_missing_program_means_the_app_endpoint(monkeypatch):
     monkeypatch.setenv("DECOMP_MCP_GATEWAY", "0")
     assert mcp_gateway.program() is None
     assert mcp_gateway.start(1234) is None
+
+
+class Reader(App):
+    """A stand-in for the read-only tool process: it answers `fast` and declines everything else."""
+
+    def __init__(self, port):
+        from mcp.server.mcpserver import MCPServer
+        from mcp.server.mcpserver.exceptions import ToolError
+
+        from decompnet.app.tool_reader import DECLINED
+        self.port, self.runs = port, {"fast": 0, "slow": 0}
+        server = MCPServer(name="decomp")
+
+        @server.tool()
+        def fast(text: str) -> str:
+            self.runs["fast"] += 1
+            return "reader:" + text
+
+        @server.tool()
+        def slow(seconds: float) -> str:
+            self.runs["slow"] += 1
+            raise ToolError(DECLINED)
+
+        app = server.streamable_http_app(stateless_http=True, json_response=True)
+        self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None))
+        self.thread = threading.Thread(target=self.server.run, daemon=True)
+
+
+@pytest.fixture
+def with_reader(tmp_path):
+    port, reader_port = free_port(), free_port()
+    gw = mcp_gateway.Gateway(mcp_gateway.built(), f"http://127.0.0.1:{port}/mcp", tmp_path / "gateway.log",
+                             call_deadline=5.0, meta_deadline=1.5, reader=f"http://127.0.0.1:{reader_port}/mcp",
+                             read_tools={"fast", "slow"})
+    gw.start()
+    gw.app_port, gw.reader_port = port, reader_port
+    yield gw
+    gw.stop()
+
+
+def test_read_only_tools_go_to_the_reader_first(with_reader):
+    with App(with_reader.app_port) as app, Reader(with_reader.reader_port) as reader:
+        assert text(rpc(with_reader.url, "tools/call", {"name": "fast", "arguments": {"text": "a"}})) == "reader:a"
+        # Declined: the app answers, once.
+        assert "slow done" in text(rpc(with_reader.url, "tools/call", {"name": "slow", "arguments": {"seconds": 0}}))
+        assert reader.runs == {"fast": 1, "slow": 1} and app.runs["slow"] == 1
+        health = httpx.get(f"http://127.0.0.1:{with_reader.port}/health", timeout=5).json()
+        assert health["reader"] and health["read_by_reader"] == 1 and health["passed_to_app"] == 1
+
+
+def test_without_its_reader_the_app_answers(with_reader):
+    with App(with_reader.app_port):
+        assert text(rpc(with_reader.url, "tools/call", {"name": "fast", "arguments": {"text": "b"}})) == "fast:b"
