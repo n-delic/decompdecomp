@@ -15,6 +15,7 @@
 //! The app runs its MCP server stateless behind this gateway, so the gateway keeps no MCP sessions either. It never
 //! holds a lock across an await, bounds every wait, and exits when the app closes its standard input.
 
+mod hosted;
 mod native;
 
 use std::collections::{HashMap, HashSet};
@@ -602,6 +603,12 @@ async fn until_parent_leaves(native: Arc<native::Native>) {
 
 #[tokio::main]
 async fn main() {
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("hosted") {
+        // Standalone: shared projects served without the desktop app (hosted.rs).
+        args.remove(0);
+        std::process::exit(hosted::main(args).await);
+    }
     let config = match Config::from_args() {
         Ok(config) => config,
         Err(problem) => {
