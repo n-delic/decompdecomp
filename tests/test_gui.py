@@ -706,3 +706,9 @@ def test_audio_browser_cancellation_errors_and_explicit_playback():
         pytest.skip('needs node to run the GUI scripts')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_audio_browser.js'))],check=True,
                    capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+@pytest.mark.skipif(not NODE,reason='node is not installed')
+def test_rom_model_browser_lifecycle():
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_model_browser.js'))],check=True,
+                   capture_output=True,text=True)

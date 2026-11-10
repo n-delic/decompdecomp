@@ -19,6 +19,8 @@ function romControls(view) {
 async function loadRomExplorer() {
   const slug=S.slug, epoch=++romEpoch, view=romView(slug), log=romWorkLog();
   if(typeof stopRomAudioBrowser==='function')stopRomAudioBrowser();
+  if(typeof stopRomModelBrowser==='function')stopRomModelBrowser();
+  $('romModelPanel').hidden=true;view._modelReport=null;
   $('romAudioPanel').hidden=true;view._audioReport=null;
   if(typeof stopRomTextureGallery==='function')stopRomTextureGallery();
   $('romTexturePanel').hidden=true;view._textureReport=null;
@@ -129,6 +131,7 @@ function renderRomExplorer(view=romView()) {
   host.querySelectorAll('[data-rom-region]').forEach(b=>b.onclick=()=>openRomRegion(b.dataset.romRegion));
   const more=host.querySelector('[data-rom-more]');if(more)more.onclick=()=>{view.limit+=100;renderRomExplorer(view);};
   drawRomMap(view);drawRomTypeMap(view);
+  if(typeof renderRomModelBrowser==='function' && view._modelReport!==report){view._modelReport=report;renderRomModelBrowser(view);}
   if(typeof renderRomAudioBrowser==='function' && view._audioReport!==report){view._audioReport=report;renderRomAudioBrowser(view);}
   if(typeof renderRomTextureGallery==='function' && view._textureReport!==report){view._textureReport=report;renderRomTextureGallery(view);}
 }

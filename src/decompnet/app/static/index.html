@@ -440,6 +440,15 @@
         <div class="row"><button type="button" class="ghost small-btn" id="assetAgentPrevious">Previous findings</button><span class="small muted" id="assetAgentPage"></span><button type="button" class="ghost small-btn" id="assetAgentNext">Next findings</button></div>
       </div>
     </details>
+    <details class="panel settings-disclosure" id="romModelPanel" hidden>
+      <summary class="panel-head"><h2>Model browser <span class="disclosure-context" id="romModelContext"></span></h2></summary>
+      <div class="pad"><p>Browse detected geometry and rotate individual meshes to inspect their shape.</p>
+        <label class="field"><span>Find models or functions</span><input type="search" id="romModelFilter"></label>
+        <p class="small muted">Wireframes use local coordinates. Textures, object transforms, animation and split scenery streams are not rendered. No recorded references does not mean unused.</p>
+        <div id="romModelItems"></div><div class="row"><button id="romModelPrevious" type="button" class="ghost small-btn">Previous models</button><span id="romModelPage" class="small muted"></span><button id="romModelNext" type="button" class="ghost small-btn">Next models</button></div>
+        <button id="romModelStop" type="button" class="ghost small-btn" hidden>Stop preparing model</button><pre id="romModelWork" class="joblog" hidden></pre><div id="romModelResult" aria-live="polite"></div>
+      </div>
+    </details>
     <details class="panel settings-disclosure" id="romAudioPanel" hidden>
       <summary class="panel-head"><h2>Audio browser <span class="disclosure-context" id="romAudioContext"></span></h2></summary>
       <div class="pad"><p>Browse detected samples and prepare a WAV preview, then press Play to listen. Music sequences, pitch, mixing and loops are not rendered.</p>
@@ -1183,6 +1192,7 @@
 <script src="/assets/js/code-audit.js"></script>
 <script src="/assets/js/rom-audio.js"></script>
 <script src="/assets/js/rom-audio-browser.js"></script>
+<script src="/assets/js/rom-model-browser.js"></script>
 <script src="/assets/js/rom-assets.js"></script>
 <script src="/assets/js/rom-discovery.js"></script>
 <script src="/assets/js/rom-textures.js"></script>

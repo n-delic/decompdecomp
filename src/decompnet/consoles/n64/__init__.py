@@ -4,6 +4,7 @@
 - audio.py: source-assisted B1 sound banks, sample tables and mono VADPCM previews.
 - resources.py: validated directory schemas, animation/world metadata and RNC extents.
 - models.py: validated indexed geometry and local mesh wireframes.
+- archived_models.py: CRC-checked self-contained PD3V model meshes in ZIP members.
 - textures.py: source-assisted indexed texture banks and bounded RNC asset previews.
 - texture_packs.py: trailer-count image/palette packs inside embedded ZIP members.
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
@@ -75,13 +76,14 @@ class Nintendo64(Console):
     asm_preamble = '.include "macro.inc"\n.set noat\n.set noreorder\n.set gp=64\n.section .text, "ax"\n'
 
     def asset_regions(self, image, *, context=None, **kwargs):
-        from . import audio, models, ptr_audio, resources, texture_packs, textures
-        known=textures.regions(image, **kwargs)+texture_packs.regions(image, **kwargs)+audio.regions(image, context=context, **kwargs)+ptr_audio.regions(image, **kwargs)+ptr_audio.sequences(image, **kwargs)+models.regions(image, **kwargs)
+        from . import archived_models, audio, models, ptr_audio, resources, texture_packs, textures
+        known=textures.regions(image, **kwargs)+texture_packs.regions(image, **kwargs)+audio.regions(image, context=context, **kwargs)+ptr_audio.regions(image, **kwargs)+ptr_audio.sequences(image, **kwargs)+models.regions(image, **kwargs)+archived_models.regions(image, **kwargs)
         return known+resources.regions(image,known=known,**kwargs)
 
     def asset_preview(self, data, asset, selection):
-        from . import audio, models, ptr_audio, resources, texture_packs, textures
+        from . import archived_models, audio, models, ptr_audio, resources, texture_packs, textures
         if asset.get('audio_kind') in ('libmus sample bank','libmus sequence'):return ptr_audio.preview(data,asset,selection)
+        if asset.get('layout')=='archived-pd3v-model':return archived_models.preview(data,asset,selection)
         if asset.get('layout')=='trailer-count-texture-pack':return texture_packs.preview(data,asset,selection)
         return {'audio':audio.preview,'model':models.preview,'metadata':resources.preview}.get(asset.get('media'),textures.preview)(data, asset, selection)
 

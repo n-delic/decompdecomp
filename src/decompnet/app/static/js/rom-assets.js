@@ -92,7 +92,7 @@ async function loadRomLoaderRoles() {
 function romNativeModelHTML(region) {
   const asset=region.detected_asset;if(asset?.media!=='model')return '';
   const selected=Number(region.annotation?.preview_settings?.mesh || 0);
-  return `<p class="small muted">Detected model geometry · ${asset.nodes} nodes · ${asset.meshes.length} meshes · ${asset.vertices} vertices · ${asset.triangles} polygon commands. Preview one mesh in local coordinates; skeleton poses, animation and textures are not applied.</p><label class="field"><span>Model mesh</span><select data-native-model-mesh>${asset.meshes.map((mesh,i)=>`<option value="${i}"${i===selected ? ' selected' : ''}>Node ${mesh.node} / part ${mesh.part} / section ${mesh.section} · ${mesh.vertices} vertices · ${mesh.triangles} polygons</option>`).join('')}</select></label>`;
+  return `<p class="small muted">Detected model geometry · ${asset.nodes} nodes · ${asset.meshes.length} meshes · ${asset.vertices} vertices · ${asset.triangles} polygon commands. Preview one mesh in local coordinates; skeleton poses, animation and textures are not applied.</p><label class="field"><span>Model mesh</span><select data-native-model-mesh>${asset.meshes.map((mesh,i)=>`<option value="${i}"${i===selected ? ' selected' : ''}>${esc(mesh.name || `Node ${mesh.node} / part ${mesh.part} / section ${mesh.section}`)} · ${mesh.vertices} vertices · ${mesh.triangles} polygons</option>`).join('')}</select></label>`;
 }
 
 function romResourceHTML(region) {

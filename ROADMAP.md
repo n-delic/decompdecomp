@@ -699,7 +699,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Audio browser, filters, sortable samples and explicit WAV preparation | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / metadata | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
-| Automatic indexed model geometry and local mesh wireframes (raw, RNC 1/2) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Model browser and automatic indexed geometry / local mesh wireframes (raw, RNC 1/2, embedded ZIP) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | B1 / libmus PtrTablesV2 audio banks, table evidence and mono VADPCM/PCM16 previews | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Native frame/palette/mip selection and explicit animation | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Image, texture/palette and audio previews | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -3495,3 +3495,9 @@ A bounded nearby-sibling reservation precedes the global donor shortlist cap. Th
 MIPS arithmetic reader's supported reciprocal forms and the project-mode gaps above
 remain unchanged. Full discovery/adoption replay is available for self-contained
 private fixtures and a synthetic real-compiler regression.
+
+The model browser also recognizes self-contained PD3V models inside embedded ZIP
+archives, checking CRCs, complete mesh extents, material indices and triangle/quad
+references. Search, sortable counts, recorded function links and mesh selection
+share the rotatable wireframe viewer. Split scenery coordinate streams, object
+transforms, textured rendering and animation remain planned.

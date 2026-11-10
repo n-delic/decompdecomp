@@ -2178,6 +2178,6 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .rom-texture-open { height:auto; min-height:220px; padding:10px; display:flex; flex-direction:column; gap:6px; width:100%; text-align:left; white-space:normal; }
 .rom-texture-thumb { flex:none; display:flex; align-items:center; justify-content:center; width:100%; min-height:128px; background:var(--bg); overflow-wrap:anywhere; }
 .rom-texture-thumb img { width:128px; height:128px; max-width:100%; image-rendering:pixelated; object-fit:contain; }
-#romAudioPanel { min-width:0; }
-#romAudioItems, #romAudioResult, #romAudioSequences { min-width:0; overflow-wrap:anywhere; }
-#romAudioItems td:last-child, #romAudioItems th:last-child { position:sticky; right:0; background:var(--panel); }
+#romAudioPanel, #romModelPanel { min-width:0; }
+#romModelItems, #romModelResult, #romAudioItems, #romAudioResult, #romAudioSequences { min-width:0; overflow-wrap:anywhere; }
+#romModelItems td:last-child, #romModelItems th:last-child, #romAudioItems td:last-child, #romAudioItems th:last-child { position:sticky; right:0; background:var(--panel); }
