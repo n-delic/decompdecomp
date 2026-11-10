@@ -1095,9 +1095,16 @@ class Progress:
                     threading.Condition(self._project_lock(slug)).wait(timeout=0.1)
             if self._batching(slug):
                 return False
+            observed_preparation = None
             while (preparing := self.rendering.get(slug)) is not None:
-                if saves.default_folder(self.net, slug) != preparing[0] or self._signature(preparing[0]) != preparing[1]:
-                    break  # External contributions still take the ordinary import path.
+                if preparing is not observed_preparation:
+                    if saves.default_folder(self.net, slug) != preparing[0] or self._signature(preparing[0]) != preparing[1]:
+                        break  # External contributions still take the ordinary import path.
+                    observed_preparation = preparing
+                # A waiting save checks each renderer once, not every 100 ms.
+                # The publisher revalidates its receipt before writing; after
+                # it finishes, this waiter takes the ordinary disk/import path.
+                # Foreground callers still validate their own current inputs.
                 if getattr(self.local, 'foreground', False) or self.viewing:
                     # Only DB-to-disk preparation is in flight. Foreground work can
                     # use the current DB; explicit saves/checkpoints wait for it.
@@ -1522,7 +1529,8 @@ class Progress:
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, cfg, known_names)
-                function_rows = store.all('SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
+                function_rows = metadata_rows(store, ('name', 'unit', 'vram', 'rom_offset'),
+                    'SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
                 # Judge the merged files against today's database inputs, not the
                 # previous disk snapshot. Local searches may already have verified
                 # new sources/profiles since that snapshot was published.
