@@ -337,6 +337,11 @@ def setup(args) -> int:
             toolchains.install(tid, log=lambda line: print(f"  {line}"))
         except Exception as e:  # keep going: the app shows what's missing
             print(f"  ! {tc.name}: {e}")
+    from . import mcp_gateway
+    try:
+        mcp_gateway.install(log=lambda line: print(f"  {line}"))
+    except Exception as e:  # the app falls back to its own endpoint
+        print(f"  ! MCP gateway: {e}")
     print("  IDO (most first-party games) is proprietary: install it from the app if you accept its license.")
     if why := window.missing():
         print(f"  ! {why}")

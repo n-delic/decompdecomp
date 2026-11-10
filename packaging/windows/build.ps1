@@ -17,6 +17,9 @@ try {
     try {
         uv export --locked --no-dev --no-emit-project --format requirements.txt --output-file $runtimeRequirements | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Could not export the locked runtime dependencies (exit code $LASTEXITCODE)" }
+        # the MCP gateway, carried in the wheel (docs/MCP_GATEWAY.md)
+        uv run --no-project --python 3.12 packaging/build_gateway.py
+        if ($LASTEXITCODE -ne 0) { throw "The MCP gateway build failed with exit code $LASTEXITCODE" }
         uv build --wheel --out-dir $wheelDir | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "uv build failed with exit code $LASTEXITCODE" }
     }
@@ -67,6 +70,10 @@ raise SystemExit(main())
     if ($LASTEXITCODE -ne 0) { throw 'The bundled app failed its launch smoke check.' }
     & (Join-Path $bundlePython 'python.exe') -c "import site,sys; site.addsitedir(sys.argv[1]); import decompnet.app.server" $packages
     if ($LASTEXITCODE -ne 0) { throw 'The bundled app failed its server startup import check.' }
+    if ($env:DECOMP_BUILD_GATEWAY -ne '0') {
+        & (Join-Path $bundlePython 'python.exe') -c "import site,sys; site.addsitedir(sys.argv[1]); from decompnet.app import mcp_gateway; assert mcp_gateway.built(), 'no MCP gateway in the package'" $packages
+        if ($LASTEXITCODE -ne 0) { throw 'The package has no MCP gateway.' }
+    }
     # picker.py uses Tk's native Windows folder/file dialogs, so keep tkinter and Tcl in the installed runtime.
     foreach ($unused in @('Lib/test', 'Lib/idlelib', 'Lib/site-packages', 'Lib/turtledemo',
                            'Lib/ensurepip', 'include', 'libs')) {

@@ -13,6 +13,7 @@ VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$ROOT/src/decompnet/__init__
 ARCH="$(uname -m)"
 case "$ARCH" in arm64|x86_64) ;; *) echo "Unsupported Mac architecture: $ARCH" >&2; exit 1 ;; esac
 
+"$PYTHON" "$ROOT/packaging/build_gateway.py"  # the MCP gateway, carried in the wheel (docs/MCP_GATEWAY.md)
 uv build --wheel --out-dir "$WORK/wheel" "$ROOT" >/dev/null
 APP="$WORK/decompdecomp.app"
 CONTENTS="$APP/Contents"
@@ -53,6 +54,7 @@ EOF
 # Test the path that Finder invokes before archiving. It must work after moving the app.
 "$CONTENTS/MacOS/decompdecomp" --help >/dev/null
 "$CONTENTS/Runtime/bin/python3.12" -c 'import Cocoa, WebKit, decompnet.app.server'
+[ "${DECOMP_BUILD_GATEWAY:-1}" = 0 ] || "$CONTENTS/Runtime/bin/python3.12" -c 'from decompnet.app import mcp_gateway; assert mcp_gateway.built(), "no MCP gateway in the app"'
 # Keep the app for direct sharing. Archives remain available for release builds.
 rm -rf "$OUT/decompdecomp.app"
 ditto "$APP" "$OUT/decompdecomp.app"

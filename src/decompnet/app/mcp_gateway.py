@@ -8,8 +8,9 @@ repeat the same call" while it keeps running. A repeat attaches to the call alre
 twice. Behind the gateway the app's MCP server is stateless (no tool uses an MCP session), so either side can
 restart without breaking the other.
 
-The gateway is optional. Without its program (a checkout that hasn't run `cargo build --release` in `gateway/`, a
-platform with no build) or with DECOMP_MCP_GATEWAY=0 the helpers connect to the app's /mcp as before.
+The gateway is optional. Packages carry its program (packaging/build_gateway.py); an install from source gets the
+release's copy from `decomp setup` (install below). Without it (a checkout that hasn't run `cargo build --release` in
+`gateway/`, a platform with no build) or with DECOMP_MCP_GATEWAY=0 the helpers connect to the app's /mcp as before.
 DECOMP_MCP_GATEWAY=<path> names the program. The app holds the gateway's standard input open: when the app ends,
 for any reason, the gateway sees end-of-file and ends too. If the gateway ends while the app runs, it's started
 again on the same port, so the helpers' MCP settings stay right.
@@ -46,13 +47,86 @@ def program() -> Path | None:
 
 
 def built() -> Path | None:
-    """The gateway program shipped in the package or built in this checkout, whatever the setting says."""
-    package = Path(__file__).resolve().parents[1]
-    for candidate in (package / "bin" / NAME,  # a packaged build
-                      package.parents[1] / "gateway" / "target" / "release" / NAME):  # a checkout's cargo build
+    """The gateway program shipped in the package, built in this checkout or downloaded by `decomp setup`, whatever
+    the setting says."""
+    for candidate in (*_local(), downloaded()):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
     return None
+
+
+def _local() -> tuple[Path, Path]:
+    package = Path(__file__).resolve().parents[1]
+    return (package / "bin" / NAME,  # a packaged build
+            package.parents[1] / "gateway" / "target" / "release" / NAME)  # a checkout's cargo build
+
+
+def downloaded() -> Path:
+    """Where `decomp setup` keeps the release's copy, beside the toolchains (outside uv's tool environment, which
+    every update replaces)."""
+    from .. import toolchains
+    return toolchains.root() / "mcp-gateway" / NAME
+
+
+def asset_name(plat: str | None = None) -> str:
+    """The release asset for a platform (packaging/build_gateway.py --asset)."""
+    from .. import toolchains
+    plat = plat or toolchains.current_platform()
+    return f"decomp-mcp-gateway-{plat}" + (".exe" if plat.startswith("windows") else "")
+
+
+def install(log=print, repo: str | None = None, version: str | None = None) -> Path | None:
+    """For an install from source (uv tool install of GitHub's archive, which has no Rust build): the release's
+    gateway for this platform, checked against its .sha256. The release of this version first, else the latest
+    (the gateway only forwards requests: any recent one serves). None, and the app's own endpoint, when neither
+    has one; a copy downloaded before stays."""
+    import urllib.error
+    import urllib.request
+
+    from .. import __version__
+    if any(p.is_file() and os.access(p, os.X_OK) for p in _local()):
+        return built()
+    if repo is None:
+        from . import updates
+        repo = updates.installed().get("repo") or updates.REPO
+    name = asset_name()
+    target = downloaded()
+    for release in (f"download/v{version or __version__}", "latest/download"):
+        base = f"https://github.com/{repo}/releases/{release}/{name}"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(base + ".sha256", headers=HEADERS), timeout=30) as r:
+                expected = r.read(4096).decode("ascii", "replace").split()[0].lower()
+            if target.is_file() and _sha256(target.read_bytes()) == expected:
+                log(f"MCP gateway: up to date ({target})")
+                return target
+            with urllib.request.urlopen(urllib.request.Request(base, headers=HEADERS), timeout=120) as r:
+                data = r.read(MAX_PROGRAM + 1)
+        except (urllib.error.URLError, OSError, IndexError, ValueError):
+            continue  # no such release or asset, or offline
+        if len(data) > MAX_PROGRAM or _sha256(data) != expected:
+            log(f"MCP gateway: {base} didn't match its checksum; not installed")
+            return built()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        part = target.with_name(f"{target.name}.{os.getpid()}.part")
+        try:
+            part.write_bytes(data)
+            part.chmod(0o755)
+            os.replace(part, target)
+        finally:
+            part.unlink(missing_ok=True)
+        log(f"MCP gateway: installed {target}")
+        return target
+    log("MCP gateway: no release build for this computer; helpers use the app's own endpoint")
+    return built()
+
+
+HEADERS = {"User-Agent": "decompnet-toolchain-installer"}
+MAX_PROGRAM = 64 * 1024 * 1024
+
+
+def _sha256(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
 
 
 class Gateway:
