@@ -587,3 +587,48 @@ def test_fork_projects_still_count_every_rename(game, monkeypatch):
     assert auto.input_key(net, proj, fn, SOURCE, 'candidate') == key
     net.bump_generation(1)  # any other change compiles depend on still counts
     assert auto.input_key(net, proj, fn, SOURCE, 'candidate') != key
+
+
+def _given_up(net):
+    from decompnet.app import readable
+    return {r['detail'] for r in net.store.all(readable.GIVEN_UP, 1)}
+
+
+def test_a_function_whose_rewrites_keep_failing_is_let_go_after_its_tries(game):
+    # A helper handed the same function every session, every rewrite failing to compile, still lets it go: each
+    # hand-out with a failed rewrite is one try, however many rewrites failed in it.
+    from decompnet.app import readable
+
+    net, agent, calls = game
+    for attempt in range(readable.POLISH_TRIES):
+        said = net.readability.claim(agent, 'game')
+        name = said.split('MAKE READABLE: ')[1].split()[0]
+        assert name not in _given_up(net)
+        for n in range(2):
+            broken = SOURCE.replace(' f(', f' {name}(').replace('s32 var_v0', f'BROKEN{attempt}{n} var_v0')
+            assert 'COMPILE ERROR' in net.readability.submit(agent, 'game', name, broken)
+    assert _given_up(net) == {name}
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE kind='polish_failed'")['n'] == readable.POLISH_TRIES
+    said = net.readability.claim(agent, 'game')
+    assert said.startswith(f'You held {name}; it has had its tries') and name not in said.split('\n\n', 1)[1][:40]
+
+
+def test_hand_outs_without_a_judged_rewrite_take_many_more_to_let_a_function_go(game):
+    # A helper's session ending, a refusal for changed inputs or a function renamed by mistake says nothing about
+    # the function: 199 of an N64 game's last 207 functions were given up that way, only 8 for failed rewrites.
+    from decompnet.app import readable
+
+    net, agent, _ = game
+    with net.store.tx() as db:
+        for _ in range(readable.POLISH_CLAIMS - 1):
+            net._event(db, 1, agent.id, 'polish', 'f')
+    assert 'f' not in _given_up(net)
+    net._evaluate = lambda *a: (None, None, [])  # the helper renamed it in its rewrite
+    assert 'No function named' in net.readability.submit(agent, 'game', 'f', SOURCE.replace('var_v0', 'total'))
+    assert not net.store.one("SELECT 1 FROM events WHERE kind='polish_failed'")
+    with net.store.tx() as db:
+        net._event(db, 1, agent.id, 'polish', 'f')
+    assert _given_up(net) == {'f'}
+    with net.store.tx() as db:  # made readable since: it has its tries again
+        net._event(db, 1, agent.id, 'readable', 'f')
+    assert _given_up(net) == set()

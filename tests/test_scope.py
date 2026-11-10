@@ -111,7 +111,8 @@ def test_polishing_helpers_carry_on_once_nothing_is_left_to_decompile(tmp_path, 
 def test_polishing_takes_small_functions_last_and_leaves_one_it_keeps_failing_on(tmp_path, monkeypatch):
     """A floor of 8 instructions left 15 of a small Xbox game's 33 functions with address names: small ones come last
     now, not never. And biggest first, one no rewrite kept matching was handed out again and again, to every helper:
-    after POLISH_TRIES tries since it was last readable it's left, and helpers stop once only such functions remain."""
+    after POLISH_CLAIMS hand-outs since it was last readable it's left (POLISH_TRIES once its rewrites fail), and
+    helpers stop once only such functions remain."""
     from decompnet.app import readable
 
     net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
@@ -125,7 +126,7 @@ def test_polishing_takes_small_functions_last_and_leaves_one_it_keeps_failing_on
     proj = net._project(slug)
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
     assert readable.Readability(net).left(proj) == 2
-    for _ in range(readable.POLISH_TRIES):  # game_b, the bigger, first: given up on each time
+    for _ in range(readable.POLISH_CLAIMS):  # game_b, the bigger, first: let go each time
         assert "MAKE READABLE: game_b" in net.readability.claim(agent, slug)
         net.release(agent, "game_b", "", slug)
     assert net.readability.left(proj) == 1
@@ -142,7 +143,7 @@ def test_polishing_takes_small_functions_last_and_leaves_one_it_keeps_failing_on
 def test_a_held_function_taken_up_again_counts_as_a_try(tmp_path, monkeypatch):
     """A helper whose every rewrite of one function failed to compile kept its claim (each compile renewed it) and was
     handed the same function at the start of each session, 174 times in an afternoon on an Xbox game: only a new claim
-    counted as a try. Taking a held one up again counts too, and after POLISH_TRIES it's let go for the next."""
+    counted as a try. Taking a held one up again counts too, and after POLISH_CLAIMS it's let go for the next."""
     from decompnet.app import readable
 
     net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
@@ -154,12 +155,11 @@ def test_a_held_function_taken_up_again_counts_as_a_try(tmp_path, monkeypatch):
     net.store.conn.execute("UPDATE functions SET n_insns=20 WHERE name='game_a'")
     monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
-    for _ in range(readable.POLISH_TRIES):  # never released: each session's claim_readable gives it back
+    for _ in range(readable.POLISH_CLAIMS):  # never released: each session's claim_readable gives it back
         said = net.readability.claim(agent, slug)
         assert said.startswith("MAKE READABLE: game_b")
     said = net.readability.claim(agent, slug)
-    assert said.startswith(f"You held game_b; it was tried {readable.POLISH_TRIES} times without a rewrite that kept it "
-                           "matching")
+    assert said.startswith("You held game_b; it has had its tries without a rewrite that kept it matching")
     assert "MAKE READABLE: game_a" in said
     held = net.store.all("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id")
     assert [r["name"] for r in held] == ["game_a"]
@@ -304,7 +304,7 @@ def test_a_held_file_taken_up_again_counts_as_a_try(tmp_path, monkeypatch):
     for _ in range(readable.POLISH_TRIES):  # never cleared: each claim_readable gives the same helper its file back
         assert net.readability.claim(agent, slug).startswith("TIDY A FILE: game")
     said = net.readability.claim(agent, slug)
-    assert said.startswith(f"You held game; it was tried {readable.POLISH_TRIES} times without being tidied")
+    assert said.startswith("You held game; it has had its tries without being tidied")
     assert "TIDY A FILE" not in said and "Stop here" in said
     assert net.readability.left(proj) == 0 and net.readability._tidying == {}
     kinds = [r["kind"] for r in net.store.all("SELECT kind FROM events WHERE kind='tidy'")]
