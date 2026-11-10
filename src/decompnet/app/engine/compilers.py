@@ -387,8 +387,11 @@ class CompilerMixin:
                           "flags": " ".join(r["flags"]),
                           "check": c.get("status", ""), "said": c.get("said", "")})
         elsewhere = sorted((r for r in (cmap.runs if cmap else []) if r.differs()), key=lambda r: -r.functions)
+        has_map = cmap is not None
         # the compiler's name and its flags apart: "built with KMC GCC 2.7.2" reads at a glance, the flags are details
-        return {"compiler": consoles.compiler_name(main[0]), "flags": " ".join(main[1]), "parts": parts, "mips": cmap is not None,
+        # (`mips` is what older pages called this fact: a map now also covers a project's source files, PC and DS)
+        return {"compiler": consoles.compiler_name(main[0]), "flags": " ".join(main[1]), "parts": parts,
+                "compiler_map": has_map, "mips": has_map,
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": self._short(r.label), "functions": r.functions,
                                "confirmed": r.confirmed} for r in elsewhere[:self.ANSWER_STRETCHES]],
                 "elsewhere_count": len(elsewhere),

@@ -947,6 +947,24 @@ def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
     assert net.store.conn.total_changes - before < functions
 
 
+def test_a_projects_overview_claims_no_compiler_facts_where_its_build_decides(tmp_path):
+    """A public decomp's own build sets its compilers: the overview adds no compiler facts at all, so the Settings
+    panel stays hidden and a page reading a missing `compiler_map` as false says there's no map (steering.js). The
+    Settings answer refuses rather than calling every fork's map MIPS; the map fact the GUI's wording follows is its
+    own (`compiler_answer`), not the overview's."""
+    from types import SimpleNamespace
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    fp = SimpleNamespace(root=root, manifest={}, units=lambda: [])
+    assert net.forks._compiler_facts(fp, {"platform": "gc"}) == {}
+    net.forks._register("p", "P", "fork", root,
+                        {"kind": "fork", "platform": "gc", "origin": "fork", "ready": True}, "x")
+    with pytest.raises(NetworkError, match="this project's own build sets its compilers"):
+        net.compiler_answer("p")
+
+
 def test_a_join_a_console_cant_make_refuses_before_any_vote_is_counted(tmp_path):
     """A GameCube project has no join_functions yet: the refusal comes before the votes, so no agent's agreement is
     kept for a later version and joins_refused gets nothing either (only a real attempted join that fails does)."""

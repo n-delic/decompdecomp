@@ -4160,7 +4160,10 @@ class ForkEngine:
         return own, parts
 
     def _compiler_facts(self, fp: ForkProject, cfg: dict) -> dict:
-        """The overview's compiler fields, as a ROM project's: the Settings panel and its dropdown work the same."""
+        """The overview's compiler fields, as a ROM project's: the Settings panel and its dropdown work the same.
+        Nothing where the project's build decides its compilers (a public decomp): no panel, and a page reading a
+        missing `compiler_map` as false says there's no map (steering.js). The map fact the GUI's wording follows is
+        the Settings answer's (compiler_answer), which each file having a compiler decides."""
         found = self._file_parts(fp, cfg)
         if found is None:
             return {}
@@ -4182,7 +4185,9 @@ class ForkEngine:
         elsewhere = [r for r in files.build(slug).runs if r.differs()]
         survey, state = cfg.get("file_survey") or {}, files.surveys.get(slug) or {}
         checks = cfg.get("file_checks") or []
-        return {"compiler": consoles.compiler_name(own), "flags": "", "mips": True, "unit": "source file",
+        has_map = files.applies(slug)  # (`mips` is what older pages called this fact)
+        return {"compiler": consoles.compiler_name(own), "flags": "", "compiler_map": has_map,
+                "mips": has_map, "unit": "source file",
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": consoles.compiler_name(r.label[0]),
                                "functions": r.functions, "confirmed": r.confirmed} for r in elsewhere[:12]],
                 "elsewhere_count": len(elsewhere),
