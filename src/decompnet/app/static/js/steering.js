@@ -445,6 +445,79 @@ function renderSavedMatchRecovery(ov) {
   recover.onclick = () => start("/api/reconcile-matches", "Recovering saved matches");
 }
 
+/* Other releases of this game (app/regional.py): found by game code, or by comparing code on request; once linked,
+   the other release's names and header types come over through the checked bulk rename. */
+const releaseViews = new Map();
+function renderReleases(ov) {
+  const panel = $("releasePanel");
+  if (!panel) return;
+  if (ov.kind === "fork") { panel.hidden = true; return; }
+  const view = releaseViews.get(ov.slug);
+  if (!view) {
+    releaseViews.set(ov.slug, {loading: true});
+    loadReleases(ov.slug).catch(() => { releaseViews.set(ov.slug, {data: {supported: false}}); if (S.slug === ov.slug) panel.hidden = true; });
+    return;
+  }
+  if (view.data) drawReleases(ov.slug, view.data);
+}
+async function loadReleases(slug, shared = false) {
+  const data = await api(`/api/regional?slug=${encodeURIComponent(slug)}${shared ? "&shared=1" : ""}`);
+  releaseViews.set(slug, {data});
+  if (S.slug === slug) drawReleases(slug, data);
+  return data;
+}
+function releaseLabel(r) {
+  return `${esc(r.name)} · ${esc(r.region || r.game_code || "another release")} · ${r.matched.toLocaleString()} of ${r.functions.toLocaleString()} matched`;
+}
+function drawReleases(slug, data) {
+  const panel = $("releasePanel"), body = $("releaseBody"), log = $("releaseLog");
+  panel.hidden = !data.supported;
+  if (!data.supported) return;
+  const linked = data.linked, last = linked?.last;
+  $("releaseContext").textContent = linked ? `— ${linked.name}` : data.candidates.length ? `— ${data.candidates.length} found` : "— none linked";
+  body.innerHTML = (linked ? `<p><b>Linked:</b> ${releaseLabel(linked)}</p>`
+      + (last ? `<p class="muted small">Last run: ${last.renamed.toLocaleString()} names brought over · ${last.paired.toLocaleString()} functions paired (${last.identical.toLocaleString()} identical) · ${(last.header?.added || 0).toLocaleString()} header items${last.rejected ? ` · ${last.rejected} names left out (the run's log says why)` : ""}.</p>` : "")
+      + `<div class="row"><button type="button" class="primary small-btn" data-release-names>Bring names over</button><button type="button" class="ghost small-btn" data-release-unlink>Unlink</button></div>` : "")
+    + data.candidates.map(c => `<p>${releaseLabel(c)} <span class="muted small">(${c.evidence === "game code" ? "same game code" : `${Math.round(c.shared * 100)}% identical code`})</span> <button type="button" class="ghost small-btn" data-release-link="${esc(c.slug)}">Link as another release</button></p>`).join("")
+    + (!linked && !data.candidates.length ? `<p class="muted small">No other release of this game found by its game code.</p>` : "");
+  const controls = () => [...body.querySelectorAll("button"), $("releaseScan")];
+  body.querySelectorAll("[data-release-link]").forEach(button => button.onclick = async () => {
+    showJobError(log, "");
+    try { drawReleases(slug, await api("/api/regional", {method: "POST", body: {slug, other: button.dataset.releaseLink}})); }
+    catch (error) { log.hidden = false; showJobError(log, error.message); }
+  });
+  const unlink = body.querySelector("[data-release-unlink]");
+  if (unlink) unlink.onclick = async () => {
+    showJobError(log, "");
+    try { drawReleases(slug, await api("/api/regional", {method: "POST", body: {slug, other: ""}})); }
+    catch (error) { log.hidden = false; showJobError(log, error.message); }
+  };
+  const names = body.querySelector("[data-release-names]");
+  if (names) names.onclick = async () => {
+    log.hidden = false; log.textContent = ""; log._showJobProgress = true;
+    showJobError(log, "");
+    const finish = beginWork(log, "Bringing names over", controls(), "Names brought over.");
+    try {
+      const {job} = await api("/api/regional/names", {method: "POST", body: {slug}});
+      const result = await followJob(job, log);
+      toast(`${result.renamed.toLocaleString()} names from ${esc(linked.name)}.`, "match");
+      await loadReleases(slug);
+    } catch (error) { showJobError(log, error.message); }
+    finally { finish(); }
+  };
+  $("releaseScan").onclick = async () => {
+    log.hidden = false; log.textContent = "Comparing this game's code with your other games of the same console.";
+    showJobError(log, "");
+    const finish = beginWork(log, "Comparing code", controls(), "Comparison finished.");
+    try {
+      const data = await loadReleases(slug, true);
+      log.textContent = data.candidates.length ? "Another release was found." : "No other game shares enough identical code.";
+    }
+    catch (error) { showJobError(log, error.message); }
+    finally { finish(); }
+  };
+}
+
 function renderAutopilot(ov) {
   const draftButton = $('regenerateMachineDrafts'), draftScope = $('machineDraftIncludeAll');
   if (draftScope && renderAutopilot.draftProject !== S.slug) {
@@ -483,6 +556,7 @@ function renderAutopilot(ov) {
   };
 
   renderSavedMatchRecovery(ov);
+  renderReleases(ov);
   const collapsed = renderAutopilot.collapsed ||= new Set();
   const toggle = $("crossGameToggle"), body = $("crossGameBody");
   body.hidden = collapsed.has(ov.slug);

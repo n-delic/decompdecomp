@@ -766,6 +766,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | ✓ symbol table, DWARF 1 | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
+| Other releases of a game: found, paired, names and header types brought over | ✓ | — not yet run | — not yet run | — not yet run | — object pairing planned | — object pairing planned | — object pairing planned | — object pairing planned |
 | Automatic attempts from similar verified C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | — | — |
 | Bounded automatic reuse, tiny templates and local SDK C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -1720,6 +1721,23 @@ Many games have a second build with symbols: a demo, a prototype, or a port to a
 class and the parameter types, so carrying them over gives agents real signatures. Pair functions by the text and
 constants they use, spread the pairs through the call graph, and let the user approve the names in bulk (as boundary
 reports are approved now). Names only: matching is unaffected. It also names the classes `get_class` finds.
+
+### Other releases of a game
+
+A game's releases (Europe, North America, Japan) are mostly the same code at shifted addresses. A Europe N64 rally
+game matched and polished and its North America release at 62% shared 1,675 identical functions, yet twins matched
+11 there: the donor's C names its own release's addresses. Done (app/regional.py, the overview's "Other releases of
+this game"): a release found by its game code (N64, GBA: `Console.release_key`) or, on request, by identical code;
+the user links it; functions paired (identical code in the game's order, then the rest by place); how addresses
+move learned from the identical pairs' relocations; the other release's function and global names and its header's
+missing types brought over through the checked bulk rename and header edit. Next:
+- An autopilot phase that tries the linked release's matched C on each paired function as it is (polished code
+  included, with its per-function compiler settings), and on already-matched functions to bring the polish over.
+- Near pairs (80-99% alike): the other release's C as the draft, its constant and offset variants tried, then the
+  instruction-by-instruction difference in the agent's brief.
+- Run it on PS1, PS2 and PSP games (their serials differ by region, so by identical code) and mark the table.
+- Project mode: pair object files' functions (GameCube/Wii by game ID, DS by game code, PC by its executable).
+Related: "Names from another build you own", for a build with symbols (a demo, a port).
 
 ### C++ classes for PowerPC
 

@@ -177,6 +177,7 @@ A console works in one of two modes:
    | `export_project(net, slug, out, log)` | ROM: write and check a tree that rebuilds the game. |
    | `find_gp(image, program, segments)` | ROM: `$gp` as the game sets it. |
    | `debug_info(program, known)`, `debug_brief(known)` | The game's own symbols and types, and their lines in a brief. |
+   | `release_key(rom)` | What every release (region) of one game shares, from its header (N64, GBA: the game code without its region letter): other releases are found by it. None: by identical code. |
    | `after_import(net, slug, chosen)`, `on_start(net, slug)` | Work a new project gets once; work each project gets at start. |
    | `create_project(root, game, compiler)`, `game_info(game)` | PROJECT: makes the project; says which game a file is. |
    | `tool_args()` | PROJECT: points the project's configure step at the pinned tools. |
