@@ -1,6 +1,6 @@
 [project]
 name = "decompnet"
-version = "1.0.9-alpha.4"
+version = "1.0.9-alpha.5"
 description = "A desktop app where AI agents decompile the games you own into C that rebuilds them byte for byte. Runs locally."
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -58,5 +58,8 @@ select = ["F", "I", "E9", "B006", "B008", "B023"]
 known-first-party = ["decompnet"]
 
 [tool.pytest.ini_options]
-# the room tests drive the room server through Starlette's TestClient, which warns about the timeouts real clients use
-filterwarnings = ["ignore:You should not use the 'timeout' argument with the TestClient"]
+# the room tests drive the room server through Starlette's TestClient, which warns about the timeouts real clients use.
+# A background thread that raises fails its test: pytest only warned when a project's indexing thread called a
+# test's stand-in with an argument it didn't take (PR #139)
+filterwarnings = ["ignore:You should not use the 'timeout' argument with the TestClient",
+                  "error::pytest.PytestUnhandledThreadExceptionWarning"]
