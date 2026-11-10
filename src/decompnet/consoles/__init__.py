@@ -1,5 +1,5 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps1/, consoles/ps2/, consoles/ps3/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/xbox/,
+consoles/ps1/, consoles/ps2/, consoles/ps3/, consoles/ps4/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/xbox/,
 consoles/nds/) whose
 `__init__.py` makes a `Console`
 below and fills in its parts; the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
@@ -13,7 +13,7 @@ A console works in one of two modes:
   splitter and judge are still being ported: ROADMAP.md).
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
-  project (`create_project`) and points its build at the pinned tools (`tool_args`). GameCube, Wii, PC, Xbox and DS.
+  project (`create_project`) and points its build at the pinned tools (`tool_args`). PS4, GameCube, Wii, PC, Xbox and DS.
 
 What's the processor's and not the console's (relocations, disassembly, hand-written assembly, the readers for the
 compiler map and C++ classes) is in arch/. Adding a console: copy consoles/template/, fill in its parts, add a demo
@@ -88,6 +88,8 @@ class Console:
     mode = ""  # ROM, PROJECT, or "" (only public decomps)
     layout = ""  # what a game started from scratch becomes, for the GUI: "splat", "dtk-template"
     compilers: tuple[Compiler, ...] = ()  # the first is the default, unless default_compiler says another
+    import_note = ""  # compiler/setup guidance before importing a project
+    import_error = ""  # a host restriction that prevents importing on this computer
     packs: tuple[tuple[str, str], ...] = ()  # (toolchain, what it's for): more that Setup offers for it
     kits: tuple[str, ...] = ()  # the kits users bring that it takes (kits/: an SDK, a compiler only it came in)
     guides: tuple[str, ...] = ()  # guide topics worth reading first (files in its guides/ folder or app/guide/)
@@ -384,6 +386,10 @@ class Console:
         """The arguments that point the project's configure step at this computer's pinned tools."""
         return []
 
+    def adapt_draft(self, text: str) -> str:
+        """Translate machine-draft type names into this console's project headers."""
+        return text
+
     def identity(self, path: Path) -> str | None:
         """Which game a file is (a sha1), when that isn't the file's own bytes: rooms check members have the same."""
         return None
@@ -492,6 +498,10 @@ class Console:
         ForkEngine.propose_join, which checks the rebuild); returns what changed, as a sentence. Not for matched
         functions (`keep`)."""
         raise RomError(f"{self.name} projects can't join functions yet: the agents' agreement is kept for when they can")
+
+    def function_addresses(self, fp) -> dict[tuple[str, str], int]:
+        """Original addresses by (unit, symbol), where relocatable targets cannot carry them for objdiff."""
+        return {}
 
     def function_extent(self, fp, symbol: str) -> tuple[int, int] | None:
         """(address, size) of a function by its symbol, in a project the console made: where report_boundary's `end`
@@ -607,6 +617,7 @@ class Console:
         """What the GUI shows about it (the `consoles` list of /api/state)."""
         return {"id": self.id, "name": self.name, "short": self.short or self.name, "aliases": list(self.aliases),
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
+                "import_note": self.import_note, "import_error": self.import_error,
                 "features": sorted(self.features), "packs": [*(tool for tool, _ in self.packs), *self.kits],
                 "compilers": [{"id": c.id, "name": c.name, "built": c.built, "target": c.target}
                               for c in self.compilers],
@@ -627,6 +638,7 @@ def _registry() -> list[Console]:
     from .ps1 import PS1
     from .ps2 import PS2
     from .ps3 import PS3
+    from .ps4 import PS4_CONSOLE
     from .psp import PSP
     from .public import PUBLIC_ONLY
     from .xbox import XBOX
@@ -634,7 +646,7 @@ def _registry() -> list[Console]:
     # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
     # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF; the Xbox before them all: a full Xbox disc dump
     # starts with a DVD video partition; the PS3 before the PS2 too, though the PS2 takes only 32-bit MIPS ELFs)
-    return [N64, XBOX, PSP, PS1, PS3, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    return [N64, XBOX, PSP, PS1, PS3, PS2, PS4_CONSOLE, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()
