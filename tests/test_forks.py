@@ -947,6 +947,45 @@ def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
     assert net.store.conn.total_changes - before < functions
 
 
+def test_a_join_a_console_cant_make_refuses_before_any_vote_is_counted(tmp_path):
+    """A GameCube project has no join_functions yet: the refusal comes before the votes, so no agent's agreement is
+    kept for a later version and joins_refused gets nothing either (only a real attempted join that fails does)."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root,
+                        {"kind": "fork", "platform": "gc", "origin": "scratch", "ready": True}, "x")
+    with net.store.tx() as db:
+        for k, name in enumerate(("f", "g")):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,vram) "
+                       "VALUES(1,?,8,2,'open','a',?)", (name, 0x80000000 + 8 * k))
+    for who in ("opencode-beam-free-1", "opencode-beam-free-2", "claude-sonnet-5-5-1"):
+        with pytest.raises(NetworkError, match="GameCube projects can't join functions yet"):
+            net.forks.propose_join(net.local_agent(who)[0], "p", "g", "f", "f has no epilogue; g pops it")
+    for row in net.store.all("SELECT meta FROM functions WHERE project_id=1"):
+        assert not json.loads(row["meta"] or "{}").get("joins")
+    cfg = json.loads(net.store.one("SELECT config FROM projects WHERE slug='p'")["config"])
+    assert "joins_refused" not in cfg
+
+
+def test_a_boundary_report_names_the_console_that_cant_cut_functions(tmp_path):
+    """The old refusal said report_boundary works in "a PC game started from scratch" even in a GameCube or DS
+    project: it names the project's own console now."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root,
+                        {"kind": "fork", "platform": "gc", "origin": "scratch", "ready": True}, "x")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,vram) "
+                   "VALUES(1,'f',16,4,'open','a',0x80000000)")
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    with pytest.raises(NetworkError, match="GameCube projects can't report function ends yet"):
+        net.forks.report_boundary(agent, "p", "f", "0x80000008", "padding")
+
+
 def test_the_overview_reads_a_projects_file_compilers_again_only_when_a_file_changed(tmp_path, monkeypatch):
     """The overview goes with every live poll (each second): a PC game's 1,300 source files' compilers were read
     again each time (300-400 ms a poll). They're read again when one of the files they come from changed."""
