@@ -533,3 +533,57 @@ def test_spending_and_advice_do_not_invalidate_polishing(game, monkeypatch, phas
     monkeypatch.setattr(net, '_compile' if phase == 'compile' else '_evaluate', operation)
     assert auto.structured(net.readability, agent, 'game', 'f', '{"arg0":"value"}', 'Triple it.').startswith('✅')
     assert net._function('f', 'game')['readable'] and len(calls) == 1
+
+
+def _rename_during(net, monkeypatch, phase, *, used):
+    """A rename recorded while the polish compiles or is judged; `used` also moves a name the function uses."""
+    from decompnet.rom.symbols import Symbol
+
+    original = net._compile if phase == 'compile' else net._evaluate
+    def operation(*args):
+        result = original(*args)
+        with net.store.tx() as db:
+            net._event(db, 1, None, 'rename', 'func_80001234 → unrelated_helper')
+        if used:
+            net.symbols(1).alias(Symbol('s32', 12345))
+        return result
+    monkeypatch.setattr(net, '_compile' if phase == 'compile' else '_evaluate', operation)
+
+
+@pytest.mark.parametrize('phase', ['compile', 'judge'])
+def test_another_functions_rename_does_not_refuse_a_polish(game, monkeypatch, phase):
+    # Agents rename constantly while polishing: each rename refused every polish in flight on an N64 game.
+    net, agent, calls = game
+    before = net._generation.get(1, 0)
+    _rename_during(net, monkeypatch, phase, used=False)
+    assert auto.structured(net.readability, agent, 'game', 'f', '{"arg0":"value"}', 'Triple it.').startswith('✅')
+    assert net._function('f', 'game')['readable'] and len(calls) == 1
+    # Repeat compiles still treat the rename as a change: only polishing's guard leaves it out.
+    assert net._generation[1] == before + 1
+
+
+@pytest.mark.parametrize('phase', ['compile', 'judge'])
+def test_a_rename_that_reaches_the_function_still_refuses_the_polish(game, monkeypatch, phase):
+    net, agent, _ = game
+    _rename_during(net, monkeypatch, phase, used=True)
+    with pytest.raises(NetworkError, match='Changed inputs: symbols'):
+        auto.structured(net.readability, agent, 'game', 'f', '{"arg0":"value"}', 'Triple it.')
+    assert not net._function('f', 'game')['readable']
+
+
+def test_fork_projects_still_count_every_rename(game, monkeypatch):
+    # A fork project's guard has no header or symbol components to notice a rename that reaches the function.
+    net, _, _ = game
+    proj, fn = net._project('game'), net._function('f', 'game')
+    monkeypatch.setattr(net, 'is_rom', lambda *a: False)
+    key = auto.input_key(net, proj, fn, SOURCE, 'candidate')
+    with net.store.tx() as db:
+        net._event(db, 1, None, 'rename', 'g → h')
+    assert auto.input_key(net, proj, fn, SOURCE, 'candidate') != key
+    monkeypatch.setattr(net, 'is_rom', lambda *a: True)
+    key = auto.input_key(net, proj, fn, SOURCE, 'candidate')
+    with net.store.tx() as db:
+        net._event(db, 1, None, 'rename', 'h → i')
+    assert auto.input_key(net, proj, fn, SOURCE, 'candidate') == key
+    net.bump_generation(1)  # any other change compiles depend on still counts
+    assert auto.input_key(net, proj, fn, SOURCE, 'candidate') != key
