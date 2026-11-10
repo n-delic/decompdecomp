@@ -477,12 +477,13 @@
         <p id="romSummary" role="status"></p><p id="romStale" class="err-msg" hidden>The imported layout changed. Scan again before inspecting regions or saving notes.</p>
         <canvas id="romMap" class="rom-image-map" role="img" aria-label="ROM byte map. Use the region table below for keyboard access."></canvas>
         <div class="row"><span class="small muted" id="romMapRange"></span><button id="romResetZoom" type="button" class="ghost small-btn">Whole image</button></div>
-        <p class="rom-map-legend small"><span>Code</span><span>Data / strings</span><span>Format / table clues</span><span>Repeated bytes</span><span>Unknown</span></p>
-        <div id="romTypeMapPanel" hidden>
-          <h3>Regions by type</h3>
-          <p class="small muted">One box per analysed region or evidence-based group, in ROM order. Hover for details, click to inspect, or use arrow keys and Enter.</p>
+        <div id="romMapKey" hidden>
           <label class="small"><input id="romGroupAssets" type="checkbox" checked> Group regions with shared boundaries (ungroup to see individual types) <span id="romGroupCount"></span></label>
           <div id="romTypeLegend" class="rom-type-legend small"></div>
+        </div>
+        <div id="romTypeMapPanel" hidden>
+          <h3>Regions by type</h3>
+          <p class="small muted">The same regions and colours as the strip above, one box each, in ROM order. Hover for details, click to inspect, or use arrow keys and Enter.</p>
           <canvas id="romTypeMap" class="rom-type-map" tabindex="0" role="img" aria-label="ROM regions by type. Arrow keys select a region; Enter opens details. The region table below is also available." aria-describedby="romTypeStatus"></canvas>
           <p id="romTypeStatus" class="small muted" aria-live="polite"></p>
         </div>
