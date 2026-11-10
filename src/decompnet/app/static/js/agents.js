@@ -148,7 +148,7 @@ function sortAgentCards(sessions, board, mode, now = Date.now() / 1000) {
     const x = a.metrics || board.get(a.agent), y = b.metrics || board.get(b.agent);
     const value = mode === "matches" ? (y?.matched || 0) - (x?.matched || 0)
       : mode === "improved" ? (y?.improved || 0) - (x?.improved || 0)
-      : mode === "recent_improvement" ? (y?.last_improvement || 0) - (x?.last_improvement || 0)
+      : mode === "recent_improvement" ? (y?.last_polish || y?.last_improvement || 0) - (x?.last_polish || x?.last_improvement || 0)
       : mode === "runtime" ? agentRuntime(b, now) - agentRuntime(a, now)
       : mode === "model" ? (a.model || a.agent).localeCompare(b.model || b.agent)
       : mode === "efficiency" ? (agentTokenRate(a, x) ?? Infinity) - (agentTokenRate(b, y) ?? Infinity)
@@ -206,13 +206,14 @@ function agentMetrics(s, stats) {
   const elapsed = agentRuntime(s);
   const runtime = LIVE.includes(s.state) ? `${Math.floor(elapsed / 3600)}h ${Math.floor(elapsed % 3600 / 60)}m` : "Not running";
   const metric = (kind,count) => `<button type="button" class="agent-metric-link" data-agent-results="${esc(s.id)}" data-result-kind="${kind}" ${count ? '' : 'disabled'} aria-label="View ${count} ${kind} functions for ${esc(s.label)}"><strong>${count}</strong><span>${kind === "worked" ? "worked on" : kind} <span aria-hidden="true">↗</span></span></button>`;
-  const last = stats?.last_improvement;
+  const polishing = s.task === 'readable';
+  const last = polishing ? stats?.last_polish : stats?.last_improvement;
   const seconds = last ? Math.max(0, Date.now() / 1000 - last) : null;
   const ago = seconds == null ? "None yet" : seconds < 60 ? `${Math.floor(seconds)}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
   return `<div class="agent-results-summary">${s.task === 'readable' ? `<span><strong>${stats?.polished || 0}</strong> polished</span>` : metric('matched',stats?.matched || 0)}${metric('improved',stats?.improved || 0)}${metric('worked',stats?.worked || 0)}</div>
     ${s.task === "boundary" ? `<p class="small"><b>Boundary investigation:</b> ${esc(s.boundary_function || "selected function")} · advice only · no compilation or layout edits</p>` : ""}
     ${s.focus_function ? `<p class="small"><b>Focused:</b> ${esc(s.focus_function)} · deadline ${s.focus_until ? esc(new Date(s.focus_until*1000).toLocaleTimeString()) : "starting"}</p>` : ""}
-    <div class="agent-timing"><span>${runtime} <span class="muted">since latest start</span></span><span><span class="muted">Last improvement</span> ${ago === 'None yet' ? ago : ago + ' ago'}</span></div>`;
+    <div class="agent-timing"><span>${runtime} <span class="muted">since latest start</span></span><span><span class="muted">${polishing ? 'Last polish' : 'Last improvement'}</span> ${ago === 'None yet' ? ago : ago + ' ago'}</span></div>`;
 }
 function agentEfficiency(s) {
   return (s.efficiency || []).slice(-3).map(e => {
@@ -1224,7 +1225,7 @@ function showRetryPaused(session) {
 
 function clearedAgentMetrics(session, reset) {
   return {...session, tokens:0, usd:0, runs:0, restarts:0, estimated_cost:0, efficiency:null,
-    metrics:{matched:0, improved:0, compiles:0, worked:0, polished:0, last_improvement:null},
+    metrics:{matched:0, improved:0, compiles:0, worked:0, polished:0, last_improvement:null, last_polish:null},
     metrics_since:reset.metrics_since, metrics_after:reset.metrics_after};
 }
 
