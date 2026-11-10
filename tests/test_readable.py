@@ -182,3 +182,31 @@ def test_small_polish_plan_passes_the_real_rom_judge_without_moving_lines(matche
     assert fn['readable'] and fn['matched_source'].count('\n') == original.count('\n')
     assert fn['unpolished_source'] == original
     assert net.project_store(slug).one('SELECT 1 FROM polish_patterns WHERE function_id=?',fn['id'])
+
+
+@pytest.mark.parametrize('exact', [True, False])
+def test_push_poll_timestamp_during_real_polish_still_requires_exact_bytes(matched, monkeypatch, exact):
+    import json
+
+    net, slug, agent = matched
+    store = net.project_store(slug)
+    with store.tx() as db:
+        row = db.execute('SELECT id,config FROM projects WHERE slug=?', (slug,)).fetchone()
+        cfg = json.loads(row['config'])
+        cfg['auto_push'] = {'enabled': True, 'next_check': 1}
+        db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(cfg), row['id']))
+    original = net._function('clamp_s32', slug)['matched_source']
+    compile = net._compile
+    def advance_poll(*args):
+        result = compile(*args)
+        with store.tx() as db:
+            db.execute("UPDATE projects SET config=json_set(config,'$.auto_push.next_check',2) WHERE slug=?", (slug,))
+        return result
+    monkeypatch.setattr(net, '_compile', advance_poll)
+    answer = net.readability.submit(agent, slug, 'clamp_s32', READABLE if exact else BROKEN)
+    fn = net._function('clamp_s32', slug)
+    assert bool(fn['readable']) is exact
+    if exact:
+        assert answer.startswith('✅') and fn['matched_source'] == READABLE
+    else:
+        assert answer.startswith('❌ It no longer matches') and fn['matched_source'] == original
