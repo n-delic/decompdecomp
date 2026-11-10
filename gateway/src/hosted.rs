@@ -38,6 +38,10 @@ const MAX_SOURCE: usize = 256 * 1024;
 const MAX_NOTE: usize = 4000;
 const PER_USER: usize = 16;
 const PROTOCOL_FALLBACK: &str = "2025-06-18";
+/// How long a verifier holds a submission it leased before another may take it.
+const LEASE_SECONDS: f64 = 10.0 * 60.0;
+/// Verifiers that couldn't judge a submission this many times: it is marked unverifiable.
+const MAX_TRIES: i64 = 3;
 
 const PROJECT_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS claims(function_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, user_name TEXT NOT NULL,
@@ -46,7 +50,7 @@ CREATE INDEX IF NOT EXISTS claims_user ON claims(user_id, expires_at);
 CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, function_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL, user_name TEXT NOT NULL, source TEXT NOT NULL, reported_score INTEGER NOT NULL,
     created_at REAL NOT NULL, state TEXT NOT NULL DEFAULT 'reported', verified_score INTEGER, detail TEXT,
-    verified_at REAL, verifier TEXT);
+    verified_at REAL, verifier TEXT, lease_verifier INTEGER, lease_until REAL, tries INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS submissions_state ON submissions(state, id);
 CREATE INDEX IF NOT EXISTS submissions_verified ON submissions(verified_at);
 CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY AUTOINCREMENT, function_id INTEGER, user_name TEXT NOT NULL,
@@ -56,6 +60,9 @@ CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY AUTOINCREMENT, function_
 const SERVER_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
     token_hash TEXT NOT NULL UNIQUE, role TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS verifiers(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL,
+    projects TEXT NOT NULL, toolchains TEXT NOT NULL, slots INTEGER NOT NULL, version TEXT NOT NULL,
+    registered_at REAL NOT NULL, last_seen REAL NOT NULL, UNIQUE(user_id, name));
 ";
 
 fn now() -> f64 {
@@ -195,6 +202,18 @@ impl Project {
             return Err(format!("{slug} is hosted format {format:?}; this program reads format {FORMAT}"));
         }
         db.execute_batch(PROJECT_SCHEMA).map_err(|e| e.to_string())?;
+        // Files from before verifiers leased submissions.
+        let columns: Vec<String> = db
+            .prepare("PRAGMA table_info(submissions)")
+            .and_then(|mut s| s.query_map([], |r| r.get::<_, String>(1))?.collect())
+            .map_err(|e| e.to_string())?;
+        for (column, ddl) in [("lease_verifier", "INTEGER"), ("lease_until", "REAL"), ("tries", "INTEGER NOT NULL DEFAULT 0")] {
+            if !columns.iter().any(|c| c == column) {
+                db.execute_batch(&format!("ALTER TABLE submissions ADD COLUMN {column} {ddl}")).map_err(|e| e.to_string())?;
+            }
+        }
+        db.execute_batch("CREATE INDEX IF NOT EXISTS submissions_lease ON submissions(state, lease_until, id)")
+            .map_err(|e| e.to_string())?;
         Ok(Project { slug: slug.to_string(), path: path.to_path_buf(), db: Mutex::new(db), readers: Mutex::new(Vec::new()) })
     }
 
@@ -619,26 +638,36 @@ impl Project {
         Ok(json!({"submissions": rows}))
     }
 
-    /// A verifier's compile of a submission: `score` None is a compile failure.
-    pub fn verdict(&self, verifier: &User, id: i64, score: Option<i64>, detail: &str) -> Result<Value, Problem> {
+    /// A verifier's compile of a submission: `score` None is a compile failure. `lease` is the verifier (from
+    /// /v1/verifiers) that leased it, if any: a submission another verifier holds is left to that one.
+    pub fn verdict(&self, verifier: &User, lease: Option<i64>, id: i64, score: Option<i64>, detail: &str) -> Result<Value, Problem> {
         let mut db = self.db.lock().unwrap();
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let found: Option<(i64, String, String, i64, String)> = tx
+        let found: Option<(i64, String, String, i64, String, Option<i64>, Option<f64>)> = tx
             .query_row(
-                "SELECT function_id,source,state,reported_score,user_name FROM submissions WHERE id=?",
+                "SELECT function_id,source,state,reported_score,user_name,lease_verifier,lease_until FROM submissions WHERE id=?",
                 [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
             )
             .optional()?;
-        let Some((function, source, state, reported, by)) = found else { return problem(format!("no submission {id}")) };
+        let Some((function, source, state, reported, by, holder, until)) = found else {
+            return problem(format!("no submission {id}"));
+        };
         if state != "reported" {
             return problem(format!("submission {id} is already {state}"));
         }
         let at = now();
-        // Rejected: it didn't compile, or it was worse than its author said.
-        let accepted = matches!(score, Some(s) if s >= 0 && s <= reported);
+        if let (Some(holder), Some(until)) = (holder, until) {
+            if until > at && Some(holder) != lease {
+                return problem(format!("submission {id} is leased to another verifier"));
+            }
+        }
+        // Scores measured by agents' own tools differ from the verifier's for anything but a match, so any compile
+        // is recorded with the verifier's score. Rejected: it didn't compile, or it claimed a match that isn't one.
+        let accepted = matches!(score, Some(s) if s >= 0 && !(reported == 0 && s != 0));
         tx.execute(
-            "UPDATE submissions SET state=?,verified_score=?,detail=?,verified_at=?,verifier=? WHERE id=?",
+            "UPDATE submissions SET state=?,verified_score=?,detail=?,verified_at=?,verifier=?,lease_verifier=NULL,\
+             lease_until=NULL WHERE id=?",
             params![if accepted { "verified" } else { "rejected" }, score, detail, at, verifier.name, id],
         )?;
         let mut matched = false;
@@ -660,6 +689,63 @@ impl Project {
         }
         tx.commit()?;
         Ok(json!({"id": id, "state": if accepted { "verified" } else { "rejected" }, "matched": matched}))
+    }
+
+    /// Lease up to `max` reported submissions to a verifier (those whose compiler it has, if it names any).
+    pub fn lease(&self, verifier: i64, toolchains: &[String], max: i64) -> Result<Vec<Value>, Problem> {
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let at = now();
+        let wanted = serde_json::to_string(toolchains).unwrap_or_else(|_| "[]".into());
+        let found: Vec<Value> = {
+            let mut statement = tx.prepare_cached(
+                "SELECT s.id,f.id,f.name,f.unit,f.vram,f.size,f.target,f.relocs,f.compiler,s.source,s.reported_score \
+                 FROM submissions s JOIN functions f ON f.id=s.function_id \
+                 WHERE s.state='reported' AND (s.lease_until IS NULL OR s.lease_until<?1) \
+                 AND (?2='[]' OR json_extract(f.compiler,'$.toolchain') IN (SELECT value FROM json_each(?2))) \
+                 ORDER BY s.id LIMIT ?3",
+            )?;
+            let rows = statement.query_map(params![at, wanted, max.clamp(1, 100)], |r| {
+                Ok(json!({"id": r.get::<_, i64>(0)?, "slug": self.slug,
+                          "function": {"id": r.get::<_, i64>(1)?, "name": r.get::<_, String>(2)?,
+                                       "unit": r.get::<_, Option<String>>(3)?, "vram": r.get::<_, Option<i64>>(4)?,
+                                       "size": r.get::<_, Option<i64>>(5)?,
+                                       "target": hex(&r.get::<_, Option<Vec<u8>>>(6)?.unwrap_or_default()),
+                                       "relocs": r.get::<_, Option<String>>(7)?},
+                          "compiler": serde_json::from_str::<Value>(&r.get::<_, Option<String>>(8)?.unwrap_or_default()).unwrap_or(Value::Null),
+                          "source": r.get::<_, String>(9)?, "reported_score": r.get::<_, i64>(10)?}))
+            })?;
+            rows.collect::<Result<_, _>>()?
+        };
+        for item in &found {
+            tx.execute(
+                "UPDATE submissions SET lease_verifier=?,lease_until=? WHERE id=?",
+                params![verifier, at + LEASE_SECONDS, item["id"].as_i64()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(found)
+    }
+
+    /// A verifier couldn't judge a submission (its copy of the game differs, its compiler broke): another may.
+    pub fn release_lease(&self, verifier: i64, id: i64, reason: &str) -> Result<Value, Problem> {
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tries: Option<i64> = tx
+            .query_row(
+                "SELECT tries FROM submissions WHERE id=? AND state='reported' AND lease_verifier=?",
+                params![id, verifier],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(tries) = tries else { return problem(format!("submission {id} isn't leased to this verifier")) };
+        let state = if tries + 1 >= MAX_TRIES { "unverifiable" } else { "reported" };
+        tx.execute(
+            "UPDATE submissions SET tries=tries+1,lease_verifier=NULL,lease_until=NULL,state=?,detail=? WHERE id=?",
+            params![state, reason.chars().take(4000).collect::<String>(), id],
+        )?;
+        tx.commit()?;
+        Ok(json!({"id": id, "state": state}))
     }
 
     /// Verified matches since a time, for the app that owns the full project to take in.
@@ -788,6 +874,92 @@ impl Hosted {
             .unwrap_or_default();
         found.sort();
         found
+    }
+
+    /// A compiler server says what it can judge; the same user and name again updates its entry. Its id is what it
+    /// leases with.
+    pub fn register(&self, user: &User, body: &Value) -> Result<Value, Problem> {
+        let name = body.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        if name.is_empty() || name.len() > 100 {
+            return problem("name the verifier (up to 100 characters)");
+        }
+        let strings = |key: &str| -> Vec<String> {
+            body.get(key)
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default()
+        };
+        let projects: Vec<String> = strings("projects").into_iter().filter(|s| valid_slug(s)).collect();
+        let toolchains = strings("toolchains");
+        let slots = body.get("slots").and_then(Value::as_i64).unwrap_or(1).clamp(1, 256);
+        let version = body.get("version").and_then(Value::as_str).unwrap_or("").chars().take(100).collect::<String>();
+        let at = now();
+        let db = self.server.lock().unwrap();
+        db.execute(
+            "INSERT INTO verifiers(user_id,name,projects,toolchains,slots,version,registered_at,last_seen) \
+             VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(user_id,name) DO UPDATE SET projects=excluded.projects,\
+             toolchains=excluded.toolchains,slots=excluded.slots,version=excluded.version,last_seen=excluded.last_seen",
+            params![user.id, name, json!(projects).to_string(), json!(toolchains).to_string(), slots, version, at, at],
+        )?;
+        let id: i64 =
+            db.query_row("SELECT id FROM verifiers WHERE user_id=? AND name=?", params![user.id, name], |r| r.get(0))?;
+        let served: Vec<&String> = projects.iter().filter(|s| self.dir.join("projects").join(format!("{s}.sqlite3")).is_file()).collect();
+        Ok(json!({"verifier": id, "projects": served}))
+    }
+
+    /// The verifier's projects and toolchains, if it is this user's.
+    fn verifier_of(&self, user: &User, id: i64) -> Result<(Vec<String>, Vec<String>), Problem> {
+        let db = self.server.lock().unwrap();
+        let found: Option<(String, String)> = db
+            .query_row(
+                "SELECT projects,toolchains FROM verifiers WHERE id=? AND user_id=?",
+                params![id, user.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((projects, toolchains)) = found else { return problem("register this verifier first (POST /v1/verifiers)") };
+        db.execute("UPDATE verifiers SET last_seen=? WHERE id=?", params![now(), id])?;
+        Ok((serde_json::from_str(&projects).unwrap_or_default(), serde_json::from_str(&toolchains).unwrap_or_default()))
+    }
+
+    /// Up to `max` submissions for a verifier, across the projects it registered for.
+    pub fn lease(&self, user: &User, verifier: i64, max: i64) -> Result<Value, Problem> {
+        let (projects, toolchains) = self.verifier_of(user, verifier)?;
+        let mut work = Vec::new();
+        for slug in projects {
+            let left = max - work.len() as i64;
+            if left <= 0 {
+                break;
+            }
+            if let Some(project) = self.project(&slug) {
+                work.extend(project.lease(verifier, &toolchains, left)?);
+            }
+        }
+        Ok(json!({"work": work, "lease_seconds": LEASE_SECONDS}))
+    }
+
+    pub fn release(&self, user: &User, verifier: i64, slug: &str, id: i64, reason: &str) -> Result<Value, Problem> {
+        self.verifier_of(user, verifier)?;
+        let Some(project) = self.project(slug) else { return problem("no such project") };
+        project.release_lease(verifier, id, reason)
+    }
+
+    pub fn verifiers(&self) -> Result<Value, Problem> {
+        let db = self.server.lock().unwrap();
+        let mut statement = db.prepare(
+            "SELECT v.id,v.name,u.name,v.projects,v.toolchains,v.slots,v.version,v.last_seen FROM verifiers v \
+             JOIN users u ON u.id=v.user_id ORDER BY v.id",
+        )?;
+        let rows: Vec<Value> = statement
+            .query_map([], |r| {
+                Ok(json!({"id": r.get::<_, i64>(0)?, "name": r.get::<_, String>(1)?, "user": r.get::<_, String>(2)?,
+                          "projects": serde_json::from_str::<Value>(&r.get::<_, String>(3)?).unwrap_or(Value::Null),
+                          "toolchains": serde_json::from_str::<Value>(&r.get::<_, String>(4)?).unwrap_or(Value::Null),
+                          "slots": r.get::<_, i64>(5)?, "version": r.get::<_, String>(6)?,
+                          "last_seen": r.get::<_, f64>(7)?}))
+            })?
+            .collect::<Result<_, _>>()?;
+        Ok(json!({"verifiers": rows}))
     }
 
     fn lane(&self, user: &User) -> Arc<Semaphore> {
@@ -967,8 +1139,9 @@ async fn verdict(State(hosted): State<Arc<Hosted>>, UrlPath(slug): UrlPath<Strin
         return json_response(StatusCode::BAD_REQUEST, json!({"error": "id is required"}));
     };
     let score = body.get("score").and_then(Value::as_i64);
+    let lease = body.get("verifier").and_then(Value::as_i64);
     let detail = body.get("detail").and_then(Value::as_str).unwrap_or("").chars().take(4000).collect::<String>();
-    blocking(move || project.verdict(&user, id, score, &detail)).await
+    blocking(move || project.verdict(&user, lease, id, score, &detail)).await
 }
 
 async fn matches(
@@ -985,6 +1158,98 @@ async fn matches(
     blocking(move || project.matches(since)).await
 }
 
+fn admin(hosted: &Hosted, headers: &HeaderMap) -> Result<User, Response> {
+    match hosted.user(headers) {
+        Some(user) if user.role == "admin" => Ok(user),
+        Some(_) => Err(json_response(StatusCode::FORBIDDEN, json!({"error": "admins only"}))),
+        None => Err(json_response(StatusCode::UNAUTHORIZED, json!({"error": "a valid API token is required"}))),
+    }
+}
+
+fn json_body(body: &Bytes) -> Result<Value, Response> {
+    serde_json::from_slice::<Value>(body)
+        .map_err(|_| json_response(StatusCode::BAD_REQUEST, json!({"error": "send a JSON object"})))
+}
+
+/// POST /v1/verifiers: a compiler server registers {name, projects, toolchains, slots, version}.
+async fn register(State(hosted): State<Arc<Hosted>>, headers: HeaderMap, body: Bytes) -> Response {
+    let user = match verifier(&hosted, &headers) {
+        Ok(user) => user,
+        Err(denied) => return denied,
+    };
+    let body = match json_body(&body) {
+        Ok(b) => b,
+        Err(bad) => return bad,
+    };
+    blocking(move || hosted.register(&user, &body)).await
+}
+
+/// GET /v1/verifiers: the registered compiler servers (admins).
+async fn list_verifiers(State(hosted): State<Arc<Hosted>>, headers: HeaderMap) -> Response {
+    if let Err(denied) = admin(&hosted, &headers) {
+        return denied;
+    }
+    blocking(move || hosted.verifiers()).await
+}
+
+/// POST /v1/work/lease {verifier, max}: submissions to judge.
+async fn lease(State(hosted): State<Arc<Hosted>>, headers: HeaderMap, body: Bytes) -> Response {
+    let user = match verifier(&hosted, &headers) {
+        Ok(user) => user,
+        Err(denied) => return denied,
+    };
+    let body = match json_body(&body) {
+        Ok(b) => b,
+        Err(bad) => return bad,
+    };
+    let Some(id) = body.get("verifier").and_then(Value::as_i64) else {
+        return json_response(StatusCode::BAD_REQUEST, json!({"error": "verifier is required"}));
+    };
+    let max = body.get("max").and_then(Value::as_i64).unwrap_or(1);
+    blocking(move || hosted.lease(&user, id, max)).await
+}
+
+/// POST /v1/work/release {verifier, slug, id, reason}: a submission this verifier couldn't judge.
+async fn release_work(State(hosted): State<Arc<Hosted>>, headers: HeaderMap, body: Bytes) -> Response {
+    let user = match verifier(&hosted, &headers) {
+        Ok(user) => user,
+        Err(denied) => return denied,
+    };
+    let body = match json_body(&body) {
+        Ok(b) => b,
+        Err(bad) => return bad,
+    };
+    let (Some(verifier_id), Some(slug), Some(id)) = (
+        body.get("verifier").and_then(Value::as_i64),
+        body.get("slug").and_then(Value::as_str).map(String::from),
+        body.get("id").and_then(Value::as_i64),
+    ) else {
+        return json_response(StatusCode::BAD_REQUEST, json!({"error": "verifier, slug and id are required"}));
+    };
+    let reason = body.get("reason").and_then(Value::as_str).unwrap_or("").to_string();
+    blocking(move || hosted.release(&user, verifier_id, &slug, id, &reason)).await
+}
+
+/// POST /v1/users {name, role}: a new user and its token (admins), to register agents or compiler servers remotely.
+async fn create_user(State(hosted): State<Arc<Hosted>>, headers: HeaderMap, body: Bytes) -> Response {
+    if let Err(denied) = admin(&hosted, &headers) {
+        return denied;
+    }
+    let body = match json_body(&body) {
+        Ok(b) => b,
+        Err(bad) => return bad,
+    };
+    let name = body.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let role = body.get("role").and_then(Value::as_str).unwrap_or("agent").to_string();
+    if name.is_empty() {
+        return json_response(StatusCode::BAD_REQUEST, json!({"error": "name is required"}));
+    }
+    match hosted.add_user(&name, &role) {
+        Ok(token) => json_response(StatusCode::OK, json!({"name": name, "role": role, "token": token})),
+        Err(e) => json_response(StatusCode::CONFLICT, json!({"error": e})),
+    }
+}
+
 async fn health() -> Response {
     json_response(StatusCode::OK, json!({"ok": true, "mode": "hosted"}))
 }
@@ -996,6 +1261,10 @@ pub fn router(hosted: Arc<Hosted>, max_body: usize) -> Router {
         .route("/v1/p/{slug}/pending", get(pending))
         .route("/v1/p/{slug}/verdicts", post(verdict))
         .route("/v1/p/{slug}/matches", get(matches))
+        .route("/v1/verifiers", post(register).get(list_verifiers))
+        .route("/v1/work/lease", post(lease))
+        .route("/v1/work/release", post(release_work))
+        .route("/v1/users", post(create_user))
         .route("/health", get(health))
         .layer(DefaultBodyLimit::max(max_body))
         .with_state(hosted)
@@ -1132,9 +1401,9 @@ mod tests {
         let ids: Vec<i64> = pending["submissions"].as_array().unwrap().iter().map(|s| s["id"].as_i64().unwrap()).collect();
         assert_eq!(ids.len(), 2);
         let verifier = User { id: 9, name: "v".into(), role: "verifier".into() };
-        assert_eq!(p.verdict(&verifier, ids[1], Some(4), "4 bytes differ").unwrap()["state"], "rejected");
-        assert_eq!(p.verdict(&verifier, ids[0], Some(0), "").unwrap()["matched"], true);
-        assert!(p.verdict(&verifier, ids[0], Some(0), "").is_err()); // already verified
+        assert_eq!(p.verdict(&verifier, None, ids[1], Some(4), "4 bytes differ").unwrap()["state"], "rejected");
+        assert_eq!(p.verdict(&verifier, None, ids[0], Some(0), "").unwrap()["matched"], true);
+        assert!(p.verdict(&verifier, None, ids[0], Some(0), "").is_err()); // already verified
         let info = p.call(&user(1), "get_function", &json!({"function": "small", "section": "matched"})).unwrap();
         assert!(info.contains("void small(){}"));
         assert!(p.call(&user(1), "get_claims", &json!({})).unwrap().contains("\"claims\":[]"));
@@ -1149,6 +1418,34 @@ mod tests {
         p.call(&user(1), "release_function", &json!({"function": "small", "claim_token": token, "notes": "tried a loop"})).unwrap();
         assert!(p.call(&user(2), "get_function", &json!({"function": "small", "section": "notes"})).unwrap().contains("u1: tried a loop"));
         assert!(p.call(&user(2), "claim_function", &json!({})).unwrap().starts_with("CLAIMED small"));
+    }
+
+    #[test]
+    fn leases_are_exclusive_and_three_releases_give_up() {
+        let (_dir, p) = project();
+        let token = token_of(&p.call(&user(1), "claim_function", &json!({"function": "small"})).unwrap());
+        for source in ["a", "b"] {
+            p.call(&user(1), "submit_result", &json!({"function": "small", "claim_token": token, "source": source, "score": 3})).unwrap();
+        }
+        let first = p.lease(10, &[], 1).unwrap();
+        let second = p.lease(11, &[], 5).unwrap();
+        assert_eq!((first.len(), second.len()), (1, 1));
+        assert_ne!(first[0]["id"], second[0]["id"]);
+        assert!(p.lease(12, &[], 5).unwrap().is_empty()); // both leased
+        assert!(p.lease(12, &["ido-7.1".to_string()], 5).unwrap().is_empty());
+        let id = first[0]["id"].as_i64().unwrap();
+        let checker = User { id: 9, name: "v".into(), role: "verifier".into() };
+        assert!(p.verdict(&checker, Some(11), id, Some(1), "").unwrap_err().0.contains("another verifier"));
+        assert!(p.release_lease(11, id, "not mine").is_err());
+        for (round, verifier) in [10, 12, 13].into_iter().enumerate() {
+            if round > 0 {
+                assert_eq!(p.lease(verifier, &[], 1).unwrap()[0]["id"].as_i64(), Some(id));
+            }
+            let state = p.release_lease(verifier, id, "no compiler").unwrap()["state"].clone();
+            assert_eq!(state, if round == 2 { "unverifiable" } else { "reported" });
+        }
+        let other = second[0]["id"].as_i64().unwrap();
+        assert_eq!(p.verdict(&checker, Some(11), other, Some(2), "").unwrap()["state"], "verified");
     }
 
     mod tempfile_dir {

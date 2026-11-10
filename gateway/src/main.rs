@@ -17,6 +17,7 @@
 
 mod hosted;
 mod native;
+mod verifier;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -608,6 +609,11 @@ async fn main() {
         // Standalone: shared projects served without the desktop app (hosted.rs).
         args.remove(0);
         std::process::exit(hosted::main(args).await);
+    }
+    if args.first().map(String::as_str) == Some("verifier") {
+        // A compiler server judging a hosted server's submissions (verifier.rs).
+        args.remove(0);
+        std::process::exit(verifier::main(args).await);
     }
     let config = match Config::from_args() {
         Ok(config) => config,
