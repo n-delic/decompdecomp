@@ -360,6 +360,9 @@ END;
 # The write-ahead log is cut back to this after a checkpoint. Without a limit it never shrinks: the owner's grew to
 # 90 MB beside a 172 MB database, and every start read through it.
 WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
+# Set only by a process that reads what the app keeps (app/tool_reader.py): it opens existing files as they are, with no
+# schema upgrade, checkpoint or ANALYZE and without the writer gate, so starting it never makes the app's writers wait.
+ATTACH_ONLY = False
 IN_MEMORY = ":memory:"  # a database only its own connection sees: reads go through the writer's connection
 # Every connection: WAL makes synchronous=NORMAL durable against app crashes (only an OS crash or power loss can
 # drop the last commits, never corrupt), sorts and temporary indexes stay in memory, and pages are read through a
@@ -432,13 +435,44 @@ class Store:
         from .writer_gate import WriterGate
         self.writer_gate=WriterGate(self.path)
         try:
-            with self.writer_gate.hold():
-                self._initialize()
+            if ATTACH_ONLY and self.path != IN_MEMORY and Path(self.path).is_file():
+                self._attach()
+            else:
+                with self.writer_gate.hold():
+                    self._initialize()
         except BaseException as error:
             if hasattr(self,'conn'):self.conn.close()
             if isinstance(error, sqlite3.DatabaseError) and corrupt_database(error):
                 raise CorruptDatabaseError(self.path) from error
             raise
+
+    def _attach(self):
+        """Open a database the app has already set up (ATTACH_ONLY): its connection functions, none of its DDL."""
+        from .payload_storage import Connection
+        self.conn = sqlite3.connect(Path(self.path).resolve().as_uri()+'?mode=rw', uri=True, check_same_thread=False,
+                                    isolation_level=None, factory=Connection)
+        self.conn.row_factory = sqlite3.Row
+        self._migration_admin = False
+        self.conn.create_function('storage_migration_admin',0,lambda:int(self._migration_admin))
+        if self.repair_archive is not None:
+            self.conn.repair_archive = self.repair_archive
+            from .repair_archive import register
+            register(self.conn)
+        if self.project_namespace is not None:
+            marker = sqlite3.Connection.execute(self.conn,"SELECT value FROM settings WHERE key='project-id-namespace'").fetchone()
+            if not marker or marker[0]!=str(self.project_namespace):
+                raise ValueError('The project database identity is missing or incorrect. Restore a consistent backup.')
+        from .shard_ids import bind
+        bind(self.conn,self.project_namespace,self.stable_ids)
+        from .header_storage import Codec
+        self.header_codec = Codec()
+        self.header_codec.register(self.conn)
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        tune(self.conn, READER_CACHE_KIB)
+        self.read_cache = ReadCache(lambda: getattr(getattr(self, '_local', None), 'in_tx', False))
+        self._slow_queries = {}
+        self.lock = threading.RLock()
+        self._local = threading.local()
 
     def _initialize(self):
         from .payload_storage import Connection

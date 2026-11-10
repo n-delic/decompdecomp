@@ -809,10 +809,12 @@ QUICK_LANE = 16
 WORK_LANE = 32
 
 
-def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]], observe=None) -> MCPServer:
-    """MCP server for CLI agents. `agent_of` maps a request to (agent, project slug)."""
-    from .tool_policy import ensure
-    ensure(net)
+def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]], observe=None, reader=None) -> MCPServer:
+    """MCP server for CLI agents. `agent_of` maps a request to (agent, project slug). `reader` (ctx, name, args) ->
+    text answers every call instead, in the read-only tool process (app/tool_reader.py)."""
+    if reader is None:
+        from .tool_policy import ensure
+        ensure(net)
     mcp = MCPServer(name="decomp", title="decompdecomp", instructions=INSTRUCTIONS, version=__version__)
 
     health_limiter = anyio.CapacityLimiter(2)
@@ -821,6 +823,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     quick_limiter = anyio.CapacityLimiter(QUICK_LANE)
     work_limiter = anyio.CapacityLimiter(WORK_LANE)
     async def run(ctx: Context, name: str, **args) -> str:
+        if reader is not None:
+            return await anyio.to_thread.run_sync(lambda: reader(ctx, name, args), limiter=quick_limiter)
         queued=time.monotonic()
         try:
             checking = name == 'project_info' and (ctx.headers or {}).get('x-decomp-connection-check') == '1'

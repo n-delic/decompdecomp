@@ -75,8 +75,14 @@ class Core(Network):
         self.drafter = Drafter(self)
         from ..reuse_cascade import Cascade
         self.cascades = Cascade(self)
-        self.find_moved_projects()
+        from ... import store as storage
         from ..progress import Progress
+        if storage.ATTACH_ONLY:
+            # A reader process (app/tool_reader.py): the app moves projects, runs repair analyses and keeps the
+            # progress folders; another process doing any of it would race the app's own.
+            self.progress = Progress(self)
+            return
+        self.find_moved_projects()
         self.progress = Progress(self)
         from .. import repair_outcomes
         repair_outcomes.prepare(self.repair_feedback)

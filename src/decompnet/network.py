@@ -461,10 +461,12 @@ class Network:
                 self._project_files = Files(self)
             from types import SimpleNamespace
 
+            from . import store as storage
             from .permuter_claims import clear, nonexclusive
-            identities = [r['id'] for r in self.store.all('SELECT id,name,owner FROM agents') if nonexclusive(SimpleNamespace(**dict(r)))]
-            for selected,_ in self.project_stores():
-                with selected.tx() as db:clear(db,agent_ids=identities)
+            if not storage.ATTACH_ONLY:  # the app's own leases: a reader process leaves them to it
+                identities = [r['id'] for r in self.store.all('SELECT id,name,owner FROM agents') if nonexclusive(SimpleNamespace(**dict(r)))]
+                for selected,_ in self.project_stores():
+                    with selected.tx() as db:clear(db,agent_ids=identities)
         except BaseException:
             if self._project_files is not None:
                 for store in self._project_files.opened.values():store.conn.close()

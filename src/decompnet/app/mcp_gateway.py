@@ -49,10 +49,13 @@ def program() -> Path | None:
 def built() -> Path | None:
     """The gateway program shipped in the package, built in this checkout or downloaded by `decomp setup`, whatever
     the setting says."""
-    for candidate in (*_local(), downloaded()):
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return candidate
-    return None
+    # The newer of a package's copy and a checkout's cargo build: in a checkout that once ran
+    # packaging/build_gateway.py, the copy it left must not shadow later builds.
+    local = [p for p in _local() if p.is_file() and os.access(p, os.X_OK)]
+    if local:
+        return max(local, key=lambda p: p.stat().st_mtime)
+    candidate = downloaded()
+    return candidate if candidate.is_file() and os.access(candidate, os.X_OK) else None
 
 
 def _local() -> tuple[Path, Path]:
@@ -133,8 +136,10 @@ class Gateway:
     """The running gateway process, restarted on the same port if it ends while the app runs."""
 
     def __init__(self, exe: Path, upstream: str, log_path: Path | None = None, *,
-                 call_deadline: float = CALL_DEADLINE, meta_deadline: float = META_DEADLINE):
+                 call_deadline: float = CALL_DEADLINE, meta_deadline: float = META_DEADLINE,
+                 reader: str | None = None, read_tools=()):
         self.exe, self.upstream, self.log_path = exe, upstream, log_path
+        self.reader, self.read_tools = reader, sorted(read_tools)
         self.call_deadline, self.meta_deadline = call_deadline, meta_deadline
         self.port: int | None = None
         self.process: subprocess.Popen | None = None
@@ -149,7 +154,8 @@ class Gateway:
     def _command(self, port: int) -> list[str]:
         return [str(self.exe), "--listen", f"127.0.0.1:{port}", "--upstream", self.upstream,
                 "--call-deadline", str(self.call_deadline), "--meta-deadline", str(self.meta_deadline),
-                "--max-body", str(MAX_BODY)]
+                "--max-body", str(MAX_BODY)] + (
+                    ["--reader", self.reader, "--read-tools", ",".join(self.read_tools)] if self.reader else [])
 
     def _launch(self, port: int) -> int:
         """Start the program and return the port it listens on (it prints `LISTENING <port>` first)."""
@@ -224,14 +230,17 @@ class Gateway:
             process.kill()
 
 
-def start(app_port: int, log_path: Path | None = None, port_file: Path | None = None) -> Gateway | None:
+def start(app_port: int, log_path: Path | None = None, port_file: Path | None = None, reader=None) -> Gateway | None:
     """Start the gateway in front of the app's /mcp, or None when the helpers should connect to the app itself.
 
-    `port_file` keeps the gateway's port across app starts: helpers connected by hand keep a working address."""
+    `port_file` keeps the gateway's port across app starts: helpers connected by hand keep a working address.
+    `reader` (app/tool_reader.py) answers the read-only tools it can before the app is asked."""
     exe = program()
     if exe is None:
         return None
-    gateway = Gateway(exe, f"http://127.0.0.1:{app_port}/mcp", log_path)
+    from .tool_reader import READER_TOOLS
+    gateway = Gateway(exe, f"http://127.0.0.1:{app_port}/mcp", log_path,
+                      reader=reader.url if reader is not None else None, read_tools=READER_TOOLS)
     try:
         preferred = int(port_file.read_text().strip()) if port_file and port_file.is_file() else 0
     except (OSError, ValueError):

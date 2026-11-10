@@ -15,7 +15,7 @@
 //! The app runs its MCP server stateless behind this gateway, so the gateway keeps no MCP sessions either. It never
 //! holds a lock across an await, bounds every wait, and exits when the app closes its standard input.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -32,6 +32,8 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
 
 const PROTOCOL_FALLBACK: &str = "2025-06-18";
+/// The reader's answer when it can't answer a call exactly as the app would (src/decompnet/app/tool_reader.py).
+const DECLINED: &str = "decompdecomp-reader: declined";
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -48,6 +50,11 @@ struct Config {
     max_body: usize,
     per_agent: usize,
     total: usize,
+    /// The app's read-only tool process: `read_tools` go there first, and to the app when it declines.
+    reader: Option<String>,
+    read_tools: HashSet<String>,
+    /// How long the reader may take before the call goes to the app instead.
+    reader_limit: Duration,
 }
 
 impl Config {
@@ -62,6 +69,9 @@ impl Config {
             max_body: 4 * 1024 * 1024,
             per_agent: 16,
             total: 256,
+            reader: None,
+            read_tools: HashSet::new(),
+            reader_limit: Duration::from_secs(20),
         };
         let mut args = std::env::args().skip(1);
         while let Some(flag) = args.next() {
@@ -86,6 +96,11 @@ impl Config {
                 "--max-body" => config.max_body = count(value()?)?,
                 "--per-agent" => config.per_agent = count(value()?)?,
                 "--total" => config.total = count(value()?)?,
+                "--reader" => config.reader = Some(value()?),
+                "--read-tools" => {
+                    config.read_tools = value()?.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
+                }
+                "--reader-limit" => config.reader_limit = seconds(value()?)?,
                 _ => return Err(format!("unknown option {flag}")),
             }
         }
@@ -114,6 +129,9 @@ struct Gateway {
     served: AtomicU64,
     late: AtomicU64,
     reachable: AtomicBool,
+    /// Calls the reader answered, and calls it passed to the app.
+    read: AtomicU64,
+    declined: AtomicU64,
 }
 
 fn log(message: impl AsRef<str>) {
@@ -208,12 +226,46 @@ enum Upstream {
     Failed(String),
 }
 
+/// The reader's reply says it declined: a tool error whose text is DECLINED.
+fn declined(reply: &Value) -> bool {
+    let result = reply.get("result");
+    result.and_then(|r| r.get("isError")).and_then(Value::as_bool).unwrap_or(false)
+        && result.and_then(|r| r.get("content")).and_then(Value::as_array).is_some_and(|items| {
+            items.iter().any(|i| i.get("text").and_then(Value::as_str).is_some_and(|t| t.contains(DECLINED)))
+        })
+}
+
 impl Gateway {
     async fn send(&self, message: &Value, headers: &HeaderMap, limit: Duration) -> Upstream {
+        let upstream = self.config.upstream.clone();
+        self.send_to(&upstream, message, headers, limit).await
+    }
+
+    /// The reader's answer to a read-only call, or None: the app answers it (not a reader tool, declined,
+    /// unreachable, failed or too slow; a read changes nothing, so asking the app after is safe).
+    async fn from_reader(&self, message: &Value, headers: &HeaderMap, tool: &str) -> Option<Value> {
+        let reader = self.config.reader.as_ref()?;
+        if !self.config.read_tools.contains(tool) {
+            return None;
+        }
+        match self.send_to(reader, message, headers, self.config.reader_limit).await {
+            Upstream::Reply(reply) if reply.get("error").is_none() && !declined(&reply) => {
+                self.read.fetch_add(1, Ordering::Relaxed);
+                Some(reply)
+            }
+            _ => {
+                self.declined.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
+    }
+
+    async fn send_to(&self, url: &str, message: &Value, headers: &HeaderMap, limit: Duration) -> Upstream {
         let id = message.get("id").cloned().unwrap_or(Value::Null);
+        let to_app = url == self.config.upstream;
         let mut request = self
             .client
-            .post(&self.config.upstream)
+            .post(url)
             .timeout(limit)
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT, "application/json, text/event-stream")
@@ -228,7 +280,9 @@ impl Gateway {
             Err(error) if error.is_connect() => return Upstream::Unreachable(error.to_string()),
             Err(error) => return Upstream::Failed(error.to_string()),
         };
-        self.reachable.store(true, Ordering::Relaxed);
+        if to_app {
+            self.reachable.store(true, Ordering::Relaxed);
+        }
         let status = response.status();
         let content_type = response
             .headers()
@@ -318,7 +372,12 @@ impl Gateway {
                         tokio::spawn(async move {
                             let _permits = permits;
                             let limit = gateway.config.upstream_limit;
-                            let reply = match gateway.send_patiently(&message, &headers, limit).await {
+                            let read = gateway.from_reader(&message, &headers, &tool).await;
+                            let reply = match read {
+                                Some(reply) => Upstream::Reply(reply),
+                                None => gateway.send_patiently(&message, &headers, limit).await,
+                            };
+                            let reply = match reply {
                                 Upstream::Reply(reply) => reply,
                                 Upstream::Unreachable(why) => tool_text(&Value::Null, format!(
                                     "decompdecomp isn't running or is restarting ({why}). Nothing was changed. \
@@ -472,6 +531,9 @@ async fn health(State(gateway): State<Arc<Gateway>>) -> Response {
         "calls_tracked": running,
         "served": gateway.served.load(Ordering::Relaxed),
         "still_running_replies": gateway.late.load(Ordering::Relaxed),
+        "reader": gateway.config.reader.is_some(),
+        "read_by_reader": gateway.read.load(Ordering::Relaxed),
+        "passed_to_app": gateway.declined.load(Ordering::Relaxed),
     }))
 }
 
@@ -523,6 +585,8 @@ async fn main() {
         served: AtomicU64::new(0),
         late: AtomicU64::new(0),
         reachable: AtomicBool::new(true),
+        read: AtomicU64::new(0),
+        declined: AtomicU64::new(0),
     });
     let app = Router::new()
         .route("/mcp", post(mcp_post).get(mcp_other).delete(mcp_other))
@@ -587,6 +651,16 @@ event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"ok\":1}}\n\n";
         let plain = br#"{"jsonrpc":"2.0","id":7,"result":{"ok":2}}"#;
         assert_eq!(reply_in(plain, "application/json", &id).unwrap()["result"]["ok"], 2);
         assert!(reply_in(b"data: nope\n\n", "text/event-stream", &id).is_none());
+    }
+
+    #[test]
+    fn recognizes_the_readers_decline() {
+        let no = json!({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": DECLINED}], "isError": true}});
+        assert!(declined(&no));
+        let error = json!({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": "no function f"}], "isError": true}});
+        assert!(!declined(&error));
+        let answer = json!({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": DECLINED}], "isError": false}});
+        assert!(!declined(&answer));
     }
 
     #[test]

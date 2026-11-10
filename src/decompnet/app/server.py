@@ -46,7 +46,8 @@ from .shutdown_progress import Progress as ShutdownProgress
 from .support import Jobs, Settings, session_options
 
 
-def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool = False, mcp_url: str | None = None):
+def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool = False, mcp_url: str | None = None,
+          reader=None):
     from .permuter_worker import PermuterWorker
     net.permuter = PermuterWorker(net)
     # The helpers' address: the MCP gateway's when it runs (app/mcp_gateway.py), else this server's own /mcp.
@@ -238,6 +239,11 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     threading.Thread(target=resume_work, daemon=True, name="resume-work").start()
 
     mcp = tools.build_mcp(net, agent_of, observe=manager.record_agent)
+    if reader is not None:  # read-only tools in their own process (app/tool_reader.py)
+        from . import tool_reader
+        tool_reader.watch(net, reader.changed)
+        reader.attach(lambda: tool_reader.routes(net, manager, settings),
+                      lambda message: tool_reader.apply_report(net, manager, message))
 
     mcp_metadata_limiter = anyio.CapacityLimiter(2)
 
