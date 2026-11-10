@@ -209,10 +209,11 @@ def changed_inputs(expected, current):
 
 
 def retry_inputs(expected, current):
-    # A different source/header/target or chosen compiler needs a new explicit proposal. Symbol/build changes
-    # may retry once because the entire explicit bundle is freshly compiled and byte judged against them.
+    # Source/header/target changes need a new proposal. Destination compiler settings may
+    # change while room matches arrive; the explicit bundle keeps its own profile and
+    # can retry once with a fresh full compile and linked-byte/data verdict.
     changed = changed_inputs(expected, current)
-    return bool(changed) and set(changed) <= {'symbols', 'build files'}
+    return bool(changed) and set(changed) <= {'compiler/build settings', 'symbols', 'build files'}
 
 
 def promote_measured(net, proj, fn, source, header, settings, agent, expected, *, preserve_exact=False):

@@ -468,3 +468,31 @@ def test_changed_inputs_are_not_retired_as_failed_profiles(pair,monkeypatch,mess
     result=room_matches.verify(host,slug,agent,'func_80000808',DAMAGE)
     assert result['pending'] and not result.get('rejected')
     assert room_matches.pending(host,slug)
+
+
+@pytest.mark.parametrize('value',[60,61])
+def test_room_match_rechecks_after_host_profile_changes(pair,monkeypatch,value):
+    host,slug,guest,gslug=pair
+    source=DAMAGE.replace('= 60;', '= ROOM_TIMER;')
+    evidence=room_matches.packet(guest,gslug,'func_80000808',source)
+    evidence['header']+=f'\n#define ROOM_TIMER {value}\n'
+    evidence['header_sha256']=room_matches.match_bundle.digest(evidence['header'])
+    compile=host._compile
+    calls=[]
+    def changing_compile(*args,**kwargs):
+        result=compile(*args,**kwargs)
+        calls.append(1)
+        if len(calls)==1:
+            cfg=host.cfg(host.project_row(slug));cfg['compiler']['flags']=['-O0']
+            with host.store.tx() as db:
+                db.execute('UPDATE projects SET config=? WHERE slug=?',(json.dumps(cfg),slug))
+        return result
+    monkeypatch.setattr(host,'_compile',changing_compile)
+    remote,_=host.local_agent('room-client')
+    result=room_matches.verify(host,slug,remote,'func_80000808',source,evidence)
+    assert result['matched']==(value==60),result['reason']
+    if value==60:
+        assert len(calls)==2
+        assert not room_matches.pending(host,slug)
+    else:
+        assert host._function('func_80000808',slug)['status']=='open'
