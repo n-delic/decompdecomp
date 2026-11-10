@@ -750,3 +750,19 @@ one SQLite JSON result. For 2,001 synthetic rows, the native row boundary fell
 from 2,001 to one, with identical nullable/Unicode values. Three-trial medians were
 2.02 to 1.89 ms idle and 496.89 to 9.94 ms with one Python competitor bounded to
 two seconds. This excludes compiler time and does not establish a live speedup.
+
+### Provider streams that keep retrying
+
+A connector may identify a retryable error on its explicitly selected primary
+stream. The shared CLI runner requires at least three such errors spanning two
+minutes without intervening text, reasoning or tool progress before ending that
+process through ordinary provider backoff. This is evidence-based recovery from
+an open failed stream, not a longer tool timeout or an automatic model switch.
+The retry history is per process and resets on progress; isolated transient
+errors remain the CLI's responsibility.
+
+OpenCode currently opts in only for its structured selected-model inference
+service overload error. Small/title streams, other models/providers, informational
+logs and arbitrary HTTP errors do not qualify. The persisted failure is a fixed
+category, without raw provider content, credentials or request bodies. This
+recovers the app's retry loop; it cannot restore remote inference capacity.

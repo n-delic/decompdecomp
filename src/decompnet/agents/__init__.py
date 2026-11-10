@@ -303,6 +303,14 @@ class Agent:
         """
         return ""
 
+    def stderr_retry(self, line: str, model: str = "") -> str:
+        """A selected primary stream's retryable provider failure, as a safe category.
+
+        A single retry does not end a process. The runner requires repeated
+        failures over a quiet interval and resets that history on model progress.
+        """
+        return ""
+
     def startup_failure(self, text: str) -> str | None:
         """A CLI startup failure that stops before a model turn, or None for ordinary errors."""
         return None

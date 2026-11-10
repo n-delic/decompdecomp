@@ -2110,10 +2110,15 @@ class Manager:
 
         stream_rejected = threading.Event()
         stream_errors: list[str] = []
+        from .provider_retries import Retries
+        provider_retries = Retries()
+        retry_failure = getattr(k, 'stderr_retry', None)
 
         def drain_err():
             for line in proc.stderr:
                 failure = k.stderr_failure(line, s.model)
+                if not failure and retry_failure is not None:
+                    failure = provider_retries.observe(retry_failure(line, s.model))
                 if failure and not stream_rejected.is_set() and not s.stop.is_set():
                     stream_errors.append(failure)
                     stream_rejected.set()
@@ -2131,6 +2136,8 @@ class Manager:
         last_error = refused = ""
         for line in proc.stdout:
             for kind, text in k.parse_line(line, state):
+                if kind in ('text', 'think', 'tool'):
+                    provider_retries.progress()
                 if kind == "conversation":
                     from .session_recovery import conversation
                     if k.focus_resume and conversation(s, text):

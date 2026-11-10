@@ -173,20 +173,30 @@ class Opencode(Agent):
         # prompts, informational logs and transient retry errors are not failures.
         # Title/small-model failures may coexist with a healthy main request.
         # Route only the primary stream for this worker's explicitly selected model.
-        selected = model.split('#', 1)[0]
-        if '/' not in selected:
-            return ""
-        provider, selected_model = selected.split('/', 1)
-        metadata = line.split(' error=', 1)[0]
-        def field(name):
-            match = re.search(r'(?:^|\s)'+name+r'=(?:"([^"\n]*)"|([^\s]+))', metadata)
-            return (match[1] if match[1] is not None else match[2]) if match else None
-        if field('small') != 'false' or field('providerID') != provider or field('modelID') != selected_model:
-            return ""
-        if re.search(r'\blevel=error\b', line, re.I) and re.search(
+        if self._primary_error(line, model) and re.search(
                 r'\bFree usage limit reached\b', self.clean_stderr(line), re.I):
             return "Provider usage limit reached; the selected model's free allowance is exhausted."
         return ""
+
+    def stderr_retry(self, line: str, model: str = "") -> str:
+        # Go can leave stdout open across repeated overload failures. Do not
+        # classify arbitrary HTTP errors, title requests or other model routes.
+        if self._primary_error(line, model) and re.search(
+                r'\bThe inference service is overloaded\. Please try again later\.', self.clean_stderr(line), re.I):
+            return "No capacity available for model at the provider; repeated inference service overload."
+        return ""
+
+    @staticmethod
+    def _primary_error(line: str, model: str) -> bool:
+        selected = model.split('#', 1)[0]
+        if '/' not in selected:return False
+        provider, selected_model = selected.split('/', 1)
+        metadata = re.split(r' error(?:\.error)?=', line, maxsplit=1)[0]
+        def field(name):
+            match = re.search(r'(?:^|\s)'+name+r'=(?:"([^"\n]*)"|([^\s]+))', metadata)
+            return (match[1] if match[1] is not None else match[2]) if match else None
+        return (field('small') == 'false' and field('providerID') == provider
+                and field('modelID') == selected_model and bool(re.search(r'\blevel=error\b', metadata, re.I)))
 
     def clean_stderr(self, line: str) -> str:
         """--print-logs: keep the error itself, drop the stack noise."""

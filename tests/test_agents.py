@@ -2150,3 +2150,59 @@ def test_opencode_provider_failure_is_not_a_local_mcp_handshake(tmp_path, monkey
         assert manager._run_cli(session,token,tmp_path) is False
         assert session.throttled and not session.auth_failed and not session.limited
     assert session.tool_handshake_failures==0
+
+
+@pytest.mark.parametrize('progressing', [False, True])
+def test_persistent_provider_overload_leaves_open_stream_for_normal_backoff(tmp_path, monkeypatch, progressing):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import provider_retries
+    # Unit checks cover the production 120 s interval. The fake CLI remains
+    # bounded while exercising actual stderr/stdout reading and termination.
+    monkeypatch.setattr(provider_retries, 'QUIET_SECONDS', 0)
+    progress_calls = []
+    original_progress = provider_retries.Retries.progress
+    def progress(retries):
+        progress_calls.append(1)
+        original_progress(retries)
+    monkeypatch.setattr(provider_retries.Retries, 'progress', progress)
+    manager = agents.Manager(RomNetwork(tmp_path/'app.db', tmp_path), tmp_path, URL)
+    monkeypatch.setattr(manager, '_preflight_tools', lambda *a, **kw: True)
+    monkeypatch.setattr(manager.net, 'selection_counts', lambda *a, **kw: {'available':1})
+    _, token = manager.net.local_agent('synthetic-overload')
+    line = ('level=ERROR message="stream error" providerID=opencode-go modelID=example small=false '
+            'agent=build mode=primary error.error="AI_APICallError: The inference service is overloaded. Please try again later. private-secret"')
+    event = json.dumps({'type':'tool_use','part':{'tool':'project_info','input':{}}})
+    code = 'import sys,time\n'
+    if progressing:
+        # Two errors can recover. The runner must observe the tool progress.
+        code += f'print({line!r},file=sys.stderr,flush=True)\n'*2
+        code += f'print({event!r},flush=True)\n'
+    else:
+        code += f'print({line!r},file=sys.stderr,flush=True)\n'*3
+        code += 'time.sleep(30)\n'
+    def command(*args):
+        # Simulate the authenticated project_info acknowledgement separately
+        # from the fake stdout event. A provider failure before this must still
+        # take provider backoff rather than a local-handshake retry.
+        if progressing:manager.net._pending_tool_handshakes.clear()
+        return [sys.executable,'-c',code],dict(os.environ),''
+    monkeypatch.setattr(manager, '_command', command)
+    session = agents.Session('synthetic-overload','opencode','synthetic','game','synthetic-overload',
+                             {'model':'opencode-go/example'})
+    saved = []
+    session.record = lambda kind,text: saved.append((kind,text))
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(manager._run_cli,session,token,tmp_path)
+        try:assert future.result(timeout=5) is progressing
+        finally:
+            if session.proc is not None:agents._terminate(session.proc)
+    assert bool(progress_calls) is progressing
+    assert session.throttled is not progressing
+    assert not session.limited and not session.signed_out and not session.stop.is_set()
+    assert session.tool_handshake_failures == 0
+    assert session.proc is None
+    assert 'private-secret' not in str(saved)
+    if not progressing:
+        assert 'No capacity available' in session.error
+        assert any(kind=='error' and 'repeated inference service overload' in text for kind,text in saved)
