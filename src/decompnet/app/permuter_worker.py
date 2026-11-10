@@ -346,6 +346,7 @@ def child(db_path: str, workspace: str) -> None:
     permuter = net.permuter = Permuter(net)
     output_lock = threading.Lock()
     repair_stops: dict[int, threading.Event] = {}
+    repair_threads: dict[int, threading.Thread] = {}
     stopped = threading.Event()
 
     def emit(message):
@@ -371,6 +372,7 @@ def child(db_path: str, workspace: str) -> None:
             emit({"kind": "reply", "ident": ident, "error": "repair failed"})
         finally:
             repair_stops.pop(ident, None)
+            repair_threads.pop(ident, None)
 
     try:
         for line in sys.stdin:
@@ -393,7 +395,9 @@ def child(db_path: str, workspace: str) -> None:
             elif action == "repair_pass":
                 ident = message["ident"]
                 stop = repair_stops[ident] = threading.Event()
-                threading.Thread(target=repair, args=(ident, message["slug"], stop), daemon=True).start()
+                thread = threading.Thread(target=repair, args=(ident, message["slug"], stop), daemon=True)
+                repair_threads[ident] = thread
+                thread.start()
             elif action == "cancel":
                 if stop := repair_stops.get(message["ident"]):
                     stop.set()
@@ -404,6 +408,11 @@ def child(db_path: str, workspace: str) -> None:
             state.stop.set()
         for stop in list(repair_stops.values()):
             stop.set()
+        # Stop every owner first, then let sessions close their compiler workspaces.
+        # Returning with daemon work alive races tempfile finalizers at interpreter exit.
+        permuter.join()
+        for thread in list(repair_threads.values()):
+            thread.join()
 
 
 if __name__ == "__main__" and len(sys.argv) == 4 and sys.argv[1] == "--child":

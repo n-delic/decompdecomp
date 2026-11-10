@@ -273,3 +273,25 @@ def test_one_unavailable_project_header_does_not_stop_the_remaining_repairs():
     perm._repair_round(AGENT,net.project_row('game'),State())
     assert perm.judged and all('f2(' in source for source in perm.judged)
     assert not net.store.all('SELECT * FROM claims')
+
+
+def test_progress_movement_abandons_stale_repair_snapshot_without_caching(monkeypatch, caplog):
+    from decompnet.app.progress import ProgressMoved
+
+    net = setup_repair_net(2)
+    perm = ScriptedPermuter(net, {})
+    source = net.function()['best_source']
+    def moved(*args):
+        raise ProgressMoved('Progress changed while this attempt compiled.')
+    monkeypatch.setattr(perm, '_score', moved)
+    with caplog.at_level('INFO', logger='decompdecomp'):
+        perm._repair_round(AGENT, net.project_row('game'), State())
+    assert not net.store.all('SELECT * FROM reuse_trials')
+    assert not net.store.all('SELECT * FROM claims')
+    assert net.function()['best_source'] == source and net.function()['permuted'] == 0
+    assert all(record.exc_info is None for record in caplog.records)
+    assert 'deferred' in caplog.records[-1].getMessage()
+    # A fresh pass can judge both functions; the moved trial is not a cached miss.
+    monkeypatch.setattr(perm, '_score', ScriptedPermuter._score.__get__(perm))
+    perm._repair_round(AGENT, net.project_row('game'), State())
+    assert len(perm.judged) == 2

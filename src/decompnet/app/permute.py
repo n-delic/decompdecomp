@@ -300,12 +300,23 @@ class Permuter:
         if slug in self.net.links:  # a room member: the host's copy permutes, and its matches come back here
             return None
         st = self.jobs[slug] = State()
-        threading.Thread(target=self._loop, args=(slug, st), daemon=True, name=f"permuter-{slug}").start()
+        st.thread = threading.Thread(target=self._loop, args=(slug, st), daemon=True, name=f"permuter-{slug}")
+        st.thread.start()
         return st
 
     def stop(self, slug: str) -> None:
         if (st := self.jobs.get(slug)) is not None:
             st.stop.set()
+
+    def join(self) -> None:
+        """Drain owned loops before interpreter finalizers can remove active compiler scratch.
+
+        The worker process's parent retains its bounded terminate/kill deadline.
+        """
+        for state in list(self.jobs.values()):
+            thread = getattr(state, 'thread', None)
+            if thread is not None and thread is not threading.current_thread():
+                thread.join()
 
     def candidates(self, proj, limit: int | None = None) -> list:
         limit = limit or max(CANDIDATES, 2 * workers.WORKERS)  # (a worker for each, and the next ones waiting)
@@ -373,6 +384,8 @@ class Permuter:
         Cache individual candidates with their target, header and configured compiler. A new source/header/
         configuration gets another chance. This uses the same judge for ROM and imported project modes.
         """
+        from .progress import ProgressMoved
+
         key = f"draft-repair-cursor:{proj['id']}"
         saved = self.net.project_store(proj['id']).one("SELECT value FROM settings WHERE key=?", key)
         cursor = int(saved['value']) if saved else 0
@@ -492,6 +505,10 @@ class Permuter:
                             break
                 if function_id is None and not fork and best > 0 and attempts <= budget-3 and time.monotonic() < deadline and not st.stop.is_set():
                     attempts += self._repair_flags(agent, proj, fn, st, deadline)
+            except ProgressMoved:
+                # Discard this round's project/header/source snapshot; the next pass reloads it.
+                log.info("permuter: %s: progress moved; targeted repairs deferred", fn['name'])
+                return
             except Exception:
                 log.exception("permuter: targeted repairs failed for %s", fn['name'])
             finally:
@@ -499,8 +516,13 @@ class Permuter:
                 self._let_go(agent, fn)
 
     def _turn(self, agent, proj, fn, st: State) -> None:
+        from .progress import ProgressMoved
+
         try:
             self._permute(agent, proj, fn, st)
+        except ProgressMoved:
+            # A stale result is no evidence that the current source cannot be permuted.
+            log.info("permuter: %s: progress moved; random turn deferred", fn["name"])
         except NetworkError as e:  # the project refused its source (a helper the file hasn't): an answer, not a crash
             log.info("permuter: %s: %s (left to agents)", fn["name"], str(e).splitlines()[0])
             with self.net.project_store(proj['id']).tx() as db:  # the same best attempt is refused every time: no more turns on it
