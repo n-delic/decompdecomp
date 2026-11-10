@@ -54,6 +54,17 @@ class Compiler:
     automatic: bool = True  # routine comparisons; experimental profiles remain available by explicit selection
 
 
+@dataclass(frozen=True)
+class PortKit:
+    """The library a finished game of a console is ported to a PC with (docs/PORTING.md): libultraship and Torch
+    for the N64. What the port readiness report asks of it; a console with no kit has `port_kit = None`."""
+    name: str  # "libultraship and Torch"
+    summary: str  # one sentence on what it gives a port
+    sdk_group: object  # function name -> "replaced" (the kit or the host has it), "native" (compiles as is) or None
+    microcode: object = None  # the image's bytes -> [{"name", "variant", "version", "support"}], or None
+    audio: object = None  # the game's function names -> {"library", "need"}, or None
+
+
 class Console:
     """One console: the facts below, and the parts the app calls. A part a console doesn't need keeps the default
     here, which does nothing or says the console can't do it."""
@@ -101,6 +112,7 @@ class Console:
     demo = ""  # its homemade demo game: a folder in projects/ whose build.py makes it (tests/test_consoles.py)
     demo_tools: tuple[str, ...] = ()  # what building and importing the demo needs: toolchains, or programs on PATH
     own_features: frozenset[str] = frozenset()  # EXPORT, REBUILD_CHECK
+    port_kit: PortKit | None = None  # what a finished game is ported with (docs/PORTING.md); None: no kit yet
     # PROJECT mode: its import recognises code that isn't the game's own (library code, an SDK, the C runtime) and
     # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
     sets_aside = False

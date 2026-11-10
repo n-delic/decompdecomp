@@ -1,6 +1,7 @@
 # Porting a finished decomp (plan)
 
-Status: planned, nothing built yet. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
+Status: phase 0, the readiness report, is built (ROM projects; N64 with its kit); the rest is planned. ROADMAP.md,
+"Ports: a native build of a finished game", tracks it.
 
 A matched, polished decomp rebuilds the game for its console. People finish a decomp to read, mod and port the
 game, and today decompdecomp stops at the export. This plan adds the next step: a **port**, the same C built for
@@ -41,11 +42,19 @@ Each phase is useful on its own, and each is a prerequisite for the next.
 
 ### 0. Port readiness report
 
-A panel (and a `port_readiness` tool for agents) that counts what blocks a port: the game's own functions in
-assembly, SDK functions the kit replaces, the microcode the game loads (read from its `RSP Gfx ucode` strings and
-the tasks it sends), data still addressed by number, raw blobs, pointers stored in 32-bit integers, and the
-hard-coded addresses the ROADMAP's modding-ready check counts. It extends that check: code that can move is the
-first condition of a port.
+Built. **Port readiness** on a ROM project's Overview (opened, it reads; it never runs on its own), the
+`port_readiness` tool for agents and `GET /api/port-readiness` (src/decompnet/port/readiness.py). It reads the
+project and changes nothing, with no compiler run: under a second on a 2,121-function N64 game. It counts:
+- functions with and without C; library code the kit replaces and library code compiled as it is. Library code is
+  only what the app has proven (app/sdk_identity.py); a function merely named like libultra is listed as unproven
+  and counts as the game's own;
+- the graphics microcode the ROM signs (`RSP Gfx ucode ...`) and whether the kit renders it; the audio library;
+- data the C reaches by a symbol that exists only as an address; addresses written in C as numbers;
+- the ROM's bytes outside its code, and which ROM Explorer's saved scan recognised (it reads the scan, never starts
+  one).
+
+Still to add: pointers stored in 32-bit integers, and the moved-build count of the modding-ready check. Consoles
+without a kit get the counts that don't need one; projects in project mode aren't read yet.
 
 ### 1. Data migration, judged
 

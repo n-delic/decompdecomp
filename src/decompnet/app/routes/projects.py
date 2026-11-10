@@ -234,6 +234,10 @@ def register(app: App) -> None:
             return {k: v for k, v in res.items() if k != "log"} | {"log": res.get("log", "")[-1500:]}
         return {"job": jobs.start("export", work)}
 
+    def g_port_readiness(slug, request, data):
+        from ...port.readiness import readiness
+        return readiness(net, slug)
+
     def p_rom_explorer(slug, request, data):
         with net.progress.view():
             return rom_explorer_request(slug,request,data)
@@ -990,6 +994,7 @@ def register(app: App) -> None:
         "/api/suggestion": (p_suggestion, ["POST"]), "/api/boundary": (p_boundary, ["POST"]),
         "/api/agent-results": (lambda s,r,d: net.agent_results(s,r.query_params.get('agent',''),r.query_params.get('kind','matched'),int(r.query_params.get('before',0)),int(r.query_params.get('after',0))), ["GET"]),
         "/api/stats": (lambda s, r, d: net.stats(s), ["GET"]),
+        "/api/port-readiness": (g_port_readiness, ["GET"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
     }

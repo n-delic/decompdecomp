@@ -344,6 +344,12 @@ def _compact_project_info(net, slug):
             + COMPACT_NEXT)
 
 
+def _port_readiness(net: RomNetwork, slug: str) -> str:
+    """The port readiness report as text (port/readiness.py)."""
+    from ..port.readiness import describe, readiness
+    return describe(readiness(net, slug))
+
+
 def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
     if not detail:
         return _compact_project_info(net,slug)
@@ -564,6 +570,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
+    "port_readiness": lambda net, agent, slug: _port_readiness(net, slug),
     "add_note": lambda net, agent, slug, text, function="": _add_note(net, agent, slug, text, function),
     "share_knowledge": lambda net, agent, slug, text="", supports=0, evidence="": net.knowledge.share(agent, slug, text, supports, evidence),
     "search_flags": lambda net, agent, slug, function, compiler="", source="":
@@ -595,9 +602,10 @@ HANDLERS: dict[str, Callable[..., str]] = {
 
 READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
-                       "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
+                       "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
+                       "port_readiness"})
 
-ROM_ONLY = {"claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"port_readiness","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -816,7 +824,7 @@ QUICK_TOOLS = frozenset({
     'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
     'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function',
     'add_note', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
-    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary',
+    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness',
 })
 QUICK_LANE = 16
 WORK_LANE = 32
@@ -1197,6 +1205,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     async def list_functions(ctx: Context, status: str = "open", limit: int = 40) -> str:
         """List functions by status: open, matched or all."""
         return await run(ctx, "list_functions", status=status, limit=limit)
+
+    @tool
+    async def port_readiness(ctx: Context) -> str:
+        """What still stands between this game and a native PC port (docs/PORTING.md): code without C, library
+        code, graphics microcode, data reached by address, addresses written as numbers, raw blobs. Read-only."""
+        return await run(ctx, "port_readiness")
 
     @tool
     async def add_note(ctx: Context, text: str, function: str) -> str:

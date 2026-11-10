@@ -777,6 +777,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
+| Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
@@ -957,6 +958,17 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### Port readiness report
+
+Phase 0 of docs/PORTING.md: Overview's **Port readiness**, the `port_readiness` tool and `GET /api/port-readiness`
+say what stands between a ROM project and a native port, without changing it or running a compiler. A console's
+`port_kit` (consoles/: the N64's is libultraship and Torch, consoles/n64/port.py) says which proven library code it
+replaces and which graphics microcode it renders. On a finished 2,121-function N64 game: 94 library functions the
+kit replaces, 55 compiled as they are, 22 of the game's own still assembly, 1,551 data symbols reached by address,
+38 addresses written as numbers, F3DEX rendered and S2DEX to check, in under a second. Left: running it on the PS1, PS2
+and PSP demos (no kit: the counts that don't need one) and a PS1 kit (PsyCross); project mode; pointers in 32-bit
+integers.
 
 ### Agent asset discovery
 
@@ -1743,7 +1755,8 @@ byte-identical, ROM Explorer's asset map written as a Torch config (offsets and 
 (CMake, libultraship and Torch pinned in `toolchains.toml`, glue for the main loop, input, saves, DMA and audio),
 and a port-fix task for agents judged twice: the console build still matches and the port still compiles. N64
 first (`Console.port_kit`), PS1 next on PsyCross; the rest "—" until a kit exists. First check: libultraship's
-S2DEX coverage, then a hand port of one N64 game's boot, title screen and one track.
+S2DEX coverage, then a hand port of one N64 game's boot, title screen and one track. Phase 0 is built (Recently
+done: Port readiness report).
 
 ### Browser room contributions
 

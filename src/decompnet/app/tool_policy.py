@@ -17,7 +17,8 @@ PRESETS = {'full': ('All tools', None), 'matching': ('Matching essentials', MATC
                'compiler_map','try_compiler','search_flags','compiler_experiments','get_compiler_trial','review_search_seed','suggest','report_boundary','report_data_region',
                'get_boundary_evidence','suggest_boundary'}),
            'polishing': ('Polishing and names', REQUIRED | {'claim_readable','make_readable','polish_function','tidy_file','read_data','tidy_done','rename_symbol',
-               'get_claims','guide','get_context','edit_context','read_file','edit_file','file_status','search_code','add_note','find_similar'})}
+               'get_claims','guide','get_context','edit_context','read_file','edit_file','file_status','search_code','add_note','find_similar',
+               'port_readiness'})}
 
 
 def connection_required(net, agent):
