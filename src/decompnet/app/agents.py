@@ -220,6 +220,12 @@ LIMIT = re.compile(r"(?:usage|session|weekly) limit|(?<!rate )(?<!rate-)(?<!rate
                     r"(?<!concurrency-)(?<!concurrency_)limit (?:reached|exceeded)|"
                     r"hit your (?:(?!rate\b)[\w-]+ )?limit|quota[ _](?:exceeded|exhausted)|resource[ _]exhausted|"
                     r"out of (?:usage|messages)", re.I)
+# OpenCode Zen's free models are refused once the free allowance is used up, while the same account's
+# OpenCode Go models keep working. It is a model decision, not the account's subscription limit: one
+# N64 game's Go helpers all waited out an "account" cooldown because a free helper was refused, and
+# each free retry re-armed it. Both the provider's wording and agents.FREE_ALLOWANCE must be kept out
+# of the account-limit classifier, including the title-request lines opencode logs on stderr.
+FREE_MODEL_ALLOWANCE = re.compile(r'Free usage limit reached|' + re.escape(agents.FREE_ALLOWANCE), re.I)
 # When a limit resets, as agents say it. Claude Code: "usage limit reached|1792140000" (seconds since 1970), or
 # "5-hour limit reached ∙ resets 3pm (Europe/Berlin)"; Codex: "try again in 2 hours 13 minutes" or "try again at
 # 8:05 PM"; Gemini: "Please retry in 46.6s"; others an ISO time after "reset" or "until".
@@ -2200,9 +2206,18 @@ class Manager:
         refused = refused or next((text for text in errors if k.fatal(text)), "")
         if refused:
             raise Fatal(refused + " Review the agent settings and resolve this error before restarting.")  # every retry would meet it the same way
-        if LIMIT.search(everything):
+        # stderr_failure only reports this after confirming the selected primary stream was refused;
+        # a title request can fail for the same reason while the main model turn still works. Pause
+        # just this helper with a model choice, never the whole account's cooldown.
+        if any(FREE_MODEL_ALLOWANCE.search(f) for f in stream_errors):
+            raise Fatal(f"{agents.FREE_ALLOWANCE} for the selected model. Choose an OpenCode Go model "
+                        "in Add agents, or wait for the free allowance to reset.")
+        # Raw stderr (including title requests) still carries the provider's "usage limit" wording.
+        # Strip it so a free-tier refusal cannot publish the account-wide cooldown.
+        limit_text = FREE_MODEL_ALLOWANCE.sub("", everything)
+        if LIMIT.search(limit_text):
             s.limited = True  # whatever the exit code: Claude Code says so in an ordinary result
-            s.limit_until = limit_reset(everything)
+            s.limit_until = limit_reset(limit_text)
             # Publish the account cooldown before closing this session, so siblings
             # do not launch another paid request while its exit is being recorded.
             from . import session_followups

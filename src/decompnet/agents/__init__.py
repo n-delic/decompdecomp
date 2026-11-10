@@ -45,6 +45,12 @@ VERSION_CHARS = 60  # of the first line `--version` prints
 SAID_CHARS = 400  # what the feed keeps of an error, or of a line that isn't JSON
 STDERR_CHARS = 300  # of an error an agent printed on stderr in its own format
 
+# OpenCode Zen's free models are refused once the free allowance is used up, while the same account's
+# OpenCode Go models keep working. agents/opencode.py reports that refusal with this exact wording and
+# app/agents.py keeps it out of the account's usage-limit cooldown: one free helper's refusal otherwise
+# stopped every opencode helper, on every project and model, for an hour at a time.
+FREE_ALLOWANCE = "Free model allowance exhausted"
+
 # what each agent said its version is, and the models it listed, with when it was asked: {id: (time, answer)}
 known_versions: dict[str, tuple[float, str | None]] = {}
 _models: dict[str, tuple[float, list[dict]]] = {}

@@ -16,7 +16,7 @@ import pytest
 from decompnet import agents as kinds
 from decompnet import network, scoring
 from decompnet.agents import antigravity, ohmy, opencode, zcode
-from decompnet.app import agents
+from decompnet.app import agents, session_followups
 from decompnet.app.engine import RomNetwork
 
 
@@ -2102,10 +2102,14 @@ def test_opencode_stderr_stream_rejection_ends_a_process_that_keeps_stdout_open(
     with ThreadPoolExecutor(1) as pool:
         future=pool.submit(manager._run_cli,session,token,tmp_path)
         try:
-            assert future.result(timeout=5) is False
+            with pytest.raises(agents.Fatal,match='free allowance'):
+                future.result(timeout=5)
         finally:
             if session.proc is not None:agents._terminate(session.proc)
-    assert session.limited and not session.signed_out
+    # Only this free model is unavailable. No account-wide cooldown, so Go helpers keep working.
+    assert not session.limited and not session.signed_out
+    peer=manager._record('game','opencode','peer','peer',{'model':'opencode-go/example'})
+    assert session_followups.cooldown(manager,peer) is None
     assert not session.stop.is_set(), 'provider failure is not a user stop'
     assert session.proc is None
     errors=[text for kind,text in saved if kind=='error']
@@ -2124,10 +2128,24 @@ def test_opencode_terminal_stderr_requires_the_selected_primary_stream():
                     line.replace('Free usage limit reached','rate limit reached; retrying'),
                     'Free usage limit reached', prefix]:
         assert not agent.stderr_failure(invalid, 'opencode/example-free')
-    assert 'usage limit' in agent.stderr_failure(line, 'opencode/example-free#high')
+    diagnostic=agent.stderr_failure(line, 'opencode/example-free#high')
+    assert kinds.FREE_ALLOWANCE in diagnostic
+    assert not agents.LIMIT.search(diagnostic), 'a free-tier refusal is not the account usage limit'
+    assert agent.fatal(diagnostic), 'the helper pauses on a model decision, not a timed cooldown'
     assert not agent.stderr_failure(line, 'opencode-go/example-free')
     assert not agent.stderr_failure(line)
     assert not kinds.get('claude').stderr_failure(line, 'opencode/example-free')
+
+
+def test_free_allowance_stderr_never_reaches_the_account_limit_check():
+    # opencode also logs the refusal for its small title requests, whose stream is not the selected
+    # model's primary one. Even those lines used to match LIMIT and publish an account cooldown.
+    line = ('level=error message="stream error" providerID=opencode modelID=glm-5.3-flash-free '
+            'small=true agent=title error="AI_RetryError: Free usage limit reached. Free models work '
+            'in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going"')
+    assert agents.LIMIT.search(line), 'the provider wording did look like an account usage limit'
+    assert agents.FREE_MODEL_ALLOWANCE.search(line)
+    assert not agents.LIMIT.search(agents.FREE_MODEL_ALLOWANCE.sub('', line))
 
 
 @pytest.mark.parametrize('message,outcome', [

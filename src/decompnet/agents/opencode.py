@@ -9,7 +9,7 @@ import os
 import re
 from pathlib import Path
 
-from . import SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool_name, usage_item
+from . import FREE_ALLOWANCE, SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool_name, usage_item
 
 ZEN = "opencode/"  # OpenCode Zen's models: their names start with it, and opencode's default is one of them
 STANDALONE_FROM = 2  # the major version that runs sessions in a shared service unless told --standalone
@@ -72,10 +72,11 @@ class Opencode(Agent):
 
     def fatal(self, error: str) -> bool:
         # A provider privacy-policy refusal needs an account/model decision.
-        # Repeating the same paid request cannot change that policy.
+        # Repeating the same paid request cannot change that policy. An exhausted
+        # free allowance needs a different model, not a wait on the account.
         return bool(re.search(r'ProviderModelNotFoundError|\bModel not found\b|opencode model needs a provider/model ID'
                               r'|This Go model trains on request data|Allow paid endpoints that train on request data'
-                              r'|\bModel [^\n]{1,120} has been deprecated\b',error,re.I))
+                              r'|\bModel [^\n]{1,120} has been deprecated\b|' + re.escape(FREE_ALLOWANCE),error,re.I))
 
     def config_model(self) -> str | None:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
@@ -177,7 +178,10 @@ class Opencode(Agent):
         # Route only the primary stream for this worker's explicitly selected model.
         if self._primary_error(line, model) and re.search(
                 r'\bFree usage limit reached\b', self.clean_stderr(line), re.I):
-            return "Provider usage limit reached; the selected model's free allowance is exhausted."
+            # The account is not limited: only this free model is. Do not say "usage limit" here, or
+            # the shared runner reads it as the account's subscription limit and pauses every helper.
+            return (f"{FREE_ALLOWANCE} for the selected model; choose an OpenCode Go model or wait for "
+                    "the free allowance to reset.")
         return ""
 
     def stderr_retry(self, line: str, model: str = "") -> str:
