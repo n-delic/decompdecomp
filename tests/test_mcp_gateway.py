@@ -93,15 +93,17 @@ def test_passes_requests_through(gateway):
 
 def test_slow_call_answers_in_time_and_never_runs_twice(gateway):
     with App(gateway.app_port) as app:
-        call = {"name": "slow", "arguments": {"seconds": 2.5}}
+        call = {"name": "slow", "arguments": {"seconds": 2.5}, "_meta": {"progressToken": 1}}
         began = time.monotonic()
         first = rpc(gateway.url, "tools/call", call, id=10)
         assert time.monotonic() - began < 2.0
         assert "still running" in text(first) and first["id"] == 10
-        # The repeat (arguments in another order make no difference) waits for the same run.
+        # The repeat waits for the same run. Arguments in another order and the new progress token clients put on
+        # every request make no difference.
         result = None
         for attempt in range(6):
-            reply = rpc(gateway.url, "tools/call", {"arguments": {"seconds": 2.5}, "name": "slow"}, id=11 + attempt)
+            reply = rpc(gateway.url, "tools/call", {"arguments": {"seconds": 2.5}, "name": "slow",
+                                                    "_meta": {"progressToken": 2 + attempt}}, id=11 + attempt)
             if "slow done" in text(reply):
                 result = reply
                 break

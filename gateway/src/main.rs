@@ -145,11 +145,17 @@ fn canonical(value: &Value) -> String {
     }
 }
 
+/// A call is its helper, tool and arguments. Everything else in `params` is left out: clients put a new
+/// `_meta.progressToken` on every request, so with it a repeat never found the call it repeats.
 fn call_key(auth: &str, params: &Value) -> String {
+    let identity = json!({
+        "name": params.get("name").cloned().unwrap_or(Value::Null),
+        "arguments": params.get("arguments").cloned().unwrap_or_else(|| json!({})),
+    });
     let mut hash = Sha256::new();
     hash.update(auth.as_bytes());
     hash.update([0]);
-    hash.update(canonical(params).as_bytes());
+    hash.update(canonical(&identity).as_bytes());
     hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -558,6 +564,18 @@ mod tests {
         let b = json!({"arguments": {"a": [1, {"x": 3, "y": 2}], "b": 1}, "name": "compile"});
         assert_eq!(call_key("t", &a), call_key("t", &b));
         assert_ne!(call_key("t", &a), call_key("u", &a));
+    }
+
+    #[test]
+    fn a_repeat_with_new_request_metadata_is_the_same_call() {
+        let first = json!({"name": "rename_symbol", "arguments": {"old": "f", "new": "g"}, "_meta": {"progressToken": 7}});
+        let repeat = json!({"name": "rename_symbol", "arguments": {"new": "g", "old": "f"}, "_meta": {"progressToken": 8}});
+        let bare = json!({"name": "rename_symbol", "arguments": {"old": "f", "new": "g"}});
+        assert_eq!(call_key("t", &first), call_key("t", &repeat));
+        assert_eq!(call_key("t", &first), call_key("t", &bare));
+        let other = json!({"name": "rename_symbol", "arguments": {"old": "f", "new": "h"}, "_meta": {"progressToken": 7}});
+        assert_ne!(call_key("t", &first), call_key("t", &other));
+        assert_eq!(call_key("t", &json!({"name": "guide"})), call_key("t", &json!({"name": "guide", "arguments": {}})));
     }
 
     #[test]

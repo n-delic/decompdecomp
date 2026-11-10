@@ -35,6 +35,9 @@ class Core(Network):
         self.workspace = Path(workspace)
         self._syms: dict[int, SymbolTable] = {}
         self._sym_override: dict[int, SymbolTable] = {}
+        # project id -> held by one rename at a time, from reading the symbols to writing the new name: two at once
+        # replaced each other's trial symbol table and checked sources the other had just changed.
+        self._rename_locks: dict[int, threading.RLock] = {}
         self._roms: dict[int, tuple[bytes, list[split.Segment]]] = {}
         self._xrefs: dict[int, dict] = {}
         self._draft_locks: dict[int, threading.Lock] = {}  # function id -> held while its machine draft is made

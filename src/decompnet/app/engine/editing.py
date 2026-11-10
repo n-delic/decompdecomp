@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 
 from ... import arch
@@ -276,8 +277,14 @@ class EditMixin:
     def rename_symbols(self, agent: Agent, project: str | None, pairs: list[tuple[str, str]], message: str = "", *, progress=None) -> str:
         """Rename several symbols at once (old -> new): the shared headers, matched sources and best attempts
         change together, after one check that every matched function still matches. One rename is the agents'
-        rename_symbol; many at once are the PS2 kernel stubs named at import (consoles/ps2/syscalls.py)."""
+        rename_symbol; many at once are the PS2 kernel stubs named at import (consoles/ps2/syscalls.py).
+        Renames in one project take turns (Engine._rename_locks)."""
         proj = self._project(project)
+        lock = self._rename_locks.setdefault(proj["id"], threading.RLock())
+        with lock:
+            return self._rename_symbols(agent, proj, pairs, message, progress=progress)
+
+    def _rename_symbols(self, agent: Agent, proj, pairs: list[tuple[str, str]], message: str = "", *, progress=None) -> str:
         pairs = [(old.strip(), new.strip()) for old, new in pairs]
         if not pairs:
             return "nothing to rename"
