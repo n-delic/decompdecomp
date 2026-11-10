@@ -1135,8 +1135,14 @@ function addActivity(events, attempts, first) {
   }
   const list = $("activity");
   while (list.children.length > ACTIVITY_ROWS) list.lastChild.remove();
-  list.querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
+  list.onclick = activityClick;  // (one handler for the list, however many lines the polls add)
   if (!list.children.length) list.innerHTML = `<li class="placeholder"><time></time><span class="muted">Nothing yet. Start an agent and its work shows up here.</span></li>`;
+}
+
+/* A function named in the activity list opens it. */
+function activityClick(e) {
+  const x = e.target.closest?.(".fn[data-fn]");
+  if (x) openFn(x.dataset.fn);
 }
 
 /* Agents write Markdown. Escape everything first, then allow only **bold** and `code`. */

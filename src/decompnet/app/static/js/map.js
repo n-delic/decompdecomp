@@ -111,16 +111,29 @@ function layoutMap() {
   canvas.style.height = h + "px";
   geo = { size, gap, cols, w, h, dpr };
   mapChanged();
-  applyClaims();
+  applyClaims(true, true);
 }
 
-function applyClaims(draw = true) {
+/* The claims onto the map's functions. Only the functions whose claim came, went or changed hands since the last
+   time are touched (`full`: every one, as after rows came from the server). S.claimsApplied: {map: the S.map they
+   went onto, working: name -> agent}. */
+function applyClaims(draw = true, full = false) {
   const working = new Map(S.claims.map((c) => [c.name, c.agent]));
-  S.map.forEach((f, i) => {
+  const apply = (f, i) => {
     const status = f.status === "matched" || f.status === "asm" ? f.status : working.has(f.name) ? "working" : "open";
     if (status !== f.status) { f.status = status; mapChanged(i); }
     f.agent = working.get(f.name) || null;
-  });
+  };
+  const applied = S.claimsApplied;
+  const before = !full && applied && applied.map === S.map && S.byName ? applied.working : null;
+  if (before) {
+    const names = new Set();
+    // (each claimed one is looked at, a handful: a row the server sent since may have come without its claim)
+    for (const [name, agent] of working) if (before.get(name) !== agent || S.map[S.byName.get(name)]?.status !== "working") names.add(name);
+    for (const name of before.keys()) if (!working.has(name)) names.add(name);
+    for (const name of names) { const i = S.byName.get(name); if (i != null && S.map[i]) apply(S.map[i], i); }
+  } else S.map.forEach(apply);
+  S.claimsApplied = { map: S.map, working };
   if (draw) drawMap();
 }
 

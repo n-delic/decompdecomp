@@ -111,6 +111,8 @@ async function api(path, { method = "GET", body, raw, signal } = {}) {
     error.status = res.status;
     throw error;
   }
+  // A change the user made: the open project's live feed asks now, not at its next (possibly idle-slowed) poll.
+  if (method !== "GET" && typeof livePollSoon === "function" && typeof setTimeout === "function") setTimeout(() => livePollSoon(), 150);
   return data;
 }
 

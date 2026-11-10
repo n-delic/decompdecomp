@@ -11,14 +11,24 @@ async function showAgentsPage() {
 
 /* Agents outside the app (a script, another tool) ask to work one project: the user decides here. Approving mints
    the agent a token for the one project picked; the agent reads it with the secret only it holds. */
+let pairingsLoading = null, pairingsShown = "";
 async function renderPairings() {
+  // One ask at a time; the list is drawn again only when the requests changed, so a project picked in a request's
+  // menu stays picked while it waits for Approve.
+  if (pairingsLoading) return pairingsLoading;
+  pairingsLoading = drawPairings().finally(() => { pairingsLoading = null; });
+  return pairingsLoading;
+}
+async function drawPairings() {
   const panel = $("pairPanel"), box = $("pairBox");
   if (!panel) return;
   let pending;
-  try { pending = (await api("/api/pair/requests")).requests; } catch { return; }
+  try { pending = (await api("/api/pair/requests")).requests; } catch { return false; }
   panel.hidden = !pending.length;
   disclosureContext('agPairContext', `${pending.length} pending`);
-  if (!pending.length) return;
+  const shown = JSON.stringify(pending.map((r) => [r.id, r.name, r.created_at]));
+  if (!pending.length || (shown === pairingsShown && box.firstChild)) { pairingsShown = pending.length ? shown : ""; return; }
+  pairingsShown = shown;
   const projects = S.projects && S.projects.length ? S.projects : (S.projects = await api("/api/projects").catch(() => []));
   box.innerHTML = `<p class="muted small">Agents outside the app asked to work on a project. Approving mints one a token for the single project you pick; it reads the token itself, with the secret only it holds.</p>` +
     pending.map((r) => `<div class="ep-card" data-id="${esc(r.id)}">
@@ -41,7 +51,16 @@ async function renderPairings() {
     };
   });
 }
-setInterval(() => { if (!$("agentsPage").hidden) renderPairings(); }, 5000);
+/* Pairing requests while the agents page shows and the window is visible; slower after errors. */
+let pairingsDelay = 5000;
+async function pairingsTick() {
+  if (!document.hidden && !$("agentsPage").hidden) {
+    const ok = await renderPairings().catch(() => false) !== false;
+    pairingsDelay = ok ? 5000 : Math.min(60000, pairingsDelay * 2);
+  }
+  setTimeout(pairingsTick, pairingsDelay);
+}
+setTimeout(pairingsTick, 5000);
 function renderAgentsPage() {
   const rows = S.st.agents.filter((a) => !a.uses_endpoints);
   disclosureContext('agAppsContext', `${rows.filter(a=>a.installed).length} installed${S.st.agents_detecting ? ' · checking…' : ''}`);

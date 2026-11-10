@@ -1,6 +1,11 @@
 "use strict";  // each script is strict on its own (see base.js)
 /* ------------------------------------------------------------------ project */
-const POLL_MS = 1000;  // the open project's live poll: claims, attempts, events
+const POLL_MS = 1000;  // the open project's live poll while things change: claims, attempts, events
+const POLL_IDLE_MS = 5000;  // ... and once nothing has changed for a while (it slows down step by step)
+const POLL_MAX_MS = 15000;  // the slowest it gets after errors or slow answers
+const STREAM_SAFETY_MS = 15000;  // with /api/stream telling us what changed, a poll this often all the same
+const STREAM_HELLO_MS = 8000;  // a stream that hasn't said hello by then (a webview buffering it): poll instead
+const SLOW_POLL_MS = 2000;
 const STATS_EVERY_MS = 8000;  // its numbers that change slowly (pace, cost)
 const MAP_EVERY_MS = 20000;  // its whole map again, even when nothing said it changed
 let projectLoad = null, projectLoadTimer = null;
@@ -117,7 +122,7 @@ async function openProject(slug, tab = "overview") {
   refreshMap(true).catch(() => { if (gen === S.gen) S.mapPending = true; });
   await poll();
   if (gen !== S.gen) return;  // (or its timers would poll the next project too)
-  S.timer = setInterval(poll, POLL_MS);
+  startLive();
   S.statsTimer = setInterval(loadStats, STATS_EVERY_MS);
   loadStats();
 }
@@ -133,10 +138,111 @@ function finishProjectLoading(gen) {
 }
 
 function stopPolling() {
-  if (S.timer) clearInterval(S.timer);
+  if (S.timer) clearTimeout(S.timer);
   if (S.statsTimer) clearInterval(S.statsTimer);
   S.timer = null; S.statsTimer = null;
+  LIVEFEED.gen = -1; LIVEFEED.wanted = null;
+  closeStream();
 }
+
+/* The live feed's schedule. With /api/stream open the server says which sections moved and the page asks for only
+   those (and polls every STREAM_SAFETY_MS all the same). Without it (no EventSource, a webview that buffers the stream,
+   a proxy): polls, every POLL_MS while something changes, slowing to POLL_IDLE_MS when nothing does and further after
+   errors or slow answers. A change the user makes asks at once (base.js api). */
+const LIVEFEED = { gen: -1, delay: POLL_MS, wanted: null, stream: null, streaming: false, streamFails: 0, noStream: false, hello: null };
+const LIVE_SECTIONS = ["feed", "claims", "overview", "sessions"];
+function startLive() {
+  LIVEFEED.gen = S.gen; LIVEFEED.delay = POLL_MS; LIVEFEED.wanted = null;
+  openStream();
+  scheduleLive(POLL_MS);
+}
+function scheduleLive(ms) {
+  if (S.timer) clearTimeout(S.timer);
+  S.timer = LIVEFEED.gen === S.gen ? setTimeout(() => liveTick(), ms) : null;
+}
+async function liveTick(only) {
+  const gen = S.gen;
+  if (LIVEFEED.gen !== gen || !S.slug) return;
+  if (pollingGen === gen) { livePollSoon(only); return; }  // (one in flight: it asks again when it ends)
+  const started = Date.now();
+  const result = await poll(only);
+  if (LIVEFEED.gen !== gen || gen !== S.gen) return;
+  const took = Date.now() - started;
+  if (!result) LIVEFEED.delay = POLL_IDLE_MS;  // hidden or offline: nothing was asked
+  else if (!result.ok) LIVEFEED.delay = Math.min(POLL_MAX_MS, Math.max(2 * LIVEFEED.delay, 2000));
+  else if (result.news) LIVEFEED.delay = POLL_MS;
+  else LIVEFEED.delay = Math.min(POLL_IDLE_MS, Math.round(LIVEFEED.delay * 1.5));
+  if (took > SLOW_POLL_MS) LIVEFEED.delay = Math.max(LIVEFEED.delay, Math.min(POLL_MAX_MS, took));
+  if (LIVEFEED.wanted) {
+    const wanted = LIVEFEED.wanted; LIVEFEED.wanted = null;
+    return liveTick(wanted === "all" ? undefined : [...wanted]);
+  }
+  scheduleLive(LIVEFEED.streaming && result?.ok ? STREAM_SAFETY_MS : LIVEFEED.delay);
+}
+/* Ask for the live feed now: `only` the sections named (the stream's news), or everything. */
+function livePollSoon(only) {
+  if (LIVEFEED.gen !== S.gen || !S.slug) return;
+  if (pollingGen === S.gen) {
+    if (!only || LIVEFEED.wanted === "all") LIVEFEED.wanted = "all";
+    else { LIVEFEED.wanted ||= new Set(); only.forEach((x) => LIVEFEED.wanted.add(x)); }
+    return;
+  }
+  if (S.timer) clearTimeout(S.timer);
+  S.timer = null;
+  liveTick(only);
+}
+function closeStream() {
+  clearTimeout(LIVEFEED.hello); LIVEFEED.hello = null;
+  if (LIVEFEED.stream) { try { LIVEFEED.stream.close(); } catch { /* already closed */ } }
+  LIVEFEED.stream = null; LIVEFEED.streaming = false;
+}
+function openStream() {
+  closeStream();
+  if (LIVEFEED.noStream || typeof EventSource !== "function" || document.hidden || window.decompIsOffline?.() || !S.slug) return;
+  const gen = S.gen;
+  let es;
+  try { es = new EventSource(`/api/stream?slug=${encodeURIComponent(S.slug)}`); } catch { LIVEFEED.noStream = true; return; }
+  LIVEFEED.stream = es;
+  const giveUp = () => {
+    if (LIVEFEED.stream !== es) return;
+    closeStream();
+    if (++LIVEFEED.streamFails >= 3) LIVEFEED.noStream = true;  // this page polls from now on
+    else setTimeout(() => { if (LIVEFEED.gen === gen && !LIVEFEED.stream) openStream(); }, STREAM_SAFETY_MS * 2);
+    if (LIVEFEED.gen === gen && pollingGen !== gen) scheduleLive(POLL_MS);
+  };
+  LIVEFEED.hello = setTimeout(giveUp, STREAM_HELLO_MS);
+  es.addEventListener("hello", () => {
+    if (LIVEFEED.stream !== es) return;
+    clearTimeout(LIVEFEED.hello); LIVEFEED.hello = null;
+    LIVEFEED.streaming = true; LIVEFEED.streamFails = 0;
+    livePollSoon();  // (what changed while it connected)
+  });
+  es.addEventListener("changed", (e) => {
+    if (LIVEFEED.stream !== es || gen !== S.gen) return;
+    let news = {};
+    try { news = JSON.parse(e.data); } catch { /* a malformed message: ask for everything */ }
+    const moved = Array.isArray(news.sections) ? news.sections : LIVE_SECTIONS;
+    // claims carry each function's best and tries, which a new attempt moves too
+    const only = LIVE_SECTIONS.filter((x) => moved.includes(x) || (x === "claims" && moved.includes("feed")));
+    if (only.length) livePollSoon(only);
+  });
+  es.addEventListener("gone", giveUp);
+  es.onerror = () => {
+    if (LIVEFEED.stream !== es) return;
+    // EventSource reconnects by itself (the server ends each stream after a few minutes); until it says hello
+    // again, poll. A stream that keeps failing is given up for this page.
+    LIVEFEED.streaming = false;
+    if (es.readyState === 2) { giveUp(); return; }
+    if (!LIVEFEED.hello) LIVEFEED.hello = setTimeout(giveUp, STREAM_HELLO_MS);
+    if (LIVEFEED.gen === gen && pollingGen !== gen) scheduleLive(Math.min(LIVEFEED.delay, POLL_MS * 2));
+  };
+}
+document.addEventListener("visibilitychange", () => {
+  if (LIVEFEED.gen !== S.gen || !S.slug) return;
+  if (document.hidden) { closeStream(); return; }  // (minimised: nobody sees it, and nothing is sent)
+  openStream();
+  livePollSoon();
+});
 
 function setTab(tab) {
   if(tab!=='rom' && typeof stopRomAudioBrowser==='function')stopRomAudioBrowser();
@@ -184,7 +290,7 @@ async function refreshMap(force = true, prefetched = null) {
       mapChanged(index);
     }
     S.mapSig = data.sig;
-    applyClaims(false);
+    applyClaims(false, true);  // (the changed rows came with the server's statuses)
     if (S.tab === "overview") drawMap();
     renderList(); renderProgress(); renderOverview();
     return;
@@ -217,14 +323,18 @@ async function refreshMap(force = true, prefetched = null) {
    now (sidebar.js), for every project at once: a project's poll only redraws the project, and flashes its fresh
    matches on the map. */
 let pollingGen = -1;
-async function poll() {
+/* `only`: the sections to ask for (feed, claims, overview, sessions; the stream's news), or all of them. Answers
+   {ok, news} (whether anything came that wasn't there before), or nothing when it didn't ask. */
+async function poll(only) {
   if (pollingGen === S.gen || !S.slug || ((document.hidden || window.decompIsOffline?.()) && S.primed)) return;  // (minimised: nobody sees it)
   const gen = pollingGen = S.gen, slug = S.slug, first = !S.primed;
+  const sections = first || !Array.isArray(only) ? "" : `&only=${only.join(",")}`;
   try {
-    const live = await api(`/api/live?slug=${slug}&e=${S.lastEvent}&a=${S.lastAttempt}&s=${encodeURIComponent(JSON.stringify(S.seq))}&compact=1&v=${encodeURIComponent(JSON.stringify(S.liveVersions || {}))}`);
+    const live = await api(`/api/live?slug=${slug}&e=${S.lastEvent}&a=${S.lastAttempt}&s=${encodeURIComponent(JSON.stringify(S.seq))}&compact=1&v=${encodeURIComponent(JSON.stringify(S.liveVersions || {}))}${sections}`);
     if (gen !== S.gen) return;
     const changed = {overview: !!live.overview, claims: !!live.claims, sessions: !!live.sessions};
-    S.liveVersions = live.versions || {};
+    S.liveVersions = {...(S.liveVersions || {}), ...(live.versions || {})};
+    live.events = live.events || []; live.attempts = live.attempts || [];
     live.overview = live.overview || S.ov;
     live.claims = live.claims || S.claims;
     live.sessions = live.sessions || S.sessions;
@@ -232,7 +342,10 @@ async function poll() {
     let mapDirty = false;
     for (const ev of live.events) {
       S.lastEvent = Math.max(S.lastEvent, ev.id);
-      if (["match", "split", "rename", "compiler", "reopen", "not_c", "reimport", "analysis", "readable"].includes(ev.kind)) mapDirty = true;
+      // (the first poll brings the last events from before the page opened: the map it just loaded has them)
+      if (!first && ["match", "split", "rename", "compiler", "reopen", "not_c", "reimport", "analysis", "readable"].includes(ev.kind)) mapDirty = true;
+      // (most changes come as a delta against the map the page has; a new layout as the whole map)
+      if (!first && ["split", "reimport"].includes(ev.kind)) S.mapForce = true;
       if (ev.kind === "match" && !first && ev.created_at >= S.openedAt) S.flash.set(ev.detail, performance.now());
     }
     for (const at of live.attempts) {
@@ -254,16 +367,18 @@ async function poll() {
     if (changed.claims || live.claims.some(c => c.best_score == null && !c.attempts)) renderNow(live.claims);
     if (changed.overview) renderStats(live.overview);
     const claimSig = live.claims.map((c) => c.name + "\u0000" + c.agent).join("\n");
-    if (live.cut && !first) mapDirty = true;  // (attempts it didn't send: the map's counts come again)
+    if (live.cut && !first) mapDirty = S.mapForce = true;  // (attempts it didn't send: the map's counts come again, whole: they don't move its signature)
     S.mapPending = S.mapPending || mapDirty;
     const mapVisible = S.tab === "overview" || S.tab === "functions";
     if (mapVisible && (S.mapPending || Date.now() - S.lastMapFetch > MAP_EVERY_MS)) {
-      await refreshMap(!!S.mapPending);
+      const force = !!S.mapForce;
+      S.mapForce = false;
+      await refreshMap(force || !S.mapSig);
       if (gen === S.gen) S.mapPending = false;
     }
     else {
-      applyClaims();
-      if (S.tab === "functions" && (claimSig !== S.claimSig || live.attempts.length)) renderList();
+      if (changed.claims || claimSig !== S.claimSig) applyClaims();
+      if (S.tab === "functions" && (claimSig !== S.claimSig || live.attempts.length)) renderListSoon();
     }
     if (gen !== S.gen) return;
     S.claimSig = claimSig;
@@ -271,7 +386,9 @@ async function poll() {
       const touched = live.attempts.some((a) => a.function === S.fn) || live.events.some((e) => e.detail === S.fn);
       if (touched) refreshFn(false); else fnBadge();
     }
+    return { ok: true, news: !!(live.events.length || live.attempts.length || changed.overview || changed.claims || changed.sessions) };
   } catch { /* the app is busy or restarting: the next poll tries again */
+    return { ok: false };
   } finally {
     if (pollingGen === gen) pollingGen = -1;
   }

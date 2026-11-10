@@ -46,10 +46,11 @@ from .shutdown_progress import Progress as ShutdownProgress
 from .support import Jobs, Settings, session_options
 
 
-def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool = False):
+def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool = False, mcp_url: str | None = None):
     from .permuter_worker import PermuterWorker
     net.permuter = PermuterWorker(net)
-    mcp_url = f"http://127.0.0.1:{port}/mcp"
+    # The helpers' address: the MCP gateway's when it runs (app/mcp_gateway.py), else this server's own /mcp.
+    mcp_url = mcp_url or f"http://127.0.0.1:{port}/mcp"
     from . import build_info
     build_id = (build_info.commit() or updates.installed().get("commit") or "")[:12]  # a branch install: the commit it came from
     manager = agents.Manager(net, home, mcp_url)
@@ -317,6 +318,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
 
     ui_limiter = anyio.CapacityLimiter(4)
     fast_limiter = anyio.CapacityLimiter(2)
+    # The open project's live feed has its own lane: a slow /api/live (a big overview rebuild) no longer holds the
+    # sidebar, quick map and function drawer's lane. /api/stream's checks take one worker for a moment each.
+    live_limiter = anyio.CapacityLimiter(2)
+    stream_limiter = anyio.CapacityLimiter(1)
     control_limiter = anyio.CapacityLimiter(4)
 
     async def ui_call(fn, *args):
@@ -331,6 +336,15 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
             with net.progress.view():
                 return fn(*args)
         return await anyio.to_thread.run_sync(snapshot, limiter=fast_limiter)
+
+    async def live_call(fn, *args):
+        def snapshot():
+            with net.progress.view():
+                return fn(*args)
+        return await anyio.to_thread.run_sync(snapshot, limiter=live_limiter)
+
+    async def stream_call(fn, *args):
+        return await anyio.to_thread.run_sync(fn, *args, limiter=stream_limiter)
 
     async def control_call(fn, *args):
         return await anyio.to_thread.run_sync(fn, *args, limiter=control_limiter)
@@ -354,7 +368,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,
     # whose autopilot and with_project they use
     app = routes.App(net, mcp, home, port, secret, mcp_url, build_id, manager, jobs, settings, allowed_hosts,
-                     guard, body, call, fail, ui_call=ui_call, fast_call=fast_call, control_call=control_call, updater=updates.Updater(before_restart, port, secret),
+                     guard, body, call, fail, ui_call=ui_call, fast_call=fast_call, live_call=live_call, stream_call=stream_call, control_call=control_call, updater=updates.Updater(before_restart, port, secret),
                      busy=busy, quit_app=quit_app, web_login=net.web_login, headless=headless)
     from . import web_login
     web_login.register(app)

@@ -907,11 +907,12 @@ function functionAge(stamp, now = Date.now() / 1000) {
 
 function renderList() {
   if (!S.map.length || S.tab !== "functions") return;
+  listShownAt = Date.now();
   const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, asm: 0, boundary: 0, polished: 0, first: 0, cross_project: 0 };
   for (const f of S.map) { counts[fnState(f)]++; if (starred(f)) counts.first++; if (polished(f)) counts.polished++; if (f.cross_project) counts.cross_project++; }
   const star = canStar();
   if (!star && L.filter === "first") L.filter = "all";
-  $("fnFilter").innerHTML = FILTERS.filter(([k]) => star || k !== "first").map(([k, label]) => `<button type="button" role="radio" aria-checked="${L.filter === k}" class="${L.filter === k ? "on" : ""}" data-filter="${k}"${k === "first" ? ` title="Agents take starred functions before the others"` : k === "cross_project" ? ` title="Identical target bytes in another open project, whether or not either function has matching C"` : ""}>${label}<span>${counts[k].toLocaleString()}</span></button>`).join("");
+  setHtmlIfChanged($("fnFilter"), FILTERS.filter(([k]) => star || k !== "first").map(([k, label]) => `<button type="button" role="radio" aria-checked="${L.filter === k}" class="${L.filter === k ? "on" : ""}" data-filter="${k}"${k === "first" ? ` title="Agents take starred functions before the others"` : k === "cross_project" ? ` title="Identical target bytes in another open project, whether or not either function has matching C"` : ""}>${label}<span>${counts[k].toLocaleString()}</span></button>`).join(""));
   $("starHint").hidden = $("thStar").hidden = !star;
   const q = L.q.trim().toLowerCase();
   let rows = searchFunctions(S.map.filter((f) => L.filter === "all" || (L.filter === "first" ? starred(f) : L.filter === "polished" ? polished(f) : L.filter === "cross_project" ? !!f.cross_project : fnState(f) === L.filter)),
@@ -924,7 +925,7 @@ function renderList() {
   rows = rows.slice().sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : a.i - b.i) * L.dir; });
   L.rows = rows;
   const fork = S.ov && S.ov.kind === "fork";
-  $("fnRows").innerHTML = rows.slice(0, L.limit).map((f) => {
+  setHtmlIfChanged($("fnRows"), rows.slice(0, L.limit).map((f) => {
     const st = fnState(f), p = pctOf(f.best, f.insns);
     const best = st === "matched" ? `<span class="ok">100%</span>` : p == null ? `<span class="dim">–</span>` : pctText(p);
     const status = st === "boundary" ? `<span class="st boundary" title="Incomplete extent; saved classification requires review">incomplete</span>` : st === "matched" ? (polished(f) ? `<span class="st matched polished" title="matched, and polished: real names, types and a comment">polished</span>` : `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>`) : st === "asm" ? (f.assembly_verification?.verified ? `<span class="st" title="Exact linked assembly; not matching C">${f.assembly_verification.kind === "sdk" ? "SDK assembly · verified" : "verified assembly"}</span>` : f.not_c ? `<span class="st not-c" title="Agent assessment only, not verified assembly provenance">agent set-aside</span>` : `<span class="st" title="Set aside by classification; this does not establish original assembly provenance">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
@@ -933,8 +934,8 @@ function renderList() {
     const starCell = !star ? "" : `<td class="star-col">${open || on ? `<button type="button" class="star-btn${on ? " on" : ""}" data-star="${esc(f.name)}" aria-pressed="${on}" aria-label="${on ? "Agents take it first: click to stop" : "Agents take it first"}" title="${on ? "Agents take it first (click to stop)" : "Agents take it first"}">${on ? "★" : "☆"}</button>` : ""}</td>`;
     return `<tr data-fn="${esc(f.name)}" class="${S.fn === f.name ? "sel" : ""}" tabindex="0">${starCell}<td class="mono dim">${fork ? esc(f.unit || "") : hex8(f.vram)}</td>
       <td class="mono name">${esc(f.display_name || f.name)}${f.display_name && f.display_name !== f.name ? ` <small class="dim">${esc(f.name)}</small>` : ""}${sdkBadge(f)}${f.boundary_review ? `<span class="badge" title="${esc(f.boundary_review)}">boundary review</span>` : ""}</td><td class="r mono">${f.insns.toLocaleString()}</td><td class="r mono">${best}</td>
-      <td class="r mono">${f.attempts || `<span class="dim">0</span>`}</td><td>${functionAge(f.last_improved)}</td><td>${functionAge(f.last_checked)}</td><td>${status}</td></tr>`;
-  }).join("") || `<tr class="none"><td colspan="9">${L.filter === "first" && !q ? "No function is starred. ☆ one and agents take it before the others." : `No function matches${q ? ` “${esc(L.q)}”` : ""}.`}</td></tr>`;
+      <td class="r mono">${f.attempts || `<span class="dim">0</span>`}</td><td class="fn-age-improved">${functionAge(f.last_improved)}</td><td class="fn-age-checked">${functionAge(f.last_checked)}</td><td>${status}</td></tr>`;
+  }).join("") || `<tr class="none"><td colspan="9">${L.filter === "first" && !q ? "No function is starred. ☆ one and agents take it before the others." : `No function matches${q ? ` “${esc(L.q)}”` : ""}.`}</td></tr>`);
   $("fnShown").textContent = rows.length > L.limit ? `${L.limit.toLocaleString()} of ${rows.length.toLocaleString()} shown` : plural(rows.length, "function");
   $("fnMore").hidden = rows.length <= L.limit;
   document.querySelectorAll(".fn-table th").forEach((th) => {
@@ -942,6 +943,23 @@ function renderList() {
     th.classList.toggle("desc", (th.dataset.sort === L.sort || (th.dataset.sort === "vram" && L.sort === "i")) && L.dir < 0);
   });
 }
+/* The list's markup only when it differs from what is shown: a live poll that changed nothing on screen leaves the
+   rows (and the row under the pointer, and the keyboard focus) alone. */
+const shownHtml = new WeakMap();
+function setHtmlIfChanged(el, html) {
+  if (shownHtml.get(el) === html && el.firstChild) return;
+  shownHtml.set(el, html);
+  el.innerHTML = html;
+}
+/* What the live poll asks for: the list again at most every LIST_EVERY_MS while attempts stream in. */
+const LIST_EVERY_MS = 2000;
+let listTimer = null, listShownAt = 0;
+function renderListSoon() {
+  if (listTimer) return;
+  listTimer = setTimeout(() => { listTimer = null; listShownAt = Date.now(); renderList(); },
+    Math.max(0, LIST_EVERY_MS - (Date.now() - listShownAt)));
+}
+
 $("fnFilter").addEventListener("click", (e) => { const b = e.target.closest("[data-filter]"); if (b) { L.filter = b.dataset.filter; L.limit = FUNCTION_ROWS; renderList(); } });
 $("fnSearch").addEventListener("input", () => { L.q = $("fnSearch").value; L.limit = FUNCTION_ROWS; renderList(); });
 $("fnMore").onclick = () => { L.limit += MORE_ROWS; renderList(); };
@@ -951,10 +969,11 @@ setInterval(() => {
   for (const row of $("fnRows").querySelectorAll("tr[data-fn]")) {
     const index = S.byName?.get(row.dataset.fn);
     if (index == null) continue;
-    const fn = S.map[index];
-    row.querySelector(".fn-age-improved").innerHTML = functionAge(fn.last_improved);
-    row.querySelector(".fn-age-checked").innerHTML = functionAge(fn.last_checked);
+    const fn = S.map[index], improved = row.querySelector(".fn-age-improved"), checked = row.querySelector(".fn-age-checked");
+    if (improved) improved.innerHTML = functionAge(fn.last_improved);
+    if (checked) checked.innerHTML = functionAge(fn.last_checked);
   }
+  shownHtml.delete($("fnRows"));  // (what is shown is no longer the markup renderList wrote)
 }, 15000);
 $("fnRows").addEventListener("click", (e) => {
   const star = e.target.closest("[data-star]");
