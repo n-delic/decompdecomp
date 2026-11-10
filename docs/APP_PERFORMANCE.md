@@ -784,3 +784,11 @@ medians were 12.31 to 0.69 ms idle and 994.54 to 79.51 ms with one Python compet
 bounded to one second. These measurements cover that publication component only;
 they do not establish a speedup for the running app or remove required active
 recheck validation.
+
+
+OpenCode's final `step_finish.reason="length"` is normalized to the shared
+`output_limit` category. This uses the existing one-recovery policy: reread live
+claims/current candidates, request smaller edits in a fresh conversation, then
+pause on another output limit. Saved candidates and claims are retained; partial
+responses are never replayed. A later successful step supersedes an earlier
+length reason, and quoted prose cannot trigger recovery.

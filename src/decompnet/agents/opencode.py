@@ -165,7 +165,9 @@ class Opencode(Agent):
         return out
 
     def exit_reason(self, state: dict) -> str:
-        return state.get('finish_reason', 'not reported')
+        # The shared runner permits one fresh recovery for a truncated response.
+        reason = state.get('finish_reason', 'not reported')
+        return 'output_limit' if reason == 'length' else reason
 
     def stderr_failure(self, line: str, model: str = "") -> str:
         # --print-logs can report a rejected stream while `run` leaves stdout

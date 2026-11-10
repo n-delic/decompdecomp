@@ -60,9 +60,9 @@ def test_real_progress_or_external_interrupt_breaks_no_progress_streak(tmp_path,
 def test_opencode_exit_reason_is_last_step_category_and_never_provider_payload():
     from decompnet.agents.opencode import OPENCODE
     state = {}
-    for reason in ['tool-calls', 'stop', 'length']:
+    for reason, expected in [('tool-calls','tool-calls'), ('stop','stop'), ('length','output_limit')]:
         OPENCODE.parse({'type':'step_finish','part':{'reason':reason}}, state)
-        assert OPENCODE.exit_reason(state) == reason
+        assert OPENCODE.exit_reason(state) == expected
     OPENCODE.parse({'type':'step-finish','part':{'reason':'credential=secret request body'}}, state)
     assert OPENCODE.exit_reason(state) == 'not reported'
     assert 'secret' not in json.dumps(state)
