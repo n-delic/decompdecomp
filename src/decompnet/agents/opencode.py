@@ -188,6 +188,20 @@ class Opencode(Agent):
             return "No capacity available for model at the provider; repeated inference service overload."
         return ""
 
+    def stderr_connection(self, line: str) -> str:
+        # OpenCode 1 can continue model turns after its MCP startup fails. Its
+        # warning is otherwise discarded by clean_stderr, leaving only later
+        # denied shell attempts in the app's final handshake diagnostic.
+        metadata = re.split(r' error(?:\.error)?=', line, maxsplit=1)[0]
+        fields = dict(re.findall(r'(?:^|\s)(\w+)=("[^"\n]*"|[^\s]+)', metadata))
+        if (fields.get('level', '').upper() == 'WARN'
+                and fields.get('message') == '"server unavailable"'
+                and fields.get('key', '').strip('"') == MCP_SERVER
+                and fields.get('type', '').strip('"') == 'remote'
+                and fields.get('status', '').strip('"') == 'failed'):
+            return 'OpenCode reported that the decompdecomp MCP server was unavailable during CLI startup.'
+        return ''
+
     @staticmethod
     def _primary_error(line: str, model: str) -> bool:
         selected = model.split('#', 1)[0]
