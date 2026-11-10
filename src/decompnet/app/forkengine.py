@@ -78,8 +78,16 @@ _CHEAT = re.compile(r"\b(__asm__|__asm|asm|_asm)\b|INCLUDE_ASM|GLOBAL_ASM|INCLUD
 _REGVAR = re.compile(r"\b(?:asm|__asm__|__asm)\s*\(\s*\"\$?[a-z]{1,2}\d{0,2}\"\s*\)", re.I)
 
 
+# A typed extern with an assembler *name* changes linkage only; it emits no assembly.
+# Keep this grammar narrow so instruction strings/extended asm still fail the check.
+_LINKAGE_DECL = re.compile(
+    r'\bextern\s+__typeof__\s*\(\s*[A-Za-z_]\w*\s*\)\s+[A-Za-z_]\w*\s+'
+    r'__asm__\s*\(\s*"[A-Za-z_]\w*"\s*\)\s*'
+    r'__attribute__\s*\(\(\s*visibility\s*\(\s*"hidden"\s*\)\s*\)\)\s*;')
+
+
 def _strip_comments(code: str) -> str:
-    return _REGVAR.sub(" ", re.sub(r"//[^\n]*|/\*.*?\*/", " ", code, flags=re.S))
+    return _REGVAR.sub(" ", _LINKAGE_DECL.sub(" ", re.sub(r"//[^\n]*|/\*.*?\*/", " ", code, flags=re.S)))
 
 
 def _rewrite(path: Path, text: str) -> None:
@@ -1028,6 +1036,7 @@ class ForkEngine:
             except (ObjdiffError, ForkError) as e:
                 raise NetworkError(f"objdiff couldn't measure the project: {e}") from None
         units = {u.name: u for u in fp.units()}
+        addresses = consoles.get(cfg.get("platform")).function_addresses(fp)
         data = {n: _data_symbols(u.target) for n, u in units.items()}
         rows = [(u["name"], f) for u in rep.get("units", []) for f in u.get("functions", [])
                 if f["name"] not in data.get(u["name"], ())]
@@ -1099,6 +1108,9 @@ class ForkEngine:
                     status = "asm"  # hand-written assembly (here or in its twin elsewhere): not for agents
                 score = None if fuzzy is None else scaled(fuzzy, n)
                 vram = md.get("virtual_address")
+                if vram is None:
+                    vram = addresses.get((uname, sym))
+                vram = int(vram) if vram is not None else old["vram"] if old is not None else None
                 if old is None:
                     name = sym if counts[sym] == 1 else f"{sym}@{uname}" + (f"#{k + 1}" if k else "")
                     while name in used:
@@ -1106,7 +1118,7 @@ class ForkEngine:
                     used.add(name)
                     db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,best_score,unit,vram,meta,asm) "
                                "VALUES(?,?,?,?,?,?,?,?,?,?)", (proj["id"], name, size, n, status, score, uname,
-                                                              int(vram) if vram else None, json.dumps(meta), ""))
+                                                              vram, json.dumps(meta), ""))
                 else:
                     # a better attempt kept elsewhere stays the best; a 0 (identical) of a function that no longer
                     # matches doesn't: the queue and briefs would say it's done
@@ -1114,10 +1126,10 @@ class ForkEngine:
                         score = old["best_score"] if score is None else min(score, old["best_score"])
                     # only what changed: SQLite writes a row's pages even when its values are the same, and a
                     # GameCube game's 34,000 functions rewritten on every sync were most of what the app wrote
-                    if (old["size"], old["n_insns"], old["status"], old["best_score"], self._meta(old)) != \
-                            (size, n, status, score, meta):
-                        db.execute("UPDATE functions SET size=?, n_insns=?, status=?, best_score=?, meta=? WHERE id=?",
-                                   (size, n, status, score, json.dumps(meta), old["id"]))
+                    if (old["size"], old["n_insns"], old["status"], old["best_score"], self._meta(old), old["vram"]) != \
+                            (size, n, status, score, meta, vram):
+                        db.execute("UPDATE functions SET size=?, n_insns=?, status=?, best_score=?, meta=?, vram=? WHERE id=?",
+                                   (size, n, status, score, json.dumps(meta), vram, old["id"]))
                     if old["status"] == "matched" and status != "matched":
                         self._reopened(db, proj, old, "full report" + (", the unit doesn't build" if uname in broken
                                                                          else ""), fuzzy,
@@ -2672,7 +2684,7 @@ class ForkEngine:
                 found = ghidra.decompile_object(unit.target, fp.root / STATE / "ghidra")
                 names = [meta.get("symbol") or fn["name"], *self._names(meta, fn)]
                 body = next((found[n] for n in names if n in found), None)
-                text = body and "/* Ghidra */\n" + body.strip()
+                text = body and "/* Ghidra */\n" + consoles.get(cfg.get("platform") or "").adapt_draft(body.strip())
         except OSError:
             text = None
         with self.net.store.tx() as db:
