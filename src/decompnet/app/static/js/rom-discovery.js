@@ -72,7 +72,7 @@ function renderRomModel(host,model,active) {
 function bodyModelCleanup(canvas,resize,theme) {
   // The host is replaced by subsequent previews and dialogs; disconnect on removal.
   const removal=new MutationObserver(()=>{if(!canvas.isConnected){resize.disconnect();theme.disconnect();removal.disconnect();}});
-  removal.observe($('dialogBody'),{childList:true,subtree:true});
+  removal.observe(canvas.parentElement,{childList:true,subtree:true});
 }
 function romGroupHTML(region) {
   return (region.asset_groups || []).map(group=>`<details><summary>Asset group · ${esc(group.label)} · ${group.region_ids.length} regions</summary><p>${hex8(group.start)}–${hex8(group.end)} · ${group.size.toLocaleString()} bytes · ${esc(group.basis)} (${esc(group.confidence)}).</p><p class="small muted">These boundaries join display regions using an imported symbol or a loader extent. They do not prove that the entire span is one asset.</p><button type="button" class="ghost small-btn" data-rom-group-source="${group.id}">Use group start for previews</button><p>${group.region_ids.map(id=>`<button type="button" class="link-btn" data-rom-destination="${esc(id)}">${esc(id)}</button>`).join(' · ')}</p></details>`).join('');

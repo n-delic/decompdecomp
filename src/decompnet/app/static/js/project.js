@@ -140,6 +140,7 @@ function stopPolling() {
 
 function setTab(tab) {
   if(tab!=='rom' && typeof stopRomAudioBrowser==='function')stopRomAudioBrowser();
+  if(tab!=='rom' && typeof stopRomModelBrowser==='function')stopRomModelBrowser();
   if (!TABS.includes(tab)) tab = "overview";
   S.tab = tab;
   document.querySelectorAll("#ptabs [data-ptab]").forEach((a) => {
