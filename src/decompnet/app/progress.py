@@ -440,6 +440,12 @@ class _Recheck:
     ready: bool = False
 
 
+@dataclass(eq=False)
+class _Publication:
+    signature: tuple
+    rechecks: dict[str, _Recheck]
+
+
 class Progress:
     def __init__(self, net):
         self.net = net
@@ -463,7 +469,7 @@ class Progress:
         self.project_locks: dict[str, threading.RLock] = {}
         self.rechecking: dict[str, _Recheck] = {}
         self.last_write: dict[str, float] = {}  # slug -> when a database-only change was last published
-        self.publishing: dict[Path, tuple] = {}  # folder -> (app saves running now, rechecks they keep valid)
+        self.publishing: dict[Path, list[_Publication]] = {}
         saves.publish_watchers.add(self)
         self.errors: dict[str, str] = {}
         self.signatures: dict[str, tuple] = {}  # slug -> every file's stat after the last acknowledged sync
@@ -518,11 +524,21 @@ class Progress:
         items = []
         for name in (saves.MANIFEST, "src", "best", "include"):
             path = folder / name
+            old = entries.get(name, (name, None))
+            if name == saves.MANIFEST and name not in touched:
+                items.append(old)
+                continue
             try:
                 info = os.stat(path, follow_symlinks=False)
             except OSError:
+                if name != saves.MANIFEST and old[1] is not None:return None
                 items.append((name, None))
                 continue
+            if name != saves.MANIFEST:
+                if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):return None
+                if old[1] is None:
+                    if not any(key.startswith(name+'/') for key in touched):return None
+                elif (info.st_mode, info.st_ino) != (old[3], old[5]):return None
             items.append((name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
             if name == saves.MANIFEST or not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
                 continue
@@ -859,28 +875,59 @@ class Progress:
                 active.foreground = True
                 if name:active.functions.add(name)
 
-    def publish_begin(self, folder: Path):
-        """The app is about to write `folder`; rechecks of it that no outside edit has touched so far will expect
-        what the save leaves (saves running at once share one set)."""
+    def publish_begin(self, folder: Path) -> _Publication | None:
+        """Capture only rechecks already using this folder; ordinary saves need no observer scan."""
+        with self.activity_lock:
+            candidates = {slug:r for slug,r in self.rechecking.copy().items() if r.folder == folder}
+        if not candidates:return None
         signature = self._signature(folder)
         with self.activity_lock:
-            depth, clean = self.publishing.get(folder, (0, set()))
-            clean = clean | {id(r) for r in self.rechecking.values() if r.folder == folder and r.signature == signature}
-            self.publishing[folder] = (depth + 1, clean)
+            clean = {slug:r for slug,r in candidates.items()
+                     if self.rechecking.get(slug) is r and r.signature == signature}
+            receipt = _Publication(signature, clean)
+            running = self.publishing.setdefault(folder, [])
+            # Concurrent publishers cannot prove which write left each file.
+            # Keep the recheck guard cold rather than acknowledge either batch.
+            if running:
+                receipt.rechecks.clear()
+                for other in running:other.rechecks.clear()
+            running.append(receipt)
+            return receipt
 
-    def publish_end(self, folder: Path) -> None:
-        """The app has written `folder`. The rechecks kept their fingerprint through every save, so an edit that
-        arrived before a save began still fails them; one made within the few milliseconds of a save is not seen."""
-        now = self._signature(folder)
-        with self.activity_lock:
-            depth, clean = self.publishing[folder]
-            if depth > 1:
-                self.publishing[folder] = (depth - 1, clean)
+    def publish_end(self, folder: Path, receipt: _Publication, written: dict[str, str],
+                    removed: set[str], *, complete: bool) -> None:
+        """Advance a recheck only for a completed, verified set of the app's own writes.
+
+        Unchanged files retain their old identities. Written files must still be
+        regular files containing the intended bytes; deletions must remain absent.
+        A failed or overlapping save cannot bless an external contribution.
+        """
+        now = None
+        try:
+            if not complete or not receipt.rechecks:return
+            touched = written.keys() | removed
+            try:
+                expected = self._expected_signature(folder, receipt.signature, touched)
+                if expected is None:return
+                for name, text in written.items():
+                    path = folder/name
+                    if not stat.S_ISREG(path.lstat().st_mode) or path.read_text(encoding='utf-8') != text:return
+                if any(os.path.lexists(folder/name) for name in removed):return
+                current = self._signature(folder)
+                if current == expected:now = current
+            except (OSError, UnicodeError):
+                # The save's I/O outcome is separate; leave the ordinary recheck
+                # guard invalid when an external operation defeats this receipt.
                 return
-            del self.publishing[folder]
-            for recheck in self.rechecking.values():
-                if id(recheck) in clean and recheck.folder == folder:
-                    recheck.signature = now
+        finally:
+            with self.activity_lock:
+                running = self.publishing[folder]
+                running.remove(receipt)
+                if not running:del self.publishing[folder]
+                if now is not None:
+                    for slug, recheck in receipt.rechecks.items():
+                        if self.rechecking.get(slug) is recheck and recheck.signature == receipt.signature:
+                            recheck.signature = now
 
     def _check_rechecking_files(self, slug):
         pending = self.rechecking.get(slug)
