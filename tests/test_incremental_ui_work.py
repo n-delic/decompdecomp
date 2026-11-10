@@ -60,15 +60,18 @@ def test_polishing_counts_are_batched_and_respect_resets(tmp_path):
     b, _ = net.local_agent('b')
     with net.store.tx() as db:
         for aid in (a.id, b.id):
-            db.execute("INSERT INTO events(project_id,agent_id,kind,detail) VALUES(1,?,'readable','f')", (aid,))
+            db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(1,?,'readable','f',?)", (aid, 100 + aid))
     sessions = [SimpleNamespace(agent_name=n, options={}) for n in ('a', 'b')]
     queries = []
     net.store._reader().set_trace_callback(queries.append)
     board = results(net, 'game', sessions)
     assert board['a']['polished'] == board['b']['polished'] == 1
+    # A polishing card times its latest polish ("Last polish"), not a score improvement.
+    assert (board['a']['last_polish'], board['b']['last_polish']) == (100 + a.id, 100 + b.id)
     assert sum('COUNT(DISTINCT e.detail)' in q for q in queries) == 1
     sessions[0].options = {'_metrics': {'event': 2}}
     assert results(net, 'game', sessions)['a']['polished'] == 0
+    assert results(net, 'game', sessions)['a']['last_polish'] is None
 
 
 def test_peer_snapshot_survives_memory_cache_reset_and_invalidates(tmp_path):

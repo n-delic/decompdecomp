@@ -72,15 +72,16 @@ def results(net, slug, sessions):
         'SELECT id,name FROM agents WHERE name IN (SELECT value FROM json_each(?))',
         json.dumps([s.agent_name for s in sessions]))}
     placeholders = ','.join('(?,?)' for _ in sessions)
-    counts = {r['agent_id']:r['n'] for r in net.project_store(pid).all(
+    # A polishing helper improves no scores, so its card times its latest polish instead.
+    counts = {r['agent_id']:(r['n'], r['last']) for r in net.project_store(pid).all(
         f'WITH boundary(agent_id,after_id) AS (VALUES {placeholders}) '
-        'SELECT e.agent_id,COUNT(DISTINCT e.detail) n FROM events e JOIN boundary b ON b.agent_id=e.agent_id '
+        'SELECT e.agent_id,COUNT(DISTINCT e.detail) n,MAX(e.created_at) last FROM events e JOIN boundary b ON b.agent_id=e.agent_id '
         "WHERE e.project_id=? AND e.kind='readable' AND e.id>b.after_id GROUP BY e.agent_id",
         *(v for s in sessions for v in (workers.get(s.agent_name, -1), int(s.options.get('_metrics', {}).get('event', 0)))), pid)}
     polished = {name:counts[aid] for name, aid in workers.items() if aid in counts}
     for s in sessions:
         row = board.setdefault(s.agent_name, {'matched': 0, 'improved': 0, 'worked': 0, 'compiles': 0, 'last_improvement': None})
-        row['polished'] = polished.get(s.agent_name, 0)
+        row['polished'], row['last_polish'] = polished.get(s.agent_name, (0, None))
     return board
 
 
