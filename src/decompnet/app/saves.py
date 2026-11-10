@@ -199,8 +199,8 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
             progress.local.busy = was_busy
 
 
-# Progress objects that want to know when the app itself writes a progress folder (`publish_begin(folder)`, then
-# `publish_end(folder)`): a recheck tells its own saves from an outside edit.
+# Active rechecks can validate the app's actual completed writes with a publication receipt.
+# An observer without a recheck for this folder returns None, avoiding unnecessary scans.
 publish_watchers: "weakref.WeakSet" = weakref.WeakSet()
 
 
@@ -236,12 +236,17 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
             current = path.read_text(encoding="utf-8") if path.exists() else None
             if current != expected.get(name):
                 return False  # git or an editor wrote while the database was being rendered: read it next time
-    watchers = list(publish_watchers)
-    for watcher in watchers:
-        watcher.publish_begin(folder)
+    receipts = []
+    written = {}
+    removed = set()
+    complete = False
     try:
+        for watcher in list(publish_watchers):
+            receipt = watcher.publish_begin(folder)
+            if receipt is not None:receipts.append((watcher, receipt))
         for name in (previous or {}).keys() - files.keys():
             (folder / name).unlink(missing_ok=True)
+            removed.add(name)
         for name, text in files.items():
             path = folder / name
             if path.exists() and path.read_text(encoding="utf-8") == text:
@@ -250,9 +255,11 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
             temporary = path.with_name(path.name + ".tmp")
             temporary.write_text(text, encoding="utf-8")
             temporary.replace(path)
+            written[name] = text
+        complete = True
     finally:
-        for watcher in watchers:
-            watcher.publish_end(folder)
+        for watcher, receipt in receipts:
+            watcher.publish_end(folder, receipt, written, removed, complete=complete)
     return True
 
 

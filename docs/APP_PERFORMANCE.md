@@ -766,3 +766,21 @@ service overload error. Small/title streams, other models/providers, information
 logs and arbitrary HTTP errors do not qualify. The persisted failure is a fixed
 category, without raw provider content, credentials or request bodies. This
 recovers the app's retry loop; it cannot restore remote inference capacity.
+
+### Recheck validation during app saves
+
+A save may advance a ready recheck's saved-file signature only after verifying
+its completed writes and deletions. Unchanged files retain their prior identities;
+written files must remain regular files with the intended contents, removed files
+must remain absent, and unchanged manifests and directory identities remain guarded.
+External edits arriving during a save, partial failures and overlapping publishers
+leave the recheck signature unchanged so ordinary validation still rejects stale
+inputs. Observer cleanup also runs when a later observer fails before file writes.
+
+Publication observers do not scan folders without a recheck for that folder.
+In an actual synthetic publication of one changed file beside 1,024 saved files,
+this removed two complete signature scans per inactive observer. Three-trial
+medians were 12.31 to 0.69 ms idle and 994.54 to 79.51 ms with one Python competitor
+bounded to one second. These measurements cover that publication component only;
+they do not establish a speedup for the running app or remove required active
+recheck validation.

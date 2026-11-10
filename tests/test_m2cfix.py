@@ -295,6 +295,7 @@ def test_a_callee_saved_register_read_before_it_is_set_is_left_unset():
 
 def test_a_jump_table_nobody_imported_says_what_is_missing():
     import subprocess
+
     from decompnet import seeds
     done = subprocess.CompletedProcess([], 1, "/* Decompilation failure in function f:\n\nFound jr instruction at f.s line 8, "
                                        "but the corresponding jump table is not provided.  Please include it. */", "")
