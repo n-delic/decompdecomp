@@ -13,6 +13,68 @@ from .test_rom import ROM, built  # noqa: F401
 from .test_twins_across_games import copy_project
 
 
+@pytest.mark.parametrize('gate', ['missing fingerprint', 'small', 'assembly', 'claimed', 'cancelled'])
+def test_rejected_targets_never_decode_their_candidate_payload(pair, monkeypatch, gate):
+    from types import SimpleNamespace
+
+    from decompnet import large_text_storage, payload_storage
+
+    large_text_storage.install(pair.store.conn, {'functions'})
+    source = '/* '+('synthetic unused source\n'*4000)+' */\nint ignored(void){return 0;}'
+    with pair.store.tx() as db:
+        db.execute('INSERT INTO functions(id,project_id,name,size,n_insns,target,relocs,vram,unit,status,best_source) '
+                   "VALUES(100,2,'ignored',32,8,?,'[]',2147491840,'','open',?)", (code(61), source))
+    assert pair.store.one('SELECT typeof(best_source) AS storage FROM main.functions WHERE id=100')['storage'] == 'blob'
+    if gate == 'claimed':
+        agent, _ = pair.local_agent('busy')
+        with pair.store.tx() as db:
+            db.execute('INSERT INTO claims(function_id,agent_id,claimed_at,expires_at) VALUES(100,?,0,9999999999)', (agent.id,))
+    original_prints = pair.twins.prints
+    def prints(proj):
+        result = dict(original_prints(proj))
+        if proj['id'] == 2:
+            result.pop(100, None)
+            if gate != 'missing fingerprint':
+                result[100] = SimpleNamespace(size=8 if gate == 'small' else 32, asm=gate == 'assembly')
+        return result
+    monkeypatch.setattr(pair.twins, 'prints', prints)
+    calls = []
+    digest = payload_storage.digest(source)
+    def unpack(key, payload):
+        if key == digest:calls.append(key)
+        return payload_storage.unpack(key, payload)
+    pair.store.conn.create_function('payload_read', 2, unpack, deterministic=True)
+    pair.store._reader().create_function('payload_read', 2, unpack, deterministic=True)
+    assert pair.store.one('SELECT best_source FROM functions WHERE id=100')['best_source'] == source
+    assert calls == [digest]
+    calls.clear()
+    monkeypatch.setattr(pair.twins, '_attempt_twin', lambda *a, **kw: ('miss', 'score 20'))
+    job = Job()
+    if gate == 'cancelled':
+        monkeypatch.setattr('decompnet.app.cross_game_progress.report', lambda *a, **kw: job.stop.set())
+    sm.run(pair.twins, 'destination', job)
+    assert calls == []
+
+
+@pytest.mark.parametrize('change', ['matched', 'deleted'])
+def test_target_details_are_rechecked_after_the_queue_snapshot(pair, monkeypatch, change):
+    read = pair.store.one
+    changed = []
+    def one(sql, *args):
+        row = read(sql, *args)
+        if sql == 'SELECT 1 FROM claims WHERE function_id=?' and args == (2,) and not changed:
+            changed.append(True)
+            with pair.store.tx() as db:
+                if change == 'deleted':db.execute('DELETE FROM functions WHERE id=2')
+                else:db.execute("UPDATE functions SET status='matched' WHERE id=2")
+        return row
+    monkeypatch.setattr(pair.store, 'one', one)
+    attempts = []
+    monkeypatch.setattr(pair.twins, '_attempt_twin', lambda *a, **kw: (attempts.append(True) or 'miss', 'score 20'))
+    sm.run(pair.twins, 'destination', Job())
+    assert changed and not attempts
+
+
 def code(value, big=True):
     return b"".join(w.to_bytes(4, "big" if big else "little") for w in
                     [0x24820000 | value, 0x24420002, 0x24420003, 0x24420004,

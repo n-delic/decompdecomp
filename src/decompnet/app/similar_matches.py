@@ -14,6 +14,7 @@ import re
 import time
 
 from .. import permuter, similarity, toolchains
+from ..metadata_rows import rows as metadata_rows
 from ..network import NetworkError
 from ..project import compiler_for
 
@@ -362,7 +363,11 @@ def run(twins, slug: str, job) -> int:
     def transfers_exhausted():
         return bool(repairs) and (job.reuse_attempts >= transfer_limit or time.monotonic() >= transfer_deadline)
 
-    targets = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id", proj['id'])
+    store = net.project_store(proj['id'])
+    # Most open functions have no usable fingerprint or are already claimed.
+    # Do not inflate all their source payloads before testing those cheap gates.
+    targets = metadata_rows(store, ('id', 'name'),
+                            "SELECT id,name FROM main.functions WHERE project_id=? AND status='open' ORDER BY id", proj['id'])
     # Preserve the cheap aligned-transfer search before widening to learned mappings or different flags.
     # A signed cursor encodes which phase to resume without storing any game source in the queue.
     work = [(phase, b) for phase in (0, 1) for b in targets]
@@ -380,8 +385,11 @@ def run(twins, slug: str, job) -> int:
         pb = mine.get(b['id'])
         if pb is None or pb.asm or not MIN_BYTES <= pb.size <= MAX_BYTES:
             continue
-        if net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', b['id']):
+        if store.one('SELECT 1 FROM claims WHERE function_id=?', b['id']):
             continue
+        b = store.one("SELECT * FROM functions WHERE project_id=? AND id=? AND status='open'", proj['id'], b['id'])
+        if b is None:
+            continue  # matched/deleted since the metadata snapshot or the preceding phase
         rows = donors.candidates(pb.size, max(MIN_BYTES, int(pb.size * .9)), min(MAX_BYTES, int(pb.size / .9)),
                                  pb.key, twins._compiler_key(compiler_for(cfg, b['vram'], b)), MAX_POOL, near=b['vram'])
         layout = [(o, t) for o, t, _ in relocations(b)]

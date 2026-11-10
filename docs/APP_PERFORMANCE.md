@@ -781,6 +781,18 @@ not copied. A warning alone does not terminate a CLI, retry it, or mark a recove
 handshake as failed. This improves diagnosis; it does not repair the underlying
 MCP connection or establish the cause of a timeout.
 
+### Similarity target selection
+
+Similarity search queues open target IDs and names through the scalar metadata
+transport, then reads full target details only after fingerprint, size, assembly,
+claim and cancellation checks. Previously the initial `SELECT *` inflated every
+open target's source even when none of those targets could be tried. Synthetic
+packed-source fixtures measure one payload callback becoming zero for each
+ineligible or cancelled target; this is an operation-count improvement, not a
+measured end-to-end runtime speedup. Eligible targets still use checksum-validated
+detail reads and the ordinary exact judge. Targets matched or deleted since the
+queue snapshot are skipped on their fresh detail read.
+
 ### Recheck validation during app saves
 
 A save may advance a ready recheck's saved-file signature only after verifying
