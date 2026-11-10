@@ -44,6 +44,22 @@ def files(internal):
     return operational, others
 
 
+def open_store(path, catalog):
+    """A database opened as the app opens it: a project database with its own identifier namespace (the marker it
+    stores) and the catalog's shared repair archive."""
+    from decompnet.shard_ids import KEY
+    from decompnet.store import Store
+    with sqlite3.connect(f'file:{path}?mode=ro', uri=True) as db:
+        has_settings = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").fetchone()
+        marker = db.execute('SELECT value FROM settings WHERE key=?', (KEY,)).fetchone() if has_settings else None
+    if marker is None:
+        return Store(path)
+    if catalog is None:
+        raise SystemExit(f'{path.name} is a project database but the catalog could not be opened')
+    return Store(path, project_namespace=int(marker[0]), repair_archive=catalog.conn.repair_archive,
+                 require_existing=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('home', nargs='?', default=os.environ.get('DECOMP_HOME'))
@@ -61,19 +77,24 @@ def main():
             return 1
         operational, others = files(internal)
         total = 0
+        catalog = None
         for path in [*operational, *others]:
+            if catalog is not None and path in others:
+                catalog.conn.close()  # the catalog is compacted with the rest; VACUUM needs it closed
+                catalog = None
             before = size(path)
             print(f'{path.name}: {before / 2**20:,.1f} MiB')
             if args.dry_run:
                 continue
             if not args.no_collect and path in operational:
                 from decompnet import payload_links
-                from decompnet.store import Store
-                store = Store(path)
+                catalog = catalog or open_store(internal / 'decomp.db', None)
+                store = catalog if path == internal / 'decomp.db' else open_store(path, catalog)
                 try:
                     print('    removed', payload_links.collect(store, Log()), 'unused shared payloads')
                 finally:
-                    store.conn.close()
+                    if store is not catalog:
+                        store.conn.close()
             if shutil.disk_usage(path.parent).free < 2 * before:
                 print('    skipped compaction: free at least twice this file\'s size on its drive')
                 continue
