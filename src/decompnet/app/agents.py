@@ -1523,7 +1523,7 @@ class Manager:
                 self._finish(s,'Boundary recommendation saved; review it in Review function boundaries.')
                 break
             if task != 'boundary' and self._left(s.slug, task) == 0:
-                self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'write as C' if task == 'data' else 'decompile'} here 🎉")
+                self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'write as C' if task == 'data' else 'fix for the PC' if task == 'port' else 'decompile'} here 🎉")
                 break
             agent_startup.stage(s, "Selecting eligible work")
             from ..read_cache import ReadPending
@@ -1870,7 +1870,9 @@ class Manager:
             return
         facts = tools._project_info(self.net, s.slug, detail=False).split('Next:')[0][:STARTUP_FACTS_CHARS]
         parts = ['App-provided startup context (already fetched; no project_info call needed):', facts]
-        if s.options.get('task') not in ('readable', 'data'):
+        # Only a matching session gets a function claimed for it: the other tasks claim their own work (a port-fix
+        # helper given claim_function's answer found nothing to match on a finished game and waited forever).
+        if s.options.get('task') not in NOT_MATCHING:
             # A fresh provider session has no copy of a previous session's brief/C.
             getattr(self.net, '_claim_packets', {}).pop((agent.id, s.slug), None)
             packet = tools._claim(self.net, agent, s.slug, '', '', count=1)
