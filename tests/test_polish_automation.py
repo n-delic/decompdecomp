@@ -698,3 +698,29 @@ def test_a_function_given_up_while_its_brief_was_unreadable_gets_one_fresh_start
     net.readability = readable.Readability(net)  # (a new process looks again, and leaves it)
     assert net.readability.left(proj) == 0
     assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE kind='polish_retry'")['n'] == 1
+
+
+def test_define_lines_inside_a_function_stay_and_its_other_locals_can_be_renamed():
+    # A 529-instruction function of an N64 game defines its field accessors inside: no helper would retype it whole.
+    source = ('s32 f(s32 arg0) {\n    s32 var_v0;\n    struct { s32 data[4]; } work;\n#define data work.data\n'
+              '#define FIRST(p) \\\n    ((p)[0])\n    var_v0 = FIRST(data) + arg0;\n#undef data\n    return var_v0;\n}')
+    assert edits.locals_in(source, 'f', HEADER) == ['arg0', 'var_v0']
+    result = edits.apply(source, 'f', {'arg0': 'bias', 'var_v0': 'total'}, 'Adds the first entry.', header=HEADER)
+    assert '#define data work.data\n#define FIRST(p) \\\n    ((p)[0])\n' in result and '#undef data\n' in result
+    assert 'total = FIRST(data) + bias;' in result and result.count('\n') == source.count('\n')
+    named = source.replace('#define data work.data', '#define data (work.data + arg0)')
+    with pytest.raises(NetworkError, match='simple parameters'):  # a name its macro uses stays with make_readable
+        edits.apply(named, 'f', {'arg0': 'bias'}, header=HEADER)
+    assert edits.signature(source, 'f', HEADER)[0] is not None
+
+
+def test_nothing_is_handed_out_while_the_compiler_cannot_run(game, monkeypatch):
+    from decompnet import toolchains
+
+    net, agent, _ = game
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: 'The Linux compiler runner is not ready.')
+    said = net.readability.claim(agent, 'game')
+    assert said.startswith("The compiler can't run right now") and 'MAKE READABLE' not in said
+    assert not net.store.one("SELECT 1 FROM events WHERE kind='polish'") and not net.store.one('SELECT 1 FROM claims')
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: None)
+    assert net.readability.claim(agent, 'game').startswith('MAKE READABLE')

@@ -10,6 +10,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import os
 import platform
 import re
@@ -31,6 +32,10 @@ _tools_lock = threading.Lock()
 _setup_lock = threading.Lock()
 _prepared: set[tuple[str, str]] = set()
 _status: tuple[bool, str, float] | None = None
+_status_lock = threading.Lock()
+_worked = False  # the runner answered once in this process: a failed check after that may be a blip
+BLIP_RETRIES = 2  # looks again 1 s and 2 s later before a runner that worked counts as not ready
+FAILED_FOR = 2  # seconds a failed check is remembered (a working one: 10)
 
 
 class VMError(RuntimeError):
@@ -77,21 +82,39 @@ def _plain(args: list[str], timeout: float = 30, **kwargs) -> subprocess.Complet
 
 def status(refresh: bool = False) -> tuple[bool, str]:
     """Read-only readiness check: never starts a VM or pulls an image."""
-    global _status
+    global _status, _worked
     if not wanted():
         return False, 'The Linux VM runner is for macOS; Linux runs packs directly and Windows uses WSL.'
     if not executable('colima') or not executable('docker'):
         return False, INSTALL
-    if _status and not refresh and time.monotonic() - _status[2] < 10:
-        return _status[:2]
+    with _status_lock:
+        if _status and not refresh and time.monotonic() - _status[2] < (10 if _status[0] else FAILED_FOR):
+            return _status[:2]
+        # A runner that worked can miss one check while many compiles keep Docker busy: 34 polishes of an N64 game
+        # failed in bursts that way, every compile in the 10 seconds a failure was remembered. Look again first.
+        tries = BLIP_RETRIES if _worked else 0
+        for attempt in range(tries + 1):
+            ok, why, detail = _check()
+            if ok or attempt == tries:
+                break
+            time.sleep(attempt + 1)
+        if not ok and _worked:
+            logging.getLogger('decompdecomp').warning('Linux compiler runner check failed %d times: %s',
+                                                      tries + 1, detail[-300:])
+        _worked = _worked or ok
+        _status = ok, why, time.monotonic()
+        return ok, why
+
+
+def _check() -> tuple[bool, str, str]:
     try:
         result = _plain([*_docker(), 'image', 'inspect', IMAGE], 10)
-        ok = result.returncode == 0
-        why = '' if ok else 'The Linux compiler runner is not ready. Choose Prepare Linux runner in Compilers & tools.'
     except (OSError, subprocess.TimeoutExpired) as error:
-        ok, why = False, f'The Linux compiler runner is unavailable ({error}). {INSTALL}'
-    _status = ok, why, time.monotonic()
-    return ok, why
+        return False, f'The Linux compiler runner is unavailable ({error}). {INSTALL}', str(error)
+    if result.returncode == 0:
+        return True, '', ''
+    return (False, 'The Linux compiler runner is not ready. Choose Prepare Linux runner in Compilers & tools.',
+            result.stderr.decode(errors='replace').strip())
 
 
 def setup(log=print) -> dict:

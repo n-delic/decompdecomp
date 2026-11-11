@@ -23,6 +23,7 @@ def vm(monkeypatch, tmp_path):
     monkeypatch.setattr(toolchains.wsl, 'wanted', lambda: False)
     monkeypatch.setattr(linuxvm, 'executable', lambda name: '/usr/bin/' + name)
     monkeypatch.setattr(linuxvm, '_status', None)
+    monkeypatch.setattr(linuxvm, '_worked', False)
     monkeypatch.setattr(linuxvm, '_prepared', set())
     monkeypatch.setenv('DECOMP_LINUX_VM_PROFILE', 'test-compilers')
     monkeypatch.setenv('DECOMPNET_TOOLCHAINS', str(tmp_path / 'toolchains'))
@@ -418,3 +419,29 @@ def test_guest_validates_output_paths_before_starting_compiler(tmp_path, monkeyp
     monkeypatch.setattr(linuxvm_worker.subprocess, 'Popen', unexpected)
     with pytest.raises(ValueError, match='escapes'):
         linuxvm_worker.compile_job({'files': {}, 'outputs': ['../outside/probe.o'], 'argv': [], 'timeout': 5}, tmp_path)
+
+
+def test_a_runner_that_worked_survives_one_missed_check(vm, monkeypatch, caplog):
+    # Under many compiles Docker missed a check now and then, and every compile in the next 10 seconds failed:
+    # 34 polishes of an N64 game in bursts, and one function given up on.
+    answers, slept = [], []
+    def plain(args, timeout=30, **kwargs):
+        ok = answers.pop(0) if answers else True
+        return subprocess.CompletedProcess(args, 0 if ok else 1, b'', b'' if ok else b'Error: daemon busy')
+    monkeypatch.setattr(linuxvm, '_plain', plain)
+    monkeypatch.setattr(linuxvm.time, 'sleep', slept.append)
+    answers[:] = [False]
+    assert not linuxvm.status()[0] and slept == []  # never ready in this process: said at once, for Setup
+    answers[:] = [True]
+    assert linuxvm.status(refresh=True) == (True, '')
+    answers[:] = [False, True]
+    assert linuxvm.status(refresh=True) == (True, '') and slept == [1]
+    answers[:] = [False, False, False]
+    ok, why = linuxvm.status(refresh=True)
+    assert not ok and 'not ready' in why and slept == [1, 1, 2]
+    assert 'daemon busy' in caplog.text
+    # a failure is remembered briefly, a success for 10 seconds
+    answers[:] = [True]
+    assert not linuxvm.status()[0]
+    monkeypatch.setattr(linuxvm, '_status', (False, why, linuxvm.time.monotonic() - linuxvm.FAILED_FOR - 1))
+    assert linuxvm.status() == (True, '')
