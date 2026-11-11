@@ -117,6 +117,55 @@ def torch_files(game: dict, entries: list[dict]) -> dict[str, str]:
     return {"config.yml": config, f"{slug}/rom.yml": "\n".join(lines)}
 
 
+def torch_extract(assets, image, out, log=print):
+    """Run the pinned Torch on the asset map (`assets`: config.yml and its folders) and the user's own ROM: the
+    .o2r archive libultraship reads, written into `out`."""
+    import subprocess
+    from pathlib import Path
+
+    from ... import limits, toolchains
+    from ...hostenv import NO_WINDOW
+    toolchains.ensure("torch", log=log)
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    for old in out.glob("*.o2r"):
+        old.unlink()
+    argv = [str(toolchains.binary("torch")), "o2r", "-s", str(assets), "-d", str(out), str(image)]
+    try:
+        done = subprocess.run(limits.capped(argv), cwd=out, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=900, creationflags=NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Torch took longer than 15 minutes to extract the assets.") from None
+    archives = sorted(out.glob("*.o2r"))
+    if done.returncode or not archives:
+        said = [line for line in (done.stdout + done.stderr).splitlines()
+                if "[error]" in line or "[warning]" in line or "[critical]" in line]
+        why = ("Torch found no config for this ROM: the asset map is keyed by the ROM's SHA-1, and this file's "
+               "isn't the one the project recorded. Write the asset map again." if not done.returncode else
+               f"Torch stopped (exit code {done.returncode}).")
+        raise RuntimeError(why + ("\n" + "\n".join(said[-12:]) if said else ""))
+    return archives[0]
+
+
+# A resource in an .o2r is a 0x40-byte header (its type at 4, little-endian, so "OBLB" reads "BLBO") then its body;
+# a BLOB's body is its size and its bytes.
+_BLOB = b"BLBO"
+
+
+def torch_resources(archive) -> dict:
+    """{resource name: the bytes it holds} for the BLOBs in an .o2r (a ZIP); other types aren't read yet."""
+    import struct
+    import zipfile
+    out = {}
+    with zipfile.ZipFile(archive) as z:
+        for info in z.infolist():
+            data = z.read(info)
+            if len(data) >= 0x44 and data[4:8] == _BLOB:
+                size = struct.unpack_from("<I", data, 0x40)[0]
+                out[info.filename.rsplit("/", 1)[-1]] = data[0x44:0x44 + size]
+    return out
+
+
 def _quote(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -130,4 +179,6 @@ KIT = PortKit(
     audio=audio_library,
     asset_map=torch_files,
     boot=0x1000,  # the header and IPL3, which the console's boot ROM runs
+    extract=torch_extract,
+    resources=torch_resources,
 )

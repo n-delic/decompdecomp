@@ -2,8 +2,8 @@
 
 Status: phase 0, the readiness report, is built (ROM projects; N64 with its kit); phase 1's judge and tools are
 built (N64); phase 3's first step, compiling the game's C for a PC, is built (N64), and so is phase 4's task with its
-two-way judge (N64); phase 2's asset map is written as Torch's config, one BLOB per resource (N64); the rest is
-planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
+two-way judge (N64); phase 2's asset map is written as Torch's config, one BLOB per resource, and extracted and checked by the
+pinned Torch (N64, macOS and Linux); the rest is planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
 
 A matched, polished decomp rebuilds the game for its console. People finish a decomp to read, mod and port the
 game, and today decompdecomp stops at the export. This plan adds the next step: a **port**, the same C built for
@@ -127,8 +127,11 @@ itself, audio, or other data. Each is a Torch `BLOB` for now, and the map is che
 with the code, the N64's 0x1000 boot bytes and the trailing fill. Typing comes next: a game that stores its data
 packed (a finished N64 game keeps it all in one ZIP its own code inflates, which Torch can't) keeps the archive
 whole and unpacks it at run time as it did on the console, so its textures never become Torch textures; loose
-textures, palettes, vertices and display lists will. Torch isn't pinned or run yet, so "mapped" means "covered"
-until it is.
+textures, palettes, vertices and display lists will. **Extract with Torch** then runs
+the pinned Torch (built from its source and its libraries, each pinned by commit and checksum, with a pinned CMake)
+on the map and the user's ROM, and checks every resource it made against the ROM bytes it names: that is
+"mapped". A finished N64 game's 11 resources all came out as the ROM's bytes. The archive (`.o2r`) is the game's
+own data, so it stays in the project's `build/port`, out of git.
 
 ### 3. Port export
 

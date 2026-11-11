@@ -65,6 +65,8 @@ class PortKit:
     audio: object = None  # the game's function names -> {"library", "need"}, or None
     asset_map: object = None  # (game facts, resources from port/asset_map.py) -> {file name: text}, or None
     boot: int = 0  # bytes at the image's start that the console's boot reads, never the game: in no resource
+    extract: object = None  # (asset map folder, image, output folder, log) -> the archive the extractor wrote
+    resources: object = None  # archive -> {resource name: the bytes it holds}, for checking each against the image
 
 
 class Console:

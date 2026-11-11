@@ -21,6 +21,8 @@ from pathlib import Path
 from ..network import NetworkError
 
 FOLDER = "port/assets"  # in the project's folder
+EXTRACTED = "build/port"  # the extractor's archive: the game's own bytes, so in build/, which stays out of git
+_REPORT = "extract.json"
 _FILL = "repeated bytes"
 _AUDIO = ("audio", "music sequence")
 _CRUMB = 16  # unnamed bytes fewer than this are alignment between files
@@ -200,7 +202,62 @@ def current(net, slug: str) -> dict | None:
     root = Path(net.project_row(slug)["root"]) / FOLDER
     written = all((root / name).is_file() and (root / name).read_text(encoding="utf-8") == text
                   for name, text in result["files"].items())
-    return summary(result, written) | {"was_written": any((root / name).is_file() for name in result["files"])}
+    return summary(result, written) | {"was_written": any((root / name).is_file() for name in result["files"]),
+                                       "extracted": _extracted(net, slug, result)}
+
+
+def _digest(result: dict) -> str:
+    import hashlib
+    return hashlib.sha256("".join(f"{n}\0{t}\0" for n, t in sorted(result["files"].items())).encode()).hexdigest()
+
+
+def _extracted(net, slug: str, result: dict) -> dict | None:
+    """The last extraction's check, and whether it was of this map: None when there has been none."""
+    path = Path(net.project_row(slug)["root"]) / EXTRACTED / _REPORT
+    try:
+        import json
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return report | {"current": report.get("map") == _digest(result)}
+
+
+def extract(net, slug: str, log=print) -> dict:
+    """Write the map, run the kit's extractor on it and the user's own ROM, and check that every resource it made
+    holds exactly the bytes of the ROM it names: then the map is "mapped" (docs/PORTING.md, phase 2)."""
+    import json
+    import time
+    with net.progress.view():
+        written = write(net, slug)
+        result = build(net, slug)
+        proj = net.project_row(slug)
+        kit = net.console(proj).port_kit
+        cfg = net.cfg(proj)
+    if kit.extract is None or kit.resources is None:
+        raise NetworkError(f"{net.console(proj).name}'s port kit has no extractor to run yet (ROADMAP.md, Ports).")
+    root = Path(proj["root"])
+    image = root / cfg.get("rom", {}).get("file", "")
+    if not image.is_file():
+        raise NetworkError(f"The ROM isn't at {image}: restore the project's game file, then extract again.")
+    out = root / EXTRACTED
+    log(f"Extracting {written['resources']} resources from your ROM with the kit's extractor…")
+    try:
+        archive = kit.extract(root / FOLDER, image, out, log)
+    except Exception as error:  # the kit's tool: its own message says what went wrong
+        raise NetworkError(str(error)) from error
+    got = kit.resources(archive)
+    data = image.read_bytes()
+    missing = [e["name"] for e in result["entries"] if e["name"] not in got]
+    different = [e["name"] for e in result["entries"] if e["name"] in got
+                 and got[e["name"]] != data[e["offset"]:e["offset"] + e["size"]]]
+    report = {"archive": str(archive), "total": len(result["entries"]),
+              "mapped": len(result["entries"]) - len(missing) - len(different), "missing": missing[:40],
+              "different": different[:40], "checked_at": time.time(), "map": _digest(result)}
+    (out / _REPORT).write_text(json.dumps(report, indent=1), encoding="utf-8")
+    log(f"{report['mapped']} of {report['total']} resources are the ROM's bytes they name"
+        + (f"; {len(missing)} missing from the archive" if missing else "")
+        + (f"; {len(different)} different" if different else "") + f". Archive: {archive}")
+    return report
 
 
 def write(net, slug: str) -> dict:

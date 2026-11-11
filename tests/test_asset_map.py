@@ -106,7 +106,8 @@ def test_the_map_is_written_into_the_project_and_readiness_follows_it(project, m
     assert (root / "port/assets/game/rom.yml").read_text(encoding="utf-8").count("type: BLOB") == 4
     with net.progress.view():
         report = readiness(net, "game")
-    assert report["assets"]["written"] and not any("asset map" in b for b in report["blockers"])
+    assert report["assets"]["written"] and not any("no asset map" in b for b in report["blockers"])
+    assert any("hasn't been extracted from your ROM yet" in b for b in report["blockers"])
     assert "Asset map (written): 4 resources" in describe(report)
     # a new scan that sees more makes the written map out of date
     monkeypatch.setattr(rom_explorer, "listing", lambda net, slug: {
@@ -122,3 +123,74 @@ def test_a_real_scan_maps_the_homemade_image(project):
     with net.progress.view():
         result = asset_map.build(net, "game")
     assert asset_map.check(result, CODE, SIZE) == [] and result["entries"]
+
+
+def stand_in_torch(corrupt=""):
+    """Writes an .o2r as Torch does (a ZIP of resources: a 0x40-byte header, "OBLB" at 4, then size and bytes) from
+    the asset map's BLOBs, without Torch."""
+    import re
+    import struct
+    import zipfile
+
+    def extract(assets, image, out, log=print):
+        out.mkdir(parents=True, exist_ok=True)
+        data = image.read_bytes()
+        text = (assets / "game" / "rom.yml").read_text(encoding="utf-8")
+        archive = out / "game.o2r"
+        with zipfile.ZipFile(archive, "w") as z:
+            for name, off, size in re.findall(r"^(\w+):\n  type: BLOB\n  offset: 0x(\w+)\n  size: 0x(\w+)", text, re.M):
+                body = data[int(off, 16):int(off, 16) + int(size, 16)]
+                if name == corrupt:
+                    body = body[:-1] + b"!"
+                z.writestr(f"rom/{name}", bytes(4) + b"BLBO" + bytes(0x38) + struct.pack("<I", len(body)) + body)
+        return archive
+    return extract
+
+
+def test_extracting_checks_every_resource_against_the_rom(project, monkeypatch):
+    import dataclasses
+
+    from decompnet import consoles
+    from decompnet.consoles.n64.port import KIT
+    net, root = project
+    monkeypatch.setattr(rom_explorer, "listing", lambda net, slug: {
+        "available": True, "stale": False, "size": SIZE, "regions": REGIONS})
+    n64 = consoles.get("n64")
+    monkeypatch.setattr(n64, "port_kit", dataclasses.replace(KIT, extract=stand_in_torch("audio_2000")))
+    report = asset_map.extract(net, "game", print)
+    assert (report["mapped"], report["total"], report["different"]) == (3, 4, ["audio_2000"])
+    assert (root / "build/port/game.o2r").is_file() and (root / "port/assets/config.yml").is_file()
+    with net.progress.view():
+        blockers = readiness(net, "game")["blockers"]
+    assert any("1 of 4 resources didn't come out of the extractor as the ROM's bytes: audio_2000" in b for b in blockers)
+    monkeypatch.setattr(n64, "port_kit", dataclasses.replace(KIT, extract=stand_in_torch()))
+    assert asset_map.extract(net, "game", print)["mapped"] == 4
+    with net.progress.view():
+        report = readiness(net, "game")
+    assert not any("asset map" in b or "come out of the extractor" in b for b in report["blockers"])
+    assert "Extracted: 4 of 4 are the ROM's bytes" in describe(report)
+    # a new map (a new scan) needs extracting again
+    monkeypatch.setattr(rom_explorer, "listing", lambda net, slug: {
+        "available": True, "stale": False, "size": SIZE, "regions": REGIONS[:-2]})
+    asset_map.write(net, "game")
+    with net.progress.view():
+        assert any("hasn't been extracted from your ROM since it changed" in b
+                   for b in readiness(net, "game")["blockers"])
+
+
+def test_the_pinned_torch_extracts_the_map(project, monkeypatch):
+    from decompnet import toolchains
+    if not toolchains.installed("torch"):
+        pytest.skip("The pinned Torch is not installed; never built here.")
+    net, root = project
+    image = bytes(range(256)) * (SIZE // 256)  # bytes worth comparing; Torch picks the config by their SHA-1
+    (root / "game.z64").write_bytes(image)
+    proj = net.project_row("game")
+    cfg = net.cfg(proj)
+    cfg["rom"]["sha1"] = hashlib.sha1(image).hexdigest()
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+    monkeypatch.setattr(rom_explorer, "listing", lambda net, slug: {
+        "available": True, "stale": False, "size": SIZE, "regions": REGIONS})
+    report = asset_map.extract(net, "game", print)
+    assert (report["mapped"], report["total"]) == (4, 4), report

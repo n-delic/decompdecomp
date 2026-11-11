@@ -262,6 +262,12 @@ def register(app: App) -> None:
         with net.progress.view():
             return asset_map.write(net, slug)
 
+    def p_asset_extract(slug, request, data):
+        """Extract the asset map from the user's ROM with the kit's extractor, and check it (in the background: the
+        first run builds Torch)."""
+        from ...port import asset_map
+        return {"job": jobs.start("asset-extract", lambda log: asset_map.extract(net, slug, log), project=slug)}
+
     def g_port_readiness(slug, request, data):
         from ...port.readiness import readiness
         return readiness(net, slug)
@@ -1072,6 +1078,7 @@ def register(app: App) -> None:
         "/api/data-drafts": (p_data_drafts, ["POST"]),
         "/api/pc-compile": (p_pc_compile, ["POST"]),
         "/api/asset-map": (p_asset_map, ["POST"]),
+        "/api/asset-extract": (p_asset_extract, ["POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
     }

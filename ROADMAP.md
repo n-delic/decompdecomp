@@ -781,7 +781,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Port readiness → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
-| The ROM's data as the kit's extractor config (Port readiness → Write asset map, docs/PORTING.md phase 2) | ✓ (Torch YAML, one BLOB per resource; typed textures and display lists not yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| The ROM's data as the kit's extractor config (Port readiness → Write asset map, docs/PORTING.md phase 2) | ✓ (Torch YAML, one BLOB per resource; typed textures and display lists not yet) |
+| The ROM's data extracted and checked (Port readiness → Extract with Torch) | ✓ macOS and Linux (Torch built from pinned source with pinned CMake); — Windows: Torch's MSVC build isn't driven yet | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port fixes judged twice (Start agents → Fix C for the PC, `fix_for_pc`, docs/PORTING.md phase 4) | ✓ (console match by the function judge, PC build by the pinned Zig's clang) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
@@ -963,6 +964,18 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### Torch pinned, and the asset map extracted and checked
+
+Torch (HarbourMasters, MIT) is a pinned tool: its source and the six libraries its CMake would fetch, each a
+commit tarball with a SHA-256 in `toolchains.toml`, built on first use with a pinned CMake 4.4.4 and the system's
+C++ compiler, downloading nothing else (`_build_torch`; 81 s on an M-series Mac). Port readiness → **Extract with
+Torch** writes the asset map, runs Torch on it and the user's ROM, and checks every resource against the ROM bytes
+it names (`asset_map.extract`, the N64 kit's `torch_extract` and `torch_resources`); the archive (`.o2r`, the
+game's own bytes) goes in the project's `build/port`, out of git, and the readiness report says whether the map
+was extracted since it last changed. A finished N64 game: all 11 resources came out of Torch as the ROM's bytes,
+11.2 MB, in under a second. Left: Windows (Torch builds with MSVC there), Torch's typed resources (textures,
+display lists), libultraship pinned the same way for the port export.
 
 ### The ROM's data written as Torch's asset map
 
