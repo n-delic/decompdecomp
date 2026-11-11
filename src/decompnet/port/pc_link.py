@@ -139,10 +139,13 @@ def _group(net, proj, name: str) -> str | None:
     return "other"
 
 
+def current_name(net, proj, old: str) -> str:
+    """The name a function renamed since `old` (its automatic name, or an earlier chosen one) has now."""
+    facts = _facts(net, proj)
+    automatic = _AUTO_FUNCTION.match(old)
+    address = int(automatic.group(1), 16) if automatic else facts["symbols"].by_name[old].address
+    return facts["at"][address]
+
+
 def _example(net, proj, kind: str, name: str) -> str:
-    if kind == "renamed":
-        facts = _facts(net, proj)
-        automatic = _AUTO_FUNCTION.match(name)
-        address = int(automatic.group(1), 16) if automatic else facts["symbols"].by_name[name].address
-        return f"{name} (now {facts['at'][address]})"
-    return name
+    return f"{name} (now {current_name(net, proj, name)})" if kind == "renamed" else name

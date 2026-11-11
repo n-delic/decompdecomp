@@ -219,7 +219,9 @@ def blockers(report: dict) -> list[str]:
         if link["duplicates"]:
             parts.append(f"{len(link['duplicates'])} defined twice")
         out.append(f"Linked into one PC program, the C would need {link['undefined']} symbols nothing defines: "
-                   + "; ".join(parts) + ". Port readiness lists them by what fixes each.")
+                   + "; ".join(parts) + ". Port readiness lists them by what fixes each"
+                   + ("; Fix calls by old names puts the renamed ones right." if any(
+                       g["kind"] == "renamed" for g in link["groups"]) else "."))
     assets = report.get("assets")
     if report["kit"] and report["rom_data"]["scanned"] and assets and not assets["written"]:
         out.append(f"The ROM's data has no asset map for the kit's extractor yet ({assets['resources']} resources, "

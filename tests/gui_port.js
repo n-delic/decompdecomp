@@ -86,5 +86,10 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(rows.some(r=>r.startsWith('Linked for a PC: 5 symbols needed and defined nowhere, 1 defined twice; 1,300 pieces of zeroed memory defined in port/src (2 functions')),rows.join('\n'));
    assert.ok(rows.some(r=>r.includes('renamed')&&r.includes('func_80000580 (now draw_hud), ...')));
    assert.ok(rows.some(r=>r.includes('defined twice')&&r.includes('tbl (a, b)')));}
-  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction and link passed');
+  {const t=setup();t.c.$('portPanel').open=true;const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
+   t.c.reply=async url=>url==='/api/rename-calls'?{job:'r1'}:report;
+   await t.run('fixRenamedCalls()');
+   assert.deepEqual(t.calls,['/api/rename-calls','/api/port-readiness?slug=a'],'the report is read again after');
+   assert.deepEqual(followed,['r1']);assert.equal(t.c.$('portRenameCalls').disabled,false);}
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link and renamed calls passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

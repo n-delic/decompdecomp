@@ -162,7 +162,9 @@ helpers defined twice. Linking against the real libultraship comes after those.
 Of the data symbols, nearly all are memory the game zeroes at boot, with no bytes in the ROM. Compile for PC
 defines them (`port/zeroed.py`, files in the project's `port/src`) with the types the game's C declares, sized
 by the PC compiler; what's left of the data group is data with bytes in the ROM (phase 1's data units), ROM
-offsets the asset map covers, and libultra's low-memory globals the kit provides.
+offsets the asset map covers, and libultra's low-memory globals the kit provides. Calls by a function's old name are put right by
+**Fix calls by old names** (`port/renamed_calls.py`): the new name in the callers, each judged on the console and
+the PC.
 
 ### 4. Port fixes, an agent task judged twice
 
