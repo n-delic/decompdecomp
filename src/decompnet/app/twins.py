@@ -1326,7 +1326,9 @@ class Twins:
                     res = forks.attempt(agent, slug, b["name"], note + src, keep=False,
                                         prelude="\n".join([prelude, *decls]).strip("\n"))
             else:
-                res = self.net.try_quietly(agent, proj, b, note + source)
+                # Saved files follow through the progress watcher, as for autopilot's drafts: syncing them before and
+                # after each try took most of a try's time on a big game.
+                res = self.net.try_quietly(agent, proj, b, note + source, synchronize=False)
         except NetworkError as e:
             log.info("twins: %s from %s: %s", b["name"], a["name"], str(e)[:WHY_CHARS])
             return "skip", ""

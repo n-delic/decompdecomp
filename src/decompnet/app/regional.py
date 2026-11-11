@@ -52,6 +52,16 @@ def release_key(net, proj) -> str | None:
     return net.console(proj).release_key(net.cfg(proj).get('rom') or {})
 
 
+def _row(net, slug: str):
+    """A project's current row without syncing its saved files first (project_row does): the other release's code
+    reads rows on every try, and each sync of a finished game took seconds. Saved files follow through the progress
+    watcher."""
+    row = net.project_store(slug).one("SELECT * FROM projects WHERE slug=?", slug)
+    if row is None:
+        raise NetworkError(f"There's no project {slug!r} here any more: link another release.")
+    return row
+
+
 def _eligible(net, proj) -> bool:
     return net.is_rom(proj) and not net.fork_slug(proj['slug']) and proj['slug'] not in net.links
 
@@ -109,7 +119,7 @@ def linked(net, proj) -> dict | None:
     if not link:
         return None
     try:
-        other = net.project_row(link['slug'])
+        other = _row(net, link['slug'])
     except (NetworkError, KeyError, ValueError):
         return None
     return dict(link, **_summary(net, other))
@@ -629,7 +639,7 @@ def _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) -
     from ..project import compiler_for
     from .prepared_evidence import scoped_config
     theirs = compiler_for(net.cfg(donor), a['vram'], a)
-    mine = compiler_for(net.cfg(net.project_row(proj['slug'])), b['vram'], b)
+    mine = compiler_for(net.cfg(_row(net, proj['slug'])), b['vram'], b)
     if (theirs['toolchain'], list(theirs['flags'])) == (mine['toolchain'], list(mine['flags'])):
         return None
     if net.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=?", b['id']):
@@ -644,10 +654,10 @@ def _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) -
     if not ok:
         return None
     settings = dict(toolchain=theirs['toolchain'], flags=list(theirs['flags']))
-    current = net.project_row(proj['slug'])  # (the pass's row is older than the settings other matches set)
+    current = _row(net, proj['slug'])  # (the pass's row is older than the settings other matches set)
     try:
         net._apply_compiler_config(current, scoped_config(current, b, settings))
-        result = net.try_quietly(agent, net.project_row(proj['slug']), b, note + source)
+        result = net.try_quietly(agent, _row(net, proj['slug']), b, note + source, synchronize=False)
     except (NetworkError, ToolchainError):
         return None  # the project changed meanwhile (a helper's match): the next pass tries again
     return 'match' if result.get('matched') else None
