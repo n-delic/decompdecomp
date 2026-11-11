@@ -632,3 +632,69 @@ def test_hand_outs_without_a_judged_rewrite_take_many_more_to_let_a_function_go(
     with net.store.tx() as db:  # made readable since: it has its tries again
         net._event(db, 1, agent.id, 'readable', 'f')
     assert _given_up(net) == set()
+
+
+# A twin's C: the declarations of the file it came from and blank lines that keep the function at its line.
+PREAMBLE = ('/* identical to f in ANOTHER GAME (matched), with its names changed by decompdecomp */\n'
+            + ''.join(f'extern s32 D_8009{i:04X}; /* audio state */\n' for i in range(300)) + ' ' * 40 + '\n' * 400)
+BIG = PREAMBLE + SOURCE + '\n'
+
+
+def _big(net):
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=? WHERE name='f'", (BIG,))
+        db.execute("UPDATE functions SET readable=1 WHERE name='g'")
+
+
+def test_a_brief_shows_only_the_function_under_a_big_preamble(game):
+    net, agent, _ = game
+    _big(net)
+    brief = net.readability.claim(agent, 'game')
+    assert brief.startswith('MAKE READABLE: f') and SOURCE in brief
+    assert 'D_80090000' not in brief and len(brief) < len(BIG) // 4
+    line = PREAMBLE.count('\n') + 1
+    assert f'the {line - 1:,} lines above it' in brief and f'line {line:,}' in brief
+
+
+def test_make_readable_takes_the_function_alone_and_keeps_its_line(game):
+    net, agent, calls = game
+    _big(net)
+    polished = '// Triples the value.\ns32 f(s32 value) {\n    s32 total;\n    total = value * 3;\n    return total;\n}'
+    assert net.readability.submit(agent, 'game', 'f', polished).startswith('✅')
+    kept = net._function('f', 'game')['matched_source']
+    assert calls[-1] == kept and kept.startswith(PREAMBLE)
+    assert kept.split('\n')[PREAMBLE.count('\n')] == '/* Triples the value. */ s32 f(s32 value) {'
+    assert kept.count('\n') == BIG.count('\n')
+
+
+def test_the_whole_c_or_a_small_preamble_is_taken_as_sent(game):
+    net, agent, calls = game
+    _big(net)
+    whole = BIG.replace('arg0', 'value')
+    assert net.readability.submit(agent, 'game', 'f', whole).startswith('✅') and calls[-1] == whole
+    # a machine draft's few declarations: the function alone is the whole C, as before
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=?, readable=0 WHERE name='g'", (DRAFT.replace(' f(', ' g('),))
+    alone = SOURCE.replace(' f(', ' g(').replace('arg0', 'value')
+    assert net.readability.submit(agent, 'game', 'g', alone).startswith('✅') and calls[-1] == alone
+
+
+def test_a_function_given_up_while_its_brief_was_unreadable_gets_one_fresh_start(game):
+    from decompnet.app import readable
+
+    net, agent, _ = game
+    _big(net)
+    def handed_out(times):
+        with net.store.tx() as db:
+            for _ in range(times):
+                net._event(db, 1, agent.id, 'polish', 'f')
+    handed_out(readable.POLISH_CLAIMS)
+    assert _given_up(net) == {'f'}
+    proj = net._project('game')
+    assert net.readability.left(proj) == 1 and _given_up(net) == set()
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE kind='polish_retry' AND detail='f'")['n'] == 1
+    handed_out(readable.POLISH_CLAIMS)  # tried again with a brief it could read: given up for good
+    assert net.readability.left(proj) == 0
+    net.readability = readable.Readability(net)  # (a new process looks again, and leaves it)
+    assert net.readability.left(proj) == 0
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE kind='polish_retry'")['n'] == 1
