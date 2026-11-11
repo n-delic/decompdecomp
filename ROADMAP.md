@@ -783,6 +783,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | The game's C compiled for a PC (Port readiness → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | The ROM's data as the kit's extractor config (Port readiness → Write asset map, docs/PORTING.md phase 2) | ✓ (Torch YAML, one BLOB per resource; typed textures and display lists not yet) |
 | The ROM's data extracted and checked (Port readiness → Extract with Torch) | ✓ macOS and Linux (Torch built from pinned source with pinned CMake); — Windows: Torch's MSVC build isn't driven yet | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| What stops the C linking for a PC (Port readiness, from Compile for PC's objects, docs/PORTING.md phase 3) | ✓ (undefined and twice-defined symbols, sorted by what fixes each; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port fixes judged twice (Start agents → Fix C for the PC, `fix_for_pc`, docs/PORTING.md phase 4) | ✓ (console match by the function judge, PC build by the pinned Zig's clang) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
@@ -964,6 +965,18 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### What stops the game's C linking for a PC
+
+Compile for PC now keeps what each function's object defines and needs (`pc_compile.symbols`, pyelftools), and
+Port readiness works out what a link of all of them would refuse (`port/pc_link.py`): symbols needed and defined
+nowhere, sorted by what fixes each (functions renamed since their callers were written, the game's assembly,
+unmatched functions, data that is only an address in the split's assembly, what the kit provides), and symbols
+defined twice. A kept port fix refreshes its function's symbols. On a finished N64 game's saved C: 1,529
+undefined, of them 1,424 data symbols (phase 1's work), 43 calls to old automatic names of functions renamed while
+polishing (`func_8008D8B4` is `pif_lock` now: the console build links by address and never noticed), 14
+functions in assembly, 10 libultra functions for libultraship; and 4 helpers defined in two files. Left: an agent
+task for the renamed calls and the duplicates, then the real link against a pinned libultraship.
 
 ### Torch pinned, and the asset map extracted and checked
 

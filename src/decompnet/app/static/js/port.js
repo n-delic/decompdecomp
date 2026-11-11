@@ -34,6 +34,16 @@ function renderPortReadiness(report) {
       + `, ${pc.warned} cast pointers to 32-bit integers (${new Date(pc.checked_at * 1000).toLocaleString()})`));
   for (const k of pc ? pc.kinds : []) facts.append(portRow(`  ${k.kind}`, `${k.functions}: ${k.about}. `
     + k.examples.join(", ") + (k.functions > k.examples.length ? ", ..." : "")));
+  const link = report.link;
+  if (link) {
+    facts.append(portRow("Linked for a PC", `${link.undefined.toLocaleString()} symbols needed and defined nowhere`
+      + (link.duplicates.length ? `, ${link.duplicates.length} defined twice` : "")
+      + (link.unread ? ` (${link.unread} functions don't compile yet, so what they need isn't known)` : "")));
+    for (const g of link.groups) facts.append(portRow(`  ${g.kind}`, `${g.symbols} (needed by ${g.users} functions): `
+      + `${g.about}. ` + g.examples.join(", ") + (g.symbols > g.examples.length ? ", ..." : "")));
+    if (link.duplicates.length) facts.append(portRow("  defined twice", link.duplicates.slice(0, 8)
+      .map((d) => `${d.name} (${d.in.join(", ")})`).join("; ")));
+  }
   const assets = report.assets;
   if (assets) facts.append(portRow("Asset map", `${assets.resources} resources, `
     + Object.entries(assets.groups).map(([g, b]) => `${g} ${b.toLocaleString()} bytes`).join(", ")
