@@ -51,5 +51,20 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    await t.run('loadPortReadiness()');
    assert.match(t.c.$('portWork')._errorBox.textContent,/Not a ROM project/);
    assert.equal(t.c.$('portReload').disabled,false);}
-  console.log('Port readiness panel: closed, read, stale reply and failure passed');
+  {const t=setup();t.c.$('portPanel').open=true;
+   t.c.reply=async()=>({...report,assets:{resources:11,groups:{archive:900,audio:70},unknown:60,written:false,folder:'port/assets'}});
+   await t.run('loadPortReadiness()');
+   const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
+   assert.ok(rows.some(r=>r.startsWith('Asset map: 11 resources, archive 900 bytes')&&r.endsWith('not written yet')),rows.join('\n'));
+   t.calls.length=0;
+   t.c.reply=async url=>url==='/api/asset-map'?{resources:11,bytes:970,path:'/p/port/assets',files:['config.yml','g/rom.yml']}:report;
+   await t.run('writeAssetMap()');
+   assert.deepEqual(t.calls,['/api/asset-map','/api/port-readiness?slug=a'],'writing reads the report again');
+   assert.match(t.c.$('portAssetsLog').textContent,/11 resources .* written to \/p\/port\/assets: config.yml, g\/rom.yml/);
+   assert.equal(t.c.$('portAssets').disabled,false);
+   t.c.reply=async()=>{throw Error("ROM Explorer hasn't scanned this ROM yet");};
+   await t.run('writeAssetMap()');
+   assert.match(t.c.$('portAssetsLog')._errorBox.textContent,/hasn't scanned/);
+   assert.equal(t.c.$('portAssets').disabled,false,'the button comes back after a failure');}
+  console.log('Port readiness panel: closed, read, stale reply, failure and asset map passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -781,6 +781,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Port readiness → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| The ROM's data as the kit's extractor config (Port readiness → Write asset map, docs/PORTING.md phase 2) | ✓ (Torch YAML, one BLOB per resource; typed textures and display lists not yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port fixes judged twice (Start agents → Fix C for the PC, `fix_for_pc`, docs/PORTING.md phase 4) | ✓ (console match by the function judge, PC build by the pinned Zig's clang) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
@@ -963,6 +964,21 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### The ROM's data written as Torch's asset map
+
+Port readiness → **Write asset map** (ROM projects with a port kit, once ROM Explorer has scanned): every byte of
+the ROM outside its code segments is put in one resource, grouped as ROM Explorer read it: an archive the game
+unpacks itself (kept whole: a ZIP's members are inflated by the game's own code, which Torch can't do), audio, or
+other data; padding and a few unnamed bytes between files join their neighbours, the cartridge's trailing fill and
+the N64's boot bytes are left out, and the map is checked to cover the ROM exactly once (`port/asset_map.py`). The
+N64 kit writes it as Torch's config, keyed by the ROM's SHA-1, and one BLOB per resource
+(`consoles/n64/port.py`, `torch_files`), into the project's `port/assets` folder: offsets and sizes, no game
+bytes. The readiness report says when it's missing or older than the scan. A finished N64 game whose data is one
+10.8 MB ZIP: 11 resources (the archive, two audio banks, eight small data blocks), 64 KB of them bytes ROM Explorer
+can't name yet. Left: textures, palettes, vertices and display lists in Torch's own types where they lie in the
+ROM unpacked; a run of Torch itself on the map (it isn't pinned yet); the port's glue turning the game's cartridge
+reads into reads of these resources.
+
 ### Agents fix the game's C for the PC, judged twice
 
 **Start agents → Fix C for the PC** (ROM projects, once Compile for PC has run): agents claim one function at a
@@ -972,7 +988,10 @@ when the console's compiler still makes the game's exact bytes and a 64-bit PC b
 pointer-size warnings (`port/port_fix.py`); what only the PC needs goes behind `#ifdef PORT`, which the PC check
 defines and the console build doesn't. A kept fix is the function's C, saved and committed like polishing.
 Driven through those calls on a copy of a finished N64 game: two functions with 19 and 2 PC errors fixed by
-pointer types, both still matching byte for byte, and a manual save wrote both. Left: an LLM run on a real game;
+pointer types, both still matching byte for byte, and a manual save wrote both. A first LLM run (Claude Haiku, one helper) on that game kept 11 fixes and
+released 10 functions too big for one pass with notes saying why (gcc's `__builtin_next_arg`
+varargs, functions with 20+ pointer errors). It needed a fix first: the app claimed a function to match for it
+before each session and, finding none on a finished game, never started the model. Left:
 display lists built by hand as two words (a `Gfx` is bigger in libultraship), which compile and need the port
 build to find; a per-function view of the PC errors in Functions.
 

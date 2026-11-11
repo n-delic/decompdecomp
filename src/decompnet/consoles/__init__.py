@@ -63,6 +63,8 @@ class PortKit:
     sdk_group: object  # function name -> "replaced" (the kit or the host has it), "native" (compiles as is) or None
     microcode: object = None  # the image's bytes -> [{"name", "variant", "version", "support"}], or None
     audio: object = None  # the game's function names -> {"library", "need"}, or None
+    asset_map: object = None  # (game facts, resources from port/asset_map.py) -> {file name: text}, or None
+    boot: int = 0  # bytes at the image's start that the console's boot reads, never the game: in no resource
 
 
 class Console:

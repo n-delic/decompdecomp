@@ -2,7 +2,8 @@
 
 Status: phase 0, the readiness report, is built (ROM projects; N64 with its kit); phase 1's judge and tools are
 built (N64); phase 3's first step, compiling the game's C for a PC, is built (N64), and so is phase 4's task with its
-two-way judge (N64); the rest is planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
+two-way judge (N64); phase 2's asset map is written as Torch's config, one BLOB per resource (N64); the rest is
+planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
 
 A matched, polished decomp rebuilds the game for its console. People finish a decomp to read, mod and port the
 game, and today decompdecomp stops at the export. This plan adds the next step: a **port**, the same C built for
@@ -119,6 +120,15 @@ Torch's asset types (texture, palette, vertices, display list, sound bank, seque
 after the symbol that loads it, and writes the game's Torch YAML, keyed by the ROM's SHA-1. A region is "mapped"
 when Torch extracts it and the extracted asset round-trips to the same bytes. The map is publishable: no game
 bytes are in it.
+
+Built first (`port/asset_map.py`, the N64 kit's `torch_files`): Port readiness → **Write asset map** puts every
+byte outside the code segments in one resource, grouped from ROM Explorer's scan: an archive the game unpacks
+itself, audio, or other data. Each is a Torch `BLOB` for now, and the map is checked to cover the ROM exactly once
+with the code, the N64's 0x1000 boot bytes and the trailing fill. Typing comes next: a game that stores its data
+packed (a finished N64 game keeps it all in one ZIP its own code inflates, which Torch can't) keeps the archive
+whole and unpacks it at run time as it did on the console, so its textures never become Torch textures; loose
+textures, palettes, vertices and display lists will. Torch isn't pinned or run yet, so "mapped" means "covered"
+until it is.
 
 ### 3. Port export
 
