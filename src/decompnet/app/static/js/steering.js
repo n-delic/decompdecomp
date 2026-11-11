@@ -455,12 +455,13 @@ function renderReleases(ov) {
   if (!panel) return;
   if (ov.kind === "fork") { panel.hidden = true; return; }
   const view = releaseViews.get(ov.slug);
-  if (!view) {
-    releaseViews.set(ov.slug, {loading: true});
+  if (!view || panel._slug !== ov.slug) {  // each time a project is opened: its status, and any job it runs
+    panel._slug = ov.slug;
+    releaseViews.set(ov.slug, {...(view || {}), loading: true});
     loadReleases(ov.slug).catch(() => { releaseViews.set(ov.slug, {data: {supported: false}}); if (S.slug === ov.slug) panel.hidden = true; });
-    return;
+    if (!view?.data) return;
   }
-  if (view.data && !view.busy) drawReleases(ov.slug, view.data);
+  if (view?.data && !view.busy) drawReleases(ov.slug, view.data);
 }
 async function loadReleases(slug, shared = false) {
   const data = await api(`/api/regional?slug=${encodeURIComponent(slug)}${shared ? "&shared=1" : ""}`);
@@ -471,6 +472,33 @@ function showReleases(slug, data) {
   const view = releaseViews.get(slug) || {};
   releaseViews.set(slug, {...view, data, loading: false});
   if (S.slug === slug && !view.busy) drawReleases(slug, data);
+  if (S.slug === slug && !view.busy && data.linked) {  // a job started elsewhere (before a reload, say): follow it
+    if (data.running?.names) bringReleaseNames(slug, data.linked, data.running.names);
+    else if (data.running?.code) tryReleaseCode(slug, data.linked, data.running.code);
+  }
+}
+/* "Bring names over" and "Try its code": start the job, or follow the one already running (`job`). A start refused
+   because one runs (another window, a click before a reload) follows that one instead. */
+function startOrFollow(slug, kind, job) {
+  return job ? Promise.resolve({job}) : api(`/api/regional/${kind}`, {method: "POST", body: {slug}}).catch(async error => {
+    const running = (await api(`/api/regional?slug=${encodeURIComponent(slug)}`).catch(() => null))?.running?.[kind];
+    if (running) return {job: running};
+    throw error;
+  });
+}
+function bringReleaseNames(slug, linked, job = null) {
+  return releaseAction(slug, "Bringing names over", "Names brought over.", async log => {
+    const result = await followJob((await startOrFollow(slug, "names", job)).job, log);
+    toast(`${result.renamed.toLocaleString()} names from ${esc(linked.name)}.`, "match");
+    showReleases(slug, await api(`/api/regional?slug=${encodeURIComponent(slug)}`));
+  });
+}
+function tryReleaseCode(slug, linked, job = null) {
+  return releaseAction(slug, "Trying the other release's code", "Finished trying the other release's code.", async log => {
+    const result = await followJob((await startOrFollow(slug, "code", job)).job, log);
+    toast(`${result.matched.toLocaleString()} matched and ${result.polished.toLocaleString()} polished from ${esc(linked.name)}.`, "match");
+    showReleases(slug, await api(`/api/regional?slug=${encodeURIComponent(slug)}`));
+  });
 }
 function releaseLabel(r) {
   return `${esc(r.name)} · ${esc(r.region || r.game_code || "another release")} · ${r.matched.toLocaleString()} of ${r.functions.toLocaleString()} matched`;
@@ -518,19 +546,9 @@ function drawReleases(slug, data, force = false) {
     log.textContent = "Unlinked.";
   });
   const names = body.querySelector("[data-release-names]");
-  if (names) names.onclick = () => releaseAction(slug, "Bringing names over", "Names brought over.", async log => {
-    const {job} = await api("/api/regional/names", {method: "POST", body: {slug}});
-    const result = await followJob(job, log);
-    toast(`${result.renamed.toLocaleString()} names from ${esc(linked.name)}.`, "match");
-    showReleases(slug, await api(`/api/regional?slug=${encodeURIComponent(slug)}`));
-  });
+  if (names) names.onclick = () => bringReleaseNames(slug, linked);
   const code = body.querySelector("[data-release-code]");
-  if (code) code.onclick = () => releaseAction(slug, "Trying the other release's code", "Finished trying the other release's code.", async log => {
-    const {job} = await api("/api/regional/code", {method: "POST", body: {slug}});
-    const result = await followJob(job, log);
-    toast(`${result.matched.toLocaleString()} matched and ${result.polished.toLocaleString()} polished from ${esc(linked.name)}.`, "match");
-    showReleases(slug, await api(`/api/regional?slug=${encodeURIComponent(slug)}`));
-  });
+  if (code) code.onclick = () => tryReleaseCode(slug, linked);
   $("releaseScan").onclick = () => releaseAction(slug, "Comparing code", "Comparison finished.", async log => {
     log.textContent = "Comparing this game's code with your other games of the same console.";
     const found = await api(`/api/regional?slug=${encodeURIComponent(slug)}&shared=1`);

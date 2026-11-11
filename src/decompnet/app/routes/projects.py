@@ -865,27 +865,33 @@ def register(app: App) -> None:
             check.state = 'done'
             raise
 
+    REGIONAL_JOBS = {'names': 'Names from another release', 'code': 'Code from another release'}
+
     def p_regional(slug, request, data):
         from .. import regional
         if request.method == 'POST':
-            return regional.link(net, slug, str(data.get('other') or '') or None)
-        return regional.status(net, slug, shared=request.query_params.get('shared') == '1')
+            out = regional.link(net, slug, str(data.get('other') or '') or None)
+        else:
+            out = regional.status(net, slug, shared=request.query_params.get('shared') == '1')
+        # The panel follows a job it didn't start too (a reload, another window, a restart of the page).
+        return out | {'running': {key: regional_running(slug, kind) for key, kind in REGIONAL_JOBS.items()}}
 
     def regional_running(slug, kind):
+        """The id of this project's running job of this kind, or None."""
         with jobs._lock:
-            return any(j['kind'] == kind and j['state'] == 'running' and j.get('activity_project') == slug
-                       for j in jobs.jobs.values())
+            return next((j['id'] for j in jobs.jobs.values() if j['kind'] == kind and j['state'] == 'running'
+                         and j.get('activity_project') == slug), None)
 
     def p_regional_names(slug, request, data):
         from .. import regional  # (the job checks the link: reading the project waits while it syncs)
-        if regional_running(slug, 'Names from another release'):
+        if regional_running(slug, REGIONAL_JOBS['names']):
             raise ValueError('Names are already coming over from the other release: its progress is in the panel.')
-        return {'job': jobs.start('Names from another release', lambda log: regional.bring_names(net, slug, log),
+        return {'job': jobs.start(REGIONAL_JOBS['names'], lambda log: regional.bring_names(net, slug, log),
                                   cancel_message='Stopped. The names already checked and saved stay.')}
 
     def p_regional_code(slug, request, data):
         from .. import regional
-        if regional_running(slug, 'Code from another release'):
+        if regional_running(slug, REGIONAL_JOBS['code']):
             raise ValueError('The other release\'s code is already being tried: its progress is in the panel.')
         if (net.autopilot_status(slug) or {}).get('state') == 'running':
             raise ValueError('Autopilot is running and tries the other release\'s code itself. Wait for it to finish.')
@@ -898,7 +904,7 @@ def register(app: App) -> None:
             job = Job()
             job.stop = log.cancel_event
             return regional.transfer(net, slug, job, log)
-        return {'job': jobs.start("Code from another release", work,
+        return {'job': jobs.start(REGIONAL_JOBS['code'], work,
                                   cancel_message='Stopped. Matches and polished functions found so far are saved.')}
 
     def p_sdk(slug, request, data):
