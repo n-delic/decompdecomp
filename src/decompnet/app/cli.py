@@ -328,7 +328,7 @@ def hosted_link(args) -> int:
 
 def judge_worker(args) -> int:
     from ..hosted_judge import main as judge
-    return judge(home_dir())
+    return judge(home_dir(), Path(args.packs) if args.packs else None, Path(args.cache) if args.cache else None)
 
 
 def install_info(args) -> int:
@@ -412,7 +412,9 @@ def main(argv: list[str] | None = None) -> int:
     he = sub.add_parser("hosted-export", help="write a project as a small hosted file, for decomp-mcp-gateway hosted serve")
     he.add_argument("slug", help="the project's slug")
     he.add_argument("dir", help="the hosted server's folder (writes DIR/projects/SLUG.sqlite3; again to update it)")
-    sub.add_parser("judge-worker", help=argparse.SUPPRESS)  # a verifier's judge (hosted_judge.py)
+    jw = sub.add_parser("judge-worker", help=argparse.SUPPRESS)  # a verifier's judge (hosted_judge.py)
+    jw.add_argument("--packs", help="judge from the verification packs in this folder (hosted_pack.py)")
+    jw.add_argument("--cache", help="where to build their scratch projects (default: PACKS/.judge-cache)")
     hl = sub.add_parser("hosted-link", help="take verified matches from a hosted server into a project")
     hl.add_argument("slug", help="the project's slug here")
     hl.add_argument("--server", help="the hosted server's address, https://...")

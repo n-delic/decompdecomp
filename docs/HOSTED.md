@@ -80,17 +80,45 @@ The MCP endpoint is `/p/<slug>/mcp`, with `Authorization: Bearer <token>`. It is
 
 ## Verifying: compiler servers
 
-A verifier is a compiler server: any computer with decompdecomp, the game imported and its compilers installed.
-The app's exact judge links each function at its address with the whole project's symbols and the ROM, so a
-verifier needs the full project, not just the hosted file. Several can serve one hosted server; each judges only
-the projects and compilers it has.
+A verifier is a compiler server: a computer with decompdecomp and the games' compilers installed. It doesn't need
+the games. Several can serve one hosted server; each judges only the projects and compilers it has.
 
 ```sh
 # on the server, or remotely by an admin: POST /v1/users {"name": "mac-studio", "role": "verifier"}
 decomp-mcp-gateway hosted add-user --dir /srv/decomp --name mac-studio --role verifier
-# on the compiler server (DECOMP_HOME: the home with the games imported)
-decomp-mcp-gateway verifier --server https://decomp.example --token dd_... --name mac-studio --slots 4
+# on the compiler server
+decomp setup                                   # the compilers
+decomp-mcp-gateway verifier --server https://decomp.example --token dd_... --name mac-studio --slots 4 \
+    --packs ~/decomp-packs
 ```
+
+### Verification packs
+
+The app's judge doesn't compare only the function's bytes. It links the compiled function at its address,
+resolving its references with the project's symbols. Then it checks any data the C defines (strings, jump tables,
+arrays) against the game's bytes at the addresses the original code uses (rom/match.py). So a verifier needs more
+than the agents' file: a verification pack (`hosted_pack.py`).
+- The pack holds:
+  - the symbol table and segment map;
+  - the bytes of the program segments (code and data, not the assets);
+  - any overlay data the project was given;
+  - each function's target and relocations, and the context headers;
+  - the settings the consoles' judges read (`JUDGE_KEYS`). None of the owner's paths or other settings are in it.
+- `decomp hosted-export` writes it beside the agents' file, as `DIR/packs/<slug>.sqlite3`. v-rally's is 2.6 MB.
+- Only verifiers and admins can download it (`GET /v1/p/<slug>/pack`, with an ETag), never agents, because it holds
+  game data. In invite-only mode, a verifier gets only the packs of projects granted to it.
+- `verifier --packs DIR` downloads the pack of every project it may verify, and again when one changes. It gives its
+  judges `--packs DIR`.
+- `decomp judge-worker --packs DIR` builds a small scratch project from each pack, once per version (the first judge
+  builds it, the others wait). It then judges with the app's own judge.
+- On a copy of v-rally, judging from the pack and from the full project gave the same verdict for 80 of 80
+  submissions: 60 real matches, all matched, and 20 functions given another function's C. Each took about 0.36 s
+  either way.
+- A verifier on a computer with no game imported (an empty decompdecomp home) downloaded the pack and verified 10
+  real matches with the real compilers, and rejected 2 wrong ones.
+
+Without `--packs`, a verifier judges with the projects imported in its own decompdecomp home instead (DECOMP_HOME),
+as on the owner's computer.
 
 `decomp-mcp-gateway verifier` (gateway/src/verifier.rs) does the following:
 - It runs one judge process per slot, `decomp judge-worker` by default (src/decompnet/hosted_judge.py), or another
@@ -166,7 +194,7 @@ On a copy of v-rally, the whole loop ran with the real compilers:
 
 ## Not yet
 
-- A judge in Rust for a console, so a compiler server needs only the compilers and the game, not decompdecomp.
+- A judge in Rust for a console, so a compiler server needs only the compilers and the packs, not decompdecomp.
 - Sign-in for users with GitHub, instead of tokens handed out by an admin. This needs a GitHub OAuth app of the
   server's own.
 - Fork (project-mode) projects. Only ROM projects export.

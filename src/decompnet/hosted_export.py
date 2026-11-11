@@ -134,4 +134,8 @@ def main(slug: str, out_dir: str, home: Path) -> int:
     internal = Path(home) / ".decomp"
     net = RomNetwork(internal / "decomp.db", Path(home), project_databases=True)
     export(net, slug, Path(out_dir) / "projects" / f"{slug}.sqlite3")
+    from .hosted_pack import export_pack
+    counts = export_pack(net, slug, Path(out_dir) / "packs" / f"{slug}.sqlite3")
+    print(f"{slug}: verification pack (for verifiers only) {counts['bytes'] / 2**20:.1f} MiB -> "
+          f"{Path(out_dir) / 'packs' / (slug + '.sqlite3')}")
     return 0

@@ -1512,6 +1512,32 @@ async fn policy(State(hosted): State<Arc<Hosted>>, headers: HeaderMap, body: Byt
     }
 }
 
+/// GET /v1/p/{slug}/pack (verifiers and admins): the project's verification pack (hosted_pack.py). It holds game data,
+/// so agents never get it. Its ETag is its SHA-256: a verifier sends If-None-Match and gets 304 when it has it.
+async fn verification_pack(State(hosted): State<Arc<Hosted>>, UrlPath(slug): UrlPath<String>, headers: HeaderMap) -> Response {
+    let user = match verifier(&hosted, &headers) {
+        Ok(user) => user,
+        Err(denied) => return denied,
+    };
+    if !valid_slug(&slug) || !hosted.allowed(&user, &slug) {
+        return json_response(StatusCode::NOT_FOUND, json!({"error": "no such pack"}));
+    }
+    let path = hosted.dir.join("packs").join(format!("{slug}.sqlite3"));
+    let Ok(Ok(data)) = tokio::task::spawn_blocking(move || std::fs::read(path)).await else {
+        return json_response(StatusCode::NOT_FOUND, json!({"error": "this project has no verification pack yet"}));
+    };
+    let tag = format!("\"{}\"", hex(&Sha256::digest(&data)));
+    if headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) == Some(tag.as_str()) {
+        return StatusCode::NOT_MODIFIED.into_response();
+    }
+    let mut response = (StatusCode::OK, data).into_response();
+    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/vnd.sqlite3"));
+    if let Ok(value) = HeaderValue::from_str(&tag) {
+        response.headers_mut().insert(header::ETAG, value);
+    }
+    response
+}
+
 async fn health() -> Response {
     json_response(StatusCode::OK, json!({"ok": true, "mode": "hosted"}))
 }
@@ -1523,6 +1549,7 @@ pub fn router(hosted: Arc<Hosted>, max_body: usize) -> Router {
         .route("/v1/p/{slug}/pending", get(pending))
         .route("/v1/p/{slug}/verdicts", post(verdict))
         .route("/v1/p/{slug}/matches", get(matches))
+        .route("/v1/p/{slug}/pack", get(verification_pack))
         .route("/v1/verifiers", post(register).get(list_verifiers))
         .route("/v1/work/lease", post(lease))
         .route("/v1/work/release", post(release_work))
