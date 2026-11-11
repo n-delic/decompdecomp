@@ -90,6 +90,14 @@ Driven through the agents' own tool calls on a copy of a finished N64 game: 80 c
 drafts, none handed out twice. Mechanical drafts (raw `u32` words, pointers cast to `u32`) match the bytes but are
 what a 64-bit port must undo; the prompt asks agents for the types the code uses, which the judge can't check.
 
+- **Machine drafts** (`app/data_drafts.py`): Port readiness → **Write data as C from the code**, a background job
+  with no agents and no tokens. Each datum's type comes from the game's code: every load and store of it (the
+  facts guess_struct uses, `Arch.field_accesses`) says each field's width, sign or float, and which fields are
+  pointers; a word holding a known symbol's address is a pointer to it. A draft is written only when the code
+  explains every byte (a field it uses, a pointer to a known symbol, or zero padding before an aligned field); a
+  datum read two ways, or with bytes nothing explains, goes to the data agents, whose brief now lists the fields
+  the code uses. Drafts are judged like agents' C.
+
 Still to do: an LLM agent run on a real game; the export building matched data from its C in place of the
 assembly; typed drafts; flagging pointers stored as integers (phase 0's open count); `.bss`; programs whose data
 isn't after their last code segment (overlays) and consoles other than the N64 (a `bss_start` reader each).

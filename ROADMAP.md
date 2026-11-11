@@ -961,6 +961,14 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### The game's data drafted as typed C, from its code
+
+Port readiness → **Write data as C from the code**: no agents, no tokens. The game's own loads and stores say each
+datum's fields (width, sign, float, pointer); a draft is written only when they explain every byte, and kept only
+when it holds the game's bytes. What's left goes to the data agents, whose brief lists what the code does with it.
+The last datum before `.bss` now ends there (it had no end). Left: data reached only through pointers the reader
+doesn't follow, overlays, other consoles' `bss_start`.
+
 ### Agents write the game's data as C
 
 **Start agents → Write data as C** (ROM projects, offered with polishing): agents claim the game's data one unit at

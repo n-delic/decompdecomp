@@ -241,6 +241,16 @@ def register(app: App) -> None:
         result = data_units.compile_data(net, slug, str(data.get("name", "")), str(data.get("source", "")))
         return {"exact": result.exact, "problems": result.problems, "size": result.size, "span": result.span}
 
+    def p_data_drafts(slug, request, data):
+        """Draft the game's data as typed C from its code (app/data_drafts.py), in the background."""
+        from .. import data_drafts
+
+        def work(log):
+            counts = data_drafts.run(net, slug, log)
+            return {k: v for k, v in counts.items() if k != "reasons"} | {"reasons": dict(sorted(
+                counts["reasons"].items(), key=lambda kv: -kv[1])[:6])}
+        return {"job": jobs.start("data-drafts", work, project=slug)}
+
     def g_port_readiness(slug, request, data):
         from ...port.readiness import readiness
         return readiness(net, slug)
@@ -1042,6 +1052,7 @@ def register(app: App) -> None:
         "/api/stats": (lambda s, r, d: net.stats(s), ["GET"]),
         "/api/port-readiness": (g_port_readiness, ["GET"]),
         "/api/data-unit": (p_data_unit, ["GET", "POST"]),
+        "/api/data-drafts": (p_data_drafts, ["POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
     }

@@ -347,7 +347,8 @@
       <div class="pad">
         <p>What still stands between this game and a native PC port. Read-only: nothing changes and no compiler runs.</p>
         <p class="small muted" id="portKit"></p>
-        <div class="row"><button class="ghost small-btn" id="portReload" type="button">Refresh</button></div>
+        <div class="row"><button class="ghost small-btn" id="portReload" type="button">Refresh</button><button class="ghost small-btn" id="portDrafts" type="button" title="Write the game's data as typed C where its code says every byte's type; each definition is judged by its bytes. Local CPU, no AI tokens.">Write data as C from the code</button></div>
+        <pre id="portDraftLog" class="joblog" hidden></pre>
         <pre id="portWork" class="joblog" hidden></pre>
         <ul class="small" id="portFacts"></ul>
         <p id="portReady"></p>
