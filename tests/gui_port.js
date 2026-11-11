@@ -32,7 +32,16 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.match(t.c.$('portKit').textContent,/libultraship and Torch/);
    assert.ok(t.c.$('portFacts').children.some(r=>r.children[1].textContent.includes('F3DEX.Rej 2.05')));
    assert.equal(t.c.$('portReload').disabled,false);
-   assert.equal(t.c.$('portWork')._workStatus.textContent,'Read.');}
+   assert.equal(t.c.$('portWork')._workStatus.textContent,'Read.');
+   assert.ok(t.c.$('portFacts').children.some(r=>r.children[1].textContent.startsWith('not yet: Compile for PC')),
+     'a game never compiled for a PC says how to');}
+  {const t=setup();t.c.$('portPanel').open=true;
+   t.c.reply=async()=>({...report,pc:{checked_at:1,target:'x86_64-linux-gnu',total:10,ok:6,warned:3,failed:1,
+     kinds:[{kind:'assembly',about:'MIPS assembly',functions:1,examples:['helper']}]}});
+   await t.run('loadPortReadiness()');
+   const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
+   assert.ok(rows.some(r=>r.includes('9 of 10 functions compile, 1 don')),rows.join('\n'));
+   assert.ok(rows.some(r=>r.includes('assembly')&&r.includes('helper')));}
   {const t=setup(),pending=deferred();t.c.$('portPanel').open=true;t.c.reply=()=>pending.promise;
    const p=t.run('loadPortReadiness()');assert.equal(t.c.$('portReload').disabled,true,'Refresh waits for the read');
    t.c.S.slug='b';pending.resolve(report);await p;

@@ -936,6 +936,39 @@ sha256 = "3623232f33a9c3baadf304480b2535f9a3cba8a58d42ecbb438ba267315d9998"
 subdir = "jdk-21.0.12.1+1/Contents/Home"
 platforms = ["macos-arm64"]
 
+[zig]
+name = "Zig 0.14.1 (clang 19), a C compiler for the PC"
+kind = "tool"
+license = "MIT"
+source = "ziglang.org/download 0.14.1"
+description = "Compiles a finished game's C for a 64-bit PC, to list what a port has to fix first (Port readiness, Compile for PC). Its clang brings its own headers for every target, so the result is the same on every computer."
+binary_name = "zig"
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz"
+sha256 = "24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c"
+subdir = "zig-x86_64-linux-0.14.1"
+platforms = ["linux-x86_64"]
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-aarch64-linux-0.14.1.tar.xz"
+sha256 = "f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b"
+subdir = "zig-aarch64-linux-0.14.1"
+platforms = ["linux-aarch64"]
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-x86_64-macos-0.14.1.tar.xz"
+sha256 = "b0f8bdfb9035783db58dd6c19d7dea89892acc3814421853e5752fe4573e5f43"
+subdir = "zig-x86_64-macos-0.14.1"
+platforms = ["macos-x86_64"]
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-aarch64-macos-0.14.1.tar.xz"
+sha256 = "39f3dc5e79c22088ce878edc821dedb4ca5a1cd9f5ef915e9b3cc3053e8faefa"
+subdir = "zig-aarch64-macos-0.14.1"
+platforms = ["macos-arm64"]
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-x86_64-windows-0.14.1.zip"
+sha256 = "554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c"
+subdir = "zig-x86_64-windows-0.14.1"
+platforms = ["windows-x86_64"]
+
 [binutils-mips]
 name = "GNU binutils for MIPS (decompals)"
 kind = "tool"

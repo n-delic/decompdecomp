@@ -28,6 +28,12 @@ function renderPortReadiness(report) {
   if (report.graphics.length) facts.append(portRow("Graphics microcode", report.graphics.map((g) =>
     `${g.name}${g.variant ? "." + g.variant : ""} ${g.version} (${g.support})`).join(", ")));
   if (report.audio.library) facts.append(portRow("Audio", report.audio.need));
+  const pc = report.pc;
+  facts.append(portRow("Compiled for a PC", !pc ? "not yet: Compile for PC lists what a port build refuses"
+    : `${(pc.ok + pc.warned).toLocaleString()} of ${pc.total.toLocaleString()} functions compile, ${pc.failed} don't`
+      + `, ${pc.warned} cast pointers to 32-bit integers (${new Date(pc.checked_at * 1000).toLocaleString()})`));
+  for (const k of pc ? pc.kinds : []) facts.append(portRow(`  ${k.kind}`, `${k.functions}: ${k.about}. `
+    + k.examples.join(", ") + (k.functions > k.examples.length ? ", ..." : "")));
   const todo = $("portBlockers");
   todo.replaceChildren(...report.blockers.map((b) => { const li = document.createElement("li"); li.textContent = b; return li; }));
   $("portReady").textContent = report.ready ? "Nothing found in the way of a port." : "To do, in order:";
@@ -62,8 +68,23 @@ async function draftPortData() {
   if (S.slug === slug) loadPortReadiness();
 }
 
+async function compileForPc() {
+  const slug = S.slug, log = $("portCompileLog");
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, "Compiling the game's C for a PC", [$("portCompile"), $("portReload")], "Compiled.");
+  try {
+    const { job } = await api("/api/pc-compile", { method: "POST", body: { slug } });
+    await followJob(job, log, null, () => S.slug === slug);
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally { finish(); }
+  if (S.slug === slug) loadPortReadiness();
+}
+
 if ($("portPanel")) {
   $("portDrafts").onclick = draftPortData;
+  $("portCompile").onclick = compileForPc;
   $("portPanel").addEventListener("toggle", loadPortReadiness);
   $("portReload").onclick = loadPortReadiness;
 }

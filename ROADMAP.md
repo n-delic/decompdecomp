@@ -780,6 +780,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
+| The game's C compiled for a PC (Port readiness → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
@@ -960,6 +961,17 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### The game's C compiled for a PC
+
+Port readiness → **Compile for PC**: every matched function the port keeps (the game's own and the library code it
+compiles as it is, not what the kit replaces) is compiled on its own with the project's shared header by a current
+clang for a 64-bit PC: the pinned Zig (`toolchains.toml`), whose clang brings its own headers, so every computer
+gets the same result. What fails and what keeps pointers in 32-bit integers is kept per function
+(`port/pc_compile.py`) and counted, by kind, in the readiness report and the `port_readiness` tool. On a finished
+2,121-function N64 game, 1,904 of 2,005 functions compile; 101 don't (calls with no declaration, integers passed as
+pointers, its own size checks), and 397 cast pointers to 32-bit integers. Left: a per-function tool for phase 4's
+fix agents, libultraship's headers in place of the game's own declarations of libultra, other consoles' kits.
 
 ### The game's data in C, saved and exported
 

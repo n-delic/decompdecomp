@@ -1,7 +1,7 @@
 # Porting a finished decomp (plan)
 
 Status: phase 0, the readiness report, is built (ROM projects; N64 with its kit); phase 1's judge and tools are
-built (N64); the rest is planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
+built (N64); phase 3's first step, compiling the game's C for a PC, is built (N64); the rest is planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
 
 A matched, polished decomp rebuilds the game for its console. People finish a decomp to read, mod and port the
 game, and today decompdecomp stops at the export. This plan adds the next step: a **port**, the same C built for
@@ -128,6 +128,16 @@ A sibling of today's Export: a CMake project that builds the game natively. It h
   through libultraship's controllers, EEPROM and Controller Pak saves as files, `osPiStartDma` from ROM turned into
   resource loads from the archive, the audio mixer;
 - a first-run step that runs Torch on the user's ROM to make the archive.
+
+Built first: **Compile for PC** (Port readiness; `port/pc_compile.py`), which compiles every function the port
+keeps, on its own, with the project's shared header, by a current clang for 64-bit x86 Linux (the pinned Zig, whose
+clang brings its own headers: the same result on every computer). Nothing is linked or run. Each function's errors
+and pointer-size warnings are kept in the project's database, sorted into what a port fixes (MIPS `asm`, calls
+with no declaration, integers passed as pointers, the C's own size checks, the shared header, pointers cast to
+32-bit integers), and the readiness report counts them. A finished N64 game's first run: 101 of 2,005 functions
+fail, 397 more cast pointers to 32-bit integers; the 32-bit build failed the same 101, so the pointer casts are
+what 64-bit adds. The game's C declares libultra itself (its shared header), so libultraship's headers aren't
+needed yet; they come with the export's glue.
 
 ### 4. Port fixes, an agent task judged twice
 

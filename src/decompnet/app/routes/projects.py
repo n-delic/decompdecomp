@@ -251,6 +251,11 @@ def register(app: App) -> None:
                 counts["reasons"].items(), key=lambda kv: -kv[1])[:6])}
         return {"job": jobs.start("data-drafts", work, project=slug)}
 
+    def p_pc_compile(slug, request, data):
+        """Compile the game's C for a PC and keep what breaks (port/pc_compile.py), in the background."""
+        from ...port import pc_compile
+        return {"job": jobs.start("pc-compile", lambda log: pc_compile.check(net, slug, log), project=slug)}
+
     def g_port_readiness(slug, request, data):
         from ...port.readiness import readiness
         return readiness(net, slug)
@@ -1059,6 +1064,7 @@ def register(app: App) -> None:
         "/api/port-readiness": (g_port_readiness, ["GET"]),
         "/api/data-unit": (p_data_unit, ["GET", "POST"]),
         "/api/data-drafts": (p_data_drafts, ["POST"]),
+        "/api/pc-compile": (p_pc_compile, ["POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
     }

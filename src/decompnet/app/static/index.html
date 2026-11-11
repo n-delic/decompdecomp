@@ -345,9 +345,10 @@
     <details class="panel settings-disclosure" id="portPanel">
       <summary class="panel-head"><h2>Port readiness</h2></summary>
       <div class="pad">
-        <p>What still stands between this game and a native PC port. Read-only: nothing changes and no compiler runs.</p>
+        <p>What still stands between this game and a native PC port. Refresh only reads: nothing changes and no compiler runs.</p>
         <p class="small muted" id="portKit"></p>
-        <div class="row"><button class="ghost small-btn" id="portReload" type="button">Refresh</button><button class="ghost small-btn" id="portDrafts" type="button" title="Write the game's data as typed C where its code says every byte's type; each definition is judged by its bytes. Local CPU, no AI tokens.">Write data as C from the code</button></div>
+        <div class="row"><button class="ghost small-btn" id="portReload" type="button">Refresh</button><button class="ghost small-btn" id="portDrafts" type="button" title="Write the game's data as typed C where its code says every byte's type; each definition is judged by its bytes. Local CPU, no AI tokens.">Write data as C from the code</button><button class="ghost small-btn" id="portCompile" type="button" title="Compile every function the port keeps for a 64-bit PC with a current clang, and list what it refuses. Nothing is linked or run, and the game's own build doesn't change. Local CPU, no AI tokens.">Compile for PC</button></div>
+        <pre id="portCompileLog" class="joblog" hidden></pre>
         <pre id="portDraftLog" class="joblog" hidden></pre>
         <pre id="portWork" class="joblog" hidden></pre>
         <ul class="small" id="portFacts"></ul>
