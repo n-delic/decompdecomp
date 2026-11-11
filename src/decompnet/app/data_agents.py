@@ -5,6 +5,10 @@ bytes (compile_data); a match frees the claim, and a unit it can't write goes ba
 The queue is every place in the game's initialised data its own code refers to, in address order, but a place inside
 a unit already in C (a struct's field): fewest tries first, so a hard datum doesn't hold up the rest. Claims are a
 lease on the unit's row, so a stopped agent's unit comes back on its own. Data agents see only these tools.
+
+Everything here reads the project inside `net.progress.view()`: outside it, each read first syncs the project's
+saved progress (seconds on a big project, a minute right after the app starts), and data units aren't part of
+that saved progress. Starting a data agent took 35 seconds at "Validating worker selection" that way.
 """
 
 from __future__ import annotations
@@ -38,8 +42,10 @@ def configure(net, slug, options, count):
     """A data task needs a ROM project whose data the app can find."""
     if options.get("task") != TASK:
         return options
-    proj = data_units._project(net, slug)
-    if not data_units.initialised_data(net, proj):
+    with net.progress.view():
+        proj = data_units._project(net, slug)
+        found = data_units.initialised_data(net, proj)
+    if not found:
         raise ValueError("The app can't find this game's initialised data yet (it reads where .bss starts from the "
                          "program: the N64's boot stub), so there is nothing for data agents to write.")
     return options
@@ -88,7 +94,9 @@ def queue(net, proj) -> list[int]:
 
 
 def left(net, slug) -> int:
-    return len(queue(net, data_units._project(net, slug)))
+    """Units left, asked every turn of every data agent's session loop."""
+    with net.progress.view():
+        return len(queue(net, data_units._project(net, slug)))
 
 
 def claim(net, agent, slug, name: str = "") -> str:

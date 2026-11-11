@@ -240,7 +240,7 @@ def register(app: App) -> None:
             if given.get("account_id"):
                 options.update(settings.account_options(kind, str(given["account_id"])))
             agents.report_start("Reading project metadata…")
-            if options.get('focus_function') or options.get('task')=='assets':
+            if options.get('focus_function') or options.get('task') in ('assets', 'data'):
                 with net.progress.view():
                     net.project_row(slug)
             else:

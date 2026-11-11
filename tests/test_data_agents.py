@@ -95,3 +95,15 @@ def test_the_tools_are_for_rom_projects_and_the_prompt_says_the_loop(project):
     with net.progress.view():
         text = data_agents.prompt(net, SimpleNamespace(options={"per_session": 3}, slug="game"))
     assert "claim_data()" in text and "compile_data(name, source)" in text and "up to 3 units" in text
+
+
+def test_starting_counting_and_tool_calls_never_wait_for_a_progress_sync(project, monkeypatch):
+    """Starting a data agent waited 35 seconds at "Validating worker selection": each read outside a progress view
+    first synced the project's saved progress, which a big project just after the app starts takes a minute for."""
+    from decompnet.app.tools import _invoke_once
+    net = project
+    monkeypatch.setattr(net.progress, "sync", lambda *a, **k: pytest.fail("data agents must not sync saved progress"))
+    assert data_agents.configure(net, "game", {"task": "data"}, 1) == {"task": "data"}
+    assert data_agents.left(net, "game") == 2
+    agent = start(net, "writer")
+    assert _invoke_once(net, agent, "game", "claim_data", {}).startswith("Claimed D_80000500")

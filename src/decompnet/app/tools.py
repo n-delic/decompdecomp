@@ -754,7 +754,8 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
 
 def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Work tools see pulled changes; the pending compact connection handshake reads saved metadata."""
-    if asset_agents.scope(net,agent):
+    if asset_agents.scope(net,agent) or _data_agents().scope(net,agent):
+        # their work isn't in the saved progress files: no sync before each call (app/data_agents.py)
         with net.progress.view():return _dispatch(net,agent,slug,name,args)
     if boundary_investigations.scope(net,agent):
         return _dispatch(net,agent,slug,name,args)
