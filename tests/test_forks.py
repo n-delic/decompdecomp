@@ -406,12 +406,32 @@ def test_the_definition_the_build_sees_beside_a_parked_one_is_found_by_its_annot
     text = ("#define MY_ATTR(x)\n#ifdef PARKED\nMY_ATTR(1) int F(void) { return 2; }\n#endif\n"
             "MY_ATTR(1) int H(void) { return 3; }\n")
     assert ForkEngine._seen_beside(fp, text, csource.find(text, "F"), "F", ["F"]) is None
-    for head, name in (("MY_ATTR(1, (2)) static int F(int a) const", "F"), ("__declspec(align(16)) int F(void)", "F"),
-                       ("__attribute__((format(printf, 1, 2))) int P(const char *f, ...)", "P"),
-                       ("void __attribute__((noinline)) G(int a)", "G"), ("int (*Pick(int a))(int b)", "Pick"),
-                       ("CFoo::CFoo(int a) : m_a(a), m_b(0)", "CFoo::CFoo"), ("int Get() const throw()", "Get"),
-                       ("void Car::operator()(int)", "Car::operator()"), ("int f(a, b)\nint a; int b;\n", "f")):
+    # and after the parameter list: `THROW_SPEC()` was taken for the name, and H for F's visible copy
+    text = ("#define THROW_SPEC()\n#ifdef PARKED\nint Car::F(void) const THROW_SPEC() { return 2; }\n#endif\n"
+            "int Car::H(void) const THROW_SPEC() { return 3; }\n")
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "Car::F"), "Car::F", ["Car::F"]) is None
+    for head, name in DEFINITION_HEADS:
         assert csource.defined_name(head + " {\n}\n", (0, len(head) + 4)) == name, head
+
+
+# a definition's head, and the name it gives its function (csource.parameter_list; dll2coff takes the same,
+# tests/test_ltcg_judge.py)
+DEFINITION_HEADS = (
+    ("MY_ATTR(1, (2)) static int F(int a) const", "F"), ("__declspec(align(16)) int F(void)", "F"),
+    ("__attribute__((format(printf, 1, 2))) int P(const char *f, ...)", "P"),
+    ("void __attribute__((noinline)) G(int a)", "G"), ("int (*Pick(int a))(int b)", "Pick"),
+    ("CFoo::CFoo(int a) : m_a(a), m_b(0)", "CFoo::CFoo"), ("int Get() const throw()", "Get"),
+    ("void Car::operator()(int)", "Car::operator()"), ("int f(a, b)\nint a; int b;\n", "f"),
+    # a macro after the parameter list, with or without its own, or between the type and the name
+    ("int Car::H(void) const THROW_SPEC()", "Car::H"), ("int F(void) MY_NORETURN(1)", "F"),
+    ("int Get() const THROW_SPEC()", "Get"), ("int F(int a) __THROW", "F"), ("int MY_ATTR(x) F(void)", "F"),
+    ("void __declspec(noinline) F(int a)", "F"), ("__declspec(noinline) Car::Car()", "Car::Car"),
+    ("MY_ATTR(x) Car::Car() : m_a(0)", "Car::Car"), ("int\nmain(void)", "main"), ("int Log(...)", "Log"),
+    # a K&R definition's declarations, past a macro's call (its `;` isn't the macro's)
+    ("MY_ATTR(1) int f(a)\nint a;", "f"),
+    # no name's parameter list leads to the body: none, not the first name (`int`)
+    ("int (F)(void)", None),
+)
 
 
 def test_csource_takes_no_macro_written_prototype_for_a_definition():

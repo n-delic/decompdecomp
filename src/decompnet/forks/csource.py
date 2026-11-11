@@ -113,33 +113,51 @@ def _definitions(text: str, clean: str, pos: int, bound: int):
 _NAME_THEN_PAREN = re.compile(  # (not `int (*Pick(int a))(int b)`'s `int (*`: a declarator's parenthesis)
     r"(?<![\w~:<>])((?:[\w~<>]+::)*operator\s*(?:\(\)|[^\s(]+)|(?:[\w~<>]+::)*~?\w+)\s*\((?!\s*[*&^])")
 _GROUP = r"\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"  # a parenthesised group, two levels deep
-# what can come between a parameter list and the body: qualifiers and an exception specification, then a
-# constructor's initialisers, a trailing return type, or a declarator's closing `)`. Not another `NAME(...)`: in a
-# definition, attributes and macros like them come before the declarator, and `MY_ATTR(1) int F(void)`'s F is the
-# name only once MY_ATTR's own group isn't taken for its parameter list
-_AFTER_PARAMETERS = re.compile(
-    rf"(?:\s|const\b|volatile\b|override\b|final\b|&&?|(?:throw|noexcept|__attribute__)\s*{_GROUP}|noexcept\b)*"
-    r"(?:(?::|->|\)).*)?", re.S)
+# what can come between a parameter list and the body: qualifiers, exception specifications, attributes and any
+# macro (`THROW_SPEC()`, `MY_NORETURN(1)`), then a constructor's initialisers, a trailing return type, or a
+# declarator's closing `)`. (`\b`: a word is never split into words, which would backtrack without end)
+_AFTER_PARAMETERS = re.compile(rf"(?:\s|&&?|\w+\b(?:\s*{_GROUP})?)*(?:(?::(?!:)|->|\)).*)?", re.S)
+_KR_DECLARATIONS = re.compile(r"[^(]*;")  # a K&R definition's parameter declarations: a `;`, no call before it
+# keywords written like a call (`__declspec(noinline)`, `throw()`), never a function's name; unlike macros, a list
+_KEYWORDS = frozenset({"__declspec", "__attribute__", "alignas", "_Alignas", "__pragma", "_Pragma", "decltype",
+                       "throw", "noexcept", "sizeof", "typeof", "__typeof__", "asm", "__asm", "__asm__"})
+_ARGUMENTS = re.compile(r"\(\s*(?:[\d\"'-]|\.\d)")  # `MY_ATTR(1)`: a macro's arguments, never a parameter list
+_PARAMETERS = re.compile(r"\(\s*void\s*\)|\(.*(?:\w[\s*&]+\w|[*&]|\.\.\.)", re.S)  # (void), `int a`, `char *`, `...`
 
 
-def defined_name(text: str, span: tuple[int, int]) -> str | None:
-    """The name a definition gives its function (`CAIBehaviour::Update` for `void CAIBehaviour::Update(int)`): the
-    name whose parameter list the body follows (after qualifiers, `throw()`, attributes, initialisers). The name
-    before the first `(` was taken for it, and of a parked draft written `__declspec(noinline) int F(void)` (or with
-    any macro, `MY_ATTR(1) int F(void)`) the next function written the same way was taken for its visible copy. A K&R
-    definition's declarations come before its body too (a `;` there)."""
-    head = _blank(text[span[0]:span[1]]).split("{", 1)[0]
-    found = [m for m in _NAME_THEN_PAREN.finditer(head) if _in_declarator(head, m.start())]
-    for m in found:
+def parameter_list(head: str) -> re.Match | None:
+    """The `NAME(` whose parentheses are a definition's parameter list in `head`, the text before its body (comments
+    and strings blanked): group 1 is the name. It's a name whose list the body follows, past qualifiers, `throw()`,
+    macros, initialisers, or a K&R definition's declarations. `MY_ATTR(1) int F(void)` and `int F(void)
+    THROW_SPEC()` look alike, a `NAME(...)` beside another, so of those a list that can only be parameters wins
+    (`void`, `int a`), then a name with a type before it; never a keyword or a group starting with a literal. None
+    when no name's list leads to the body (`int (F)(void)`)."""
+    best, rank = None, None
+    for m in _NAME_THEN_PAREN.finditer(head):
+        if m.group(1) in _KEYWORDS or not _in_declarator(head, m.start()):
+            continue
         depth, k = 0, m.end() - 1
         while k < len(head):
             depth += (head[k] == "(") - (head[k] == ")")
             k += 1
             if depth == 0:
                 break
-        if ";" in head[k:] or _AFTER_PARAMETERS.fullmatch(head[k:]):
-            return m.group(1)
-    return found[0].group(1) if found else None
+        group, rest = head[m.end() - 1:k], head[k:]
+        if _ARGUMENTS.match(group) or not (_KR_DECLARATIONS.match(rest) or _AFTER_PARAMETERS.fullmatch(rest)):
+            continue
+        typed = re.search(r"[\w*&>]\s*$", head[:m.start()]) is not None
+        if rank is None or (_PARAMETERS.match(group) is not None, typed) > rank:
+            best, rank = m, (_PARAMETERS.match(group) is not None, typed)
+    return best
+
+
+def defined_name(text: str, span: tuple[int, int]) -> str | None:
+    """The name a definition gives its function (`CAIBehaviour::Update` for `void CAIBehaviour::Update(int)`): the
+    one whose parameter list the body follows (parameter_list). The name before the first `(` was taken for it, and
+    of a parked draft written `__declspec(noinline) int F(void)` (or with any macro, before the name or after its
+    parameters) the next function written the same way was taken for its visible copy."""
+    m = parameter_list(_blank(text[span[0]:span[1]]).split("{", 1)[0])
+    return m.group(1) if m else None
 
 
 def _in_declarator(head: str, at: int) -> bool:

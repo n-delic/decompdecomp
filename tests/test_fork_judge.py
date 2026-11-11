@@ -312,6 +312,32 @@ def test_a_parked_definition_brought_out_leaves_out_its_harness_stand_in_too(for
     assert "lit.standins.cpp" in log  # committed with the match
 
 
+def test_a_parked_functions_best_attempt_is_previewed_without_its_harness_stand_in(fork, monkeypatch):
+    """The best attempt's preview places code as a try does (ForkEngine._place): of a draft parked under `#ifdef
+    FLAG`, with its harness's stand-in under `#ifndef FLAG`, it's built with the stand-in left out (or defined twice,
+    LNK2005), and the harness is as it was after."""
+    net, slug, _ = fork
+    root = Path(net.project_row(slug)["root"])
+    path = root / "src" / "lit.c"
+    path.write_text(path.read_text() + "\n#ifdef REAL_SCALE\n// FUNCTION: 0x80000010\n" + SCALE.replace("1.1", "1.2")
+                    + "#endif\n")
+    (root / "harness").mkdir()
+    harness = root / "harness" / "lit.standins.cpp"
+    standin = "int g_other;\n#ifndef REAL_SCALE\ndouble scale(double x) { return x; }\n#endif\n"
+    harness.write_text(standin)
+    before = path.read_text()
+    fid = net._function("scale", slug)["id"]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=50, best_source=? WHERE id=?", (SCALE, fid))
+    seen = []
+    build = net.forks._build_unit
+    monkeypatch.setattr(net.forks, "_build_unit", lambda proj, fp, unit: (seen.append(harness.read_text()),
+                                                                          build(proj, fp, unit))[1])
+    assert net.function_diff(slug, "scale", "best")["kind"] == "best"
+    assert seen[0] == "int g_other;\n"  # built with the stand-in left out
+    assert harness.read_text() == standin and path.read_text() == before  # and both files as they were
+
+
 def test_a_function_only_declared_in_the_build_is_not_built_yet(tmp_path, monkeypatch):
     """objdiff lists an extern the source calls on the build's side, with no size and no code: read as built, that
     was a "100% match", and a DS game's agents were told so of a function no file defined, again and again."""

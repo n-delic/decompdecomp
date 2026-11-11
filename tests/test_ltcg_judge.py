@@ -306,3 +306,20 @@ def test_the_app_and_the_judge_take_the_same_definition_for_an_annotation(text, 
     at, clean = text.index("\n") + 1, dll2coff._blank(text)
     first = csource.get(text, key, [key, *app]).split("\n", 1)[0]
     assert first.startswith(dll2coff.definition(text, clean, at, len(text), judge)), first
+
+
+def test_the_judge_names_a_definition_as_the_app_does_past_any_macro():
+    """A definition with a macro after its parameter list (`int Car::H(void) const THROW_SPEC()`) was cut up to its
+    line's last "(", as `?THROW_SPEC@@` (and one with `throw()` as `?throw@@`): the app's csource and dll2coff now
+    take the same name, the one whose parameter list the body follows."""
+    from .test_forks import DEFINITION_HEADS
+
+    for head, name in DEFINITION_HEADS:
+        if name is None:  # (no name leads to the body: the judge keeps its old reading, the app writes no try there)
+            continue
+        text = f"// FUNCTION: 0x11000\n{head} {{\n}}\n"
+        decl = dll2coff.definition(text, dll2coff._blank(text), text.index("\n") + 1, len(text), ["_func_00011000"])
+        assert decl is not None and dll2coff._declared(decl) == name, (head, decl)
+    text = "// FUNCTION: 0x11000\nint Car::H(void) const THROW_SPEC()\n{\n}\n"
+    decl = dll2coff.definition(text, dll2coff._blank(text), text.index("\n") + 1, len(text), ["_func_00011000"])
+    assert decl == "int Car::H(" and dll2coff.symbol_hint(decl) == "?H@Car@@"

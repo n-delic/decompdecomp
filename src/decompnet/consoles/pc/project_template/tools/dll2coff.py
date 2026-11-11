@@ -67,6 +67,55 @@ _INLINE_HEAD = re.compile(r"\b(?:inline|__inline|__forceinline)\b")
 # what's written before a declaration with parentheses of its own (`__declspec(noinline)`, `MY_ATTR(1)`), alone on a line
 _ONLY_CALLS = re.compile(r"\s*(?:\w+\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)\s*)+")  # a line of `NAME(...)`s alone
 
+# Which `NAME(` is a definition's parameter list: as the app's csource.parameter_list takes it (the same rules, kept in
+# step by tests/test_ltcg_judge.py), which writes a try where this then cuts the function out
+_NAME_THEN_PAREN = re.compile(
+    r"(?<![\w~:<>])((?:[\w~<>]+::)*operator\s*(?:\(\)|[^\s(]+)|(?:[\w~<>]+::)*~?\w+)\s*\((?!\s*[*&^])")
+_GROUP = r"\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"
+_AFTER_PARAMETERS = re.compile(rf"(?:\s|&&?|\w+\b(?:\s*{_GROUP})?)*(?:(?::(?!:)|->|\)).*)?", re.S)
+_KR_DECLARATIONS = re.compile(r"[^(]*;")
+_KEYWORDS = frozenset({"__declspec", "__attribute__", "alignas", "_Alignas", "__pragma", "_Pragma", "decltype",
+                       "throw", "noexcept", "sizeof", "typeof", "__typeof__", "asm", "__asm", "__asm__"})
+_ARGUMENTS = re.compile(r"\(\s*(?:[\d\"'-]|\.\d)")
+_PARAMETERS = re.compile(r"\(\s*void\s*\)|\(.*(?:\w[\s*&]+\w|[*&]|\.\.\.)", re.S)
+
+
+def _parameter_list(head: str) -> re.Match | None:
+    """The `NAME(` whose parentheses are the parameter list the body after `head` follows (past qualifiers, `throw()`,
+    macros before the name or after the list, initialisers, K&R declarations), or None. Of `NAME(...)`s side by side
+    (`MY_ATTR(1) int F(void)`, `int F(void) THROW_SPEC()`), a list that can only be parameters wins, then a name with
+    a type before it; never a keyword or a group starting with a literal. Cut up to the last "(" of its line, a
+    definition `int Car::H(void) const THROW_SPEC() {` was `?THROW_SPEC@@`, and one with `throw()` `?throw@@`."""
+    best, rank = None, None
+    for m in _NAME_THEN_PAREN.finditer(head):
+        if m.group(1) in _KEYWORDS or not _in_declarator(head, m.start()):
+            continue
+        depth, k = 0, m.end() - 1
+        while k < len(head):
+            depth += (head[k] == "(") - (head[k] == ")")
+            k += 1
+            if depth == 0:
+                break
+        group, rest = head[m.end() - 1:k], head[k:]
+        if _ARGUMENTS.match(group) or not (_KR_DECLARATIONS.match(rest) or _AFTER_PARAMETERS.fullmatch(rest)):
+            continue
+        typed = re.search(r"[\w*&>]\s*$", head[:m.start()]) is not None
+        if rank is None or (_PARAMETERS.match(group) is not None, typed) > rank:
+            best, rank = m, (_PARAMETERS.match(group) is not None, typed)
+    return best
+
+
+def _in_declarator(head: str, at: int) -> bool:
+    """True when `at` isn't inside another call's parentheses (`align` in `__declspec(align(16))`): at the top, or only
+    in a declarator's own (`(*`), as `Pick` is in `int (*Pick(int a))(int b)`."""
+    opened = []
+    for k, c in enumerate(head[:at]):
+        if c == "(":
+            opened.append(re.match(r"\(\s*[*&^]", head[k:]) is not None)
+        elif c == ")" and opened:
+            opened.pop()
+    return all(opened)
+
 
 def _past(clean: str, brace: int) -> int:
     """Just past the block that opens at `brace`."""
@@ -135,7 +184,17 @@ def _definition_lines(text: str, clean: str, pos: int, bound: int):
         if "(" not in head or re.match(r"\s*(?:typedef\s+)?(?:struct|class|union|enum|namespace)\b", head):
             pos = _past(clean, brace)  # past the type (or initialiser)
             continue
-        at, lines = head_at, []
+        # from the line of the name whose parameter list the body follows, up to that list's "(" (the real text:
+        # extern "C" keeps its "C"), with preprocessor lines left out
+        flat = "\n".join(" " * len(ln) if ln.lstrip().startswith("#") else ln for ln in clean[head_at:brace].split("\n"))
+        if (m := _parameter_list(flat)) is not None:
+            start = head_at + flat.rfind("\n", 0, m.start(1)) + 1
+            start += len(text[start:head_at + m.start(1)]) - len(text[start:head_at + m.start(1)].lstrip())
+            yield text[start:head_at + m.end()], bool(_INLINE_HEAD.search(head))
+            any_found = True
+            pos = _past(clean, brace)
+            continue
+        at, lines = head_at, []  # none: as before it, the first line with a "(" that isn't only macro calls
         for ln in clean[head_at:brace].split("\n"):  # its lines with a "(" (not a #pragma)
             if "(" in ln and not ln.lstrip().startswith("#"):
                 lines.append((at, ln))
