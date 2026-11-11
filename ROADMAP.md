@@ -966,6 +966,18 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### The game's zeroed memory defined for the PC
+
+Almost all the data a finished game's C reaches by address and that has no C is memory the game zeroes at boot
+(`.bss`): on a finished N64 game, 1,332 of 1,355 such symbols. It has no bytes to extract or judge; a PC program
+only needs each defined at the size the PC needs. Compile for PC now writes those definitions after compiling the
+functions (`port/zeroed.py`): each name is defined with the type the game's own C declares it with
+(`__typeof__(x) x;`, the declaration copied from the function that makes it), so a pointer gets 8 bytes; an array
+declared without a size gets twice its console room in PC-sized elements; a name whose type only its function
+knows is zeroed bytes, twice its room, in a second file. The PC compiler checks them, the link check counts them
+as defined, and they go in the project's `port/src` (names and types, no game bytes). Left: code that runs off one
+variable into the next, and pointers declared as 32-bit integers, which show only when the port runs.
+
 ### What stops the game's C linking for a PC
 
 Compile for PC now keeps what each function's object defines and needs (`pc_compile.symbols`, pyelftools), and

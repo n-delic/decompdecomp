@@ -281,7 +281,9 @@ def describe(report: dict) -> str:
     if link:
         lines.append(f"Linking for a PC ({link['functions']} functions' objects"
                      + (f", {link['unread']} not compiled yet" if link["unread"] else "")
-                     + f"): {link['undefined']} symbols needed and defined nowhere.")
+                     + f"): {link['undefined']} symbols needed and defined nowhere"
+                     + (f"; {link['zeroed']} pieces of zeroed memory defined by port/src/zeroed_data*.c"
+                        if link.get("zeroed") else "") + ".")
         lines += [f"- {g['kind']} ({g['symbols']}, needed by {g['users']} functions): {g['about']}. "
                   + ", ".join(g["examples"]) for g in link["groups"]]
         if link["duplicates"]:

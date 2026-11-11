@@ -261,6 +261,11 @@ def check(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
                 db.execute("DELETE FROM port_compile WHERE project_id=? AND name=?", (proj["id"], name))  # gone
             for name, found in results.items():
                 record(db, proj["id"], name, found, now, linked[name])
+        from .pc_link import undefined
+        from .zeroed import build as define_zeroed
+        missing = undefined(net, proj, zeroed=False)
+        if missing is not None:  # (none left still rewrites the files and the record)
+            define_zeroed(net, proj, missing[0].get("data", []), cc, log)
         result = summary(net, proj)
     sizes = next((k["functions"] for k in result["kinds"] if k["kind"] == "pointer size"), 0)
     log(f"{result['ok'] + result['warned']} of {result['total']} functions compile for a 64-bit PC; "

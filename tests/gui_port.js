@@ -79,11 +79,11 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.deepEqual(followed,['j1'],'the job is followed with its progress bar');
    assert.equal(t.c.$('portExtract').disabled,false);assert.equal(t.c.$('portAssets').disabled,false);}
   {const t=setup();t.c.$('portPanel').open=true;
-   t.c.reply=async()=>({...report,link:{functions:10,unread:2,undefined:5,duplicates:[{name:'tbl',in:['a','b']}],
+   t.c.reply=async()=>({...report,link:{functions:10,unread:2,undefined:5,zeroed:1300,duplicates:[{name:'tbl',in:['a','b']}],
      groups:[{kind:'renamed',about:'old names',symbols:3,users:4,examples:['func_80000580 (now draw_hud)']}]}});
    await t.run('loadPortReadiness()');
    const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
-   assert.ok(rows.some(r=>r.startsWith('Linked for a PC: 5 symbols needed and defined nowhere, 1 defined twice (2 functions')),rows.join('\n'));
+   assert.ok(rows.some(r=>r.startsWith('Linked for a PC: 5 symbols needed and defined nowhere, 1 defined twice; 1,300 pieces of zeroed memory defined in port/src (2 functions')),rows.join('\n'));
    assert.ok(rows.some(r=>r.includes('renamed')&&r.includes('func_80000580 (now draw_hud), ...')));
    assert.ok(rows.some(r=>r.includes('defined twice')&&r.includes('tbl (a, b)')));}
   console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction and link passed');
