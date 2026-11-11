@@ -32,6 +32,12 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 
 pub const FORMAT: &str = "1";
+/// The verification packs' format (src/decompnet/hosted_pack.py FORMAT).
+const PACK_FORMAT: &str = "1";
+/// How a published project merges into the live one: the same script the Python exporter runs.
+const MERGE_SQL: &str = include_str!("../../src/decompnet/hosted_merge.sql");
+/// The largest project or pack a publish may upload.
+const MAX_UPLOAD: usize = 1024 * 1024 * 1024;
 const CLAIM_SECONDS: f64 = 30.0 * 60.0;
 const MAX_CLAIMS: i64 = 6;
 const MAX_SOURCE: usize = 256 * 1024;
@@ -755,6 +761,26 @@ impl Project {
         Ok(json!({"id": id, "state": state}))
     }
 
+    /// Merge a fresh export into this project (MERGE_SQL), on its writer, in one transaction.
+    fn merge(&self, fresh: &Path) -> Result<i64, Problem> {
+        let mut db = self.db.lock().unwrap();
+        db.execute("ATTACH DATABASE ?1 AS incoming", [fresh.to_string_lossy()])?;
+        let result = (|| -> Result<i64, Problem> {
+            let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let removed: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM main.functions WHERE status NOT IN ('matched','removed') \
+                 AND id NOT IN (SELECT id FROM incoming.functions)",
+                [],
+                |r| r.get(0),
+            )?;
+            tx.execute_batch(MERGE_SQL)?;
+            tx.commit()?;
+            Ok(removed)
+        })();
+        db.execute("DETACH DATABASE incoming", [])?;
+        result
+    }
+
     /// Verified matches since a time, for the app that owns the full project to take in.
     pub fn matches(&self, since: f64) -> Result<Value, Problem> {
         self.read(|db| self.matches_on(db, since))
@@ -1090,6 +1116,78 @@ impl Hosted {
             .filter(|s| self.dir.join("projects").join(format!("{s}.sqlite3")).is_file() && self.allowed(user, s))
             .collect();
         Ok(json!({"verifier": id, "projects": served}))
+    }
+
+    /// Install an uploaded project file or verification pack (`decomp hosted-publish`): a new project as it is, an
+    /// existing one merged in one transaction (MERGE_SQL), so the server keeps its claims, submissions and matches.
+    /// A pack replaces the old one whole.
+    pub fn install(&self, slug: &str, kind: &str, data: &[u8]) -> Result<Value, Problem> {
+        if !valid_slug(slug) {
+            return problem(format!("{slug:?} isn't a project name"));
+        }
+        let incoming = self.dir.join("incoming");
+        std::fs::create_dir_all(&incoming).map_err(|e| Problem(e.to_string()))?;
+        let upload = incoming.join(format!("{slug}-{}.sqlite3", new_token(6)));
+        std::fs::write(&upload, data).map_err(|e| Problem(e.to_string()))?;
+        let result = self.install_file(slug, kind, &upload);
+        let _ = std::fs::remove_file(&upload);
+        result
+    }
+
+    fn install_file(&self, slug: &str, kind: &str, upload: &Path) -> Result<Value, Problem> {
+        let (format, named, functions, file_kind) = {
+            let db = Connection::open_with_flags(upload, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|e| Problem(format!("that isn't a SQLite file: {e}")))?;
+            let meta = |key: &str| -> Option<String> {
+                db.query_row("SELECT value FROM meta WHERE key=?", [key], |r| r.get(0)).optional().ok().flatten()
+            };
+            let functions: i64 = db.query_row("SELECT COUNT(*) FROM functions", [], |r| r.get(0)).unwrap_or(-1);
+            (meta("format"), meta("slug"), functions, meta("kind").unwrap_or_else(|| "project".into()))
+        };
+        if file_kind != kind {
+            return problem(format!("that file is a {file_kind}, not a {kind}"));
+        }
+        if named.as_deref() != Some(slug) {
+            return problem(format!("that file is the project {named:?}, not {slug:?}"));
+        }
+        if functions < 0 {
+            return problem("that file has no functions table");
+        }
+        match kind {
+            "pack" => {
+                if format.as_deref() != Some(PACK_FORMAT) {
+                    return problem(format!("that pack is format {format:?}; this server reads {PACK_FORMAT}"));
+                }
+                let packs = self.dir.join("packs");
+                std::fs::create_dir_all(&packs).map_err(|e| Problem(e.to_string()))?;
+                let part = packs.join(format!(".{slug}.part"));
+                std::fs::copy(upload, &part).map_err(|e| Problem(e.to_string()))?;
+                std::fs::rename(&part, packs.join(format!("{slug}.sqlite3"))).map_err(|e| Problem(e.to_string()))?;
+                Ok(json!({"project": slug, "kind": "pack", "functions": functions}))
+            }
+            "project" => {
+                if format.as_deref() != Some(FORMAT) {
+                    return problem(format!("that project is format {format:?}; this server reads {FORMAT}"));
+                }
+                let live = self.dir.join("projects").join(format!("{slug}.sqlite3"));
+                {
+                    // A project nobody has opened yet: installed as it is (under the lock that opens projects).
+                    let projects = self.projects.lock().unwrap();
+                    if !projects.contains_key(slug) && !live.exists() {
+                        let part = live.with_file_name(format!(".{slug}.part"));
+                        std::fs::copy(upload, &part).map_err(|e| Problem(e.to_string()))?;
+                        std::fs::rename(&part, &live).map_err(|e| Problem(e.to_string()))?;
+                        drop(projects);
+                        let _ = self.project(slug).ok_or_else(|| Problem("the new project didn't open".into()))?;
+                        return Ok(json!({"project": slug, "kind": "project", "created": true, "functions": functions}));
+                    }
+                }
+                let project = self.project(slug).ok_or_else(|| Problem(format!("{slug} didn't open")))?;
+                let removed = project.merge(upload)?;
+                Ok(json!({"project": slug, "kind": "project", "created": false, "functions": functions, "removed": removed}))
+            }
+            other => problem(format!("kind is project or pack, not {other:?}")),
+        }
     }
 
     /// The verifier's projects and toolchains, if it is this user's.
@@ -1538,6 +1636,25 @@ async fn verification_pack(State(hosted): State<Arc<Hosted>>, UrlPath(slug): Url
     response
 }
 
+/// POST /v1/p/{slug}/upload?kind=project|pack (admins): `decomp hosted-publish`'s files, the raw SQLite file as the body.
+async fn upload(
+    State(hosted): State<Arc<Hosted>>,
+    UrlPath(slug): UrlPath<String>,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(denied) = admin(&hosted, &headers) {
+        return denied;
+    }
+    let kind = query.get("kind").cloned().unwrap_or_else(|| "project".into());
+    match tokio::task::spawn_blocking(move || hosted.install(&slug, &kind, &body)).await {
+        Ok(Ok(value)) => json_response(StatusCode::OK, value),
+        Ok(Err(Problem(text))) => json_response(StatusCode::BAD_REQUEST, json!({"error": text})),
+        Err(_) => json_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "failed"})),
+    }
+}
+
 async fn health() -> Response {
     json_response(StatusCode::OK, json!({"ok": true, "mode": "hosted"}))
 }
@@ -1550,6 +1667,7 @@ pub fn router(hosted: Arc<Hosted>, max_body: usize) -> Router {
         .route("/v1/p/{slug}/verdicts", post(verdict))
         .route("/v1/p/{slug}/matches", get(matches))
         .route("/v1/p/{slug}/pack", get(verification_pack))
+        .route("/v1/p/{slug}/upload", post(upload).layer(DefaultBodyLimit::max(MAX_UPLOAD)))
         .route("/v1/verifiers", post(register).get(list_verifiers))
         .route("/v1/work/lease", post(lease))
         .route("/v1/work/release", post(release_work))

@@ -71,7 +71,7 @@ def export_pack(net, slug: str, path: Path) -> dict:
     db = sqlite3.connect(part)
     try:
         db.executescript(SCHEMA)
-        meta = {"format": FORMAT, "slug": slug, "name": proj["name"], "arch": proj["arch"] or "",
+        meta = {"format": FORMAT, "kind": "pack", "slug": slug, "name": proj["name"], "arch": proj["arch"] or "",
                 "big_endian": str(int(bool(proj["big_endian"]))), "config": json.dumps(judge_settings(cfg)),
                 "rom_size": str(len(rom)), "exported_at": repr(time.time())}
         db.executemany("INSERT INTO meta VALUES(?,?)", meta.items())
