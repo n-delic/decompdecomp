@@ -619,33 +619,41 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
         if outcome == 'match':
             log(f"{y.name} matched from {a['name']} in {donor['name']}.")
 
-    # Open functions side by side: nearly all of a try is the compiler, and the machine has cores to spare (the
-    # shared compiler slots keep agents' compiles going meanwhile). One at a time took 20 minutes on a game's
-    # 1,968 pairs.
+    def polish(item):
+        x, y, _ = item
+        if stop is not None and stop.is_set():
+            return
+        a = theirs[x.id]
+        with lock:
+            active[y.id] = (a['name'], y.name)
+            show("Bringing its polished code")
+        said = ''
+        try:
+            b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
+            if b is not None and b['status'] == 'matched' and not b['readable'] and a['readable']:
+                with lock:
+                    counts['tried'] += 1
+                said = net.readability.submit(agent, slug, b['name'], p.text(a['matched_source']), synchronize=False)
+        except NetworkError:
+            pass  # held by an agent, or changed meanwhile
+        except Exception as error:  # one odd function must not stop the rest
+            logging.getLogger('decompdecomp').info('regional: polished %s from %s failed: %s', y.name, a['name'], error)
+        with lock:
+            active.pop(y.id, None)
+            tally['done'] += 1
+            counts['polished'] += said.startswith('✅')
+            show("Bringing its polished code")
+
+    # Side by side: nearly all of a try is the compiler, and the machine has cores to spare (the shared compiler
+    # slots keep agents' compiles going meanwhile). One at a time took 20 minutes on a game's 1,968 pairs, and its
+    # polished code 12 s a function. Open functions first, then polished code for the matched ones.
     from . import workers
     from .purpose_work import Executor
     open_work = [t for t in work if t[1].status == 'open']
-    with Executor(max_workers=max(1, min(WIDTH, workers.WORKERS)), purpose="Other release's code",
-                  project=slug, stop=stop.set if stop is not None else None) as pool:
-        list(pool.map(one, open_work))
-    # Polished code goes in one at a time: each replaces a matched function's C and checks it again.
-    for x, y, score in work[len(open_work):]:
-        if stop is not None and stop.is_set():
-            break
-        a = theirs[x.id]
-        progress(dict(phase="Bringing its polished code", done=tally['done'], total=len(work), donor=a['name'],
-                      function=y.name))
-        tally['done'] += 1
-        b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
-        if b is None or b['status'] != 'matched' or b['readable'] or not a['readable']:
-            continue
-        counts['tried'] += 1
-        try:
-            said = net.readability.submit(agent, slug, b['name'], p.text(a['matched_source']))
-        except NetworkError:
-            continue  # held by an agent, or changed meanwhile
-        if said.startswith('✅'):
-            counts['polished'] += 1
+    for run, items in ((one, open_work), (polish, work[len(open_work):])):
+        with Executor(max_workers=max(1, min(WIDTH, workers.WORKERS)), purpose="Other release's code",
+                      project=slug, stop=stop.set if stop is not None else None) as pool:
+            list(pool.map(run, items))
     progress(dict(phase="Trying the other release's code", done=len(work), total=len(work)))
     log(f"{counts['matched']} matched and {counts['polished']} polished from {donor['name']}; "
         f"{counts['tried']} tried.")

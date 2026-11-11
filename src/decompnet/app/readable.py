@@ -405,9 +405,15 @@ class Readability:
                 f"{', ...' if len(held) > 10 else ''}. Each is free again when its helper finishes it or its claim "
                 "runs out: call claim_readable again later. Don't stop.")
 
-    def submit(self, agent: Agent, slug: str, function: str, source: str) -> str:
-        """An agent's readable rewrite of a matched function: kept only when it still matches byte for byte."""
-        with self.net.progress.judging(slug):
+    def submit(self, agent: Agent, slug: str, function: str, source: str, *, synchronize: bool = True) -> str:
+        """An agent's readable rewrite of a matched function: kept only when it still matches byte for byte.
+        synchronize=False (a pass over many functions, as the other release's polished code): the saved files aren't
+        read before and after each one, which took 12 s a function on a 2,000-function game; the progress watcher
+        writes them afterwards, as for autopilot's drafts."""
+        if synchronize:
+            with self.net.progress.judging(slug):
+                return self._submit(agent, slug, function, source)
+        with self.net.progress.judging(slug, synchronize=False), self.net.progress.view():
             return self._submit(agent, slug, function, source)
 
     def _submit(self, agent: Agent, slug: str, function: str, source: str) -> str:
