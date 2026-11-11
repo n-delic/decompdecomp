@@ -113,8 +113,8 @@ No whole game has been decompiled yet. The export uses matched C and assembly fo
 Read [ROADMAP.md](ROADMAP.md#what-works-where) for each feature and console. Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after
 you accept their licenses in Setup. Visual C++ 2017 needs [wine](https://www.winehq.org/) on Linux and macOS; see [Visual C++ builds](docs/VISUAL-CPP.md).
 PS4 projects need the Linux x86-64 app, including inside WSL 2; the native Windows and macOS apps cannot build them. They use the free pinned
-Clang 5.0.2 pack and strict objdiff, tested on leaf functions and same-file, cross-file and import calls. Many other features are still gaps;
-encrypted SELF, PKG and PRX modules are not supported.
+Clang 5.0.2 pack and strict objdiff, tested on leaf functions and same-file, cross-file and import calls. decompdecomp includes no Sony SDK
+and no game files. Many other features are still gaps; encrypted SELF, PKG and PRX modules are not supported.
 
 ## Other tasks
 **Update.** It tells you when a new version is available; one click installs and restarts it. See [Installation details](docs/GUIDE.md#installation-details).

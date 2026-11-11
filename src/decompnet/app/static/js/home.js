@@ -76,8 +76,8 @@ drop.addEventListener("drop", (e) => {
   pickFiles(e.dataTransfer.files);
 });
 $("file").addEventListener("change", () => pickFiles($("file").files));
-/* A game, and the debug information that may come with it (a PC game's .pdb or linker .map: its import reads them). */
-const DEBUG_FILE = /\.(pdb|map)$/i;
+/* A game with its PC debug symbols or PS4 function map. */
+const DEBUG_FILE = /\.(pdb|map)$|(?:^|\.)functions\.jsonl$/i;
 function pickFiles(list) {
   const files = [...list], debug = files.filter((f) => DEBUG_FILE.test(f.name));
   const game = files.find((f) => !debug.includes(f)) || files[0];
@@ -144,7 +144,10 @@ const cwPack = (id) => CW_PACK[id] || ((tc) => ({ title: tc?.name || id, note: C
   text: `Install ${tc?.name || id}: ${tc?.description || ""} It's proprietary software, kept by the decomp community: `
     + "only if you accept that." }))((S.st?.toolchains || []).find((t) => t.id === id));
 // the pack the game's program asks for (a PC game's Visual C++: pcPack), else its console's first
-const packOf = (info) => info?.pack || (CW_PACK[consoleOf(info?.platform)?.packs[0]] ? consoleOf(info.platform).packs[0] : "mwcc");
+const packOf = (info) => {
+  const id = info?.pack || consoleOf(info?.platform)?.packs[0];
+  return CW_PACK[id] || (S.st?.toolchains || []).some((t) => t.id === id && t.license === "proprietary") ? id : "";
+};
 
 /* Which Visual C++ pack a 32-bit Windows program needs, from the head bytes the drop has read: scratch.describe in
    short, and the pack its version builds with the server's (the PC console's pack_by_version, its 2015-and-newer
@@ -267,6 +270,9 @@ function identifyHead(head, file) {
       pack: pe64 ? consoleOf("pc")?.pack_x64 || "msvc2015" : pcPack(head, pe), target: pe64 ? "x64" : "x86" };
   }
   if (isXbe(head, dv)) return { ...base, platform: "xbox", order: "Xbox program (XBE)" };
+  if (head.length >= 64 && text(0, 4) === "\x7fELF" && head[4] === 2 && head[5] === 1
+      && [0xfe10, 0xfe04].includes(dv.getUint16(16, true)) && dv.getUint16(18, true) === 62)
+    return { ...base, platform: "ps4", order: "decrypted Orbis ELF", entry: Number(dv.getBigUint64(24, true)) };
   if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
   // a PSP's UMD image names its system in the volume descriptor ("PSP GAME"); which other PlayStation a disc is
   // for, its SYSTEM.CNF says (the server reads it, and a CHD's too, which the browser can't look into)
@@ -351,8 +357,9 @@ async function pickFile(file, extras = []) {
       return toast(esc(NOT_A_GAME), "err");
     }
   }
-  // only a PC game's import reads them (debuginfo.py): with another game they'd be uploaded for nothing
-  picked = { buf, info, name: file.name, extras: info.platform === "win32" ? extras : [] };
+  // Send only the sidecars this console reads beside its uploaded program.
+  picked = { buf, info, name: file.name, extras: extras.filter((f) => info.platform === "win32" ? /\.(pdb|map)$/i.test(f.name)
+    : info.platform === "ps4" && /(?:^|\.)functions\.jsonl$/i.test(f.name)) };
   $("romFile").textContent = file.name;
   $("romTitle").textContent = info.title;
   const p = info.platform;
@@ -361,7 +368,7 @@ async function pickFile(file, extras = []) {
        ["Entry", hex8(info.entry)], ["Looks like", info.compiler === "IDO" ? "IDO" : "GCC (KMC)"]]
     : [["Platform", platformName(p)], ["Format", info.order], ["Size", MB(info.size)],
        info.code ? ["Game ID", info.code] : ["Entry", info.entry != null ? hex8(info.entry) : "from the disc"],
-       ["Project", consoleOf(p)?.layout || ""], ...(picked.extras.length ? [["Debug symbols", picked.extras.map((f) => f.name).join(", ")]] : [])];
+       ["Project", consoleOf(p)?.layout || ""], ...(picked.extras.length ? [["Function maps / debug symbols", picked.extras.map((f) => f.name).join(", ")]] : [])];
   $("romFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("");
   const level = platformStatus(p);
   $("romStatus").hidden = !level;
@@ -412,7 +419,8 @@ function setupCompilers(info) {
     + (con.default_compiler ? "" : `<option value="" selected>Let decompdecomp pick (from the program itself)</option>`);
   const pack = packOf(info);
   note.hidden = false;
-  note.textContent = cwPack(pack).note;
+  note.textContent = con.import_error || con.import_note || (pack ? cwPack(pack).note : "This project uses its console's compiler. Install it in Compilers & tools before importing.");
+  if (!pack || con.import_error) return;
   $("mwText").textContent = cwPack(pack).text;
   $("mwConsent").hidden = !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
 }
@@ -427,7 +435,7 @@ function missingCompilers(p) {
 
 function updateAnalyse() {
   const needsConsent = !$("mwConsent").hidden;
-  $("analyse").disabled = !$("own").checked || (needsConsent && !$("mwAccept").checked);
+  $("analyse").disabled = !!consoleOf(picked?.info?.platform)?.import_error || !$("own").checked || (needsConsent && !$("mwAccept").checked);
 }
 $("mwAccept").addEventListener("change", updateAnalyse);
 
@@ -511,6 +519,7 @@ $("errBack").onclick = (e) => { e.stopPropagation(); resetDrop(); };
 async function ensureCodeWarrior() {
   if ($("mwConsent").hidden) return;
   const id = packOf(picked?.info);
+  if (!id) return;
   $("busyTitle").textContent = `Installing ${cwPack(id).title}…`;
   const { job } = await api("/api/toolchain", { method: "POST", body: { id, accept_license: true } });
   await followJob(job, $("jobLog"));
