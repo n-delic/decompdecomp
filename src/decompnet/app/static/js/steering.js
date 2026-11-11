@@ -446,7 +446,9 @@ function renderSavedMatchRecovery(ov) {
 }
 
 /* Other releases of this game (app/regional.py): found by game code, or by comparing code on request; once linked,
-   the other release's names and header types come over through the checked bulk rename. */
+   the other release's names, header types and code come over through the checked bulk rename, header edit and judge.
+   The overview polls every second or so: the panel is drawn again only when what it shows changed, and never while
+   one of its actions runs, or a click would land on a button that's just been replaced (and its bar would go). */
 const releaseViews = new Map();
 function renderReleases(ov) {
   const panel = $("releasePanel");
@@ -458,19 +460,42 @@ function renderReleases(ov) {
     loadReleases(ov.slug).catch(() => { releaseViews.set(ov.slug, {data: {supported: false}}); if (S.slug === ov.slug) panel.hidden = true; });
     return;
   }
-  if (view.data) drawReleases(ov.slug, view.data);
+  if (view.data && !view.busy) drawReleases(ov.slug, view.data);
 }
 async function loadReleases(slug, shared = false) {
   const data = await api(`/api/regional?slug=${encodeURIComponent(slug)}${shared ? "&shared=1" : ""}`);
-  releaseViews.set(slug, {data});
-  if (S.slug === slug) drawReleases(slug, data);
+  showReleases(slug, data);
   return data;
+}
+function showReleases(slug, data) {
+  const view = releaseViews.get(slug) || {};
+  releaseViews.set(slug, {...view, data, loading: false});
+  if (S.slug === slug && !view.busy) drawReleases(slug, data);
 }
 function releaseLabel(r) {
   return `${esc(r.name)} · ${esc(r.region || r.game_code || "another release")} · ${r.matched.toLocaleString()} of ${r.functions.toLocaleString()} matched`;
 }
-function drawReleases(slug, data) {
-  const panel = $("releasePanel"), body = $("releaseBody"), log = $("releaseLog");
+/* One of the panel's actions: its bar and log while it runs, its controls disabled, no redraw until it ends. */
+async function releaseAction(slug, label, done, work) {
+  const body = $("releaseBody"), log = $("releaseLog"), view = releaseViews.get(slug) || {};
+  releaseViews.set(slug, {...view, busy: true});
+  log.hidden = false; log.textContent = ""; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, label, [...body.querySelectorAll("button"), $("releaseScan")], done);
+  try { return await work(log); }
+  catch (error) { showJobError(log, error.message); return null; }
+  finally {
+    finish();
+    const current = releaseViews.get(slug) || {};
+    releaseViews.set(slug, {...current, busy: false});
+    if (S.slug === slug && current.data) drawReleases(slug, current.data, true);
+  }
+}
+function drawReleases(slug, data, force = false) {
+  const panel = $("releasePanel"), body = $("releaseBody");
+  const key = slug + "\n" + JSON.stringify(data);
+  if (!force && panel._drawn === key) return;
+  panel._drawn = key;
   panel.hidden = !data.supported;
   if (!data.supported) return;
   const linked = data.linked, last = linked?.last;
@@ -480,55 +505,38 @@ function drawReleases(slug, data) {
       + `<div class="row"><button type="button" class="primary small-btn" data-release-names>Bring names over</button><button type="button" class="ghost small-btn" data-release-code>Try its code</button><button type="button" class="ghost small-btn" data-release-unlink>Unlink</button></div>` : "")
     + data.candidates.map(c => `<p>${releaseLabel(c)} <span class="muted small">(${c.evidence === "game code" ? "same game code" : `${Math.round(c.shared * 100)}% identical code`})</span> <button type="button" class="ghost small-btn" data-release-link="${esc(c.slug)}">Link as another release</button></p>`).join("")
     + (!linked && !data.candidates.length ? `<p class="muted small">No other release of this game found by its game code.</p>` : "");
-  const controls = () => [...body.querySelectorAll("button"), $("releaseScan")];
-  body.querySelectorAll("[data-release-link]").forEach(button => button.onclick = async () => {
-    showJobError(log, "");
-    try { drawReleases(slug, await api("/api/regional", {method: "POST", body: {slug, other: button.dataset.releaseLink}})); }
-    catch (error) { log.hidden = false; showJobError(log, error.message); }
+  body.querySelectorAll("[data-release-link]").forEach(button => button.onclick = () => {
+    const other = button.dataset.releaseLink;
+    releaseAction(slug, "Linking the other release", "Linked.", async log => {
+      showReleases(slug, await api("/api/regional", {method: "POST", body: {slug, other}}));
+      log.textContent = "Linked. Bring its names over next; autopilot tries its code from now on.";
+    });
   });
   const unlink = body.querySelector("[data-release-unlink]");
-  if (unlink) unlink.onclick = async () => {
-    showJobError(log, "");
-    try { drawReleases(slug, await api("/api/regional", {method: "POST", body: {slug, other: ""}})); }
-    catch (error) { log.hidden = false; showJobError(log, error.message); }
-  };
+  if (unlink) unlink.onclick = () => releaseAction(slug, "Unlinking", "Unlinked.", async log => {
+    showReleases(slug, await api("/api/regional", {method: "POST", body: {slug, other: ""}}));
+    log.textContent = "Unlinked.";
+  });
   const names = body.querySelector("[data-release-names]");
-  if (names) names.onclick = async () => {
-    log.hidden = false; log.textContent = ""; log._showJobProgress = true;
-    showJobError(log, "");
-    const finish = beginWork(log, "Bringing names over", controls(), "Names brought over.");
-    try {
-      const {job} = await api("/api/regional/names", {method: "POST", body: {slug}});
-      const result = await followJob(job, log);
-      toast(`${result.renamed.toLocaleString()} names from ${esc(linked.name)}.`, "match");
-      await loadReleases(slug);
-    } catch (error) { showJobError(log, error.message); }
-    finally { finish(); }
-  };
+  if (names) names.onclick = () => releaseAction(slug, "Bringing names over", "Names brought over.", async log => {
+    const {job} = await api("/api/regional/names", {method: "POST", body: {slug}});
+    const result = await followJob(job, log);
+    toast(`${result.renamed.toLocaleString()} names from ${esc(linked.name)}.`, "match");
+    showReleases(slug, await api(`/api/regional?slug=${encodeURIComponent(slug)}`));
+  });
   const code = body.querySelector("[data-release-code]");
-  if (code) code.onclick = async () => {
-    log.hidden = false; log.textContent = ""; log._showJobProgress = true;
-    showJobError(log, "");
-    const finish = beginWork(log, "Trying the other release's code", controls(), "Finished trying the other release's code.");
-    try {
-      const {job} = await api("/api/regional/code", {method: "POST", body: {slug}});
-      const result = await followJob(job, log);
-      toast(`${result.matched.toLocaleString()} matched and ${result.polished.toLocaleString()} polished from ${esc(linked.name)}.`, "match");
-      await loadReleases(slug);
-    } catch (error) { showJobError(log, error.message); }
-    finally { finish(); }
-  };
-  $("releaseScan").onclick = async () => {
-    log.hidden = false; log.textContent = "Comparing this game's code with your other games of the same console.";
-    showJobError(log, "");
-    const finish = beginWork(log, "Comparing code", controls(), "Comparison finished.");
-    try {
-      const data = await loadReleases(slug, true);
-      log.textContent = data.candidates.length ? "Another release was found." : "No other game shares enough identical code.";
-    }
-    catch (error) { showJobError(log, error.message); }
-    finally { finish(); }
-  };
+  if (code) code.onclick = () => releaseAction(slug, "Trying the other release's code", "Finished trying the other release's code.", async log => {
+    const {job} = await api("/api/regional/code", {method: "POST", body: {slug}});
+    const result = await followJob(job, log);
+    toast(`${result.matched.toLocaleString()} matched and ${result.polished.toLocaleString()} polished from ${esc(linked.name)}.`, "match");
+    showReleases(slug, await api(`/api/regional?slug=${encodeURIComponent(slug)}`));
+  });
+  $("releaseScan").onclick = () => releaseAction(slug, "Comparing code", "Comparison finished.", async log => {
+    log.textContent = "Comparing this game's code with your other games of the same console.";
+    const found = await api(`/api/regional?slug=${encodeURIComponent(slug)}&shared=1`);
+    showReleases(slug, found);
+    log.textContent = found.candidates.length ? "Another release was found." : "No other game shares enough identical code.";
+  });
 }
 
 function renderAutopilot(ov) {

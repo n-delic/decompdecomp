@@ -50,12 +50,20 @@ const pal = {slug: 'pal', name: 'Rally (Europe)', region: 'Europe', game_code: '
     await tick();
     assert.equal(t.$('releasePanel').hidden, false);
     assert.match(t.$('releaseBody').innerHTML, /same game code/);
-    t.$('releaseBody').querySelector('[data-release-link]').onclick();
+    // The overview polls every second: with nothing changed, the button the user is clicking stays the same one.
+    const button = t.$('releaseBody').querySelector('[data-release-link]');
+    t.context.renderReleases({slug: 'ntsc', kind: 'rom'});
+    assert.equal(t.$('releaseBody').querySelector('[data-release-link]'), button);
+    button.onclick();
+    assert.equal(t.$('releaseLog').children.filter(c => c.className.startsWith('workbar') && !c.removed).length, 1);
     await tick();
+    assert.ok(t.$('releaseLog').children.filter(c => c.className.startsWith('workbar')).every(c => c.removed));
     assert.equal(JSON.stringify(t.calls.at(-1)), JSON.stringify({url: '/api/regional', body: {slug: 'ntsc', other: 'pal'}}));
     assert.match(t.$('releaseBody').innerHTML, /Linked:/);
     assert.ok(t.$('releaseBody').querySelector('[data-release-names]'));
     assert.ok(t.$('releaseBody').querySelector('[data-release-code]'));
+    t.context.renderReleases({slug: 'ntsc', kind: 'rom'});  // the next poll keeps showing the link
+    assert.match(t.$('releaseBody').innerHTML, /Linked:/);
   }
   {
     // Bringing names over shows the shared bar while it works, and clears it on success and on failure.
