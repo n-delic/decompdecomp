@@ -781,6 +781,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Port readiness → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| Port fixes judged twice (Start agents → Fix C for the PC, `fix_for_pc`, docs/PORTING.md phase 4) | ✓ (console match by the function judge, PC build by the pinned Zig's clang) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
@@ -961,6 +962,19 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### Agents fix the game's C for the PC, judged twice
+
+**Start agents → Fix C for the PC** (ROM projects, once Compile for PC has run): agents claim one function at a
+time from what the PC check listed (those that don't compile first, then pointer casts; fewest tries first), see
+its C and the PC compiler's errors, try fixes (`check_for_pc`) and submit one (`fix_for_pc`). A fix is kept only
+when the console's compiler still makes the game's exact bytes and a 64-bit PC build has no errors and fewer
+pointer-size warnings (`port/port_fix.py`); what only the PC needs goes behind `#ifdef PORT`, which the PC check
+defines and the console build doesn't. A kept fix is the function's C, saved and committed like polishing.
+Driven through those calls on a copy of a finished N64 game: two functions with 19 and 2 PC errors fixed by
+pointer types, both still matching byte for byte, and a manual save wrote both. Left: an LLM run on a real game;
+display lists built by hand as two words (a `Gfx` is bigger in libultraship), which compile and need the port
+build to find; a per-function view of the PC errors in Functions.
 
 ### The game's C compiled for a PC
 

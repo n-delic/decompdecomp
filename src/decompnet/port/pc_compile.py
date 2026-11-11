@@ -28,15 +28,18 @@ from ..network import IN_BUILD, NetworkError
 
 TOOL = "zig"
 TARGET = "x86_64-linux-gnu"
-# gnu17 so a newer clang's default doesn't move the counts; non-prototype calls are only refused by C23
-FLAGS = ["-target", TARGET, "-std=gnu17", "-ffreestanding", "-fno-color-diagnostics", "-fno-caret-diagnostics",
+# gnu17 so a newer clang's default doesn't move the counts; non-prototype calls are only refused by C23. PORT is
+# defined, as the port's build defines it: a fix the console's compiler can't take goes behind #ifdef PORT.
+FLAGS = ["-target", TARGET, "-std=gnu17", "-DPORT=1", "-ffreestanding", "-fno-color-diagnostics", "-fno-caret-diagnostics",
          "-fdiagnostics-show-option", "-Wno-deprecated-non-prototype", "-Wpointer-to-int-cast",
          "-Wint-to-pointer-cast", "-Wvoid-pointer-to-int-cast"]
 POINTER_SIZE = frozenset({"pointer-to-int-cast", "int-to-pointer-cast", "void-pointer-to-int-cast",
                           "int-to-void-pointer-cast"})
 TIMEOUT = 120
+# a function's last result, and its port-fix claim (app/port_agents.py): who holds it, until when, tries, a note
 SCHEMA = '''CREATE TABLE IF NOT EXISTS port_compile(project_id INTEGER, name TEXT, status TEXT, kinds TEXT,
-            diagnostics TEXT, checked_at REAL, PRIMARY KEY(project_id, name))'''
+            diagnostics TEXT, checked_at REAL, agent_id INTEGER, lease REAL, attempts INTEGER DEFAULT 0, note TEXT,
+            PRIMARY KEY(project_id, name))'''
 # what each kind of failure is, for the report (the order is the order it lists them in)
 KINDS = {
     "assembly": "MIPS assembly in the C (asm statements)",
@@ -137,6 +140,44 @@ def _environment() -> dict:
     return {**os.environ, "ZIG_GLOBAL_CACHE_DIR": str(cache), "ZIG_LOCAL_CACHE_DIR": str(cache)}
 
 
+def _compile(root: Path, cc: list[str], env: dict, i: int, header: str, source: str) -> list[dict]:
+    """One function's C, compiled in `root` (its include/ holds the headers) for the PC: its diagnostics."""
+    file = f"f{i}.c"  # names are the project's; files are numbered, so any name is a safe path
+    (root / "src" / file).write_text(f'#include "{header}"\n{source.strip()}\n', encoding="utf-8")
+    argv = [*cc, *FLAGS, "-Iinclude", "-c", "-o", f"obj/f{i}.o", f"src/{file}"]
+    try:
+        done = subprocess.run(limits.capped(argv), cwd=root, env=env, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=TIMEOUT, creationflags=NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        return [{"level": "error", "kind": "other", "line": 0, "file": "",
+                 "message": f"the compiler took longer than {TIMEOUT} s"}]
+    found = diagnostics(done.stderr + done.stdout, file, 1)
+    if done.returncode and not any(d["level"] == "error" for d in found):
+        tail = (done.stderr or done.stdout).strip().splitlines()[-1:] or [f"exit code {done.returncode}"]
+        found.append({"level": "error", "kind": "other", "line": 0, "file": "", "message": tail[0][:300]})
+    return found
+
+
+def compile_one(header: str, source: str, *, cc: list[str] | None = None, log=print) -> list[dict]:
+    """A function's C (with the shared header it compiles with) for the PC, as `check` compiles it."""
+    cc = cc or compiler(log)
+    with tempfile.TemporaryDirectory(prefix="pc-compile-") as tmp:
+        root = Path(tmp)
+        for folder in ("include", "src", "obj"):
+            (root / folder).mkdir()
+        (root / "include" / "common.h").write_text(header, encoding="utf-8")
+        return _compile(root, cc, _environment(), 0, "common.h", source)
+
+
+def record(db, project_id: int, name: str, found: list[dict], now: float | None = None) -> None:
+    """Keep a function's result, and what agents left on it (its claim, tries, note)."""
+    db.execute("INSERT INTO port_compile(project_id, name, status, kinds, diagnostics, checked_at) VALUES(?,?,?,?,?,?) "
+               "ON CONFLICT(project_id, name) DO UPDATE SET status=excluded.status, kinds=excluded.kinds, "
+               "diagnostics=excluded.diagnostics, checked_at=excluded.checked_at",
+               (project_id, name, _status(found), json.dumps(sorted({d["kind"] for d in found})), json.dumps(found[:20]),
+                now or time.time()))
+
+
 def check(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
     """Compile every function the port keeps for a 64-bit PC, record each one's result, and return the summary."""
     with net.progress.view():
@@ -162,20 +203,7 @@ def check(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
         (root / "obj").mkdir()
 
         def one(i: int, f: dict) -> tuple[str, list[dict]]:
-            file = f"f{i}.c"  # names are the project's; files are numbered, so any name is a safe path
-            (root / "src" / file).write_text(f'#include "{files[f["header"]]}"\n{f["source"].strip()}\n', encoding="utf-8")
-            argv = [*cc, *FLAGS, "-Iinclude", "-c", "-o", f"obj/f{i}.o", f"src/{file}"]
-            try:
-                done = subprocess.run(limits.capped(argv), cwd=root, env=env, capture_output=True, text=True,
-                                      encoding="utf-8", errors="replace", timeout=TIMEOUT, creationflags=NO_WINDOW)
-            except subprocess.TimeoutExpired:
-                return f["name"], [{"level": "error", "kind": "other", "line": 0, "file": "",
-                                    "message": f"the compiler took longer than {TIMEOUT} s"}]
-            found = diagnostics(done.stderr + done.stdout, file, 1)
-            if done.returncode and not any(d["level"] == "error" for d in found):
-                tail = (done.stderr or done.stdout).strip().splitlines()[-1:] or [f"exit code {done.returncode}"]
-                found.append({"level": "error", "kind": "other", "line": 0, "file": "", "message": tail[0][:300]})
-            return f["name"], found
+            return f["name"], _compile(root, cc, env, i, files[f["header"]], f["source"])
 
         workers = max(1, min(16, (os.cpu_count() or 2) - 1))
         with ThreadPoolExecutor(workers) as pool:
@@ -188,11 +216,11 @@ def check(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
     now = time.time()
     with net.progress.view():
         with _store(net, proj).tx() as db:
-            db.execute("DELETE FROM port_compile WHERE project_id=?", (proj["id"],))
-            db.executemany(
-                "INSERT INTO port_compile(project_id, name, status, kinds, diagnostics, checked_at) VALUES(?,?,?,?,?,?)",
-                [(proj["id"], name, _status(found), json.dumps(sorted({d["kind"] for d in found})),
-                  json.dumps(found[:20]), now) for name, found in results.items()])
+            for name in {r["name"] for r in db.execute("SELECT name FROM port_compile WHERE project_id=?",
+                                                       (proj["id"],)).fetchall()} - set(results):
+                db.execute("DELETE FROM port_compile WHERE project_id=? AND name=?", (proj["id"], name))  # gone
+            for name, found in results.items():
+                record(db, proj["id"], name, found, now)
         result = summary(net, proj)
     sizes = next((k["functions"] for k in result["kinds"] if k["kind"] == "pointer size"), 0)
     log(f"{result['ok'] + result['warned']} of {result['total']} functions compile for a 64-bit PC; "

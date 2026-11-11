@@ -269,7 +269,7 @@ function renderSessions(sessions, refreshCosts = true) {
     const dot = s.state === "paused" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
     const live = LIVE.includes(s.state), id = esc(s.id), b = s.metrics || board.get(s.agent);
     const account = s.account_label || s.account_name;
-    const facts = [s.task === "assets" ? `<b>discovering assets</b>` : s.task === "data" ? `<b>writing data as C</b>` : s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), account ? `account: ${esc(account)}` : "", s.model ? esc(s.model) : "its default model", s.task === "readable" ? helperResults(b, s.task) : "", b ? `${plural(b.compiles, "compile")} submitted by this agent` : "",
+    const facts = [s.task === "assets" ? `<b>discovering assets</b>` : s.task === "data" ? `<b>writing data as C</b>` : s.task === "port" ? `<b>fixing C for the PC</b>` : s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), account ? `account: ${esc(account)}` : "", s.model ? esc(s.model) : "its default model", s.task === "readable" ? helperResults(b, s.task) : "", b ? `${plural(b.compiles, "compile")} submitted by this agent` : "",
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" && !s.configuration_error ? " Then press Start again." : ""}` : "";
@@ -279,21 +279,21 @@ function renderSessions(sessions, refreshCosts = true) {
         <details class="agent-menu" data-agent-menu="${id}" ${agentMenusOpen.has(s.id) ? 'open' : ''}><summary aria-label="Actions for ${esc(s.label)}" title="Agent actions">⋮</summary><div class="agent-menu-items">
           <button data-rename="${id}" type="button">Rename</button>${!S.st?.agents?.find(a=>a.id===s.kind)?.uses_endpoints ? `<button data-change-model="${id}" type="button">Change model</button>` : ""}<button data-queue="${id}" type="button">Work settings</button><button data-agent-prompts="${id}" type="button">Prompts</button><button data-agent-tools="${id}" type="button">Tools</button>
           <button data-log="${id}" type="button" aria-pressed="${S.logFor === s.id}">${S.logFor === s.id ? 'Back to everything' : 'What it said and did'}</button>
-          ${["readable","boundary","assets","data"].includes(s.task) ? "" : `<button data-retry-paused="${id}" type="button">Retry paused functions</button>`}
+          ${["readable","boundary","assets","data","port"].includes(s.task) ? "" : `<button data-retry-paused="${id}" type="button">Retry paused functions</button>`}
           <button data-reset-metrics="${id}" type="button" class="agent-menu-reset">Reset metrics</button>
           ${live ? '' : `<button data-remove="${id}" type="button">Remove agent</button>`}</div></details></div>
       ${agentMetrics(s, b)}
       <span class="state ${s.state === 'paused' ? 'err' : ''}">${helperState(s, claim)}</span>
       ${["starting", "working"].includes(s.state) && s.startup_stage ? `<progress class="workbar" aria-label="Agent startup"></progress>` : ""}
       ${todo ? `<span class="todo-line">${esc(todo)}</span>${s.can_login && !live && /login|sign.?in/i.test(s.todo || "") ? `<button class="ghost" type="button" data-login="${id}">Sign in to ${esc(s.kind_name)}</button>` : ""}` : ''}
-      ${s.provider_waiting ? `<button class="ghost" data-retry-provider="${id}" type="button" ${s.provider_retry_requested ? "disabled" : ""}>${s.provider_retry_requested ? "Provider retry requested…" : "Retry provider now"}</button>` : !["readable","boundary","assets","data"].includes(s.task) && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
+      ${s.provider_waiting ? `<button class="ghost" data-retry-provider="${id}" type="button" ${s.provider_retry_requested ? "disabled" : ""}>${s.provider_retry_requested ? "Provider retry requested…" : "Retry provider now"}</button>` : !["readable","boundary","assets","data","port"].includes(s.task) && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
       ${agentUsage(s)}
       <details class="agent-details" data-agent-details="${id}" ${agentDetailsOpen.has(s.id) ? 'open' : ''}><summary>Details</summary><div class="agent-details-body">
       <span class="facts-line">${facts.join(' · ')}</span>
       ${rate == null ? '' : `<span class="small muted">${compactAgentNumber(rate)} reported tokens / match${s.estimated_cost != null && b?.matched ? ` · ≈ ${money(s.estimated_cost / b.matched)} / match` : ''}</span>`}
       ${agentEfficiency(s)}
       ${s.metrics_since ? `<span class="small muted">Metrics since reset · ${new Date(s.metrics_since * 1000).toLocaleString()}</span>` : ''}
-      <span class="small muted">Work settings · ${s.per_session || 8} ${s.task==='assets'?'regions':s.task==='data'?'data units':'functions'}/session${["readable","assets","boundary","data"].includes(s.task) ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>
+      <span class="small muted">Work settings · ${s.per_session || 8} ${s.task==='assets'?'regions':s.task==='data'?'data units':'functions'}/session${["readable","assets","boundary","data","port"].includes(s.task) ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>
       ${s.last_message ? `<div class="agent-message"><b class="small">Latest agent reply${["starting", "working", "waiting"].includes(s.state) ? " · helper continues" : ""}</b><q class="said">${esc(s.last_message)}</q></div>` : ''}
       </div></details></div>`;
   }).join("");
@@ -632,7 +632,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     }
     if (S.slug === slug) hideLaunch();
     const total = LZ.multiple ? models.length * count : count;
-    toast(replacement ? "Agent replaced. The original history and saved work are kept." : `${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : LZ.task==="assets" ? "Review discoveries in ROM Explorer" : LZ.task==="data" ? "Port readiness counts the data in C" : "Watch the map fill in"}; Agents says what each one does.`, "match");
+    toast(replacement ? "Agent replaced. The original history and saved work are kept." : `${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : LZ.task==="assets" ? "Review discoveries in ROM Explorer" : LZ.task==="data" ? "Port readiness counts the data in C" : LZ.task==="port" ? "Port readiness counts what still doesn't build for a PC" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     if(LZ.task==='assets'&&S.slug===slug&&S.tab==='rom')loadAssetAgents();
     poll(false);
     loadNav();
@@ -653,7 +653,8 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
 const TASKS = [["", "Decompile", "match functions the game has, byte for byte"],
   ["readable", "Polish matched code", "give matched functions real names, types and a comment; they still match"],
   ["assets","Discover assets","investigate ROM data and propose names and formats for user review"],
-  ["data","Write data as C","turn the game's data into C for a port; each definition is kept only if it holds the game's bytes"]];
+  ["data","Write data as C","turn the game's data into C for a port; each definition is kept only if it holds the game's bytes"],
+  ["port","Fix C for the PC","fix what Compile for PC lists; each fix is kept only if the console build still matches and the PC build improves"]];
 const POLISH_FROM_SHARE = 0.5;  // polishing comes once most of the work is matching: before that, agents decompile
 // of the game's own code (cFunctions, as the header counts): an Xbox game whose 33 functions all matched had no Polish
 // to choose, its 241 set-aside ones (library code, assembly) counted against it

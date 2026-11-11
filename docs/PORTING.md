@@ -1,7 +1,8 @@
 # Porting a finished decomp (plan)
 
 Status: phase 0, the readiness report, is built (ROM projects; N64 with its kit); phase 1's judge and tools are
-built (N64); phase 3's first step, compiling the game's C for a PC, is built (N64); the rest is planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
+built (N64); phase 3's first step, compiling the game's C for a PC, is built (N64), and so is phase 4's task with its
+two-way judge (N64); the rest is planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
 
 A matched, polished decomp rebuilds the game for its console. People finish a decomp to read, mod and port the
 game, and today decompdecomp stops at the export. This plan adds the next step: a **port**, the same C built for
@@ -152,7 +153,15 @@ static checks:
 - K&R-era C that a current compiler refuses (implicit declarations, implicit `int`).
 
 The judge runs both builds; a fix that can't keep the console build matching is accepted only inside
-`#ifdef PORT`. Building the port 32-bit first (Linux, Windows) defers most pointer fixes; macOS needs 64-bit.
+`#ifdef PORT`.
+
+Built (`app/port_agents.py`, `port/port_fix.py`): **Start agents → Fix C for the PC** works through what Compile for
+PC listed, the functions that don't compile first. `check_for_pc` shows the PC's verdict of a try alone;
+`fix_for_pc` keeps a fix only when the function judge still finds the game's bytes and the PC build (PORT defined)
+has no errors and fewer pointer-size warnings than before. The PC side judges the one function with the header as
+it is; a prototype an agent adds to the header for it is judged with it, and the next full check shows what it does
+to the rest. Not caught by compiling yet: `Gfx` commands built by hand as two words, which compile for a PC and
+are wrong there. Building the port 32-bit first (Linux, Windows) defers most pointer fixes; macOS needs 64-bit.
 
 ### 5. Play, and check that it runs
 

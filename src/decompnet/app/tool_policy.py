@@ -23,9 +23,11 @@ PRESETS = {'full': ('All tools', None), 'matching': ('Matching essentials', MATC
 
 def connection_required(net, agent):
     """Check the authenticated task's tools without granting advisory workers compiler access."""
-    from . import asset_agents, boundary_investigations, data_agents
+    from . import asset_agents, boundary_investigations, data_agents, port_agents
     if agent is not None and data_agents.scope(net, agent):
         return data_agents.REQUIRED
+    if agent is not None and port_agents.scope(net, agent):
+        return port_agents.REQUIRED
     if agent is not None and asset_agents.scope(net,agent):
         return asset_agents.TOOLS - {'get_assembly','guide'}
     if agent is not None and boundary_investigations.scope(net,agent):
@@ -92,7 +94,7 @@ def disabled(net):
 
 
 def visible(net, slug, names, agent=None):
-    from . import asset_agents, boundary_investigations, data_agents
+    from . import asset_agents, boundary_investigations, data_agents, port_agents
     ensure(net)
     blocked = disabled(net)
     if agent and asset_agents.scope(net,agent):
@@ -103,6 +105,9 @@ def visible(net, slug, names, agent=None):
     if agent and data_agents.scope(net, agent):
         blocked.update(net.selection(slug, agent.name).get('disabled_tools', []))
         return [name for name in names if name in data_agents.TOOLS and (name in data_agents.REQUIRED or name not in blocked)]
+    if agent and port_agents.scope(net, agent):
+        blocked.update(net.selection(slug, agent.name).get('disabled_tools', []))
+        return [name for name in names if name in port_agents.TOOLS and (name in port_agents.REQUIRED or name not in blocked)]
     if agent:
         blocked.update(net.selection(slug, agent.name).get('disabled_tools', []))
     return [name for name in names if name in REQUIRED or name not in blocked]

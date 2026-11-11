@@ -79,6 +79,7 @@ GUIDES = {
     "arm": "ARM and Thumb (GBA, DS, 3DS): registers, conditional code, literal pools",
     "aarch64": "AArch64 and Clang (Switch): registers, matching Clang output",
     "similarity": "finding similar functions and reusing matched code",
+    "port": "fixing matched C so it also builds for a PC, without losing the console match",
 }
 
 
@@ -362,6 +363,21 @@ def _data_agents():
     return data_agents
 
 
+def _port_agents():
+    from . import port_agents
+    return port_agents
+
+
+def _fix_for_pc(net: RomNetwork, agent, slug: str, function: str, source: str) -> str:
+    from ..port import port_fix
+    return _port_agents().fixed(net, agent, slug, function, port_fix.fix(net, agent, slug, function, source))
+
+
+def _check_for_pc(net: RomNetwork, slug: str, function: str, source: str) -> str:
+    from ..port import port_fix
+    return port_fix.check(net, slug, function, source)
+
+
 def _port_readiness(net: RomNetwork, slug: str) -> str:
     """The port readiness report as text (port/readiness.py)."""
     from ..port.readiness import describe, readiness
@@ -585,6 +601,11 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "get_class": lambda net, agent, slug, what="": net.get_class(slug, what),
     "get_data_unit": lambda net, agent, slug, name: _data_unit(net, slug, name),
     "compile_data": lambda net, agent, slug, name, source: _compile_data(net, slug, name, source, agent),
+    "claim_port_fix": lambda net, agent, slug, function="": _port_agents().claim(net, agent, slug, function),
+    "release_port_fix": lambda net, agent, slug, function, note="":
+        _port_agents().release(net, agent, slug, function, note),
+    "check_for_pc": lambda net, agent, slug, function, source: _check_for_pc(net, slug, function, source),
+    "fix_for_pc": lambda net, agent, slug, function, source: _fix_for_pc(net, agent, slug, function, source),
     "claim_data": lambda net, agent, slug, name="": _data_agents().claim(net, agent, slug, name),
     "release_data": lambda net, agent, slug, name, note="": _data_agents().release(net, agent, slug, name, note),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
@@ -625,9 +646,9 @@ HANDLERS: dict[str, Callable[..., str]] = {
 READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
-                       "port_readiness", "get_data_unit"})
+                       "port_readiness", "get_data_unit", "check_for_pc"})
 
-ROM_ONLY = {"port_readiness","get_data_unit","compile_data","claim_data","release_data","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"port_readiness","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -754,8 +775,10 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
 
 def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Work tools see pulled changes; the pending compact connection handshake reads saved metadata."""
-    if asset_agents.scope(net,agent) or _data_agents().scope(net,agent):
-        # their work isn't in the saved progress files: no sync before each call (app/data_agents.py)
+    if (asset_agents.scope(net,agent) or _data_agents().scope(net,agent)
+            or (_port_agents().scope(net,agent) and name != "fix_for_pc")):
+        # their work isn't in the saved progress files: no sync before each call (app/data_agents.py). A kept port
+        # fix is a function's C, which is: fix_for_pc syncs before and after, as any work tool
         with net.progress.view():return _dispatch(net,agent,slug,name,args)
     if boundary_investigations.scope(net,agent):
         return _dispatch(net,agent,slug,name,args)
@@ -775,6 +798,7 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
 def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     asset_agents.guard(net,agent,slug,name,args)
     _data_agents().guard(net,agent,slug,name,args)
+    _port_agents().guard(net,agent,slug,name,args)
     boundary_investigations.guard(net,agent,slug,name,args)
     pending = getattr(net, '_pending_tool_handshakes', set())
     handshake = (agent.id, slug) in pending
@@ -849,6 +873,7 @@ QUICK_TOOLS = frozenset({
     'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function',
     'add_note', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
     'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness', 'get_data_unit', 'claim_data', 'release_data',
+    'claim_port_fix', 'release_port_fix',
 })
 QUICK_LANE = 16
 WORK_LANE = 32
@@ -1201,6 +1226,29 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     async def release_data(ctx: Context, name: str, note: str = "") -> str:
         """Data agents: give a unit back with what you learned, for the next try."""
         return await run(ctx, "release_data", name=name, note=note)
+
+    @tool
+    async def claim_port_fix(ctx: Context, function: str = "") -> str:
+        """Port-fix agents: take the next matched function to fix for the PC (or the one named): its C and what a
+        64-bit PC compiler says of it."""
+        return await run(ctx, "claim_port_fix", function=function)
+
+    @tool
+    async def release_port_fix(ctx: Context, function: str, note: str = "") -> str:
+        """Port-fix agents: give a function back with what you learned, for the next try."""
+        return await run(ctx, "release_port_fix", function=function, note=note)
+
+    @tool
+    async def check_for_pc(ctx: Context, function: str, source: str) -> str:
+        """What a 64-bit PC compiler (PORT defined) says of C for a matched function, with the header it compiles
+        with. Nothing is judged or saved."""
+        return await run(ctx, "check_for_pc", function=function, source=source)
+
+    @tool
+    async def fix_for_pc(ctx: Context, function: str, source: str) -> str:
+        """Judge a matched function's C fixed for the PC: kept only when the console build still matches byte for
+        byte and the PC build has no errors and fewer pointer-size warnings than before."""
+        return await run(ctx, "fix_for_pc", function=function, source=source)
 
     @tool
     async def compile_data(ctx: Context, name: str, source: str) -> str:

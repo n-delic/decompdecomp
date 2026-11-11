@@ -104,7 +104,7 @@ _SIGNIN = re.compile(r"auth|log ?in|sign(ed)? ?in|credential|api.?key|unauthori[
 # with 2 per session that was most of what small functions cost.
 PER_SESSION = 8
 # Tasks that are not matching functions: polishing, boundary reviews, asset discovery, the game's data as C
-NOT_MATCHING = frozenset({"readable", "boundary", "assets", "data"})
+NOT_MATCHING = frozenset({"readable", "boundary", "assets", "data", "port"})
 STARTUP_FACTS_CHARS = 1800
 STARTUP_BRIEF_CHARS = 6000
 MAX_AT_ONCE = 8  # helpers started with one click
@@ -799,6 +799,8 @@ class Manager:
         options = asset_agents.configure(self.net,slug,options,count)
         from . import data_agents
         options = data_agents.configure(self.net,slug,options,count)
+        from . import port_agents
+        options = port_agents.configure(self.net,slug,options,count)
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
         if agent.id != kind:
             kind = agent.id
@@ -1345,6 +1347,9 @@ class Manager:
         if task == "data":
             from .data_agents import left
             return left(self.net, slug)
+        if task == "port":
+            from .port_agents import left
+            return left(self.net, slug)
         row = self.net.project_store(proj["id"]).one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
         return row["n"]
 
@@ -1470,8 +1475,10 @@ class Manager:
         asset_agents.bind(self.net,s,agent)
         from . import data_agents
         data_agents.bind(self.net,s,agent)
+        from . import port_agents
+        port_agents.bind(self.net,s,agent)
         if not hasattr(self.net, '_agent_tool_tasks'): self.net._agent_tool_tasks = {}
-        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'boundary' if s.options.get('task') == 'boundary' else 'assets' if s.options.get('task')=='assets' else 'data' if s.options.get('task')=='data' else 'matching'
+        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'boundary' if s.options.get('task') == 'boundary' else 'assets' if s.options.get('task')=='assets' else 'data' if s.options.get('task')=='data' else 'port' if s.options.get('task')=='port' else 'matching'
 
         workdir = self.home / "agents" / s.agent_name
         workdir.mkdir(parents=True, exist_ok=True)
@@ -1885,6 +1892,9 @@ class Manager:
             return prompt(s)
         if s.options.get('task') == 'data':
             from .data_agents import prompt
+            return prompt(self.net, s) + ('\n\n' + s.startup_context if s.startup_context else '')
+        if s.options.get('task') == 'port':
+            from .port_agents import prompt
             return prompt(self.net, s) + ('\n\n' + s.startup_context if s.startup_context else '')
         text = (focused_agents.prompt(s) if s.options.get('focus_id') else self._prompt(s)) + previous(self.net, s.id, s.slug)
         if s.options.get('focus_id'):

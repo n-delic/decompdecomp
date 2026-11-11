@@ -610,6 +610,15 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                        s(name=st("data symbol, or empty for the next"))),
         "release_data": ("Data agents: give a unit back with what you learned.",
                          s(name=st("data symbol", True), note=st("what you learned"))),
+        "claim_port_fix": ("Port-fix agents: take the next matched function to fix for the PC (or the one named).",
+                           s(function=st("function, or empty for the next"))),
+        "release_port_fix": ("Port-fix agents: give a function back with what you learned.",
+                             s(function=st("function", True), note=st("what you learned"))),
+        "check_for_pc": ("What a 64-bit PC compiler says of C for a matched function. Nothing is judged or saved.",
+                         s(function=st("function", True), source=st("its C", True))),
+        "fix_for_pc": ("Judge a function's C fixed for the PC: kept only if the console build still matches and the "
+                       "PC build has no errors and fewer pointer-size warnings.",
+                       s(function=st("function", True), source=st("its fixed C", True))),
         "compile_data": ("Judge C defining one data symbol: kept only if it holds the game's bytes there, all of it.",
                          s(name=st("data symbol", True), source=st("C defining it", True))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "
