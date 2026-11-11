@@ -477,7 +477,7 @@ function drawReleases(slug, data) {
   $("releaseContext").textContent = linked ? `— ${linked.name}` : data.candidates.length ? `— ${data.candidates.length} found` : "— none linked";
   body.innerHTML = (linked ? `<p><b>Linked:</b> ${releaseLabel(linked)}</p>`
       + (last ? `<p class="muted small">Last run: ${last.renamed.toLocaleString()} names brought over · ${last.paired.toLocaleString()} functions paired (${last.identical.toLocaleString()} identical) · ${(last.header?.added || 0).toLocaleString()} header items${last.rejected ? ` · ${last.rejected} names left out (the run's log says why)` : ""}.</p>` : "")
-      + `<div class="row"><button type="button" class="primary small-btn" data-release-names>Bring names over</button><button type="button" class="ghost small-btn" data-release-unlink>Unlink</button></div>` : "")
+      + `<div class="row"><button type="button" class="primary small-btn" data-release-names>Bring names over</button><button type="button" class="ghost small-btn" data-release-code>Try its code</button><button type="button" class="ghost small-btn" data-release-unlink>Unlink</button></div>` : "")
     + data.candidates.map(c => `<p>${releaseLabel(c)} <span class="muted small">(${c.evidence === "game code" ? "same game code" : `${Math.round(c.shared * 100)}% identical code`})</span> <button type="button" class="ghost small-btn" data-release-link="${esc(c.slug)}">Link as another release</button></p>`).join("")
     + (!linked && !data.candidates.length ? `<p class="muted small">No other release of this game found by its game code.</p>` : "");
   const controls = () => [...body.querySelectorAll("button"), $("releaseScan")];
@@ -501,6 +501,19 @@ function drawReleases(slug, data) {
       const {job} = await api("/api/regional/names", {method: "POST", body: {slug}});
       const result = await followJob(job, log);
       toast(`${result.renamed.toLocaleString()} names from ${esc(linked.name)}.`, "match");
+      await loadReleases(slug);
+    } catch (error) { showJobError(log, error.message); }
+    finally { finish(); }
+  };
+  const code = body.querySelector("[data-release-code]");
+  if (code) code.onclick = async () => {
+    log.hidden = false; log.textContent = ""; log._showJobProgress = true;
+    showJobError(log, "");
+    const finish = beginWork(log, "Trying the other release's code", controls(), "Finished trying the other release's code.");
+    try {
+      const {job} = await api("/api/regional/code", {method: "POST", body: {slug}});
+      const result = await followJob(job, log);
+      toast(`${result.matched.toLocaleString()} matched and ${result.polished.toLocaleString()} polished from ${esc(linked.name)}.`, "match");
       await loadReleases(slug);
     } catch (error) { showJobError(log, error.message); }
     finally { finish(); }

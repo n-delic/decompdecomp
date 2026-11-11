@@ -286,7 +286,7 @@ class Plan:
     kept: int  # this project's own names, kept over the other release's
     unmapped: int  # the other release's names at addresses that didn't map
     taken: int  # names this project already uses elsewhere
-    translate: dict[str, str]  # the other release's names -> this project's, for its C and header
+    translate: dict[str, str]  # the other release's names -> this project's now, for its C and header
     name_at: object = None  # this project's name at an address: (name, offset)
 
     def name(self, word: str) -> str | None:
@@ -318,17 +318,15 @@ def plan(net, proj, donor) -> Plan:
 
     def offer(old: str, new: str, address: int):
         nonlocal kept, taken
-        translate[new] = new
+        translate[new] = old  # what this project calls it now (the same name once it's brought over)
         if old == new or new in seen:
             return
         if not generated(old):
             kept += 1
-            translate[new] = old
             return
         at = syms.resolve(new)
         if at is not None and at != address:
             taken += 1
-            translate.pop(new, None)
             return
         seen.add(new)
         rows.append(dict(old=old, new=new, address=address))
@@ -484,7 +482,7 @@ def bring_names(net, slug: str, log) -> dict:
     log(f"{renamed:,} names brought over" + (f"; {len(rejected)} left out:" if rejected else "."))
     for row in rejected[:5]:
         log(f"  {row['old']} -> {row['new']}: {row['why']}")
-    header = _bring_header(net, proj, donor, p, log)
+    header = _bring_header(net, proj, donor, plan(net, net.project_row(slug), donor), log)  # with the new names
     result = dict(paired=len(p.pairs), identical=identical, addresses=len(p.addresses), renamed=renamed,
                   rejected=rejected[:50], kept=p.kept, taken=p.taken, unmapped=p.unmapped, header=header, at=time.time())
     net._update_cfg(slug, lambda cfg: cfg.get('release_of', {}).__setitem__(
@@ -498,12 +496,11 @@ def _bring_header(net, proj, donor, p: Plan, log) -> dict:
     if net._unit_contexts(proj['id']):
         log('Header types were not brought over: this project has a header per source file.')
         return dict(added=0, why='per-file headers')
-    syms = net.symbols(proj['id'])  # (after the renames above)
-    functions_now = {x.name: syms.name_at(y.vram)[0] for x, y, _ in p.pairs}  # the donor's names, kept or refused
+    syms = net.symbols(proj['id'])
     produced = set()  # this project's names the translation gave (an address name resolves for any address)
 
     def rename(name):
-        new = functions_now.get(name) or p.name(name)
+        new = p.name(name)
         if new:
             produced.add(new)
         return new
@@ -527,3 +524,107 @@ def _bring_header(net, proj, donor, p: Plan, log) -> dict:
     result = net.edit_context(agent, proj['slug'], '', block, f"Types and declarations from {donor['name']}")
     log(result.split('\n')[0])
     return dict(added=len(items) if result.startswith('✅') else 0, why=None if result.startswith('✅') else result.split('\n')[0])
+
+
+# ------------------------------------------------------------------ the other release's code
+
+def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
+    """Try the linked release's matched C, with this project's names, on each paired function: an open one becomes
+    a match when the judge says so (built with the other release's compiler settings for that function when its
+    own don't match and those do), and a matched one not yet polished takes the other release's polished C when
+    it still matches. Misses are remembered as twins' are, so a pass tries only what changed."""
+    proj = net.project_row(slug)
+    link_ = linked(net, proj)
+    if not link_ or not _eligible(net, proj):
+        return dict(matched=0, polished=0, tried=0)
+    donor = net.project_row(link_['slug'])
+    stop = getattr(job, 'stop', None)
+    progress = getattr(log, 'progress', None) or (lambda _: None)
+    p = plan(net, proj, donor)
+    from ..function_rows import selected
+    theirs = {r['id']: r for r in selected(net.project_store(donor['id']), donor['id'],
+                                            [x.id for x, _, _ in p.pairs if x.status == 'matched'])}
+    work = [(x, y, s) for x, y, s in p.pairs if x.id in theirs and theirs[x.id]['matched_source']]
+    work.sort(key=lambda t: (t[1].status != 'open', -t[2]))  # open functions first, identical code first
+    counts = dict(matched=0, polished=0, tried=0)
+    agent, _ = net.local_agent('autopilot')
+    for done, (x, y, score) in enumerate(work):
+        if stop is not None and stop.is_set():
+            break
+        progress(dict(phase="Trying the other release's code", done=done, total=len(work)))
+        a = theirs[x.id]
+        b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
+        if b is None:
+            continue
+        source = p.text(a['matched_source'])
+        if b['status'] == 'open':
+            outcome = _try_open(net, agent, proj, donor, a, b, source, score)
+            counts['tried'] += outcome != 'skip'
+            if outcome == 'match':
+                counts['matched'] += 1
+                if job is not None and hasattr(job, 'cross_matched'):
+                    job.cross_matched += 1
+                log(f"{b['name']} matched from {a['name']} in {donor['name']}.")
+        elif b['status'] == 'matched' and not b['readable'] and a['readable']:
+            counts['tried'] += 1
+            try:
+                said = net.readability.submit(agent, slug, b['name'], source)
+            except NetworkError:
+                continue  # held by an agent, or changed meanwhile
+            if said.startswith('✅'):
+                counts['polished'] += 1
+    progress(dict(phase="Trying the other release's code", done=len(work), total=len(work)))
+    log(f"{counts['matched']} matched and {counts['polished']} polished from {donor['name']}; "
+        f"{counts['tried']} tried.")
+    return counts
+
+
+def _try_open(net, agent, proj, donor, a, b, source, score) -> str:
+    """match | miss | skip for the other release's C on an open function, recorded as a cross-game attempt."""
+    twins = net.twins
+    if twins._missed(b['id'], source, project_id=proj['id']):
+        return 'skip'
+    origin = f" in {donor['name']}, another release of this game"
+    outcome, why = twins._attempt_twin(agent, proj, a, b, source, origin=origin, similar=score < 1.0)
+    if outcome == 'miss':
+        outcome = _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) or outcome
+    with net.project_store(proj['id']).tx() as db:
+        if outcome != 'skip':
+            db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,source_function_id,"
+                       "outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)",
+                       (proj['id'], b['id'], donor['id'], a['id'], outcome, why[:200], time.time()))
+        if outcome == 'miss':
+            db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
+                       "VALUES(?,?,?,?,?)", (b['id'], twins._miss_key(source), proj['id'], time.time(), why))
+    return outcome
+
+
+def _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) -> str | None:
+    """'match' when the other release builds this function with other compiler settings and the C matches with
+    them here too: they become this function's settings. The other release's match is the evidence that those
+    settings built it; the judge checks they build this one."""
+    from ..project import compiler_for
+    from .prepared_evidence import scoped_config
+    theirs = compiler_for(net.cfg(donor), a['vram'], a)
+    mine = compiler_for(net.cfg(net.project_row(proj['slug'])), b['vram'], b)
+    if (theirs['toolchain'], list(theirs['flags'])) == (mine['toolchain'], list(mine['flags'])):
+        return None
+    if net.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=?", b['id']):
+        return None
+    relation = "adapted from similar verified C in" if score < 1.0 else "identical to"
+    note = f"/* {relation} {a['name']}{origin} (matched), with its names changed by decompdecomp */\n"
+    from ..toolchains import ToolchainError
+    try:
+        ok, _, _ = net._judge_with(proj, b, theirs['toolchain'], list(theirs['flags']), note + source)
+    except (NetworkError, ToolchainError):
+        return None  # (a compiler this computer can't run, say: the function stays for the others)
+    if not ok:
+        return None
+    settings = dict(toolchain=theirs['toolchain'], flags=list(theirs['flags']))
+    current = net.project_row(proj['slug'])  # (the pass's row is older than the settings other matches set)
+    try:
+        net._apply_compiler_config(current, scoped_config(current, b, settings))
+        result = net.try_quietly(agent, net.project_row(proj['slug']), b, note + source)
+    except (NetworkError, ToolchainError):
+        return None  # the project changed meanwhile (a helper's match): the next pass tries again
+    return 'match' if result.get('matched') else None

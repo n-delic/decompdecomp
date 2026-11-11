@@ -609,6 +609,10 @@ class Twins:
             job.ordered.set()
             self.run(slug, job)
             job.state = "running"  # run() finishes its local pass; cross-project work is still cancellable
+            from . import regional  # another release of this game first: its pairs are the surest donors
+            if regional.linked(self.net, proj):
+                report(job, "Trying the other release's code")
+                job.matched += regional.transfer(self.net, slug, job)['matched']
             report(job, 'Searching other games and local SDKs')
             job.matched += self.across_games(slug, job)
             from . import free_candidates, named_donors, similar_phase

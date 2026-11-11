@@ -55,6 +55,7 @@ const pal = {slug: 'pal', name: 'Rally (Europe)', region: 'Europe', game_code: '
     assert.equal(JSON.stringify(t.calls.at(-1)), JSON.stringify({url: '/api/regional', body: {slug: 'ntsc', other: 'pal'}}));
     assert.match(t.$('releaseBody').innerHTML, /Linked:/);
     assert.ok(t.$('releaseBody').querySelector('[data-release-names]'));
+    assert.ok(t.$('releaseBody').querySelector('[data-release-code]'));
   }
   {
     // Bringing names over shows the shared bar while it works, and clears it on success and on failure.

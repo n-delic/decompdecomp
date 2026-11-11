@@ -867,6 +867,21 @@ def register(app: App) -> None:
         return {'job': jobs.start('Names from another release', lambda log: regional.bring_names(net, slug, log),
                                   cancel_message='Stopped. The names already checked and saved stay.')}
 
+    def p_regional_code(slug, request, data):
+        from .. import regional
+        if not regional.linked(net, net.project_row(slug)):
+            raise ValueError('Link this project with another release of the game first.')
+        if (net.autopilot_status(slug) or {}).get('state') == 'running':
+            raise ValueError('Autopilot is running and tries the other release\'s code itself. Wait for it to finish.')
+
+        def work(log):
+            from ..twins import Job
+            job = Job()
+            job.stop = log.cancel_event
+            return regional.transfer(net, slug, job, log)
+        return {'job': jobs.start("Code from another release", work,
+                                  cancel_message='Stopped. Matches and polished functions found so far are saved.')}
+
     def p_sdk(slug, request, data):
         path = hostenv.local_path(str(data.get("path") or ""))
         corpus = str(data.get("corpus") or path.stem).strip()[:80]
@@ -997,6 +1012,7 @@ def register(app: App) -> None:
         "/api/cross-game/run": (p_cross_run, ["POST"]),
         "/api/regional": (p_regional, ["GET", "POST"]),
         "/api/regional/names": (p_regional_names, ["POST"]),
+        "/api/regional/code": (p_regional_code, ["POST"]),
         "/api/cross-game/name": (p_cross_name, ["POST"]),
         "/api/cross-game/functions": (p_project_functions, ["GET"]),
         "/api/claim-order": (p_claim_order, ["POST"]),
