@@ -341,6 +341,19 @@
         <ol class="mini-list board" id="board"></ol>
       </section>
     </div>
+
+    <details class="panel settings-disclosure" id="portPanel">
+      <summary class="panel-head"><h2>Port readiness</h2></summary>
+      <div class="pad">
+        <p>What still stands between this game and a native PC port. Read-only: nothing changes and no compiler runs.</p>
+        <p class="small muted" id="portKit"></p>
+        <div class="row"><button class="ghost small-btn" id="portReload" type="button">Refresh</button></div>
+        <pre id="portWork" class="joblog" hidden></pre>
+        <ul class="small" id="portFacts"></ul>
+        <p id="portReady"></p>
+        <ol class="small" id="portBlockers"></ol>
+      </div>
+    </details>
   </section>
 
   <!-- functions -->
@@ -1199,6 +1212,7 @@
 <script defer src="/assets/js/rom-textures.js"></script>
 <script defer src="/assets/js/rom-explorer.js"></script>
 <script defer src="/assets/js/asset-agents.js"></script>
+<script defer src="/assets/js/port.js"></script>
 <script defer src="/assets/js/boundary-repairs.js"></script>
 <script defer src="/assets/js/repository-setup.js"></script>
 <script defer src="/assets/js/repository-push.js"></script>
