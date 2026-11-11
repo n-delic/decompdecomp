@@ -287,7 +287,10 @@ class _Linker:
         return raw
 
     def place_pointees(self) -> None:
-        """Place nested data from ROM pointers, including HI16/LO16 addresses in a submitted helper body."""
+        """Place nested data from ROM pointers: a jump table's entries, and the HI16/LO16 address, $gp-relative
+        datum, or jal target a submitted helper body carries. A helper sharing the function's own .text is out of
+        scope (address() refuses it, never matching its body unchecked); this covers the candidate's other
+        sections (review point 3)."""
         todo = list(self.data)
         while todo:
             shndx, off = todo.pop()
@@ -305,17 +308,33 @@ class _Linker:
                                "value": int.from_bytes(word or b"", self.target.order) &
                                (0xFFFF if r["type"] in (R_MIPS_HI16, R_MIPS_LO16) else 0xFFFFFFFF)})
             for k, r in enumerate(raw):
-                if r["type"] not in (R_MIPS_32, R_MIPS_HI16, R_MIPS_LO16):
+                rtype = r["type"]
+                if rtype not in (R_MIPS_32, R_MIPS_HI16, R_MIPS_LO16, R_MIPS_GPREL16, R_MIPS_26):
                     continue
-                value = section_target("mips", raw, k)
-                _, own = self._pointee(r["symtab"].get_symbol(r["symidx"]), value)
+                s = r["symtab"].get_symbol(r["symidx"])
+                if rtype == R_MIPS_GPREL16:  # section_target doesn't cover $gp-relative; its addend is the immediate
+                    if not self.target.gp:
+                        continue  # a $gp datum on a game with no $gp: verify_data raises the -G0 problem
+                    value = r["value"] - 0x10000 if r["value"] & 0x8000 else r["value"]
+                    if s["st_info"]["bind"] == "STB_LOCAL":
+                        value += self.gp0
+                else:
+                    value = section_target("mips", raw, k)
+                _, own = self._pointee(s, value)
                 if own is None or not linked[k]["available"]:
                     continue
-                if r["type"] in (R_MIPS_HI16, R_MIPS_LO16) and any(
+                if rtype in (R_MIPS_HI16, R_MIPS_LO16) and any(
                         not q["available"] for q in linked if q["symidx"] == r["symidx"] and
                         q["symtab"] is r["symtab"] and q["type"] in (R_MIPS_HI16, R_MIPS_LO16)):
                     continue
-                dest = section_target("mips", linked, k) & 0xFFFFFFFF
+                if rtype == R_MIPS_GPREL16:  # the ROM word's immediate is address - $gp
+                    imm = linked[k]["value"] & 0xFFFF
+                    dest = (imm - 0x10000 if imm & 0x8000 else imm) + self.target.gp
+                elif rtype == R_MIPS_26:  # the ROM word's jump index, in the instruction's 256 MB region
+                    pc = addr + r["off"]
+                    dest = ((pc + 4) & 0xF0000000) | ((linked[k]["value"] & 0x03FFFFFF) << 2)
+                else:
+                    dest = section_target("mips", linked, k) & 0xFFFFFFFF
                 if own in self.data:
                     if self.data[own] != dest:
                         self.problem(f"{sec.name}+0x{off + r['off']:X} points to conflicting ROM addresses")
@@ -348,6 +367,9 @@ class _Linker:
                 continue
             s = r["symtab"].get_symbol(r["symidx"])
             if rtype == R_MIPS_GPREL16:  # section_target doesn't cover $gp-relative; its addend is the immediate
+                if not self.target.gp:
+                    self.problem("your code uses $gp-relative data, but this game doesn't: compile with -G0")
+                    return
                 value = r["value"] - 0x10000 if r["value"] & 0x8000 else r["value"]
                 if s["st_info"]["bind"] == "STB_LOCAL":
                     value += self.gp0

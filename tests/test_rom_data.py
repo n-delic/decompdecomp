@@ -211,3 +211,145 @@ def test_gp_rel_in_a_defined_region_is_relocated(tmp_path):
                          Symbol("g", G, 4, "data")])
     res = match.link(cobj, "caller", target, table, read)
     assert res.exact, res.problems
+
+_EE = pytest.mark.skipif(toolchains.installed("ee-gcc-2.96") is None, reason="needs ee-gcc-2.96")
+
+
+def _defined_region_oracle(tmp_path, src, named_ext=(), gp=0x80018000, base=0x80010000):
+    """Compile `src` (its entry point is `caller`, at .text+0) with ee-gcc and build an oracle ROM for it.
+
+    Returns (obj, RomTarget, SymbolTable, read). `named_ext` is (name, addr, bytes, kind) for symbols the game
+    provides. A section relocation's target folds in the REL field's addend, the way a disassembler records an
+    absolute address; `apply` then sets each field from that address, so the oracle is independent of match.py.
+    """
+    from elftools.elf.relocation import RelocationSection
+    d = str(toolchains.require("ee-gcc-2.96")); cc = f"{d}/bin/ee-gcc"
+    (tmp_path / "c.c").write_text(src)
+    subprocess.run([cc, "-c", "-O2", "-G8", "-o", str(tmp_path / "c.o"), str(tmp_path / "c.c")], check=True)
+    obj = (tmp_path / "c.o").read_bytes()
+    e = ELFFile(BytesIO(obj)); st = e.get_section_by_name(".symtab")
+    prog = [s.name for s in e.iter_sections()
+            if s.name and s["sh_type"] in ("SHT_PROGBITS", "SHT_NOBITS") and s.name != ".mdebug.eabi64"]
+    sec_base = {nm: base + 0x2000 * i for i, nm in enumerate(prog)}
+    ext = {n: (a, b, k) for n, a, b, k in named_ext}
+
+    def resolve(sym):
+        if sym.name in ext:
+            return ext[sym.name][0]
+        sh = sym["st_shndx"]
+        if isinstance(sh, int) and e.get_section(sh).name in sec_base:
+            return sec_base[e.get_section(sh).name] + sym["st_value"]
+        return None
+
+    def relocs_of(sec):
+        idx = next(i for i, s in enumerate(e.iter_sections()) if s.name == sec)
+        data = e.get_section_by_name(sec).data(); out = []
+        for s in e.iter_sections():
+            if isinstance(s, RelocationSection) and s["sh_info"] == idx:
+                for r in s.iter_relocations():
+                    a = resolve(st.get_symbol(r["r_info_sym"]))
+                    if a is None:
+                        continue
+                    off, typ = r["r_offset"], r["r_info_type"]
+                    w = int.from_bytes(data[off:off + 4], "little")
+                    if typ == match.R_MIPS_26:
+                        a += (w & 0x03FFFFFF) << 2
+                    elif typ == match.R_MIPS_32:
+                        a += w
+                    out.append((off, typ, a))
+        return out
+
+    def apply(sec):
+        data = bytearray(e.get_section_by_name(sec).data())
+        for off, typ, a in relocs_of(sec):
+            w = int.from_bytes(data[off:off + 4], "little")
+            if typ == match.R_MIPS_32:
+                w = a
+            elif typ == match.R_MIPS_26:
+                w = (w & ~0x03FFFFFF) | ((a >> 2) & 0x03FFFFFF)
+            elif typ == match.R_MIPS_GPREL16:
+                w = (w & ~0xFFFF) | ((a - gp) & 0xFFFF)
+            elif typ == match.R_MIPS_HI16:
+                w = (w & ~0xFFFF) | (((a + 0x8000) >> 16) & 0xFFFF)
+            elif typ == match.R_MIPS_LO16:
+                w = (w & ~0xFFFF) | (a & 0xFFFF)
+            data[off:off + 4] = w.to_bytes(4, "little")
+        return bytes(data)
+
+    image = {sec_base[nm]: apply(nm) for nm in prog if e.get_section_by_name(nm)["sh_type"] != "SHT_NOBITS"}
+    for _n, (a, b, _k) in ext.items():
+        image[a] = b
+
+    def read(a, n):
+        for b, data in image.items():
+            if b <= a and a + n <= b + len(data):
+                return data[a - b:a - b + n]
+        return None
+
+    cal = next(s for s in st.iter_symbols() if s.name == "caller")
+    assert cal["st_value"] == 0, "the oracle expects `caller` at .text+0"
+    code = image[sec_base[".text"]][:cal["st_size"]]
+    rel = [(off, typ, a) for off, typ, a in relocs_of(".text") if off < cal["st_size"]]
+    syms = [Symbol("caller", sec_base[".text"], cal["st_size"], "func")]
+    for n, (a, b, k) in ext.items():
+        syms.append(Symbol(n, a, len(b), k))
+    target = match.RomTarget("caller", sec_base[".text"], code, rel, big_endian=False, gp=gp)
+    return obj, target, SymbolTable(syms), read
+
+
+@_EE
+def test_r26_call_to_a_static_helper_in_a_defined_region_is_relocated(tmp_path):
+    """A matched caller can keep a static helper the game doesn't name in its own section and reach it with `jal`.
+    verify_data must relocate that R_MIPS_26 call, and place_pointees must find the helper from the linked ROM
+    word, or the call compares as the assembler's unrelocated 0 and the match is lost though every byte is right."""
+    src = ("static int inner(void) __attribute__((noinline, section(\".fclone\")));\n"
+           "static int outer(void) __attribute__((noinline, section(\".fclone\")));\n"
+           "static int outer(void){ return inner() + 1; }\n"
+           "static int inner(void){ return 0x42; }\n"
+           "int caller(void){ return outer(); }\n")
+    obj, target, table, read = _defined_region_oracle(tmp_path, src)
+    res = match.link(obj, "caller", target, table, read)
+    assert res.exact, res.problems
+
+
+@_EE
+def test_gp_rel_from_a_defined_region_to_a_static_datum_is_placed(tmp_path):
+    """A static clone can load a static datum of its own $gp-relatively. The datum has no name the game knows, so
+    place_pointees must put it where the ROM's instruction points and verify_data must relocate the load against
+    that placement, rather than refuse the nameless symbol (`` is not a known symbol`)."""
+    src = ("static int s = 0x12345678;\n"
+           "static int helper(void) __attribute__((noinline, section(\".fclone\")));\n"
+           "static int helper(void){ return s; }\n"
+           "int caller(void){ return helper(); }\n")
+    obj, target, table, read = _defined_region_oracle(tmp_path, src)
+    res = match.link(obj, "caller", target, table, read)
+    assert res.exact, res.problems
+
+
+@_EE
+def test_defined_region_gp_rel_is_refused_without_g0(tmp_path):
+    """On a game with no $gp (gp == 0), a $gp-relative reference inside a defined region is refused with the same
+    'compile with -G0' message the function's own code gets, not silently accepted."""
+    src = ("static int s = 0x12345678;\n"
+           "static int helper(void) __attribute__((noinline, section(\".fclone\")));\n"
+           "static int helper(void){ return s; }\n"
+           "int caller(void){ return helper(); }\n")
+    obj, target, table, read = _defined_region_oracle(tmp_path, src, gp=0)
+    res = match.link(obj, "caller", target, table, read)
+    assert not res.exact
+    assert any("compile with -G0" in p for p in res.problems), res.problems
+
+
+@_EE
+def test_static_helper_in_the_functions_own_text_is_out_of_scope(tmp_path):
+    """Scope limit: this change covers helpers and data the candidate keeps in its OTHER sections, not a static
+    helper that shares the function's own .text. Such a helper the game doesn't name is refused, never silently
+    matched with its body unchecked; verifying same-.text helper bodies is left to a follow-up (review point 3)."""
+    src = ("int caller(int x);\n"
+           "static int helper(int x) __attribute__((noinline));\n"
+           "int caller(int x){ return helper(x) + 1; }\n"
+           "static int helper(int x){ return x * 3; }\n")
+    obj, target, table, read = _defined_region_oracle(tmp_path, src)
+    res = match.link(obj, "caller", target, table, read)
+    assert not res.exact
+    assert any("not a known symbol" in p for p in res.problems), res.problems
