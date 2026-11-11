@@ -3,8 +3,8 @@ agents once Compile for PC (port/pc_compile.py) has listed what a PC build refus
 
 Each agent claims one function at a time (claim_port_fix), sees its C and what the PC compiler said of it, tries
 fixes (check_for_pc shows the PC's verdict alone), and submits one (fix_for_pc), which is kept only when the
-console build still matches byte for byte and the PC build has no errors and fewer pointer-size warnings
-(port/port_fix.py). A function it can't fix goes back with a note (release_port_fix). The queue is the functions
+console build still matches byte for byte and the PC build is no worse on errors or pointer-size warnings and
+better on one (port/port_fix.py): a big function is fixed a group of lines at a time, and the agent keeps it. A function it can't fix goes back with a note (release_port_fix). The queue is the functions
 that don't compile first, then those that cast pointers to 32-bit integers, fewest tries first; a claim is a lease
 on the function's row of the PC results, so a stopped agent's function comes back on its own. Port-fix agents see
 only these tools, and fix only the function they hold.
@@ -29,16 +29,19 @@ PROMPT = (
     "You are a decompdecomp helper fixing the C of {title}, a game the user owns, so it also builds for a PC: the "
     "first step of a port. Every function you get is matched: its C compiles to the game's exact bytes with the "
     "console's compiler. A fix is kept only when that is still true AND a current clang building for a 64-bit PC "
-    "takes it with no errors and fewer pointer-size warnings (fix_for_pc judges both), so a mistake costs nothing. "
+    "finds it no worse on errors and pointer-size warnings and better on one (fix_for_pc judges both), so a mistake "
+    "costs nothing and a big function can be fixed a group of lines at a time: don't skip a function for its size. "
     "The game's code is private: never publish it.\n"
     "Loop: claim_port_fix() gives you a function, its C and what the PC compiler says of it. Fix the cause, not the "
     "warning: a pointer kept in an s32/u32 becomes a pointer type (in the variable, the parameter, the struct "
     "field); a call to an undeclared function gets its prototype in the header (edit_context; matched functions "
-    "must still match); an integer passed as a pointer gets the right type, or a cast where the value really is an "
-    "address. MIPS asm statements and anything the console's compiler can't take the same way go inside "
-    "`#ifdef PORT` ... `#else` (the original) `#endif`: the console build doesn't define PORT. Never cast a pointer "
-    "to an integer to silence a warning. check_for_pc(function, source) shows the PC's verdict alone; "
-    "fix_for_pc(function, source) judges both and keeps it. When it's kept, claim the next. If after a few tries "
+    "must still match; when the header alone fixes it, fix_for_pc the C as it is); an integer passed as a pointer "
+    "gets the right type. When a pointer type changes the console's instructions (operand order, registers), don't "
+    "fight the old compiler: write the pointer-typed lines inside `#ifdef PORT`, the original lines in `#else`, "
+    "`#endif` (the console build doesn't define PORT); the same for MIPS asm and gcc-only builtins. Never cast a "
+    "pointer to a 32-bit integer (s32/u32) to silence a warning; uintptr_t is the PC's pointer-sized integer, for "
+    "words that hold addresses (a display list's). check_for_pc(function, source) shows the PC's verdict alone; "
+    "fix_for_pc(function, source) judges both and keeps it. When nothing is left of it, claim the next. If after a few tries "
     "it won't pass, release_port_fix(function, note) with what you learned and claim another.\n"
     "Read guide(\"port\") once. Work up to {count} functions this session, then end; the app continues the queue. "
     "If claim_port_fix says nothing is left, end the session."
@@ -176,13 +179,17 @@ def fixed(net, agent, slug, function: str, result: dict) -> str:
         return text
     counts = net.__dict__.setdefault("_session_diagnostic_compiles", {})
     counts[agent.id] = counts.get(agent.id, 0) + 1
-    if result["kept"]:
+    if result["kept"] and port_fix._tally(result["found"]) == (0, 0):
         return text + "\nclaim_port_fix() for the next function."
     with net.progress.view():
         proj = _project(net, slug)
         with pc_compile._store(net, proj).tx() as db:
-            db.execute("UPDATE port_compile SET lease=? WHERE project_id=? AND name=? AND agent_id=?",
-                       (time.time() + LEASE, proj["id"], net._function(function, slug)["name"], agent.id))
+            db.execute("UPDATE port_compile SET agent_id=?, lease=? WHERE project_id=? AND name=? "
+                       "AND (agent_id=? OR agent_id IS NULL)",
+                       (agent.id, time.time() + LEASE, proj["id"], net._function(function, slug)["name"], agent.id))
+    if result["kept"]:  # progress on a big function: it's still the agent's, with what's left
+        return (text + "\nYou still hold it: fix what's left the same way, or release_port_fix(function, note) "
+                "with where you got to.")
     return text
 
 

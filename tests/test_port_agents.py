@@ -25,7 +25,13 @@ WARNING = STAND_IN.replace('''    if "#line" in line:''', '''    if "*)table" in
         print(f"{source}:{n}:30: warning: cast to 's32 *' (aka 'int *') from smaller integer type 's32' "
               "[-Wint-to-pointer-cast]", file=sys.stderr)
     if "#line" in line:''')
-assert WARNING != STAND_IN
+# and refuses a call the shared header doesn't declare (a comment stands for the call: it changes no console bytes)
+WARNING = WARNING.replace('''    if "#line" in line:''', '''    if "needs_proto" in line and "needs_proto" not in open("include/common.h").read():
+        print(f"{source}:{n}:1: error: call to undeclared function 'needs_proto'; ISO C99 and later do not "
+              "support implicit function declarations [-Wimplicit-function-declaration]", file=sys.stderr)
+        failed = True
+    if "#line" in line:''')
+assert WARNING != STAND_IN and "needs_proto" in WARNING
 
 
 @pytest.fixture
@@ -90,6 +96,43 @@ def test_a_fix_is_kept_only_when_both_builds_agree(project):
     # nothing left to improve: the same verdict again isn't a fix
     again = port_fix.fix(net, me, "game", "get_first", SLOWER)
     assert not again["kept"] and "says the same of it" in again["text"]
+    with pytest.raises(NetworkError, match="the C it has already"):
+        port_fix.fix(net, me, "game", "get_first", FIXED)
+
+
+def test_a_header_fix_and_a_big_function_fixed_a_step_at_a_time_are_kept(project):
+    net, cc = project
+    me = agent(net)
+    # two pointers kept in s32s and a call the header doesn't declare: 1 error, 2 warnings
+    both = BEFORE.replace("{ return *(s32 *)table; }", "{\n/* needs_proto */\ns32 a = *(s32 *)table;\n"
+                                                         "return a + *(s32 *)table - a; }")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=? WHERE name='get_first'", (both,))
+    pc_compile.check(net, "game", print, cc=cc)
+    # the error is fixed and one warning is left: better on one count, no worse on the other, so it's kept and the
+    # function stays in the queue (it doesn't have to compile for a PC at once)
+    half = both.replace("/* needs_proto */", "/* the call, declared */").replace("s32 a = *(s32 *)table", "s32 a = 0")
+    step = port_fix.fix(net, me, "game", "get_first", half)
+    if not step["kept"]:  # the console bytes moved: try the step the guide gives, the PC's lines behind PORT
+        pytest.skip("the homemade function's bytes changed: " + step["text"][:200])
+    assert "closer to building for a PC" not in step["text"] and "1 pointer-size warnings left" in step["text"]
+    with net.progress.view():
+        assert port_agents.queue(net, net.project_row("game")) == ["get_first"]
+    # back to the C that needs the declaration; then the header alone fixes it, and the C is submitted unchanged
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=? WHERE name='get_first'", (both,))
+    pc_compile.check(net, "game", print, cc=cc)
+    with pytest.raises(NetworkError, match="the C it has already"):
+        port_fix.fix(net, me, "game", "get_first", both)
+    with net.store.tx() as db:  # the header gets the declaration (edit_context judges that edit on its own)
+        db.execute("INSERT INTO context_versions(project_id, version, header, message, created_at, unit) "
+                   "VALUES((SELECT id FROM projects WHERE slug='game'), 1, '/* void needs_proto(void); */', "
+                   "'declare it', 0, '')")
+    header = port_fix.fix(net, me, "game", "get_first", both)
+    assert header["kept"] and "the header's change fixed it" in header["text"], header["text"]
+    assert net._function("get_first", "game")["matched_source"] == both
+    with net.progress.view():
+        assert pc_compile.function(net, net.project_row("game"), "get_first")[0]["kind"] == "pointer size"
 
 
 def test_agents_claim_fix_and_release_one_function_at_a_time(project):

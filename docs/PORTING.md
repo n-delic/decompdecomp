@@ -168,7 +168,13 @@ The judge runs both builds; a fix that can't keep the console build matching is 
 Built (`app/port_agents.py`, `port/port_fix.py`): **Start agents → Fix C for the PC** works through what Compile for
 PC listed, the functions that don't compile first. `check_for_pc` shows the PC's verdict of a try alone;
 `fix_for_pc` keeps a fix only when the function judge still finds the game's bytes and the PC build (PORT defined)
-has no errors and fewer pointer-size warnings than before. The PC side judges the one function with the header as
+is no worse than before on errors and pointer-size warnings and better on one: a big function is fixed a group of
+lines at a time, and the agent keeps it until nothing is left. A fix the header alone made (a prototype added with
+`edit_context`) is kept by submitting the function's C unchanged. The first LLM run showed what agents need told:
+when a pointer type changes the old compiler's operand order or registers, the PC's lines go behind `#ifdef PORT`
+with the original under `#else` instead of more tries; display-list words that hold addresses are `uintptr_t` on
+the PC (a `Gfx` of its own in the header, behind PORT); gcc's `__builtin_next_arg` varargs become `<stdarg.h>`,
+callee first (`app/guide/port.md`). The PC side judges the one function with the header as
 it is; a prototype an agent adds to the header for it is judged with it, and the next full check shows what it does
 to the rest. Not caught by compiling yet: `Gfx` commands built by hand as two words, which compile for a PC and
 are wrong there. Building the port 32-bit first (Linux, Windows) defers most pointer fixes; macOS needs 64-bit.
