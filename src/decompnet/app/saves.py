@@ -957,8 +957,10 @@ class Autosave:
     def run_once(self) -> list[str]:
         """Synchronize every ROM project, including file changes that have no database event."""
         saved = []
-        for row in self.net.store.all("SELECT slug FROM projects"):
+        for row in self.net.store.all("SELECT id, slug, root FROM projects"):
             try:
+                if self.net.project_missing(row):
+                    continue  # its folder is gone: there is nothing to save into, only records to remove
                 if self.net.progress.sync(row["slug"], force=True, retry=False):  # (a failed one waits: RETRY_FAILED_SECONDS)
                     saved.append(row["slug"])
             except Exception as e:  # never stands between the user and their work

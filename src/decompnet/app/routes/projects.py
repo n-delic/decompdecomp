@@ -33,7 +33,8 @@ def register(app: App) -> None:
             try:
                 def perform():
                     result = fn(slug, request, data)
-                    if request.method == "POST" and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    project = net.store.one("SELECT * FROM projects WHERE slug=?", slug)
+                    if request.method == "POST" and project and not net.project_missing(project):
                         net.progress.sync(slug, force=True)
                     return result
                 return JSONResponse(await call(perform))
@@ -45,7 +46,8 @@ def register(app: App) -> None:
         settings.data["last_project"] = slug
         settings.save()
         overview = net.overview(slug)
-        net.warm_briefs_soon(slug)  # the project is open: agents' first briefs come next
+        if not overview.get("missing"):
+            net.warm_briefs_soon(slug)  # the project is open: agents' first briefs come next
         return overview
 
     def p_live(slug, request, data):

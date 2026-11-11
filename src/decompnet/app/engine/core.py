@@ -11,7 +11,7 @@ import secrets
 import threading
 from pathlib import Path
 
-from ... import consoles
+from ... import consoles, hostenv
 from ...network import Agent, Network, NetworkError, hash_token
 from ...rom import split
 from ...rom.symbols import Symbol, SymbolTable
@@ -68,7 +68,7 @@ class Core(Network):
 
     def _project(self, slug: str | None):
         row = super()._project(slug)
-        if hasattr(self, "progress"):
+        if hasattr(self, "progress") and self.project_missing(row) is None:
             self.progress.sync(row["slug"])
             row = super()._project(row["slug"])
         return row
@@ -106,6 +106,23 @@ class Core(Network):
                     db.execute("UPDATE projects SET root=? WHERE id=?", (str(here), row["id"]))
                 moved.append(row["slug"])
         return moved
+
+    def project_missing(self, proj) -> str | None:
+        """Why the project's folder isn't on disk, in a sentence, or None when it is there.
+
+        Its folder holds the game and everything made from it, so a project without one can't be opened; its database
+        records are all that is left, and removing the project is the way out. A folder that moved within this
+        workspace is found again by its name first (find_moved_projects): that project isn't missing any more."""
+        root = str(proj["root"] or "")
+        if root and Path(root).is_dir():
+            return None
+        if root and self.find_moved_projects():
+            row = self.store.one("SELECT root FROM projects WHERE id=?", proj["id"])
+            if row is not None and row["root"] and Path(row["root"]).is_dir():
+                return None
+        where = f": {hostenv.shown_path(root)}" if root else ""
+        return (f"Its folder is missing{where}. Put it back where it was (with the game in it), or remove the project "
+                "from decompdecomp: its matches and notes go with its database records.")
 
     def is_rom(self, proj) -> bool:
         return self.cfg(proj).get("kind") == "rom"
