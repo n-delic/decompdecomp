@@ -124,7 +124,16 @@ def test_a_linked_release_gives_its_names_and_header_types(built, tmp_path):  # 
     else:
         assert False, "names come only from a linked release"
     assert regional.link(net, "other-release", slug)["linked"]["slug"] == slug
-    result = regional.bring_names(net, "other-release", lambda *_: None)
+    lines, steps = [], []
+    log = lambda line: lines.append(line)  # noqa: E731
+    log.progress = steps.append  # (a job's log: its lines, and its progress for the panel's bar)
+    result = regional.bring_names(net, "other-release", log)
+    phases = [step["phase"] for step in steps]
+    assert phases[0].startswith("Reading") and any(ph.startswith("Pairing functions") for ph in phases)
+    counted = [step for step in steps if step["phase"].startswith("Renaming update_party (1 of 1): checking")]
+    assert counted and all(0 <= step["done"] <= step["total"] == result["renamed"] for step in counted)
+    assert any(step["phase"].startswith("Checking 2 header items") for step in steps)
+    assert any("names checked" in line for line in lines)
     assert result["renamed"] >= 1 and result["identical"] == result["paired"] and not result["rejected"]
     assert net._function("update_party", "other-release")["vram"] == net._function("update_party", slug)["vram"]
     header = net._context(other["id"])["header"]

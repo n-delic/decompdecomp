@@ -871,22 +871,30 @@ def register(app: App) -> None:
             return regional.link(net, slug, str(data.get('other') or '') or None)
         return regional.status(net, slug, shared=request.query_params.get('shared') == '1')
 
+    def regional_running(slug, kind):
+        with jobs._lock:
+            return any(j['kind'] == kind and j['state'] == 'running' and j.get('activity_project') == slug
+                       for j in jobs.jobs.values())
+
     def p_regional_names(slug, request, data):
-        from .. import regional
-        if not regional.linked(net, net.project_row(slug)):
-            raise ValueError('Link this project with another release of the game first.')
+        from .. import regional  # (the job checks the link: reading the project waits while it syncs)
+        if regional_running(slug, 'Names from another release'):
+            raise ValueError('Names are already coming over from the other release: its progress is in the panel.')
         return {'job': jobs.start('Names from another release', lambda log: regional.bring_names(net, slug, log),
                                   cancel_message='Stopped. The names already checked and saved stay.')}
 
     def p_regional_code(slug, request, data):
         from .. import regional
-        if not regional.linked(net, net.project_row(slug)):
-            raise ValueError('Link this project with another release of the game first.')
+        if regional_running(slug, 'Code from another release'):
+            raise ValueError('The other release\'s code is already being tried: its progress is in the panel.')
         if (net.autopilot_status(slug) or {}).get('state') == 'running':
             raise ValueError('Autopilot is running and tries the other release\'s code itself. Wait for it to finish.')
 
         def work(log):
             from ..twins import Job
+            log.progress(dict(phase='Reading this project and the linked release'))
+            if not regional.linked(net, net.project_row(slug)):
+                raise ValueError('Link this project with another release of the game first.')
             job = Job()
             job.stop = log.cancel_event
             return regional.transfer(net, slug, job, log)

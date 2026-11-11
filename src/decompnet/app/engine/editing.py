@@ -410,11 +410,11 @@ class EditMixin:
         return f"✅ renamed {len(pairs)} symbols; {len(affected)} affected matches checked; {len(rewritten)} matched sources updated, all still match."+guard_note
 
     def edit_context(self, agent: Agent, project: str | None, old: str, new: str, message: str,
-                     function: str | None = None) -> str:
+                     function: str | None = None, *, progress=None) -> str:
         self._rom_only(project, "edit_context")
         link = self._link(project)
         if link is None:
-            return super().edit_context(agent, project, old, new, message, function)
+            return super().edit_context(agent, project, old, new, message, function, progress=progress)
         text = link.call("/collab/context", agent, old=old, new=new, message=message, function=function)
         if text.startswith("✅"):
             link.sync()
