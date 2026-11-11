@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 
 from .. import scoring
+from ..forks.csource import _blank, find
 from ..forks.project import ForkProject
 from ..network import GAME_CODE, IN_BUILD, Agent, NetworkError
 
@@ -46,12 +47,17 @@ POLISH_TRIES = 3  # hand-outs whose rewrite failed (polish_failed) since it was 
 # rewrite had failed on: most tries had gone to polishes refused for reasons since fixed, or never submitted.
 # A function nobody finishes is still let go after this many.
 POLISH_CLAIMS = 10
+# C before the function above this many characters isn't shown in its brief, and make_readable takes the function alone
+# and puts it back under it. A twin's C keeps the declarations of the file it came from and blank lines that hold the
+# function at its line: an N64 game's audio library functions came to 7,500 lines (64,000 characters), a brief agents
+# couldn't read, so each was handed out 10 times without a rewrite.
+BIG_PREAMBLE = 8_000
 # what polishing takes (claim) and what a polishing helper's session counts as left (agents.Manager._left): the game's
 # own matched code that isn't readable yet and isn't given up on: one no rewrite kept matching was handed out again
 # and again, to every helper, being the biggest. (TODO and GIVEN_UP each take one ?, the project's id, after the
 # caller's own)
 GIVEN_UP = ("SELECT p.detail FROM events p WHERE p.project_id=? AND p.kind IN ('polish','polish_failed') AND p.id > "
-            "COALESCE((SELECT MAX(r.id) FROM events r WHERE r.project_id=p.project_id AND r.kind='readable' "
+            "COALESCE((SELECT MAX(r.id) FROM events r WHERE r.project_id=p.project_id AND r.kind IN ('readable','polish_retry') "
             "AND r.detail=p.detail), 0) "
             f"GROUP BY p.detail HAVING SUM(p.kind='polish_failed') >= {POLISH_TRIES} OR SUM(p.kind='polish') >= {POLISH_CLAIMS}")
 TODO = f"status='matched' AND readable=0 AND {GAME_CODE} AND name NOT IN ({GIVEN_UP})"
@@ -90,6 +96,7 @@ class Readability:
         self._tidying: dict[tuple[int, str], tuple[int, float]] = {}  # (project, unit) -> (agent, until)
         self._polish_locks = {}  # function id -> reentrant plan/submission lock
         self._tidy_lock = threading.Lock()  # (helpers claim at once: one file, one helper)
+        self._retried: set[int] = set()  # projects whose unread given-up functions were looked for (_retry_unread)
 
     def _untidy(self, proj) -> list[str]:
         """The project's source files (units) to tidy, most functions first: every function of the game's in them
@@ -125,9 +132,32 @@ class Readability:
                                  f"FROM functions WHERE project_id=? AND {GAME_CODE}", proj["id"])
         return {"matched": row["matched"] or 0, "readable": row["readable"] or 0}
 
+    @staticmethod
+    def preamble(source: str, name: str) -> int:
+        """Where the function starts in its C when what comes before it is too big to show (BIG_PREAMBLE), else 0."""
+        span = find(source, name)
+        return span[0] if span and span[0] > BIG_PREAMBLE else 0
+
+    def _retry_unread(self, proj) -> None:
+        """Give a function one fresh start (polish_retry) when it was given up on while its brief was too big to read:
+        those hand-outs say nothing about the function. Once per function, so one that fails again stays given up."""
+        if proj["id"] in self._retried:
+            return
+        self._retried.add(proj["id"])
+        store = self.net.project_store(proj['id'])
+        rows = store.all(f"SELECT * FROM functions WHERE project_id=? AND status='matched' AND readable=0 AND {GAME_CODE} "
+                         f"AND name IN ({GIVEN_UP}) AND name NOT IN (SELECT detail FROM events WHERE project_id=? "
+                         "AND kind='polish_retry')", proj["id"], proj["id"], proj["id"])
+        unread = [fn["name"] for fn in rows if self.preamble(self._matching_c(proj, fn), fn["name"])]
+        if unread:
+            with store.tx() as db:
+                for name in unread:
+                    self.net._event(db, proj["id"], None, "polish_retry", name)
+
     def left(self, proj) -> int:
         """How many functions polishing can still take, held ones included, and files to tidy: a polishing helper
         stops at none (a game with nothing left to decompile stopped its polishing helpers before they began)."""
+        self._retry_unread(proj)
         return self.net.project_store(proj['id']).one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND {TODO}",
                                   proj["id"], proj["id"])["n"] + len(self._untidy(proj))
 
@@ -228,6 +258,7 @@ class Readability:
         """The next matched function that isn't readable yet, held for this agent, with what it needs to know."""
         proj = self.net._project(slug)
         fork = not self.net.is_rom(proj)
+        self._retry_unread(proj)
         now = time.time()
         from .local_claims import expiry_ids
         store = self.net.project_store(proj['id'])
@@ -288,13 +319,21 @@ class Readability:
         # picked its own style (Shape3_Init, Shape2_init, vec3_dot_product)
         names += ("- read_data a global before you name it: what it holds (a string, a table, a constant) says what it "
                   "is;\n- name things in the style the names around them already use.\n")
+        start = self.preamble(source, fn["name"])
+        shown, alone = source.strip(), ""
+        if start:
+            before = source[:start].count("\n")
+            shown = source[start:].strip()
+            alone = (f"(Only the function: the {before:,} lines above it, declarations and blank lines that keep it at "
+                     f"line {before + 1:,}, stay as they are. Polish it in place, or give make_readable the function "
+                     "alone: it goes back under them, on the same line.)\n")
         from ..release_receipts import current
         lease = current(self.net, fn, agent)
         return (f"{given_up}MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
                 f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n"
                 f"claim_token: {lease}\n"
                 "Pass this claim_token to release_function if you leave this function for another helper.\n\n"
-                f"It matches today with this C:\n```c\n{source.strip()}\n```\n\n"
+                f"It matches today with this C:\n{alone}```c\n{shown}\n```\n\n"
                 + prepared + "\nMake it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
                 "- keep the statements' shape: the order, the casts and the temporaries that make it match.\n"
@@ -347,6 +386,7 @@ class Readability:
         if claim is not None and claim["agent_id"] != agent.id:
             raise NetworkError(f"{fn['name']} is held by {self.net._agent_name(claim['agent_id'])}")
         original = self._matching_c(proj, fn)
+        source = self._under_preamble(original, source, fn["name"])
         if " ".join(source.split()) == " ".join(original.split()):
             raise NetworkError("that's the C it has already: rename, type and comment it first")
         from . import polish_automation
@@ -388,6 +428,22 @@ class Readability:
                     f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""), cacheable=d.score > 0 and not problems)
         polish_automation.check_inputs(self.net, proj, fn, original, source, key, receipt, 'judge')
         return self._readable(proj, fn, agent, source, original=original)
+
+    def _under_preamble(self, original: str, source: str, name: str) -> str:
+        """The function alone, as a brief that left out a big preamble shows it: back under that preamble, starting on
+        the line it started on. Anything else is the whole C, as before."""
+        start = self.preamble(original, name)
+        span = find(source, name)
+        if not start or span is None:
+            return source
+        clean = _blank(source)
+        if clean[span[1]:].strip() or re.search(r"\S", clean[:span[0]]):
+            return source  # declarations or other code of its own: the agent sent the whole C
+        # its comment (blanked above) stays on the function's first line, so the function keeps its line
+        lead = re.sub(r"//([^\n]*)", lambda m: "/* " + m[1].replace("*/", "* /").strip() + " */", source[:span[0]])
+        lead = " ".join(lead.split())
+        return original[:start] + (lead + " " if lead else "") + source[span[0]:].lstrip() + \
+            ("\n" if original.endswith("\n") and not source.endswith("\n") else "")
 
     def _failed(self, proj, fn, agent: Agent) -> None:
         """A judged rewrite didn't compile or stopped matching: its hand-out counts as a try (POLISH_TRIES), once."""
