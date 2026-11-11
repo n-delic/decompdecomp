@@ -153,6 +153,12 @@ fail, 397 more cast pointers to 32-bit integers; the 32-bit build failed the sam
 what 64-bit adds. The game's C declares libultra itself (its shared header), so libultraship's headers aren't
 needed yet; they come with the export's glue.
 
+Then what a link would refuse: Compile for PC keeps each object's defined and needed symbols, and Port readiness
+lists what's needed and defined nowhere, by what fixes it, and what's defined twice (`port/pc_link.py`). On a
+finished N64 game: 1,424 data symbols still only addresses in assembly, 43 calls to functions by an automatic name
+they lost when polishing renamed them, 14 functions in assembly, 10 libultra functions the kit provides, and 4
+helpers defined twice. Linking against the real libultraship comes after those.
+
 ### 4. Port fixes, an agent task judged twice
 
 Like **Polish matched code**, a task agents take from **Start agents**, offered once a game is at 100% and its

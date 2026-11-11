@@ -61,6 +61,12 @@ def _pc(net, proj) -> dict | None:
     return summary(net, proj)
 
 
+def _link(net, proj) -> dict | None:
+    """What stops the C linking into one PC program, from the last Compile for PC (port/pc_link.py)."""
+    from .pc_link import report
+    return report(net, proj)
+
+
 def _assets(net, slug: str) -> dict | None:
     """The asset map as it would be written now (port/asset_map.py), and whether the project's folder has it."""
     from .asset_map import current
@@ -158,6 +164,7 @@ def readiness(net, slug: str) -> dict:
                       "examples": sorted(literals, key=lambda n: -literals[n])[:_LIMIT]},
         "rom_data": _rom_data(net, slug, cfg, len(image)),
         "pc": _pc(net, proj),
+        "link": _link(net, proj),
         "assets": _assets(net, slug),
     }
     report["blockers"] = blockers(report)
@@ -206,6 +213,13 @@ def blockers(report: dict) -> list[str]:
         if sizes:
             out.append(f"{sizes['functions']} functions cast pointers to and from 32-bit integers: they build for a "
                        "32-bit PC, but a 64-bit one (macOS) loses half of each pointer.")
+    link = report.get("link")
+    if link and (link["undefined"] or link["duplicates"]):
+        parts = [f"{g['symbols']} {g['kind']}" for g in link["groups"]]
+        if link["duplicates"]:
+            parts.append(f"{len(link['duplicates'])} defined twice")
+        out.append(f"Linked into one PC program, the C would need {link['undefined']} symbols nothing defines: "
+                   + "; ".join(parts) + ". Port readiness lists them by what fixes each.")
     assets = report.get("assets")
     if report["kit"] and report["rom_data"]["scanned"] and assets and not assets["written"]:
         out.append(f"The ROM's data has no asset map for the kit's extractor yet ({assets['resources']} resources, "
@@ -263,6 +277,16 @@ def describe(report: dict) -> str:
                      + f"; {assets['unknown']:,} bytes ROM Explorer can't name yet."
                      + (f" Extracted: {done['mapped']} of {done['total']} are the ROM's bytes."
                         if done and done["current"] else ""))
+    link = report.get("link")
+    if link:
+        lines.append(f"Linking for a PC ({link['functions']} functions' objects"
+                     + (f", {link['unread']} not compiled yet" if link["unread"] else "")
+                     + f"): {link['undefined']} symbols needed and defined nowhere.")
+        lines += [f"- {g['kind']} ({g['symbols']}, needed by {g['users']} functions): {g['about']}. "
+                  + ", ".join(g["examples"]) for g in link["groups"]]
+        if link["duplicates"]:
+            lines.append("- defined twice: " + ", ".join(f"{d['name']} ({', '.join(d['in'])})"
+                                                        for d in link["duplicates"][:12]))
     rom = report["rom_data"]
     if rom["scanned"]:
         lines.append("ROM outside code, as ROM Explorer read it: "

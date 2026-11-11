@@ -97,7 +97,8 @@ def fix(net, agent, slug: str, name: str, source: str = "", *, edits=None, cc: l
                                "first.")
         same = " ".join(source.split()) == " ".join(fn["matched_source"].split())
         header = _header(net, proj, fn)
-        found = pc_compile.compile_one(header, source, cc=cc)
+        linked: dict = {}
+        found = pc_compile.compile_one(header, source, cc=cc, linked=linked)
         (errors, sizes), (had_errors, had_sizes) = _tally(found), _tally(before)
         if errors > had_errors or sizes > had_sizes or (errors, sizes) == (had_errors, had_sizes):
             why = ("it has more PC errors than before" if errors > had_errors else
@@ -109,7 +110,7 @@ def fix(net, agent, slug: str, name: str, source: str = "", *, edits=None, cc: l
                     "text": f"❌ Not kept: {why} ({errors} errors, {sizes} pointer-size warnings; it had {had_errors} "
                             f"and {had_sizes}).\n{render(found)}"}
         if same:  # the header changed under it (edit_context, judged there): only the PC's verdict is new
-            _refresh(net, proj, fn, agent, found)
+            _refresh(net, proj, fn, agent, found, linked.get("symbols"))
             return {"kept": True, "found": found, "text": _kept(fn["name"], errors, sizes, had_errors, had_sizes,
                                                                 "its C is unchanged; the header's change fixed it")}
         context = net._context(proj["id"], fn["unit"])
@@ -132,7 +133,7 @@ def fix(net, agent, slug: str, name: str, source: str = "", *, edits=None, cc: l
                     "text": f"❌ Not kept: the console build no longer matches (score {diff.score}). Keep the "
                             "console's C as it was outside #ifdef PORT, or change only types the compiler treats "
                             f"the same.\n{diff.render()}{note}"}
-        _keep(net, proj, fn, agent, source, found)
+        _keep(net, proj, fn, agent, source, found, linked.get("symbols"))
     return {"kept": True, "found": found, "text": _kept(fn["name"], errors, sizes, had_errors, had_sizes,
                                                         "it still matches byte for byte on the console")}
 
@@ -145,18 +146,18 @@ def _kept(name: str, errors: int, sizes: int, had_errors: int, had_sizes: int, c
     return f"✅ {name} {left}; it had {had_errors} errors and {had_sizes} warnings. Kept: {console}."
 
 
-def _refresh(net, proj, fn, agent, found: list[dict]) -> None:
+def _refresh(net, proj, fn, agent, found: list[dict], symbols: dict | None = None) -> None:
     """A fix the header made: the function's PC result is new, its C isn't."""
     store = net.project_store(proj["id"])
     with store.tx() as db:
         net._event(db, proj["id"], agent.id, "port_fix", fn["name"])
     with pc_compile._store(net, proj).tx() as db:
-        pc_compile.record(db, proj["id"], fn["name"], found)
+        pc_compile.record(db, proj["id"], fn["name"], found, symbols=symbols)
         db.execute("UPDATE port_compile SET agent_id=NULL, lease=NULL WHERE project_id=? AND name=?",
                    (proj["id"], fn["name"]))
 
 
-def _keep(net, proj, fn, agent, source: str, found: list[dict]) -> None:
+def _keep(net, proj, fn, agent, source: str, found: list[dict], symbols: dict | None = None) -> None:
     """The fixed C is the function's C now, recorded as a verified match (saves and commits follow it)."""
     from ..app import match_commits
     from ..match_bundle import capture
@@ -175,6 +176,6 @@ def _keep(net, proj, fn, agent, source: str, found: list[dict]) -> None:
             store.after_commit(lambda: match_commits.enqueue(net, net.project_row(proj["slug"]), fn["id"],
                                                              polished=True))
     with pc_compile._store(net, proj).tx() as db:
-        pc_compile.record(db, proj["id"], fn["name"], found)
+        pc_compile.record(db, proj["id"], fn["name"], found, symbols=symbols)
         db.execute("UPDATE port_compile SET agent_id=NULL, lease=NULL WHERE project_id=? AND name=?",
                    (proj["id"], fn["name"]))

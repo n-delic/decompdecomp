@@ -78,5 +78,13 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.deepEqual(t.calls,['/api/asset-extract','/api/port-readiness?slug=a']);
    assert.deepEqual(followed,['j1'],'the job is followed with its progress bar');
    assert.equal(t.c.$('portExtract').disabled,false);assert.equal(t.c.$('portAssets').disabled,false);}
-  console.log('Port readiness panel: closed, read, stale reply, failure, asset map and extraction passed');
+  {const t=setup();t.c.$('portPanel').open=true;
+   t.c.reply=async()=>({...report,link:{functions:10,unread:2,undefined:5,duplicates:[{name:'tbl',in:['a','b']}],
+     groups:[{kind:'renamed',about:'old names',symbols:3,users:4,examples:['func_80000580 (now draw_hud)']}]}});
+   await t.run('loadPortReadiness()');
+   const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
+   assert.ok(rows.some(r=>r.startsWith('Linked for a PC: 5 symbols needed and defined nowhere, 1 defined twice (2 functions')),rows.join('\n'));
+   assert.ok(rows.some(r=>r.includes('renamed')&&r.includes('func_80000580 (now draw_hud), ...')));
+   assert.ok(rows.some(r=>r.includes('defined twice')&&r.includes('tbl (a, b)')));}
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction and link passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
