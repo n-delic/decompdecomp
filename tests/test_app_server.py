@@ -3339,3 +3339,34 @@ def test_settings_explain_compiler_services_with_this_computers_commands(app):
         hosted_sync.unlink(internal, "game")
     anon = TestClient(client.app, base_url=f"http://127.0.0.1:{PORT}")
     assert anon.get("/api/compiler-service").status_code == 401
+
+
+def test_other_release_jobs_start_at_once_and_one_at_a_time(app, monkeypatch):
+    """A second click on "Bring names over" while names are coming over is refused with where to look."""
+    from decompnet.app import regional
+
+    from .test_loading import tiny_game
+
+    client, net, _ = app
+    slug = "regional-one-at-a-time"
+    tiny_game(net, slug)
+    release = threading.Event()
+
+    def slow(net_, slug_, log):
+        log.progress({"phase": "Pairing functions"})
+        release.wait(10)
+        return {"renamed": 0}
+    monkeypatch.setattr(regional, "bring_names", slow)
+    headers = {"X-Decomp": "1"}
+    first = client.post("/api/regional/names", headers=headers, json={"slug": slug})
+    assert first.status_code == 200, first.text
+    again = client.post("/api/regional/names", headers=headers, json={"slug": slug})
+    assert again.status_code == 400 and "already coming over" in again.json()["error"]
+    release.set()
+    for _ in range(100):
+        job = client.get("/api/job", params={"id": first.json()["job"]}).json()
+        if job["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert job["state"] == "done"
+    assert client.post("/api/regional/names", headers=headers, json={"slug": slug}).status_code == 200
