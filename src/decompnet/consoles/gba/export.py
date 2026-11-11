@@ -64,6 +64,7 @@ def export_gba(net, slug: str, out: Path, log=print) -> dict:
     build = {
         "title": proj["name"], "platform": "gba", "image": "baserom.gba", "output": "build/game.gba",
         "sha1": hashlib.sha1(image).hexdigest(), "base": BASE, "compiler": cfg["compiler"],
+        "compiler_ranges": cfg.get("compiler_ranges") or [], "function_compilers": cfg.get("function_compilers") or {},
         "functions": functions, "symbols": dict(sorted(symbols.items(), key=lambda kv: kv[1])),
     }
     (out / "build.json").write_text(json.dumps(build, indent=1), encoding="utf-8")
