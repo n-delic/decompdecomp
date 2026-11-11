@@ -6,6 +6,7 @@ import shutil
 
 from starlette.testclient import TestClient
 
+from decompnet import hostenv
 from decompnet.app.engine import RomNetwork
 from decompnet.app.server import build
 from decompnet.consoles import ROM, Console
@@ -69,7 +70,8 @@ def test_a_missing_folder_is_listed_and_removed_without_it(tmp_path):
     shutil.rmtree(root)
 
     summary = net.summary("gone")
-    assert "folder is missing" in summary["missing"] and str(root) in summary["missing"]
+    shown = hostenv.shown_path(root)  # what the app shows: the home folder as ~
+    assert "folder is missing" in summary["missing"] and shown in summary["missing"]
     overview = net.overview("gone")
     assert overview["missing"] == summary["missing"]
     assert not root.exists()  # listing or opening it must not write its folder back into being
