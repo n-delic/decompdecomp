@@ -85,6 +85,39 @@ const pal = {slug: 'pal', name: 'Rally (Europe)', region: 'Europe', game_code: '
     assert.match(t.$('releaseLog')._errorBox.textContent, /Link this project/);
   }
   {
+    // A job started before a reload (or in another window) is followed when the project opens: its bar and log.
+    const t = setup(url => url.startsWith('/api/regional?') ? {supported: true, linked: {...pal, last: null}, candidates: [], running: {names: null, code: 'job-7'}} : {});
+    let followed = null, finishJob;
+    t.context.followJob = async id => { followed = id; return new Promise(resolve => { finishJob = resolve; }); };
+    t.context.renderReleases({slug: 'ntsc', kind: 'rom'});
+    await tick();
+    assert.equal(followed, 'job-7');
+    assert.equal(t.$('releaseLog').children.filter(c => c.className.startsWith('workbar') && !c.removed).length, 1);
+    t.context.renderReleases({slug: 'ntsc', kind: 'rom'});  // a poll meanwhile neither redraws nor follows twice
+    await tick();
+    assert.equal(t.$('releaseLog').children.filter(c => c.className.startsWith('workbar') && !c.removed).length, 1);
+    finishJob({matched: 3, polished: 1});
+    await tick();
+    assert.ok(t.$('releaseLog').children.filter(c => c.className.startsWith('workbar')).every(c => c.removed));
+  }
+  {
+    // A click refused because the job already runs follows that job instead of only saying so.
+    let started = false;
+    const t = setup((url, options) => {
+      if (url === '/api/regional/code') return new Error("The other release's code is already being tried: its progress is in the panel.");
+      return {supported: true, linked: {...pal, last: null}, candidates: [], running: {names: null, code: started ? 'job-9' : null}};
+    });
+    let followed = null;
+    t.context.followJob = async id => { followed = id; return {matched: 0, polished: 0}; };
+    t.context.renderReleases({slug: 'ntsc', kind: 'rom'});
+    await tick();
+    started = true;
+    t.$('releaseBody').querySelector('[data-release-code]').onclick();
+    await tick();
+    assert.equal(followed, 'job-9');
+    assert.equal(t.$('releaseLog')._errorBox?.textContent || '', '');
+  }
+  {
     // Project-mode games have no panel.
     const t = setup(() => ({supported: true, linked: null, candidates: []}));
     t.context.renderReleases({slug: 'ntsc', kind: 'fork'});

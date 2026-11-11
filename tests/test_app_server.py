@@ -3362,6 +3362,9 @@ def test_other_release_jobs_start_at_once_and_one_at_a_time(app, monkeypatch):
     assert first.status_code == 200, first.text
     again = client.post("/api/regional/names", headers=headers, json={"slug": slug})
     assert again.status_code == 400 and "already coming over" in again.json()["error"]
+    # The panel finds the running job (opened in another window, or after a reload) and follows it.
+    running = client.get("/api/regional", params={"slug": slug}).json()["running"]
+    assert running == {"names": first.json()["job"], "code": None}
     release.set()
     for _ in range(100):
         job = client.get("/api/job", params={"id": first.json()["job"]}).json()
