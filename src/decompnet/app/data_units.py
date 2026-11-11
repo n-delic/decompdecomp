@@ -105,9 +105,14 @@ def reader(net, proj):
 
 
 def _bounds(net, proj, address: int):
-    """(where the next named symbol starts, the other places the game's code refers to) after `address`."""
+    """(where the next datum starts, the other places the game's code refers to) after `address`. The next datum is
+    the next named symbol, or where the initialised data ends (.bss), whichever comes first: the last datum before
+    .bss had no end at all."""
     symbols = net.symbols(proj["id"])
-    return symbols.next_after(address), frozenset(a for a in references(net, proj) if a > address)
+    ends = [e for e in (symbols.next_after(address), *(r["vram"] + r["size"] for r in initialised_data(net, proj)
+                                                       if r["vram"] <= address < r["vram"] + r["size"]))
+            if e is not None]
+    return (min(ends) if ends else None), frozenset(a for a in references(net, proj) if a > address)
 
 
 def unit(net, slug: str, name: str) -> dict:
@@ -125,7 +130,9 @@ def unit(net, slug: str, name: str) -> dict:
     data = read(address, min(span or 64, 4096))
     refs = references(net, proj)
     row = _store(net, proj).one("SELECT * FROM data_units WHERE project_id=? AND address=?", proj["id"], address)
+    from .data_drafts import summary
     return {"name": symbols.name_at(address)[0] if symbols.by_addr.get(address) else name, "address": address,
+            "accesses": summary(net, proj, address),
             "span": span, "next": symbols.label(nxt) if nxt is not None else None,
             "bytes": data.hex() if data is not None else None, "bss": data is None,
             "used_by": sorted(set(refs.get(address, []))), "status": row["status"] if row else "open",
@@ -184,6 +191,8 @@ def unit_text(info: dict) -> str:
              + f". Status: {info['status']}."]
     if info["used_by"]:
         lines.append(f"Used by: {', '.join(info['used_by'][:20])}")
+    if info.get("accesses"):
+        lines.append("The game's code uses it as: " + "; ".join(info["accesses"][:12]))
     if info["bss"]:
         lines.append("No bytes in the ROM: .bss. Define it without an initialiser.")
     elif info["bytes"]:

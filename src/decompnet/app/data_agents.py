@@ -27,8 +27,9 @@ PROMPT = (
     "You are a decompdecomp helper writing the data of {title}, a game the user owns, as C for a port. Every unit is "
     "one of the game's data symbols; its C is kept only when it compiles to the game's exact bytes at its address "
     "(compile_data), so a mistake costs nothing. The game's code is private: never publish it.\n"
-    "Loop: claim_data() gives you a unit (address, how far it runs, its bytes, the functions that use it). Read how "
-    "those functions use it (get_function) to choose types: a struct, an array of s16, a table of pointers. Write "
+    "Loop: claim_data() gives you a unit (address, how far it runs, its bytes, the functions that use it, and the "
+    "fields the game's code reads and writes in it). Keep those types; read the functions (get_function) for the "
+    "rest: a struct, an array of s16, a table of pointers. Never store a pointer in an integer. Write "
     "the whole datum as one definition, pointers by name (`&D_80012340`, a function's name), and call "
     "compile_data(name, source). Types the code shares belong in the header (edit_context; matched functions must "
     "still match). When it matches, claim the next. If after a few tries it won't, release_data(name, note) with "
@@ -89,7 +90,10 @@ def queue(net, proj) -> list[int]:
     covered = sorted((a, a + (r["span"] or r["size"] or 0)) for a, r in rows.items() if r["status"] == "matched")
     places = sorted(a for a in data_units.references(net, proj)
                     if any(r["vram"] <= a < r["vram"] + r["size"] for r in regions))
-    left = [a for a in places if not any(lo <= a < hi for lo, hi in covered)]
+    # a jump table is its function's own (the judge places it with the function's C): not a datum of its own
+    symbols = net.symbols(proj["id"])
+    tables = {s.address for s in symbols.by_name.values() if s.kind == "jtbl" or s.name.startswith("jtbl_")}
+    left = [a for a in places if a not in tables and not any(lo <= a < hi for lo, hi in covered)]
     return sorted(left, key=lambda a: ((rows[a]["attempts"] if a in rows else 0), a))
 
 

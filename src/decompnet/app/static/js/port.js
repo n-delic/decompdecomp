@@ -47,7 +47,23 @@ async function loadPortReadiness() {
   } finally { finish(); }
 }
 
+async function draftPortData() {
+  const slug = S.slug, log = $("portDraftLog");
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, "Drafting the game's data from its code", [$("portDrafts"), $("portReload")],
+                           "Data drafted.");
+  try {
+    const { job } = await api("/api/data-drafts", { method: "POST", body: { slug } });
+    await followJob(job, log, null, () => S.slug === slug);
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally { finish(); }
+  if (S.slug === slug) loadPortReadiness();
+}
+
 if ($("portPanel")) {
+  $("portDrafts").onclick = draftPortData;
   $("portPanel").addEventListener("toggle", loadPortReadiness);
   $("portReload").onclick = loadPortReadiness;
 }

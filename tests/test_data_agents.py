@@ -55,6 +55,14 @@ def test_agents_claim_the_game_s_data_one_unit_each_in_address_order(project):
         assert data_agents.left(net, "game") == 2
 
 
+def test_jump_tables_belong_to_their_functions_not_the_data_queue(project):
+    net = project
+    with net.store.tx() as db:
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(1,'jtbl_boot',?,16,'jtbl')", (DATA,))
+    with net.progress.view():
+        assert data_agents.queue(net, net.project_row("game")) == [DATA + 0x10]
+
+
 def test_a_data_agent_sees_only_its_tools_and_compiles_only_what_it_holds(project):
     net = project
     with net.progress.view():
