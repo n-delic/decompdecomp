@@ -990,7 +990,11 @@ defines and the console build doesn't. A kept fix is the function's C, saved and
 Driven through those calls on a copy of a finished N64 game: two functions with 19 and 2 PC errors fixed by
 pointer types, both still matching byte for byte, and a manual save wrote both. A first LLM run (Claude Haiku, one helper) on that game kept 11 fixes and
 released 10 functions too big for one pass with notes saying why (gcc's `__builtin_next_arg`
-varargs, functions with 20+ pointer errors). It needed a fix first: the app claimed a function to match for it
+varargs, functions with 20+ pointer errors). Its notes changed the judge and the guide: a fix is kept when it's no
+worse on errors and pointer warnings and better on one, so a big function is fixed in steps; a fix the header
+alone made is kept by submitting the C unchanged (it was refused as "the C it has already"); and the guide says
+how to keep the console's operand order behind `#ifdef PORT`, type display-list words as `uintptr_t` on the PC and
+replace gcc's varargs. It needed a fix first: the app claimed a function to match for it
 before each session and, finding none on a finished game, never started the model. Left:
 display lists built by hand as two words (a `Gfx` is bigger in libultraship), which compile and need the port
 build to find; a per-function view of the PC errors in Functions.
