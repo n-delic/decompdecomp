@@ -90,6 +90,37 @@ def audio_library(names) -> dict:
                     "the CPU in the port."}
 
 
+# Torch's `gbi` names the command set its display-list reader decodes; the lighter variants send F3DEX's commands.
+_GBI = {"Fast3D": "F3D", "F3D": "F3D", "F3DEX": "F3DEX", "F3DLX": "F3DEX", "F3DLP": "F3DEX", "F3DEX2": "F3DEX2",
+        "F3DLX2": "F3DEX2"}
+_ABOUT = {"archive": "an archive the game's own code unpacks (Torch can't inflate it), kept whole",
+          "audio": "audio: sample banks and sequences the game's audio library reads",
+          "data": "data the game reads from the cartridge"}
+
+
+def torch_files(game: dict, entries: list[dict]) -> dict[str, str]:
+    """The game's Torch config (config.yml, keyed by the ROM's SHA-1, as Torch picks the config for a ROM) and its
+    assets, one BLOB per resource for now: Torch extracts each to the archive libultraship reads."""
+    gbi = next((_GBI[g["name"]] for g in game["graphics"] if g["name"] in _GBI), "F3DEX")
+    slug = game["slug"]
+    config = (f"# {game['title']}: written by decompdecomp from ROM Explorer's map (docs/PORTING.md, phase 2).\n"
+              "# Offsets and sizes only: Torch reads the bytes from your own ROM.\n"
+              f"{game['sha1']}:\n  name: {_quote(game['title'])}\n  path: {slug}\n  config:\n    gbi: {gbi}\n"
+              f"    sort: OFFSET\n    output:\n      binary: {slug}.o2r\n      headers: include\n      code: src\n")
+    lines = [f"# The ROM's data outside its code, {len(entries)} resources. Kinds are ROM Explorer's.", ""]
+    for e in entries:
+        holds = ", ".join(f"{kind} {size:,}" for kind, size in e["holds"].items())
+        lines.append(f"# {_ABOUT[e['group']]}. Holds: {holds}"
+                     + (f". Loaded by: {', '.join(e['loaders'])}" if e["loaders"] else ""))
+        lines += [f"{e['name']}:", "  type: BLOB", f"  offset: 0x{e['offset']:X}", f"  size: 0x{e['size']:X}",
+                  f"  symbol: {e['name']}", ""]
+    return {"config.yml": config, f"{slug}/rom.yml": "\n".join(lines)}
+
+
+def _quote(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 KIT = PortKit(
     name="libultraship and Torch",
     summary="libultra's API, a renderer for the game's display lists, input and saves (libultraship); the assets "
@@ -97,4 +128,6 @@ KIT = PortKit(
     sdk_group=_sdk_group,
     microcode=microcode,
     audio=audio_library,
+    asset_map=torch_files,
+    boot=0x1000,  # the header and IPL3, which the console's boot ROM runs
 )

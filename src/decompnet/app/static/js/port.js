@@ -34,6 +34,11 @@ function renderPortReadiness(report) {
       + `, ${pc.warned} cast pointers to 32-bit integers (${new Date(pc.checked_at * 1000).toLocaleString()})`));
   for (const k of pc ? pc.kinds : []) facts.append(portRow(`  ${k.kind}`, `${k.functions}: ${k.about}. `
     + k.examples.join(", ") + (k.functions > k.examples.length ? ", ..." : "")));
+  const assets = report.assets;
+  if (assets) facts.append(portRow("Asset map", `${assets.resources} resources, `
+    + Object.entries(assets.groups).map(([g, b]) => `${g} ${b.toLocaleString()} bytes`).join(", ")
+    + (assets.unknown ? `; ${assets.unknown.toLocaleString()} bytes ROM Explorer can't name yet` : "")
+    + (assets.written ? ` (written to ${assets.folder})` : ", not written yet")));
   const todo = $("portBlockers");
   todo.replaceChildren(...report.blockers.map((b) => { const li = document.createElement("li"); li.textContent = b; return li; }));
   $("portReady").textContent = report.ready ? "Nothing found in the way of a port." : "To do, in order:";
@@ -82,7 +87,23 @@ async function compileForPc() {
   if (S.slug === slug) loadPortReadiness();
 }
 
+async function writeAssetMap() {
+  const slug = S.slug, log = $("portAssetsLog");
+  log.hidden = false;
+  showJobError(log, "");
+  const finish = beginWork(log, "Writing the asset map", [$("portAssets"), $("portReload")], "Written.");
+  try {
+    const result = await api("/api/asset-map", { method: "POST", body: { slug } });
+    log.textContent = `${result.resources} resources (${result.bytes.toLocaleString()} bytes) written to ${result.path}: `
+      + result.files.join(", ");
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally { finish(); }
+  if (S.slug === slug) loadPortReadiness();
+}
+
 if ($("portPanel")) {
+  $("portAssets").onclick = writeAssetMap;
   $("portDrafts").onclick = draftPortData;
   $("portCompile").onclick = compileForPc;
   $("portPanel").addEventListener("toggle", loadPortReadiness);

@@ -61,6 +61,12 @@ def _pc(net, proj) -> dict | None:
     return summary(net, proj)
 
 
+def _assets(net, slug: str) -> dict | None:
+    """The asset map as it would be written now (port/asset_map.py), and whether the project's folder has it."""
+    from .asset_map import current
+    return current(net, slug)
+
+
 def readiness(net, slug: str) -> dict:
     """{"kit", "code", "graphics", "audio", "data", "addresses", "rom_data", "blockers"} for a ROM project."""
     from ..app.sdk_identity import display_name, identify
@@ -152,6 +158,7 @@ def readiness(net, slug: str) -> dict:
                       "examples": sorted(literals, key=lambda n: -literals[n])[:_LIMIT]},
         "rom_data": _rom_data(net, slug, cfg, len(image)),
         "pc": _pc(net, proj),
+        "assets": _assets(net, slug),
     }
     report["blockers"] = blockers(report)
     report["ready"] = not report["blockers"]
@@ -199,6 +206,12 @@ def blockers(report: dict) -> list[str]:
         if sizes:
             out.append(f"{sizes['functions']} functions cast pointers to and from 32-bit integers: they build for a "
                        "32-bit PC, but a 64-bit one (macOS) loses half of each pointer.")
+    assets = report.get("assets")
+    if report["kit"] and report["rom_data"]["scanned"] and assets and not assets["written"]:
+        out.append(f"The ROM's data has no asset map for the kit's extractor yet ({assets['resources']} resources, "
+                   f"{assets['bytes']:,} bytes): Write asset map puts it in the project's {assets['folder']} folder."
+                   if not assets.get("was_written") else
+                   "The asset map in the project's folder is older than ROM Explorer's scan: write it again.")
     rom = report["rom_data"]
     if rom["bytes"] and not rom["scanned"]:
         out.append(f"{rom['bytes']:,} bytes of the ROM are outside its code, and ROM Explorer hasn't scanned it: scan "
@@ -235,6 +248,10 @@ def describe(report: dict) -> str:
         lines.append(f"Compiled for a PC ({pc['target']}): {pc['ok'] + pc['warned']} of {pc['total']} functions "
                      f"compile, {pc['failed']} don't, {pc['warned']} cast pointers to 32-bit integers.")
         lines += [f"- {k['kind']} ({k['functions']}): {', '.join(k['examples'])}" for k in pc["kinds"]]
+    if assets := report.get("assets"):
+        lines.append(f"Asset map ({'written' if assets['written'] else 'not written yet'}): {assets['resources']} "
+                     "resources, " + ", ".join(f"{g} {b:,} bytes" for g, b in assets["groups"].items())
+                     + f"; {assets['unknown']:,} bytes ROM Explorer can't name yet.")
     rom = report["rom_data"]
     if rom["scanned"]:
         lines.append("ROM outside code, as ROM Explorer read it: "
