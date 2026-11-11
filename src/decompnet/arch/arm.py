@@ -57,6 +57,36 @@ for _md in _READERS.values():
     _md.detail = True
 
 
+ARM_NOP = 0xE1A00000           # mov r0, r0
+THUMB_NOPS = (0x46C0, 0xBF00)  # mov r8, r8 ; the Thumb-2 nop
+
+
+def _padding(code: bytes, big_endian: bool, thumb: bool) -> bool:
+    """Whether `code` is all alignment padding in the given mode: zero fill (padding in either mode), or the
+    mode's nop repeated. The mode matters — the four bytes of an ARM nop can read as a Thumb nop followed by a
+    real instruction, and vice versa — so the reader is chosen by the function's mode, not guessed from the bytes."""
+    if not code:
+        return False
+    if not any(code):
+        return True
+    order = "big" if big_endian else "little"
+    if thumb:
+        return len(code) % 2 == 0 and all(int.from_bytes(code[i:i + 2], order) in THUMB_NOPS
+                                          for i in range(0, len(code), 2))
+    return len(code) % 4 == 0 and all(int.from_bytes(code[i:i + 4], order) == ARM_NOP for i in range(0, len(code), 4))
+
+
+def arm_is_padding(code: bytes, big_endian: bool = False) -> bool:
+    """Alignment padding an ARM-mode function can be trimmed down to: zero fill or the ARM nop (mov r0, r0)."""
+    return _padding(code, big_endian, thumb=False)
+
+
+def thumb_is_padding(code: bytes, big_endian: bool = False) -> bool:
+    """Alignment padding a Thumb-mode function can be trimmed down to: zero fill or a Thumb nop (mov r8, r8, or
+    the Thumb-2 nop)."""
+    return _padding(code, big_endian, thumb=True)
+
+
 def asm_reason(code: bytes, big_endian: bool = False, thumb: bool | None = None, **_facts) -> str | None:
     """Why this ARM or Thumb function can't come from a compiler (a BIOS call stub; in ARM code, the CPU's mode or
     coprocessor 15), or None. `thumb`: whether it's Thumb code, None when the object doesn't say."""

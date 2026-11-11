@@ -100,14 +100,13 @@ class EditMixin:
         th, tt = self._make_target(proj, head, syms), self._make_target(proj, tail, syms)
         with self.store.tx() as db:
             # The head's extent changed, so its old best attempt no longer describes it (reset seed/best, not just
-            # the score). A side trimmed down to pure 0x00 padding (all nops) is not a function to match — mark it
-            # done ('asm'), with an alignment-padding reason for its page, so it leaves the open pool instead of
-            # lingering as an open sliver. Both halves are checked: splitting leading alignment nops off a function
-            # can leave a padding head, and splitting at a point that lands in trailing padding leaves a padding tail.
-            # This recognises MIPS zero padding (nop = 0x00000000); x86 (0xCC/0x90) and ARM/PPC nops aren't caught,
-            # so their padding slivers stay 'open' — harmless, a missed cleanup (ROADMAP).
-            head_padding = bool(head.size) and not any(th.code)
-            tail_padding = bool(tail.size) and not any(tt.code)
+            # the score). A side trimmed down to pure alignment padding (the processor's nop/filler) is not a
+            # function to match — mark it done ('asm'), with an alignment-padding reason for its page, so it leaves
+            # the open pool instead of lingering as an open sliver. Both halves are checked: splitting leading
+            # padding off a function can leave a padding head, and splitting into trailing padding leaves a padding
+            # tail. The console asks the right reader for the function's mode (GBA: ARM vs Thumb).
+            head_padding = bool(head.size) and console.is_padding(th.code, fn)
+            tail_padding = bool(tail.size) and console.is_padding(tt.code, fn)
             meta = console.function_meta(tail)
             if tail_meta:
                 meta.update(tail_meta)
