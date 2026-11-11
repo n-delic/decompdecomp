@@ -197,8 +197,47 @@ def test_disabling_during_snapshot_cancels_publication(automatic, monkeypatch):
 def test_layout_changes_require_a_manual_checkpoint(automatic):
     net, root, _, _ = automatic
     with net.store.tx() as db:db.execute("UPDATE functions SET size=8 WHERE name='g'")
-    with pytest.raises(NetworkError, match='Commit current progress once'):
+    with pytest.raises(NetworkError, match=r'split, joined or resized since the last progress checkpoint \(g\)\. Commit saved progress'):
         enable(automatic)
+
+
+def test_enabling_after_renames_says_which_functions_were_renamed(automatic):
+    net, root, _, _ = automatic
+    with net.store.tx() as db:db.execute("UPDATE functions SET name='route_point' WHERE name='g'")
+    net.progress.sync('game', force=True)
+    with pytest.raises(NetworkError, match='1 function was renamed since the last progress checkpoint \\(g → route_point\\)'):
+        enable(automatic)
+
+
+def test_renames_after_the_checkpoint_get_their_own_checkpoint_and_the_match_commits(automatic):
+    """Polishing renamed most functions of a finished game after its last checkpoint; its queued matches waited."""
+    net, root, _, _ = automatic
+    enable(automatic)
+    match(automatic, note='Use the signed comparison')
+    with net.store.tx() as db:db.execute("UPDATE functions SET name='route_point' WHERE name='g'")
+    net.progress.sync('game', force=True)
+    before = int(git(root, 'rev-list', '--count', 'HEAD'))
+    match_commits.process(net, 'game')
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+    assert int(git(root, 'rev-list', '--count', 'HEAD')) == before + 2
+    assert git(root, 'log', '-2', '--format=%s').splitlines() == ['Use the signed comparison', 'Save 1 renamed function']
+    manifest = json.loads(git(root, 'show', 'HEAD:decompdecomp.json'))
+    assert {entry['name'] for entry in manifest['layout']} == {'f', 'route_point'}
+    assert 'matched_by' in manifest['functions']['f']
+    files = git(root, 'ls-tree', '-r', '--name-only', 'HEAD').splitlines()
+    assert 'best/route_point.c' in files and 'best/g.c' not in files
+
+
+def test_other_layout_changes_wait_and_say_which_functions_moved(automatic):
+    net, root, _, _ = automatic
+    enable(automatic)
+    match(automatic)
+    with net.store.tx() as db:db.execute("UPDATE functions SET size=8 WHERE name='g'")
+    before = git(root, 'rev-parse', 'HEAD')
+    match_commits.process(net, 'game')
+    state = match_commits.status(net, net.project_row('game'))
+    assert state['pending'] == 1 and git(root, 'rev-parse', 'HEAD') == before
+    assert state['error'].startswith('Functions were split, joined or resized since the last progress checkpoint (g). Commit saved progress')
 
 
 def test_later_edits_do_not_replace_the_queued_verified_source(automatic):
