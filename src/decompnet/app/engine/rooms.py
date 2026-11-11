@@ -206,7 +206,8 @@ class RoomMixin:
         for h in sorted(functions, key=lambda f: f["vram"]):
             # Mirror _join_saved_layout's disambiguation: the head is the piece at the host's address carrying the
             # host's name (or the sole function there); an overlay that shares the address is never guessed at. The
-            # tails are only pieces in the head's own unit, so a second overlay's alias in the range is never folded.
+            # tails are this instance's own ROM run (by rom_offset), so a same-address alias is never folded and a
+            # cross-unit over-split is still joined (#192 review points 1 and 3).
             at = by_vram.get(h["vram"], [])
             head = next((r for r in at if r["name"] == h["name"]), None)
             if head is None:
@@ -217,11 +218,19 @@ class RoomMixin:
                 continue  # the head already matches at its own extent; don't fold it into a longer function
             if (head["size"] or 0) >= h["size"]:
                 continue  # already the host's function: there is no split to undo
-            rows = sorted((r for r in local.values()
-                           if head["vram"] <= r["vram"] < h["vram"] + h["size"] and r["unit"] == head["unit"]),
-                          key=lambda r: (r["vram"], r["id"]))
+            if head["rom_offset"] is not None:
+                # this overlay instance's own ROM run, the way _apply_join selects it: an aliased copy shares the
+                # vram window but lies elsewhere in the ROM, and a real tail may sit in another unit (join across
+                # overlay unit labels), so pick by rom_offset, not by vram and unit.
+                rows = sorted((r for r in local.values() if r["rom_offset"] is not None
+                               and head["rom_offset"] <= r["rom_offset"] < head["rom_offset"] + h["size"]),
+                              key=lambda r: r["rom_offset"])
+            else:
+                rows = sorted((r for r in local.values()
+                               if head["vram"] <= r["vram"] < h["vram"] + h["size"] and r["unit"] == head["unit"]),
+                              key=lambda r: (r["vram"], r["id"]))
             if len(rows) < 2 or rows[0]["id"] != head["id"]:
-                continue  # only the head in its own unit here, or another function starts the run
+                continue  # only the head's own run here, or another function starts the run
             head, tails = rows[0], rows[1:]
             if any(t["status"] == "matched" or t["matched_source"] for t in tails):
                 continue  # never fold a matched function away
