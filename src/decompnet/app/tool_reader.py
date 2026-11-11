@@ -433,17 +433,7 @@ class Service:
         return slug
 
     def fresh(self, slug: str) -> None:
-        """Drop the engine's per-project caches the app's own edits would have dropped (renames, splits, imports)."""
-        project = self.net.project_row(slug)
-        store = self.net.project_store(project["id"])
-        now = (project["config"],) + tuple(store.read_version(kind) for kind in CACHE_REVISIONS)
-        with self.revisions_lock:
-            if self.revisions.get(project["id"]) == now:
-                return
-            self.revisions[project["id"]] = now
-            for cache in ("_syms", "_xrefs", "_roms", "_sym_override", "_asm_names", "_generation",
-                          "_rename_generation"):
-                getattr(self.net, cache, {}).pop(project["id"], None)
+        drop_stale_caches(self.net, slug, self.revisions, self.revisions_lock)
 
     def call(self, headers: dict, name: str, args: dict) -> str:
         from ..network import NetworkError
@@ -478,6 +468,21 @@ class Service:
         report.update(content=result, timings={"dispatch_ms": round((time.monotonic() - started) * 1000, 2)})
         self.emit({"call": report})
         return result
+
+
+def drop_stale_caches(net, slug: str, seen: dict, lock: threading.Lock) -> None:
+    """In a process beside the app (this reader, render_worker.py): drop the engine's per-project caches the app's
+    own edits would have dropped (renames, splits, imports), as the database's revisions show them."""
+    project = net.project_row(slug)
+    store = net.project_store(project["id"])
+    now = (project["config"],) + tuple(store.read_version(kind) for kind in CACHE_REVISIONS)
+    with lock:
+        if seen.get(project["id"]) == now:
+            return
+        seen[project["id"]] = now
+        for cache in ("_syms", "_xrefs", "_roms", "_sym_override", "_asm_names", "_generation",
+                      "_rename_generation"):
+            getattr(net, cache, {}).pop(project["id"], None)
 
 
 def reader_progress(net):

@@ -10,6 +10,30 @@ The desktop app and private web interface use the same local implementation. Thi
 - Per-engine view snapshots retain at most 100,000 row units and 64 entries. Concurrent identical snapshot builds coalesce. Overview diagnostics expire after five seconds; map/cross-project snapshots after thirty seconds. Transactional map reads are not cached. Full map requests also include attempt revisions and current claims in their freshness key.
 - Clients opt into changed-row maps. Compatible layouts patch existing objects and draw changed cells; missing old snapshots and structural changes return full maps. Older clients continue receiving full maps.
 
+## Work in processes of their own
+
+The app is one Python process: its window, the agents' tool calls and its background work share one interpreter
+lock. Work that is heavy and doesn't need the app's memory runs in processes beside it. Each opens the same
+databases without changing their schema (`store.ATTACH_ONLY`) and never syncs progress folders. Each drops its
+caches when the database's revisions show the app changed something:
+- **The permuter** (`app/permuter_worker.py`).
+- **Read-only tool calls**, answered by the MCP gateway itself (`gateway/src/native.rs`) or the tool reader
+  (`app/tool_reader.py`): docs/MCP_GATEWAY.md.
+- **Progress-folder renders** (`app/render_worker.py`).
+  - Every publish renders every function's file or a few of them, and always the whole manifest. On v-rally that is
+    about half a second of pure Python, most of it `json.dumps(manifest, indent=1)` (which Python 3.12 can't encode
+    in C).
+  - Two render processes (`DECOMP_RENDER_WORKERS`, 0 turns them off) render, while the app's thread only waits.
+  - The app still checks that a render is current and writes the files.
+  - When no worker answers, or one hits an error the app doesn't expect from a render, the app renders on its own
+    thread as before.
+  - On a copy of v-rally, worker renders were identical to the app's (2,118 files full, 39 partial). With two
+    projects' renders running back to back, a quick operation in the app (a function list and about a millisecond
+    of Python) took:
+    - on the app's threads: median 58.7 ms, p95 272 ms, max 444 ms;
+    - in render workers: median 2.7 ms, p95 3.7 ms;
+    - with nothing else running: median 3.0 ms.
+
 ## Scheduling and compilation
 
 Sidebar/live reads use a separate two-request lane from the four-request heavy UI lane. Both read saved progress while verification runs. They cannot bypass mutation or judge synchronization gates.
