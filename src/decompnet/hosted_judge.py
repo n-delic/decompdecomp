@@ -15,6 +15,11 @@ Requests:
   bytes differ from the hosted ones (another build of the game).
 
 Opened as the reader process does (store.ATTACH_ONLY, no saved-progress sync), so it can run beside the app.
+
+    decomp judge-worker --packs DIR    # judge from verification packs instead: no game imported here
+
+With --packs, the projects are DIR/<slug>.sqlite3, verification packs (hosted_pack.py) that the verifier downloads
+from the hosted server. Each becomes a small scratch project the same judge runs on.
 """
 from __future__ import annotations
 
@@ -83,14 +88,53 @@ def judge(net, request: dict) -> dict:
     return {"score": max(1, int(diff.score)), "detail": (log or "")[-2000:]}
 
 
+class Packs:
+    """Projects from verification packs in a folder, each judged on a scratch project built from it."""
+
+    def __init__(self, folder: Path, cache: Path):
+        self.folder, self.cache = Path(folder), Path(cache)
+        self.nets: dict[str, tuple[tuple, object]] = {}
+
+    def slugs(self) -> list[str]:
+        return sorted(p.stem for p in self.folder.glob("*.sqlite3"))
+
+    def net(self, slug: str):
+        path = self.folder / f"{slug}.sqlite3"
+        if not path.is_file():
+            return None
+        version = (path.stat().st_mtime_ns, path.stat().st_size)
+        if slug not in self.nets or self.nets[slug][0] != version:  # (a newer pack: a new scratch project)
+            from .app.tool_reader import reader_progress
+            from .hosted_pack import scratch
+            net, found = scratch(path, self.cache)
+            if found != slug:
+                raise ValueError(f"{path.name} is the pack of {found!r}")
+            reader_progress(net)
+            self.nets[slug] = (version, net)
+        return self.nets[slug][1]
+
+    def describe(self) -> dict:
+        from . import __version__, toolchains
+        installed = sorted(tid for tid in toolchains.registry() if _installed(toolchains, tid))
+        return {"projects": self.slugs(), "toolchains": installed, "version": __version__}
+
+    def judge(self, request: dict) -> dict:
+        net = self.net(str(request.get("slug") or ""))
+        if net is None:
+            return {"error": f"this computer has no verification pack for {request.get('slug')!r}"}
+        return judge(net, request)
+
+
 def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
+    """Answer requests from a home's network, or from Packs."""
+    packs = net if isinstance(net, Packs) else None
     for line in lines:
         try:
             request = json.loads(line)
             if request.get("op") == "describe":
-                reply = describe(net)
+                reply = packs.describe() if packs else describe(net)
             elif request.get("op") == "judge":
-                reply = judge(net, request)
+                reply = packs.judge(request) if packs else judge(net, request)
             else:
                 reply = {"error": f"unknown op {request.get('op')!r}"}
         except Exception as error:  # this request only: the verifier releases it for another
@@ -99,7 +143,11 @@ def serve(net, lines=sys.stdin, out=sys.stdout) -> None:
         out.flush()
 
 
-def main(home: Path) -> int:
+def main(home: Path, packs: Path | None = None, cache: Path | None = None) -> int:
+    if packs is not None:
+        out, sys.stdout = sys.stdout, sys.stderr
+        serve(Packs(packs, cache or Path(packs) / ".judge-cache"), sys.stdin, out)
+        return 0
     from . import store as storage
     storage.ATTACH_ONLY = True
     from .app.engine import RomNetwork

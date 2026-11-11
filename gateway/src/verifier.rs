@@ -1,7 +1,7 @@
 //! Verifier mode: a compiler server that judges a hosted server's submissions.
 //!
 //!     decomp-mcp-gateway verifier --server https://decomp.example --token TOKEN --name mac-studio \
-//!         [--slots 4] [--judge decomp --judge-arg judge-worker] [--idle-exit SECONDS]
+//!         [--slots 4] [--packs DIR] [--judge decomp --judge-arg judge-worker] [--idle-exit SECONDS]
 //!
 //! Agents compile on their own machines and report a score; a hosted server (hosted.rs) counts a match only once a
 //! trusted machine has compiled the same C and got the same bytes. This is that machine's side:
@@ -12,6 +12,9 @@
 //! - it leases submissions up to its free slots, judges them, and posts each verdict;
 //! - what it can't judge (a different copy of the game, a judge that crashed or hung) it releases for another
 //!   verifier. Hung or crashed judges are replaced.
+//!
+//! With `--packs DIR` this computer needs no game imported: it downloads the verification pack (hosted_pack.py) of
+//! every project it may verify into DIR, keeps them current, and gives its judges `--packs DIR`.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -37,6 +40,7 @@ struct Options {
     judge: Vec<String>,
     poll: Duration,
     idle_exit: Option<Duration>,
+    packs: Option<std::path::PathBuf>,
 }
 
 impl Options {
@@ -49,6 +53,7 @@ impl Options {
             judge: Vec::new(),
             poll: Duration::from_secs(3),
             idle_exit: None,
+            packs: None,
         };
         let mut judge_args = Vec::new();
         let mut args = args.into_iter();
@@ -60,6 +65,7 @@ impl Options {
                 "--name" => options.name = value,
                 "--slots" => options.slots = value.parse().ok().filter(|n| *n > 0).ok_or("--slots is a count")?,
                 "--judge" => options.judge = vec![value],
+                "--packs" => options.packs = Some(std::path::PathBuf::from(value)),
                 "--judge-arg" => judge_args.push(value),
                 "--poll" => options.poll = Duration::from_secs_f64(value.parse().map_err(|_| "--poll is seconds")?),
                 "--idle-exit" => {
@@ -72,6 +78,10 @@ impl Options {
             options.judge = vec!["decomp".into(), "judge-worker".into()];
         }
         options.judge.extend(judge_args);
+        if let Some(packs) = &options.packs {
+            options.judge.push("--packs".into());
+            options.judge.push(packs.to_string_lossy().into_owned());
+        }
         if options.server.is_empty() || options.token.is_empty() || options.name.is_empty() {
             return Err("--server, --token (or DECOMP_VERIFIER_TOKEN) and --name are required".into());
         }
@@ -148,7 +158,52 @@ impl Verifier {
         }
     }
 
+    /// Download the packs of the projects this verifier may judge that are new or changed (by ETag).
+    async fn sync_packs(&self) -> Result<(), String> {
+        let Some(folder) = &self.options.packs else { return Ok(()) };
+        std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+        let listed: Value = self
+            .http
+            .get(format!("{}/v1/projects", self.options.server))
+            .bearer_auth(&self.options.token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        for slug in listed.get("projects").and_then(Value::as_array).cloned().unwrap_or_default() {
+            let Some(slug) = slug.as_str() else { continue };
+            if !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                continue;
+            }
+            let (file, tag_file) = (folder.join(format!("{slug}.sqlite3")), folder.join(format!("{slug}.etag")));
+            let mut request = self.http.get(format!("{}/v1/p/{slug}/pack", self.options.server)).bearer_auth(&self.options.token);
+            if file.is_file() {
+                if let Ok(tag) = std::fs::read_to_string(&tag_file) {
+                    request = request.header("If-None-Match", tag.trim());
+                }
+            }
+            let response = request.send().await.map_err(|e| e.to_string())?;
+            match response.status().as_u16() {
+                304 => continue,
+                200 => {}
+                404 => continue, // (no pack yet for that project)
+                other => return Err(format!("the pack of {slug}: HTTP {other}")),
+            }
+            let tag = response.headers().get("etag").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let data = response.bytes().await.map_err(|e| e.to_string())?;
+            let part = folder.join(format!(".{slug}.part"));
+            std::fs::write(&part, &data).map_err(|e| e.to_string())?;
+            std::fs::rename(&part, &file).map_err(|e| e.to_string())?; // (whole: a judge never reads half of one)
+            std::fs::write(&tag_file, tag).map_err(|e| e.to_string())?;
+            log(format!("verification pack of {slug}: {} KiB", data.len() / 1024));
+        }
+        Ok(())
+    }
+
     async fn register(&self) -> Result<(), String> {
+        self.sync_packs().await?;
         let mut judge = self.judge()?;
         let described = judge.ask(&json!({"op": "describe"}), Duration::from_secs(120)).await?;
         self.judges.lock().unwrap().push(judge);
