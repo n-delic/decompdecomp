@@ -226,3 +226,21 @@ def test_a_compiler_this_computer_cannot_run_only_skips_its_function(built, tmp_
     monkeypatch.setattr(net, "_judge_with", unavailable)
     assert regional.transfer(net, "other-release")["matched"] == 0
     assert net._function("func_800007D0", "other-release")["status"] == "open"
+
+
+def test_trying_the_other_releases_code_does_not_sync_saved_files_per_function(built, tmp_path):  # noqa: F811
+    """Each try synced the project's saved files before and after it, and again to read the project: about ten
+    seconds a function on a finished 2,000-function game, and two days for one pass. Files follow through the
+    progress watcher, as for autopilot's own drafts."""
+    from decompnet.app import regional
+
+    from .test_app_engine import CLAMP
+
+    net, slug, agent = _two_releases(tmp_path)
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    synced = []
+    sync = net.progress.sync
+    net.progress.sync = lambda *a, **k: (synced.append(a), sync(*a, **k))[1]
+    result = regional.transfer(net, "other-release")
+    assert result["tried"] >= 1 and result["matched"] >= 1
+    assert len(synced) <= 4  # opening the two projects; it was 17 for this one try

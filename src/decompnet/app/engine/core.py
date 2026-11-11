@@ -179,9 +179,11 @@ class Core(Network):
         return said
 
     def fork_slug(self, project: str | None) -> str | None:
-        """The slug when `project` is a fork of a public decomp, else None."""
+        """The slug when `project` is a fork of a public decomp, else None. (A project's kind never changes, so this
+        reads the row without syncing its saved files: twins and the other release's code ask it on every try, and
+        each sync of a finished 2,000-function game took seconds.)"""
         try:
-            proj = self._project(project)
+            proj = Network._project(self, project)
         except NetworkError:
             return None
         return proj["slug"] if self.cfg(proj).get("kind") == "fork" else None
