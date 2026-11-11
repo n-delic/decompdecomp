@@ -326,6 +326,14 @@ def hosted_link(args) -> int:
     return link(args, home_dir() / ".decomp")
 
 
+def hosted_publish(args) -> int:
+    if not args.token:
+        print("hosted-publish needs --token (an admin's token on the server) or DECOMP_HOSTED_TOKEN", file=sys.stderr)
+        return 2
+    from ..hosted_export import publish_main
+    return publish_main(args.slug, args.server, args.token, home_dir())
+
+
 def judge_worker(args) -> int:
     from ..hosted_judge import main as judge
     return judge(home_dir(), Path(args.packs) if args.packs else None, Path(args.cache) if args.cache else None)
@@ -412,6 +420,11 @@ def main(argv: list[str] | None = None) -> int:
     he = sub.add_parser("hosted-export", help="write a project as a small hosted file, for decomp-mcp-gateway hosted serve")
     he.add_argument("slug", help="the project's slug")
     he.add_argument("dir", help="the hosted server's folder (writes DIR/projects/SLUG.sqlite3; again to update it)")
+    hp = sub.add_parser("hosted-publish", help="upload a project to a hosted server (an admin's token)")
+    hp.add_argument("slug", help="the project's slug")
+    hp.add_argument("--server", required=True, help="the hosted server's address, https://...")
+    hp.add_argument("--token", default=os.environ.get("DECOMP_HOSTED_TOKEN", ""),
+                    help="an admin's token on that server (or DECOMP_HOSTED_TOKEN)")
     jw = sub.add_parser("judge-worker", help=argparse.SUPPRESS)  # a verifier's judge (hosted_judge.py)
     jw.add_argument("--packs", help="judge from the verification packs in this folder (hosted_pack.py)")
     jw.add_argument("--cache", help="where to build their scratch projects (default: PACKS/.judge-cache)")
@@ -433,7 +446,8 @@ def main(argv: list[str] | None = None) -> int:
     limits.no_core_dumps()
     return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd,
             "install-info": install_info, "hosted-export": hosted_export,
-            "judge-worker": judge_worker, "hosted-link": hosted_link}.get(args.cmd, run)(args)
+            "judge-worker": judge_worker, "hosted-link": hosted_link,
+            "hosted-publish": hosted_publish}.get(args.cmd, run)(args)
 
 
 if __name__ == "__main__":

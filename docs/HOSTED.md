@@ -10,18 +10,67 @@ Hosted projects are separate files, and in them the server is the only thing tha
 
 ## Running a server
 
+On the server (any Linux machine; the gateway program is a single static file, `decomp-mcp-gateway-linux-x86_64` in
+each release):
+
 ```sh
-decomp hosted-export v-rally /srv/decomp        # from the desktop app's home: /srv/decomp/projects/v-rally.sqlite3
-decomp-mcp-gateway hosted add-user --dir /srv/decomp --name alice                  # prints alice's API token
-decomp-mcp-gateway hosted add-user --dir /srv/decomp --name checker --role verifier
+decomp-mcp-gateway hosted add-user --dir /srv/decomp --name owner --role admin     # prints the admin's token
 decomp-mcp-gateway hosted serve --dir /srv/decomp --listen 127.0.0.1:8080
 ```
 
-- Put a TLS reverse proxy in front of it (Caddy, nginx) to serve it on the internet.
-- Tokens are shown once and stored as SHA-256 hashes in `server.sqlite3`. Roles are `agent`, `verifier` and `admin`.
-- Running `hosted-export` again updates the project in place, in one transaction, so the server can keep running.
-  The server keeps its claims, submissions, notes, matches and better scores. A function matched on the server
-  stays matched, and functions gone from the project become `removed`.
+From the computer with the project (the desktop app's home; safe while the app runs):
+
+```sh
+decomp hosted-publish v-rally --server https://decomp.example --token dd_...     # the admin's token
+```
+
+- `hosted-publish` uploads a fresh export of the project and its verification pack (`POST /v1/p/<slug>/upload`,
+  admins only). The server creates the project, or merges the export into the live one in one transaction while it
+  keeps serving.
+  - It keeps its claims, submissions, notes, matches and better scores. A function matched on the server stays
+    matched, and functions gone from the project become `removed`.
+  - The pack is replaced whole.
+  - The merge is `src/decompnet/hosted_merge.sql`, which the server includes and the local `decomp hosted-export SLUG
+    DIR` also runs, so the two can't disagree.
+  - The server checks that each upload is the right kind of file (project or pack), for that slug and in its format.
+  - v-rally (5.7 MB and 2.6 MB) takes under 2 s.
+- Add agents with `hosted add-user --name alice` or `POST /v1/users`, and compiler servers with `--role verifier`.
+- Tokens are shown once and stored as SHA-256 hashes in `server.sqlite3`.
+
+### As a service, with HTTPS
+
+The gateway speaks plain HTTP on a local port; put a TLS proxy in front of it. With Caddy (certificates included):
+
+```
+# /etc/caddy/Caddyfile
+decomp.example {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+And keep it running with systemd:
+
+```ini
+# /etc/systemd/system/decomp-hosted.service
+[Unit]
+Description=decompdecomp hosted projects
+After=network-online.target
+
+[Service]
+User=decomp
+ExecStart=/usr/local/bin/decomp-mcp-gateway hosted serve --dir /srv/decomp --listen 127.0.0.1:8080
+Restart=always
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/srv/decomp
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`systemctl enable --now decomp-hosted caddy`. Everything the server keeps is in `--dir`: `server.sqlite3` (users,
+grants, compiler servers), `projects/` and `packs/`. Back that folder up. SQLite's WAL mode lets a backup tool copy
+it while the server runs (`sqlite3 FILE ".backup ..."`).
 
 ## Who may use it
 
