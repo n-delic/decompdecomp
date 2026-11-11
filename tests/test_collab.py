@@ -1023,3 +1023,39 @@ def test_apply_remote_layout_join_folds_a_cross_unit_tail(built, tmp_path):  # n
     net.apply_remote_layout(slug, [{"name": "func_800007C4", "vram": orig["vram"], "size": orig_size}], [])
     assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='func_800007D0'", pid) is None  # tail folded
     assert net._function("func_800007C4", slug)["size"] == orig_size                                          # head joined
+
+
+def test_apply_remote_layout_join_clears_the_heads_stale_best(built, tmp_path):  # noqa: F811
+    # The over-split head carried a best attempt for its short extent; once the host's join makes it a longer
+    # function, that best is stale and must be cleared, as the host's own _apply_join does (#192 review point 4).
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("tester")
+    orig = net._function("func_800007C4", slug)
+    orig_size = orig["size"]
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")
+    head = net._function("func_800007C4", slug)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=5, best_source='/* stale */' WHERE id=?", (head["id"],))
+    net.apply_remote_layout(slug, [{"name": "func_800007C4", "vram": orig["vram"], "size": orig_size}], [])
+    joined = net._function("func_800007C4", slug)
+    assert joined["size"] == orig_size
+    assert joined["best_score"] is None and joined["best_source"] is None   # stale best for the short extent cleared
+
+
+def test_apply_join_refuses_a_head_matched_since_the_vote(built, tmp_path):  # noqa: F811
+    # A match can land on the head between the agents' vote and the apply. Folding tails into it then would overwrite
+    # the match (status open, the shorter size); refuse and ask the agents to look again (#192 review point 5).
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("tester")
+    proj = net._project(slug)
+    orig = net._function("func_800007C4", slug)
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")
+    last = net._function("func_800007D0", slug)
+    with net.store.tx() as db:                                              # the head matched since the vote
+        db.execute("UPDATE functions SET status='matched', matched_source='/* done */' "
+                   "WHERE project_id=? AND name='func_800007C4'", (orig["project_id"],))
+    first = net._function("func_800007C4", slug)
+    with pytest.raises(NetworkError, match="matched"):
+        net._apply_join(proj, first, last, agent, ["a", "b", "c"])

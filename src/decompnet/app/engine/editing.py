@@ -252,6 +252,9 @@ class EditMixin:
         if len(rows) < 2 or rows[0]["id"] != first["id"]:
             raise NetworkError("the functions between them changed; look again and report the pair afresh")
         tails = rows[1:]
+        if rows[0]["status"] == "matched" or rows[0]["matched_source"]:
+            raise NetworkError(f"{first['name']} matched between the vote and now; a join would overwrite it. "
+                               "look again and report the pair afresh")
         if any(t["status"] == "matched" or t["matched_source"] for t in tails):
             raise NetworkError("a function between them now matches; look again and report the pair afresh")
         key = f"{first['name']}+{last['name']}"
@@ -264,7 +267,7 @@ class EditMixin:
         target = self._make_target(proj, joined, self.symbols(pid))
         with self.store.tx() as db:
             db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,best_score=NULL,"
-                       "best_source=NULL,status='open',attempts=attempts+? WHERE id=?",
+                       "best_source=NULL,attempts=attempts+? WHERE id=?",
                        (joined.size, console.function_insns(joined), target.code, json.dumps(target.to_json()),
                         console.function_asm(joined), sum(t["attempts"] or 0 for t in tails), first["id"]))
             for tail in tails:
@@ -285,6 +288,7 @@ class EditMixin:
             self._xrefs.pop(pid, None)
         if hasattr(self, "_ops"):
             self._ops.pop(pid, None)
+        self.joined(first["name"], proj["slug"])  # reopen a set-aside head via the shared path, not a direct open
         try:   # a decompdecomp "joined" note, so a later check-again (not_c_from_notes) discounts the pieces'
             self.add_note(self.local_agent("decompdecomp")[0], proj["slug"],  # old no-C notes, not set it aside
                           f"Agents ({', '.join(said)}) found the analysis cut this; the pieces are joined into "

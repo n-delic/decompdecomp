@@ -242,7 +242,7 @@ class RoomMixin:
             tgt = self._make_target(proj, joined, self.symbols(pid))
             with self.store.tx() as db:
                 db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, "
-                           "attempts=attempts+? WHERE id=?",
+                           "best_score=NULL, best_source=NULL, attempts=attempts+? WHERE id=?",
                            (joined.size, console.function_insns(joined), tgt.code, json.dumps(tgt.to_json()),
                             console.function_asm(joined), sum(t["attempts"] or 0 for t in tails), head["id"]))
                 for t in tails:
@@ -266,6 +266,7 @@ class RoomMixin:
                                      for i in by_vram.get(head["vram"], [])]
             self._syms.pop(pid, None)
             self._xrefs.pop(pid, None)
+            self.joined(head["name"], proj["slug"])  # reopen a set-aside head via the shared path (clears its verdict)
 
         for f in sorted(functions, key=lambda f: f["vram"]):
             at = by_vram.get(f["vram"], [])
