@@ -189,3 +189,26 @@ def test_a_session_that_isnt_matching_gets_no_function_claimed_for_it(tmp_path, 
     session = agents.Session("worker", "claude", "worker", "game", "worker", {"task": task})
     manager.prepare_session(session, net.local_agent("worker")[0])
     assert "claim_function" not in session.startup_context
+
+
+def test_a_long_function_is_briefed_by_its_flagged_lines_and_fixed_with_edits(project):
+    net, cc = project
+    me = agent(net)
+    # a twin's C can be a whole preprocessed file: hundreds of blank and declaration lines before the function
+    long = "\n" * 400 + "typedef int s32;\n" + "\n" * 100 + "s32 get_first(s32 table) { return *(s32 *)table; }"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=? WHERE name='get_first'", (long,))
+    pc_compile.check(net, "game", print, cc=cc)
+    brief = port_agents.claim(net, me, "game")
+    assert brief.startswith("Claimed get_first") and "Its C is 502 lines (500 of them blank)" in brief
+    assert "  502> s32 get_first(s32 table) { return *(s32 *)table; }" in brief and brief.count("\n") < 40
+    assert "edits" in brief and "Don't send the whole C back" in brief
+    edit = [{"old": "s32 get_first(s32 table) { return *(s32 *)table; }", "new": "s32 get_first(s32 *table) { return *table; }"}]
+    assert "0 errors, 0 pointer-size" in port_fix.check(net, "game", "get_first", edits=edit)
+    with pytest.raises(NetworkError, match="occurs 0 times|not found|doesn't occur|isn't in"):
+        port_fix.fix(net, me, "game", "get_first", edits=[{"old": "no such text", "new": ""}])
+    with pytest.raises(NetworkError, match="not both"):
+        port_fix.fix(net, me, "game", "get_first", FIXED, edits=edit)
+    kept = port_fix.fix(net, me, "game", "get_first", edits=edit)
+    assert kept["kept"], kept["text"]
+    assert net._function("get_first", "game")["matched_source"] == long.replace(edit[0]["old"], edit[0]["new"])

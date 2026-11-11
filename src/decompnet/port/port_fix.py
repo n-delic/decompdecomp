@@ -47,26 +47,50 @@ def _function(net, slug: str, name: str):
     return proj, fn
 
 
+def _apply(fn, source: str, edits) -> str:
+    """The C to judge: `source` whole, or the function's C with `edits` ([{"old", "new"}], each `old` once in it),
+    which is how a long function is fixed without sending all of it back."""
+    if not edits:
+        if not (source or "").strip():
+            raise NetworkError("Give the function's whole C as `source`, or `edits` ([{\"old\", \"new\"}]) for a "
+                               "long function.")
+        return source
+    if (source or "").strip():
+        raise NetworkError("Give either the whole C (`source`) or `edits`, not both.")
+    from ..textedit import replace_once
+    text = fn["matched_source"]
+    for edit in edits:
+        old = str((edit or {}).get("old", ""))
+        if not old.strip():
+            raise NetworkError("Each edit needs an `old`: text that occurs once in the function's C.")
+        text = replace_once(text, old, str(edit.get("new", "")), f"{fn['name']}'s C")
+    return text
+
+
 def _header(net, proj, fn) -> str:
     context = net._context(proj["id"], fn["unit"])
     return context["header"] if context is not None else ""
 
 
-def check(net, slug: str, name: str, source: str, *, cc: list[str] | None = None) -> str:
-    """What the PC compiler says of `source` for the function, judged by nothing and saved nowhere."""
+def check(net, slug: str, name: str, source: str = "", *, edits=None, cc: list[str] | None = None) -> str:
+    """What the PC compiler says of `source` (or the function's C with `edits`), judged by nothing and saved
+    nowhere."""
     with net.progress.view():
         proj, fn = _function(net, slug, name)
         header = _header(net, proj, fn)
+        source = _apply(fn, source, edits)
     found = pc_compile.compile_one(header, source, cc=cc)
     errors, sizes = _tally(found)
     return (f"For a 64-bit PC: {errors} errors, {sizes} pointer-size warnings (nothing saved; fix_for_pc judges it "
             f"on the console too).\n{render(found)}")
 
 
-def fix(net, agent, slug: str, name: str, source: str, *, cc: list[str] | None = None) -> dict:
-    """Judge a fix both ways and keep it when it passes: {"kept", "text", "found"}."""
+def fix(net, agent, slug: str, name: str, source: str = "", *, edits=None, cc: list[str] | None = None) -> dict:
+    """Judge a fix (the whole C, or `edits` to the function's C) both ways and keep it when it passes:
+    {"kept", "text", "found"}."""
     with net.progress.judging(slug):
         proj, fn = _function(net, slug, name)
+        source = _apply(fn, source, edits)
         before = pc_compile.function(net, proj, fn["name"])
         if before is None:
             raise NetworkError(f"{fn['name']} hasn't been compiled for a PC yet: run Compile for PC (Port readiness) "

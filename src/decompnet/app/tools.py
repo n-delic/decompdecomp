@@ -368,14 +368,15 @@ def _port_agents():
     return port_agents
 
 
-def _fix_for_pc(net: RomNetwork, agent, slug: str, function: str, source: str) -> str:
+def _fix_for_pc(net: RomNetwork, agent, slug: str, function: str, source: str = "", edits=None) -> str:
     from ..port import port_fix
-    return _port_agents().fixed(net, agent, slug, function, port_fix.fix(net, agent, slug, function, source))
+    return _port_agents().fixed(net, agent, slug, function,
+                                port_fix.fix(net, agent, slug, function, source, edits=edits))
 
 
-def _check_for_pc(net: RomNetwork, slug: str, function: str, source: str) -> str:
+def _check_for_pc(net: RomNetwork, slug: str, function: str, source: str = "", edits=None) -> str:
     from ..port import port_fix
-    return port_fix.check(net, slug, function, source)
+    return port_fix.check(net, slug, function, source, edits=edits)
 
 
 def _port_readiness(net: RomNetwork, slug: str) -> str:
@@ -604,8 +605,10 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "claim_port_fix": lambda net, agent, slug, function="": _port_agents().claim(net, agent, slug, function),
     "release_port_fix": lambda net, agent, slug, function, note="":
         _port_agents().release(net, agent, slug, function, note),
-    "check_for_pc": lambda net, agent, slug, function, source: _check_for_pc(net, slug, function, source),
-    "fix_for_pc": lambda net, agent, slug, function, source: _fix_for_pc(net, agent, slug, function, source),
+    "check_for_pc": lambda net, agent, slug, function, source="", edits=None: _check_for_pc(
+        net, slug, function, source, edits),
+    "fix_for_pc": lambda net, agent, slug, function, source="", edits=None: _fix_for_pc(
+        net, agent, slug, function, source, edits),
     "claim_data": lambda net, agent, slug, name="": _data_agents().claim(net, agent, slug, name),
     "release_data": lambda net, agent, slug, name, note="": _data_agents().release(net, agent, slug, name, note),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
@@ -1239,16 +1242,18 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "release_port_fix", function=function, note=note)
 
     @tool
-    async def check_for_pc(ctx: Context, function: str, source: str) -> str:
+    async def check_for_pc(ctx: Context, function: str, source: str = "", edits: list[dict] | None = None) -> str:
         """What a 64-bit PC compiler (PORT defined) says of C for a matched function, with the header it compiles
-        with. Nothing is judged or saved."""
-        return await run(ctx, "check_for_pc", function=function, source=source)
+        with. Nothing is judged or saved. Give the whole C as `source`, or `edits` ([{"old", "new"}], each `old`
+        once in its C) for a long function."""
+        return await run(ctx, "check_for_pc", function=function, source=source, edits=edits)
 
     @tool
-    async def fix_for_pc(ctx: Context, function: str, source: str) -> str:
+    async def fix_for_pc(ctx: Context, function: str, source: str = "", edits: list[dict] | None = None) -> str:
         """Judge a matched function's C fixed for the PC: kept only when the console build still matches byte for
-        byte and the PC build has no errors and fewer pointer-size warnings than before."""
-        return await run(ctx, "fix_for_pc", function=function, source=source)
+        byte and the PC build is no worse on errors and pointer-size warnings and better on one. Give the whole C as
+        `source`, or `edits` ([{"old", "new"}], each `old` once in its C) for a long function."""
+        return await run(ctx, "fix_for_pc", function=function, source=source, edits=edits)
 
     @tool
     async def compile_data(ctx: Context, name: str, source: str) -> str:

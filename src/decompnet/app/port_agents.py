@@ -25,6 +25,9 @@ TOOLS = frozenset({"project_info", "claim_port_fix", "release_port_fix", "check_
                    "get_context", "edit_context", "guess_struct", "get_class", "guide"})
 REQUIRED = frozenset({"project_info", "claim_port_fix", "fix_for_pc", "release_port_fix"})
 LEASE = 1800  # seconds a claim lasts without a judged fix
+LONG = 250  # lines of C past which a brief shows only what the PC compiler flags (a twin's C can be a whole
+# preprocessed file: one was 7,942 lines, and an agent given all of it ended its session three times without a try)
+CONTEXT = 6  # lines shown on each side of a flagged line
 PROMPT = (
     "You are a decompdecomp helper fixing the C of {title}, a game the user owns, so it also builds for a PC: the "
     "first step of a port. Every function you get is matched: its C compiles to the game's exact bytes with the "
@@ -41,7 +44,8 @@ PROMPT = (
     "`#endif` (the console build doesn't define PORT); the same for MIPS asm and gcc-only builtins. Never cast a "
     "pointer to a 32-bit integer (s32/u32) to silence a warning; uintptr_t is the PC's pointer-sized integer, for "
     "words that hold addresses (a display list's). check_for_pc(function, source) shows the PC's verdict alone; "
-    "fix_for_pc(function, source) judges both and keeps it. When nothing is left of it, claim the next. If after a few tries "
+    "fix_for_pc(function, source) judges both and keeps it; for a long function give `edits` ([{old, new}]) in "
+    "place of `source`, as its brief says. When nothing is left of it, claim the next. If after a few tries "
     "it won't pass, release_port_fix(function, note) with what you learned and claim another.\n"
     "Read guide(\"port\") once. Work up to {count} functions this session, then end; the app continues the queue. "
     "If claim_port_fix says nothing is left, end the session."
@@ -151,12 +155,38 @@ def brief(net, proj, name: str) -> str:
                                            proj["id"], name)
     found = pc_compile.function(net, proj, name) or []
     text = (f"What a 64-bit PC compiler says of it now (line numbers are the C's own):\n{port_fix.render(found)}\n"
-            f"Its C (matches the console byte for byte):\n```c\n{fn['matched_source'].strip()}\n```")
+            + _source(fn["matched_source"], found))
     if fn["unit"]:
         text += f"\nIt compiles with the header of unit {fn['unit']} (get_context)."
     if row is not None and row["note"]:
         text += f"\nA previous try left this note:\n{row['note']}"
     return text
+
+
+def _source(source: str, found: list[dict]) -> str:
+    """The function's C for the brief: whole, or for a long one the lines the PC compiler flags with a few around
+    them, numbered, and how to fix it with edits."""
+    lines = source.split("\n")
+    if len(lines) <= LONG:
+        return f"Its C (matches the console byte for byte):\n```c\n{source.strip()}\n```"
+    marked = sorted({d["line"] for d in found if not d["file"] and 0 < d["line"] <= len(lines)})
+    spans: list[list[int]] = []
+    for line in marked:
+        lo, hi = max(1, line - CONTEXT), min(len(lines), line + CONTEXT)
+        if spans and lo <= spans[-1][1] + 1:
+            spans[-1][1] = hi
+        else:
+            spans.append([lo, hi])
+    shown = []
+    for lo, hi in spans[:20]:
+        shown.append(f"... lines {lo}-{hi}:")
+        shown += [f"{n:>5}{'>' if n in marked else ' '} {lines[n - 1]}" for n in range(lo, hi + 1)]
+    blank = sum(not line.strip() for line in lines)
+    return (f"Its C is {len(lines):,} lines ({blank:,} of them blank), too long to show whole; it matches the console "
+            "byte for byte. The lines the PC compiler flags (marked >), with the lines around them:\n```c\n"
+            + "\n".join(shown) + "\n```\nFix it with `edits` instead of `source` in check_for_pc and fix_for_pc: "
+            "[{\"old\": \"text from a line above\", \"new\": \"its replacement\"}], each `old` occurring once in "
+            "the C (include enough of the line to make it unique). Don't send the whole C back.")
 
 
 def release(net, agent, slug, function: str, note: str = "") -> str:
