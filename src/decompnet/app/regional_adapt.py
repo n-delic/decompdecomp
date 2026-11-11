@@ -21,8 +21,13 @@ Structs from the shared header aren't changed here: other functions use them (RO
 from __future__ import annotations
 
 import re
+import struct
 from collections import defaultdict
+from decimal import Decimal
+from difflib import SequenceMatcher
 from io import BytesIO
+
+from .. import arch as processors
 
 NUMBER = re.compile(r'(?<![\w.])-?(?:0[xX][0-9a-fA-F]+|\d+)(?![\w.])')
 # a literal in C: decimal or hex, with an optional integer suffix, not part of a name or a float
@@ -35,15 +40,37 @@ PROBE = '__release_layout'
 MAX_VARIANTS = 3
 
 
-def differences(old, new) -> tuple[dict[int, int], set[int], dict[int, int]]:
+def align(old, new) -> list[tuple[int, int]]:
+    """(row in old, row in new) for the instructions two releases have in common, in order: all of them when the
+    instructions are the same, the unchanged stretches around what changed when some were added or removed."""
+    if [i.mnemonic for i in old] == [i.mnemonic for i in new]:
+        return list(zip(range(len(old)), range(len(new))))
+    matcher = SequenceMatcher(None, [i.mnemonic for i in old], [i.mnemonic for i in new], autojunk=False)
+    return [(i + k, j + k) for i, j, n in matcher.get_matching_blocks() for k in range(n)]
+
+
+def differences(old, new, arch: str | None = None):
     """(memory offsets that moved: old -> new, offsets read at the same place somewhere, other numbers that changed:
-    old -> new) from two releases' instructions (scoring.Insn), the same instructions in the same order. A number
-    that moves two ways says nothing; one that moved somewhere and stayed elsewhere is in both (two structs with a
-    field at that offset, one of them moved: moved_layout tells them apart)."""
-    moved, constant = defaultdict(set), defaultdict(set)
+    old -> new, floats that changed: old bits -> new bits) from two releases' instructions (scoring.Insn), lined up
+    by align(). A number that moves two ways says nothing; one that moved somewhere and stayed elsewhere is in both
+    (two structs with a field at that offset, one of them moved: moved_layout tells them apart). Branch and jump
+    targets move with the code around them, not with anything the C says: they're left out."""
+    moved, constant, floats = defaultdict(set), defaultdict(set), defaultdict(set)
     kept = set()
-    for a, b in zip(old, new):
-        if a.mnemonic != b.mnemonic:
+    rows = align(old, new)
+    built = getattr(processors.get(arch), 'built_floats', None) if arch else None
+    if built:
+        # in order, when both build as many floats (a float built with an ori in one release and without in the
+        # other shifts the instructions around it); else where the instructions line up
+        theirs, mine = built(old), built(new)
+        lined = list(zip(sorted(theirs), sorted(mine))) if len(theirs) == len(mine) else \
+            [(i, j) for i, j in rows if i in theirs and j in mine]
+        for i, j in lined:
+            if theirs[i] != mine[j]:
+                floats[theirs[i]].add(mine[j])
+    for i, j in rows:
+        a, b = old[i], new[j]
+        if a.mnemonic != b.mnemonic or a.mnemonic.startswith(('b', 'j')):
             continue
         xs, ys = list(NUMBER.finditer(a.operands)), list(NUMBER.finditer(b.operands))
         if len(xs) != len(ys) or NUMBER.sub('#', a.operands) != NUMBER.sub('#', b.operands):
@@ -64,7 +91,7 @@ def differences(old, new) -> tuple[dict[int, int], set[int], dict[int, int]]:
                 constant[u].add(v)
     moves = {u: next(iter(v)) for u, v in moved.items() if len(v) == 1}
     constants = {u: next(iter(v)) for u, v in constant.items() if len(v) == 1}
-    return moves, kept, constants
+    return moves, kept, constants, {u: next(iter(v)) for u, v in floats.items() if len(v) == 1}
 
 
 def _bracketed(text: str, at: int) -> bool:
@@ -143,21 +170,26 @@ def layouts(values: list[int], items: list[Struct]) -> list[tuple[list[tuple[int
     return out
 
 
-def moved_layout(s: Struct, fields, size, moves, kept, constants):
-    """[(declaration, member, new offset, width)] for the struct's fields (filler dropped) and its new size, or None when nothing
-    of it moved or the new places don't fit. A field this release reads elsewhere goes there; one it doesn't read
-    moves with the field before it. A struct moves when one of its fields moved and was nowhere read in place; its
-    fields read both ways (another struct's field shares the offset) then move too."""
+def anchors(s: Struct, fields, moves, kept) -> dict[int, int] | None:
+    """{member index: this release's offset} for the struct's fields this release reads, or None when none of them
+    moved. A struct moves when one of its fields moved and was nowhere read in place; its fields read both ways
+    (another struct's field shares the offset) then move too."""
     real = [(i, offset) for i, ((_, name), (offset, _)) in enumerate(zip(s.members, fields)) if not FILLER.match(name)]
     if not any(offset in moves and offset not in kept for _, offset in real):
         return None
-    anchors = {i: moves.get(offset, offset) for i, offset in real if offset in moves or offset in kept}
+    return {i: moves.get(offset, offset) for i, offset in real if offset in moves or offset in kept}
+
+
+def place(s: Struct, fields, size, found: dict[int, int], constants):
+    """[(declaration, member, new offset, width)] for the struct's fields (filler dropped) and its new size, with
+    the fields in `found` where it says and the others moved with the field before them; or None when they don't
+    fit."""
     placed, delta, end = [], 0, 0  # what comes before the first field read stays where it is
     for i, ((decl, name), (offset, width)) in enumerate(zip(s.members, fields)):
         if FILLER.match(name):
             continue
-        if i in anchors:
-            delta = anchors[i] - offset
+        if i in found:
+            delta = found[i] - offset
         new = offset + delta
         if new < end:
             return None  # two fields would overlap: the guess is wrong
@@ -168,6 +200,12 @@ def moved_layout(s: Struct, fields, size, moves, kept, constants):
     said = constants.get(size)
     new_size = said if said is not None else size + delta
     return (placed, new_size, said is not None) if new_size >= end else None
+
+
+def moved_layout(s: Struct, fields, size, moves, kept, constants):
+    """place() with the fields this release reads where it reads them, or None when nothing of it moved."""
+    found = anchors(s, fields, moves, kept)
+    return None if found is None else place(s, fields, size, found, constants)
 
 
 def relaid(s: Struct, placed, size) -> str:
@@ -233,6 +271,48 @@ def _probe(net, proj, header, source, fn, items, count):
 
 # ------------------------------------------------------------------ numbers written in the C
 
+C_FLOAT = re.compile(r'(?<![\w.])((?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?)([fF]?)(?![\w.])')
+
+
+def _bits(value: float) -> int:
+    return struct.unpack('>I', struct.pack('>f', value))[0]
+
+
+def _float_text(bits: int) -> str:
+    """The shortest decimal that is this float (single precision)."""
+    value = struct.unpack('>f', struct.pack('>I', bits))[0]
+    for digits in range(1, 10):
+        text = f'{value:.{digits}g}'
+        if _bits(float(text)) == bits:
+            break
+    if 'e' in text and abs(value) < 1e9:
+        text = format(Decimal(text), 'f')  # 13000, not 1.3e+04: as people write it
+    if 'e' not in text and '.' not in text:
+        text += '.0'
+    return text
+
+
+def adapt_floats(source: str, floats: dict[int, int]) -> str | None:
+    """The C with each float literal that is one of the other release's floats changed to this release's."""
+    if not floats:
+        return None
+    code = _code_only(source)
+    edits = []
+    for m in C_FLOAT.finditer(code):
+        if '.' not in m.group(1) and 'e' not in m.group(1).lower() and not m.group(2):
+            continue  # an integer
+        try:
+            bits = _bits(float(m.group(1)))
+        except (OverflowError, ValueError):
+            continue
+        if bits in floats:
+            edits.append((m.start(), m.end(), _float_text(floats[bits]) + (m.group(2) or 'f')))
+    out = source
+    for start, end, text in reversed(edits):
+        out = out[:start] + text + out[end:]
+    return out if out != source else None
+
+
 def adapt_numbers(source: str, moves: dict[int, int], constants: dict[int, int]) -> str | None:
     """The C with each number the instructions map to exactly one other number changed to it (as written: hex
     stays hex). Offsets change only where the C adds them to a pointer or indexes with them."""
@@ -263,14 +343,16 @@ def _code_only(source: str) -> str:
 
 def variants(net, proj, header, source, fn, old, new) -> list[str]:
     """Up to MAX_VARIANTS versions of the other release's C fitted to this release's numbers, most changed first."""
-    moves, kept, constants = differences(old, new)
-    if not moves and not constants:
+    moves, kept, constants, floats = differences(old, new, proj['arch'])
+    if not moves and not constants and not floats:
         return []
+    floated = adapt_floats(source, floats)  # a float is the same float whatever else changed
+    source = floated or source
     laid = adapt_structs(net, proj, header, source, fn, moves, kept, constants)
     numbered = adapt_numbers(source, moves, constants)
     both = adapt_numbers(laid, moves, constants) if laid else None
     out = []
-    for v in (both, laid, numbered):
-        if v and v != source and v not in out:
+    for v in (both, laid, numbered, floated):
+        if v and v not in out:
             out.append(v)
     return out[:MAX_VARIANTS]

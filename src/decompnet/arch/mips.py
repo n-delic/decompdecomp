@@ -483,3 +483,31 @@ def boundary_instruction(word, address):
             'return': ins.isReturn(), 'call': ins.doesLink(), 'target': target,
             'terminal': ins.isReturn() or (not ins.doesLink() and
                         (ins.isUnconditionalBranch() or ins.isJump()))}
+
+
+def built_floats(insns) -> dict[int, int]:
+    """{instruction index: a float's 32 bits} for the floats a function builds in a register (`lui $at, 0x42f0`, an
+    optional `ori $at, $at, 0x2000`, then `mtc1 $at, $f2`), keyed by the lui. Two releases that build different
+    floats there (a speed, a screen height) differ by the float, which the C writes as a float, not as its halves:
+    regional_adapt changes the C's float. Read from scoring.Insn rows (capstone's text)."""
+    out = {}
+    for i, ins in enumerate(insns):
+        if ins.mnemonic != 'lui':
+            continue
+        register, _, value = ins.operands.partition(',')
+        try:
+            bits = int(value.strip(), 0) << 16
+        except ValueError:
+            continue  # %hi(symbol): an address
+        j = i + 1
+        if j < len(insns) and insns[j].mnemonic == 'ori' and insns[j].operands.startswith(f'{register}, {register},'):
+            try:
+                bits |= int(insns[j].operands.rsplit(',', 1)[1].strip(), 0)
+            except ValueError:
+                continue
+            j += 1
+        for k in range(j, min(j + 3, len(insns))):  # (the move can wait for a delay slot or another load)
+            if insns[k].mnemonic == 'mtc1' and insns[k].operands.startswith(f'{register},'):
+                out[i] = bits
+                break
+    return out

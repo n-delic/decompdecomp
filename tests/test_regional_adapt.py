@@ -35,7 +35,7 @@ def test_what_moved_is_read_from_the_same_instructions():
                 ('lw', '$v0, 0x18($a1)'))
     old.append(Insn(32, 'lw', '$v0, 0x10($a2)', ''))
     new.append(Insn(32, 'lw', '$v0, 0x14($a2)', ''))
-    moves, kept, constants = ra.differences(old, new)
+    moves, kept, constants, floats = ra.differences(old, new)
     assert moves == {0x4c: 0x42, 0x28: 0x24}  # 0x10 moved two ways: nothing
     assert kept == {0x28, 0}
     assert constants == {0x38: 0x30}
@@ -68,7 +68,8 @@ def test_numbers_in_the_c_change_where_the_instructions_map_them_one_way():
 def _plan(pal_syms, ntsc_syms, pal_fns, ntsc_fns):
     addresses = AddressMap(pair(pal_fns, ntsc_fns, lambda *_: 0.0))
     mine, theirs = SymbolTable(ntsc_syms), SymbolTable(pal_syms)
-    return Plan([], addresses, [], 0, 0, 0, {}, mine.name_at, theirs.resolve, mine.resolve)
+    return Plan([], addresses, [], 0, 0, 0, {}, mine.name_at, their_address=theirs.resolve, address_of=mine.resolve,
+                their_size=lambda name: theirs.by_name[name].size if name in theirs.by_name else 0)
 
 
 def test_relocations_vote_by_their_place_when_one_release_lists_fewer():
@@ -113,3 +114,41 @@ def test_the_compiler_lays_out_the_fitted_struct(built, tmp_path):  # noqa: F811
     values = ra._probe(net, proj, header, out, f, items, sum(2 * len(s.members) + 1 for s in items))
     offsets = dict(zip((n for _, n in items[0].members), (o for o, _ in ra.layouts(values, items)[0][0])))
     assert offsets['subs'] == 0x24 and offsets['nsub'] == 0x42
+
+
+def test_numbers_are_read_around_added_instructions_and_branch_targets_left_out():
+    old = insns(('lw', '$v0, 0x178($a0)'), ('addiu', '$a2, $a2, -8'), ('beqz', '$v0, 0x40'), ('jr', '$ra'))
+    new = insns(('lw', '$v0, 0x170($a0)'), ('move', '$a1, $s7'), ('addiu', '$a2, $a2, -0x10'), ('beqz', '$v0, 0x48'),
+                ('jr', '$ra'))
+    moves, kept, constants, floats = ra.differences(old, new)
+    assert moves == {0x178: 0x170} and constants == {-8: -16}  # not the branch's 0x40 -> 0x48
+
+
+def test_floats_built_from_immediates_take_this_releases_value():
+    """`lui $at, 0x42f0; mtc1 $at, $f2` is 120.0f: the other release's 120.0f becomes this release's 13000.0f."""
+    from decompnet.arch import mips
+
+    old = insns(('lui', '$at, 0x42f0'), ('mtc1', '$at, $f2'), ('lui', '$at, 0x463b'), ('ori', '$at, $at, 0x8000'),
+                ('mtc1', '$at, $f4'))
+    new = insns(('lui', '$at, 0x464b'), ('ori', '$at, $at, 0x2000'), ('mtc1', '$at, $f2'), ('lui', '$at, 0x4302'),
+                ('mtc1', '$at, $f4'))
+    assert mips.built_floats(old) == {0: 0x42F00000, 2: 0x463B8000}
+    *_, floats = ra.differences(old, new, 'mips')
+    assert floats == {0x42F00000: 0x464B2000, 0x463B8000: 0x43020000}
+    out = ra.adapt_floats('f(120.0f, 12000.0f, 120, 1.5f);', floats)
+    assert out == 'f(13000.0f, 130.0f, 120, 1.5f);'
+
+
+def test_a_pairs_own_relocations_place_its_names_before_the_game_wide_map():
+    """Data inside a big block moves unevenly: the map's guess for a variable can be off, the pair's own
+    instructions aren't. `ptr + 0x245` on a 4-byte pointer variable is where it points: left alone."""
+    pal = [fn(1, 0x100, 'k1', size=12, ops=('lui', 'lw', 'jr'), relocs=[(0, 5, 0x800D0000), (4, 6, 0x800D0000)]),
+           fn(2, 0x200, 'k2', size=8, ops=('lui', 'lw'), relocs=[(0, 5, 0x800C0000)])]
+    ntsc = [fn(11, 0x100, 'k3', size=16, ops=('lui', 'nop', 'lw', 'jr'), relocs=[(0, 5, 0x800C8000), (8, 6, 0x800C8000)]),
+            fn(12, 0x200, 'k2', size=8, ops=('lui', 'lw'), relocs=[(0, 5, 0x800C0000)])]
+    p = _plan([Symbol('gRecords', 0x800D0000, 0x100), Symbol('gPtr', 0x800C0000, 4)],
+              [Symbol('D_800C0000', 0x800C0000, 0x10000)], pal, ntsc)
+    own = p.for_pair(pal[0], ntsc[0])
+    assert own.local == {0x800D0000: 0x800C8000}
+    assert own.text('x = gRecords;') == 'x = D_800C8000;'
+    assert p.offsets('*(gPtr + 0x245) = 0;') == '*(gPtr + 0x245) = 0;'
