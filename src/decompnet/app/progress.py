@@ -28,6 +28,7 @@ from pathlib import Path
 
 from .. import toolchains
 from ..network import NetworkError
+from ..rom.symbols import AUTO_NAME
 from . import saves
 
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
@@ -368,7 +369,7 @@ def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]
     return {row["name"] for row in rows}
 
 
-def _adopt_saved_names(net, pid: int, saved_manifest: dict) -> None:
+def _adopt_saved_names(net, pid: int, saved_manifest: dict, auto_only: bool = False) -> None:
     """Before a first sync renders, give a database function the saved (older) name the folder still uses for it:
     when exactly one database function at a saved entry's address matches it (by unit, or by size when no unit can
     tell siblings apart) and that saved name is gone from the database, rename the row to the saved name. Then the
@@ -376,9 +377,9 @@ def _adopt_saved_names(net, pid: int, saved_manifest: dict) -> None:
     or quietly replacing the saved one on the next change (#174)."""
     saved_layout = saved_manifest.get("layout") or []
     saved_names = {entry.get("name") for entry in saved_layout}
-    rows = net.store.all("SELECT id, name, vram, size, unit, matched_source, best_source "
-                         "FROM functions WHERE project_id=?", pid)
+    rows = net.store.all("SELECT id, name, vram, size, unit FROM functions WHERE project_id=?", pid)
     db_names = {r["name"] for r in rows}
+    pairs = []
     for saved in saved_layout:
         new = saved.get("name")
         if new in db_names:
@@ -390,16 +391,17 @@ def _adopt_saved_names(net, pid: int, saved_manifest: dict) -> None:
         if len(matching) != 1:
             continue  # same-size siblings with no unit to separate them, or no match: leave the database names
         row = matching[0]
-        word = re.compile(rf"\b{re.escape(row['name'])}\b")
-        with net.store.tx() as db:
-            db.execute("UPDATE functions SET name=?, matched_source=?, best_source=? WHERE id=?",
-                       (new, word.sub(new, row["matched_source"]) if row["matched_source"] else None,
-                        word.sub(new, row["best_source"]) if row["best_source"] else None, row["id"]))
+        if auto_only and not AUTO_NAME.match(row["name"]):
+            continue  # later syncs adopt only over an auto name (a re-analysis reset), never a deliberate rename
+        with net.store.tx() as db:  # rename this one row and its symbol only -- never a same-address overlay sibling
+            db.execute("UPDATE functions SET name=? WHERE id=?", (new, row["id"]))
             db.execute("UPDATE symbols SET name=? WHERE project_id=? AND address=? AND name=?",
                        (new, pid, row["vram"], row["name"]))
-        net._syms.pop(pid, None)
+        pairs.append((row["name"], new))
         db_names.discard(row["name"]); db_names.add(new)
         rows = [{**r, "name": new} if r["id"] == row["id"] else r for r in rows]
+    if pairs:
+        net._rename_in_code(pid, dict(pairs))  # callers and headers that still name the old symbols follow (review 2)
 
 
 class Progress:
@@ -914,6 +916,16 @@ class Progress:
         config_changed = state is not None and (state.config_key is None or config_key != state.config_key)
         baseline = self._baseline(pid)
         signature = self._signature(folder)
+        if baseline is not None and slug not in self.adopting:
+            # Not only on a first sync: before a later publish renders the database's name, keep a database function
+            # at the saved name the folder still uses for it (#174 review 1). _adopt_saved_names acts only when a
+            # saved name is missing from the database and exactly one row matches, so this is a no-op once they agree.
+            manifest_path = folder / saves.MANIFEST
+            if manifest_path.exists():
+                try:
+                    _adopt_saved_names(net, pid, json.loads(manifest_path.read_text(encoding="utf-8")), auto_only=True)
+                except (OSError, UnicodeError, ValueError):
+                    pass
         if baseline is not None and self.signatures.get(slug) == signature:
             if not db_changed and not config_changed:
                 return False

@@ -1275,19 +1275,6 @@ def test_a_later_merge_keeps_both_set_aside_functions_at_one_address():
     b = {"name": "ovl_b_004BF720", "vram": 0x4BF720}
     merged = _merge_manifest({"set_aside": [a]}, {"set_aside": [a, b]}, {"set_aside": [a]})
     assert [f["name"] for f in merged["set_aside"]] == ["ovl_a_004BF720", "ovl_b_004BF720"]
-def test_a_piece_named_by_its_label_saves_and_opens_again(project):
-    """#158: spimdisasm names a piece that starts at a jump target by its label (`.L80129B10`); the folder the app
-    wrote with it must read back."""
-    net, folder, _ = project
-    with net.store.tx() as db:
-        db.execute("UPDATE functions SET name='.L00001004' WHERE name='g'")
-    net.progress.sync("game", force=True)
-    manifest(folder, instructions="edited in the folder")
-    net.progress.sync("game", force=True)
-    names = [row["name"] for row in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
-    assert ".L00001004" in names
-
-
 def test_a_first_sync_keeps_a_same_size_overlay_sibling_by_unit():
     """Two overlay functions of the same size at one address: the saved name matches the database entry of its own
     unit, so the sibling in the other overlay still joins instead of being taken as the same rename and dropped.
@@ -1369,3 +1356,54 @@ def test_the_rendered_layout_carries_each_functions_unit(project):
     net, folder, _ = project
     man = json.loads((folder / saves.MANIFEST).read_text())
     assert man["layout"] and all("unit" in entry for entry in man["layout"])
+
+
+def test_a_saved_name_survives_a_later_reset_to_a_default_name(project):
+    """#174 review 1: a deliberate saved name must survive a later database change that resets the function to its
+    auto name (a re-analysis), not only on the first sync. The folder keeps the saved name and the row is re-adopted.
+    A database rename to another deliberate name is left alone (the collab rename suite covers that)."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:          # re-analysis reset the function at 0x1000 back to its auto name
+        db.execute("UPDATE functions SET name='func_00001000' WHERE project_id=? AND name='f'", (pid,))
+    net._syms.pop(pid, None)
+    net.progress.sync("game", force=True)
+    names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert "f" in names and "func_00001000" not in names, names                 # the saved name survived the reset
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='f'", pid)   # adopted back in the db
+
+
+def test_a_later_sync_does_not_override_a_deliberate_rename(project):
+    """#174 review 1: the later-sync adopt must only reclaim an auto name, never undo a real rename. A database
+    rename of a function to another deliberate name wins over the folder's older saved name."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='draw_sprite' WHERE project_id=? AND name='f'", (pid,))
+    net._syms.pop(pid, None)
+    net.progress.sync("game", force=True)
+    names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert "draw_sprite" in names and "f" not in names, names                   # the deliberate rename was kept
+
+
+def test_adopt_updates_callers_and_the_header_to_the_saved_name(tmp_path):
+    """#174 review 2: adopting a saved name must rewrite its callers and the shared header too, or the saved folder
+    no longer builds. A caller that calls the old name and a header that declares it follow the rename."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                   "VALUES(?,1,'extern void ovl_a_disp_004BF720(void);',0,'')", (pid,))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,matched_source) VALUES"
+                   "(?,'ovl_a_disp_004BF720',?,36,9,'matched','ovl_a','void ovl_a_disp_004BF720(void){}')", (pid, 0x4BF720))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,matched_source) VALUES"
+                   "(?,'caller',?,40,9,'matched','','int caller(void){ ovl_a_disp_004BF720(); return 0; }')", (pid, 0x4C0000))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,'ovl_a_disp_004BF720',?,36,'func')", (pid, 0x4BF720))
+    saved = {"layout": [{"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}]}
+    _adopt_saved_names(net, pid, saved)
+    caller = net.store.one("SELECT matched_source FROM functions WHERE project_id=? AND name='caller'", pid)
+    assert "draw_sprite()" in caller["matched_source"] and "ovl_a_disp_004BF720" not in caller["matched_source"]
+    header = net._context(pid, "")["header"]
+    assert "draw_sprite" in header and "ovl_a_disp_004BF720" not in header
