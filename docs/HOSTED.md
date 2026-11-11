@@ -99,8 +99,8 @@ Other endpoints:
   and last contact.
 - `POST /v1/users {name, role}` (admins): a new user's token, to register agents or compiler servers remotely.
 - `GET /v1/p/<slug>/pending?limit=50` (verifiers): submissions waiting, for a verifier of your own.
-- `GET /v1/p/<slug>/matches?since=<time>` (verifiers): verified matches, for the desktop app that owns the full
-  project to take in.
+- `GET /v1/p/<slug>/matches?since=<time>` (verifiers): the matches verified on this server (not the ones the project
+  came with), for the desktop app that owns the full project to take in.
 - `GET /v1/projects`: the projects, for any user.
 
 On a copy of v-rally, with 10 matched functions reopened, a verifier on the development Mac judged 10 submissions
@@ -118,10 +118,31 @@ On a copy of v-rally with half its functions reopened, running on the developmen
 Writes to one project are serialized, which is what makes claims exclusive, and reads run on their own
 connections. Real agents spend minutes compiling between calls, so this is far above what hundreds of them need.
 
+## Back into the full project
+
+The desktop app that owns the project takes the server's verified matches in by itself:
+
+```sh
+decomp hosted-link v-rally --server https://decomp.example --token dd_...   # a verifier's token
+decomp hosted-link v-rally --remove
+```
+
+- While the app runs it asks each linked server for new matches every minute (`app/hosted_sync.py`).
+- It takes each in the way a room member's match comes in (`room_matches.verify`): the app's own judge compiles it
+  against the full project and records it like any match.
+- The match is credited to a local agent named `hosted.<user>`.
+- A match the app's judge doesn't reproduce isn't recorded.
+- Links are kept in `.decomp/hosted-links.json`, readable only by its owner and out of project databases and saves.
+  The file is read again each round, so no restart is needed.
+
+On a copy of v-rally, the whole loop ran with the real compilers:
+1. Six matched functions were reopened in the project and its hosted file.
+2. An agent submitted their C to the hosted server.
+3. The Rust verifier confirmed all six.
+4. The app took them in, re-judged, in 3 s. All six were matched again, credited to `hosted.alice`.
+
 ## Not yet
 
-- Taking verified matches into the desktop app's full project automatically (`/v1/p/<slug>/matches` is there for
-  it).
 - A judge in Rust for a console, so a compiler server needs only the compilers and the game, not decompdecomp.
 - Sign-in for users (GitHub), per-project access lists, removing users, and per-user rate limits beyond the 16
   concurrent calls.
