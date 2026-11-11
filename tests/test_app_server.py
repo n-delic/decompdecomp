@@ -3316,3 +3316,26 @@ def test_stop_sharing_closes_persisted_room_and_reports_retryable_errors(app,mon
     assert not room_reconcile.snapshot(room)['active']
     # A repeated stop is safe, including a room that only exists in saved settings.
     assert client.post('/api/collab/stop',json={'slug':slug},headers={'X-Decomp':'1'}).status_code==200
+
+
+def test_settings_explain_compiler_services_with_this_computers_commands(app):
+    """Settings › Compiler services (compiler_service.py): this computer's facts and links, never a token."""
+    from decompnet.app import hosted_sync
+    client, net, _ = app
+    internal = net.workspace / ".decomp"
+    hosted_sync.link(internal, "game", "https://hosted.example/", "dd_secret_token")
+    try:
+        info = client.get("/api/compiler-service").json()
+        assert info["decomp"] and isinstance(info["compilers"], list)
+        assert info["slots"] >= 1 and info["cores"] >= info["slots"] and info["name"]
+        assert info["links"] == [{"slug": "game", "server": "https://hosted.example", "remote": "game", "since": 0,
+                                  "last": None}]
+        assert "dd_secret_token" not in json.dumps(info)
+        page = client.get("/").text
+        assert 'id="compilerServicePanel"' in page and "/assets/js/compiler-service.js" in page
+        script = client.get("/assets/js/compiler-service.js")
+        assert script.status_code == 200 and "loadCompilerService" in script.text
+    finally:
+        hosted_sync.unlink(internal, "game")
+    anon = TestClient(client.app, base_url=f"http://127.0.0.1:{PORT}")
+    assert anon.get("/api/compiler-service").status_code == 401

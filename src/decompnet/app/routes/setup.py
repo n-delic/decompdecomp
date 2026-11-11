@@ -28,6 +28,17 @@ def register(app: App) -> None:
     net, mcp, manager, jobs = app.net, app.mcp, app.manager, app.jobs
     settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
 
+    @mcp.custom_route("/api/compiler-service", methods=["GET"])
+    async def api_compiler_service(request: Request) -> Response:
+        """Settings › Compiler services: this computer's commands for serving a hosted project (compiler_service.py)."""
+        if (bad := guard(request)):
+            return bad
+        compiler_service, = await app.imports('decompnet.app', ('compiler_service',))
+        try:
+            return JSONResponse(await call(lambda: compiler_service.info(net, app.home)))
+        except NetworkError as error:
+            return fail(error)
+
     @mcp.custom_route("/api/sdk-library", methods=["GET", "POST"])
     async def api_sdk_library(request: Request) -> Response:
         sdk_library, = await app.imports('decompnet.app', ('sdk_library',))

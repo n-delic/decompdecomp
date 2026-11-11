@@ -343,6 +343,7 @@ async function showSettingsPage() {
   loadHeaderStorage().catch(error=>{$('headerStorageEstimate').textContent=error.message;});
   loadDatabaseCleanup().catch(error=>{$('databaseCleanupEstimate').textContent=error.message;});
   loadMatchLibrary().catch(error=>{$("matchLibraryCount").textContent=error.message;});
+  loadCompilerService().catch(error=>{$("compilerService").innerHTML=`<p class="small">${esc(error.message)}</p>`;});
   const projects = await api('/api/projects');
   $("browserBridgeProject").innerHTML = projects.map(p => `<option value="${esc(p.slug)}">${esc(p.title || p.name || p.slug)}</option>`).join('');
   const browserAction = async action => {

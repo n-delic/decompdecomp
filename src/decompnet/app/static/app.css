@@ -2175,3 +2175,12 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 #romAudioPanel, #romModelPanel { min-width:0; }
 #romModelItems, #romModelResult, #romAudioItems, #romAudioResult, #romAudioSequences { min-width:0; overflow-wrap:anywhere; }
 #romModelItems td:last-child, #romModelItems th:last-child, #romAudioItems td:last-child, #romAudioItems th:last-child { position:sticky; right:0; background:var(--panel); }
+
+/* Settings › Compiler services (compiler-service.js) */
+.cs-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 16px; }
+#compilerService .steps { gap: 12px; margin: 12px 0; }
+#compilerService .steps > li { min-width: 0; }
+#compilerService .cmd { margin: 6px 0; align-items: flex-start; }  /* long commands wrap (as in .manual-mcp) */
+#compilerService .cmd code { white-space: pre-wrap; overflow-wrap: anywhere; }
+#compilerService table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+#compilerService th, #compilerService td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); }
