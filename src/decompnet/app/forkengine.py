@@ -3920,11 +3920,31 @@ class ForkEngine:
 
     def search(self, slug: str, pattern: str, glob: str = "") -> str:
         _, fp, _ = self.get(slug)
+        root = fp.root.resolve()
+        if not glob and shutil.which("grep"):
+            try:
+                cmd = ["grep", "-rn", "-E", pattern]
+                for ext in ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.inc"):
+                    cmd.append(f"--include={ext}")
+                cmd.extend(["--exclude-dir=.git", "--exclude-dir=build", f"--exclude-dir={STATE}"])
+                cmd.append(".")
+                proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, errors="replace", timeout=15)
+                if proc.returncode in (0, 1):
+                    hits = []
+                    for line in proc.stdout.splitlines():
+                        parts = line.split(":", 2)
+                        if len(parts) >= 3:
+                            rel = parts[0].removeprefix("./")
+                            hits.append(f"{rel}:{parts[1]}: {parts[2].strip()[:160]}")
+                            if len(hits) >= 80:
+                                return "\n".join(hits + ["... (more matches; narrow the pattern)"])
+                    return "\n".join(hits) or "no matches"
+            except Exception:
+                pass
         try:
             rx = re.compile(pattern)
         except re.error:  # e.g. "func(": search for the text itself
             rx = re.compile(re.escape(pattern))
-        root = fp.root.resolve()
         if glob:
             glob = _path_glob(glob)
             try:
