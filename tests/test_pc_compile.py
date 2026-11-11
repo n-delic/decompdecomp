@@ -107,3 +107,15 @@ def test_the_pinned_compiler_builds_for_a_64_bit_pc(project):  # noqa: F811
     result = pc_compile.check(net, "game", print)
     kinds = {k["kind"]: k["examples"] for k in result["kinds"]}
     assert kinds["pointer size"] == ["update"] and kinds["undeclared"] == ["helper"]
+
+
+def test_the_same_c_compiled_twice_still_warns():
+    """Zig answered a second compile of the same C from its cache, with none of the warnings: a second check, or
+    check_for_pc then fix_for_pc, lost every pointer-size warning."""
+    if not toolchains.installed(pc_compile.TOOL):
+        pytest.skip("The pinned Zig is not installed; never download it here.")
+    import uuid
+    name = "v" + uuid.uuid4().hex[:8]  # new to any cache this computer has
+    source = f"typedef int s32;\nint {name};\nvoid update(void) {{ s32 k = (s32)&{name}; }}"
+    for _ in range(2):
+        assert [d["kind"] for d in pc_compile.compile_one("", source)] == ["pointer size"]

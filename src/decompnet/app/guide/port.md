@@ -6,6 +6,11 @@ finds it no worse than before on errors and on pointer-size warnings, and better
 a group of lines at a time: submit each group that passes, and you keep holding the function until nothing is left. `check_for_pc(function, source)` shows the PC's
 verdict alone, quickly; `fix_for_pc(function, source)` judges both and keeps it.
 
+A long function (some are whole preprocessed files, thousands of lines) is fixed with `edits` in place of
+`source`: `[{"old": "text from its C", "new": "its replacement"}]`, each `old` occurring once in the function's C
+(take enough of the line to make it unique). Its brief shows only the lines the PC compiler flags, numbered;
+`check_for_pc` and `fix_for_pc` take the same edits. Never send a long C back whole.
+
 What the PC compiler refuses, and the usual fix
 - `[undeclared] call to undeclared function 'osFoo'`: C99 and later need a declaration. Add the prototype to the
   header (`edit_context`), with the types the callers use. Matched functions must still match after it. When that

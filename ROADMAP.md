@@ -1007,7 +1007,12 @@ varargs, functions with 20+ pointer errors). Its notes changed the judge and the
 worse on errors and pointer warnings and better on one, so a big function is fixed in steps; a fix the header
 alone made is kept by submitting the C unchanged (it was refused as "the C it has already"); and the guide says
 how to keep the console's operand order behind `#ifdef PORT`, type display-list words as `uintptr_t` on the PC and
-replace gcc's varargs. It needed a fix first: the app claimed a function to match for it
+replace gcc's varargs. Then it paused on a function whose C, copied from a twin, is a whole preprocessed file
+(7,942 lines): a long function's brief now shows only the lines the PC flags, numbered, and `check_for_pc`/
+`fix_for_pc` take `edits` (old/new pairs) in place of the whole C. Two bugs found on the way: the PC check dropped
+a function's leading blank lines, so its line numbers were short by that many; and Zig answered a second compile
+of the same C from its cache with no warnings, so a repeated check (or check_for_pc then fix_for_pc) lost pointer
+warnings; each compile now gets an empty cache (0.1 s). It needed a fix first: the app claimed a function to match for it
 before each session and, finding none on a finished game, never started the model. Left:
 display lists built by hand as two words (a `Gfx` is bigger in libultraship), which compile and need the port
 build to find; a per-function view of the PC errors in Functions.

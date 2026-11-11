@@ -134,17 +134,21 @@ def compiler(log=print) -> list[str]:
 
 
 def _environment() -> dict:
-    """Zig keeps a cache of what it builds; it goes with the app's tools, not in the user's home."""
-    cache = toolchains.data_dir() / "cache" / "zig"
-    cache.mkdir(parents=True, exist_ok=True)
-    return {**os.environ, "ZIG_GLOBAL_CACHE_DIR": str(cache), "ZIG_LOCAL_CACHE_DIR": str(cache)}
+    """The environment compiles run in (each gets its own Zig cache in `_compile`)."""
+    return dict(os.environ)
 
 
 def _compile(root: Path, cc: list[str], env: dict, i: int, header: str, source: str) -> list[dict]:
     """One function's C, compiled in `root` (its include/ holds the headers) for the PC: its diagnostics."""
     file = f"f{i}.c"  # names are the project's; files are numbered, so any name is a safe path
-    (root / "src" / file).write_text(f'#include "{header}"\n{source.strip()}\n', encoding="utf-8")
+    # only trailing space goes: leading blank lines are lines of the C, and the diagnostics count them
+    (root / "src" / file).write_text(f'#include "{header}"\n{source.rstrip()}\n', encoding="utf-8")
     argv = [*cc, *FLAGS, "-Iinclude", "-c", "-o", f"obj/f{i}.o", f"src/{file}"]
+    # An empty Zig cache for each compile: when Zig has built the same C before it answers from its cache and prints
+    # none of the warnings, so a second check (or check_for_pc then fix_for_pc of the same C) lost every pointer-size
+    # warning. Errors were unaffected (a failed build isn't cached). A fresh one costs about 0.1 s and 2 KB.
+    cache = str(root / "zig-cache" / str(i))
+    env = {**env, "ZIG_GLOBAL_CACHE_DIR": cache, "ZIG_LOCAL_CACHE_DIR": cache}
     try:
         done = subprocess.run(limits.capped(argv), cwd=root, env=env, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=TIMEOUT, creationflags=NO_WINDOW)
