@@ -289,3 +289,23 @@ def test_the_other_releases_code_is_tried_on_several_functions_at_once(built, tm
     monkeypatch.setattr(regional, "_try_open", slow)
     result = regional.transfer(net, "other-release")
     assert result["tried"] >= 3 and most[0] > 1
+
+
+def test_bringing_polished_code_does_not_sync_saved_files_per_function(built, tmp_path):  # noqa: F811
+    """Each polished function read and wrote the saved files before and after it: 12 s a function on a finished
+    2,000-function game. The progress watcher writes them afterwards."""
+    from decompnet.app import regional
+
+    from .test_app_engine import CLAMP
+
+    net, slug, agent = _two_releases(tmp_path)
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, "other-release").startswith("✅ MATCH")
+    polished = CLAMP.replace("s32 v,", "s32 value,").replace("(v ", "(value ").replace("return v;", "return value;")
+    assert net.readability.submit(agent, slug, "func_800007D0", polished).startswith("✅")
+    synced = []
+    sync = net.progress.sync
+    net.progress.sync = lambda *a, **k: (synced.append(a), sync(*a, **k))[1]
+    assert regional.transfer(net, "other-release")["polished"] == 1
+    assert len(synced) <= 4  # opening the two projects
+    assert "value" in net._function("func_800007D0", "other-release")["matched_source"]
