@@ -127,3 +127,22 @@ def test_agents_claim_fix_and_release_one_function_at_a_time(project):
         row = pc_compile._store(net, net.project_row("game")).one(
             "SELECT attempts, note FROM port_compile WHERE name='boot'")
     assert row["attempts"] == 1 and row["note"] == "it needs a prototype"
+
+
+@pytest.mark.parametrize("task", ["readable", "data", "port"])
+def test_a_session_that_isnt_matching_gets_no_function_claimed_for_it(tmp_path, monkeypatch, task):
+    """A port-fix helper on a finished game was handed claim_function's "nothing to claim" before it started, so the
+    app took it for out of work and never asked the model anything."""
+    from decompnet.app import agents, tools
+    from tests.test_agents import URL, _no_agent_settings
+    from tests.test_agents import _game as agent_game
+    _no_agent_settings(monkeypatch)
+    net = agent_game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+
+    def claimed(*args, **kwargs):
+        raise AssertionError("only a matching session gets a function claimed for it")
+    monkeypatch.setattr(tools, "_claim", claimed)
+    session = agents.Session("worker", "claude", "worker", "game", "worker", {"task": task})
+    manager.prepare_session(session, net.local_agent("worker")[0])
+    assert "claim_function" not in session.startup_context
