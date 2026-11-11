@@ -859,6 +859,34 @@ def test_remove_paused_stops_and_deletes_only_paused_helpers_on_the_project(tmp_
     }
 
 
+def test_restart_paused_starts_only_paused_helpers_on_the_project(tmp_path, quiet):
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    paused_ids = [
+        m.start("claude", "game", 1, {"model": "paused-a"})[0],
+        m.start("claude", "game", 1, {"model": "paused-b"})[0],
+    ]
+    (working_id,) = m.start("claude", "game", 1, {"model": "working"})
+    (elsewhere_id,) = m.start("claude", "other", 1, {"model": "paused-elsewhere"})
+    for sid in paused_ids + [elsewhere_id]:
+        m.sessions[sid].state = "paused"
+        m._save(m.sessions[sid])
+    m.sessions[working_id].state = "working"
+    m._save(m.sessions[working_id])
+
+    started = []
+    m.options_now = lambda kind, options: options
+    m._prepare = lambda slug: None
+    m._launch = lambda s: (started.append(s.id), setattr(s, "state", "starting"))
+
+    assert m.restart_paused("game") == 2
+
+    assert started == paused_ids                        # only the two paused on this project, restarted
+    assert all(m.sessions[sid].state == "starting" for sid in paused_ids)
+    assert m.sessions[working_id].state == "working"    # a working helper is left alone
+    assert m.sessions[elsewhere_id].state == "paused"   # a paused helper on another project is left alone
+
+
 def test_an_api_helper_starts_again_with_its_endpoints_key(tmp_path, quiet):
     """An API helper's key is never in its record: started again by hand, it gets it from its saved endpoint, and one
     whose endpoint is gone says so."""
