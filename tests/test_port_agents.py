@@ -212,3 +212,19 @@ def test_a_long_function_is_briefed_by_its_flagged_lines_and_fixed_with_edits(pr
     kept = port_fix.fix(net, me, "game", "get_first", edits=edit)
     assert kept["kept"], kept["text"]
     assert net._function("get_first", "game")["matched_source"] == long.replace(edit[0]["old"], edit[0]["new"])
+
+
+def test_the_prompt_is_written_for_every_helper():
+    """The prompt is filled in with str.format: braces in its text (`[{old, new}]`) stopped every port-fix session
+    with KeyError before it started."""
+    from types import SimpleNamespace
+
+    from decompnet.app import agent_startup
+    net = SimpleNamespace(instructions=lambda slug: "")
+    original = agent_startup.project_facts
+    agent_startup.project_facts = lambda net, slug: {"title": "A homemade game"}
+    try:
+        text = port_agents.prompt(net, SimpleNamespace(slug="game", options={"per_session": 5}))
+    finally:
+        agent_startup.project_facts = original
+    assert "A homemade game" in text and "Work up to 5 functions" in text and "[{old, new}]" in text

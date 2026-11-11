@@ -44,7 +44,7 @@ PROMPT = (
     "`#endif` (the console build doesn't define PORT); the same for MIPS asm and gcc-only builtins. Never cast a "
     "pointer to a 32-bit integer (s32/u32) to silence a warning; uintptr_t is the PC's pointer-sized integer, for "
     "words that hold addresses (a display list's). check_for_pc(function, source) shows the PC's verdict alone; "
-    "fix_for_pc(function, source) judges both and keeps it; for a long function give `edits` ([{old, new}]) in "
+    "fix_for_pc(function, source) judges both and keeps it; for a long function give `edits` ([{{old, new}}]) in "
     "place of `source`, as its brief says. When nothing is left of it, claim the next. If after a few tries "
     "it won't pass, release_port_fix(function, note) with what you learned and claim another.\n"
     "Read guide(\"port\") once. Work up to {count} functions this session, then end; the app continues the queue. "
