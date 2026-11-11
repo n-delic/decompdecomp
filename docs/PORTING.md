@@ -1,7 +1,7 @@
 # Porting a finished decomp (plan)
 
-Status: phase 0, the readiness report, is built (ROM projects; N64 with its kit); the rest is planned. ROADMAP.md,
-"Ports: a native build of a finished game", tracks it.
+Status: phase 0, the readiness report, is built (ROM projects; N64 with its kit); phase 1's judge and tools are
+built (N64); the rest is planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
 
 A matched, polished decomp rebuilds the game for its console. People finish a decomp to read, mod and port the
 game, and today decompdecomp stops at the export. This plan adds the next step: a **port**, the same C built for
@@ -58,10 +58,30 @@ without a kit get the counts that don't need one; projects in project mode aren'
 
 ### 1. Data migration, judged
 
-Data symbols become claimable units next to functions. An agent writes a symbol's data as C (an array, a struct
-with the layouts `guess_struct` and the shared header already know, a table of pointers to named symbols); it's
-kept only when the rebuilt ROM is still byte-identical. Pointers into code and data become symbol references, which
-is what lets the port, and mods, move them.
+Data symbols become units next to functions. An agent writes a symbol's data as C (an array, a struct with the
+layouts `guess_struct` and the shared header already know, a table of pointers to named symbols); it's kept only when
+it holds the game's bytes. Pointers into code and data become symbol references, which is what lets the port, and
+mods, move them.
+
+Built:
+- **The data judge** (`rom/data_match.py`): one definition, placed at its symbol's address by the function judge's
+  linker, its pointers resolved and the strings it points at placed where the game's pointers point. It must cover
+  the whole datum: up to the next place the game names or its code refers to (each function's stored relocations,
+  read from the ROM), short of it by no more than the next datum's alignment in zero bytes. Data the game keeps
+  initialised needs an initialiser, zeros too, or the compiler moves it to `.bss`.
+- **Where the data is** (`app/data_units.py`): splits record code segments' text; the data the compiler put after it
+  runs to where `.bss` starts, which the console reads from the program (`Console.bss_start`; N64: the boot stub
+  that clears it). The function judge doesn't read this region yet, so own data in matched functions there is
+  still unchecked.
+- **Units** keyed by address in the project's database (`data_units`); a matched unit is replaced only by C that
+  matches. Tools `get_data_unit` and `compile_data`; `GET/POST /api/data-unit`; the readiness report counts data in C.
+
+On a finished 2,121-function N64 game: its 0xCCC0 bytes of data found after its last code segment; drafts of the 129
+zero-filled data and 19 tables of function pointers matched, 38 `.bss` symbols too.
+
+Still to do: an agent task for it (claims, a brief, a launch option, like polishing); the export building matched
+data from its C in place of the assembly; typed drafts; programs whose data isn't after their last code segment
+(overlays) and consoles other than the N64 (a `bss_start` reader each).
 
 ### 2. Asset map, written as a Torch config
 

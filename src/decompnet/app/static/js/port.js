@@ -19,7 +19,8 @@ function renderPortReadiness(report) {
     portRow("Functions", `${code.total.toLocaleString()}, ${code.c.toLocaleString()} in C`),
     portRow("Library code", `${code.replaced} the kit replaces, ${code.native} compiled as it is, ${code.library_other} other`),
     portRow("The game's own without C", `${code.game_asm} in assembly, ${code.open} not matched`),
-    portRow("Data reached by address", `${report.data.symbols.toLocaleString()} symbols`),
+    portRow("Data reached by address", `${report.data.symbols.toLocaleString()} symbols`
+      + (report.data.units ? ` (${report.data.units.toLocaleString()} data units already in C)` : "")),
     portRow("Addresses written as numbers", `${report.addresses.literals} in ${report.addresses.functions} functions`),
     portRow("ROM outside code", `${report.rom_data.bytes.toLocaleString()} bytes`
       + (report.rom_data.scanned ? `, ${report.rom_data.unshaped.toLocaleString()} of them not yet recognised by ROM Explorer`

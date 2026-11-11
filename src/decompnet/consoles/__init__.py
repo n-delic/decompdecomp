@@ -575,6 +575,11 @@ class Console:
         program's functions by its processor's Arch.field_accesses, consoles/pc/rtti.py)."""
         return None
 
+    def bss_start(self, image: bytes) -> int | None:
+        """Where the program's .bss starts in RAM, read from its own code (the N64's boot stub clears it), or None.
+        Initialised data runs from the end of a code segment's text up to it (app/data_units.py)."""
+        return None
+
     # for agents
 
     def asm_reason(self, code: bytes) -> str | None:

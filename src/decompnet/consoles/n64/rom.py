@@ -196,3 +196,25 @@ def read_info(data: bytes) -> tuple[bytes, RomInfo]:
     if not 0x80000000 <= entry < 0x80800000:
         raise RomError(f"the header's entry point 0x{entry:08X} is not in N64 RAM; is this a real ROM image?")
     return rom, info
+
+
+def bss_start(rom: bytes) -> int | None:
+    """Where the program's .bss starts, from the boot stub at the entry point (ROM 0x1000), which libultra games
+    begin with: `lui $t0, hi; addiu $t0, $t0, lo` (or `ori`), then a loop storing zero through $t0. None when the
+    entry doesn't start that way: the game boots its own way, and its data has to be found otherwise."""
+    if len(rom) < 0x1040:
+        return None
+    words = struct.unpack(">16I", rom[0x1000:0x1040])
+    if words[0] >> 16 != 0x3C08:  # lui $t0
+        return None
+    high, low = words[0] & 0xFFFF, words[1] & 0xFFFF
+    if words[1] >> 16 == 0x2508:  # addiu $t0, $t0
+        start = ((high << 16) + (low - 0x10000 if low & 0x8000 else low)) & 0xFFFFFFFF
+    elif words[1] >> 16 == 0x3508:  # ori $t0, $t0
+        start = (high << 16) | low
+    else:
+        return None
+    # the loop that clears it: `sw $zero, 0($t0)` within the next few instructions
+    if not any(w == 0xAD000000 for w in words[2:8]):
+        return None
+    return start if 0x80000000 <= start < 0x80800000 else None
