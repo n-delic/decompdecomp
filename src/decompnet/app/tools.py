@@ -349,9 +349,17 @@ def _data_unit(net: RomNetwork, slug: str, name: str) -> str:
     return unit_text(unit(net, slug, name))
 
 
-def _compile_data(net: RomNetwork, slug: str, name: str, source: str) -> str:
+def _compile_data(net: RomNetwork, slug: str, name: str, source: str, agent=None) -> str:
     from .data_units import compile_data, describe
-    return describe(compile_data(net, slug, name, source), name)
+    result = compile_data(net, slug, name, source)
+    _data_agents().compiled(net, agent, slug, name, result)
+    text = describe(result, name)
+    return text + ("\nclaim_data() for the next unit." if result.exact and _data_agents().scope(net, agent) else "")
+
+
+def _data_agents():
+    from . import data_agents
+    return data_agents
 
 
 def _port_readiness(net: RomNetwork, slug: str) -> str:
@@ -576,7 +584,9 @@ HANDLERS: dict[str, Callable[..., str]] = {
                                                             if net.fork_slug(slug) else net.read_data(slug, what, length)),
     "get_class": lambda net, agent, slug, what="": net.get_class(slug, what),
     "get_data_unit": lambda net, agent, slug, name: _data_unit(net, slug, name),
-    "compile_data": lambda net, agent, slug, name, source: _compile_data(net, slug, name, source),
+    "compile_data": lambda net, agent, slug, name, source: _compile_data(net, slug, name, source, agent),
+    "claim_data": lambda net, agent, slug, name="": _data_agents().claim(net, agent, slug, name),
+    "release_data": lambda net, agent, slug, name, note="": _data_agents().release(net, agent, slug, name, note),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
     "redraft": lambda net, agent, slug, function, context: _redraft(net, slug, function, context, agent),
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
@@ -617,7 +627,7 @@ READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
                        "port_readiness", "get_data_unit"})
 
-ROM_ONLY = {"port_readiness","get_data_unit","compile_data","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"port_readiness","get_data_unit","compile_data","claim_data","release_data","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -763,6 +773,7 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
 
 def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     asset_agents.guard(net,agent,slug,name,args)
+    _data_agents().guard(net,agent,slug,name,args)
     boundary_investigations.guard(net,agent,slug,name,args)
     pending = getattr(net, '_pending_tool_handshakes', set())
     handshake = (agent.id, slug) in pending
@@ -836,7 +847,7 @@ QUICK_TOOLS = frozenset({
     'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
     'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function',
     'add_note', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
-    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness', 'get_data_unit',
+    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness', 'get_data_unit', 'claim_data', 'release_data',
 })
 QUICK_LANE = 16
 WORK_LANE = 32
@@ -1179,6 +1190,16 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         """One of the game's data symbols, for writing it as C (docs/PORTING.md): its address, how far it runs (to the
         next place the game names or refers to), its bytes, who uses it, and any C it has."""
         return await run(ctx, "get_data_unit", name=name)
+
+    @tool
+    async def claim_data(ctx: Context, name: str = "") -> str:
+        """Data agents: take the next data unit to write as C (or the one named): its address, extent, bytes, users."""
+        return await run(ctx, "claim_data", name=name)
+
+    @tool
+    async def release_data(ctx: Context, name: str, note: str = "") -> str:
+        """Data agents: give a unit back with what you learned, for the next try."""
+        return await run(ctx, "release_data", name=name, note=note)
 
     @tool
     async def compile_data(ctx: Context, name: str, source: str) -> str:

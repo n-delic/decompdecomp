@@ -606,6 +606,10 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                                                                                     length=it("bytes, up to 512"))),
         "get_data_unit": ("One of the game's data symbols to write as C: address, extent, bytes, users.",
                           s(name=st("data symbol (D_80012340 or its name)", True))),
+        "claim_data": ("Data agents: take the next data unit to write as C (or the one named).",
+                       s(name=st("data symbol, or empty for the next"))),
+        "release_data": ("Data agents: give a unit back with what you learned.",
+                         s(name=st("data symbol", True), note=st("what you learned"))),
         "compile_data": ("Judge C defining one data symbol: kept only if it holds the game's bytes there, all of it.",
                          s(name=st("data symbol", True), source=st("C defining it", True))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "

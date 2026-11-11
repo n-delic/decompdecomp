@@ -17,9 +17,11 @@ from ..rom.data_match import DataResult, link_data
 SCHEMA = (
     '''CREATE TABLE IF NOT EXISTS data_units(project_id INTEGER, address INTEGER, size INTEGER, span INTEGER,
        status TEXT DEFAULT 'open', source TEXT, problems TEXT DEFAULT '[]', attempts INTEGER DEFAULT 0,
-       matched_at REAL, PRIMARY KEY(project_id, address))''',
+       matched_at REAL, agent_id INTEGER, lease REAL, note TEXT, PRIMARY KEY(project_id, address))''',
 )
 _CALL = 4  # R_MIPS_26: a call's target is code, not where a datum starts
+# columns added after the first release of the table (projects that used compile_data then have it without them)
+_ADDED = (("agent_id", "INTEGER"), ("lease", "REAL"), ("note", "TEXT"))
 
 
 def _store(net, proj):
@@ -29,6 +31,10 @@ def _store(net, proj):
         with store.tx() as db:
             for sql in SCHEMA:
                 db.execute(sql)
+            have = {r[1] for r in db.execute("PRAGMA table_info(data_units)").fetchall()}
+            for column, kind in _ADDED:
+                if column not in have:
+                    db.execute(f"ALTER TABLE data_units ADD COLUMN {column} {kind}")
         ready.add(proj["id"])
     return store
 
