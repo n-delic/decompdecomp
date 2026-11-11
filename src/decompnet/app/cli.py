@@ -431,7 +431,8 @@ def main(argv: list[str] | None = None) -> int:
     hl = sub.add_parser("hosted-link", help="take verified matches from a hosted server into a project")
     hl.add_argument("slug", help="the project's slug here")
     hl.add_argument("--server", help="the hosted server's address, https://...")
-    hl.add_argument("--token", help="a verifier's token on that server")
+    hl.add_argument("--token", default=os.environ.get("DECOMP_VERIFIER_TOKEN", ""),
+                    help="a verifier's token on that server (or DECOMP_VERIFIER_TOKEN)")
     hl.add_argument("--remote", help="the project's slug on the server (default: the same)")
     hl.add_argument("--remove", action="store_true", help="stop taking matches from it")
     ii = sub.add_parser("install-info", help=argparse.SUPPRESS)  # the installers: where updates come from

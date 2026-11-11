@@ -169,6 +169,10 @@ than the agents' file: a verification pack (`hosted_pack.py`).
 Without `--packs`, a verifier judges with the projects imported in its own decompdecomp home instead (DECOMP_HOME),
 as on the owner's computer.
 
+Settings › Compiler services in the app explains this and fills the commands in for that computer: its gateway
+program and `decomp`, its compilers, and a slot count from its cores. It also lists the projects there that take a
+server's matches in.
+
 `decomp-mcp-gateway verifier` (gateway/src/verifier.rs) does the following:
 - It runs one judge process per slot, `decomp judge-worker` by default (src/decompnet/hosted_judge.py), or another
   program given with `--judge PROGRAM --judge-arg ARG`. A judge reads one JSON request per line and answers one per
