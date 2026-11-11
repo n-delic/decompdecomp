@@ -53,6 +53,13 @@ GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
 
 
+
+def _settings(row) -> dict:
+    """A project's settings for reading, parsed once per version (engine/core.py Core.cfg): the background loops read
+    a few flags every second or two, and a big project's settings are half a megabyte of JSON."""
+    from .engine.core import Core
+    return Core.cfg(row)
+
 def _source_file(name: str) -> str:
     """Keep C++ template symbols intact, but fit their source files on Windows and Unix filesystems.
 
@@ -1583,7 +1590,7 @@ class Autosave:
     def _reconcile(self):
         projects = {}
         for row in self._projects(active_only=True):
-            cfg = json.loads(row['config'])
+            cfg = _settings(row)  # (parsed once per version: a big project's settings are 0.5 MB)
             if cfg.get('kind') == 'rom' and cfg.get('rom', {}).get('sha1'):
                 projects[row['slug']] = row
         with self.lock:
@@ -1604,7 +1611,7 @@ class Autosave:
                 self._start_commits(slug, worker)
 
     def _start_commits(self, slug, worker):
-        cfg = json.loads(worker['row']['config'])
+        cfg = _settings(worker['row'])
         if worker.get('commit_thread') or not (cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished') or cfg.get('score_commits', {}).get('enabled')):
             return
         worker['commit_thread'] = threading.Thread(target=self._commit_loop, args=(slug, worker),
@@ -1627,7 +1634,7 @@ class Autosave:
         while not self.stop.is_set() and self.workers.get(slug) is worker:
             try:
                 check()
-                cfg = json.loads(worker['row']['config'])
+                cfg = _settings(worker['row'])
                 if not (cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished') or cfg.get('score_commits', {}).get('enabled')):
                     self.stop.wait(1)
                     continue
@@ -1650,7 +1657,7 @@ class Autosave:
         # Read preferences now, not the coordinator's older discovery snapshot.
         proj = self.net.project_row(slug)
         if proj is None:return
-        cfg = json.loads(proj['config'])
+        cfg = _settings(proj)
         if cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished'):
             from . import match_commits
             match_commits.process(self.net, slug, output)
@@ -1725,7 +1732,7 @@ class Autosave:
                 if deep:
                     self.deep_check_after[row["slug"]] = time.monotonic() + 15
                 self.retry_after.pop(row['slug'], None)
-                commit_cfg = json.loads(row['config'])
+                commit_cfg = _settings(row)
                 if commits and (commit_cfg.get('auto_commit_matches') or commit_cfg.get('auto_commit_polished') or commit_cfg.get('score_commits', {}).get('enabled')):
                     self._commit_once(row['slug'], logger or log.info)
             except _AutosavePaused:

@@ -19,6 +19,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import logging
 import os
 import re
 import stat
@@ -36,6 +37,8 @@ from ..network import NetworkError
 from ..request_timing import phase
 from ..rom.symbols import ASM_LOCAL, IDENT
 from ..store import in_transaction
+
+log = logging.getLogger("decompdecomp")
 
 # spimdisasm can name a function piece by the numeric label at its first instruction.
 LOCAL_PIECE = re.compile(r"\.L[0-9A-F]+")
@@ -497,6 +500,7 @@ class Progress:
         self.paused: set[str] = set()
         self.batches: dict[str, int] = {}
         self.rendering: dict[str, tuple[Path, tuple]] = {}
+        self.renderers = None  # render_worker.Renderers: publishes render in processes of their own (the app)
         self.verification_slot = threading.Semaphore(verification_projects())
         # slug -> its verification's lease, admission time and phase (under activity_lock): a project holds one
         # lane at most, so its own checks still run one at a time
@@ -1589,6 +1593,14 @@ class Progress:
             readme_key = saves._readme_key(json.loads(baseline.projected.manifest))
         signature = self._signature(folder)
         def render():
+            # In a render process when there is one (render_worker.py): the app's own thread only waits.
+            if (renderers := self.renderers) is not None:
+                from . import render_worker
+                try:
+                    return renderers.render(slug, folder, full=full, names=names, headers=flags.headers,
+                                            readme_key=readme_key)
+                except render_worker.Unavailable as why:
+                    log.info("Rendering %s here: %s", slug, why)
             if full:
                 return saves._render(net, slug, readme_key=readme_key, write_readme=False)
             return saves._render_partial(net, proj, folder, names, headers=flags.headers,

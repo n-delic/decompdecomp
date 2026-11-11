@@ -25,6 +25,7 @@ os.environ["DECOMP_DETECT_AGENTS"] = "off"
 os.environ["DECOMP_WINDOW"] = "0"
 # helpers connect to the app itself; tests/test_mcp_gateway.py starts the gateway by hand
 os.environ["DECOMP_MCP_GATEWAY"] = "0"
+os.environ["DECOMP_RENDER_WORKERS"] = "0"  # progress renders in this process, except tests/test_render_worker.py
 os.environ.setdefault("BROWSER", "true")
 os.environ.setdefault("DECOMP_TRAY", "0")
 # nor the wine prefix the user's app runs Visual C++ 2017 in (toolchains/.wine, a development copy's .wine-dev: #146):

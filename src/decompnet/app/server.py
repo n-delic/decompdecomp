@@ -197,6 +197,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     startup.start()
     from .database_cleanup import Retention
     net.database_retention = Retention(net,jobs)
+    from . import render_worker
+    net.progress.renderers = render_worker.start(net, home)  # progress-folder renders off this process's lock
     net.autosave = saves.Autosave(net, settings)
     net.autosave.start()
     from .hosted_sync import Sync
