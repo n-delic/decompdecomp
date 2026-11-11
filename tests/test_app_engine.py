@@ -81,6 +81,17 @@ def test_split_match_and_rename(net):
     assert "clamp_s32" in net._function("clamp_s32", "demo-quest-64")["matched_source"]
 
 
+def test_an_address_name_already_given_a_name_is_not_renamed_again(net):
+    """Two helpers renamed one function at once: the second rename of its address name added a second name at the
+    address and renamed the function, while its matched C kept the first name, so it stopped matching."""
+    agent, _ = net.local_agent("tester4")
+    assert net.rename_symbol(agent, "demo-quest-64", "func_800081A0", "first_name").startswith("✅")
+    with pytest.raises(NetworkError, match="is called `first_name` now"):
+        net.rename_symbol(agent, "demo-quest-64", "func_800081A0", "second_name")
+    assert net.rename_symbol(agent, "demo-quest-64", "first_name", "second_name").startswith("✅")
+    assert net._function("second_name", "demo-quest-64")["vram"] == 0x800081A0
+
+
 def test_struct_access_through_an_automatic_name(net):
     agent, _ = net.local_agent("tester2")
     brief = net.get_function("func_80000808", "demo-quest-64")

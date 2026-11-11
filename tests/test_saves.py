@@ -46,6 +46,27 @@ def test_restore_notes_preserves_measurements_without_scanning_history(tmp_path,
     assert proj["id"] == pid
 
 
+@pytest.mark.parametrize("unit", ["local_source_1", "exact_match_1_2"])
+def test_a_function_keeps_its_own_header_through_a_save(tmp_path, monkeypatch, unit):
+    """Source preparation gives a function a header of its own (local_source_<id>). Saves kept only an exact match's
+    (exact_match_), so three of an N64 game's matches went back to the shared header and stopped compiling."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,'{}')",
+                         (str(tmp_path),)).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'f',4096,4,1,'open',?)", (pid, unit))
+        db.execute("INSERT INTO context_versions(project_id,version,header,unit) VALUES(?,1,'typedef int Acmd;',?)",
+                   (pid, unit))
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    manifest = json.loads(saves._render(net, "game")[0][saves.MANIFEST])
+    assert manifest["function_headers"] == {"f": unit} and unit in manifest["headers"]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET unit='' WHERE name='f'")
+    saves._apply_context(net, "game", tmp_path, manifest, lambda *_: None)
+    assert net._function("f", "game")["unit"] == unit
+
+
 @pytest.mark.parametrize("author", ["@alex.claude-opus-1", "claude-sonnet-5-5-1"])
 def test_restoring_room_members_credits_does_not_reject_their_names(tmp_path, monkeypatch, author):
     """A room credit starts with @; opening its save used runner-name validation and aborted restoration."""
