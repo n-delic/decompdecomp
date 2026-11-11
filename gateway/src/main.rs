@@ -598,6 +598,9 @@ async fn until_parent_leaves(native: Arc<native::Native>) {
             if let Some(routes) = message.get("routes").and_then(native::Routes::parse) {
                 native.set_routes(routes);
             }
+            if let Some(guides) = message.get("guides").and_then(native::Guides::parse) {
+                native.set_guides(guides);
+            }
         }
     }
 }

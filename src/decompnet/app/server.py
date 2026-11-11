@@ -251,6 +251,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         for side in served_elsewhere:
             side.attach(lambda: tool_reader.routes(net, manager, settings),
                         lambda message: tool_reader.apply_report(net, manager, message))
+        if gateway is not None:
+            gateway.guides = tool_reader.guides
 
     mcp_metadata_limiter = anyio.CapacityLimiter(2)
 

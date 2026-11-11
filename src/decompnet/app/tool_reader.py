@@ -244,7 +244,48 @@ def routes(net, manager, settings) -> dict:
                            | set(getattr(net, "_boundary_investigators", {})) | set(spent)),
         "tasks": {str(agent): task for agent, task in getattr(net, "_agent_tool_tasks", {}).items()},
         "busy": sorted(busy),
+        "hidden": _hidden(net, {**assignments, **pairings, **manual}),
+        # (agent, function) with a kept compile diff: get_assembly's default view starts at its first mismatch, which
+        # only the app knows.
+        "diffs": sorted({(agent, function) for agent, function in list(getattr(net, "_last_diffs", {}))}),
     }
+
+
+# The tools the gateway answers itself (gateway/src/native.rs TOOLS).
+GATEWAY_TOOLS = ("get_claims", "list_functions", "project_info", "get_assembly", "get_context", "guide")
+
+
+def _hidden(net, helpers: dict) -> dict:
+    """The gateway's tools each helper's tool settings disable (tool_policy.visible): it leaves those to the app,
+    which says so."""
+    from ..network import Agent
+    from .tool_policy import visible
+    out = {}
+    for agent_id, slug in helpers.items():
+        try:
+            row = net.store.one("SELECT id,name,owner,trusted FROM agents WHERE id=?", int(agent_id))
+            if row is None:
+                continue
+            agent = Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
+            shown = set(visible(net, slug, list(GATEWAY_TOOLS), agent))
+        except Exception:
+            shown = set()
+        hidden = [name for name in GATEWAY_TOOLS if name not in shown]
+        if hidden:
+            out[str(agent_id)] = hidden
+    return out
+
+
+def guides(platforms) -> dict:
+    """What `guide` answers, for the gateway (native.rs): every topic's text for each platform, the listing, and the
+    tools' extended help. They change only with the app, so the gateway is sent them once per platform."""
+    from . import tools
+    topics = sorted({*tools.GUIDES, *tools._console_guides()})
+    return {"tool_help": dict(tools.TOOL_HELP),
+            "missing_tool_help": tools.guide_text("tool:\x00"),
+            "platforms": {platform: {"listing": tools.guide_text("", platform),
+                                     "topics": {topic: tools.guide_text(topic, platform) for topic in topics}}
+                          for platform in sorted(platforms)}}
 
 
 class WatchedSet(set):
@@ -318,6 +359,10 @@ def _projects(net, slugs) -> dict:
             out[slug] = {"id": proj["id"], "db": str(net.project_store(proj["id"]).path),
                          "fork": cfg.get("kind") == "fork", "info_head": compact_info_head(net, proj),
                          "info_tail": tail}
+            try:  # (guide's platform: the overview's, its console's id)
+                out[slug]["platform"] = net.console(proj).id
+            except Exception:
+                pass
         except Exception:  # a project removed meanwhile: the app answers its helpers
             continue
     return out
