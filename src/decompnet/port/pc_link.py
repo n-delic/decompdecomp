@@ -38,34 +38,50 @@ GROUPS = {
 }
 
 
-def report(net, proj) -> dict | None:
-    """{"functions", "unread", "undefined", "groups": [{"kind", "about", "symbols", "examples", "users"}],
-    "duplicates": [{"name", "in"}]}, or None before Compile for PC has run."""
+def undefined(net, proj, *, zeroed: bool = True) -> tuple[dict[str, list[str]], dict] | None:
+    """({group: [names]}, facts) for the symbols some function needs and none defines, or None before Compile for
+    PC has run. `zeroed`: count the generated definitions of zeroed memory (port/zeroed.py) as defining theirs."""
     rows = pc_compile._store(net, proj).all("SELECT name, symbols FROM port_compile WHERE project_id=?", proj["id"])
     if not rows:
         return None
     defined: dict[str, list[str]] = {}
     needed: dict[str, set[str]] = {}
-    unread = 0
-    compiled = set()
+    unread, compiled = 0, set()
     for row in rows:
         found = json.loads(row["symbols"]) if row["symbols"] else None
-        if found is not None:
-            compiled.add(row["name"])
         if found is None:
             unread += 1
             defined.setdefault(row["name"], []).append(row["name"])
             continue
+        compiled.add(row["name"])
         for name in found["defines"]:
             defined.setdefault(name, []).append(row["name"])
         for name in found["needs"]:
             needed.setdefault(name, set()).add(row["name"])
+    generated = set()
+    if zeroed:
+        from .zeroed import defined as zeroed_names
+        generated = set(zeroed_names(net, proj))
     groups: dict[str, list[str]] = {}
-    for name in sorted(set(needed) - set(defined)):
+    for name in sorted(set(needed) - set(defined) - generated):
         if (kind := "static" if name in compiled else _group(net, proj, name)) is not None:
             groups.setdefault(kind, []).append(name)
-    duplicates = [{"name": name, "in": sorted(where)} for name, where in sorted(defined.items()) if len(where) > 1]
-    return {"functions": len(rows), "unread": unread, "undefined": sum(len(v) for v in groups.values()),
+    return groups, {"rows": len(rows), "unread": unread, "defined": defined, "needed": needed,
+                    "zeroed": len(generated)}
+
+
+def report(net, proj) -> dict | None:
+    """{"functions", "unread", "zeroed", "undefined", "groups": [{"kind", "about", "symbols", "examples", "users"}],
+    "duplicates": [{"name", "in"}]}, or None before Compile for PC has run."""
+    found = undefined(net, proj)
+    if found is None:
+        return None
+    groups, facts = found
+    needed = facts["needed"]
+    duplicates = [{"name": name, "in": sorted(where)} for name, where in sorted(facts["defined"].items())
+                  if len(where) > 1]
+    return {"functions": facts["rows"], "unread": facts["unread"], "zeroed": facts["zeroed"],
+            "undefined": sum(len(v) for v in groups.values()),
             "groups": [{"kind": kind, "about": GROUPS[kind], "symbols": len(groups[kind]),
                         "examples": [_example(net, proj, kind, n) for n in groups[kind][:_LIMIT]],
                         "users": len(set().union(*(needed[n] for n in groups[kind])))}

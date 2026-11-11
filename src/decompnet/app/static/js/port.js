@@ -38,6 +38,7 @@ function renderPortReadiness(report) {
   if (link) {
     facts.append(portRow("Linked for a PC", `${link.undefined.toLocaleString()} symbols needed and defined nowhere`
       + (link.duplicates.length ? `, ${link.duplicates.length} defined twice` : "")
+      + (link.zeroed ? `; ${link.zeroed.toLocaleString()} pieces of zeroed memory defined in port/src` : "")
       + (link.unread ? ` (${link.unread} functions don't compile yet, so what they need isn't known)` : "")));
     for (const g of link.groups) facts.append(portRow(`  ${g.kind}`, `${g.symbols} (needed by ${g.users} functions): `
       + `${g.about}. ` + g.examples.join(", ") + (g.symbols > g.examples.length ? ", ..." : "")));
