@@ -140,7 +140,7 @@ def unit(net, slug: str, name: str) -> dict:
             "problems": json.loads(row["problems"]) if row else []}
 
 
-def compile_data(net, slug: str, name: str, source: str) -> DataResult:
+def compile_data(net, slug: str, name: str, source: str, *, save: bool = True) -> DataResult:
     """Compile a datum's C with the project's compiler and shared header, judge it, and keep it if it matches. A
     matched unit is replaced only by C that matches too."""
     proj = _project(net, slug)
@@ -175,6 +175,9 @@ def compile_data(net, slug: str, name: str, source: str) -> DataResult:
         elif row is None or row["status"] != "matched":
             db.execute("UPDATE data_units SET source=?, problems=? WHERE project_id=? AND address=?",
                        (source, json.dumps(result.problems), proj["id"], address))
+    if result.exact and save:
+        from .data_saves import matched as saved
+        saved(net, slug, net.symbols(proj["id"]).name_at(address)[0])
     return result
 
 

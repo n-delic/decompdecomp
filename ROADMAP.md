@@ -961,6 +961,17 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### The game's data in C, saved and exported
+
+Matched data units are saved with the project's progress (`data.json` and `data/<name>.c`), committed with it,
+tracked by rebuildable repositories and judged again on restore. The export builds each matched datum from its C at
+its address, so the byte-for-byte rebuild proves it: a finished 2,121-function N64 game's export rebuilt byte for
+byte with 218 data units built from C. Fixed on the way, each of which stopped that export: splat gets one name per
+address (two names an agent gave one address: "Duplicate symbol detected"); a renamed function the export extracts
+is linked by its C's name, not splat's automatic one; the judge steps know the addresses of data the assembly
+defines (`labels` in build.json); data is placed at its exact address (a 2-byte datum at ...42 was aligned to ...44).
+Left: data the split wrote as assembly, and data whose C brings strings of its own.
+
 ### The game's data drafted as typed C, from its code
 
 Port readiness → **Write data as C from the code**: no agents, no tokens. The game's own loads and stores say each

@@ -181,7 +181,7 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
                     net.progress.prune_matched_drafts(slug)
                     saves._check_save_paths(path, chosen=True)
                     manifest = json.loads((path/saves.MANIFEST).read_text(encoding='utf-8'))
-                    names = repository_progress.owned(manifest)
+                    names = repository_progress.owned(manifest, path)
                     files = {}
                     for name in names:
                         item = repository_sync.inside(path, name)

@@ -73,9 +73,13 @@ def _symbol_lines(net, proj) -> list[str]:
     lines = []
     for vram, r in sorted(funcs.items()):
         lines.append(f"{r['name']} = 0x{vram:08X}; // type:func size:0x{r['size']:X}")
-    for s in sorted(syms.by_name.values(), key=lambda s: s.address):
-        if s.address in funcs or AUTO_NAME.match(s.name):
+    # One name per address: splat refuses two ("Duplicate symbol detected", an N64 game whose agents gave one address
+    # two names). The table's own name for the address labels it; the other names still link, from build.json.
+    named = set(funcs)
+    for s in sorted(syms.by_name.values(), key=lambda s: (s.address, s.name != syms.name_at(s.address)[0], s.name)):
+        if s.address in named or AUTO_NAME.match(s.name):
             continue
+        named.add(s.address)
         lines.append(f"{s.name} = 0x{s.address:08X};")
     return lines
 
@@ -171,6 +175,107 @@ def _section_bases(placements: dict) -> tuple[dict, str | None]:
             return {}, "its own data isn't laid out like the game's"
         bases[section] = possible.pop()
     return bases, None
+
+
+def _plain_datum(obj: bytes, name: str, size: int) -> bool:
+    """The object holds the datum and nothing else (zero padding aside): no strings or statics of its own, which
+    would land after it in the game's data instead of where the game keeps them."""
+    from elftools.elf.elffile import ELFFile
+
+    elf = candidate_elf(obj, ELFFile)
+    symtab = elf.get_section_by_name(".symtab")
+    sym = next((s for s in (symtab.iter_symbols() if symtab else ()) if s.name == name
+                and isinstance(s["st_shndx"], int)), None)
+    if sym is None or sym["st_value"] != 0:
+        return False
+    for section in elf.iter_sections():
+        if section.name not in (".data", ".rodata", ".sdata", ".rdata") or section["sh_type"] == "SHT_NOBITS":
+            continue
+        content = section.data()
+        rest = content[size:] if elf.get_section_index(section.name) == sym["st_shndx"] else content
+        if rest.strip(b"\0"):
+            return False
+    return True
+
+
+def _data_in_c(net, proj, out: Path, layout: list, objects: list, image: bytes, cfg: dict, log) -> list[dict]:
+    """The game's data from its C (app/data_units.py): the raw segment that holds a region of initialised data
+    becomes a segment placed at its address, each matched datum compiled and judged again at its own; the build
+    assembles every other byte of it from the user's copy (fill_gaps), and its whole-image check proves the C."""
+    from ..app import data_units
+    from .data_match import link_data
+
+    regions = data_units.initialised_data(net, proj)
+    units = {a: u for a, u in data_units.matched(net, proj).items()}
+    if not regions or not units:
+        return []
+    rows = {r["address"]: r for r in data_units._store(net, proj).all(
+        "SELECT address, source FROM data_units WHERE project_id=? AND status='matched'", proj["id"])}
+    symbols = net.symbols(proj["id"])
+    context = net._context(proj["id"])
+    header = context["header"] if context is not None else ""
+    placed, kept_out = [], []
+    for region in regions:
+        lo, hi = region["vram"], region["vram"] + region["size"]
+        at = next((i for i, seg in enumerate(layout) if seg["kind"] == "raw" and seg["start"] == region["rom_start"]),
+                  None)
+        if at is None:
+            log(f"the data at 0x{lo:08X} isn't a raw segment of the split: its C stays out of the export for now")
+            continue
+        raw = layout[at]
+        following = [seg["start"] for seg in layout if seg["start"] > raw["start"]]
+        raw_end = min(following, default=len(image))
+        end = region["rom_start"] + region["size"]
+        if raw_end < end:
+            log(f"the data at 0x{lo:08X} runs past its raw segment: its C stays out of the export for now")
+            continue
+        pieces = []
+        for address in sorted(a for a in units if lo <= a < hi):
+            name = symbols.name_at(address)[0]
+            source = rows[address]["source"]
+            identity = {"id": None, "name": name, "vram": address, "meta": "{}", "target": None, "relocs": None}
+            compiled = net._compile(proj, header, source, identity)
+            if not compiled.ok:
+                kept_out.append((name, "doesn't compile any more"))
+                continue
+            judged = link_data(compiled.obj, name, symbols, data_units.reader(net, proj),
+                               big_endian=bool(cfg.get("big_endian", True)))
+            if not judged.exact or not judged.initialised:
+                kept_out.append((name, "no longer holds the game's bytes"))
+                continue
+            if not _plain_datum(compiled.obj, name, judged.size):
+                kept_out.append((name, "its C brings strings or statics of its own"))
+                continue
+            src = out / "src" / "data" / f"{name}.c"
+            src.parent.mkdir(parents=True, exist_ok=True)
+            prelude = toolchains.source_prelude(toolchains.get(compiler_for(cfg, address, identity)["toolchain"]),
+                                                source + "\n" + header)
+            src.write_text(exported_source(prelude, "common.h", source), encoding="utf-8")
+            obj = f"build/src/data/{name}.o"
+            pieces.append({"vram": address, "obj": obj})
+            placed.append({"name": name, "src": src.relative_to(out).as_posix(), "obj": obj, "vram": address,
+                           "size": judged.size})
+        if not pieces:
+            continue
+        segment = {"name": raw["name"], "kind": "code", "start": region["rom_start"], "end": end, "vram": lo,
+                   "bss_vram": None, "bss_size": 0, "pieces": pieces, "bss": [],
+                   "subalign": 1}  # each datum exactly at its address: a 2-byte one may start at ...42
+        if raw_end > end:  # the rest of the raw segment stays raw, from its own slice of the image
+            rest = f"{raw['name']}_rest"
+            blob = out / "assets" / f"{rest}.bin"
+            blob.parent.mkdir(exist_ok=True)
+            blob.write_bytes(image[end:raw_end])
+            stub, obj = f"asm/bin/{rest}.s", f"build/asm/bin/{rest}.o"
+            objects.append({"kind": "asm", "src": stub, "obj": obj})
+            layout.insert(at + 1, {"name": rest, "kind": "raw", "start": end, "objects": [obj], "stub": stub,
+                                   "incbin": f"assets/{rest}.bin"})
+        objects[:] = [o for o in objects if o["obj"] not in raw["objects"]]
+        layout[at] = segment
+    for name, why in kept_out[:20]:
+        log(f"data {name}: from the game's bytes, not its C ({why})")
+    if placed:
+        log(f"{len(placed)} data units built from their C")
+    return placed
 
 
 def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
@@ -339,6 +444,8 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
             layout.append({"name": name, "kind": "code", "start": start, "end": seg["end"], "vram": vram,
                            "bss_vram": bss_vram, "bss_size": int(seg.get("bss_size") or 0),
                            "pieces": sorted(data, key=lambda d: d["vram"]), "bss": sorted(bss, key=lambda d: d["vram"])})
+    data_c = _data_in_c(net, proj, out, layout, objects, image, cfg, log)
+    defined.update(d["name"] for d in data_c)
     syms = net.symbols(proj["id"])
     absolute = {s.name: s.address for s in syms.by_name.values() if s.name not in defined}
     # Startup assembly can retain an import-time alias after a discovered function receives an address-based
@@ -359,12 +466,21 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
             for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}\b", rows[f["vram"]]["matched_source"])):
                 if (m := AUTO_NAME.match(word)) and word not in defined:
                     absolute.setdefault(word, int(m.group(1), 16))
+    for d in data_c:  # automatic names the data's C points at
+        for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}\b", (out / d["src"]).read_text(encoding="utf-8"))):
+            if (m := AUTO_NAME.match(word)) and word not in defined:
+                absolute.setdefault(word, int(m.group(1), 16))
     fn_json = []
     for f in functions:
         entry = {"name": f["name"], "seg": f["seg"], "vram": f["vram"], "rom": f["rom"], "asm": f["asm"]}
         if f["kind"] == "c":
             entry["c"] = f["src"]
-            if f.get('entry_only'):entry['entry_only']=True
+            if f.get('entry_only'):
+                entry['entry_only']=True
+                # the C defines the function by its name in the project, which splat's file name may not be (it kept
+                # func_8005D0B0 for a renamed function, and its extraction found no function by that name)
+                if rows[f["vram"]]["name"] != f["name"]:
+                    entry['symbol'] = rows[f["vram"]]["name"]
             entry["own"] = {sec: base for (obj, sec, base) in private if obj == f["obj"]}
         fn_json.append(entry)
 
@@ -383,6 +499,11 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         "as_flags": [*console.as_flags, "-G0", "-no-pad-sections", "-I", "include"],
         "ld_flags": ["-EB" if console.big_endian else "-EL", "--no-check-sections"],
         "assembly": objects, "segments": layout, "functions": fn_json,
+        "data": [{k: d[k] for k in ("name", "src", "obj", "vram", "size")} for d in data_c],
+        # every named datum's address, for the judge steps (export_entry, `build.py check`): names the assembly
+        # defines aren't in "symbols" (the link has them), and a function's C that reads one couldn't be judged
+        "labels": {s.name: s.address for s in sorted(syms.by_name.values(), key=lambda s: s.address)
+                   if s.kind != "func" and not AUTO_NAME.match(s.name)},
         "symbols": {k: v for k, v in sorted(absolute.items(), key=lambda kv: kv[1])},
     }
     # An expanded analysis image is not the cartridge. Rebuild RNC literals from linked code before reporting
@@ -442,6 +563,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
     if not identical:
         log((proc.stdout + proc.stderr)[-3000:])
     return {"path": str(out), "identical": identical, "matched": matched, "functions": len(functions),
+            "data": len(data_c),
             "fallback": as_fallback, "log": (proc.stdout + proc.stderr)[-3000:]}
 
 
