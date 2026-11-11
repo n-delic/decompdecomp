@@ -76,12 +76,17 @@ def _insert_padding(net):
     return vram
 
 
-def test_padding_head_reply_points_at_tail(net):
+def test_both_padding_halves_are_retired(net):
+    # Splitting the three-NOP function at vram+8 leaves a two-NOP head and a one-NOP tail: both are pure alignment
+    # padding, so both are retired and the reply offers neither as work (the review's case: the tail used to stay
+    # open and the reply pointed the user straight at a lone NOP).
     agent, _ = net.local_agent("tester")
     vram = _insert_padding(net)
-    reply = net.split_function(agent, SLUG, "padfn", f"0x{vram + 8:08X}")  # head = the leading NOPs
-    assert "func_80010008" in reply, reply           # the reply sends the user to the tail...
-    assert "Continue with padfn" not in reply, reply  # ...not back to the retired padding head
+    reply = net.split_function(agent, SLUG, "padfn", f"0x{vram + 8:08X}")
+    assert net._function("padfn", SLUG)["status"] == "asm"          # the head sliver retired...
+    assert net._function("func_80010008", SLUG)["status"] == "asm"  # ...and the tail sliver too
+    assert "both" in reply.lower() and "set aside" in reply.lower(), reply
+    assert "Continue with" not in reply, reply                      # neither dead sliver is offered
 
 
 def test_padding_head_shows_alignment_reason(net):
@@ -92,3 +97,47 @@ def test_padding_head_shows_alignment_reason(net):
     aside = set_aside(net._function("padfn", SLUG))
     assert "padding" in aside["set_aside"].lower(), aside   # a real reason, not the
     assert aside["set_aside"] != "hand-written assembly"    # generic fallback
+
+
+JR_RA = 0x03E00008  # jr $ra: a real MIPS instruction (non-zero), not padding
+
+
+def _insert_words(net, name, words):
+    """Insert a function `name` whose instructions are the given 32-bit `words`, carrying a stale best; return vram."""
+    pid = net._function(FN, SLUG)["project_id"]
+    unit = net._function(FN, SLUG)["unit"]
+    vram, rom = 0x80010000, 0x10000
+    dis = {0x00000000: "nop", JR_RA: "jr $ra"}
+    lines = "".join(f"/* {rom + 4 * i:X} {vram + 4 * i:08X} {w:08X} */  {dis[w]}\n" for i, w in enumerate(words))
+    asm = f"glabel {name}\n{lines}endlabel {name}\n"
+    target = b"".join(w.to_bytes(4, "big") for w in words)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
+                   "status,best_source,best_score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (pid, name, 4 * len(words), len(words), target, "[]", asm, None, unit, vram, rom, "open",
+                    "int was_here(void){return 1;}", 400))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (pid, name, vram, 4 * len(words), "func"))
+    net._syms.pop(pid, None)  # the symbol cache predates the row we just inserted
+    return vram
+
+
+def test_split_marks_a_pure_padding_tail_done(net):
+    from decompnet.network import set_aside
+    agent, _ = net.local_agent("tester")
+    vram = _insert_words(net, "mixfn", [JR_RA, 0x0, 0x0])    # a real instruction, then two trailing NOPs
+    reply = net.split_function(agent, SLUG, "mixfn", f"0x{vram + 4:08X}")  # tail = the trailing NOPs
+    tail = net._function("func_80010004", SLUG)
+    assert tail["status"] == "asm", tail["status"]          # the pure-padding tail is retired...
+    assert "padding" in set_aside(tail)["set_aside"].lower(), set_aside(tail)
+    assert net._function("mixfn", SLUG)["status"] != "asm"  # ...the real head stays workable
+    assert "continue with mixfn" in reply, reply            # and the reply keeps the user on the head
+
+
+def test_padding_head_only_points_at_tail(net):
+    agent, _ = net.local_agent("tester")
+    vram = _insert_words(net, "mixfn", [0x0, 0x0, JR_RA])    # two leading NOPs, then real code
+    reply = net.split_function(agent, SLUG, "mixfn", f"0x{vram + 8:08X}")  # head = the leading NOPs
+    assert net._function("mixfn", SLUG)["status"] == "asm"          # the padding head is retired...
+    assert net._function("func_80010008", SLUG)["status"] != "asm"  # ...the real tail stays workable
+    assert "func_80010008" in reply, reply                          # and the reply sends the user there
