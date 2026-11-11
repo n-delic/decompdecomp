@@ -153,6 +153,8 @@ class Gateway:
         # what to do with its reports of those calls.
         self.routes = None
         self.report = None
+        self.guides = None  # (platforms) -> guide texts (tool_reader.guides), sent once per platform
+        self.guided: set[str] = set()
 
     @property
     def url(self) -> str:
@@ -185,14 +187,15 @@ class Gateway:
             process.wait(timeout=5)
             raise RuntimeError(f"the MCP gateway didn't start (exit {process.poll()}, said {line!r})")
         self.process = process
+        self.guided = set()  # (a new process has none)
         threading.Thread(target=self._reports, args=(process,), daemon=True, name="gateway-reports").start()
         self._send_routes()
         return int(line.split()[1])
 
-    def attach(self, routes, report) -> None:
+    def attach(self, routes, report, guides=None) -> None:
         """Let the gateway answer some reads itself: `routes()` is sent every second and at `changed()`; each
-        call it answers comes back to `report`."""
-        self.routes, self.report = routes, report
+        call it answers comes back to `report`; `guides(platforms)` gives guide's texts for new platforms."""
+        self.routes, self.report, self.guides = routes, report, guides
         self._send_routes()
         threading.Thread(target=self._push, daemon=True, name="gateway-routes").start()
 
@@ -207,7 +210,12 @@ class Gateway:
         if self.routes is None:
             return
         try:
-            line = (json.dumps({"routes": self.routes()}) + "\n").encode()
+            routes = self.routes()
+            line = (json.dumps({"routes": routes}) + "\n").encode()
+            platforms = {p["platform"] for p in routes.get("projects", {}).values() if p.get("platform")}
+            if self.guides is not None and not platforms <= self.guided:
+                line = (json.dumps({"guides": self.guides(platforms | self.guided)}) + "\n").encode() + line
+                self.guided = platforms | self.guided
         except Exception:  # the gateway stops answering itself once its routes are stale; the app answers
             log.exception("MCP gateway routes failed")
             return

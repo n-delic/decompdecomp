@@ -26,11 +26,23 @@ with their work.
 
 ## Tools the gateway answers itself
 
-The first step towards serving the tools without the Python app: `gateway/src/native.rs` answers `get_claims`,
-`list_functions` and the compact `project_info` straight from the SQLite databases, read-only, with exactly the
-reply the app's handlers give (the same SQL, Python's number formatting and `json.dumps`, the same claim tokens).
-`tests/test_gateway_native.py` compares the two byte for byte. On a copy of a real project they agreed on all 23
-calls tried, and the gateway answered in about 1 ms.
+The first step towards serving the tools without the Python app: `gateway/src/native.rs` answers these straight from
+the SQLite databases, read-only:
+- `get_claims`, `list_functions` and the compact `project_info`;
+- `get_assembly`, about 6% of all tool calls. It decodes the app's compressed text and renames automatic labels
+  through the project's symbol table, which it keeps until the database's symbol or naming revision moves. It
+  restores lost local labels (`draft_asm`), and pages, focuses and hides display columns as the helper's settings
+  say;
+- `get_context`: the unit's latest header, else the project's, from the compressed header store;
+- `guide`. The app sends every topic's text once per platform (`tool_reader.guides`), plus the tools' extended help.
+
+Each reply is exactly what the app's handler gives: the same SQL, Python's number formatting, `json.dumps` and
+`splitlines`, and its regular expressions (fancy-regex for the lookarounds). `tests/test_gateway_native.py` and
+`tests/test_gateway_native_reads.py` compare the two byte for byte. On a copy of a real project:
+- 23 of 23 calls of the first three tools agreed;
+- 2,410 of 2,410 `get_assembly`, `get_context` and `guide` calls agreed. That covers every function's default view,
+  pages, symbol and mismatch focus, display columns hidden and kept, every unit's header, and every guide topic.
+- `get_assembly` took a median of 4.5 ms in the gateway, against 8.9 ms in an idle app.
 
 - The app sends what only it knows over the gateway's standard input every second, and at once when a handshake
   or investigation starts (`app/tool_reader.py` routes):
@@ -42,6 +54,10 @@ calls tried, and the gateway answered in about 1 ms.
   tool usage and activity (`apply_report`). It doesn't update the helper's advisory last-seen time.
 - Whatever it isn't sure of goes on to the reader and then the app:
   - a helper or project the app hasn't described, or routes older than 5 s;
+  - a tool the helper's tool settings disable (the app says so);
+  - a function named any way but its exact stored name (the app resolves claims, units, addresses and C++ names);
+  - `get_assembly`'s default view when the app keeps the helper's last diff of that function (it starts at the
+    first mismatch);
   - fork projects;
   - `project_info(detail=true)`;
   - a missing row, or any database error.
