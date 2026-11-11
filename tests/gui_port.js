@@ -66,5 +66,17 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    await t.run('writeAssetMap()');
    assert.match(t.c.$('portAssetsLog')._errorBox.textContent,/hasn't scanned/);
    assert.equal(t.c.$('portAssets').disabled,false,'the button comes back after a failure');}
-  console.log('Port readiness panel: closed, read, stale reply, failure and asset map passed');
+  {const t=setup();t.c.$('portPanel').open=true;
+   t.c.reply=async()=>({...report,assets:{resources:11,groups:{archive:900},unknown:0,written:true,folder:'port/assets',
+     extracted:{current:true,mapped:11,total:11}}});
+   await t.run('loadPortReadiness()');
+   const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
+   assert.ok(rows.some(r=>r.endsWith("extracted: 11 of 11 are the ROM's bytes")),rows.join('\n'));
+   const followed=[];t.c.followJob=async(job,log)=>{followed.push(job);};
+   t.calls.length=0;t.c.reply=async url=>url==='/api/asset-extract'?{job:'j1'}:report;
+   await t.run('extractAssets()');
+   assert.deepEqual(t.calls,['/api/asset-extract','/api/port-readiness?slug=a']);
+   assert.deepEqual(followed,['j1'],'the job is followed with its progress bar');
+   assert.equal(t.c.$('portExtract').disabled,false);assert.equal(t.c.$('portAssets').disabled,false);}
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map and extraction passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

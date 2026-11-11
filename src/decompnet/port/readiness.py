@@ -212,6 +212,14 @@ def blockers(report: dict) -> list[str]:
                    f"{assets['bytes']:,} bytes): Write asset map puts it in the project's {assets['folder']} folder."
                    if not assets.get("was_written") else
                    "The asset map in the project's folder is older than ROM Explorer's scan: write it again.")
+    elif report["kit"] and assets and assets["written"]:
+        done = assets.get("extracted")
+        if done is None or not done["current"]:
+            out.append("The asset map hasn't been extracted from your ROM " + ("since it changed" if done else "yet")
+                       + ": Extract with Torch runs the kit's extractor and checks every resource against the ROM.")
+        elif done["mapped"] < done["total"]:
+            out.append(f"{done['total'] - done['mapped']} of {done['total']} resources didn't come out of the "
+                       "extractor as the ROM's bytes: " + ", ".join(done["missing"] + done["different"]))
     rom = report["rom_data"]
     if rom["bytes"] and not rom["scanned"]:
         out.append(f"{rom['bytes']:,} bytes of the ROM are outside its code, and ROM Explorer hasn't scanned it: scan "
@@ -249,9 +257,12 @@ def describe(report: dict) -> str:
                      f"compile, {pc['failed']} don't, {pc['warned']} cast pointers to 32-bit integers.")
         lines += [f"- {k['kind']} ({k['functions']}): {', '.join(k['examples'])}" for k in pc["kinds"]]
     if assets := report.get("assets"):
+        done = assets.get("extracted")
         lines.append(f"Asset map ({'written' if assets['written'] else 'not written yet'}): {assets['resources']} "
                      "resources, " + ", ".join(f"{g} {b:,} bytes" for g, b in assets["groups"].items())
-                     + f"; {assets['unknown']:,} bytes ROM Explorer can't name yet.")
+                     + f"; {assets['unknown']:,} bytes ROM Explorer can't name yet."
+                     + (f" Extracted: {done['mapped']} of {done['total']} are the ROM's bytes."
+                        if done and done["current"] else ""))
     rom = report["rom_data"]
     if rom["scanned"]:
         lines.append("ROM outside code, as ROM Explorer read it: "

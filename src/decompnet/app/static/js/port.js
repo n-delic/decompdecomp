@@ -38,7 +38,9 @@ function renderPortReadiness(report) {
   if (assets) facts.append(portRow("Asset map", `${assets.resources} resources, `
     + Object.entries(assets.groups).map(([g, b]) => `${g} ${b.toLocaleString()} bytes`).join(", ")
     + (assets.unknown ? `; ${assets.unknown.toLocaleString()} bytes ROM Explorer can't name yet` : "")
-    + (assets.written ? ` (written to ${assets.folder})` : ", not written yet")));
+    + (assets.written ? ` (written to ${assets.folder})` : ", not written yet")
+    + (assets.extracted && assets.extracted.current
+      ? `; extracted: ${assets.extracted.mapped} of ${assets.extracted.total} are the ROM's bytes` : "")));
   const todo = $("portBlockers");
   todo.replaceChildren(...report.blockers.map((b) => { const li = document.createElement("li"); li.textContent = b; return li; }));
   $("portReady").textContent = report.ready ? "Nothing found in the way of a port." : "To do, in order:";
@@ -102,7 +104,23 @@ async function writeAssetMap() {
   if (S.slug === slug) loadPortReadiness();
 }
 
+async function extractAssets() {
+  const slug = S.slug, log = $("portExtractLog");
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, "Extracting the assets with Torch", [$("portExtract"), $("portAssets"), $("portReload")],
+                           "Extracted.");
+  try {
+    const { job } = await api("/api/asset-extract", { method: "POST", body: { slug } });
+    await followJob(job, log, null, () => S.slug === slug);
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally { finish(); }
+  if (S.slug === slug) loadPortReadiness();
+}
+
 if ($("portPanel")) {
+  $("portExtract").onclick = extractAssets;
   $("portAssets").onclick = writeAssetMap;
   $("portDrafts").onclick = draftPortData;
   $("portCompile").onclick = compileForPc;

@@ -735,6 +735,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
             (folder / INCLUDES).write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
         if tc.build == "psyq-obj-parser":
             _build_psyq_parser(dest, linux, log)
+        if tc.build == "torch":
+            _build_torch(dest, log)
         if linux and not archive_only and "runtime-i386" in tc.requires:  # WSL systems rarely have a 32-bit loader: bring ours
             n = wsl.wrap_i386(dest, wsl.path(path("runtime-i386", linux=True)))
             log(f"  {n} 32-bit programs start through the pinned 32-bit runtime")
@@ -781,6 +783,47 @@ def _build_psyq_parser(dest: Path, linux: bool, log) -> None:
                                  + (result.stdout + result.stderr)[-3000:])
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ToolchainError(f"Couldn't build the PsyQ converter: {error}. Install a C++20 compiler and zlib headers.") from error
+
+
+# Torch's CMakeLists fetches these at configure time (FetchContent); each is a pinned part of [torch] instead, handed
+# to CMake as an unpacked folder so the build downloads nothing and every computer builds the same sources.
+_TORCH_DEPS = ("dr_libs", "libgfxd", "spdlog", "tinyxml2", "yaml-cpp", "zlib")
+
+
+def _build_torch(dest: Path, log) -> None:
+    """Build Torch from its pinned source with the pinned CMake (its standalone command, no viewer). Only the host's
+    C++ compiler, make and zlib headers come from the system, as for the PsyQ converter."""
+    mac = current_platform().startswith("macos")
+    tools = ("Torch is built from its source on this computer, which needs "
+             + ("Xcode Command Line Tools: run `xcode-select --install`, then try again." if mac else
+                "a C++17 compiler, make and zlib headers (on Debian or Ubuntu: `sudo apt install g++ make zlib1g-dev`), "
+                "then try again."))
+    if not shutil.which("make") or not shutil.which("c++"):
+        raise ToolchainError(tools)
+    source = dest / "source"
+    cmake = str(binary("cmake"))
+    log("  building Torch from its pinned source (first install only, a few minutes)")
+    with tempfile.TemporaryDirectory(prefix="decomp-torch-") as tmp:
+        build = Path(tmp) / "build"
+        configure = [cmake, "-S", str(source / "torch"), "-B", str(build), "-G", "Unix Makefiles",
+                     "-DCMAKE_BUILD_TYPE=Release", "-DUSE_STANDALONE=ON", "-DBUILD_UI=OFF",
+                     "-DFETCHCONTENT_FULLY_DISCONNECTED=ON", "-DCMAKE_DISABLE_FIND_PACKAGE_spdlog=ON",
+                     *(f"-DFETCHCONTENT_SOURCE_DIR_{name.upper()}={source / 'deps' / name}" for name in _TORCH_DEPS)]
+        steps = (configure, [cmake, "--build", str(build), "--parallel", str(min(8, os.cpu_count() or 1))])
+        for argv in steps:
+            try:
+                result = subprocess.run(limits.capped(argv), cwd=tmp, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", timeout=1800, creationflags=NO_WINDOW)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ToolchainError(f"Couldn't build Torch: {error}. {tools}") from error
+            if result.returncode:
+                raise ToolchainError(f"Building Torch failed. {tools}\n" + (result.stdout + result.stderr)[-3000:])
+        built = build / "torch"
+        if not built.is_file():
+            raise ToolchainError(f"Torch's build finished without a torch program in {build}. {tools}")
+        shutil.copyfile(built, dest / "torch")
+        os.chmod(dest / "torch", 0o755)
+    shutil.rmtree(source, ignore_errors=True)  # the program is what's kept; the pinned archives stay in .downloads
 
 
 def _build_ghidra_decompiler(ghidra: Path, log) -> None:
