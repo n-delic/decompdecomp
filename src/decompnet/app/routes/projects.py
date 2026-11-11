@@ -872,21 +872,20 @@ def register(app: App) -> None:
         return regional.status(net, slug, shared=request.query_params.get('shared') == '1')
 
     def p_regional_names(slug, request, data):
-        from .. import regional
-        if not regional.linked(net, net.project_row(slug)):
-            raise ValueError('Link this project with another release of the game first.')
+        from .. import regional  # (the job checks the link: reading the project waits while it syncs)
         return {'job': jobs.start('Names from another release', lambda log: regional.bring_names(net, slug, log),
                                   cancel_message='Stopped. The names already checked and saved stay.')}
 
     def p_regional_code(slug, request, data):
         from .. import regional
-        if not regional.linked(net, net.project_row(slug)):
-            raise ValueError('Link this project with another release of the game first.')
         if (net.autopilot_status(slug) or {}).get('state') == 'running':
             raise ValueError('Autopilot is running and tries the other release\'s code itself. Wait for it to finish.')
 
         def work(log):
             from ..twins import Job
+            log.progress(dict(phase='Reading this project and the linked release'))
+            if not regional.linked(net, net.project_row(slug)):
+                raise ValueError('Link this project with another release of the game first.')
             job = Job()
             job.stop = log.cancel_event
             return regional.transfer(net, slug, job, log)

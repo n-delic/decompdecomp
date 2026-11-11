@@ -445,15 +445,17 @@ def missing_items(donor_header: str, header: str, rename, known) -> list[str]:
 # ------------------------------------------------------------------ bringing names over
 
 def bring_names(net, slug: str, log) -> dict:
-    """Give this project the linked release's names (functions and globals) and its header's missing types."""
+    """Give this project the linked release's names (functions and globals) and its header's missing types.
+    `log.progress` is told each step, and how many names (and of their matches, how many) are checked so far."""
     from . import symbol_names
+    progress = getattr(log, 'progress', None) or (lambda _: None)
+    progress(dict(phase='Reading this project and the linked release'))  # (it waits while the project syncs)
     proj = net.project_row(slug)
     link_ = linked(net, proj)
     if not link_:
         raise NetworkError('Link this project with another release of the game first.')
     donor = net.project_row(link_['slug'])
-    progress = getattr(log, 'progress', lambda _: None)
-    progress(dict(phase='Pairing functions'))
+    progress(dict(phase=f"Pairing functions with {donor['name']}"))
     log(f"Pairing {proj['name']} with {donor['name']} ({link_['region'] or 'other release'}).")
     p = plan(net, proj, donor)
     identical = sum(1 for *_, s in p.pairs if s == 1.0)
@@ -461,27 +463,39 @@ def bring_names(net, slug: str, log) -> dict:
         f"{p.addresses.conflicts} ambiguous.")
     log(f"{len(p.names):,} names to bring over; {p.kept:,} of this project's own names kept; "
         f"{p.taken:,} already used here; {p.unmapped:,} at addresses that didn't map.")
-    renamed, rejected = 0, []
+    renamed, rejected, total = 0, [], len(p.names)
     message = f"Names from {donor['name']} ({link_['region'] or 'other release'})"
-    queue = [p.names[i:i + CHUNK] for i in range(0, len(p.names), CHUNK)]
+    queue = [p.names[i:i + CHUNK] for i in range(0, total, CHUNK)]
     done = 0
     while queue:
         if getattr(log, 'cancel_event', None) is not None and log.cancel_event.is_set():
             break
         rows = queue.pop(0)
-        progress(dict(phase='Renaming and checking matches', done=done, total=len(p.names)))
+        what = f"{rows[0]['new']} ({done + 1:,} of {total:,})" if len(rows) == 1 else \
+            f"names {done + 1:,}–{done + len(rows):,} of {total:,}"
+
+        def checked(value, rows=rows, what=what, base=done):  # the rename's own check, as part of the whole
+            n, of = value.get('done') or 0, value.get('total') or 0
+            progress(dict(phase=f"Renaming {what}: checking {n:,} of {of:,} matches that use them",
+                          done=base + (len(rows) * n // of if of else 0), total=total))
+        checked({})
+        step = lambda line: log(line)  # (symbol_names reads the progress callback from the log it's given)
+        step.progress = checked
         try:
-            renamed += symbol_names.apply(net, slug, rows, message, log)['renamed']
+            renamed += symbol_names.apply(net, slug, rows, message, step)['renamed']
             done += len(rows)
+            log(f"{done:,} of {total:,} names checked: {renamed:,} brought over, every match still matches.")
         except NetworkError as error:
             if len(rows) == 1:
                 rejected.append(dict(rows[0], why=str(error).split('\n')[0]))
                 done += 1
+                log(f"Left out {rows[0]['new']} (for {rows[0]['old']}): {rejected[-1]['why']}")
             else:  # find the names that fail (one that breaks a match, say): the rest of the chunk still goes in
+                log(f"{len(rows)} names together would break a match: trying them in halves to find which.")
                 queue[:0] = [rows[:len(rows) // 2], rows[len(rows) // 2:]]
-    log(f"{renamed:,} names brought over" + (f"; {len(rejected)} left out:" if rejected else "."))
-    for row in rejected[:5]:
-        log(f"  {row['old']} -> {row['new']}: {row['why']}")
+    progress(dict(phase='Renaming finished', done=done, total=total))
+    log(f"{renamed:,} names brought over" + (f"; {len(rejected)} left out." if rejected else "."))
+    progress(dict(phase="Pairing again with the new names, for the header's types"))
     header = _bring_header(net, proj, donor, plan(net, net.project_row(slug), donor), log)  # with the new names
     result = dict(paired=len(p.pairs), identical=identical, addresses=len(p.addresses), renamed=renamed,
                   rejected=rejected[:50], kept=p.kept, taken=p.taken, unmapped=p.unmapped, header=header, at=time.time())
@@ -521,7 +535,15 @@ def _bring_header(net, proj, donor, p: Plan, log) -> dict:
         return dict(added=0)
     agent, _ = net.local_agent('you')
     block = f"/* From {donor['name']}, another release of this game. */\n" + '\n'.join(items)
-    result = net.edit_context(agent, proj['slug'], '', block, f"Types and declarations from {donor['name']}")
+    progress = getattr(log, 'progress', None) or (lambda _: None)
+    log(f"Adding {len(items)} types and declarations to the header, if every matched function still matches.")
+
+    def checked(value):
+        progress(dict(phase=f"Checking {len(items)} header items against every matched function",
+                      done=value.get('done') or 0, total=value.get('total') or 0))
+    checked({})
+    result = net.edit_context(agent, proj['slug'], '', block, f"Types and declarations from {donor['name']}",
+                              progress=checked)
     log(result.split('\n')[0])
     return dict(added=len(items) if result.startswith('✅') else 0, why=None if result.startswith('✅') else result.split('\n')[0])
 
@@ -551,8 +573,9 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
     for done, (x, y, score) in enumerate(work):
         if stop is not None and stop.is_set():
             break
-        progress(dict(phase="Trying the other release's code", done=done, total=len(work)))
         a = theirs[x.id]
+        progress(dict(phase="Trying the other release's code" if y.status == 'open' else "Bringing its polished code",
+                      done=done, total=len(work), donor=a['name'], function=y.name))
         b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
         if b is None:
             continue

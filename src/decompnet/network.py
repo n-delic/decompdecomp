@@ -2165,9 +2165,10 @@ class Network:
     # -------------------------------------------------------- shared context
 
     def edit_context(self, agent: Agent, project: str | None, old: str, new: str, message: str,
-                     function: str | None = None) -> str:
+                     function: str | None = None, *, progress=None) -> str:
         """Exact-string edit of a header. Accepted only if every already-matched function compiled against
-        that header still matches with the new one — that's the project's test suite."""
+        that header still matches with the new one — that's the project's test suite. `progress`: told how far
+        that check has got."""
         if function:
             fn = self._function(function, project)
             proj = self.project_store(fn["project_id"]).one("SELECT * FROM projects WHERE id=?", fn["project_id"])
@@ -2211,7 +2212,7 @@ class Network:
                     if self._context(proj['id'],unit)['version']!=ctx['version']:
                         continue
                     return 'Cached rejected header edit (no regression compiles run).\n'+cached[1]
-                broken = self.regression_test(proj, new_header, only=members)
+                broken = self.regression_test(proj, new_header, only=members, progress=progress)
                 if broken:
                     listing = "\n".join(f"- {name}: {why}" for name, why in broken[:10])
                     result=(f"❌ REJECTED: the edit breaks {len(broken)} already-matched function(s), so the header "
