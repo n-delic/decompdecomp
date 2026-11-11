@@ -127,3 +127,11 @@ def asm_reason(code: bytes, big_endian: bool = True, **_facts) -> str | None:
                 return f"reads r{r} before setting it: compiled code receives nothing there"
         written.update(writes)
     return None
+
+
+def is_padding(code: bytes, big_endian: bool) -> bool:
+    """PowerPC padding is nop = ori r0,r0,0 (0x60000000): an all-nop, word-aligned block is padding."""
+    if not code or len(code) % 4:
+        return False
+    order = "big" if big_endian else "little"
+    return all(int.from_bytes(code[i:i + 4], order) == 0x60000000 for i in range(0, len(code), 4))
