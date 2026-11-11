@@ -305,6 +305,13 @@ class EditMixin:
             if taken is not None and taken != addr:
                 raise NetworkError(f"`{new}` already names 0x{taken:08X}")
             at = self.project_store(proj["id"]).all("SELECT id, name, size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
+            # An address name (func_8008949C) still resolves once its address has a real name. Two helpers renaming
+            # one function at once both got through: the second added a second name at the address and renamed the
+            # function, leaving its matched C defining the first name, so it no longer matched.
+            current, _ = syms.name_at(addr)
+            if (old not in syms.by_name and current != old and current in syms.by_name
+                    and not any(r["name"] == old for r in at)):  # (an overlay twin may still go by the address name)
+                raise NetworkError(f"`{old}` is called `{current}` now: rename `{current}` if the name should change")
             renamed = [r for r in at if r["name"] == old] or (at if len(at) == 1 else [])
             if any(r["name"] == new for r in at) and not any(r["name"] == new for r in renamed):
                 # the other overlay function at this address has it: the names would collide (#117 review)

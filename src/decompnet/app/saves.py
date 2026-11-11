@@ -38,6 +38,11 @@ from ..scoring import percent_text
 from . import save_readme
 from .restore_effects import batched as restore_batch
 
+# Headers that belong to one function, not to a source file: an exact match's (app/exact_match_inputs.py) and the
+# declarations source preparation wrote for it (app/source_preparation.py). A save that kept only the first kind
+# lost the second, and three of an N64 game's matches stopped compiling against the shared header.
+PRIVATE_HEADERS = ("exact_match_", "local_source_")
+
 FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
@@ -573,7 +578,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "auto_compiler": cfg.get("auto_compiler"),
         "knowledge_auto": bool(cfg.get("knowledge_auto")), "headers": {u: _header_file(u) for u in sorted(units)},
         "functions": functions,
-        "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith("exact_match_")},
+        "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith(PRIVATE_HEADERS)},
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
                     "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
         "symbols": net.layout_symbols(pid),
@@ -1097,7 +1102,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
         # Restore that binding before compilation; older saves have no bindings.
         for name, unit in (manifest.get("function_headers") or {}).items():
             check_cancel()
-            if isinstance(unit, str) and unit.startswith("exact_match_") and unit in (manifest.get("headers") or {}):
+            if isinstance(unit, str) and unit.startswith(PRIVATE_HEADERS) and unit in (manifest.get("headers") or {}):
                 db.execute("UPDATE functions SET unit=? WHERE project_id=? AND name=?", (unit, pid, name))
         for text in manifest.get("knowledge") or []:
             check_cancel()
