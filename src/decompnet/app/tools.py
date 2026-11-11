@@ -344,6 +344,16 @@ def _compact_project_info(net, slug):
             + COMPACT_NEXT)
 
 
+def _data_unit(net: RomNetwork, slug: str, name: str) -> str:
+    from .data_units import unit, unit_text
+    return unit_text(unit(net, slug, name))
+
+
+def _compile_data(net: RomNetwork, slug: str, name: str, source: str) -> str:
+    from .data_units import compile_data, describe
+    return describe(compile_data(net, slug, name, source), name)
+
+
 def _port_readiness(net: RomNetwork, slug: str) -> str:
     """The port readiness report as text (port/readiness.py)."""
     from ..port.readiness import describe, readiness
@@ -565,6 +575,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "read_data": lambda net, agent, slug, what, length=64: (net.forks.read_data(agent, slug, what, length)
                                                             if net.fork_slug(slug) else net.read_data(slug, what, length)),
     "get_class": lambda net, agent, slug, what="": net.get_class(slug, what),
+    "get_data_unit": lambda net, agent, slug, name: _data_unit(net, slug, name),
+    "compile_data": lambda net, agent, slug, name, source: _compile_data(net, slug, name, source),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
     "redraft": lambda net, agent, slug, function, context: _redraft(net, slug, function, context, agent),
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
@@ -603,9 +615,9 @@ HANDLERS: dict[str, Callable[..., str]] = {
 READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
-                       "port_readiness"})
+                       "port_readiness", "get_data_unit"})
 
-ROM_ONLY = {"port_readiness","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"port_readiness","get_data_unit","compile_data","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -824,7 +836,7 @@ QUICK_TOOLS = frozenset({
     'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
     'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function',
     'add_note', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
-    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness',
+    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness', 'get_data_unit',
 })
 QUICK_LANE = 16
 WORK_LANE = 32
@@ -1161,6 +1173,18 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         """Hex dump of the original's data: an address or symbol (ROM projects), a data symbol such as
         lbl_1_data_10 (forks); text, pointers and floats decoded."""
         return await run(ctx, "read_data", what=what, length=length)
+
+    @tool
+    async def get_data_unit(ctx: Context, name: str) -> str:
+        """One of the game's data symbols, for writing it as C (docs/PORTING.md): its address, how far it runs (to the
+        next place the game names or refers to), its bytes, who uses it, and any C it has."""
+        return await run(ctx, "get_data_unit", name=name)
+
+    @tool
+    async def compile_data(ctx: Context, name: str, source: str) -> str:
+        """Judge C that defines one of the game's data symbols: kept only when it holds the game's bytes at its
+        address, all of the datum, pointers by name (`void *D_x[2] = {func, &D_y};`)."""
+        return await run(ctx, "compile_data", name=name, source=source)
 
     @tool
     async def redraft(ctx: Context, function: str, context: str) -> str:

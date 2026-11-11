@@ -234,6 +234,13 @@ def register(app: App) -> None:
             return {k: v for k, v in res.items() if k != "log"} | {"log": res.get("log", "")[-1500:]}
         return {"job": jobs.start("export", work)}
 
+    def p_data_unit(slug, request, data):
+        from .. import data_units
+        if request.method == "GET":
+            return data_units.unit(net, slug, request.query_params.get("name", ""))
+        result = data_units.compile_data(net, slug, str(data.get("name", "")), str(data.get("source", "")))
+        return {"exact": result.exact, "problems": result.problems, "size": result.size, "span": result.span}
+
     def g_port_readiness(slug, request, data):
         from ...port.readiness import readiness
         return readiness(net, slug)
@@ -995,6 +1002,7 @@ def register(app: App) -> None:
         "/api/agent-results": (lambda s,r,d: net.agent_results(s,r.query_params.get('agent',''),r.query_params.get('kind','matched'),int(r.query_params.get('before',0)),int(r.query_params.get('after',0))), ["GET"]),
         "/api/stats": (lambda s, r, d: net.stats(s), ["GET"]),
         "/api/port-readiness": (g_port_readiness, ["GET"]),
+        "/api/data-unit": (p_data_unit, ["GET", "POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
     }

@@ -94,6 +94,11 @@ class Nintendo64(Console):
         from .textures import decode
         return decode(data)
 
+    def bss_start(self, image: bytes) -> int | None:
+        from .rom import bss_start
+
+        return bss_start(image)
+
     def sniff(self, head: bytes, file) -> bool:
         from .rom import MAGIC
 

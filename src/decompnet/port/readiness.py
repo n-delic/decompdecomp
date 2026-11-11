@@ -117,6 +117,12 @@ def readiness(net, slug: str) -> dict:
         found = [v for v in (int(m.group(1), 16) for m in _HEX.finditer(text)) if high > low and low <= v < high]
         if found:
             literals[r["name"]] = len(found)
+    # Data already in C (app/data_units.py): a symbol inside a matched unit's span is reached by name there
+    from ..app.data_units import matched
+    units = sorted((a, a + (u["span"] or u["size"] or 0)) for a, u in matched(net, proj).items())
+    in_c = {n for n in data if (a := symbols.resolve(n)) is not None and any(lo <= a < hi for lo, hi in units)}
+    data -= in_c
+    automatic -= in_c
 
     graphics = []
     audio = {"library": "", "need": ""}
@@ -134,7 +140,8 @@ def readiness(net, slug: str) -> dict:
         "names": {k: v[:_LIMIT] for k, v in code.items() if isinstance(v, list)},
         "graphics": graphics,
         "audio": audio,
-        "data": {"symbols": len(data), "automatic": len(automatic), "examples": sorted(automatic or data)[:_LIMIT]},
+        "data": {"symbols": len(data), "automatic": len(automatic), "in_c": len(in_c), "units": len(units),
+                 "examples": sorted(automatic or data)[:_LIMIT]},
         "addresses": {"functions": len(literals), "literals": sum(literals.values()),
                       "examples": sorted(literals, key=lambda n: -literals[n])[:_LIMIT]},
         "rom_data": _rom_data(net, slug, cfg, len(image)),
@@ -169,7 +176,7 @@ def blockers(report: dict) -> list[str]:
         out.append(report["audio"]["need"])
     if report["data"]["symbols"]:
         out.append(f"The C reaches {report['data']['symbols']} data symbols that exist only as addresses in the "
-                   "split's assembly: each needs to be C, or an asset the kit extracts.")
+                   "split's assembly: each needs to be C (compile_data), or an asset the kit extracts.")
     if report["addresses"]["literals"]:
         out.append(f"{report['addresses']['functions']} functions write {report['addresses']['literals']} addresses "
                    "as numbers: each needs to be a symbol so the port (and mods) can move it.")

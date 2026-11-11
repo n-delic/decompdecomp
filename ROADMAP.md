@@ -778,6 +778,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
@@ -958,6 +959,15 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### The game's data as C
+
+Phase 1 of docs/PORTING.md, its judge and tools: `get_data_unit` and `compile_data` turn one of a ROM project's data
+symbols into C, kept only when it holds the game's bytes at its address, all of it, pointers resolved by name.
+Where a datum ends comes from the game's own references; where the data is, from the program (the N64's boot stub
+says where `.bss` starts, and the data runs from the last code segment's text to it). On a finished 2,121-function
+N64 game, drafts of its 129 zero-filled data and 19 function-pointer tables all matched. Left: an agent task with
+claims and a launch option, the export building data from its C, typed drafts, overlays, other consoles.
 
 ### Port readiness report
 

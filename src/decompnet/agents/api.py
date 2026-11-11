@@ -604,6 +604,10 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                               s(queries={"type":"array","items":{"type":"string","minLength":1,"maxLength":200},"minItems":1,"maxItems":20,"req":True}, context_function=st("canonical function in the intended original image"))),
         "read_data": ("Hex dump of the original's data at an address or symbol.", s(what=st("address or symbol", True),
                                                                                     length=it("bytes, up to 512"))),
+        "get_data_unit": ("One of the game's data symbols to write as C: address, extent, bytes, users.",
+                          s(name=st("data symbol (D_80012340 or its name)", True))),
+        "compile_data": ("Judge C defining one data symbol: kept only if it holds the game's bytes there, all of it.",
+                         s(name=st("data symbol", True), source=st("C defining it", True))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "
                       "Give a vtable address or one of its functions; empty lists the classes.",
                       s(what=st("vtable address, or a virtual function / constructor"))),
