@@ -256,6 +256,12 @@ def register(app: App) -> None:
         from ...port import pc_compile
         return {"job": jobs.start("pc-compile", lambda log: pc_compile.check(net, slug, log), project=slug)}
 
+    def p_rename_calls(slug, request, data):
+        """Rewrite calls by a function's old name to its name now, each function judged twice
+        (port/renamed_calls.py), in the background."""
+        from ...port import renamed_calls
+        return {"job": jobs.start("rename-calls", lambda log: renamed_calls.fix(net, slug, log), project=slug)}
+
     def p_asset_map(slug, request, data):
         """Write the ROM's data as the kit's extractor config into the project's folder (port/asset_map.py)."""
         from ...port import asset_map
@@ -1078,6 +1084,7 @@ def register(app: App) -> None:
         "/api/data-drafts": (p_data_drafts, ["POST"]),
         "/api/pc-compile": (p_pc_compile, ["POST"]),
         "/api/asset-map": (p_asset_map, ["POST"]),
+        "/api/rename-calls": (p_rename_calls, ["POST"]),
         "/api/asset-extract": (p_asset_extract, ["POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),

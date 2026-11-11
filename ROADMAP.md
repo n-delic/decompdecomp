@@ -966,6 +966,15 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### Calls by a function's old name put right
+
+The link check finds callers that use a function's old name (an automatic `func_` name, or an earlier chosen one
+the symbol table keeps) and knows the name it has now. Port readiness → **Fix calls by old names** rewrites them,
+whole words, in the calling functions only, and judges each of those twice: its console build must still be the
+game's exact bytes (the regression test, on those functions alone) and the PC compiler must find no more errors;
+one that fails keeps its C and is listed (`port/renamed_calls.py`). The rewritten functions' recorded symbols are
+refreshed, so the link check drops what was fixed at once. No agents, no tokens.
+
 ### The game's zeroed memory defined for the PC
 
 Almost all the data a finished game's C reaches by address and that has no C is memory the game zeroes at boot

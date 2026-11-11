@@ -130,7 +130,22 @@ async function extractAssets() {
   if (S.slug === slug) loadPortReadiness();
 }
 
+async function fixRenamedCalls() {
+  const slug = S.slug, log = $("portRenameLog");
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, "Rewriting calls by old names", [$("portRenameCalls"), $("portReload")], "Done.");
+  try {
+    const { job } = await api("/api/rename-calls", { method: "POST", body: { slug } });
+    await followJob(job, log, null, () => S.slug === slug);
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally { finish(); }
+  if (S.slug === slug) loadPortReadiness();
+}
+
 if ($("portPanel")) {
+  $("portRenameCalls").onclick = fixRenamedCalls;
   $("portExtract").onclick = extractAssets;
   $("portAssets").onclick = writeAssetMap;
   $("portDrafts").onclick = draftPortData;
