@@ -98,8 +98,16 @@ what a 64-bit port must undo; the prompt asks agents for the types the code uses
   datum read two ways, or with bytes nothing explains, goes to the data agents, whose brief now lists the fields
   the code uses. Drafts are judged like agents' C.
 
-Still to do: an LLM agent run on a real game; the export building matched data from its C in place of the
-assembly; typed drafts; flagging pointers stored as integers (phase 0's open count); `.bss`; programs whose data
+- **Saved and exported** (`app/data_saves.py`, `rom/export.py` `_data_in_c`): matched data goes in the progress
+  folder as `data.json` (the index) and `data/<name>.c`, written when a unit matches and by every save, owned by
+  progress commits and allowed by rebuildable repositories' `.gitignore`; a restore judges each one again. The
+  export turns the raw segment holding the initialised data into a segment placed at its address, builds each
+  matched datum from its C (recompiled, judged again, and only when its object holds the datum alone: strings of
+  its own would land after it), and fills the other bytes from the user's copy, so the whole-image check proves
+  the data's C too.
+
+Still to do: an LLM agent run on a real game; data the split wrote as assembly (not a raw segment) built from C;
+data whose C brings strings of its own placed in the export; typed drafts; flagging pointers stored as integers (phase 0's open count); `.bss`; programs whose data
 isn't after their last code segment (overlays) and consoles other than the N64 (a `bss_start` reader each).
 
 ### 2. Asset map, written as a Torch config

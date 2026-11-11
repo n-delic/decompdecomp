@@ -193,6 +193,8 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
                 _remember_revision(net, slug, json.loads(files[MANIFEST]))
             else:
                 net.progress.sync(slug, force=True)  # a contributor wrote meanwhile: apply it, don't overwrite it
+        from .data_saves import publish as publish_data  # the data's C (app/data_saves.py)
+        publish_data(net, slug, target)
         _remember_folder(net, proj["id"], target.resolve(), chosen=chosen)
         if chosen:
             # Local-only receipt: distinguish an untouched app backup from contributor edits.
@@ -228,7 +230,7 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
         path = Path(name)
         if path.is_absolute() or ".." in path.parts or path.as_posix() != name:
             raise NetworkError("Progress contains an unsafe file path. Fix its manifest before saving again.")
-        if name != MANIFEST and name != "README.md" and not name.startswith(("src/", "best/", "include/")):
+        if name not in (MANIFEST, "README.md", "data.json") and not name.startswith(("src/", "best/", "include/", "data/")):
             raise NetworkError("Progress contains an unsupported file path. Fix its manifest before saving again.")
         target = folder / path
         for parent in (target, *target.parents):
@@ -962,7 +964,9 @@ def restore(net, source: str, game: Path | None = None, log=print) -> dict:
                     finally:
                         progress.adopting.discard(slug)
                     result = progress.results.pop(slug, None) or _restore_counts(net, slug)
-                    return result | {"slug": slug}
+                    from .data_saves import restore as restore_data  # the data's C, judged again
+                    data_result = restore_data(net, slug, live, log)
+                    return result | {"slug": slug} | ({"data": data_result} if data_result["saved"] else {})
             except Exception:
                 # #101 review: importing and splitting happened before the save could be applied. A restore that
                 # fails (a missing compiler, a cancelled judge) leaves no half-open project, as a failed room join
