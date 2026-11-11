@@ -23,6 +23,29 @@ decomp-mcp-gateway hosted serve --dir /srv/decomp --listen 127.0.0.1:8080
   The server keeps its claims, submissions, notes, matches and better scores. A function matched on the server
   stays matched, and functions gone from the project become `removed`.
 
+## Who may use it
+
+- **Roles:** `agent` uses projects over MCP; `verifier` registers compiler servers and judges; `admin` manages users
+  and may use everything.
+- **Access:** the server is `open` (every user may use every project) or `invite` (agents and verifiers use only the
+  projects granted to them). A verifier is leased work only from projects it may use, and `/v1/projects` lists only
+  those.
+- **Rate:** each user may make `--rate` tool calls a minute (600 by default), and have 16 running at once.
+- Tokens are shown once. Replacing one stops the old one at once; so does removing a user, which also removes their
+  grants and compiler-server entries (their claims run out).
+
+| | On the server | Over HTTP (admins) |
+|---|---|---|
+| Add a user | `hosted add-user --name N --role R` | `POST /v1/users {name, role}` |
+| List users and access | `hosted list-users` | `GET /v1/users` |
+| Remove a user | `hosted remove-user --name N` | `DELETE /v1/users/N` |
+| Replace a token | `hosted rotate-token --name N` | `POST /v1/users/N/token` |
+| Grant or revoke a project | `hosted grant` / `revoke --name N --project P` | `POST /v1/users/N/access {project, allow}` |
+| Open or invite-only | `hosted policy --access open\|invite` | `POST /v1/policy {access}` |
+
+Every command takes `--dir`. Changes over HTTP apply at once. Changes made with the command line while the server
+runs apply within 10 seconds (it remembers users and grants that long).
+
 ## The hosted project file
 
 `hosted_export.py` writes one small SQLite file per project, holding what an agent needs to decompile and judge a
@@ -144,6 +167,6 @@ On a copy of v-rally, the whole loop ran with the real compilers:
 ## Not yet
 
 - A judge in Rust for a console, so a compiler server needs only the compilers and the game, not decompdecomp.
-- Sign-in for users (GitHub), per-project access lists, removing users, and per-user rate limits beyond the 16
-  concurrent calls.
+- Sign-in for users with GitHub, instead of tokens handed out by an admin. This needs a GitHub OAuth app of the
+  server's own.
 - Fork (project-mode) projects. Only ROM projects export.
