@@ -10,6 +10,7 @@ import shutil
 import uuid
 from pathlib import Path
 
+import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -233,6 +234,9 @@ def register(app: App) -> None:
                             headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
         return Response(raw, media_type="application/json")
 
+    _map_cache: dict[str, tuple[str, bytes, bytes | None]] = {}
+    _map_lock = anyio.Lock()
+
     @mcp.custom_route("/api/map", methods=["GET"])
     async def api_map(request: Request) -> Response:
         """Every function, for the map and the table. `since`: the signature the GUI has; when nothing changed, the
@@ -241,19 +245,55 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         slug = request.query_params.get("slug", "")
+        since = request.query_params.get("since")
+        accepts_gzip = "gzip" in request.headers.get("accept-encoding", "")
 
-        def build() -> dict:
-            sig = net.map_signature(slug)
-            if request.query_params.get("since") == sig:
-                return {"sig": sig, "same": True}
-            rows = net.function_map(slug)
-            keys = list(rows[0]) if rows else []  # every field function_map gives: a list of them here lost polished and not_c
-            return {"sig": sig, "keys": keys, "rows": [[r[k] for k in keys] for r in rows]}
         try:
-            data = await call(build)
+            sig = await call(net.map_signature, slug)
         except (NetworkError, ValueError) as e:
             return fail(e)
-        return packed(request, data)
+
+        if since == sig:
+            return Response(b'{"sig":"' + sig.encode() + b'","same":true}', media_type="application/json")
+
+        entry = _map_cache.get(slug)
+        if entry is not None and entry[0] == sig:
+            _, raw_bytes, gz_bytes = entry
+            if accepts_gzip and gz_bytes is not None:
+                return Response(gz_bytes, media_type="application/json",
+                                headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+            return Response(raw_bytes, media_type="application/json")
+
+        async with _map_lock:
+            entry = _map_cache.get(slug)
+            if entry is not None and entry[0] == sig:
+                _, raw_bytes, gz_bytes = entry
+                if accepts_gzip and gz_bytes is not None:
+                    return Response(gz_bytes, media_type="application/json",
+                                    headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+                return Response(raw_bytes, media_type="application/json")
+
+            def build() -> tuple[bytes, bytes | None]:
+                rows = net.function_map(slug)
+                keys = list(rows[0]) if rows else []  # every field function_map gives: a list of them here lost polished and not_c
+                data = {"sig": sig, "keys": keys, "rows": [[r[k] for k in keys] for r in rows]}
+                raw = json.dumps(data, separators=(",", ":")).encode()
+                gz = None
+                if len(raw) > GZIP_FROM_BYTES:
+                    import gzip
+                    gz = gzip.compress(raw, 1)
+                return raw, gz
+
+            try:
+                raw_bytes, gz_bytes = await call(build)
+                _map_cache[slug] = (sig, raw_bytes, gz_bytes)
+            except (NetworkError, ValueError) as e:
+                return fail(e)
+
+        if accepts_gzip and gz_bytes is not None:
+            return Response(gz_bytes, media_type="application/json",
+                            headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+        return Response(raw_bytes, media_type="application/json")
 
     @mcp.custom_route("/api/mapcolumns", methods=["GET"])
     async def api_map_columns(request: Request) -> Response:
