@@ -199,14 +199,26 @@ class Core(Network):
             self._roms[proj["id"]] = (rom, segs)
         return self._roms[proj["id"]]
 
-    def reader(self, proj):
+    def reader(self, proj, fn=None):
+        """Read helpers and constants from the caller's overlay, then unambiguous shared segments."""
         rom, segs = self._rom(proj)
+        preferred = []
+        if fn is not None and fn["rom_offset"] is not None:
+            preferred = [s for s in segs if s.contains(fn["vram"], fn["size"]) and
+                         s.rom_start + fn["vram"] - s.vram == fn["rom_offset"]]
 
         def read(addr: int, n: int) -> bytes | None:
-            for seg in segs:
-                if seg.contains(addr, n):
-                    at = seg.rom_start + addr - seg.vram
-                    return rom[at:at + n]
+            candidates = [s for s in preferred if s.contains(addr, n)]
+            if not candidates:
+                candidates = [s for s in segs if s.contains(addr, n)]
+            offsets = {s.rom_start + addr - s.vram for s in candidates}
+            # None means unbacked memory to the linker and skips verification. Ambiguity must fail instead.
+            if fn is not None and len(offsets) > 1:
+                raise NetworkError(f"Cannot verify bytes at 0x{addr:X}: multiple ROM overlays cover this address "
+                                   "and the caller's ROM offset does not select one.")
+            if candidates:
+                at = candidates[0].rom_start + addr - candidates[0].vram
+                return rom[at:at + n]
             return None
         return read
 
