@@ -972,10 +972,12 @@ Compile for PC now keeps what each function's object defines and needs (`pc_comp
 Port readiness works out what a link of all of them would refuse (`port/pc_link.py`): symbols needed and defined
 nowhere, sorted by what fixes each (functions renamed since their callers were written, the game's assembly,
 unmatched functions, data that is only an address in the split's assembly, what the kit provides), and symbols
-defined twice. A kept port fix refreshes its function's symbols. On a finished N64 game's saved C: 1,529
-undefined, of them 1,424 data symbols (phase 1's work), 43 calls to old automatic names of functions renamed while
-polishing (`func_8008D8B4` is `pif_lock` now: the console build links by address and never noticed), 14
-functions in assembly, 10 libultra functions for libultraship; and 4 helpers defined in two files. Left: an agent
+defined twice. A kept port fix refreshes its function's symbols. On a finished N64 game, after its PC fixes:
+1,444 undefined: 1,338 data symbols (phase 1's work), 72 libultra and C library functions for libultraship, 20
+calls to functions by a name they lost when polishing renamed them (an automatic `func_` name, or an earlier
+chosen one the symbol table keeps: the console build links by address and never noticed), 13 functions in
+assembly, and one libultra helper its C defines `static` that another function calls; nothing defined twice.
+Left: an agent
 task for the renamed calls and the duplicates, then the real link against a pinned libultraship.
 
 ### Torch pinned, and the asset map extracted and checked

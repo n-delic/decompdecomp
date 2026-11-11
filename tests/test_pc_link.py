@@ -23,24 +23,31 @@ def test_each_undefined_symbol_is_sorted_by_what_supplies_it(project):  # noqa: 
         assert pc_link.report(net, net.project_row("game")) is None
     # update calls draw_hud's old automatic name (it's at 0x80000580), reads two data symbols; helper calls the
     # game's assembly, a libultra function the kit replaces, an unmatched function and something nobody names
-    put(net, "update", ["update"], ["helper", "func_80000580", "D_80010000", "g_speed"])
-    put(net, "helper", ["helper", "shared_table"], ["boot_stub", "osInvalDCache", "draw_hud", "mystery"])
+    put(net, "update", ["update"], ["helper", "func_80000580", "D_80010000", "g_speed", "drawHud"])
+    put(net, "helper", ["helper", "shared_table"], ["boot_stub", "osInvalDCache", "draw_hud", "mystery",
+                                                    "_allocatePVoice"])
+    # _allocatePVoice's C defines it static (libultra's file-local helper): compiled, but it exports nothing
+    put(net, "_allocatePVoice", [], [])
+    with net.store.tx() as db:  # draw_hud was called drawHud before: the symbol table keeps that name too
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES("
+                   "(SELECT id FROM projects WHERE slug='game'),'drawHud',0x80000580,32,'func')")
     put(net, "alSynNew", ["alSynNew", "shared_table"], [])
     put(net, "reset_callback", compiled=False)  # no object: counts as defining itself
     with net.progress.view():
         link = pc_link.report(net, net.project_row("game"))
     groups = {g["kind"]: g["examples"] for g in link["groups"]}
-    assert groups == {"renamed": ["func_80000580 (now draw_hud)"], "assembly": ["boot_stub"],
+    assert groups == {"renamed": ["drawHud (now draw_hud)", "func_80000580 (now draw_hud)"],
+                      "static": ["_allocatePVoice"], "assembly": ["boot_stub"],
                       "not matched": ["draw_hud"], "data": ["D_80010000", "g_speed"], "kit": ["osInvalDCache"],
                       "other": ["mystery"]}
     assert [g["kind"] for g in link["groups"]] == list(pc_link.GROUPS)  # the order fixes come in
-    assert (link["undefined"], link["unread"], link["functions"]) == (7, 1, 4)
+    assert (link["undefined"], link["unread"], link["functions"]) == (9, 1, 5)
     assert link["duplicates"] == [{"name": "shared_table", "in": ["alSynNew", "helper"]}]
     with net.progress.view():
         report = readiness(net, "game")
     text = " ".join(report["blockers"])
-    assert "the C would need 7 symbols nothing defines: 1 renamed; 1 assembly" in text and "1 defined twice" in text
-    assert "- renamed (1, needed by 1 functions)" in describe(report)
+    assert "the C would need 9 symbols nothing defines: 2 renamed; 1 static; 1 assembly" in text
+    assert "1 defined twice" in text and "- renamed (2, needed by 1 functions)" in describe(report)
 
 
 def test_data_already_in_c_counts_as_defined(project):  # noqa: F811

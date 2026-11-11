@@ -4,8 +4,10 @@ linked here: a symbol some function needs and none defines would be a link error
 
 Each undefined symbol is sorted by what supplies it:
 - the kit (libultraship and the host's C library replace libultra and libc functions);
-- a function renamed since its callers were written (they still call `func_80012345`, which is `draw_hud` now):
-  the console build links by address and never notices, a PC link does;
+- a function renamed since its callers were written (they still call `func_80012345`, or an earlier chosen name
+  the symbol table keeps, and it's `draw_hud` now): the console build links by address and never notices, a PC
+  link does;
+- a function its own C defines as `static` (libultra's file-local helpers, split into functions of their own);
 - the game's own functions with no C yet (assembly, or not matched);
 - data the C reaches that exists only as an address in the split's assembly (phase 1 writes it as C);
 - anything else.
@@ -26,7 +28,8 @@ _AUTO_DATA = re.compile(r"[DB]_[0-9A-Fa-f]+$")
 _LIMIT = 12  # examples per group
 # what each group is, and what fixes it, in the order the report lists them
 GROUPS = {
-    "renamed": "functions renamed since their callers were written: the callers still use the old automatic name",
+    "renamed": "functions renamed since their callers were written: the callers still use an old name",
+    "static": "functions their own C defines as static: no other file can call them on a PC",
     "assembly": "the game's own functions still in assembly: each needs C for the PC",
     "not matched": "the game's own functions with no C yet",
     "data": "data that exists only as an address in the split's assembly: each needs to be C (phase 1)",
@@ -44,8 +47,11 @@ def report(net, proj) -> dict | None:
     defined: dict[str, list[str]] = {}
     needed: dict[str, set[str]] = {}
     unread = 0
+    compiled = set()
     for row in rows:
         found = json.loads(row["symbols"]) if row["symbols"] else None
+        if found is not None:
+            compiled.add(row["name"])
         if found is None:
             unread += 1
             defined.setdefault(row["name"], []).append(row["name"])
@@ -56,7 +62,7 @@ def report(net, proj) -> dict | None:
             needed.setdefault(name, set()).add(row["name"])
     groups: dict[str, list[str]] = {}
     for name in sorted(set(needed) - set(defined)):
-        if (kind := _group(net, proj, name)) is not None:
+        if (kind := "static" if name in compiled else _group(net, proj, name)) is not None:
             groups.setdefault(kind, []).append(name)
     duplicates = [{"name": name, "in": sorted(where)} for name, where in sorted(defined.items()) if len(where) > 1]
     return {"functions": len(rows), "unread": unread, "undefined": sum(len(v) for v in groups.values()),
@@ -107,6 +113,8 @@ def _group(net, proj, name: str) -> str | None:
     if automatic and int(automatic.group(1), 16) in facts["at"]:
         return "renamed"
     symbol = facts["symbols"].by_name.get(name)
+    if symbol is not None and symbol.kind == "func" and facts["at"].get(symbol.address, name) != name:
+        return "renamed"  # an earlier chosen name the symbol table still has (renamed twice)
     if _AUTO_DATA.match(name) or (symbol is not None and symbol.kind != "func"):
         address = facts["symbols"].resolve(name)
         if address is not None and any(lo <= address < hi for lo, hi in facts["data_c"]):
@@ -117,5 +125,8 @@ def _group(net, proj, name: str) -> str | None:
 
 def _example(net, proj, kind: str, name: str) -> str:
     if kind == "renamed":
-        return f"{name} (now {_facts(net, proj)['at'][int(name[5:], 16)]})"
+        facts = _facts(net, proj)
+        automatic = _AUTO_FUNCTION.match(name)
+        address = int(automatic.group(1), 16) if automatic else facts["symbols"].by_name[name].address
+        return f"{name} (now {facts['at'][address]})"
     return name
