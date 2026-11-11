@@ -1059,3 +1059,23 @@ def test_apply_join_refuses_a_head_matched_since_the_vote(built, tmp_path):  # n
     first = net._function("func_800007C4", slug)
     with pytest.raises(NetworkError, match="matched"):
         net._apply_join(proj, first, last, agent, ["a", "b", "c"])
+
+
+def test_splitting_a_function_voids_join_votes_that_name_it(built, tmp_path):  # noqa: F811
+    # #192: votes to join FN+TAIL live on FN's meta; when TAIL (the other piece) is split they must be dropped, or a
+    # single fresh vote reaches quorum against the now-shorter TAIL and joins the wrong extent. Distinct from
+    # test_split_after_a_join_clears_stale_votes, which re-splits the head; this splits the tail.
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("tester")
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")        # FN=func_800007C4, TAIL=func_800007D0
+    tail = net._function("func_800007D0", slug)
+    assert tail["size"] >= 8, tail["size"]                               # room to split the tail again
+    fn = net._function("func_800007C4", slug)
+    key = "func_800007C4+func_800007D0"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET meta=? WHERE id=?",
+                   (json.dumps({"joins": {key: {"api-1": {"model": "api"}, "api-2": {"model": "api"}}}}), fn["id"]))
+    net.split_function(agent, slug, "func_800007D0", hex(0x800007D0 + 4))  # splitting TAIL must void FN's FN+TAIL vote
+    meta = json.loads(net._function("func_800007C4", slug)["meta"] or "{}")
+    assert key not in meta.get("joins", {}), meta
