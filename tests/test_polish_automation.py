@@ -720,7 +720,32 @@ def test_nothing_is_handed_out_while_the_compiler_cannot_run(game, monkeypatch):
     net, agent, _ = game
     monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: 'The Linux compiler runner is not ready.')
     said = net.readability.claim(agent, 'game')
-    assert said.startswith("The compiler can't run right now") and 'MAKE READABLE' not in said
+    assert said.startswith("The compiler for what's left can't run right now") and 'MAKE READABLE' not in said
     assert not net.store.one("SELECT 1 FROM events WHERE kind='polish'") and not net.store.one('SELECT 1 FROM claims')
     monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: None)
     assert net.readability.claim(agent, 'game').startswith('MAKE READABLE')
+
+
+def test_a_function_is_handed_out_only_when_its_own_compiler_can_run(game, monkeypatch):
+    # An N64 game's smallest function is built with the compiler its Linux runner runs; the check looked only at
+    # the game's own compiler, which ran, and the function was handed out 10 times while the runner was down.
+    from decompnet import toolchains
+
+    net, agent, _ = game
+    with net.store.tx() as db:
+        cfg = json.loads(db.execute('SELECT config FROM projects').fetchone()['config'])
+        g = db.execute("SELECT vram,rom_offset FROM functions WHERE name='g'").fetchone()
+        cfg['function_compilers'] = {'g': {'vram': g['vram'], 'function': 'g', 'toolchain': 'gcc-4.4.0-n64', 'flags': []}}
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+        db.execute("UPDATE functions SET n_insns=60 WHERE name='g'")  # g first, as the bigger one
+    down = {'gcc-4.4.0-n64': 'The Linux compiler runner is not ready.'}
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: down.get(tid))
+    assert net.readability.claim(agent, 'game').startswith('MAKE READABLE: f')  # g skipped, not handed out
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET readable=1 WHERE name='f'")
+        db.execute('DELETE FROM claims')
+    said = net.readability.claim(agent, 'game')
+    assert said.startswith("The compiler for what's left can't run right now")
+    assert [r['detail'] for r in net.store.all("SELECT detail FROM events WHERE kind='polish'")] == ['f']
+    down.clear()
+    assert net.readability.claim(agent, 'game').startswith('MAKE READABLE: g')
