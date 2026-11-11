@@ -70,6 +70,7 @@ class EditMixin:
             self._event(db, proj["id"], agent_id, "split", f"{prev['name']} / {new_name}")
         self._xrefs.pop(proj["id"], None)
         self._ops.pop(proj["id"], None)
+        self._facts_cache.pop(proj["id"], None)  # new code over bytes that were data moves the code/data line
         return f"✅ new function {new_name} at 0x{new.vram:08X}, {new.size} bytes."
 
     def _cut(self, proj, fn, addr: int, new_name: str, syms: SymbolTable, agent_id: int | None, kind: str, detail: str,

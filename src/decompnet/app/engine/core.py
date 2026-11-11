@@ -17,12 +17,6 @@ from ...rom import split
 from ...rom.symbols import Symbol, SymbolTable
 from .common import _ADDRESS
 
-# Settings parsed, by their text: GTA San Andreas's are 193 KB, and one request read them 4 to 12 times (a range
-# check after a match, 462 times). A few versions are kept: each change of a project's settings is a new text.
-SETTINGS_KEPT = 8
-_settings: dict[str, dict] = {}
-_settings_lock = threading.Lock()
-
 
 class Core(Network):
     def __init__(self, db_path: str | Path, workspace: Path, claim_ttl: int = 30 * 60):
@@ -32,6 +26,8 @@ class Core(Network):
         self._sym_override: dict[int, SymbolTable] = {}
         self._roms: dict[int, tuple[bytes, list[split.Segment]]] = {}
         self._xrefs: dict[int, dict] = {}
+        self._scan_cache: dict[int, dict] = {}  # project id -> {vram: (content token, classes scan)}; survives edits
+        self._facts_cache: dict[int, dict] = {}  # project id -> {vram: (content token, structs Facts)}; survives edits
         self._draft_locks: dict[int, threading.Lock] = {}  # function id -> held while its machine draft is made
         self._headers: dict[tuple, object] = {}  # (project id, header version, for m2c) -> its declarations
         self._asm_names: dict[int, dict] = {}  # project id -> {function id: (size, the names its assembly mentions)}
@@ -66,27 +62,22 @@ class Core(Network):
         from ..progress import Progress
         self.progress = Progress(self)
 
+    def _corpus(self, pid: int) -> list[tuple[int, bytes, list, bytes]]:
+        """(vram, code, relocs, content token) for every function with target bytes. The token is a cheap content
+        hash so classes/structs extraction can be reused for every function whose bytes did not change (the
+        expensive part of recovery; the whole-game rebuild on each layout change was the ceiling under many agents)."""
+        out = []
+        for r in self.store.all("SELECT vram, target, relocs FROM functions WHERE project_id=? AND target IS NOT NULL", pid):
+            token = hashlib.blake2b(r["target"] + b"\x1e" + r["relocs"].encode(), digest_size=16).digest()
+            out.append((r["vram"], r["target"], json.loads(r["relocs"]), token))
+        return out
+
     def _project(self, slug: str | None):
         row = super()._project(slug)
         if hasattr(self, "progress") and self.project_missing(row) is None:
             self.progress.sync(row["slug"])
             row = super()._project(row["slug"])
         return row
-
-    @staticmethod
-    def cfg(proj) -> dict:
-        """A project's settings. Shared by everyone who reads the same version of them: read it, never change it
-        (_update_cfg changes settings; code that edits a copy parses its own, json.loads(proj["config"]))."""
-        text = proj["config"]
-        with _settings_lock:
-            parsed = _settings.get(text)
-        if parsed is None:
-            parsed = json.loads(text)
-            with _settings_lock:
-                if len(_settings) >= SETTINGS_KEPT:
-                    _settings.pop(next(iter(_settings)))  # the oldest version
-                _settings[text] = parsed
-        return parsed
 
     def find_moved_projects(self) -> list[str]:
         """Projects whose folder isn't where it was, found again in this workspace by their name: a whole Decomp

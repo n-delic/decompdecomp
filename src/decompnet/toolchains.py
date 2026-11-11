@@ -144,7 +144,11 @@ def _registry_data() -> dict:
             **{k.id: k.toolchain() for k in kits.KITS}}
 
 
+@functools.cache
 def registry() -> dict[str, Toolchain]:
+    # Built once and shared read-only: _registry_data() is already cached for the process and the registry's
+    # contents never change at runtime, but get() calls this on every compile and consoles read it constantly.
+    # Rebuilding every Toolchain (Toolchain.__post_init__ per entry) per call cost ~5% of CPU under many agents.
     return {tid: Toolchain(id=tid, **spec) for tid, spec in _registry_data().items()}
 
 

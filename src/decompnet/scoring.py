@@ -353,6 +353,18 @@ def compact_asm(text: str) -> str:
     return "\n".join(out)
 
 
+def asm_page(text: str, start: int, count: int) -> tuple[str, int, "int | None"]:
+    """A slice of (already compacted) assembly or draft by line: lines[start : start+count]. Returns
+    (page_text, total_lines, next_start) where next_start is the line to resume from, or None at the end.
+    Lets a large function's assembly or draft be paged instead of dumped whole into an agent's context."""
+    lines = text.splitlines()
+    total = len(lines)
+    start = max(0, start)
+    end = total if not count or count <= 0 else min(total, start + count)
+    nxt = end if end < total else None
+    return "\n".join(lines[start:end]), total, nxt
+
+
 def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
     """Compare a candidate with the target instruction by instruction: a score (0 is a match, lower is closer), the
     rows to show, and what's missing or extra. Equal bytes are a match whatever the score."""

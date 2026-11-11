@@ -312,6 +312,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "claim_function": lambda net, agent, slug, function="", strategy="", count=1:
         _claim(net, agent, slug, function, strategy, count),
     "get_function": lambda net, agent, slug, function: net.get_function(function, slug, agent),
+    "read_asm": lambda net, agent, slug, function, start=0, count=1500, part="asm":
+        net.read_asm(function, int(start), int(count), part, slug, agent),
     "compile_and_diff": lambda net, agent, slug, function, source: _compile(net, agent, slug, function, source),
     "last_diff": lambda net, agent, slug, function, context=2: net.last_diff(agent, function, slug, context),
     "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False:
@@ -512,6 +514,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         """Show any function (by name or address): assembly, status, best attempt, notes. Read matched
         functions to learn how this codebase is written."""
         return await run(ctx, "get_function", function=function)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def read_asm(ctx: Context, function: str, start: int = 0, count: int = 1500, part: str = "asm") -> str:
+        """Read a page of a big function's target assembly (part="asm", the default) or its current draft/best
+        attempt C (part="draft"), when the full text does not fit in one claim_function/get_function reply.
+        `start`: first line (0-based). `count`: lines per page. The reply tells you the next `start`, or says
+        it is the end. Page through to the end before deciding a function cannot be matched."""
+        return await run(ctx, "read_asm", function=function, start=start, count=count, part=part)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def compile_and_diff(ctx: Context, function: str, source: str) -> str:
