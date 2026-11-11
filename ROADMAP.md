@@ -1853,10 +1853,15 @@ for that function when only those match), its polished C on functions matched he
 instructions and other numbers (app/regional_adapt.py) get the C fitted: the structs it defines laid out at the
 offsets this release reads (checked by a compiler probe), offsets and constants that changed, a big global's fields
 reached by byte offset moved as the address map says; and a variable inside one of this project's big blocks named
-by its address (on a Europe/North America N64 pair: 177 of 719 open functions matched, 81 of them fitted). Next:
-- Structs from the shared header whose fields moved between releases: this release's own copy of the type, through
-  the checked header edit (other functions use them, so not per function).
-- Near pairs (80-99% alike) that still miss: the instruction-by-instruction difference in the agent's brief.
+by its address (on a Europe/North America N64 pair: 177 of 719 open functions matched, 81 of them fitted). The
+numbers are read from the instructions both releases have, lined up around added or removed ones; floats built from
+immediates too (MIPS: `Arch.built_floats`); and each pair's names placed by its own relocations before the
+game-wide address map (data inside a big block moves unevenly): 22 more of the 536 left. Next:
+- Structs from a shared header whose fields moved between releases: this release's own copy of the type, through
+  the checked header edit (that game's header had none: its functions define their structs).
+- Near pairs (80-99% alike) that still miss: what's left after fitting is real code change (an added call, a
+  branch), not a single edit: the fitted C is the function's best start, and its instruction-by-instruction
+  difference belongs in the agent's brief.
 - Run it on PS1, PS2 and PSP games (their serials differ by region, so by identical code) and mark the table.
 - Project mode: pair object files' functions (GameCube/Wii by game ID, DS by game code, PC by its executable).
 Related: "Names from another build you own", for a build with symbols (a demo, a port).

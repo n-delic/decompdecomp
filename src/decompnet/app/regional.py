@@ -26,7 +26,7 @@ import re
 import threading
 import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 
 from ..network import IN_BUILD, NetworkError
@@ -243,6 +243,32 @@ def similarity(x: Fn, y: Fn) -> float:
 
 # ------------------------------------------------------------------ how addresses move
 
+def _moved_place(x: Fn, y: Fn, offset: int) -> int | None:
+    """Where an instruction of x is in y, for similar code (a few instructions added or removed): in the stretches
+    of instructions both have, lined up. Only for fixed-width instructions (each op is 4 bytes of the function), and
+    not for the ops cut short at similarity.MAX_OPS."""
+    if len(x.ops) * 4 != x.size or len(y.ops) * 4 != y.size or offset % 4:
+        return None
+    blocks = _matching_blocks(x.ops, y.ops)
+    i = offset // 4
+    for a, b, n in blocks:
+        if a <= i < a + n:
+            return (b + i - a) * 4 + offset % 4
+    return None
+
+
+_BLOCKS: dict[tuple[tuple, tuple], list] = {}
+
+
+def _matching_blocks(xs: tuple, ys: tuple) -> list:
+    key = (xs, ys)
+    if key not in _BLOCKS:
+        if len(_BLOCKS) > 4096:
+            _BLOCKS.clear()
+        _BLOCKS[key] = SequenceMatcher(None, xs, ys, autojunk=False).get_matching_blocks()
+    return _BLOCKS[key]
+
+
 class AddressMap:
     """Release A's addresses in release B, learned from identical pairs: each relocation fills in an address in
     both, and paired functions start at each other's address. An address voted two ways is dropped; one between
@@ -252,12 +278,13 @@ class AddressMap:
         votes = defaultdict(Counter)
         for x, y, score in pairs:
             votes[x.vram][y.vram] += 1
-            if score == 1.0:  # the same instructions: a relocation at the same place fills in the same thing
-                # (by place, not list order: one release's list can lack an entry, a %lo inside a big symbol)
-                theirs = {(o, t): ay for o, t, ay in y.relocs}
-                for o, t, ax in x.relocs:
-                    if (o, t) in theirs:
-                        votes[ax][theirs[(o, t)]] += 1
+            # a relocation at the same instruction fills in the same thing (by place, not list order: one
+            # release's list can lack an entry, a %lo inside a big symbol)
+            theirs = {(o, t): ay for o, t, ay in y.relocs}
+            for o, t, ax in x.relocs:
+                at = o if score == 1.0 else _moved_place(x, y, o)
+                if at is not None and (at, t) in theirs:
+                    votes[ax][theirs[(at, t)]] += 1
         self.exact = {a: next(iter(c)) for a, c in votes.items() if len(c) == 1}
         self.conflicts = len(votes) - len(self.exact)
         self.known = sorted(self.exact)
@@ -306,12 +333,34 @@ class Plan:
     translate: dict[str, str]  # the other release's names -> this project's now, for its C and header
     name_at: object = None  # this project's name at an address: (name, offset)
     their_address: object = None  # the other release's address for one of its names
+    their_size: object = None  # the other release's size for one of its names (0: not known)
     address_of: object = None  # this project's address for one of its names
+    local: dict = field(default_factory=dict)  # for one pair (for_pair): its addresses -> this project's
+
+    def for_pair(self, x: Fn, y: Fn) -> 'Plan':
+        """This plan for one pair's C: the addresses its relocations fill in, read from the instructions both have,
+        before the game-wide map. Data inside one of this project's big blocks moves unevenly (the map guessed a
+        variable 0x20C bytes off), but each instruction the two have in common says where its address went."""
+        local = {}
+        theirs = {(o, t): ay for o, t, ay in y.relocs}
+        for o, t, ax in x.relocs:
+            at = o if x.ops == y.ops else _moved_place(x, y, o)
+            if at is not None and (at, t) in theirs:
+                local.setdefault(ax, set()).add(theirs[(at, t)])
+        return replace(self, local={a: next(iter(b)) for a, b in local.items() if len(b) == 1})
+
+    def _here(self, address: int) -> int | None:
+        return self.local.get(address, self.addresses.get(address))
 
     def name(self, word: str) -> str | None:
         """This project's name for one of the other release's: given, or an address name (D_8009B5D0) moved as
         the address map says (inside one of this project's own symbols, the address's own name: see plan). None: no
         name here (unmapped)."""
+        if self.local and self.their_address is not None:
+            at = self.their_address(word)
+            if at is not None and at in self.local:
+                name, offset = self.name_at(self.local[at])
+                return f'D_{self.local[at]:08X}' if offset else name
         if word in self.translate:
             return self.translate[word]
         m = AUTO_NAME.fullmatch(word)
@@ -329,7 +378,7 @@ class Plan:
 
     def offsets(self, source: str) -> str:
         """The other release's C with `name + 0x3252` (a field of a big global reached by its byte offset) moved to
-        where that field is here, as the address map says; the rest as it was. Its names are the other release's
+        where that field is here, as the pair's own relocations or the address map say; the rest as it was. Its names are the other release's
         still: text() changes them."""
         if self.their_address is None or self.address_of is None:
             return source
@@ -338,10 +387,11 @@ class Plan:
             base, number = m.group(1), m.group(2)
             start = self.their_address(base)
             here = self.address_of(self.name(base) or base)
-            if start is None or here is None:
-                return m.group(0)
             offset = int(number, 0)
-            target = self.addresses.get(start + offset)
+            # only inside the symbol: `ptr + 0x245` on a pointer variable is where it points, plus 0x245
+            if start is None or here is None or not (self.their_size and offset < self.their_size(base)):
+                return m.group(0)
+            target = self._here(start + offset)
             if target is None or target - here == offset or target < here:
                 return m.group(0)
             new = target - here
@@ -405,7 +455,7 @@ def plan(net, proj, donor) -> Plan:
         else:
             offer(current, s.name, address)
     return Plan(pairs, addresses, rows, kept, unmapped, taken, translate, syms.name_at, donor_syms.resolve,
-                syms.resolve)
+                lambda name: getattr(donor_syms.by_name.get(name), 'size', 0) or 0, syms.resolve)
 
 
 # ------------------------------------------------------------------ header types
@@ -645,8 +695,8 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
             b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
             outcome = 'skip' if b is None or b['status'] != 'open' else \
                 _try_open(net, agent, proj, donor, a, b, p.text(a['matched_source']), score)
-            if outcome != 'match' and score == 1.0 and b is not None and b['status'] == 'open':
-                outcome = _try_fitted(net, agent, proj, donor, p, a, b) or outcome
+            if outcome != 'match' and b is not None and b['status'] == 'open':
+                outcome = _try_fitted(net, agent, proj, donor, p, a, b, (x, y)) or outcome
         except Exception as error:  # one odd function must not stop the rest
             logging.getLogger('decompdecomp').info('regional: %s from %s failed: %s', y.name, a['name'], error)
             outcome = 'skip'
@@ -711,10 +761,10 @@ def _likeliest(x: Fn, y: Fn, score: float) -> tuple:
     return (y.status != 'open', x.key != y.key, -score)
 
 
-def _try_fitted(net, agent, proj, donor, p, a, b) -> str | None:
+def _try_fitted(net, agent, proj, donor, p, a, b, pair=None) -> str | None:
     """'match' or 'miss' for the other release's C fitted to this release's numbers (regional_adapt: its own
-    structs laid out as this release reads them, offsets and constants that changed; Plan.offsets: fields of a big
-    global reached by byte offset), on a function with the same instructions as its pair; None when nothing differs
+    structs laid out as this release reads them, offsets, constants and floats that changed, read from the
+    instructions both have; Plan.offsets: fields of a big global reached by byte offset); None when nothing differs
     that the C could change."""
     from .. import scoring
     from . import regional_adapt
@@ -725,7 +775,8 @@ def _try_fitted(net, agent, proj, donor, p, a, b) -> str | None:
         return None
     header = net._context(proj['id'], b['unit'])['header']
     plain = p.text(a['matched_source'])
-    moved = p.text(p.offsets(a['matched_source']))
+    own = p.for_pair(*pair) if pair else p
+    moved = own.text(own.offsets(a['matched_source']))
     tries = [moved] if moved != plain else []
     for base in (moved, plain) if moved != plain else (plain,):
         tries += [v for v in regional_adapt.variants(net, proj, header, base, b, old, new) if v not in tries]
