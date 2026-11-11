@@ -92,6 +92,9 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             try:
                 if net.project_missing(row):
                     continue  # its folder is gone: only its records are left, and those are removed, not set up
+                # #260: after a restart no check is being weighed, so one saved as "checking" waits instead of spinning
+                net.rangechecks.normalise(row["slug"])
+                net.filecompilers.normalise(row["slug"])
                 if net.is_rom(row):
                     net.rangechecks.reopen(row["slug"])
                 net.console(row).on_start(net, row["slug"], log=jobs.logger.info)

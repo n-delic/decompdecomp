@@ -49,6 +49,8 @@ class FileCompilers:
         self.net = net
         self.surveys: dict[str, dict] = {}  # slug -> the running or last survey
         self._lock = threading.Lock()  # one check run at a time
+        self._running: dict[str, int] = {}  # slug -> check runs under way (the panel says "checking" while one does)
+        self._running_lock = threading.Lock()
 
     # ------------------------------------------------------------------ the project's files
 
@@ -355,19 +357,60 @@ class FileCompilers:
             return "confirmed"
         return "neutral" if any((pct or 0) >= 100 for pct in with_other.values()) else "unknown"
 
+    def working(self, slug: str) -> bool:
+        """Whether this project's checks are being weighed now."""
+        with self._running_lock:
+            return bool(self._running.get(slug))
+
+    def normalise(self, slug: str) -> int:
+        """A check saved as "checking" with no run behind it (an older version, or the app stopped mid-weigh) is
+        waiting, with a reason: #260, the Settings panel said "checking…" forever after a restart. A run under way
+        keeps its checks."""
+        if self.working(slug):
+            return 0
+        try:
+            proj = self.net._project(slug)
+        except NetworkError:
+            return 0
+        stale = [c for c in self.net.cfg(proj).get("file_checks", []) if c["status"] == "checking"]
+        if not stale:
+            return 0
+
+        def change(cfg):
+            for c in cfg.get("file_checks", []):
+                if c["status"] == "checking":
+                    c["status"] = "waiting"
+                    c["said"] = "waiting: the app restarted before it finished; the next match weighs it again"
+        self.net._update_cfg(slug, change)
+        return len(stale)
+
     def recheck(self, slug: str, cid: int | None = None) -> int:
         """Weigh a check (or every open one) again, in the background. Returns how many."""
         checks = [c for c in (self.net.cfg(self.net.project_row(slug)).get("file_checks") or [])
                   if c["status"] in OPEN and (cid is None or c["id"] == cid)]
 
         def run():
-            with self._lock:
-                for c in checks:
-                    try:
-                        self._weigh(slug, copy.deepcopy(c))
-                    except Exception:  # noqa: BLE001  a check never stands between an agent and its work: it waits
-                        log.exception("file range check failed")
+            try:
+                with self._lock:
+                    for c in checks:
+                        try:
+                            self._weigh(slug, copy.deepcopy(c))
+                        except Exception:  # noqa: BLE001  #260: a check that failed waits, it doesn't say "checking"
+                            log.exception("file range check #%s failed", c["id"])
+                            try:
+                                self._wait(slug, c, "waiting: weighing it failed; the next match tries again")
+                            except Exception:  # noqa: BLE001  the run's own failure is the one to report
+                                log.exception("file range check #%s could not be marked waiting", c["id"])
+            finally:
+                with self._running_lock:
+                    left = self._running.get(slug, 1) - 1
+                    if left:
+                        self._running[slug] = left
+                    else:
+                        self._running.pop(slug, None)
         if checks:
+            with self._running_lock:
+                self._running[slug] = self._running.get(slug, 0) + 1
             if self.background:
                 threading.Thread(target=run, daemon=True, name=f"file-check-{slug}").start()
             else:
@@ -377,11 +420,13 @@ class FileCompilers:
     def _weigh(self, slug: str, c: dict) -> None:
         files = self._files(slug)
         if not files:
+            self._wait(slug, c, "waiting: this project has no source files with code yet")
             return
         at = {source: k for k, (_, _, source, _) in enumerate(files)}
         inside = lambda k: any(a < files[k][1] and files[k][0] < b for a, b in c["spans"])  # noqa: E731
         o = at.get(c["origin"], next((k for k in range(len(files)) if inside(k)), None))
         if o is None:
+            self._wait(slug, c, "waiting: the suggested files are not in the project any more")
             return
         evidence = dict(c["evidence"])
 
@@ -416,7 +461,12 @@ class FileCompilers:
         if status == "quirk":
             return self._finish(slug, c, "quirk", start, end)
         if nxt is not None and nxt.vram in c["tasks"]:
-            return self._save(slug, c, "checking: an agent has the next file's task")  # (its answer moves it on)
+            source = next(s for s0, _, s, _ in files if s0 == nxt.vram)
+            fn = next((f for f in self._rows_by_file(self.net.project_row(slug)).get(source, ())
+                       if f["status"] == "open"), None)
+            said = (f"waiting: {fn['name']} in {source} is next (first in line for an agent)" if fn is not None else
+                    "waiting: an agent has the next file's task; its answer moves the check on")
+            return self._wait(slug, c, said)  # (its answer moves it on)
         if nxt is not None and len(c["tasks"]) < MAX_TASKS:
             source = next(s for s0, _, s, _ in files if s0 == nxt.vram)
             fn = next((f for f in self._rows_by_file(self.net.project_row(slug)).get(source, ())
@@ -426,7 +476,7 @@ class FileCompilers:
                 self.net.set_priority(slug, fn["name"], True)
                 self.net.add_note(self.net.local_agent("autopilot")[0], slug, self.task_text(c, fn["name"], source),
                                   fn["name"])
-                return self._save(slug, c, f"checking: {fn['name']} in {source} is next (first in line for an agent)")
+                return self._wait(slug, c, f"waiting: {fn['name']} in {source} is next (first in line for an agent)")
         c["status"] = "waiting"
         self._save(slug, c, "waiting: no neighbouring file settled it yet; the user decides, or agents' next "
                             "matches do")
@@ -469,6 +519,11 @@ class FileCompilers:
                 self.net.set_priority(slug, f["name"], False)
         with self.net.store.tx() as db:
             self.net._event(db, proj["id"], None, "compiler", f"range check #{c['id']} ({compiler}): {text}")
+
+    def _wait(self, slug: str, c: dict, said: str) -> None:
+        """Save a check waiting, so the panel doesn't read it as work still running (#260)."""
+        c["status"] = "waiting"
+        self._save(slug, c, said)
 
     def _save(self, slug: str, c: dict, said: str, resolve: str | None = None) -> None:
         c["said"] = said

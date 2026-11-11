@@ -2845,7 +2845,9 @@ def test_a_neighbouring_file_nobody_can_tell_yet_goes_to_an_agent(tmp_path, monk
     agent = net.local_agent("claude-sonnet-5-5-1")[0]
     net.suggest(agent, "p", "7.1 built these", compiler="MSVC/7.1", ranges="0x401020-0x401030")
     (check,) = net.cfg(net.project_row("p"))["file_checks"]
-    assert check["status"] == "checking" and check["said"].startswith("checking: _func_00401010 in src/auto/text_00401010")
+    # #260: an agent has to take it, so it waits (the app isn't checking anything); "checking" made the panel spin
+    assert check["status"] == "waiting" and check["said"].startswith("waiting: _func_00401010 in src/auto/text_00401010")
+    assert net.compiler_answer("p")["checking"] is False
     assert net.cfg(net.project_row("p"))["priority"] == ["_func_00401010"]
     note = net.store.one("SELECT text FROM notes WHERE function_id=?", net._function("_func_00401010", "p")["id"])
     assert 'try_compiler("_func_00401010", "MSVC/7.1")' in note["text"]
@@ -2853,6 +2855,50 @@ def test_a_neighbouring_file_nobody_can_tell_yet_goes_to_an_agent(tmp_path, monk
     (check,) = net.cfg(net.project_row("p"))["file_checks"]
     assert check["status"] == "confirmed" and switched == [([[0x401010, 0x401030]], "MSVC/7.1")]
     assert net.cfg(net.project_row("p"))["priority"] == []
+
+
+def test_a_file_check_left_checking_does_not_spin_after_a_restart(tmp_path, monkeypatch):
+    """#260: a PC project's check saved as "checking" by an older version kept the Settings panel saying "checking…"
+    after a restart. A fresh network over the same database answers that it isn't checking, and saves it as waiting
+    with a reason."""
+    from decompnet.app.engine import RomNetwork
+
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, {})
+    stale = {"id": 1, "suggestion": None, "toolchain": "MSVC/7.1", "origin": "src/auto/text_00401020.cpp",
+             "spans": [[0x401020, 0x401030]], "status": "checking", "evidence": {}, "tasks": [], "range": None, "t": 0}
+    net._update_cfg("p", lambda cfg: cfg.__setitem__("file_checks", [stale]))
+    restarted = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    restarted.filecompilers.background = False  # (the survey it starts has no C to build: done before the answer)
+    assert restarted.compiler_answer("p")["checking"] is False
+    (check,) = restarted.cfg(restarted.project_row("p"))["file_checks"]
+    assert check["status"] == "waiting" and "restarted" in check["said"]
+
+
+def test_a_file_check_whose_files_are_gone_waits_with_a_reason(tmp_path, monkeypatch):
+    """#260: the early way out of a weigh (the suggested files are no longer in the project) used to leave the check
+    as "checking" with no work behind it."""
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, {})
+    stale = {"id": 1, "suggestion": None, "toolchain": "MSVC/7.1", "origin": "src/auto/gone.cpp",
+             "spans": [[0x900000, 0x900010]], "status": "checking", "evidence": {}, "tasks": [], "range": None, "t": 0}
+    net._update_cfg("p", lambda cfg: cfg.__setitem__("file_checks", [stale]))
+    net.filecompilers.recheck("p")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "waiting" and "not in the project" in check["said"]
+    assert net.compiler_answer("p")["checking"] is False
+
+
+def test_a_file_check_that_fails_to_weigh_waits_with_a_reason(tmp_path, monkeypatch):
+    """#260: an exception in a weigh was logged and the check stayed "checking" forever."""
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, _only_with("00401020"))
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    net.suggest(agent, "p", "7.1 built these", compiler="MSVC/7.1", ranges="0x401020-0x401030")
+
+    def fail(*args):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(net.filecompilers, "_weigh", fail)
+    net.filecompilers.recheck("p")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "waiting" and check["said"].startswith("waiting: weighing it failed")
 
 
 @needs_tools

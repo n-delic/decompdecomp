@@ -210,7 +210,8 @@ def test_checks_dismissed_without_a_compile_are_weighed_again_once():
 def test_without_evidence_the_nearest_neighbour_goes_to_an_agent_and_giving_up_moves_on():
     net = FakeNet(functions(9), {"f4": {CW[0]}})
     _, check = start(net)
-    assert check["status"] == "checking" and net.priority == ["f3"]
+    # #260: an agent has to answer, so the check waits; "checking" made the Settings panel say "checking…" forever
+    assert check["status"] == "waiting" and net.priority == ["f3"]
     assert any(fn == "f3" and "try_compiler(\"f3\"" in t for fn, t in net.notes)
     # the agent gives up: inconclusive, the next neighbour (the other side) is tried
     net.rangechecks.gave_up(net.proj, net._function("f3", "game"))
@@ -220,6 +221,72 @@ def test_without_evidence_the_nearest_neighbour_goes_to_an_agent_and_giving_up_m
     net.rangechecks.tried(net.proj, net._function("f5", "game"), CW[0], CW[1], "f5", True)
     check = net.cfg(net.proj)["range_checks"][-1]
     assert check["status"] == "confirmed" and net.priority == []
+
+
+def test_a_rom_check_waiting_for_an_agent_answers_not_checking(tmp_path):
+    """#260: a check whose neighbour went to an agent waits for it; the Settings panel must not say "checking…"
+    while no run is weighing it."""
+    from decompnet.app.engine import RomNetwork
+
+    from .test_loading import tiny_game
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    proj = tiny_game(net, functions=9)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET n_insns=20")  # long enough to be evidence
+    net.rangechecks.background = False
+    net._update_cfg("game", lambda cfg: cfg.setdefault("suggestions", []).append(
+        {"id": 1, "status": "open", "ranges": [], "check": None}))
+    origin = net._function("func_4", "game")
+    net.rangechecks.propose(proj, {"id": 1}, "func_4", CW[0], CW[1],
+                            [[origin["vram"], origin["vram"] + origin["size"]]])
+    (check,) = net.cfg(net.project_row("game"))["range_checks"]
+    assert check["status"] == "waiting"
+    assert net.compiler_answer("game")["checking"] is False
+
+
+def test_a_rom_check_left_checking_does_not_spin_after_a_restart(tmp_path):
+    """#260: an older version saved the check as "checking" and nothing was running after a restart. A fresh network
+    over the same database answers that it isn't checking, and saves the check as waiting with a reason."""
+    from decompnet.app.engine import RomNetwork
+
+    from .test_loading import tiny_game
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    tiny_game(net)
+    stale = {"id": 1, "suggestion": None, "toolchain": CW[0], "flags": CW[1], "origin": 0x100000,
+             "origin_source": None, "spans": [[0x100000, 0x100010]], "status": "checking", "evidence": {},
+             "tasks": [], "given_up": [], "range": None, "t": 0}
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("range_checks", [stale]))
+    restarted = RomNetwork(tmp_path / "app.db", tmp_path)
+    assert restarted.compiler_answer("game")["checking"] is False
+    (check,) = restarted.cfg(restarted.project_row("game"))["range_checks"]
+    assert check["status"] == "waiting" and "restarted" in check["said"]
+
+
+def test_a_rom_check_whose_range_no_longer_holds_a_function_waits_with_a_reason():
+    """#260: the early way out of a weigh used to leave the check as "checking" with no work behind it."""
+    net = FakeNet(functions(9), {})
+    check = {"id": 1, "suggestion": None, "toolchain": CW[0], "flags": CW[1], "origin": 0x999999,
+             "origin_source": None, "spans": [[0x999999, 0x999A00]], "status": "checking", "evidence": {},
+             "tasks": [], "given_up": [], "range": None, "t": 0}
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("range_checks", [check]))
+    net.rangechecks.recheck("game", background=False)
+    (check,) = net.cfg(net.proj)["range_checks"]
+    assert check["status"] == "waiting" and "no longer holds" in check["said"]
+
+
+def test_a_rom_check_that_fails_to_weigh_waits_with_a_reason(monkeypatch):
+    """#260: an exception in a weigh was logged and the check stayed "checking" forever."""
+    net = FakeNet(functions(9), {"f4": {CW[0]}})
+    start(net)
+
+    def fail(*args):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(net.rangechecks, "_weigh", fail)
+    net.rangechecks.recheck("game", background=False)
+    check = net.cfg(net.proj)["range_checks"][-1]
+    assert check["status"] == "waiting" and check["said"].startswith("waiting: weighing it failed")
 
 
 def test_a_recheck_reads_the_functions_once_and_never_their_assembly():

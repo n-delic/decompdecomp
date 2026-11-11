@@ -144,6 +144,33 @@ class RangeChecks:
         """The open checks, each a copy of its own to change (the settings they're read from are shared)."""
         return [copy.deepcopy(c) for c in self.net.cfg(proj).get("range_checks", []) if c["status"] in OPEN]
 
+    def working(self, slug: str) -> bool:
+        """Whether this project's checks are being weighed now, or wait on the recheck debounce."""
+        with self._queue_lock:
+            return slug in self._draining
+
+    def normalise(self, slug: str) -> int:
+        """A check saved as "checking" with no run behind it (an older version, or the app stopped mid-weigh) is
+        waiting, with a reason: #260, the Settings panel said "checking…" forever after a restart. A run under way
+        keeps its checks."""
+        if self.working(slug):
+            return 0
+        try:
+            proj = self.net._project(slug)
+        except NetworkError:
+            return 0
+        stale = [c for c in self.net.cfg(proj).get("range_checks", []) if c["status"] == "checking"]
+        if not stale:
+            return 0
+
+        def change(cfg):
+            for c in cfg.get("range_checks", []):
+                if c["status"] == "checking":
+                    c["status"] = "waiting"
+                    c["said"] = "waiting: the app restarted before it finished; the next match weighs it again"
+        self.net._update_cfg(slug, change)
+        return len(stale)
+
     def _judged(self, proj, fn, label, source: str) -> bool:
         """The judge's verdict on C built with a compiler, remembered by the C's hash: a recheck after every match
         asked the same questions again, two compiles for each neighbour. A new header version asks again."""
@@ -221,6 +248,8 @@ class RangeChecks:
         """Weigh the wanted checks (None: every open one), reading every function's address and size, and the
         compiler map, once for all of them."""
         with self._lock:
+            proj = None
+            checks: list[dict] = []
             try:
                 proj = self.net._project(slug)
                 checks = [c for c in self._open(proj) if None in wanted or c["id"] in wanted]
@@ -230,9 +259,18 @@ class RangeChecks:
                 at = {r["vram"]: i for i, r in enumerate(rows)}
                 cmap = self.net.compiler_map(proj)
                 for c in checks:
-                    self._weigh(proj, c, rows, at, cmap)
+                    try:
+                        self._weigh(proj, c, rows, at, cmap)
+                    except Exception:  # noqa: BLE001  #260: a check that failed waits, it doesn't say "checking"
+                        log.exception("range check #%s failed", c["id"])
+                        self._wait(proj, c, "waiting: weighing it failed; the next match tries again")
             except Exception:  # noqa: BLE001  a check never stands between an agent and its work: it waits
                 log.exception("range check failed")
+                for c in checks:  # (#260: no check this run was to weigh stays "checking" with no work behind it)
+                    try:
+                        self._wait(proj, c, "waiting: weighing it failed; the next match tries again")
+                    except Exception:  # noqa: BLE001  the run's own failure is the one to report
+                        log.exception("range check #%s could not be marked waiting", c["id"])
 
     def _weigh(self, proj, c: dict, rows: list, at: dict[int, int], cmap) -> None:
         """One check, from its functions in address order (`at`: address -> index) and the compiler map."""
@@ -240,6 +278,7 @@ class RangeChecks:
         label = (c["toolchain"], tuple(c["flags"]))
         survey = (cfg.get("compiler_survey") or {}).get("confirmed", {})
         if not rows:
+            self._wait(proj, c, "waiting: this project has no functions to test the range on yet")
             return
         inside = lambda r: any(a <= r["vram"] < b for a, b in c["spans"])  # noqa: E731
         if c["origin"] in at:
@@ -248,6 +287,7 @@ class RangeChecks:
             firsts = [i for a, b in c["spans"] if (i := bisect.bisect_left(rows, a, key=lambda r: r["vram"])) < len(rows)
                       and rows[i]["vram"] < b]
             if not firsts:
+                self._wait(proj, c, "waiting: the suggested range no longer holds a function")
                 return
             o = min(firsts)
         evidence = dict(c["evidence"])
@@ -306,14 +346,16 @@ class RangeChecks:
             return
         given = set(c["tasks"])
         if nxt is not None and nxt.vram in given:
-            return  # an agent has it, or will: its answer moves the check on
+            fn = rows[at[nxt.vram]]
+            self._wait(proj, c, f"waiting: {fn['name']} is next (first in line for an agent)")  # its answer moves it on
+            return
         if nxt is not None and len(given) < MAX_TASKS:
             fn = rows[at[nxt.vram]]
             c["tasks"] = c["tasks"] + [nxt.vram]
             self.net.set_priority(proj["slug"], fn["name"], True)
             agent, _ = self.net.local_agent("autopilot")
             self.net.add_note(agent, proj["slug"], self.task_text(c, fn["name"]), fn["name"])
-            self._save(proj, c, f"checking: {fn['name']} is next (first in line for an agent)")
+            self._wait(proj, c, f"waiting: {fn['name']} is next (first in line for an agent)")
             return
         c["status"] = "waiting"
         self._save(proj, c, "waiting: no neighbour settled it yet; the user decides, or agents' next matches do")
@@ -362,6 +404,11 @@ class RangeChecks:
                 self.net.set_priority(proj["slug"], fn["name"], False)
         with self.net.store.tx() as db:
             self.net._event(db, proj["id"], None, "compiler", f"range check #{c['id']} ({short}): {text}")
+
+    def _wait(self, proj, c: dict, said: str) -> None:
+        """Save a check waiting, so the panel doesn't read it as work still running (#260)."""
+        c["status"] = "waiting"
+        self._save(proj, c, said)
 
     def _save(self, proj, c: dict, said: str, resolve: str | None = None) -> None:
         c["said"] = said
