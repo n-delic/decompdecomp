@@ -1007,3 +1007,19 @@ def test_apply_remote_layout_join_spares_an_overlay_alias_of_the_head(built, tmp
     assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='func_800007D0'", pid) is None  # tail folded
     assert net._function("func_800007C4", slug)["size"] == orig_size                                          # head joined
     assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='alias_800007C4'", pid)         # alias spared
+
+
+def test_apply_remote_layout_join_folds_a_cross_unit_tail(built, tmp_path):  # noqa: F811
+    # An overlay over-split can leave the tail under a different unit label than the head. Mirroring the host's
+    # join must still fold it: the pieces are one ROM run, whatever their unit (#192 review point 3).
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("tester")
+    orig = net._function("func_800007C4", slug)
+    orig_size, pid = orig["size"], orig["project_id"]
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")       # guest is over-split: head + tail
+    with net.store.tx() as db:                                           # the tail sits under another unit label
+        db.execute("UPDATE functions SET unit='ovl_other' WHERE project_id=? AND name='func_800007D0'", (pid,))
+    net.apply_remote_layout(slug, [{"name": "func_800007C4", "vram": orig["vram"], "size": orig_size}], [])
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='func_800007D0'", pid) is None  # tail folded
+    assert net._function("func_800007C4", slug)["size"] == orig_size                                          # head joined
