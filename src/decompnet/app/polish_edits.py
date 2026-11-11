@@ -38,17 +38,34 @@ def type_names(header):
     return names
 
 
+DIRECTIVE = re.compile(r'^[ \t]*#(?:[^\n]*\\\n)*[^\n]*', re.M)  # one preprocessor line, with its continuations
+
+
 def scope(source, function):
     """The function's span in `source`, or None when a small edit can't be confined to it.
 
     A machine draft keeps its preamble (M2C_DEFINES, extern declarations) around the function. Refusing
     every rename there sent agents back to retyping whole files with make_readable. Edits stay inside this
     span, and locals_in leaves out any name also used outside it (a #define or prototype naming it).
+    #define and #undef lines inside it stay as they are, as outside text (a 529-instruction function of an
+    N64 game defines its field accessors there, and no helper would retype it whole); a conditional or an
+    include inside it still needs make_readable.
     """
     clean = _blank(source)
     span = find(source, function)
-    if span is None or '::' in function or re.search(r'^\s*#', clean[span[0]:span[1]], re.M):return None
+    if span is None or '::' in function:return None
+    if any(not re.match(r'[ \t]*#[ \t]*(?:define|undef)\b', m[0])
+           for m in DIRECTIVE.finditer(clean, span[0], span[1])):return None
     return span
+
+
+def _code(clean, span):
+    """`clean` with the #define/#undef lines inside the function blanked (edits never touch them), and their names."""
+    names = set()
+    for m in DIRECTIVE.finditer(clean, span[0], span[1]):
+        names.update(IDENT.findall(m[0]))
+        clean = clean[:m.start()] + re.sub(r'[^\n]', ' ', m[0]) + clean[m.end():]
+    return clean, names
 
 
 def locals_in(source, function, header=''):
@@ -64,12 +81,13 @@ def locals_in(source, function, header=''):
     type_pat = '(?:'+'|'.join(re.escape(t) for t in sorted(types))+r'|(?:struct|union|enum)\s+[A-Za-z_]\w*)'
     decl = re.compile(r'(?:\b(?:const|volatile|register)\s+)*\b'+type_pat+
                       r'(?:\s+(?:const|volatile|signed|unsigned|long|short|int))*\s*\**\s*([A-Za-z_]\w*)\s*(?=[,)=;\[])')
-    matches = list(decl.finditer(clean, span[0], span[1]))
+    code, in_directives = _code(clean, span)
+    matches = list(decl.finditer(code, span[0], span[1]))
     # Static/extern locals have linkage or storage-sensitive names, so leave them to a full rewrite.
     names = [m[1] for m in matches if m[1] != function and m[1] not in KEYWORDS
              and not re.search(r'\b(?:extern|static)\s*$',clean[max(0,m.start()-16):m.start()])]
     if len(names) != len(set(names)):return []  # shadowed locals need a scope-aware edit
-    outside = set(IDENT.findall(clean[:span[0]]+' '+clean[span[1]:]))
+    outside = set(IDENT.findall(clean[:span[0]]+' '+clean[span[1]:])) | in_directives
     return [name for name in names if name not in outside]
 
 
@@ -93,9 +111,10 @@ def apply(source, function, renames, comment='', types=None, header=''):
     if set(types)-words or (set(types) | set(types.values()))-known_types:
         raise NetworkError('Type edits need existing type names from the header. Add declarations with edit_context or edit_file first.')
     span = scope(source, function)
-    if span is None:raise NetworkError('Polish this function with make_readable: its definition has preprocessor lines.')
+    if span is None:raise NetworkError('Polish this function with make_readable: it has a preprocessor conditional or include inside.')
+    code, _ = _code(clean, span)
     edits = []
-    for m in IDENT.finditer(clean, span[0], span[1]):
+    for m in IDENT.finditer(code, span[0], span[1]):
         before = clean[:m.start()].rstrip()
         if before.endswith(('.', '->', '::')):continue
         if m[0] in renames or m[0] in types:

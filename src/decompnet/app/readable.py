@@ -138,6 +138,15 @@ class Readability:
         span = find(source, name)
         return span[0] if span and span[0] > BIG_PREAMBLE else 0
 
+    def _cannot_compile(self, proj) -> str | None:
+        """Why the project's compiler can't start now (its Linux runner down, say), or None."""
+        from .. import toolchains
+        tid = (self.net.cfg(proj).get("compiler") or {}).get("toolchain")
+        try:
+            return toolchains.runtime_error(tid) if tid else None
+        except toolchains.ToolchainError:  # a compiler this copy doesn't know: its compiles say why
+            return None
+
     def _retry_unread(self, proj) -> None:
         """Give a function one fresh start (polish_retry) when it was given up on while its brief was too big to read:
         those hand-outs say nothing about the function. Once per function, so one that fails again stays given up."""
@@ -259,6 +268,11 @@ class Readability:
         proj = self.net._project(slug)
         fork = not self.net.is_rom(proj)
         self._retry_unread(proj)
+        if not fork and (why := self._cannot_compile(proj)):
+            # every edit would fail, and each hand-out counts towards POLISH_CLAIMS: an N64 game's smallest
+            # function was given up on after 10 hand-outs while its compiler runner was down
+            return (f"The compiler can't run right now: {why}\nNothing was handed out. Wait a minute, then "
+                    "claim_readable again.")
         now = time.time()
         from .local_claims import expiry_ids
         store = self.net.project_store(proj['id'])
