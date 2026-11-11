@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import bisect
 import json
+import logging
 import re
+import threading
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -31,6 +33,8 @@ from ..network import IN_BUILD, NetworkError
 from ..rom.symbols import AUTO_NAME
 from .function_names import generated as _generated
 
+WIDTH = 6  # the other release's code tried on this many functions at once (fewer on a computer with fewer workers)
+_SETTINGS = threading.Lock()  # one compiler-settings change at a time
 SHARED_ENOUGH = 0.4  # without a release key: share of the smaller game's functions that are identical
 NEAR = 0.8  # instruction similarity for two functions in the same place to be paired
 MAX_GAP_CELLS = 40000  # a gap between identical pairs larger than this (functions x functions) stays unpaired
@@ -577,39 +581,83 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
     theirs = {r['id']: r for r in selected(net.project_store(donor['id']), donor['id'],
                                             [x.id for x, _, _ in p.pairs if x.status == 'matched'])}
     work = [(x, y, s) for x, y, s in p.pairs if x.id in theirs and theirs[x.id]['matched_source']]
-    work.sort(key=lambda t: (t[1].status != 'open', -t[2]))  # open functions first, identical code first
+    work.sort(key=lambda t: _likeliest(*t))
     counts = dict(matched=0, polished=0, tried=0)
     agent, _ = net.local_agent('autopilot')
-    for done, (x, y, score) in enumerate(work):
+    lock = threading.Lock()
+    active: dict[int, str] = {}
+    tally = dict(done=0)
+
+    def show(phase):
+        progress(dict(phase=phase, done=tally['done'], total=len(work), donor=', '.join(d for d, _ in active.values()),
+                      function=', '.join(f for _, f in active.values())))
+
+    def one(item):
+        x, y, score = item
         if stop is not None and stop.is_set():
-            break
+            return
         a = theirs[x.id]
-        progress(dict(phase="Trying the other release's code" if y.status == 'open' else "Bringing its polished code",
-                      done=done, total=len(work), donor=a['name'], function=y.name))
-        b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
-        if b is None:
-            continue
-        source = p.text(a['matched_source'])
-        if b['status'] == 'open':
-            outcome = _try_open(net, agent, proj, donor, a, b, source, score)
+        with lock:
+            active[y.id] = (a['name'], y.name)
+            show("Trying the other release's code")
+        try:
+            b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
+            outcome = 'skip' if b is None or b['status'] != 'open' else \
+                _try_open(net, agent, proj, donor, a, b, p.text(a['matched_source']), score)
+        except Exception as error:  # one odd function must not stop the rest
+            logging.getLogger('decompdecomp').info('regional: %s from %s failed: %s', y.name, a['name'], error)
+            outcome = 'skip'
+        with lock:
+            active.pop(y.id, None)
+            tally['done'] += 1
             counts['tried'] += outcome != 'skip'
             if outcome == 'match':
                 counts['matched'] += 1
                 if job is not None and hasattr(job, 'cross_matched'):
                     job.cross_matched += 1
-                log(f"{b['name']} matched from {a['name']} in {donor['name']}.")
-        elif b['status'] == 'matched' and not b['readable'] and a['readable']:
-            counts['tried'] += 1
-            try:
-                said = net.readability.submit(agent, slug, b['name'], source)
-            except NetworkError:
-                continue  # held by an agent, or changed meanwhile
-            if said.startswith('✅'):
-                counts['polished'] += 1
+            show("Trying the other release's code")
+        if outcome == 'match':
+            log(f"{y.name} matched from {a['name']} in {donor['name']}.")
+
+    # Open functions side by side: nearly all of a try is the compiler, and the machine has cores to spare (the
+    # shared compiler slots keep agents' compiles going meanwhile). One at a time took 20 minutes on a game's
+    # 1,968 pairs.
+    from . import workers
+    from .purpose_work import Executor
+    open_work = [t for t in work if t[1].status == 'open']
+    with Executor(max_workers=max(1, min(WIDTH, workers.WORKERS)), purpose="Other release's code",
+                  project=slug, stop=stop.set if stop is not None else None) as pool:
+        list(pool.map(one, open_work))
+    # Polished code goes in one at a time: each replaces a matched function's C and checks it again.
+    for x, y, score in work[len(open_work):]:
+        if stop is not None and stop.is_set():
+            break
+        a = theirs[x.id]
+        progress(dict(phase="Bringing its polished code", done=tally['done'], total=len(work), donor=a['name'],
+                      function=y.name))
+        tally['done'] += 1
+        b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
+        if b is None or b['status'] != 'matched' or b['readable'] or not a['readable']:
+            continue
+        counts['tried'] += 1
+        try:
+            said = net.readability.submit(agent, slug, b['name'], p.text(a['matched_source']))
+        except NetworkError:
+            continue  # held by an agent, or changed meanwhile
+        if said.startswith('✅'):
+            counts['polished'] += 1
     progress(dict(phase="Trying the other release's code", done=len(work), total=len(work)))
     log(f"{counts['matched']} matched and {counts['polished']} polished from {donor['name']}; "
         f"{counts['tried']} tried.")
     return counts
+
+
+def _likeliest(x: Fn, y: Fn, score: float) -> tuple:
+    """Open functions first; then those whose bytes are the same in both releases apart from the addresses they
+    fill in (the same twin key), whose other C matches unless the compiler differs; then by similarity. Pairs scored
+    1.0 for the same instructions can still differ in their operands (a struct field at 0x42 in one release, 0x4c
+    in the other), and those rarely match as they are."""
+    return (y.status != 'open', x.key != y.key, -score)
 
 
 def _try_open(net, agent, proj, donor, a, b, source, score) -> str:
@@ -654,10 +702,11 @@ def _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) -
     if not ok:
         return None
     settings = dict(toolchain=theirs['toolchain'], flags=list(theirs['flags']))
-    current = _row(net, proj['slug'])  # (the pass's row is older than the settings other matches set)
-    try:
-        net._apply_compiler_config(current, scoped_config(current, b, settings))
-        result = net.try_quietly(agent, _row(net, proj['slug']), b, note + source, synchronize=False)
-    except (NetworkError, ToolchainError):
-        return None  # the project changed meanwhile (a helper's match): the next pass tries again
+    with _SETTINGS:  # tries run side by side: each reads the settings it changes after the last one's change
+        current = _row(net, proj['slug'])  # (the pass's row is older than the settings other matches set)
+        try:
+            net._apply_compiler_config(current, scoped_config(current, b, settings))
+            result = net.try_quietly(agent, _row(net, proj['slug']), b, note + source, synchronize=False)
+        except (NetworkError, ToolchainError):
+            return None  # the project changed meanwhile (a helper's match): the next pass tries again
     return 'match' if result.get('matched') else None

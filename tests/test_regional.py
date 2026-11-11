@@ -244,3 +244,48 @@ def test_trying_the_other_releases_code_does_not_sync_saved_files_per_function(b
     result = regional.transfer(net, "other-release")
     assert result["tried"] >= 1 and result["matched"] >= 1
     assert len(synced) <= 4  # opening the two projects; it was 17 for this one try
+
+
+def test_the_same_bytes_are_tried_before_the_same_instructions():
+    """A pair scored 1.0 for the same instructions can differ in a struct field's offset, and rarely matches as it is:
+    pairs with the same bytes (twin keys) go first, so a pass's matches come in its first minute."""
+    from decompnet.app.regional import _likeliest
+
+    same = (fn(1, 0, 'k'), fn(2, 0, 'k'), 1.0)
+    operands = (fn(3, 4, 'a'), fn(4, 4, 'b'), 1.0)
+    near = (fn(5, 8, 'c'), fn(6, 8, 'c'), 0.9)
+    done = (fn(7, 12, 'd'), Fn(8, 'f', 12, 12, 'd', 64, 'matched'), 1.0)
+    assert sorted([done, operands, near, same], key=lambda t: _likeliest(*t)) == [same, near, operands, done]
+
+
+def test_the_other_releases_code_is_tried_on_several_functions_at_once(built, tmp_path, monkeypatch):  # noqa: F811
+    """Nearly all of a try is the compiler: one at a time took 20 minutes on a 2,000-function game."""
+    import threading
+    import time
+
+    from decompnet.app import regional, workers
+
+    from .test_app_engine import CLAMP
+
+    net, slug, agent = _two_releases(tmp_path)
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    real = regional.plan
+    def every_open_function(net_, proj, donor):  # the matched function's C offered to each open one
+        p = real(net_, proj, donor)
+        x = next(x for x, _, _ in p.pairs if x.name == "func_800007D0")
+        p.pairs = [(x, y, 1.0) for _, y, _ in p.pairs if y.status == 'open']
+        return p
+    monkeypatch.setattr(regional, "plan", every_open_function)
+    monkeypatch.setattr(workers, "WORKERS", 4)
+    running, most, lock = [0], [0], threading.Lock()
+    def slow(*_):
+        with lock:
+            running[0] += 1
+            most[0] = max(most[0], running[0])
+        time.sleep(0.2)
+        with lock:
+            running[0] -= 1
+        return 'miss'
+    monkeypatch.setattr(regional, "_try_open", slow)
+    result = regional.transfer(net, "other-release")
+    assert result["tried"] >= 3 and most[0] > 1
