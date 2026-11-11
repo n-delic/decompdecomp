@@ -32,8 +32,8 @@ def test_the_boot_stub_says_where_bss_starts():
     assert bss_start(bytes(0x2000)) is None  # a game that boots its own way: found otherwise
 
 
-@pytest.fixture
-def project(tmp_path):
+def build(tmp_path):
+    """The homemade project (test_data_agents builds it too)."""
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     rom = image()
     (tmp_path / "game.z64").write_bytes(rom)
@@ -52,6 +52,12 @@ def project(tmp_path):
                                                  json.dumps(relocs), "{}"))
         db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                    (pid, "boot", TEXT, 32, "func"))
+    return net
+
+
+@pytest.fixture
+def project(tmp_path):
+    net = build(tmp_path)
     yield net
     if hasattr(net, "autosave"):
         net.autosave.close()

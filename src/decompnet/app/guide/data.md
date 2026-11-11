@@ -26,6 +26,8 @@ Floats
 The game's data as C (ROM projects; for ports, docs/PORTING.md)
 - `get_data_unit("D_80012340")` shows one data symbol: its address, how far it runs (to the next place the game
   names or its code refers to), its bytes, who uses it.
+- Data agents (Start agents → Write data as C) take units with `claim_data()` and give back one they can't write
+  with `release_data(name, note)`; the note is what the next try reads first.
 - `compile_data(name, source)` judges one definition, kept only when it holds the game's bytes there: all of the
   datum (half a table doesn't count), pointers written by name (`void (*D_x[2])(void) = {func_a, func_b};`,
   `&D_80012340`), strings it points at brought along. Zeros the game keeps in initialised data need `= {0}`;

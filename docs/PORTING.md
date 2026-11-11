@@ -79,9 +79,20 @@ Built:
 On a finished 2,121-function N64 game: its 0xCCC0 bytes of data found after its last code segment; drafts of the 129
 zero-filled data and 19 tables of function pointers matched, 38 `.bss` symbols too.
 
-Still to do: an agent task for it (claims, a brief, a launch option, like polishing); the export building matched
-data from its C in place of the assembly; typed drafts; programs whose data isn't after their last code segment
-(overlays) and consoles other than the N64 (a `bss_start` reader each).
+- **A task for agents** (`app/data_agents.py`): **Start agents → Write data as C**, offered on ROM projects once
+  polishing is. The queue is every place in the initialised data the game's code refers to, in address order,
+  fewest tries first, but places inside a unit already in C (a struct's fields). `claim_data` leases one unit (it
+  comes back on its own after 30 minutes without a compile), `compile_data` judges it and a match frees it,
+  `release_data` gives it back with a note the next try reads. Data agents see only the data tools and read-only
+  helpers, compile only the unit they hold, and their compiles count as their session's work.
+
+Driven through the agents' own tool calls on a copy of a finished N64 game: 80 claims, 79 matched with mechanical
+drafts, none handed out twice. Mechanical drafts (raw `u32` words, pointers cast to `u32`) match the bytes but are
+what a 64-bit port must undo; the prompt asks agents for the types the code uses, which the judge can't check.
+
+Still to do: an LLM agent run on a real game; the export building matched data from its C in place of the
+assembly; typed drafts; flagging pointers stored as integers (phase 0's open count); `.bss`; programs whose data
+isn't after their last code segment (overlays) and consoles other than the N64 (a `bss_start` reader each).
 
 ### 2. Asset map, written as a Torch config
 
