@@ -1831,9 +1831,14 @@ the user links it; functions paired (identical code in the game's order, then th
 move learned from the identical pairs' relocations; the other release's function and global names and its header's
 missing types brought over through the checked bulk rename and header edit; and, first in autopilot's free pass,
 its matched C with this project's names tried on each paired function (with the other release's compiler settings
-for that function when only those match), its polished C on functions matched here. Next:
-- Near pairs (80-99% alike) that still miss: the other release's C's constant and offset variants tried, then the
-  instruction-by-instruction difference in the agent's brief.
+for that function when only those match), its polished C on functions matched here. Pairs with the same
+instructions and other numbers (app/regional_adapt.py) get the C fitted: the structs it defines laid out at the
+offsets this release reads (checked by a compiler probe), offsets and constants that changed, a big global's fields
+reached by byte offset moved as the address map says; and a variable inside one of this project's big blocks named
+by its address (on a Europe/North America N64 pair: 177 of 719 open functions matched, 81 of them fitted). Next:
+- Structs from the shared header whose fields moved between releases: this release's own copy of the type, through
+  the checked header edit (other functions use them, so not per function).
+- Near pairs (80-99% alike) that still miss: the instruction-by-instruction difference in the agent's brief.
 - Run it on PS1, PS2 and PSP games (their serials differ by region, so by identical code) and mark the table.
 - Project mode: pair object files' functions (GameCube/Wii by game ID, DS by game code, PC by its executable).
 Related: "Names from another build you own", for a build with symbols (a demo, a port).

@@ -252,9 +252,12 @@ class AddressMap:
         votes = defaultdict(Counter)
         for x, y, score in pairs:
             votes[x.vram][y.vram] += 1
-            if score == 1.0 and [(o, t) for o, t, _ in x.relocs] == [(o, t) for o, t, _ in y.relocs]:
-                for (_, _, ax), (_, _, ay) in zip(x.relocs, y.relocs):
-                    votes[ax][ay] += 1
+            if score == 1.0:  # the same instructions: a relocation at the same place fills in the same thing
+                # (by place, not list order: one release's list can lack an entry, a %lo inside a big symbol)
+                theirs = {(o, t): ay for o, t, ay in y.relocs}
+                for o, t, ax in x.relocs:
+                    if (o, t) in theirs:
+                        votes[ax][theirs[(o, t)]] += 1
         self.exact = {a: next(iter(c)) for a, c in votes.items() if len(c) == 1}
         self.conflicts = len(votes) - len(self.exact)
         self.known = sorted(self.exact)
@@ -302,10 +305,13 @@ class Plan:
     taken: int  # names this project already uses elsewhere
     translate: dict[str, str]  # the other release's names -> this project's now, for its C and header
     name_at: object = None  # this project's name at an address: (name, offset)
+    their_address: object = None  # the other release's address for one of its names
+    address_of: object = None  # this project's address for one of its names
 
     def name(self, word: str) -> str | None:
         """This project's name for one of the other release's: given, or an address name (D_8009B5D0) moved as
-        the address map says. None: no name here (unmapped, or inside one of this project's own symbols)."""
+        the address map says (inside one of this project's own symbols, the address's own name: see plan). None: no
+        name here (unmapped)."""
         if word in self.translate:
             return self.translate[word]
         m = AUTO_NAME.fullmatch(word)
@@ -315,11 +321,33 @@ class Plan:
         if address is None:
             return None
         name, offset = self.name_at(address)
-        return None if offset else name
+        return f'D_{address:08X}' if offset else name
 
     def text(self, source: str) -> str:
         """The other release's C or header text with this project's names."""
         return _IDENT.sub(lambda m: self.name(m.group(0)) or m.group(0), source)
+
+    def offsets(self, source: str) -> str:
+        """The other release's C with `name + 0x3252` (a field of a big global reached by its byte offset) moved to
+        where that field is here, as the address map says; the rest as it was. Its names are the other release's
+        still: text() changes them."""
+        if self.their_address is None or self.address_of is None:
+            return source
+
+        def moved(m):
+            base, number = m.group(1), m.group(2)
+            start = self.their_address(base)
+            here = self.address_of(self.name(base) or base)
+            if start is None or here is None:
+                return m.group(0)
+            offset = int(number, 0)
+            target = self.addresses.get(start + offset)
+            if target is None or target - here == offset or target < here:
+                return m.group(0)
+            new = target - here
+            return m.group(0)[:m.start(2) - m.start()] + (f'0x{new:X}' if number.lower().startswith('0x') else str(new))
+
+        return _GLOBAL_OFFSET.sub(moved, source)
 
 
 def plan(net, proj, donor) -> Plan:
@@ -352,26 +380,39 @@ def plan(net, proj, donor) -> Plan:
             offer(y.name, x.name, y.vram)
     functions_at = {x.vram for x, _, _ in pairs}
     for s in donor_syms.by_name.values():
-        if s.address in functions_at or s.kind in ('func', 'function'):
+        if s.address in functions_at:
             continue
         address = addresses.get(s.address)
         if address is None:
             unmapped += 0 if generated(s.name) else 1
             continue
         current, offset = syms.name_at(address)
+        if s.kind in ('func', 'function'):
+            # a function too small to pair (or set aside) that paired code calls or takes the address of: its C
+            # says this project's name for it. Not renamed here: its own code wasn't compared.
+            if not offset and syms.resolve(current) == address:
+                translate[s.name] = current
+            continue
         if offset:
-            continue  # inside one of this project's own symbols: its layout differs
+            # inside one of this project's own symbols (a big block nobody split yet, where the other release has
+            # its variables): its C reaches the address by the address's own name, which links there. Kept out of
+            # the names brought over: this project's layout there isn't known. A pass over a game's other release
+            # found 150 functions the same but for such names.
+            translate[s.name] = f'D_{address:08X}'
+            continue
         if generated(s.name):
             translate[s.name] = current
         else:
             offer(current, s.name, address)
-    return Plan(pairs, addresses, rows, kept, unmapped, taken, translate, syms.name_at)
+    return Plan(pairs, addresses, rows, kept, unmapped, taken, translate, syms.name_at, donor_syms.resolve,
+                syms.resolve)
 
 
 # ------------------------------------------------------------------ header types
 
 _COMMENT = re.compile(r'/\*.*?\*/|//[^\n]*', re.S)
 _IDENT = re.compile(r'[A-Za-z_]\w*')
+_GLOBAL_OFFSET = re.compile(r'(?<![\w.>])([A-Za-z_]\w*)\s*\+\s*(0[xX][0-9a-fA-F]+|\d+)(?![\w.])')
 _KEYWORDS = frozenset('auto break case char const continue default do double else enum extern float for goto if '
                       'inline int long register return short signed sizeof static struct switch typedef union '
                       'unsigned void volatile while __attribute__ __inline__'.split())
@@ -604,6 +645,8 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
             b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
             outcome = 'skip' if b is None or b['status'] != 'open' else \
                 _try_open(net, agent, proj, donor, a, b, p.text(a['matched_source']), score)
+            if outcome != 'match' and score == 1.0 and b is not None and b['status'] == 'open':
+                outcome = _try_fitted(net, agent, proj, donor, p, a, b) or outcome
         except Exception as error:  # one odd function must not stop the rest
             logging.getLogger('decompdecomp').info('regional: %s from %s failed: %s', y.name, a['name'], error)
             outcome = 'skip'
@@ -668,12 +711,39 @@ def _likeliest(x: Fn, y: Fn, score: float) -> tuple:
     return (y.status != 'open', x.key != y.key, -score)
 
 
-def _try_open(net, agent, proj, donor, a, b, source, score) -> str:
+def _try_fitted(net, agent, proj, donor, p, a, b) -> str | None:
+    """'match' or 'miss' for the other release's C fitted to this release's numbers (regional_adapt: its own
+    structs laid out as this release reads them, offsets and constants that changed; Plan.offsets: fields of a big
+    global reached by byte offset), on a function with the same instructions as its pair; None when nothing differs
+    that the C could change."""
+    from .. import scoring
+    from . import regional_adapt
+    try:
+        old = scoring.disassemble(net._target_obj(a, donor))
+        new = scoring.disassemble(net._target_obj(b, proj))
+    except (NetworkError, ValueError, KeyError):
+        return None
+    header = net._context(proj['id'], b['unit'])['header']
+    plain = p.text(a['matched_source'])
+    moved = p.text(p.offsets(a['matched_source']))
+    tries = [moved] if moved != plain else []
+    for base in (moved, plain) if moved != plain else (plain,):
+        tries += [v for v in regional_adapt.variants(net, proj, header, base, b, old, new) if v not in tries]
+    outcome = None
+    for source in tries[:regional_adapt.MAX_VARIANTS + 1]:
+        result = _try_open(net, agent, proj, donor, a, b, source, 1.0, how=', fitted to this release\'s offsets')
+        if result == 'match':
+            return 'match'
+        outcome = outcome or (result if result != 'skip' else None)
+    return outcome
+
+
+def _try_open(net, agent, proj, donor, a, b, source, score, how='') -> str:
     """match | miss | skip for the other release's C on an open function, recorded as a cross-game attempt."""
     twins = net.twins
     if twins._missed(b['id'], source, project_id=proj['id']):
         return 'skip'
-    origin = f" in {donor['name']}, another release of this game"
+    origin = f" in {donor['name']}, another release of this game{how}"
     outcome, why = twins._attempt_twin(agent, proj, a, b, source, origin=origin, similar=score < 1.0)
     if outcome == 'miss':
         outcome = _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) or outcome
