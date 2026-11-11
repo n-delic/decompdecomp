@@ -966,6 +966,19 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### Where each libultra function comes from in a port
+
+The N64 kit said every `os*` and `gu*` function was replaced by libultraship. Read against libultraship's source
+(its libultra layer at a3f1e102, the commit Torch pins), it defines 46 of libultra's functions and variables, and
+declares but leaves to the game the math (`gu*`, `sins`, `__cosf`). The kit now says so (`consoles/n64/port.py`:
+`LIBULTRASHIP`, `sdk_group`): what libultraship or the host's C library defines is replaced; libultra's math and
+the synthesizer are the game's own C, compiled for the PC; the rest of libultra's console plumbing (threads, RSP
+tasks, the cartridge manager's queues, Controller Pak and 64DD internals, `osRomBase`) is **glue**, which the port
+supplies. Compile for PC builds the native ones; the link check lists glue as its own group, and counts what the
+kit provides apart from what nothing defines. Left: the glue itself (a main loop in place of threads, RSP tasks
+handed to libultraship's renderer and a mixer, stubs), and reading libultraship's list from its pinned source
+once it's a pinned tool.
+
 ### Calls by a function's old name put right
 
 The link check finds callers that use a function's old name (an automatic `func_` name, or an earlier chosen one

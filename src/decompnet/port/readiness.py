@@ -90,7 +90,7 @@ def readiness(net, slug: str) -> dict:
         "ORDER BY vram, id", proj["id"])
     sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True)
 
-    code = {"total": len(rows), "c": 0, "replaced": [], "native": [], "library_other": [], "game_asm": [],
+    code = {"total": len(rows), "c": 0, "replaced": [], "native": [], "glue": [], "library_other": [], "game_asm": [],
             "open": [], "unproven": []}
     game_c = []
     for r in rows:
@@ -98,7 +98,8 @@ def readiness(net, slug: str) -> dict:
         if hint:
             name = display_name(hint, r["name"])
             groups = {kit.sdk_group(n) for n in hint.get("names") or [name]} if kit else {None}
-            group = "replaced" if "replaced" in groups else "native" if "native" in groups else "library_other"
+            group = ("replaced" if "replaced" in groups else "glue" if "glue" in groups else "native" if "native" in groups
+                     else "library_other")
             code[group].append(name)
             if r["status"] == "matched":
                 code["c"] += 1
@@ -214,8 +215,8 @@ def blockers(report: dict) -> list[str]:
             out.append(f"{sizes['functions']} functions cast pointers to and from 32-bit integers: they build for a "
                        "32-bit PC, but a 64-bit one (macOS) loses half of each pointer.")
     link = report.get("link")
-    if link and (link["undefined"] or link["duplicates"]):
-        parts = [f"{g['symbols']} {g['kind']}" for g in link["groups"]]
+    if link and (link["undefined"] or link["duplicates"]):  # what the kit provides isn't in the way
+        parts = [f"{g['symbols']} {g['kind']}" for g in link["groups"] if g["kind"] != "kit"]
         if link["duplicates"]:
             parts.append(f"{len(link['duplicates'])} defined twice")
         out.append(f"Linked into one PC program, the C would need {link['undefined']} symbols nothing defines: "
@@ -253,7 +254,8 @@ def describe(report: dict) -> str:
     lines = [f"Port readiness ({report['console']}"
              + (f", kit: {report['kit']['name']})" if report["kit"] else ", no port kit yet)"),
              f"Functions: {code['total']}, {code['c']} in C. Library code the kit replaces: {code['replaced']}; "
-             f"library code compiled as it is: {code['native']}; other library code: {code['library_other']}. "
+             f"library code compiled as it is: {code['native']}; library code the port's glue supplies: "
+             f"{code['glue']}; other library code: {code['library_other']}. "
              f"The game's own in assembly: {code['game_asm']}; without C: {code['open']}."]
     if report["graphics"]:
         lines.append("Graphics microcode: " + ", ".join(
@@ -284,6 +286,7 @@ def describe(report: dict) -> str:
         lines.append(f"Linking for a PC ({link['functions']} functions' objects"
                      + (f", {link['unread']} not compiled yet" if link["unread"] else "")
                      + f"): {link['undefined']} symbols needed and defined nowhere"
+                     + (f", {link['provided']} more the kit provides" if link.get("provided") else "")
                      + (f"; {link['zeroed']} pieces of zeroed memory defined by port/src/zeroed_data*.c"
                         if link.get("zeroed") else "") + ".")
         lines += [f"- {g['kind']} ({g['symbols']}, needed by {g['users']} functions): {g['about']}. "

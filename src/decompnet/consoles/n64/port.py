@@ -47,15 +47,38 @@ def microcode(image: bytes) -> list[dict]:
 
 def _sdk_group(name: str) -> str | None:
     """Where a libultra or C library function goes in the port: "replaced" (libultraship or the host's C library
-    has it), "native" (the game's copy compiles for the PC as it is), or None (the game's own code)."""
+    has it), "native" (the game's copy compiles for the PC as it is: math, the synthesizer), "glue" (console
+    plumbing libultraship doesn't have: the port's own glue supplies it, a main loop in place of threads, RSP tasks
+    handed to the renderer and the mixer, stubs for the 64DD), or None (the game's own code)."""
     bare = name.lstrip("_")
-    if re.match(r"(os|gu)[A-Z]|(Printf|Litob|Ldtob)$", bare) or bare in _LIBC or name in _OS_INTERNAL:
-        return "replaced"
-    if re.match(r"(n_)?al[A-Z]|Mus[A-Z]", bare) or name in _SYNTH_INTERNAL:
+    if name in _MATH:  # before the C library: libultra's __cosf is its own, not the host's cosf
         return "native"
+    if name in LIBULTRASHIP or bare in _LIBC or name in _OS_INTERNAL or re.match(r"(Printf|Litob|Ldtob)$", bare):
+        return "replaced"
+    if (re.match(r"gu[A-Z]", bare) or name in _MATH or re.match(r"(n_)?al[A-Z]|Mus[A-Z]", bare)
+            or name in _SYNTH_INTERNAL):
+        return "native"
+    if re.match(r"os[A-Z]", bare):
+        return "glue"
     return None
 
 
+# What libultraship's libultra layer defines (src/libultraship/libultra/*.cpp at Kenix3/libultraship a3f1e102, the
+# commit Torch builds against): the rest of libultra's API is the game's own C (math) or the port's glue.
+LIBULTRASHIP_COMMIT = "a3f1e102e1ed50a3f536fbca2e6e412170e7320b"
+LIBULTRASHIP = frozenset({
+    "__osCurrentTime", "__osEventStateTab", "__osMaxControllers", "__osMotorAccess", "osAiGetLength",
+    "osAiSetNextBuffer", "osCartRomInit", "osContGetReadData", "osContInit", "osContStartReadData",
+    "osCreateMesgQueue", "osCreatePiManager", "osCreateViManager", "osEPiStartDma", "osEepromLongRead",
+    "osEepromLongWrite", "osEepromProbe", "osEepromRead", "osEepromWrite", "osGetCount", "osGetTime",
+    "osInvalDCache", "osInvalICache", "osJamMesg", "osMapTLB", "osMotorInit", "osPiReadIo", "osPiStartDma",
+    "osPiWriteIo", "osRecvMesg", "osSendMesg", "osSetEventMesg", "osSetTime", "osSetTimer", "osViBlack",
+    "osViGetCurrentFramebuffer", "osViGetNextFramebuffer", "osViSetEvent", "osViSetMode", "osViSetSpecialFeatures",
+    "osViSetXScale", "osViSetYScale", "osViSwapBuffer", "osVirtualToPhysical", "osWritebackDCache",
+    "osWritebackDCacheAll"})
+# libultra's own math, pure computation: the game's copy compiles for the PC (libultraship declares some, defines
+# none); the controller CRCs are the same kind of code
+_MATH = frozenset({"sins", "coss", "__sinf", "__cosf", "__osContAddressCrc", "__osContDataCrc"})
 _LIBC = frozenset({"bcopy", "bzero", "bcmp", "memcpy", "memset", "memmove", "memcmp", "strlen", "strcpy",
                    "strncpy", "strcmp", "strncmp", "strcat", "strchr", "sprintf", "vsprintf", "sqrtf", "sinf",
                    "cosf", "sins", "coss", "ldiv", "lldiv", "div", "abs", "rand", "srand", "ldexpf", "ldexp",

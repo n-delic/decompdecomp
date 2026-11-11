@@ -17,7 +17,8 @@ function renderPortReadiness(report) {
   const facts = $("portFacts");
   facts.replaceChildren(
     portRow("Functions", `${code.total.toLocaleString()}, ${code.c.toLocaleString()} in C`),
-    portRow("Library code", `${code.replaced} the kit replaces, ${code.native} compiled as it is, ${code.library_other} other`),
+    portRow("Library code", `${code.replaced} the kit replaces, ${code.native} compiled as it is, `
+      + `${code.glue || 0} the port's glue supplies, ${code.library_other} other`),
     portRow("The game's own without C", `${code.game_asm} in assembly, ${code.open} not matched`),
     portRow("Data reached by address", `${report.data.symbols.toLocaleString()} symbols`
       + (report.data.units ? ` (${report.data.units.toLocaleString()} data units already in C)` : "")),
@@ -37,6 +38,7 @@ function renderPortReadiness(report) {
   const link = report.link;
   if (link) {
     facts.append(portRow("Linked for a PC", `${link.undefined.toLocaleString()} symbols needed and defined nowhere`
+      + (link.provided ? `, ${link.provided} more the kit provides` : "")
       + (link.duplicates.length ? `, ${link.duplicates.length} defined twice` : "")
       + (link.zeroed ? `; ${link.zeroed.toLocaleString()} pieces of zeroed memory defined in port/src` : "")
       + (link.unread ? ` (${link.unread} functions don't compile yet, so what they need isn't known)` : "")));

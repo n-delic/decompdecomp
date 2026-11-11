@@ -25,7 +25,7 @@ def test_each_undefined_symbol_is_sorted_by_what_supplies_it(project):  # noqa: 
     # game's assembly, a libultra function the kit replaces, an unmatched function and something nobody names
     put(net, "update", ["update"], ["helper", "func_80000580", "D_80010000", "g_speed", "drawHud"])
     put(net, "helper", ["helper", "shared_table"], ["boot_stub", "osInvalDCache", "draw_hud", "mystery",
-                                                    "_allocatePVoice"])
+                                                    "_allocatePVoice", "osCreateThread"])
     # _allocatePVoice's C defines it static (libultra's file-local helper): compiled, but it exports nothing
     put(net, "_allocatePVoice", [], [])
     with net.store.tx() as db:  # draw_hud was called drawHud before: the symbol table keeps that name too
@@ -38,16 +38,17 @@ def test_each_undefined_symbol_is_sorted_by_what_supplies_it(project):  # noqa: 
     groups = {g["kind"]: g["examples"] for g in link["groups"]}
     assert groups == {"renamed": ["drawHud (now draw_hud)", "func_80000580 (now draw_hud)"],
                       "static": ["_allocatePVoice"], "assembly": ["boot_stub"],
-                      "not matched": ["draw_hud"], "data": ["D_80010000", "g_speed"], "kit": ["osInvalDCache"],
+                      "not matched": ["draw_hud"], "data": ["D_80010000", "g_speed"], "glue": ["osCreateThread"],
+                      "kit": ["osInvalDCache"],
                       "other": ["mystery"]}
     assert [g["kind"] for g in link["groups"]] == list(pc_link.GROUPS)  # the order fixes come in
-    assert (link["undefined"], link["unread"], link["functions"]) == (9, 1, 5)
+    assert (link["undefined"], link["provided"], link["unread"], link["functions"]) == (9, 1, 1, 5)
     assert link["duplicates"] == [{"name": "shared_table", "in": ["alSynNew", "helper"]}]
     with net.progress.view():
         report = readiness(net, "game")
     text = " ".join(report["blockers"])
     assert "the C would need 9 symbols nothing defines: 2 renamed; 1 static; 1 assembly" in text
-    assert "1 defined twice" in text and "- renamed (2, needed by 1 functions)" in describe(report)
+    assert "1 defined twice" in text and "1 kit" not in text and "- renamed (2, needed by 1 functions)" in describe(report)
 
 
 def test_data_already_in_c_counts_as_defined(project):  # noqa: F811
