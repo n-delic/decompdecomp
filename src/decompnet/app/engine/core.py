@@ -66,11 +66,11 @@ class Core(Network):
         from ..progress import Progress
         self.progress = Progress(self)
 
-    def _project(self, slug: str | None, sync: bool = True):
-        row = super()._project(slug)
+    def _project(self, slug: str | None, *args, sync: bool = True, **kwargs):
+        row = super()._project(slug, *args, **kwargs)
         if sync and hasattr(self, "progress") and self.project_missing(row) is None:
             self.progress.sync(row["slug"])
-            row = super()._project(row["slug"])
+            row = super()._project(row["slug"], *args, **kwargs)
         return row
 
     @staticmethod
