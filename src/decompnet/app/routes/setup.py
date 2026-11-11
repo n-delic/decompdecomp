@@ -245,7 +245,7 @@ def register(app: App) -> None:
                     net.project_row(slug)
             else:
                 net.project_row(slug)
-            if not options.get('focus_function') and options.get("task") not in {"readable", "boundary", "assets", "data"}:
+            if not options.get('focus_function') and options.get("task") not in {"readable", "boundary", "assets", "data", "port"}:
                 net.warm_briefs_soon(slug)  # matching briefs and machine drafts are not polishing inputs
             if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
                 options["effort"] = given["effort"]

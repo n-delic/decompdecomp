@@ -55,6 +55,12 @@ def _rom_data(net, slug: str, cfg: dict, size: int) -> dict:
     return out
 
 
+def _pc(net, proj) -> dict | None:
+    """The last PC compile (port/pc_compile.py), which this report reads but never runs: it takes minutes."""
+    from .pc_compile import summary
+    return summary(net, proj)
+
+
 def readiness(net, slug: str) -> dict:
     """{"kit", "code", "graphics", "audio", "data", "addresses", "rom_data", "blockers"} for a ROM project."""
     from ..app.sdk_identity import display_name, identify
@@ -145,6 +151,7 @@ def readiness(net, slug: str) -> dict:
         "addresses": {"functions": len(literals), "literals": sum(literals.values()),
                       "examples": sorted(literals, key=lambda n: -literals[n])[:_LIMIT]},
         "rom_data": _rom_data(net, slug, cfg, len(image)),
+        "pc": _pc(net, proj),
     }
     report["blockers"] = blockers(report)
     report["ready"] = not report["blockers"]
@@ -180,6 +187,18 @@ def blockers(report: dict) -> list[str]:
     if report["addresses"]["literals"]:
         out.append(f"{report['addresses']['functions']} functions write {report['addresses']['literals']} addresses "
                    "as numbers: each needs to be a symbol so the port (and mods) can move it.")
+    pc = report.get("pc")
+    if pc is None:
+        out.append("The game's C hasn't been compiled for a PC yet: Compile for PC lists what a port build refuses.")
+    else:
+        if pc["failed"]:
+            out.append(f"{pc['failed']} functions don't compile for a PC: "
+                       + "; ".join(f"{k['functions']} {k['kind']}" for k in pc["kinds"] if k["kind"] != "pointer size")
+                       + ". Each needs C a current compiler takes, behind #ifdef PORT if it can't match.")
+        sizes = next((k for k in pc["kinds"] if k["kind"] == "pointer size"), None)
+        if sizes:
+            out.append(f"{sizes['functions']} functions cast pointers to and from 32-bit integers: they build for a "
+                       "32-bit PC, but a 64-bit one (macOS) loses half of each pointer.")
     rom = report["rom_data"]
     if rom["bytes"] and not rom["scanned"]:
         out.append(f"{rom['bytes']:,} bytes of the ROM are outside its code, and ROM Explorer hasn't scanned it: scan "
@@ -211,6 +230,11 @@ def describe(report: dict) -> str:
             lines.append(f"{title}: {', '.join(report['names'][key])}")
     if report["data"]["examples"]:
         lines.append(f"Data symbols by address ({report['data']['symbols']}): {', '.join(report['data']['examples'])}")
+    pc = report.get("pc")
+    if pc:
+        lines.append(f"Compiled for a PC ({pc['target']}): {pc['ok'] + pc['warned']} of {pc['total']} functions "
+                     f"compile, {pc['failed']} don't, {pc['warned']} cast pointers to 32-bit integers.")
+        lines += [f"- {k['kind']} ({k['functions']}): {', '.join(k['examples'])}" for k in pc["kinds"]]
     rom = report["rom_data"]
     if rom["scanned"]:
         lines.append("ROM outside code, as ROM Explorer read it: "
