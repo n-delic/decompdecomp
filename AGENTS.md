@@ -98,7 +98,8 @@ own tests pass: run each feature the app already has on that console, for real, 
 list is ROADMAP.md's "What works where" table, one row per feature; today:
 - starting from your own copy, the judge, machine drafts, autopilot, drafts that follow the header (`redraft`),
   C++ methods drafted as `Class::method`;
-- twins (in a game and across your games), the permuter, shared knowledge;
+- twins (in a game and across your games), other releases of a game (`release_key`, app/regional.py), the permuter,
+  shared knowledge;
 - hand-written assembly and kernel stubs set aside, pieces joined to their function, the agents' "no C makes this"
   verdict, Check again, function-end reports (`report_boundary`);
 - compiler ranges and suggestions, range checks, the compiler map and the judge's survey, flag search

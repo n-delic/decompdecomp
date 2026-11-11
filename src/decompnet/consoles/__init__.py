@@ -417,6 +417,11 @@ class Console:
         """Which game a file is (a sha1), when that isn't the file's own bytes: rooms check members have the same."""
         return None
 
+    def release_key(self, rom: dict) -> str | None:
+        """What every release (region) of one game shares and other games don't, from its imported `rom` facts,
+        or None where nothing does (app/regional.py then compares the games' code)."""
+        return None
+
     def library_candidate(self, path: Path, size: int) -> bool:
         """Whether a library file is plausible before the search hashes its contents."""
         return True

@@ -719,3 +719,10 @@ def test_audio_browser_cancellation_errors_and_explicit_playback():
 def test_rom_model_browser_lifecycle():
     subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_model_browser.js'))],check=True,
                    capture_output=True,text=True)
+
+
+def test_other_releases_panel_links_and_brings_names_with_its_progress_bar():
+    if not NODE:
+        pytest.skip('node is not installed')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_releases.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)

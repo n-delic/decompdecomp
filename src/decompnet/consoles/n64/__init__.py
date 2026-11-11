@@ -99,6 +99,11 @@ class Nintendo64(Console):
 
         return head[:4] in MAGIC
 
+    def release_key(self, rom: dict) -> str | None:
+        # A game code is a media letter, the game's two letters and its region's (NVLP and NVLE: one game).
+        code = rom.get("game_code") or ""
+        return code[:3] if len(code) == 4 and code[:3].isalnum() and code[1:3] != "00" else None
+
     def identity(self, path: Path) -> str | None:
         from .rom import z64_file_sha1
 

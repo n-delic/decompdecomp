@@ -61,6 +61,11 @@ class GameBoyAdvance(Console):
 
         return header.is_gba(head)
 
+    def release_key(self, rom: dict) -> str | None:
+        # A game code's last letter is its region's (AXVE and AXVP: one game).
+        code = rom.get("game_code") or ""
+        return code[:3] if len(code) == 4 and code[:3].isalnum() else None
+
     def read_game(self, file, name: str = "") -> Picked:
         """The cartridge to split; a GBA ROM is at most 32 MiB, so it's read whole."""
         data = Path(file).read_bytes() if isinstance(file, (str, Path)) else bytes(file)
