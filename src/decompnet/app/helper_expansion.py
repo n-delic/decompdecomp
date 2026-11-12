@@ -1,8 +1,9 @@
 """Expand a tiny candidate-owned pointer initializer; no guessed helpers or repeated side effects."""
 import re
 
+from decomprepair.integer_repair_support import edit
+
 from ..forks.csource import _blank, find
-from .integer_repair_support import edit
 
 FAMILIES = ('small_helper_expansion',)
 ID = r'[A-Za-z_]\w*'

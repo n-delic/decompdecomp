@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from decompnet.app import match_shape_repairs as repairs
 from decompnet.app.matched_context import brief, declarations
+from decomprepair import match_shape_repairs as repairs
 
 
 def test_arithmetic_staging_keeps_call_and_expression():
@@ -123,7 +123,7 @@ def test_element_staging_does_not_change_rhs_call_order():
 
 
 def test_function_view_skips_same_line_type_body():
-    from decompnet.app.integer_repair_support import view
+    from decomprepair.integer_repair_support import view
     source='typedef struct {int field;} Item; void f(void){int x; x=1;}'
     part=view(source,'f')
     assert part.body=='int x; x=1;'

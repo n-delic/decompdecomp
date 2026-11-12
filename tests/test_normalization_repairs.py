@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from decompnet.app import draft_repairs, iterative_repairs, repair_ranking
-from decompnet.app import normalization_repairs as repairs
+from decomprepair import normalization_repairs as repairs
 
 
 def setter_source():

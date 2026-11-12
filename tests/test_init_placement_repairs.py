@@ -1,6 +1,6 @@
-from decompnet.app import global_array_repairs as arrays
-from decompnet.app import guard_shape_repairs as shape
-from decompnet.app import init_placement_repairs as placement
+from decomprepair import global_array_repairs as arrays
+from decomprepair import guard_shape_repairs as shape
+from decomprepair import init_placement_repairs as placement
 
 LOOP = '''void f(void) {
     s32 i = 0;

@@ -9,11 +9,11 @@ from decompnet.app import (
     allocation_evidence,
     draft_repairs,
     frame_plateau,
-    halfword_store_repairs,
     iterative_repairs,
     repair_ranking,
     search_frontier,
 )
+from decomprepair import halfword_store_repairs
 
 HEADER='typedef unsigned char u8; typedef unsigned short u16; typedef short s16; typedef int s32;'
 SOURCE='''#define H(p,o) (*(u16 *)((u8 *)(p)+(o)))

@@ -1,6 +1,6 @@
 """Synthetic source only: real compiler evidence stays in the private experiment folder."""
 from decompnet.app import draft_repairs
-from decompnet.app import inline_scheduling_repairs as repairs
+from decomprepair import inline_scheduling_repairs as repairs
 
 
 def family(source, label):

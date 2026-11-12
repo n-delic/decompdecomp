@@ -6,16 +6,10 @@ import subprocess
 
 import pytest
 
-from decompnet.app import (
-    integer_repair_support,
-    iterative_repairs,
-    later_local_repairs,
-    lifetime_donor_ranking,
-    local_flow,
-    residual_followups,
-)
-from decompnet.app.allocator_call_guards import dominators
-from decompnet.app.later_local_phases import region
+from decompnet.app import iterative_repairs, residual_followups
+from decomprepair import integer_repair_support, later_local_repairs, lifetime_donor_ranking, local_flow
+from decomprepair.allocator_call_guards import dominators
+from decomprepair.later_local_phases import region
 
 SOURCE = '''int f(int a,int b) { int value; int later; int answer;
 value=3; value += a+b; answer=value; later=9; observe(later); return answer; }'''

@@ -38,6 +38,10 @@ decomp = "decompnet.app.cli:main"
 requires = ["uv_build>=0.12.18,<0.14.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+# decomprepair is the standalone repair library (src/decomprepair/__init__.py); it ships in the same wheel for now
+module-name = ["decompnet", "decomprepair"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
@@ -57,7 +61,7 @@ extend-exclude = ["site", "src/decompnet/consoles/*/project_template/tools/ninja
 select = ["F", "I", "E9", "B006", "B008", "B023"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["decompnet"]
+known-first-party = ["decompnet", "decomprepair"]
 
 [tool.pytest.ini_options]
 # ~10,000 tests: run them in parallel. loadscope keeps a module's tests on one worker, so its

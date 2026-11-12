@@ -1,7 +1,7 @@
-from decompnet.app import buffer_address_repairs as buffers
 from decompnet.app import helper_call_diagnostics, source_diagnostics
 from decompnet.app import source_preparation as prep
 from decompnet.arch.mips_runtime import entry_context
+from decomprepair import buffer_address_repairs as buffers
 
 
 def test_same_file_definition_preserved_with_plain_alternative(tmp_path):

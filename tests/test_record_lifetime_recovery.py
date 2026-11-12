@@ -1,7 +1,8 @@
 """Homemade lifetime/store examples; no game code or target data."""
 import pytest
 
-from decompnet.app import draft_repairs, pointer_result_repairs, record_lifetime_recovery, record_store_bundles
+from decompnet.app import draft_repairs
+from decomprepair import pointer_result_repairs, record_lifetime_recovery, record_store_bundles
 
 HEADER='typedef signed short s16; typedef unsigned short u16; typedef signed int s32;'
 POINTER='''typedef struct { int id; } Item;
@@ -86,7 +87,8 @@ def test_combined_recipe_is_bounded_and_keeps_all_three_required_edges():
     out=record_lifetime_recovery.variants(source,'f',HEADER,'mips')
     assert 0<len(out)<=4
     assert all('Entry *inner;' not in s and '__repair_next_field' in s and '(s16)(x + half)' in s for _,s in out)
-    from decompnet.app import iterative_repairs, narrow_store_repairs
+    from decompnet.app import iterative_repairs
+    from decomprepair import narrow_store_repairs
     selected=iterative_repairs.targeted_variants(source,{},dict(name='f',asm=''),'mips',[],HEADER,tagged=True,limit=4)
     assert selected[:len(out)]==out
     drafts=list(narrow_store_repairs.machine_drafts([('raw',source)],'f',HEADER,'mips'))

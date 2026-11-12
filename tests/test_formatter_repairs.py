@@ -1,4 +1,5 @@
-from decompnet.app import formatter_repairs, switch_tables
+from decompnet.app import switch_tables
+from decomprepair import formatter_repairs
 
 
 def family(source, kind):

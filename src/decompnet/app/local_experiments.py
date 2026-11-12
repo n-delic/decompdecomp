@@ -4,23 +4,15 @@ import json
 import re
 import time
 
-from ..network import NetworkError
-from ..project import compiler_for
-from . import (
-    adaptive_repairs,
+from decomprepair import (
     address_association_repairs,
-    agent_evidence,
-    agent_targets,
-    agent_tokens,
     branch_layout_repairs,
     call_initialization_repairs,
     callee_prototype_repairs,
     captured_repairs,
     copy_lifetime_repairs,
     debug_boundary_repairs,
-    draft_repairs,
     evidence_repairs,
-    expression_recipes,
     expression_repairs,
     focused_lifetime_repairs,
     independent_address_repairs,
@@ -33,15 +25,26 @@ from . import (
     mmio_repairs,
     pattern_repairs,
     pointer_cast_repairs,
-    pointer_index_scope,
-    prototype_reuse,
     register_repairs,
     register_reuse_repairs,
+    store_address_repairs,
+)
+
+from ..network import NetworkError
+from ..project import compiler_for
+from . import (
+    adaptive_repairs,
+    agent_evidence,
+    agent_targets,
+    agent_tokens,
+    draft_repairs,
+    expression_recipes,
+    pointer_index_scope,
+    prototype_reuse,
     repair_ranking,
     repair_sequences,
     stack_layout,
     stack_padding_repairs,
-    store_address_repairs,
     switch_tables,
 )
 from .repair_generation import call as _generated
@@ -79,7 +82,7 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
                 net._agent_outcomes={}
             net._agent_outcomes[agent.id,fn['id']]=checked
         pools = available(net,agent,slug,fn,source,revision,requested,deadline=time.monotonic()+max(0,(deadline-time.monotonic())*0.35),desired=max_trials if families is not None else 0)
-        from .repair_localisation import order as local_order
+        from decomprepair.repair_localisation import order as local_order
         evidence = checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id'])) or {}
         for family,pool in pools.items():
             pools[family] = [candidate for _,candidate in local_order(source,[(family,c) for c in pool],evidence.get('repair_locations'))]
@@ -100,7 +103,7 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
                 proj=net._project(slug)
                 header=(net._context(proj['id'],fn['unit']) or {'header':''})['header']
                 explanation=' '+explain_scratch(source,fn['name'],header,proj['arch'])
-            from . import call_preparation_repairs
+            from decomprepair import call_preparation_repairs
             if families and set(families).intersection(call_preparation_repairs.FAMILIES):
                 proj=net._project(slug)
                 header=(net._context(proj['id'],fn['unit']) or {'header':''})['header']
@@ -163,7 +166,7 @@ def available(net, agent, slug, fn, source, revision, requested, *, deadline=Non
              repr(rtl_value_trace.saved(net,proj,fn,source,ctx['header'] if ctx else '')))
     durable_scope=agent_tokens.target_scope(net,fn,'')
     revision_scope=agent_tokens.target_scope(net,fn,revision)
-    from .repair_preflight import invalid_call
+    from decomprepair.repair_preflight import invalid_call
     def eligible(family,candidate):
         return candidate!=source and not invalid_call(candidate,fn['name']) and not agent_tokens.compiled_before(net,fn,candidate,durable_scope) and not agent_tokens.target_tried(net,fn,revision,'local:'+family,candidate,revision_scope)
     with repair_generation.session(net,scope,deadline,requested,accept=eligible,goal=desired) as state:
@@ -256,7 +259,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
         if measured and measured.get('source') == source:
             pools['stack_padding'] += stack_padding_repairs.grow(source,fn['name'],proj['arch'],measured.get('rows') or [])
     if 'spill_normalization' in pools and proj['arch'] == 'mips':
-        from . import normalization_repairs
+        from decomprepair import normalization_repairs
         measured = getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if measured and measured.get('source') == source:
             pools['spill_normalization'] = normalization_repairs.frame_variants(source,fn['name'],measured.get('rows') or [])
@@ -273,7 +276,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
         if generator.FAMILY in pools:
             pools[generator.FAMILY]=[s for _,s in generator.variants(source,fn['name'],header,proj['arch'])]
     if 'scalar_storage_reuse' in pools:
-        from . import scalar_storage_reuse
+        from decomprepair import scalar_storage_reuse
         measured=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if measured and measured.get('source')==source and measured.get('input_scope')==agent_evidence.build_key(net,fn)[0]:
             ctx=net._context(proj['id'],fn['unit'])
@@ -320,8 +323,9 @@ def _available(net, agent, slug, fn, source, revision, requested):
             family=labels[candidate]
             if family in pools and family in draft_repairs.AGENT_FAMILIES:
                 pools[family].append(candidate)
+    from decomprepair.repair_preflight import invalid_call
+
     from .repair_generation import ACTIVE
-    from .repair_preflight import invalid_call
     durable_scope=agent_tokens.target_scope(net,fn,'')
     # Reuse the pass fingerprint instead of repeating header/rule reads per proposal.
     state=ACTIVE.get()

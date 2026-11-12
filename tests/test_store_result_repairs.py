@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from decompnet.app.store_result_repairs import FAMILY, variants
+from decomprepair.store_result_repairs import FAMILY, variants
 
 
 def source(body, prefix='', parameters='struct R *p, int flag'):

@@ -1,5 +1,5 @@
-from decompnet.app import captured_control_repairs as repair
 from decompnet.app import draft_repairs
+from decomprepair import captured_control_repairs as repair
 
 
 def proposals(source,family):

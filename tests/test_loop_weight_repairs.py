@@ -4,7 +4,8 @@ import subprocess
 
 import pytest
 
-from decompnet.app import allocation_evidence, draft_repairs, loop_weight_repairs, repair_ranking
+from decompnet.app import allocation_evidence, draft_repairs, repair_ranking
+from decomprepair import loop_weight_repairs
 
 
 def test_loop_scopes_keep_update_pairs_and_exclude_control_transfers():

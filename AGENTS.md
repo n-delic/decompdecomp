@@ -137,6 +137,11 @@ is in `app/agents.py`. The rest of the app asks `agents.get(kind)` and never com
 Adding an agent (copy `agents/template.py`, fill in its parts, register it, pass `tests/test_agent_kinds.py`):
 CONTRIBUTING.md, "Adding an agent".
 
+The repair families that propose C changes from a byte difference are a standalone library, `src/decomprepair/`
+(its `__init__.py` says what it is): it never imports `decompnet`, and never compiles or judges (`tests/test_decomprepair.py`).
+A new repair that only reads C and code goes there; one that needs the network or a project stays in `app/` and calls it.
+`forks/csource.py`, `rom/symbols.py`, `arch/mips.py` and `m2cfix.py` are now names for the library's modules.
+
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
 from the vtables constructors store, MIPS and x86, named by a PC program's RTTI, `consoles/pc/rtti.py`: the `get_class`

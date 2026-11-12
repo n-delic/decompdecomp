@@ -15,10 +15,11 @@ def _break_header():
 
 def header():
     """Registered fixed GNU MIPS operations; unused macros emit no machine code."""
+    from decomprepair.mips_live_return_address import header as live_header
+
     from .mips_compare import header as compare_header
     from .mips_count import header as count_header
     from .mips_fcsr import header as fcsr_header
-    from .mips_live_return_address import header as live_header
     from .mips_status import header as status_header
     from .mips_status_return_spacing import header as status_return_header
     return status_return_header()+_break_header()+live_header()+fcsr_header()+count_header()+status_header()+compare_header()
@@ -28,10 +29,11 @@ def header_for(source):
     """Keep existing portable breakpoint headers unchanged when a new intrinsic is unused."""
     import re
 
+    from decomprepair.mips_live_return_address import header as live_header
+
     from .mips_compare import header as compare_header
     from .mips_count import header as count_header
     from .mips_fcsr import header as fcsr_header
-    from .mips_live_return_address import header as live_header
     from .mips_status import header as status_header
     from .mips_status_return_spacing import header as status_return_header
     used=set(re.findall(r'[A-Za-z_]\w*',source))

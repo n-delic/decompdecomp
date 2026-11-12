@@ -2,12 +2,7 @@
 
 import pytest
 
-from decompnet.app import (
-    address_association_repairs,
-    branch_layout_repairs,
-    pointer_pair_repairs,
-    shared_offset_repairs,
-)
+from decomprepair import address_association_repairs, branch_layout_repairs, pointer_pair_repairs, shared_offset_repairs
 
 
 def shared(source):

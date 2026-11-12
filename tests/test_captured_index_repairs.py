@@ -1,6 +1,6 @@
 import pytest
 
-from decompnet.app.captured_index_repairs import FAMILIES, variants
+from decomprepair.captured_index_repairs import FAMILIES, variants
 
 CASES = [
     ('u32 i; i=x; p[i * 4]=7;', 'dead_index_scale', '[(i *= 4)]'),

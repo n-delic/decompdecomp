@@ -3,12 +3,11 @@ import json
 
 import pytest
 
-from decompnet.app import (
+from decompnet.app import draft_repairs, local_experiments
+from decomprepair import (
     branch_layout_repairs,
     callee_prototype_repairs,
-    draft_repairs,
     integer_lifetime_repairs,
-    local_experiments,
     local_widening_repairs,
 )
 

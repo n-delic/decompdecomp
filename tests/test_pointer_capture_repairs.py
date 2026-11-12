@@ -4,8 +4,9 @@ import subprocess
 
 import pytest
 
-from decompnet.app import draft_repairs, pointer_pair_repairs
-from decompnet.app import pointer_capture_repairs as repairs
+from decompnet.app import draft_repairs
+from decomprepair import pointer_capture_repairs as repairs
+from decomprepair import pointer_pair_repairs
 
 HEADER = 'typedef unsigned char u8; typedef int s32;'
 PREFIX = '''typedef struct Record { s32 words[8]; } Record;

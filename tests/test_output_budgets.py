@@ -1,8 +1,9 @@
 import pytest
 
 from decompnet import claim_stalls
-from decompnet.app import agent_evidence, agent_tokens, load_pair_repairs, tools
+from decompnet.app import agent_evidence, agent_tokens, tools
 from decompnet.network import NetworkError
+from decomprepair import load_pair_repairs
 from tests.test_claims import _game
 
 

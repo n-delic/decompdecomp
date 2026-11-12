@@ -1,7 +1,8 @@
 """Small source fixtures cover scheduling candidates without publishing game code."""
 from decompnet import m2cfix
-from decompnet.app import conversion_scheduling_repairs as repairs
-from decompnet.app import draft_repairs, hardware_operation_repairs, repair_ranking, search_frontier
+from decompnet.app import draft_repairs, repair_ranking, search_frontier
+from decomprepair import conversion_scheduling_repairs as repairs
+from decomprepair import hardware_operation_repairs
 
 
 def test_conversion_tail_preserves_assignment_type_and_distinct_physical_lines():
@@ -96,7 +97,7 @@ def test_directives_and_other_functions_are_preserved():
 
 
 def test_unnamed_and_named_multitoken_prototypes_keep_their_width():
-    from decompnet.app.branch_call_support import prototype
+    from decomprepair.branch_call_support import prototype
     assert prototype('void use(unsigned short, unsigned int);','use','mips')[1]==['unsigned short','unsigned int']
     assert prototype('void use(unsigned short x, unsigned int y);','use','mips')[1]==['unsigned short','unsigned int']
 

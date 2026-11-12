@@ -1,7 +1,7 @@
 import pytest
 
 from decompnet.app import draft_repairs
-from decompnet.app import float_intermediate_repairs as repair
+from decomprepair import float_intermediate_repairs as repair
 
 SOURCE = 'void f(int n, float a, float b, int *out) { float value; float product; value=(float)n; *out=(int)((a * value) * b); }'
 

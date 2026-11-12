@@ -128,7 +128,7 @@ class JudgeMixin:
         checks['data'] = [p for p in res.problems if p.startswith('your data for ')]
         address_rows = []
         if res.linked_code is not None and res.candidate is not None and not res.problems and proj['arch'] == 'mips':
-            from ...arch.mips_addresses import aligned
+            from decomprepair.mips_addresses import aligned
             rows = scoring.diff(self._target_obj(fn, proj), res.candidate).rows
             address_rows = aligned(rows, target.code, res.linked_code, bool(proj['big_endian']))
             checks['address_mismatches'] = [row for row in address_rows

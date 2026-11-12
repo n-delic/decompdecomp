@@ -5,7 +5,8 @@ import sys
 
 import pytest
 
-from decompnet.app import decoded_byte_repairs, draft_repairs
+from decompnet.app import draft_repairs
+from decomprepair import decoded_byte_repairs
 
 HEADER='typedef unsigned char u8; typedef unsigned int u32;'
 

@@ -1,7 +1,8 @@
 """Captured scheduling shapes, reduced to homemade functions without game data."""
 import pytest
 
-from decompnet.app import draft_repairs, scheduling_repairs
+from decompnet.app import draft_repairs
+from decomprepair import scheduling_repairs
 
 
 def choices(source, family):

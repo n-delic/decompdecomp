@@ -1,5 +1,6 @@
-from decompnet.app import block_accumulator_repairs, global_identity_repairs, search_frontier
+from decompnet.app import search_frontier
 from decompnet.diff_summary import advice
+from decomprepair import block_accumulator_repairs, global_identity_repairs
 
 HEADER = 'typedef struct Game Game;\nextern unsigned char D_800C0000[];\n#define game (*(Game **)(D_800C0000 + 0x100))\n'
 SOURCE = 'void f(void) { use(game); use((*(Game **)0x800C0100)); }'

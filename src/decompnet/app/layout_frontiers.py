@@ -8,7 +8,8 @@ result is adopted; a historical scalar score is never reused as current evidence
 import difflib
 import re
 
-from .integer_repair_support import edit
+from decomprepair.integer_repair_support import edit
+
 from .repair_tokens import TOKEN
 
 FAMILY = 'saved_layout_followup'

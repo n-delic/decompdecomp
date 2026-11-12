@@ -3,7 +3,8 @@ import subprocess
 
 import pytest
 
-from decompnet import byte_field_macros, m2cfix
+from decompnet import m2cfix
+from decomprepair import byte_field_macros
 
 W = '#define W(p,o) (*(int*)((char*)(p)+(o)))\n'
 P = '#define P(p,o) (*(char**)((char*)(p)+(o)))\n'

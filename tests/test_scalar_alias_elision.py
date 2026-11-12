@@ -1,6 +1,6 @@
 import pytest
 
-from decompnet.app import equal_value_flow as values
+from decomprepair import equal_value_flow as values
 
 
 def choices(source, header=''):

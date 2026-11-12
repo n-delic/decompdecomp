@@ -5,9 +5,10 @@ import json
 import pytest
 
 from decompnet import candidate_quality, claim_stalls
-from decompnet.app import dependency_guard, local_experiments, register_reuse_repairs, tools
+from decompnet.app import dependency_guard, local_experiments, tools
 from decompnet.arch.call_evidence import direct
 from decompnet.network import NetworkError
+from decomprepair import register_reuse_repairs
 from tests.test_claims import _game
 
 

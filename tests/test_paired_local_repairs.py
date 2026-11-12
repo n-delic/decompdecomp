@@ -112,7 +112,8 @@ def test_new_pairs_use_the_same_trial_budget_and_report_actual_pair_evaluations(
 
 
 def test_existing_bridge_and_pointer_scope_compose_as_a_shared_regression():
-    from decompnet.app import allocation_repairs, pointer_index_scope
+    from decompnet.app import pointer_index_scope
+    from decomprepair import allocation_repairs
     source='void f(S *s,u32 *q){s32 i;u32 *p;s32 value;i=0;p=q;value=1;{ u32 **slot=s->tbl+i; *slot=(u32 *)q; }}'
     parents=[s for family,s in allocation_repairs.variants(source,'f') if family=='allocation_schedule_bridge']
     children=[s for parent in parents for family,s in pointer_index_scope.variants(parent,'f')]

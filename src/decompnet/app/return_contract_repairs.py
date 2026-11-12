@@ -1,11 +1,12 @@
 """Check a missing scalar return before searching allocation; shared prototypes stay untouched."""
 import re
 
+from decomprepair import integer_abi
+from decomprepair.integer_repair_support import IDENT, edit, locals_for, view
+from decomprepair.pattern_repairs import close
+
 from .. import arch as architectures
 from ..forks.csource import _blank, find
-from . import integer_abi
-from .integer_repair_support import IDENT, edit, locals_for, view
-from .pattern_repairs import close
 
 FAMILY = 'return_contract'
 LIMIT = 4

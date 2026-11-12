@@ -1,10 +1,11 @@
 """Frame diagnostics and an explicitly selected bitfield/helper experiment, never automatic padding."""
 import re
 
+from decomprepair.integer_repair_support import IDENT, edit
+from decomprepair.register_repairs import unwrap
+
 from .. import arch as arches
 from ..forks.csource import _blank, find
-from .integer_repair_support import IDENT, edit
-from .register_repairs import unwrap
 
 
 def diagnose(arch, rows):

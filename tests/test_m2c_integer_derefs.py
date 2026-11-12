@@ -1,6 +1,6 @@
 """Integers m2c dereferenced without a type (m2c_integer_derefs.py): the C here is made up and small."""
 
-from decompnet.m2c_integer_derefs import typed_dereferences
+from decomprepair.m2c_integer_derefs import typed_dereferences
 
 
 def test_a_load_takes_the_width_of_the_variable_it_fills():

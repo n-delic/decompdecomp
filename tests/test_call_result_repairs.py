@@ -1,5 +1,5 @@
 """Synthetic narrow-return comparisons; candidates still require the ordinary exact judge."""
-from decompnet.app import call_result_repairs, pattern_repairs
+from decomprepair import call_result_repairs, pattern_repairs
 
 
 def test_inline_repeated_narrow_call_comparisons():

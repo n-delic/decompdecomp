@@ -1,4 +1,4 @@
-from decompnet.app.focused_lifetime_repairs import variants
+from decomprepair.focused_lifetime_repairs import variants
 
 
 def test_small_store_and_pointer_index_alternatives():
@@ -27,6 +27,6 @@ def test_pointer_addition_does_not_capture_part_of_a_larger_expression():
 
 def test_shared_agent_and_autopilot_families_include_lifetime_candidates():
     from decompnet.app import draft_repairs, local_experiments
-    from decompnet.app.focused_lifetime_repairs import FAMILIES
+    from decomprepair.focused_lifetime_repairs import FAMILIES
     assert set(FAMILIES) <= set(draft_repairs.AGENT_FAMILIES)
     assert set(FAMILIES) <= set(local_experiments.FAMILIES)

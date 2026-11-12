@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
-from decompnet.app import expression_locals, mmio_repairs, repair_ranking
+from decompnet.app import repair_ranking
+from decomprepair import expression_locals, mmio_repairs
 
 
 def test_mmio_volatile_lvalue_only_and_side_effects_preserved():

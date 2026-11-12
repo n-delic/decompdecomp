@@ -10,14 +10,15 @@ def hints(source, name, asm='', arch='', rows=None):
         return []
     clean = _blank(source)
     body = clean[span[0]:span[1]]
+    from decomprepair.macro_repairs import diagnostic
+
     from .helper_call_diagnostics import suggestions
-    from .macro_repairs import diagnostic
     from .matching_investigations import hints as investigation_hints
     from .permuter_focus import classify
     from .preparation_diagnostics import allocations
     macro_note = diagnostic(source)
     result = ([macro_note] if macro_note else []) + investigation_hints(rows,arch) + suggestions(rows) + allocations(source, rows)
-    from .guarded_loop_repairs import hints as loop_hints
+    from decomprepair.guarded_loop_repairs import hints as loop_hints
     if arch=='mips':result.extend(loop_hints(source,name,rows))
     from .return_contract_repairs import hint as return_hint
     if note:=return_hint(source,name,asm,arch):result.insert(0,note)
@@ -28,13 +29,13 @@ def hints(source, name, asm='', arch='', rows=None):
     if rows and any(r[0]!=' ' for r in rows) and re.search(r'\bif\s*\(',body) and re.search(r'\b(?:s16|short)\s*\)',body):
         result.append('A branch-specific wide value is narrowed for a later use. Try branch_scalar_lifetime inside the selected arm, even if other parts contain switches or loops. For call-setup ordering, compare embedded_call_assignment and inline_call_count; preserve argument dependencies and exact prototypes. Explicit shift spelling alone may be optimized into the same temporary. These are bounded source hypotheses, not match verdicts.')
 
-    from .target_local_repairs import call_arguments
+    from decomprepair.target_local_repairs import call_arguments
     if arch == "mips" and call_arguments(source, name, asm):
         result.append("The target supplies a first call argument that a candidate-owned void prototype omits. "
                       "Try the target_call_argument local family; shared declarations stay unchanged.")
-    from .hardware_operation_repairs import hints as hardware_hints
+    from decomprepair.hardware_operation_repairs import hints as hardware_hints
     result.extend(hardware_hints(source,asm,arch,rows))
-    from .live_return_address_repairs import hint as live_ra_hint
+    from decomprepair.live_return_address_repairs import hint as live_ra_hint
     if note:=live_ra_hint(asm,arch):result.insert(0,note)
     if arch=="mips" and rows and re.search(r"\bmfc1\b",asm or "") and any(r[0]=="i" and re.match(r"(?:b\w*|j)\s",r[1]) for r in rows):
         result.append("Branch destinations near an FP conversion can depend on debug line markers and assembler hazard NOP placement. Try debug_conversion_tail with the original debug profile before flag sweeps. Preserve verified physical source lines through polishing and export; an equivalent one-line temporary may compile differently.")
@@ -44,7 +45,7 @@ def hints(source, name, asm='', arch='', rows=None):
                       'Keep format characters separate from integer output lengths, preserve output macros, case order, '
                       'fallthrough groups and flag-loop labels. Source identity and a lower score still need the exact judge.')
     if arch == 'mips':
-        from .sdk_io_repairs import hints as io_hints
+        from decomprepair.sdk_io_repairs import hints as io_hints
         result.extend(io_hints(source,asm,rows))
         from ..arch.mips_runtime import entry_context, helper, specialized_calls
         loads = {}

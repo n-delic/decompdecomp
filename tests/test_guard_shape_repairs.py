@@ -1,4 +1,4 @@
-from decompnet.app import guard_shape_repairs as shape
+from decomprepair import guard_shape_repairs as shape
 
 EARLY = '''void f(void *a, f32 b) {
     void *t;

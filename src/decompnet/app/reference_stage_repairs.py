@@ -1,8 +1,9 @@
 """Small reference-context stages before permutations; every proposal still needs the judge."""
 import re
 
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank, find
-from .pattern_repairs import close
 from .source_next_steps import called
 
 ID=r'[A-Za-z_]\w*'

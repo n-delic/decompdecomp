@@ -1,8 +1,8 @@
 import pytest
 
-from decompnet.app import call_preparation_repairs as calls
 from decompnet.app import repair_macro_analysis as macros
 from decompnet.app import repair_recipe
+from decomprepair import call_preparation_repairs as calls
 
 
 def test_guards_distinguish_macros_from_budget_and_prototype_absence():

@@ -7,9 +7,7 @@ preprocessor lines are opaque.
 
 import re
 
-from .. import compile_timing, m2cfix, seeds
-from ..forks.csource import _blank, find
-from . import (
+from decomprepair import (
     address_association_repairs,
     affine_operand_repairs,
     allocation_repairs,
@@ -18,7 +16,6 @@ from . import (
     bit_role_repairs,
     block_accumulator_repairs,
     branch_layout_repairs,
-    branch_locals,
     branch_pointer_repairs,
     branch_scalar_repairs,
     branch_tail_distribution,
@@ -32,33 +29,27 @@ from . import (
     call_preparation_repairs,
     call_scope_repairs,
     callee_prototype_repairs,
-    capture_followup_repairs,
     captured_control_repairs,
     captured_index_repairs,
-    captured_lifetimes,
     captured_repairs,
-    carrier_sequence_repairs,
     compiler_phase_repairs,
     compiler_shape_repairs,
     component_index_repairs,
     constant_pointer_repairs,
     conversion_scheduling_repairs,
     copy_lifetime_repairs,
-    copy_shape_repairs,
     count_lifetime_repairs,
     countdown_guard_repairs,
     debug_boundary_repairs,
     debug_initializer_repairs,
     decision_address_repairs,
     decoded_byte_repairs,
-    entry_point_repairs,
     equal_value_flow,
     evidence_repairs,
     example_lifetime_repairs,
     expression_repairs,
     field_order_repairs,
     float_intermediate_repairs,
-    float_storage_repairs,
     focused_lifetime_repairs,
     formatter_repairs,
     global_array_repairs,
@@ -67,12 +58,10 @@ from . import (
     guard_shape_repairs,
     guarded_call_repairs,
     hardware_operation_repairs,
-    helper_expansion,
     identity_lifetime_repairs,
     increment_expression_repairs,
     inferred_layout_repairs,
     init_placement_repairs,
-    initializer_clusters,
     inline_scheduling_repairs,
     integer_constant_repairs,
     integer_lifetime_repairs,
@@ -86,7 +75,6 @@ from . import (
     local_widening_repairs,
     local_width_repairs,
     loop_guard_storage_repairs,
-    loop_storage_shapes,
     loop_weight_repairs,
     macro_address_repairs,
     macro_repairs,
@@ -97,7 +85,6 @@ from . import (
     mmio_repairs,
     narrow_call_repairs,
     narrow_expression_repairs,
-    narrow_load_subtraction,
     narrow_store_repairs,
     near_match_repairs,
     near_repairs,
@@ -105,48 +92,34 @@ from . import (
     observed_repairs,
     operand_order_repairs,
     param_mask_repairs,
-    parameter_carriers,
     pattern_repairs,
     phase_lifetime_repairs,
     phase_union_repairs,
     pointer_capture_repairs,
     pointer_cast_repairs,
-    pointer_index_scope,
     pointer_pair_repairs,
     pointer_result_repairs,
-    pointer_snapshot_repairs,
     post_call_capture_repairs,
     preheader_order_repairs,
     prepared_call_repairs,
-    promoted_entry_repairs,
     raw_address_repairs,
-    recent_capture_repairs,
-    record_layout_search,
     record_lifetime_recovery,
     record_lifetime_repairs,
     record_slot_repairs,
     record_store_bundles,
     register_repairs,
     register_reuse_repairs,
-    repair_cleanup,
-    return_contract_repairs,
     scalar_storage_reuse,
-    scan_load_repairs,
     scheduling_repairs,
     scope_topology_repairs,
-    scratch_role_repairs,
     sdk_io_repairs,
     sdk_shape_repairs,
     shared_offset_repairs,
-    snapshot_branch_repairs,
-    stack_padding_repairs,
     stack_repairs,
     storage_scope_repairs,
     store_address_repairs,
     store_result_repairs,
     structure_return_repairs,
-    switch_constant_dispatch,
-    switch_tables,
     target_local_repairs,
     terminal_guard_repairs,
     unsigned_shift_repairs,
@@ -155,6 +128,36 @@ from . import (
     zero_argument_repairs,
     zero_chain_repairs,
     zero_test_repairs,
+)
+
+from .. import compile_timing, m2cfix, seeds
+from ..forks.csource import _blank, find
+from . import (
+    branch_locals,
+    capture_followup_repairs,
+    captured_lifetimes,
+    carrier_sequence_repairs,
+    copy_shape_repairs,
+    entry_point_repairs,
+    float_storage_repairs,
+    helper_expansion,
+    initializer_clusters,
+    loop_storage_shapes,
+    narrow_load_subtraction,
+    parameter_carriers,
+    pointer_index_scope,
+    pointer_snapshot_repairs,
+    promoted_entry_repairs,
+    recent_capture_repairs,
+    record_layout_search,
+    repair_cleanup,
+    return_contract_repairs,
+    scan_load_repairs,
+    scratch_role_repairs,
+    snapshot_branch_repairs,
+    stack_padding_repairs,
+    switch_constant_dispatch,
+    switch_tables,
 )
 from .repair_generation import call as _generated
 
@@ -474,7 +477,7 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
         if close is None or not commas:
             continue
         tail = body[commas[-1] + 1:close].strip()
-        from .repair_preflight import drop_argument_allowed
+        from decomprepair.repair_preflight import drop_argument_allowed
         if (re.fullmatch(rf'(?:0[xX][0-9a-fA-F]+[uUlL]*|[0-9]+[uUlL]*|{_IDENT})', tail)
                 and drop_argument_allowed(source,m[1],body[m.end():close],header)):
             add(offset + commas[-1], offset + close, '')
@@ -491,8 +494,9 @@ def _finish(source,name,proposals,labels,allocation_candidates,limit):
         labels.setdefault(text,'expression_or_near_repair')
     # Round-robin families so a new family cannot crowd existing repairs out of a short pass.
     groups = {}
+    from decomprepair.repair_preflight import invalid_call
+
     from .repair_generation import ACTIVE
-    from .repair_preflight import invalid_call
     for text in dict.fromkeys(proposals):
         if text == source:
             continue

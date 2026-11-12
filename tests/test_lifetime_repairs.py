@@ -1,4 +1,5 @@
-from decompnet.app import agent_evidence, lifetime_repairs
+from decompnet.app import agent_evidence
+from decomprepair import lifetime_repairs
 from tests.test_claims import _game
 
 

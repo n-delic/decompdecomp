@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from decompnet.app import unsigned_shift_repairs as repair
+from decomprepair import unsigned_shift_repairs as repair
 
 BASE = 'typedef unsigned int u32;u32 sample(u32 input){u32 c;u32 lo,hi;c=input;lo=c<<8;hi=(c<<16)+2;return lo+hi;}'
 

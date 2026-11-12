@@ -2,10 +2,11 @@
 import json
 import time
 
+from decomprepair import live_return_address_repairs
+
 from .. import toolchains
 from ..network import NetworkError, assembly_blocker
 from ..project import compiler_for
-from . import live_return_address_repairs
 
 
 def candidates(net, proj, fn):

@@ -1,4 +1,4 @@
-from decompnet.app import inferred_layout_repairs as repair
+from decomprepair import inferred_layout_repairs as repair
 
 
 def test_consistent_repeated_accesses_make_a_candidate_local_record():

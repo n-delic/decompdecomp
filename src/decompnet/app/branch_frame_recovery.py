@@ -1,6 +1,8 @@
 """Measured frame and pointer-tail proposals; all share ordinary candidate/time budgets."""
+from decomprepair import branch_tail_distribution
+
 from .. import arch as arches
-from . import branch_tail_distribution, stack_padding_repairs
+from . import stack_padding_repairs
 
 FAMILIES=('inferred_frame_reservation', 'branch_packing_tail', 'frame_branch_tail_sequence')
 

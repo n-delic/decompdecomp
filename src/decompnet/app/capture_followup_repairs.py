@@ -1,9 +1,10 @@
 """Bounded hypotheses from captured successes, using existing types and known callee bodies only."""
 import re
 
+from decomprepair.integer_repair_support import IDENT, INTEGER, edit, locals_for, split_args, view
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank, find
-from .integer_repair_support import IDENT, INTEGER, edit, locals_for, split_args, view
-from .pattern_repairs import close
 
 FAMILIES = ('typed_clamp_load','typed_pointer_load','loop_update_order','call_postincrement','callee_buffer_extent','known_call_signature','known_call_excess_arguments')
 TYPE = rf'(?:{INTEGER}|void|float|double|f32|f64|{IDENT})(?:\s*\*)*'
@@ -71,12 +72,12 @@ def variants(source, name, header='', callees='', _masked=False):
     context = header+'\n'+source+'\n'+callees
     if not part or re.search(r'\b(?:volatile|restrict|asm|__asm__|union)\b',_blank(context)):
         return []
-    from .pointer_pair_repairs import qualified_types
+    from decomprepair.pointer_pair_repairs import qualified_types
     if qualified_types(_blank(context)) & set(re.findall(IDENT,part.clean)):
         return []
     if re.search(r'^\s*#',_blank(context),re.M):
         if _masked:return []
-        from . import macro_repairs
+        from decomprepair import macro_repairs
         safe_header,_,_ = macro_repairs.prepare(header+'\n'+callees)
         if safe_header is None:return []
         return macro_repairs.variants(source,name,lambda masked:variants(masked,name,safe_header,'',True),header+'\n'+callees)
@@ -136,7 +137,7 @@ def variants(source, name, header='', callees='', _masked=False):
             dest=dest[:-2];tail=dest[1:]+'++;'
         add(FAMILIES[3],[(hit.start(),hit.end(),f'{dest} = {hit["call"]}({p}++); {tail}')])
     known = definitions(context)
-    from .repair_preflight import _PROTO
+    from decomprepair.repair_preflight import _PROTO
     for call in re.finditer(rf'\b({IDENT})\s*\(',part.clean[part.opening+1:part.end-1]):
         callee=call[1]
         if callee==name or callee not in known or len(re.findall(rf'\b{callee}\s*\(',part.body))!=1:

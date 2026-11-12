@@ -1,6 +1,6 @@
 import pytest
 
-from decompnet.app import integer_lifetime_repairs, local_flow, masked_reuse_repairs
+from decomprepair import integer_lifetime_repairs, local_flow, masked_reuse_repairs
 
 
 def flow(body):
@@ -102,7 +102,7 @@ def test_unbraced_labeled_arms_give_no_liveness_advice(arm):
 
 
 def test_inline_record_members_are_not_function_scalar_locals():
-    from decompnet.app.local_flow import analyze
+    from decomprepair.local_flow import analyze
     source='int f(int a){struct {int member; int other;} rec; int value; value=a;rec.member=value;return rec.member;}'
     flow=analyze(source,'f')
     assert flow is not None

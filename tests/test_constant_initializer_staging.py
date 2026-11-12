@@ -1,6 +1,6 @@
 """Atomic allocation repairs preserve initialization order and require target evidence."""
-from decompnet.app import constant_initializer_staging as init
-from decompnet.app import live_return_address_repairs as live
+from decomprepair import constant_initializer_staging as init
+from decomprepair import live_return_address_repairs as live
 
 ASM='/* 0 80001000 3C01800B */ lui $at, 0x800b\n/* 4 80001004 AC3F2000 */ sw $ra, 0x2000($at)'
 SOURCE='extern int D_800B2000; int f(void) { int result=0; int one=1; volatile int untouched; { int unknown; do { D_800B2000=unknown; } while(0); } result=call(one); return result; }'

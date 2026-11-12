@@ -2,15 +2,9 @@
 
 import pytest
 
-from decompnet.app import (
-    branch_frame_recovery,
-    branch_tail_distribution,
-    draft_repairs,
-    iterative_repairs,
-    narrow_store_repairs,
-    stack_padding_repairs,
-)
+from decompnet.app import branch_frame_recovery, draft_repairs, iterative_repairs, stack_padding_repairs
 from decompnet.arch import mips_stack
+from decomprepair import branch_tail_distribution, narrow_store_repairs
 
 HEADER='typedef unsigned int u32; typedef signed int s32; typedef unsigned short u16;'
 SOURCE='''typedef struct { u32 color; s32 x,y,z; } Item;

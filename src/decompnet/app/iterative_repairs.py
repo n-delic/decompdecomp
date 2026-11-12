@@ -345,13 +345,9 @@ def output_key(report):
 
 
 def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees='', *, focused=True, entry_scope=None):
-    from . import (
-        draft_repairs,
-        independent_address_repairs,
-        normalization_repairs,
-        stack_padding_repairs,
-        value_trace_repairs,
-    )
+    from decomprepair import independent_address_repairs, normalization_repairs
+
+    from . import draft_repairs, stack_padding_repairs, value_trace_repairs
     labels = {}
     proposals = draft_repairs.variants(source, fn['name'], arch, fn['asm'] or '', flags, labels, header=header, limit=None, tables=tables,callees=callees,entry_scope=entry_scope)
     from . import branch_frame_recovery
@@ -367,7 +363,9 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     from . import narrow_load_subtraction, parameter_carriers
     carriers=parameter_carriers.variants(source,fn["name"],header,arch)
     load_subtractions=narrow_load_subtraction.variants(source,fn["name"],header,arch)
-    from . import scalar_storage_reuse, scratch_role_repairs
+    from decomprepair import scalar_storage_reuse
+
+    from . import scratch_role_repairs
     scratch=scratch_role_repairs.variants(source,fn['name'],header,arch)
     reuse=scalar_storage_reuse.variants(source,fn['name'],header,arch,report.get('repair_locations'))
     from . import loop_storage_shapes
@@ -395,7 +393,7 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     lane = allocation_search.proposals(source,fn['name'],arch,report.get('rows'),result,labels,
                                        {'value_trace':report.get('value_trace')},header)
     tagged = list(dict.fromkeys(lane+tagged))
-    from . import repair_localisation
+    from decomprepair import repair_localisation
     tagged = repair_localisation.proposals(source,tagged,report.get("repair_locations"))
     # Retain established operand-supported focus. Broad reordering needs held-out replay evidence.
     use_focus=focused and bool(operand_focused or report.get('broad_focus_approved'))
@@ -709,7 +707,7 @@ def _run(twins, slug, job):
             targeted.sort(key=lambda item: ordered.index(item[0]))
             # Interleave pools so address proposals cannot starve targeted families (or vice versa).
             learned = expression_recipes.variants(net, recipe_profile, source)
-            from . import repair_localisation
+            from decomprepair import repair_localisation
             guided_tagged=repair_localisation.proposals(source,[('address_or_literal',s) for s in guided[:4]],report.get('repair_locations'))
             pools = [shared, guided_tagged, targeted,
                      [('similar_repair', s) for s in similar_matches.repair_variants(source, report)[:4]],

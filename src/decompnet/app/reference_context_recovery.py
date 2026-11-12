@@ -11,7 +11,8 @@ ID=r'[A-Za-z_]\w*'
 
 def static_helpers(source, header, reference):
     """Try actual same-file static definitions with their original physical line numbers."""
-    from .pattern_repairs import close
+    from decomprepair.pattern_repairs import close
+
     from .source_match_context import macro_context
     shadowed=lambda text:set(re.findall(r'\(\s*\*\s*('+ID+r')\s*\)',_blank(text)))
     selected=[];used=called(source)-shadowed(source);seen=set()

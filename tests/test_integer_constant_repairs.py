@@ -1,4 +1,4 @@
-from decompnet.app import integer_constant_repairs as repairs
+from decomprepair import integer_constant_repairs as repairs
 
 SOURCE='void f(int mode,int x) { if(mode) { x=0; call(1); use(1); } }'
 

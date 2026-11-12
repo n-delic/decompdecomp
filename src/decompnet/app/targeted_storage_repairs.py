@@ -1,11 +1,12 @@
 """Compiler-mapped local storage/lifetime alternatives; never prescribe physical registers/slots."""
 import re
 
+from decomprepair import integer_abi, repair_localisation
+from decomprepair.call_lifetime_repairs import block_path
+from decomprepair.integer_repair_support import IDENT, edit
+from decomprepair.repair_source_view import read
+
 from ..arch import get
-from . import integer_abi, repair_localisation
-from .call_lifetime_repairs import block_path
-from .integer_repair_support import IDENT, edit
-from .repair_source_view import read
 
 FAMILIES=('mapped_spill_storage','mapped_register_lifetime')
 LIMIT=10

@@ -1,7 +1,7 @@
 """Bounded copy/command source shapes; normal compilation and judging remain mandatory."""
 import re
 
-from .integer_repair_support import IDENT, edit, view
+from decomprepair.integer_repair_support import IDENT, edit, view
 
 FAMILIES = ('inline_copy_loop', 'typed_command_record')
 WORD = r'(?:u32|unsigned\s+int)'
@@ -101,9 +101,10 @@ def variants(source, name, header=''):
 
 def copy_branches(source, name, header=''):
     """Extract repeated overlap-aware copy blocks when their induction locals are dead on exit."""
+    from decomprepair.local_flow import analyze
+    from decomprepair.pattern_repairs import close
+
     from ..forks.csource import find
-    from .local_flow import analyze
-    from .pattern_repairs import close
     part = view(source, name)
     if not part or re.search(r'\b(?:volatile|restrict|__restrict)\b|^\s*#', part.clean, re.M):
         return []

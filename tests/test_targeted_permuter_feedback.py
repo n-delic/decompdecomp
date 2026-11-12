@@ -1,9 +1,10 @@
 import hashlib
 import json
 
-from decompnet.app import debug_boundary_repairs as boundaries
-from decompnet.app import proposal_progress, region_repairs, repair_effects, repair_localisation, repair_selection
+from decompnet.app import proposal_progress, region_repairs, repair_effects, repair_selection
 from decompnet.app.deep_repair_feedback import Feedback
+from decomprepair import debug_boundary_repairs as boundaries
+from decomprepair import repair_localisation
 from tests.test_permute import FakeNet
 
 

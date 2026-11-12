@@ -4,7 +4,7 @@ import hashlib
 import pytest
 
 from decompnet.app import allocation_targeting, draft_repairs, repair_ranking, search_frontier
-from decompnet.app import narrow_store_repairs as repairs
+from decomprepair import narrow_store_repairs as repairs
 
 HEADER='typedef signed short s16; typedef signed int s32; typedef unsigned short u16;'
 SOURCE='''typedef struct { s16 x; s16 y; u16 w; u16 h; } Box;

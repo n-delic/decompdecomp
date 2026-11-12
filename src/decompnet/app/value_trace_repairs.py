@@ -1,14 +1,10 @@
 """A tiny two-edit pool around explicitly traced lines; ordinary judging and budgets apply."""
 import difflib
 
-from . import (
-    focused_lifetime_repairs,
-    loop_weight_repairs,
-    operand_order_repairs,
-    register_reuse_repairs,
-    rtl_value_trace,
-)
-from .integer_repair_support import edit
+from decomprepair import focused_lifetime_repairs, loop_weight_repairs, operand_order_repairs, register_reuse_repairs
+from decomprepair.integer_repair_support import edit
+
+from . import rtl_value_trace
 
 FAMILY = 'value_trace_bundle'
 LIMIT = 6

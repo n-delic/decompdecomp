@@ -1,7 +1,8 @@
 """Generic C fixtures for captured repair families, independent of any game's source."""
 
-from decompnet.app import draft_repairs, pattern_repairs
-from decompnet.app.expression_repairs import variants as expression_variants
+from decompnet.app import draft_repairs
+from decomprepair import pattern_repairs
+from decomprepair.expression_repairs import variants as expression_variants
 
 
 def test_branch_orientation_is_bounded_and_preserves_other_definition():

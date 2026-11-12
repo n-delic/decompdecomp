@@ -8,14 +8,12 @@ from decompnet.app import (
     iterative_repairs,
 )
 from decompnet.app import (
-    narrow_call_repairs as narrow,
-)
-from decompnet.app import (
     repair_effects as effects,
 )
 from decompnet.app import (
     repair_sequence_lane as lane,
 )
+from decomprepair import narrow_call_repairs as narrow
 
 SOURCE='''void callee(int, short); void use(int);
 void f(int mode,int x) { int base=x+6; int y=x;

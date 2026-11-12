@@ -1,6 +1,6 @@
 from decompnet.app.expression_recipes import apply, template
 from decompnet.app.repair_ablation import minimize
-from decompnet.app.value_range_repairs import bounds, variants
+from decomprepair.value_range_repairs import bounds, variants
 
 
 def test_ablation_separates_edits_on_same_line():

@@ -3,8 +3,8 @@ import subprocess
 
 import pytest
 
-from decompnet.app import call_preparation_repairs as repairs
 from decompnet.app import draft_repairs, permuter_focus, repair_cleanup, repair_ranking
+from decomprepair import call_preparation_repairs as repairs
 
 HEADER = 'typedef unsigned int u32; typedef struct { int words[6]; } Packet; void send(int,int,Packet);'
 SOURCE = 'void f(int a,int b,Packet packet){send(a,b,packet);}'

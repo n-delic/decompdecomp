@@ -5,7 +5,7 @@ Only a complete, side-effect-free slot block is rewritten; ordinary judging appl
 """
 import re
 
-from .integer_repair_support import IDENT, INTEGER, edit, locals_for, view
+from decomprepair.integer_repair_support import IDENT, INTEGER, edit, locals_for, view
 
 FAMILY = 'pointer_index_scope'
 LIMIT = 2

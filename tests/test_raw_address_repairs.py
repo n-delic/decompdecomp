@@ -1,8 +1,8 @@
 import pytest
 
 from decompnet.app import draft_repairs, local_experiments
-from decompnet.app.raw_address_repairs import variants
-from decompnet.arch.mips_addresses import aligned, resolved
+from decomprepair.mips_addresses import aligned, resolved
+from decomprepair.raw_address_repairs import variants
 
 
 def asm(*words):
@@ -76,7 +76,7 @@ def test_aligned_numeric_annotations_do_not_change_rows_and_reject_wrong_lengths
 
 
 def test_missing_raw_instruction_breaks_tracking():
-    from decompnet.arch.mips_addresses import addresses
+    from decomprepair.mips_addresses import addresses
     assert not addresses('/* 0 80001000 3C01800B */ lui\n/* 8 80001008 AC227040 */ sw')
 
 
