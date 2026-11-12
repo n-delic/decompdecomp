@@ -42,6 +42,9 @@ function renderNav() {
     const short = p.platform_short || p.platform_name || "?";
     const state = p.working ? `<span class="dot on" title="${p.working} agent${p.working === 1 ? "" : "s"} working"></span>`
       : p.autopilot === "running" ? `<span class="dot work" title="autopilot running"></span>` : "";
+    if (p.missing) return `<a class="nav-proj broken" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.missing)}">
+      <span class="np-top"><span class="np-name">${esc(p.title)}</span></span>
+      <span class="np-meta"><span>folder is missing: remove it from the home page</span></span></a>`;
     if (p.broken) return `<a class="nav-proj broken" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.broken)}">
       <span class="np-top"><span class="np-name">${esc(p.title)}</span></span>
       <span class="np-meta"><span>can't be opened: hover for why</span></span></a>`;
