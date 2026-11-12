@@ -1,6 +1,6 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps1/, consoles/ps2/, consoles/ps3/, consoles/ps4/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/xbox/,
-consoles/nds/) whose
+consoles/ps1/, consoles/ps2/, consoles/ps3/, consoles/ps4/, consoles/psp/, consoles/gba/, consoles/android/, consoles/gc_wii/,
+consoles/pc/, consoles/xbox/, consoles/nds/) whose
 `__init__.py` makes a `Console`
 below and fills in its parts; the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
 and prompts, the export, the GUI's API) asks the console of a project, `consoles.get(platform)`, and never compares
@@ -9,8 +9,9 @@ console names. A person or an agent working on PS2 support reads consoles/ps2/ a
 A console works in one of two modes:
 - ROM: decompdecomp splits the game itself (splat, rom/split.py), and the judge links each compiled candidate at the
   function's real address and compares the bytes (rom/match.py). The console reads its file (`read_game`), names its
-  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2, PS3, PSP and GBA (whose
-  splitter and judge are still being ported: ROADMAP.md).
+  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2, PS3, PSP, GBA (whose
+  splitter and judge are still being ported: ROADMAP.md) and Android (a native ARMv7 library from an APK, split by
+  its ELF symbols, consoles/android/).
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
   project (`create_project`) and points its build at the pinned tools (`tool_args`). PS4, GameCube, Wii, PC, Xbox and DS.

@@ -3564,12 +3564,18 @@ class ForkEngine:
                 return "skip"
             names = self._names(self._meta(fn), fn)
             outcomes = []
+            # the run's counts, which the autopilot panel shows ("N candidates compiled"), as the ROM judge keeps them
+            # (#248: a game started from scratch always said 0)
+            state = self.net.autopilots.get(proj["slug"], {})
             for prelude, code in self._autopilot_drafts(proj, fp, cfg, fn, unit):
                 _, span = self._find(code, names)
                 if span is None or self.net.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND "
                                                       "source=?", fid, agent.id, code[span[0]:span[1]]):
                     continue
+                state["drafted"] = state.get("drafted", 0) + 1
                 res = self.attempt(agent, proj["slug"], fn["name"], code, keep=False, prelude=prelude)
+                if res["score"] is not None:  # it built, so the project's own build judged it
+                    state["compiled"] = state.get("compiled", 0) + 1
                 if res["matched"]:
                     return "match"
                 if res["score"] is None:

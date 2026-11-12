@@ -434,6 +434,29 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
     def in_rom(sec_idx: int) -> bool:
         return elf.get_section(sec_idx)["sh_type"] != "SHT_NOBITS"
 
+    dynamic = target.image.dynamic if target.image is not None else {}
+
+    def slots_in(addr: int, length: int) -> list[int]:
+        """The original's dynamic slots inside [addr, addr + length): words the loader writes a pointer into."""
+        return [a for a in dynamic if addr <= a <= addr + length - 4]
+
+    def slot_label(slot: int) -> str:
+        name, value = dynamic[slot]
+        return name or (symbols.label(value) if value is not None else "a pointer")
+
+    def agrees(slot: int, s, stored: int, dest: int | None) -> bool:
+        """Whether the candidate's pointer (symbol `s`, the word `stored` before relocation, `dest` where it resolves)
+        is the one the original's loader writes into `slot`: the same import with the same addend, or the same
+        address (a Thumb function's low bit aside, which the function's own symbol decides)."""
+        name, value = dynamic[slot]
+        if value is None:
+            original = read(slot, 4)
+            return (s["st_info"]["type"] != "STT_SECTION" and not _defined(s) and s.name == name
+                    and original is not None and int.from_bytes(original, "little") == stored)
+        if dest is None:
+            return False
+        return dest == value or ((dest & ~1) == (value & ~1) and (value & ~1) in target.image.functions)
+
     todo = list(own)
     while todo:  # pointers inside the data lead to more of it
         sec_idx, off = todo.pop()
@@ -446,7 +469,10 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
             _, key = pointee(s, int.from_bytes(data[at:at + 4], "little"))
             if key is None or key in own or (word := read(addr + at - off, 4)) is None:
                 continue
-            own[key] = int.from_bytes(word, "little")
+            # where the original's pointer points: the loader's value for a dynamic slot (an ABS32 against a
+            # preemptible symbol leaves 0 in the file), else the file word
+            slot = dynamic.get(addr + at - off)
+            own[key] = slot[1] if slot is not None and slot[1] is not None else int.from_bytes(word, "little")
             todo.append(key)
 
     def next_start(lo: int) -> int | None:
@@ -463,6 +489,10 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
                         problem(f"your zero-initialized data at 0x{addr:08X} cannot be verified in the original")
                 elif original.count(0) != len(original):
                     problem(f"your zero-initialized data differs from the original's data at 0x{addr:08X}")
+                elif found := slots_in(addr, length):
+                    # zeros in the file, but the loader writes pointers there: `{ 0 }` is not `{ external }`
+                    problem(f"your zero-initialized data at 0x{addr:08X} has no pointer where the original's "
+                            f"loader writes one ({slot_label(found[0])} at 0x{found[0]:08X})")
             continue
         length = extent(sec_idx, off)
         sec = elf.get_section(sec_idx)
@@ -471,6 +501,7 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
             problem(f"your data at {sec.name}+0x{off:X} is outside its section")
             continue
         unplaced = False
+        relocated = set()
         for at, rtype, s in relocs_in(sec_idx):
             at -= off
             if not 0 <= at <= length - 4:
@@ -479,9 +510,22 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
                 problem(f"relocation type {rtype} inside your data cannot be verified yet")
                 unplaced = True
                 break
-            dest, key = pointee(s, int.from_bytes(mine[at:at + 4], "little"))
+            relocated.add(addr + at)
+            stored = int.from_bytes(mine[at:at + 4], "little")
+            dest, key = pointee(s, stored)
             if key is not None:
                 dest = own.get(key)
+            if addr + at in dynamic:
+                # The original's loader writes this word: compare what it resolves to, then take the file's word
+                # (0, an addend or a local address, whatever the linker left for the loader).
+                file_word = read(addr + at, 4)
+                if file_word is None or not agrees(addr + at, s, stored, dest):
+                    problem(f"your pointer at {sec.name}+0x{off + at:X} is not the original's "
+                            f"({slot_label(addr + at)} at 0x{addr + at:08X})")
+                    unplaced = True
+                    break
+                mine[at:at + 4] = file_word
+                continue
             if (dest is None and not _defined(s) and target.image is not None
                     and int.from_bytes(mine[at:at + 4], "little") == 0
                     and target.image.slot_matches(addr + at, s.name, symbols)):
@@ -497,6 +541,13 @@ def _verify_own(elf: ELFFile, symtab, name: str, fn_shndx: int, fn_start: int, t
                 dest = int.from_bytes(word, "little")  # a Thumb function's address has its low bit set
             mine[at:at + 4] = (dest & 0xFFFFFFFF).to_bytes(4, "little")
         if unplaced:
+            continue
+        # Every word the original's loader writes needs the candidate's own pointer there: the file holds 0 under an
+        # import's slot, so without this a table of zeros would compare equal to a table of imports.
+        missing = [a for a in slots_in(addr, length) if a not in relocated]
+        if missing:
+            problem(f"your {sec.name} data at +0x{missing[0] - addr + off:X} has no pointer where the original's "
+                    f"loader writes one ({slot_label(missing[0])} at 0x{missing[0]:08X})")
             continue
         n = significant(bytes(mine), addr, None, next_start)
         rom = read(addr, n)

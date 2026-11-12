@@ -31,6 +31,13 @@ class Image:
     bss: list = field(default_factory=list)
     thumb: set = field(default_factory=set)
     plt_values: dict = field(default_factory=lambda: defaultdict(list))
+    # Every word the loader writes from a dynamic relocation (ABS32, GLOB_DAT, JUMP_SLOT, RELATIVE), wherever it is:
+    # address -> (symbol name, or '' for RELATIVE; the address it holds once loaded, or None for an import). A
+    # library's data tables hold these too, and their file words say nothing (BFD and LLD leave 0 under an ABS32
+    # against a preemptible symbol), so the judge compares what each slot resolves to, never the file word alone
+    # (#248: a table of zeros matched a table of imports; a correct local pointer beside an import was refused).
+    # Kept apart from `slots` (the GOT, and imports), which drafts read as "this address names that symbol".
+    dynamic: dict = field(default_factory=dict)
 
     def read(self, address, size):
         for vram, offset, length in self.segments:
@@ -106,6 +113,52 @@ class Image:
         return value == wanted if value is not None and wanted is not None else original_name == name and value is None
 
 
+_THUMB_TO_ARM = (bytes.fromhex('78 47 c0 46'), bytes.fromhex('78 47 00 bf'))  # bx pc; mov r8, r8 (or nop)
+
+
+def plt_entries(data: bytes, address: int, slots: dict) -> dict[str, list[int]]:
+    """Each PLT entry's import, by the GOT slot its ARM stub loads pc from: {name: [entry addresses]}.
+
+    The NDK's ld.bfd puts `bx pc; mov r8, r8` before an entry that Thumb code calls (#248): Thumb callers BL to
+    those 4 bytes, so the entry is recorded there too, with the low bit set (a Thumb destination keeps BL). Read a
+    word at a time, so the Thumb half-words (no ARM instruction) never stop the disassembly of what follows."""
+    reader = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_ARM)
+    reader.detail = True
+    out: dict[str, list[int]] = defaultdict(list)
+    base, entries, thumb = None, [], None
+    for at in range(0, len(data) - 3, 4):
+        here = address + at
+        if data[at:at + 4] in _THUMB_TO_ARM:
+            base, thumb = None, here | 1
+            continue
+        ins = next(reader.disasm(data[at:at + 4], here), None)
+        ops = ins.operands if ins is not None else []
+        if ins is not None and ins.mnemonic == 'add' and len(ops) >= 3 and ops[2].type == capstone.arm.ARM_OP_IMM:
+            dst, src = ins.reg_name(ops[0].reg), ins.reg_name(ops[1].reg)
+            encoded = int.from_bytes(ins.bytes, 'little')
+            imm8, rotate = encoded & 255, ((encoded >> 8) & 15) * 2
+            immediate = ((imm8 >> rotate) | (imm8 << (32 - rotate))) & 0xFFFFFFFF if rotate else imm8
+            if dst in ('ip', 'r12') and src == 'pc':
+                base, entries = here + 8 + immediate, [here]
+                if thumb == (here - 4) | 1:
+                    entries.append(thumb)
+            elif dst in ('ip', 'r12') and src in ('ip', 'r12') and base is not None:
+                base += immediate
+            else:
+                base = None
+        elif (ins is not None and ins.mnemonic == 'ldr' and len(ops) == 2 and ins.reg_name(ops[0].reg) == 'pc'
+              and base is not None):
+            if ops[1].type == capstone.arm.ARM_OP_MEM and ins.reg_name(ops[1].mem.base) in ('ip', 'r12'):
+                item = slots.get((base + ops[1].mem.disp) & 0xFFFFFFFF)
+                if item is not None and item[0]:
+                    out[item[0]] += entries
+            base = None
+        else:
+            base = None
+        thumb = None
+    return dict(out)
+
+
 @lru_cache(maxsize=3)
 def image(program: bytes) -> Image:
     elf = ELFFile(BytesIO(program))
@@ -158,6 +211,14 @@ def image(program: bytes) -> Image:
         for rel in section.iter_relocations():
             at, kind = rel['r_offset'], rel['r_info_type']
             symbol = symtab.get_symbol(rel['r_info_sym'])
+            if section['sh_flags'] & 2 and kind in (2, 21, 22, 23):  # SHF_ALLOC: the loader's own relocations
+                if kind == 23:
+                    result.dynamic[at] = ('', word(at))
+                elif symbol['st_shndx'] == 'SHN_UNDEF':
+                    result.dynamic[at] = (symbol.name, None)
+                else:  # REL: the file word is the addend
+                    result.dynamic[at] = (symbol.name, (symbol['st_value'] + (0 if kind == 22 else word(at)))
+                                          & 0xFFFFFFFF)
             if kind in (2, 21, 22) and symbol['st_shndx'] == 'SHN_UNDEF' and symbol.name:
                 result.slots[at] = (symbol.name, None)
             if not any(lo <= at < hi for lo, hi in got_ranges):
@@ -171,30 +232,8 @@ def image(program: bytes) -> Image:
                 result.slots[at] = ('', word(at))
     plt = elf.get_section_by_name('.plt')
     if plt is not None:
-        reader = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_ARM)
-        reader.detail = True
-        base, entry = None, None
-        for ins in reader.disasm(plt.data(), plt['sh_addr']):
-            ops = ins.operands
-            if ins.mnemonic == 'add' and len(ops) >= 3 and ops[2].type == capstone.arm.ARM_OP_IMM:
-                dst, src = ins.reg_name(ops[0].reg), ins.reg_name(ops[1].reg)
-                encoded = int.from_bytes(ins.bytes, 'little')
-                imm8, rotate = encoded & 255, ((encoded >> 8) & 15) * 2
-                immediate = ((imm8 >> rotate) | (imm8 << (32 - rotate))) & 0xFFFFFFFF if rotate else imm8
-                if dst in ('ip', 'r12') and src == 'pc':
-                    base, entry = ins.address + 8 + immediate, ins.address
-                elif dst in ('ip', 'r12') and src in ('ip', 'r12') and base is not None:
-                    base += immediate
-                else:
-                    base = None
-            elif ins.mnemonic == 'ldr' and len(ops) == 2 and ins.reg_name(ops[0].reg) == 'pc' and base is not None:
-                if ops[1].type == capstone.arm.ARM_OP_MEM and ins.reg_name(ops[1].mem.base) in ('ip', 'r12'):
-                    item = result.slots.get((base + ops[1].mem.disp) & 0xFFFFFFFF)
-                    if item is not None and item[0]:
-                        result.plt[item[0]].append(entry)
-                base = None
-            else:
-                base = None
+        for name, entries in plt_entries(plt.data(), plt['sh_addr'], result.slots).items():
+            result.plt[name] += entries
     for name, value in result.values.items():
         result.plt_values[value] += result.plt.get(name, [])
     return result
