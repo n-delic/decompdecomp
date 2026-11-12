@@ -82,9 +82,11 @@ def test_a_compile_out_of_time_stops_a_child_in_its_own_group_whose_compiler_has
     """Found only by its session, read with getsid: macOS's `ps -o sess` says 0 for every process, so a compiler
     child in a group of its own, its parent gone, outlived the compile."""
     cfg = compiler.CompilerConfig(cmd=[], sandbox="none")
+    started = time.monotonic()
     with pytest.raises(subprocess.TimeoutExpired):
         compiler._exec(cfg, tmp_path, _tree(tmp_path, parent_waits=False, child_group=True), timeout=START_SECONDS)
     assert _gone(_child(tmp_path))
+    assert time.monotonic() - started < 30  # (stopped, not waited out: the child runs for a minute)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="setsid is POSIX")
