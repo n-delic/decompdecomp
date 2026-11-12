@@ -4,6 +4,7 @@ ending everything they started, what each session spent, and the compact context
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -498,7 +499,7 @@ def test_hermes_ends_what_its_session_left_running(tmp_path, monkeypatch):
     """Hermes' gateway daemonises and outlives its session: the Linux fallback SIGTERMs every process carrying the
     session's HERMES_HOME, and no other session's. (The cross-platform `gateway stop` is skipped here so the test
     doesn't shell out to a real Hermes; test_hermes_end_leftovers_runs_gateway_stop covers that.)"""
-    monkeypatch.setattr(hermes.shutil, "which", lambda _cmd: None)
+    monkeypatch.setattr(shutil, "which", lambda _cmd: None)
     home = str(tmp_path / "h1" / ".hermes")
     left = subprocess.Popen(["sleep", "60"], env=dict(os.environ, HERMES_HOME=home), start_new_session=True)
     other = subprocess.Popen(["sleep", "60"], env=dict(os.environ, HERMES_HOME=home + "2"))
@@ -516,7 +517,7 @@ def test_hermes_end_leftovers_runs_gateway_stop(tmp_path, monkeypatch):
     """The review's medium point: Hermes detaches its gateway on macOS and Windows too, where the /proc sweep can't
     reach it. end_leftovers runs Hermes' own cross-platform `gateway stop` for the session's HERMES_HOME."""
     calls = []
-    monkeypatch.setattr(hermes.shutil, "which", lambda _cmd: "/fake/hermes")
+    monkeypatch.setattr(shutil, "which", lambda _cmd: "/fake/hermes")
     monkeypatch.setattr(hermes.subprocess, "run",
                         lambda argv, **kw: calls.append((argv, kw.get("env", {}).get("HERMES_HOME"))))
     home = str(tmp_path / "h1" / ".hermes")
@@ -1613,7 +1614,7 @@ def test_hermes_is_found_in_its_installer_dir(tmp_path, monkeypatch):
     exe = bindir / ("hermes.exe" if os.name == "nt" else "hermes")
     exe.write_text("")
     exe.chmod(0o755)
-    monkeypatch.setattr(hermes.shutil, "which", lambda *a, **k: None)  # not on PATH
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)  # not on PATH
     assert str(bindir) in [str(d) for d in hermes.HERMES.search_dirs()]
     assert hermes.HERMES.resolve_exe() == str(exe)
 
@@ -1627,7 +1628,7 @@ def test_hermes_stops_gateway_via_its_installer_dir(tmp_path, monkeypatch):
     exe = bindir / ("hermes.exe" if os.name == "nt" else "hermes")
     exe.write_text("")
     exe.chmod(0o755)
-    monkeypatch.setattr(hermes.shutil, "which", lambda *a, **k: None)  # off PATH
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)  # off PATH
     calls = []
     monkeypatch.setattr(hermes.subprocess, "run", lambda argv, **kw: calls.append(argv))
     hermes.HERMES.end_leftovers({"HERMES_HOME": str(tmp_path / "sess" / ".hermes")})
