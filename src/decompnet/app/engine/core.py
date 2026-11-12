@@ -11,7 +11,7 @@ import secrets
 import threading
 from pathlib import Path
 
-from ... import consoles
+from ... import consoles, hostenv
 from ...network import Agent, Network, NetworkError, hash_token
 from ...rom import split
 from ...rom.symbols import Symbol, SymbolTable
@@ -68,7 +68,7 @@ class Core(Network):
 
     def _project(self, slug: str | None):
         row = super()._project(slug)
-        if hasattr(self, "progress"):
+        if hasattr(self, "progress") and self.project_missing(row) is None:
             self.progress.sync(row["slug"])
             row = super()._project(row["slug"])
         return row
@@ -106,6 +106,23 @@ class Core(Network):
                     db.execute("UPDATE projects SET root=? WHERE id=?", (str(here), row["id"]))
                 moved.append(row["slug"])
         return moved
+
+    def project_missing(self, proj) -> str | None:
+        """Why the project's folder isn't on disk, in a sentence, or None when it is there.
+
+        Its folder holds the game and everything made from it, so a project without one can't be opened; its database
+        records are all that is left, and removing the project is the way out. A folder that moved within this
+        workspace is found again by its name first (find_moved_projects): that project isn't missing any more."""
+        root = str(proj["root"] or "")
+        if root and Path(root).is_dir():
+            return None
+        if root and self.find_moved_projects():
+            row = self.store.one("SELECT root FROM projects WHERE id=?", proj["id"])
+            if row is not None and row["root"] and Path(row["root"]).is_dir():
+                return None
+        where = f": {hostenv.shown_path(root)}" if root else ""
+        return (f"Its folder is missing{where}. Put it back where it was (with the game in it), or remove the project "
+                "from decompdecomp: its matches and notes go with its database records.")
 
     def is_rom(self, proj) -> bool:
         return self.cfg(proj).get("kind") == "rom"
@@ -182,14 +199,26 @@ class Core(Network):
             self._roms[proj["id"]] = (rom, segs)
         return self._roms[proj["id"]]
 
-    def reader(self, proj):
+    def reader(self, proj, fn=None):
+        """Read helpers and constants from the caller's overlay, then unambiguous shared segments."""
         rom, segs = self._rom(proj)
+        preferred = []
+        if fn is not None and fn["rom_offset"] is not None:
+            preferred = [s for s in segs if s.contains(fn["vram"], fn["size"]) and
+                         s.rom_start + fn["vram"] - s.vram == fn["rom_offset"]]
 
         def read(addr: int, n: int) -> bytes | None:
-            for seg in segs:
-                if seg.contains(addr, n):
-                    at = seg.rom_start + addr - seg.vram
-                    return rom[at:at + n]
+            candidates = [s for s in preferred if s.contains(addr, n)]
+            if not candidates:
+                candidates = [s for s in segs if s.contains(addr, n)]
+            offsets = {s.rom_start + addr - s.vram for s in candidates}
+            # None means unbacked memory to the linker and skips verification. Ambiguity must fail instead.
+            if fn is not None and len(offsets) > 1:
+                raise NetworkError(f"Cannot verify bytes at 0x{addr:X}: multiple ROM overlays cover this address "
+                                   "and the caller's ROM offset does not select one.")
+            if candidates:
+                at = candidates[0].rom_start + addr - candidates[0].vram
+                return rom[at:at + n]
             return None
         return read
 

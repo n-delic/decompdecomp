@@ -182,6 +182,16 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       S.ov = before;
       return { guest, host, alone };
     })(),
+    ps4: (() => {
+      const h = new Uint8Array(64), dv = new DataView(h.buffer);
+      h.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]);
+      dv.setUint16(18, 62, true);
+      const file = { name: "eboot.elf", size: 256 };
+      return [0xfe10, 0xfe04, 2, 0xfe18].map((type) => {
+        dv.setUint16(16, type, true);
+        return identifyHead(h, file)?.platform ?? null;
+      });
+    })(),
     dropped: (() => {
       const head = (at, text) => { const h = new Uint8Array(0x10000); [...text].forEach((c, i) => (h[at + i] = c.charCodeAt(0))); return h; };
       const file = { name: "SLUS_000.01", size: 0x10000 };
@@ -433,6 +443,30 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       document.getElementById = original;
     }
   })()`, ctx);
+  // a project whose folder was deleted: its home card says so and Remove sends its database records away
+  checks.missingProject = await vm.runInContext(`(async () => {
+    const was = { projects: S.projects, dialog, api, showHome, loadNav, toast };
+    const go = { onclick: null }, body = { title: "", text: "" }, calls = [], notes = [];
+    const original = document.getElementById;
+    document.getElementById = (id) => (id === "rmMissingGo" ? go : original(id));
+    try {
+      S.projects = [{ slug: "gone", title: "Gone <Game>", platform_short: "N64",
+        missing: "Its folder is missing: /tmp/gone. Put it back where it was, or remove the project from decompdecomp." }];
+      const html = missingProjectHtml(S.projects[0]);
+      dialog = (title, text) => { body.title = title; body.text = text; return body; };
+      api = async (url, options) => { calls.push([url, options]); return { ok: true }; };
+      showHome = async () => { calls.push(["home"]); };
+      loadNav = () => { calls.push(["nav"]); };
+      toast = (html) => notes.push(String(html));
+      removeMissingProject(S.projects[0]);
+      await go.onclick();
+      return { html, title: body.title, text: body.text, calls, notes };
+    } finally {
+      S.projects = was.projects; dialog = was.dialog; api = was.api;
+      showHome = was.showHome; loadNav = was.loadNav; toast = was.toast;
+      document.getElementById = original;
+    }
+  })()`, ctx);
   // a 2017 game's program dropped before the page's state arrived (review of #138): pickFile waits for the state,
   // whose PC table names the pack (it was offered 6.0-7.1's), and the import's dialog lists that 32-bit program's
   // own compilers, never the 64-bit one (setupCompilers, compilerFits)
@@ -451,6 +485,27 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       document.getElementById = original;
       S.st = was;
     }
+  })()`, ctx);
+  checks.ps4Drop = await vm.runInContext(`(async () => {
+    const was = S.st, original = document.getElementById, oldPicked = picked;
+    const nodes = {};
+    document.getElementById = (id) => nodes[id] || (nodes[id] = { hidden: false, checked: false, innerHTML: "", textContent: "", value: "", insertAdjacentHTML() {} });
+    try {
+      const h = new Uint8Array(64), dv = new DataView(h.buffer);
+      h.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]); dv.setUint16(16, 0xfe10, true); dv.setUint16(18, 62, true);
+      const out = [];
+      for (const installed of [false, true]) {
+        const con = { ...SERVER_CONSOLES.find((c) => c.id === "ps4"), import_error: "" };
+        S.st = { consoles: [con], toolchains: [{ id: "mwcc", license: "proprietary", installed }] };
+        await pickFile({ name: "eboot.elf", size: h.length, slice: () => ({ arrayBuffer: async () => h.buffer }) }, [{ name: "game.functions.jsonl", size: 20 }]);
+        $("own").checked = true; updateAnalyse();
+        out.push({ pack: packOf(picked.info), consent: !$("mwConsent").hidden, disabled: $("analyse").disabled,
+                   note: $("compilerNote").textContent, extras: picked.extras.map((f) => f.name) });
+      }
+      S.st.consoles[0] = { ...S.st.consoles[0], import_error: "Run the Linux app inside WSL 2." };
+      setupCompilers(picked.info); updateAnalyse();
+      return { drops: out, unsupported: { disabled: $("analyse").disabled, note: $("compilerNote").textContent, consent: !$("mwConsent").hidden } };
+    } finally { document.getElementById = original; S.st = was; picked = oldPicked; }
   })()`, ctx);
   answers["/api/state"] = state;
   // an Xbox program (XBEH, base address on a 4 KiB boundary), an XISO and a full dump's disc, and the 360's XEX2 refused

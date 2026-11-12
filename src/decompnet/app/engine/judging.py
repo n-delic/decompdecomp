@@ -38,7 +38,7 @@ class JudgeMixin:
         if not self.is_rom(proj):
             return super()._evaluate(fn, proj, obj)
         console = self.console(proj)
-        res = console.link_function(obj, fn["name"], self._rom_target(fn), self.symbols(proj["id"]), self.reader(proj))
+        res = console.link_function(obj, fn["name"], self._rom_target(fn), self.symbols(proj["id"]), self.reader(proj, fn))
         return res.candidate, res.exact if res.candidate is not None else None, res.problems
 
     def rename_tokens(self, proj, text: str) -> str:

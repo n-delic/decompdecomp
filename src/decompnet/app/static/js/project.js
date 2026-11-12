@@ -20,6 +20,7 @@ async function openProject(slug, tab = "overview") {
     location.hash = "#/";
     return;
   }
+  if (S.ov.missing) { renderMissingProject(S.ov); return; }
   document.querySelectorAll("#ptabs [data-ptab]").forEach((a) => { a.href = `#/p/${slug}/${a.dataset.ptab}`; });
   const fork = S.ov.kind === "fork";
   $("mapTitle").textContent = fork ? "Function map" : "ROM map";
@@ -51,6 +52,22 @@ function stopPolling() {
   if (S.timer) clearInterval(S.timer);
   if (S.statsTimer) clearInterval(S.statsTimer);
   S.timer = null; S.statsTimer = null;
+}
+
+/* The project's folder was deleted: show why instead of a page whose polls and maps need it, with the way to remove
+   its database records (the only thing left). */
+function renderMissingProject(ov) {
+  renderHeader(ov);
+  markNav();
+  $("ptabs").hidden = true;
+  $("forkSetup").hidden = true;
+  $("phStart").hidden = $("phExport").hidden = $("phTogether").hidden = true;
+  document.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = true; });
+  const notice = $("compilerNotice");
+  notice.hidden = false;
+  notice.className = "notice bad";
+  setHtml(notice, `<span><b>This project's folder is missing.</b> ${esc(ov.missing)}</span><span class="grow"></span><button class="primary small-btn" id="missingRemove" type="button">Remove project…</button>`);
+  $("missingRemove").onclick = () => removeMissingProject(ov);
 }
 
 function setTab(tab) {

@@ -1176,16 +1176,31 @@ class Manager:
         if s.options.get("task") == "readable":  # (in either mode: the step that differs is the mode's)
             return tools.READABLE_PROMPT.format(title=ov["title"], count=count, names=tools.READABLE_FORK
                                                 if ov.get("kind") == "fork" else tools.READABLE_ROM)
+        console = consoles.get(ov.get("platform"))
+        scratch = ov.get("origin") == "scratch"
         if ov.get("kind") == "fork":
-            guides = ["fork", "objdiff", *consoles.get(ov.get("platform")).guides]
+            guides = ["fork", "objdiff", *console.guides]
             platform = ov.get("platform_name") or "its platform"
-            what = tools.FORK_SCRATCH if ov.get("origin") == "scratch" else tools.FORK_PUBLIC
-            return tools.FORK_PROMPT.format(title=ov["title"], what=what.format(platform=platform),
+            what = tools.FORK_SCRATCH if scratch else tools.FORK_PUBLIC
+            text = tools.FORK_PROMPT.format(title=ov["title"], what=what.format(platform=platform),
                                             count=count, budget=network.stall_budget_text(),
                                             guides=", ".join(f'guide("{g}")' for g in guides))
-        guide = consoles.get(ov.get("platform")).up_front_guide(ov["compiler"]["toolchain"])
-        return tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
+            if "join_functions" in tools.tool_names(True, console, scratch=scratch):
+                text = text.replace("\nRules:", "\n" + tools.FORK_JOIN + "\n\nRules:", 1)
+            return text
+        guide = console.up_front_guide(ov["compiler"]["toolchain"])
+        text = tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
+        offered = set(tools.tool_names(False, console))
+        # (a ROM prompt may already name a join its engine offers, as #192's does: don't say it twice)
+        extra = [block for tool, block in (("join_functions", tools.ROM_JOIN),
+                                           ("guess_struct", tools.WORK_STRUCTS),
+                                           ("report_boundary", tools.WORK_BOUNDARY))
+                 if tool in offered and (tool != "join_functions" or "join_functions" not in text)]
+        if extra:
+            text = text.replace("\nWrite plausible original code", "\n" + "\n\n".join(extra)
+                                + "\n\nWrite plausible original code", 1)
+        return text
 
     def _command(self, s: Session, token: str, workdir: Path) -> tuple[list[str], dict, str | None]:
         """The agent's command line, environment and what goes in on stdin (the prompt; None when its prompt went in

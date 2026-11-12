@@ -369,8 +369,15 @@ def test_a_pc_games_pdb_dropped_with_it_goes_beside_it(tmp_path, monkeypatch):
         if (state := c.get(f"/api/job?id={j['job']}").json())["state"] != "running":
             break
     assert state["state"] == "done" and seen == {"game.exe": b"MZ-game", "game.pdb": b"pdb", "game.map": b"mp"}
+    seen.clear()
+    extras = json.dumps([["eboot.functions.jsonl", 3]])
+    j = c.post(f"/api/import?confirmed=1&name=eboot.elf&extras={extras}", content=b"elf-game" + b"map").json()
+    for _ in range(300):
+        if (state := c.get(f"/api/job?id={j['job']}").json())["state"] != "running":
+            break
+    assert state["state"] == "done" and seen == {"eboot.elf": b"elf-game", "eboot.functions.jsonl": b"map"}
     bad = c.post(f"/api/import?confirmed=1&name=game.exe&extras={json.dumps([['x.dll', 3]])}", content=b"MZ-gamex.d")
-    assert bad.status_code == 400 and ".pdb or .map" in bad.json()["error"]
+    assert bad.status_code == 400 and ".pdb, .map" in bad.json()["error"]
 
 
 @pytest.mark.skipif(toolchains.installed("msvc") is None or toolchains.installed("objdiff-cli") is None

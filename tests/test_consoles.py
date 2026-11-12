@@ -160,11 +160,16 @@ def _missing(console) -> list[str]:
 
     def there(tool: str) -> bool:
         try:
-            toolchains.get(tool)
-            return toolchains.installed(tool) is not None
+            tc = toolchains.get(tool)
+            return tc.supported and toolchains.installed(tool) is not None
         except toolchains.ToolchainError:  # a program on PATH, not a toolchain
             return shutil.which(tool) is not None
-    return [t for t in console.demo_tools if not there(t)] + ([] if ZLIB.exists() else ["zlib (projects/zlib-n64/prepare.py)"])
+    missing = [t for t in console.demo_tools if not there(t)]
+    # Read the demo's own prerequisites, including consoles added after this test.
+    build = ROOT / "projects" / getattr(console, "demo", "") / "build.py"
+    if build.is_file() and "zlib-n64" in build.read_text() and not ZLIB.exists():
+        missing.append("zlib (projects/zlib-n64/prepare.py)")
+    return missing
 
 
 @pytest.fixture(scope="module", params=DEMOS, ids=[c.id for c in DEMOS])
