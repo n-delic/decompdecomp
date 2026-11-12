@@ -36,7 +36,7 @@ MANIFEST = ".decompnet-toolchain.json"
 INCLUDES = "includes.txt"
 # what of a toolchain's entry decides what its install holds on disk (its fingerprint, installed()); a part's
 # `platforms` only says which computers take it
-INSTALLED_FROM = ("requires", "git", "commit", "pip_extra")
+INSTALLED_FROM = ("requires", "git", "commit", "pip_extra", "build")
 LINUX = "linux-x86_64"
 # Parts for WSL: Linux programs packed in a format Windows can unpack (a .deb, not a .zst)
 WSL_PLATFORM = "wsl-x86_64"
@@ -68,6 +68,13 @@ class Toolchain:
     requires_java: int = 0  # minimum Java version (Ghidra)
     prelude: str = ""  # C put before every file it compiles: works around a compiler's own bugs (see toolchains.toml)
     cplusplus: bool = False  # it compiles C++ too (by the file's extension: .cpp)
+    driver: str = ""  # packaged console compiler adapter, mounted read-only
+    build: str = ""  # native build step after verified extraction
+    family: str = ""  # backend family when the id has a different prefix
+    # how its program writes its build, where the id names none a copy could be told by (kits/owncompiler.py: two SN64
+    # 2.7.2 builds run alike, and only "Build 0001" or "SN32.3.7.0006" in cc1n64.exe tells a copy of one from the other)
+    version_mark: str = ""
+    case_sensitive: bool = False  # Linux archive cannot be safely extracted on Windows
     wine: bool = False  # Windows programs wibo can't run: through wine on Linux and macOS (wine.py)
     # toolchains whose Include folder a pack's compilers search after their own, in order: a Windows SDK several packs
     # share, downloaded once (installed first, like `requires`; INCLUDES says where in each version's folder)
@@ -99,7 +106,8 @@ class Toolchain:
     @property
     def via_wsl(self) -> bool:
         """A Linux-only toolchain on Windows: installed from its Linux build and run inside WSL 2 (see wsl.py)."""
-        return not self.native_only and wsl.wanted() and not self.git and not self.parts_for() and bool(self.parts_for(LINUX))
+        return (not self.native_only and wsl.wanted() and not self.git and not self.case_sensitive
+                and not self.parts_for() and bool(self.parts_for(LINUX)))
 
     @property
     def via_vm(self) -> bool:
@@ -166,10 +174,18 @@ def get(tid: str) -> Toolchain:
     reg = registry()
     if tid not in reg and (own := _own(tid)) is not None:
         return Toolchain(id=tid, name=own.name, license="proprietary", source="your own copy: nothing is downloaded",
-                         description="A compiler in your own SDK copy.", flags=list(own.flags))
+                         description="A compiler in your own SDK copy.", flags=list(own.flags),
+                         kind="compiler", local_files=[own.exe.name])
     if tid not in reg:
         raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(reg))}")
     return reg[tid]
+
+
+def compiler_family(tid: str) -> str:
+    """The backend family explicitly declared by a compiler profile."""
+    if own := _own(tid):
+        tid = own.like or tid
+    return _registry_data().get(tid, {}).get("family", "")
 
 
 def data_dir() -> Path:
@@ -248,7 +264,7 @@ def fingerprint(tc: Toolchain, linux: bool = False) -> str:
     else INSTALLED_FROM names. Its name and description don't change an install."""
     parts = tc.linux_parts() if linux else tc.parts_for()
     entry = {"parts": [{k: v for k, v in p.items() if k != "platforms"} for p in parts],
-             **{k: getattr(tc, k) for k in INSTALLED_FROM}}
+             **{k: getattr(tc, k) for k in INSTALLED_FROM if k != 'build' or tc.build}}
     return hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -622,6 +638,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 continue
             if part.get("build") == "mips-binutils":
                 _build_mips_binutils(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "sn64-gcc":
+                _build_sn64_gcc(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "psx-gcc-2.6.3":
                 _build_psx_gcc_263(archive, dest, part, log)
                 for url_key, hash_key, _ in (
@@ -646,6 +664,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 if part.get("build") == "ghidra-decompiler":
                     _build_ghidra_decompiler(into, log)
             pinned.append({"url": part["url"], "sha256": digest})
+        if tc.build == "psyq-obj-parser":
+            _build_psyq_parser(dest, linux, log)
         for into in dict.fromkeys(part.get("into", "") for part in parts) if tc.headers else ():
             folder = dest / into  # (relative: the toolchains' folder can be moved, DECOMPNET_TOOLCHAINS)
             lines = [Path(os.path.relpath(path(h, linux, **location) / "Include", folder)).as_posix() for h in tc.headers]
@@ -675,6 +695,58 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
     return dest
 
 
+def _build_psyq_parser(dest: Path, linux: bool, log) -> None:
+    """Build only PCSX-Redux's standalone converter and its pinned header dependencies."""
+    source = "source"
+    argv = ["c++", "-std=c++20", "-O2", "-DNDEBUG", "-DFMT_HEADER_ONLY",
+            *["-I" + source + "/" + p for p in ("", "pcsx/src", "fmt/include", "elfio", "args", "magic_enum/include")],
+            *[source + "/pcsx/" + p for p in ("tools/psyq-obj-parser/psyq-obj-parser.cc",
+                                             "src/supportpsx/psyq-obj.cc", "src/support/file.cc")],
+            "-lz", "-o", "psyq-obj-parser"]
+    log("  building the pinned PsyQ-to-ELF converter (first install only)")
+    try:
+        if linux and sys.platform == "win32":
+            result = wsl.run(["prlimit", "--as=2147483648", "--", *argv], dest, 300,
+                             inputs=[source], outputs=["psyq-obj-parser"])
+        else:
+            result = subprocess.run(limits.capped(argv), cwd=dest, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=300, creationflags=NO_WINDOW)
+        if result.returncode or not (dest / "psyq-obj-parser").is_file():
+            raise ToolchainError("Building the PsyQ converter needs a C++20 compiler and zlib headers "
+                                 "(Xcode Command Line Tools on macOS; g++ and zlib1g-dev on Linux/WSL).\n"
+                                 + (result.stdout + result.stderr)[-3000:])
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ToolchainError(f"Couldn't build the PsyQ converter: {error}. Install a C++20 compiler and zlib headers.") from error
+
+
+def _build_sn64_gcc(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """Build the checksum-pinned reconstructed SN compiler natively on macOS."""
+    if not shutil.which("clang") or not shutil.which("make"):
+        raise ToolchainError("Building reconstructed SN64 GCC needs Xcode Command Line Tools: run `xcode-select --install`, then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-sn64-gcc-") as tmp:
+        source = Path(tmp)
+        _extract(archive, source, subdir)
+        # Old GCC's bundled assert.h expects a libgcc host helper absent from Apple's
+        # runtime. Supply that diagnostic routine only; target codegen is untouched.
+        host = source / "getpwd.c"
+        host.write_text(host.read_text(encoding="latin-1") +
+                        '\n#include <stdio.h>\nvoid __eprintf(const char *fmt, const char *expr, unsigned int line, '
+                        'const char *file) { fprintf(stderr, fmt, expr, line, file); abort(); }\n', encoding="latin-1")
+        flags = "-DDARWIN -std=gnu89 -O2 -DHAVE_VPRINTF -Wno-return-type -Wno-error -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types"
+        argv = ["make", "-j" + str(min(4, os.cpu_count() or 1)), "cpp", "cc1", "CC=/usr/bin/clang", "CFLAGS=" + flags]
+        log("  building pinned reconstructed SN64 GCC (first install only)")
+        try:
+            result = subprocess.run(limits.capped(argv), cwd=source, capture_output=True, text=True,
+                                    errors="replace", timeout=900)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise ToolchainError(f"Couldn't build reconstructed SN64 GCC: {e}. Check Xcode Command Line Tools and try again.") from e
+        if result.returncode:
+            raise ToolchainError("Couldn't build reconstructed SN64 GCC.\n" + (result.stdout + result.stderr)[-4000:])
+        for name in ("cpp", "cc1"):
+            if not (source / name).is_file():
+                raise ToolchainError(f"The reconstructed SN64 GCC build did not produce {name}.")
+            shutil.copyfile(source / name, dest / name)
+            (dest / name).chmod(0o755)
 def _build_ghidra_decompiler(ghidra: Path, log) -> None:
     """Build Ghidra's decompiler from the C++ source its release ships, where the release has none for this computer
     (macOS, ARM Linux). Only the host build tools (a C++ compiler and make) come from the system. Its Makefile builds

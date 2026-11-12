@@ -142,13 +142,22 @@ def prepare_tools(directories: tuple[Path, ...]) -> tuple[str, ...]:
     EE-GCC's 32-bit access() cannot find its compiler passes on a Windows drive, even when the source is staged
     in Linux. Copying the toolchain too fixes that. The complete tree is published by rename, so parallel starts
     never see half a compiler; a fresh install gets a fresh cache without modifying another app's copy.
+    Each folder is staged under its position, not its name, as linuxvm.prepare_tools does: a user's own kit folder
+    may share its name with another folder in the list (an SN kit called `n64` beside the `consoles/n64` driver
+    folder), and by name the second would be copied inside the first. v2: v1 caches were laid out by name.
     """
-    digest = hashlib.sha256(b"tool-cache-v1")
+    digest = hashlib.sha256(b"tool-cache-v2")
     for directory in directories:
         digest.update(str(directory.resolve()).encode("utf-8"))
-        digest.update((directory / ".decompnet-toolchain.json").read_bytes())
+        manifest = directory / ".decompnet-toolchain.json"
+        if manifest.is_file():
+            digest.update(manifest.read_bytes())
+        else:
+            for file in sorted(directory.rglob("*")):
+                if file.is_file() and "__pycache__" not in file.parts:
+                    digest.update(str(file.relative_to(directory)).encode() + file.read_bytes())
     cache = f"{_cache_directory()}/{digest.hexdigest()[:24]}"
-    result = tuple(f"{cache}/{directory.name}" for directory in directories)
+    result = tuple(f"{cache}/{index}" for index in range(len(directories)))
     q = shlex.quote
     with _tools_lock:
         if cache in _prepared_tools:
@@ -156,7 +165,7 @@ def prepare_tools(directories: tuple[Path, ...]) -> tuple[str, ...]:
         lines = [f"mkdir -p {q(_cache_directory())} || exit 1", f"if [ ! -f {q(cache + '/.ready')} ]; then",
                  f"  stage=$(mktemp -d {q(cache + '.XXXXXX')}) || exit 1",
                  "  trap 'rm -rf \"$stage\"' EXIT"]
-        lines += [f'  cp -R {q(path(directory))} "$stage"/{q(directory.name)} || exit 1' for directory in directories]
+        lines += [f'  cp -R {q(path(directory))} "$stage"/{index} || exit 1' for index, directory in enumerate(directories)]
         lines += ['  touch "$stage/.ready" || exit 1',
                   f'  mv -T "$stage" {q(cache)} 2>/dev/null || [ -f {q(cache + "/.ready")} ] || exit 1', "fi"]
         with tempfile.TemporaryDirectory(prefix="decomp-wsl-tools-") as work:

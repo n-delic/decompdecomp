@@ -619,6 +619,19 @@ def test_an_install_from_an_entry_that_changed_is_offered_again(tc_root, monkeyp
     assert not any(r["changed"] for r in toolchains.status())
 
 
+def test_build_fingerprint_keeps_existing_install_compatible(tc_root):
+    import hashlib
+    from dataclasses import replace
+
+    tc = toolchains.get('gcc-2.7.2-kmc')
+    parts = tc.parts_for()
+    old = {"parts": [{k: v for k, v in p.items() if k != "platforms"} for p in parts],
+           **{k: getattr(tc, k) for k in toolchains.INSTALLED_FROM if k != 'build'}}
+    expected = hashlib.sha256(json.dumps(old, sort_keys=True).encode()).hexdigest()[:16]
+    assert not tc.build and toolchains.fingerprint(tc) == expected
+    assert toolchains.fingerprint(replace(tc, build='new recipe')) != expected
+
+
 def test_an_existing_windows_ido_install_is_offered_again_for_the_runtime(tc_root, monkeypatch):
     """#130: a Windows install from the old entry has only the release archive, so it has no msys-2.0.dll. The entry
     now has the runtime part: installed() sees the change, and Compilers & tools offers Install again."""

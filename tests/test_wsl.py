@@ -50,6 +50,40 @@ def test_reinstalling_a_compiler_gets_a_fresh_linux_copy(tool_cache):
     assert wsl.prepare_tools(directories) != first and len(calls) == 2
 
 
+def test_staging_driver_folder_without_manifest_tracks_its_files(tool_cache):
+    directories, calls = tool_cache
+    driver = directories[0] / 'n64-driver'
+    driver.mkdir()
+    source = driver / 'driver.py'
+    source.write_text('first')
+    staged = wsl.prepare_tools((*directories, driver))
+    source.write_text('second')
+    assert wsl.prepare_tools((*directories, driver)) != staged
+    assert len(calls) == 2
+
+
+def test_a_kit_folder_named_like_the_driver_folder_stages_apart(tool_cache, tmp_path):
+    """A user's SN kit kept in a folder called `n64` beside the SN driver's own folder (consoles/n64): staged by name,
+    the second copy went inside the first (cache/<hash>/n64/n64/sn64.py) while `{driver}` named cache/<hash>/n64/sn64.py.
+    Each folder has its own place, and the paths returned are the places its script copies to."""
+    from pathlib import Path
+
+    from decompnet.consoles import n64
+
+    directories, calls = tool_cache
+    kit = tmp_path / "n64"
+    kit.mkdir()
+    (kit / "cc1n64.exe").write_bytes(b"kit")
+    driver = Path(n64.__file__).parent
+    assert (driver / "sn64.py").is_file() and driver.name == kit.name
+    staged = wsl.prepare_tools((kit, *directories, driver))
+    copies = [shlex.split(line)[2:4] for line in calls[0][-1].splitlines() if line.strip().startswith("cp -R")]
+    assert [source for source, _ in copies] == [str(kit), *map(str, directories), str(driver)]
+    cache = staged[0].rsplit("/", 1)[0]
+    assert [place.replace("$stage", cache) for _, place in copies] == list(staged)
+    assert len(set(staged)) == len(staged)
+
+
 def test_a_failed_linux_copy_is_not_cached(tool_cache, monkeypatch):
     directories, _ = tool_cache
     calls = []

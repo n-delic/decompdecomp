@@ -71,7 +71,7 @@ def weight_family(cfg: dict, vram: int | None, fork: bool) -> str:
     if fork:  # forks name their console, not a toolchain: the console says its compilers' family
         return consoles.get(cfg.get("platform")).compiler_family or "base"
     toolchain = (compiler_for(cfg, vram).get("toolchain") or "") if cfg.get("compiler") else ""
-    return next((family for prefix, family in FAMILIES if toolchain.startswith(prefix)), "base")
+    return toolchains.compiler_family(toolchain) or next((family for prefix, family in FAMILIES if toolchain.startswith(prefix)), "base")
 
 
 def available() -> bool:

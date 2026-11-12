@@ -337,6 +337,15 @@ def test_linux_vm_setup_shows_readiness_and_uses_progress():
     subprocess.run([NODE, str(Path(__file__).with_name('gui_linuxvm.js'))], check=True,
                    capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
+
+def test_the_compiler_picker_adds_kit_copies_to_the_consoles_own_compilers():
+    """#198: with a Visual C++ kit the PC picker showed only the kit's copy, not 6.0 to 14.16 beside it; and a version
+    that names no games read "Visual C++ 6.0 · " (tests/gui_compiler_picker.js)."""
+    if NODE is None:
+        pytest.skip('needs node to run GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_compiler_picker.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
 def test_ps4_decrypted_executables_are_accepted_but_other_elfs_are_not(gui):
     assert gui["checks"]["ps4"] == ["ps4", "ps4", None, None]
 

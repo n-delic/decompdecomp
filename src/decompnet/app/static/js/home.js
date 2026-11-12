@@ -473,16 +473,18 @@ $("mwAccept").addEventListener("change", updateAnalyse);
 function fillCompilers(select, current, platform, only) {
   // the console's compilers
   const own = (consoleOf(platform)?.compilers || []).map((c) => c.id).filter((id) => !only || only.includes(id));
-  const tcs = (S.st?.toolchains || []).filter((t) => t.kind === "compiler" && (!own.length || own.includes(t.id)));
-  if (own.length && !tcs.length) {  // versions of a compiler pack (DS's CodeWarriors), not toolchains of their own
-    select.innerHTML = consoleOf(platform).compilers.filter((c) => own.includes(c.id))
-      .map((c) => `<option value="${esc(c.id)}" ${c.id === current ? "selected" : ""}>${esc(c.name)}</option>`)
-      .join("");
-    return;
-  }
+  const available = [...(S.st?.toolchains || []), ...(S.st?.compiler_choices || [])]
+    .filter((t) => t.kind === "compiler" && (!own.length || own.includes(t.id)));
+  const known = new Set(available.map((t) => t.id));
+  const versions = (consoleOf(platform)?.compilers || [])
+    .filter((c) => own.includes(c.id) && !known.has(c.id))
+    .map((c) => ({...c, kind: "compiler", use: c.built, supported: true, installed: true}));
+  const tcs = [...available, ...versions];
   select.innerHTML = tcs.map((t) => {
     const note = !t.supported ? " (not available on this computer)" : t.installed ? "" : t.license === "proprietary" ? " (install in Compilers & tools)" : " (will be installed)";
-    return `<option value="${esc(t.id)}" ${t.id === current ? "selected" : ""} ${t.supported ? "" : "disabled"}>${esc(t.name)} · ${esc(t.use)}${note}</option>`;
+    // a pack's version may say nothing about the games it built (the PC's and DS's): no separator before nothing
+    const use = t.use ? ` · ${esc(t.use)}` : "";
+    return `<option value="${esc(t.id)}" ${t.id === current ? "selected" : ""} ${t.supported ? "" : "disabled"}>${esc(t.name)}${use}${note}</option>`;
   }).join("");
 }
 

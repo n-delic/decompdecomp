@@ -479,7 +479,7 @@ class CompilerMixin:
         (MIPS GCC's -G; CodeWarrior's -sdatathreshold), and the few options that change the shape of code most.
         Each variant changes the project's flags in one place, so what matches says which flag it was. `more`: the
         console's own (Console.flag_extras)."""
-        family = next((f for prefix, f in FLAG_FAMILIES if toolchain.startswith(prefix)), "gcc")
+        family = toolchains.compiler_family(toolchain) or next((f for prefix, f in FLAG_FAMILIES if toolchain.startswith(prefix)), "gcc")
         levels, extras = FLAG_LEVELS[family], FLAG_EXTRAS[family] + tuple(more)
         current = next((f for f in base if f in levels), None)
         out = [base]
