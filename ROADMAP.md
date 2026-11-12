@@ -906,4 +906,7 @@ The answer goes here: build it, build part of it, or not, and why.
   doesn't use them yet.
 - **A Flatpak** on the GNOME runtime.
 - **macOS signed/notarized** distribution and a menu bar tray icon.
-- **macOS memory, CPU and file-size caps** for compiler processes (Linux currently uses systemd scopes).
+- **macOS CPU and file-size caps** for compiler processes (Linux uses prlimit; macOS has the memory watchdog,
+  `limits.CompilerMemoryWatchdog`).
+- **Windows memory caps** for compilers and project builds: the Job Object each one already runs in (`limits.attach_job`,
+  which stops the whole tree at the time limit) can also cap its memory, as Linux's scopes and macOS's watchdog do.
