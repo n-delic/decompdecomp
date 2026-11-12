@@ -15,6 +15,6 @@ none of the 64-bit pointer fixes a native port does, and data the ROM holds is c
 - stubs.py: a logging stub for every import the host doesn't implement.
 - wrap.py: a debugging aid that logs a translated function's calls.
 
-The console's own part (the host and its library's prototypes) is its port kit's `wasm` folder
-(N64: consoles/n64/port_wasm/).
+The console's own part (the host, its renderer and its library's prototypes) is its port kit's `wasm` folder
+(N64: consoles/n64/port_wasm/: host.c, render.c, libultra.sigs); every C file there is built into the host.
 """

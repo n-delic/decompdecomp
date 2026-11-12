@@ -39,6 +39,8 @@ static uint32_t be32(uint32_t a) { uint32_t v; memcpy(&v, M + a, 4); return __bu
 static uint16_t be16(uint32_t a) { uint16_t v; memcpy(&v, M + a, 2); return __builtin_bswap16(v); }
 static void wbe32(uint32_t a, uint32_t v) { v = __builtin_bswap32(v); memcpy(M + a, &v, 4); }
 static void wbe16(uint32_t a, uint16_t v) { v = __builtin_bswap16(v); memcpy(M + a, &v, 2); }
+uint8_t *port_memory(void) { return M; } /* for the renderer (render.c) */
+void port_render_task(uint32_t task); /* render.c: a graphics task's display list, drawn into the game's frame buffer */
 
 /* ---------------------------------------------------------------- the game's functions by address */
 
@@ -350,7 +352,8 @@ void w2c_env_osViSetMode(struct w2c_env *e, u32 mode) { (void)e; LOG("osViSetMod
 void w2c_env_osViSetYScale(struct w2c_env *e, f32 s) { (void)e; (void)s; }
 void w2c_env_osViBlack(struct w2c_env *e, u32 on) { (void)e; (void)on; }
 void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) { (void)e; (void)f; }
-void w2c_env_viSetSwapBuffer(struct w2c_env *e, u32 fb) { (void)e; frame_buffer = fb; swaps++; }
+void port_frame_shown(uint32_t fb, unsigned long n); /* render.c: saves it when asked */
+void w2c_env_viSetSwapBuffer(struct w2c_env *e, u32 fb) { (void)e; frame_buffer = fb; swaps++; port_frame_shown(fb, swaps); }
 
 static void retrace(void) {
     vi_count++;
@@ -383,6 +386,7 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     (void)e;
     uint32_t type = be32(task);
     if (type == 1) gfx_tasks++; else audio_tasks++;
+    if (type == 1) port_render_task(task);
     if (gfx_tasks + audio_tasks <= 4) LOG("RSP task type %u: data %08X, %X bytes", type, be32(task + 48), be32(task + 52));
     if (type == 1 && gfx_tasks == 2 && getenv("PORT_TASK")) {
         uint32_t ud = be32(task + 24) & 0x1FFFFFFF, uds = be32(task + 28), dl = be32(task + 48) & 0x1FFFFFFF;
