@@ -78,8 +78,16 @@ _CHEAT = re.compile(r"\b(__asm__|__asm|asm|_asm)\b|INCLUDE_ASM|GLOBAL_ASM|INCLUD
 _REGVAR = re.compile(r"\b(?:asm|__asm__|__asm)\s*\(\s*\"\$?[a-z]{1,2}\d{0,2}\"\s*\)", re.I)
 
 
+# A typed extern with an assembler *name* changes linkage only; it emits no assembly.
+# Keep this grammar narrow so instruction strings/extended asm still fail the check.
+_LINKAGE_DECL = re.compile(
+    r'\bextern\s+__typeof__\s*\(\s*[A-Za-z_]\w*\s*\)\s+[A-Za-z_]\w*\s+'
+    r'__asm__\s*\(\s*"[A-Za-z_]\w*"\s*\)\s*'
+    r'__attribute__\s*\(\(\s*visibility\s*\(\s*"hidden"\s*\)\s*\)\)\s*;')
+
+
 def _strip_comments(code: str) -> str:
-    return _REGVAR.sub(" ", re.sub(r"//[^\n]*|/\*.*?\*/", " ", code, flags=re.S))
+    return _REGVAR.sub(" ", _LINKAGE_DECL.sub(" ", re.sub(r"//[^\n]*|/\*.*?\*/", " ", code, flags=re.S)))
 
 
 def _rewrite(path: Path, text: str) -> None:
@@ -549,6 +557,7 @@ class ForkEngine:
         # (project id, unit) -> (sha1 of its source, base object mtime, {function: match %}): what objdiff said
         # the last time it measured the unit, so a compile doesn't need a second objdiff run to know the baseline
         self._scores: dict[tuple[int, str], tuple[str, int | None, dict]] = {}
+        self._best_diffs: dict[str, dict] = {}  # a best attempt's diff, by what it was built from
         # (project id, unit) -> whether its object is a try's now, for the units in a run of tries (trial_run)
         self._trials: dict[tuple[int, str], bool] = {}
         self._index: dict[int, dict] = {}  # project id -> {unit: {"mtime", "order", "ops"}}
@@ -1027,6 +1036,7 @@ class ForkEngine:
             except (ObjdiffError, ForkError) as e:
                 raise NetworkError(f"objdiff couldn't measure the project: {e}") from None
         units = {u.name: u for u in fp.units()}
+        addresses = consoles.get(cfg.get("platform")).function_addresses(fp)
         data = {n: _data_symbols(u.target) for n, u in units.items()}
         rows = [(u["name"], f) for u in rep.get("units", []) for f in u.get("functions", [])
                 if f["name"] not in data.get(u["name"], ())]
@@ -1098,6 +1108,9 @@ class ForkEngine:
                     status = "asm"  # hand-written assembly (here or in its twin elsewhere): not for agents
                 score = None if fuzzy is None else scaled(fuzzy, n)
                 vram = md.get("virtual_address")
+                if vram is None:
+                    vram = addresses.get((uname, sym))
+                vram = int(vram) if vram is not None else old["vram"] if old is not None else None
                 if old is None:
                     name = sym if counts[sym] == 1 else f"{sym}@{uname}" + (f"#{k + 1}" if k else "")
                     while name in used:
@@ -1105,7 +1118,7 @@ class ForkEngine:
                     used.add(name)
                     db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,best_score,unit,vram,meta,asm) "
                                "VALUES(?,?,?,?,?,?,?,?,?,?)", (proj["id"], name, size, n, status, score, uname,
-                                                              int(vram) if vram else None, json.dumps(meta), ""))
+                                                              vram, json.dumps(meta), ""))
                 else:
                     # a better attempt kept elsewhere stays the best; a 0 (identical) of a function that no longer
                     # matches doesn't: the queue and briefs would say it's done
@@ -1113,10 +1126,10 @@ class ForkEngine:
                         score = old["best_score"] if score is None else min(score, old["best_score"])
                     # only what changed: SQLite writes a row's pages even when its values are the same, and a
                     # GameCube game's 34,000 functions rewritten on every sync were most of what the app wrote
-                    if (old["size"], old["n_insns"], old["status"], old["best_score"], self._meta(old)) != \
-                            (size, n, status, score, meta):
-                        db.execute("UPDATE functions SET size=?, n_insns=?, status=?, best_score=?, meta=? WHERE id=?",
-                                   (size, n, status, score, json.dumps(meta), old["id"]))
+                    if (old["size"], old["n_insns"], old["status"], old["best_score"], self._meta(old), old["vram"]) != \
+                            (size, n, status, score, meta, vram):
+                        db.execute("UPDATE functions SET size=?, n_insns=?, status=?, best_score=?, meta=?, vram=? WHERE id=?",
+                                   (size, n, status, score, json.dumps(meta), vram, old["id"]))
                     if old["status"] == "matched" and status != "matched":
                         self._reopened(db, proj, old, "full report" + (", the unit doesn't build" if uname in broken
                                                                          else ""), fuzzy,
@@ -2671,7 +2684,7 @@ class ForkEngine:
                 found = ghidra.decompile_object(unit.target, fp.root / STATE / "ghidra")
                 names = [meta.get("symbol") or fn["name"], *self._names(meta, fn)]
                 body = next((found[n] for n in names if n in found), None)
-                text = body and "/* Ghidra */\n" + body.strip()
+                text = body and "/* Ghidra */\n" + consoles.get(cfg.get("platform") or "").adapt_draft(body.strip())
         except OSError:
             text = None
         with self.net.store.tx() as db:
@@ -2993,6 +3006,67 @@ class ForkEngine:
         except NetworkError:
             pass
 
+    def _place(self, proj, fp: ForkProject, unit, fn, source: str, names: list[str], comment: bool = False,
+               prelude: str = "") -> tuple[str, str, Path, str]:
+        """`source`'s definition written into its unit's source file as it is now: (the code, the file after,
+        the file, the file before)."""
+        _, span = self._find(source, names)
+        if span is None:
+            raise NetworkError(f"send the complete definition of {names[0]} (with its body)")
+        # with the comment right above it (what it does, from polishing): the file kept the definition only
+        # Polishing's only: a twin's note or a decompiling agent's scratch comment replaced a forked decomp's own
+        # doc comments, and piled up in its files
+        if comment:
+            span = (csource.comment_above(source, span[0]), span[1])
+        code = source[span[0]:span[1]]
+        commented = code.lstrip().startswith(("//", "/*"))
+        if not unit.source:
+            raise NetworkError(f"unit {unit.name} has no source file, so there's nowhere to write it")
+        path = fp.safe_path(unit.source, write=True)
+        try:
+            before = path.read_text(errors="replace", encoding="utf-8")
+        except OSError:
+            before = ""
+        includes, before_lines, after_lines = _around(source, span, before, unit.source)
+        hit, old_span = self._find(before, names)
+        base, carried = before, ""  # what the new definition goes into; what of the parked copy goes with it
+        parked = self._hidden(fp, before, old_span[0]) if old_span else None
+        if parked and (seen := self._seen_beside(fp, before, old_span, hit, names)):
+            # a draft parked in `#ifdef` before the build's own definition in its `#else`: the one the build sees
+            # is the one tried (the parked one taken out, a new one put in, the visible one stayed: defined twice)
+            old_span, parked = seen, None
+        if parked:
+            # parked in an #if branch the build leaves out: written there, the compile was judged on other code,
+            # and moved out with edit_file it was refused when it broke a matched neighbour (where whole-program
+            # optimisation couples them), so an agent could do nothing with it. It goes where the build sees it,
+            # without the parked copy: kept, the function is visible from then on; else the file is undone. Its
+            # annotation (`// FUNCTION: 0x...`, often with the notes of earlier tries) comes along, and its
+            # comment too unless the agent sent one
+            lo = csource.comment_above(before, old_span[0])
+            mark = csource.marker_above(before, lo)
+            carried = before[mark:lo] + ("" if commented else before[lo:old_span[0]])
+            base, old_span = before[:mark] + before[old_span[1]:], None
+        pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
+        if old_span:
+            lo, hi = old_span
+            kept = ""  # the file's comment, when none was sent
+            if commented:  # a new comment replaces the old one; without one, the file's stays
+                lo = csource.comment_above(before, lo)
+            if any(_PRAGMA.match(ln) for ln in before_lines + after_lines):  # a new wrapper replaces the old one
+                above = csource.comment_above(before, lo)
+                wrapped, hi = _pragmas_around(before, lo, hi)
+                if not commented and wrapped < above:
+                    kept = before[above:lo]
+                lo = wrapped
+            after = before[:lo] + pre + kept + code.rstrip("\n") + "\n" + post + before[hi:]
+        else:
+            placed = pre + carried + code.rstrip("\n") + "\n" + post
+            after = self._insert_in_order(proj, fp, unit, fn, base, placed)
+            if base is not before and (span := self._find(after, names)[1]) and self._hidden(fp, after, span[0]):
+                after = base.rstrip("\n") + "\n\n" + placed  # (its neighbours are parked too: after them all)
+        after = _with_includes(after, includes, prelude)
+        return code, after, path, before
+
     def _attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
                  quiet: int | None = None, comment: bool = False) -> dict:
         proj, fp, cfg = self.get(slug)
@@ -3018,36 +3092,25 @@ class ForkEngine:
                 _, span = self._find(source, names)
         if span is None:
             raise NetworkError(f"send the complete definition of {names[0]} (with its body)")
-        # with the comment right above it (what it does, from polishing): the file kept the definition only
-        # Polishing's only: a twin's note or a decompiling agent's scratch comment replaced a forked decomp's own
-        # doc comments, and piled up in its files
-        if comment:
-            span = (csource.comment_above(source, span[0]), span[1])
-        code = source[span[0]:span[1]]
-        commented = code.lstrip().startswith(("//", "/*"))
         unit = fp.unit(fn["unit"])
         if not unit.source:
             raise NetworkError(f"unit {unit.name} has no source file, so there's nowhere to write it")
-        try:
-            have = (fp.root / unit.source).read_text(errors="replace", encoding="utf-8")
-        except OSError:
-            have = ""
-        includes, before_lines, after_lines = _around(source, span, have, unit.source)
-        with self.net.store.tx() as db:  # claim bookkeeping, as for ROM projects
-            self.net._expire_claims(db)
-            claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
-            if claim is not None and claim["agent_id"] != agent.id:
-                raise NetworkError(f"{fn['name']} is claimed by {self.net._agent_name(claim['agent_id'])}")
-            now = time.time()
-            if claim is None and fn["status"] != "matched":
-                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.net.claim_ttl))
-            elif claim is not None:
-                db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.net.claim_ttl, fn["id"]))
-        path = fp.safe_path(unit.source, write=True)
         symbol = meta.get("symbol") or fn["name"]
         linked = unit.complete and fp.linkable()  # the game is built from this file: changes must keep it identical
         with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
-            before = path.read_text(errors="replace", encoding="utf-8") if path.exists() else ""
+            code, after, path, before = self._place(proj, fp, unit, fn, source, names, comment, prelude)
+            with self.net.store.tx() as db:  # claim bookkeeping, as for ROM projects
+                self.net._expire_claims(db)
+                claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
+                if claim is not None and claim["agent_id"] != agent.id:
+                    raise NetworkError(f"{fn['name']} is claimed by {self.net._agent_name(claim['agent_id'])}")
+                now = time.time()
+                if claim is None and fn["status"] != "matched":
+                    db.execute("INSERT INTO claims VALUES(?,?,?,?)",
+                               (fn["id"], agent.id, now, now + self.net.claim_ttl))
+                elif claim is not None:
+                    db.execute("UPDATE claims SET expires_at=? WHERE function_id=?",
+                               (now + self.net.claim_ttl, fn["id"]))
             # What matches in the file as it is now is what this change must keep (not the database's idea of it,
             # which a change outside decompdecomp or a different measurement can leave behind)
             scores, builds = self._baseline(proj, fp, unit, before)
@@ -3061,43 +3124,6 @@ class ForkEngine:
                 protected = {n for n, pct in (self._last_scores(proj, unit) or {}).items()
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = fn["status"] == "matched"
-            hit, old_span = self._find(before, names)
-            base, carried = before, ""  # what the new definition goes into; what of the parked copy goes with it
-            parked = self._hidden(fp, before, old_span[0]) if old_span else None
-            if parked and (seen := self._seen_beside(fp, before, old_span, hit, names)):
-                # a draft parked in `#ifdef` before the build's own definition in its `#else`: the one the build sees
-                # is the one tried (the parked one taken out, a new one put in, the visible one stayed: defined twice)
-                old_span, parked = seen, None
-            if parked:
-                # parked in an #if branch the build leaves out: written there, the compile was judged on other code,
-                # and moved out with edit_file it was refused when it broke a matched neighbour (where whole-program
-                # optimisation couples them), so an agent could do nothing with it. It goes where the build sees it,
-                # without the parked copy: kept, the function is visible from then on; else the file is undone. Its
-                # annotation (`// FUNCTION: 0x...`, often with the notes of earlier tries) comes along, and its
-                # comment too unless the agent sent one
-                lo = csource.comment_above(before, old_span[0])
-                mark = csource.marker_above(before, lo)
-                carried = before[mark:lo] + ("" if commented else before[lo:old_span[0]])
-                base, old_span = before[:mark] + before[old_span[1]:], None
-            pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
-            if old_span:
-                lo, hi = old_span
-                kept = ""  # the file's comment, when none was sent
-                if commented:  # a new comment replaces the old one; without one, the file's stays
-                    lo = csource.comment_above(before, lo)
-                if any(_PRAGMA.match(ln) for ln in before_lines + after_lines):  # a new wrapper replaces the old one
-                    above = csource.comment_above(before, lo)
-                    wrapped, hi = _pragmas_around(before, lo, hi)
-                    if not commented and wrapped < above:
-                        kept = before[above:lo]
-                    lo = wrapped
-                after = before[:lo] + pre + kept + code.rstrip("\n") + "\n" + post + before[hi:]
-            else:
-                placed = pre + carried + code.rstrip("\n") + "\n" + post
-                after = self._insert_in_order(proj, fp, unit, fn, base, placed)
-                if base is not before and (span := self._find(after, names)[1]) and self._hidden(fp, after, span[0]):
-                    after = base.rstrip("\n") + "\n\n" + placed  # (its neighbours are parked too: after them all)
-            after = _with_includes(after, includes, prelude)
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
             agents_try = keep and quiet is None and not was_matched
@@ -3428,16 +3454,50 @@ class ForkEngine:
         if not cfg.get("ready"):
             raise NetworkError("finish setting the project up first")
         console = consoles.get(cfg.get("platform"))
+        rows = self.net.store.all("SELECT id, name, unit, meta FROM functions WHERE project_id=? AND status='open' "
+                                  "ORDER BY n_insns, id", proj["id"])
         if console.own_drafts:
             if (rel := console.prepare_drafts(fp)):
                 self._commit(proj, fp, rel, "Add the types machine drafts use\n\nWritten by decompdecomp's autopilot.")
-        elif not drafts.supported(cfg.get("platform") or "") or toolchains.installed("m2c") is None:
-            raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
-        elif drafts.add_m2c_macros(fp.root / "include" / "common.h"):  # projects made before autopilot ran on them
-            self._commit(proj, fp, "include/common.h", "Add the macros machine drafts use\n\nWritten by decompdecomp's autopilot.")
-        rows = self.net.store.all("SELECT id FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns, id",
-                                  proj["id"])
+        else:
+            if not drafts.supported(cfg.get("platform") or ""):
+                raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
+            # m2c reads the assembly a project keeps for its undecompiled functions. A ds-decomp project has none: its
+            # sources are the delinked code as comments, so every draft would fail and autopilot would still commit
+            # the macros (#232). Say so before writing anything, and let the helpers have the project.
+            if rows and self._draft_asm(fp, rows) is None:
+                raise NetworkError("Autopilot needs machine drafts, and this project keeps no assembly for m2c to read "
+                                   "(a ds-decomp project): helpers still work on it.")
+            if toolchains.installed("m2c") is None:
+                raise NetworkError("autopilot needs m2c, the draft decompiler: install it in Setup")
+            if drafts.add_m2c_macros(fp.root / "include" / "common.h"):  # projects made before autopilot ran on them
+                self._commit(proj, fp, "include/common.h", "Add the macros machine drafts use\n\nWritten by decompdecomp's autopilot.")
         return [r["id"] for r in rows]
+
+    def _draft_asm(self, fp: ForkProject, rows) -> Path | None:
+        """The assembly file of the first of these open functions that has one (forks/drafts.py's lookup), or None
+        when the project keeps no assembly for m2c to read."""
+        sources: dict[str | None, str | None] = {}
+        unit_of = getattr(fp, "unit", None)  # (a project whose objdiff.json isn't there to read yet)
+        for fn in rows:
+            unit_name, source = fn["unit"], None
+            if unit_of is not None:
+                try:
+                    unit = unit_of(unit_name)
+                except ForkError:  # (not in objdiff.json any more: its assembly may still be in asm/)
+                    unit = None
+                if unit is not None:
+                    unit_name, source = unit.name, unit.source
+            if source not in sources:
+                try:
+                    sources[source] = ((fp.root / source).read_text(errors="replace", encoding="utf-8")
+                                       if source else None)
+                except OSError:
+                    sources[source] = None
+            if (asm := drafts.find_asm(fp.root, unit_name, self._meta(fn).get("symbol") or fn["name"],
+                                       sources[source])) is not None:
+                return asm
+        return None
 
     def _known(self, fp: ForkProject, unit) -> str:
         """The project's headers and a unit's source file, as one text: what drafts take declarations from."""
@@ -3568,6 +3628,10 @@ class ForkEngine:
         if any(f["status"] == "matched" for f in (a, b)):
             raise NetworkError(f"{next(f['name'] for f in (a, b) if f['status'] == 'matched')} is matched: a join "
                                "would change it, so it can't be one")
+        console = consoles.get(cfg.get("platform"))
+        if not console.joins_functions:
+            raise NetworkError(f"{console.name or 'This console'} projects can't join functions yet: work on them as "
+                               "they are, and say so in a note for the next agent")
         first, last = sorted((a, b), key=lambda f: (f["vram"] or 0, f["id"]))
         key = f"{first['name']}+{last['name']}"
         refused = (cfg.get("joins_refused") or {}).get(key)
@@ -3579,7 +3643,6 @@ class ForkEngine:
             return (f"Your proposal is counted ({len(said)} of {NOT_C_AGENTS} agents, {len(models)} of {NOT_C_MODELS} "
                     f"models): {first['name']} and {last['name']} are joined once enough agree and the game still "
                     "builds byte for byte. Meanwhile, claim another function.")
-        console = consoles.get(cfg.get("platform"))
         matched = {r["name"] for r in self.net.store.all("SELECT name FROM functions WHERE project_id=? AND "
                                                          "status='matched'", proj["id"])}
         why = None
@@ -3631,6 +3694,9 @@ class ForkEngine:
         if slug in self.net.links:
             raise NetworkError("in a room, the host's project is the one to cut functions in: say it in a note")
         console = consoles.get(cfg.get("platform"))
+        if not console.reports_boundaries:
+            raise NetworkError(f"{console.name or 'This console'} projects can't report function ends yet: work on it "
+                               "as it is (ROADMAP.md says what's planned)")
         fn = self._fn(slug, function)
         symbol = self._meta(fn).get("symbol") or fn["name"]
         extent = console.function_extent(fp, symbol)
@@ -4037,10 +4103,31 @@ class ForkEngine:
 
     def overview(self, slug: str) -> dict:
         proj, fp, cfg = self.get(slug)
-        if cfg.get("ready"):
-            self._preflight_once(slug)
         agg = self.net.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
                                  f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
+        if missing := self.net.project_missing(proj):
+            # Nothing here reads the tree (it isn't there): what the database knows, and why it can't be opened.
+            return {
+                "slug": slug, "title": proj["name"], "description": proj["description"], "kind": "fork",
+                **consoles.get(cfg.get("platform")).project_facts(),
+                "repo_url": cfg.get("repo_url"), "fork_kind": cfg.get("fork_kind"), "version": cfg.get("version"),
+                "origin": cfg.get("origin"), "compiler_name": cfg.get("compiler"), "versions": [],
+                "ready": bool(cfg.get("ready")), "needs": None,
+                "rom": {"game_code": cfg.get("version") or "", "region": consoles.name(cfg.get("platform")),
+                        "title": proj["name"]},
+                "compiler": {"toolchain": "project", "name": "Project's own build", "flags": [], "installed": True,
+                             "proprietary": False, "supported": True},
+                "compilers": [],
+                "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
+                "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
+                "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
+                "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
+                "measures": cfg.get("measures") or {}, "uncovered": None, "rebuild": None,
+                "reimports": cfg.get("origin") == "scratch" and consoles.get(cfg.get("platform")).reimports,
+                "build_problem": None, "missing": missing,
+            }
+        if cfg.get("ready"):
+            self._preflight_once(slug)
         m = cfg.get("measures") or {}
         need = fp.needs(cfg.get("version")) if not cfg.get("ready") else None
         return {
@@ -4106,7 +4193,10 @@ class ForkEngine:
         return own, parts
 
     def _compiler_facts(self, fp: ForkProject, cfg: dict) -> dict:
-        """The overview's compiler fields, as a ROM project's: the Settings panel and its dropdown work the same."""
+        """The overview's compiler fields, as a ROM project's: the Settings panel and its dropdown work the same.
+        Nothing where the project's build decides its compilers (a public decomp): no panel, and a page reading a
+        missing `compiler_map` as false says there's no map (steering.js). The map fact the GUI's wording follows is
+        the Settings answer's (compiler_answer), which each file having a compiler decides."""
         found = self._file_parts(fp, cfg)
         if found is None:
             return {}
@@ -4128,7 +4218,9 @@ class ForkEngine:
         elsewhere = [r for r in files.build(slug).runs if r.differs()]
         survey, state = cfg.get("file_survey") or {}, files.surveys.get(slug) or {}
         checks = cfg.get("file_checks") or []
-        return {"compiler": consoles.compiler_name(own), "flags": "", "mips": True, "unit": "source file",
+        has_map = files.applies(slug)  # (`mips` is what older pages called this fact)
+        return {"compiler": consoles.compiler_name(own), "flags": "", "compiler_map": has_map,
+                "mips": has_map, "unit": "source file",
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": consoles.compiler_name(r.label[0]),
                                "functions": r.functions, "confirmed": r.confirmed} for r in elsewhere[:12]],
                 "elsewhere_count": len(elsewhere),
@@ -4269,11 +4361,69 @@ class ForkEngine:
                 self._keep_scores(proj, u, text, after[u.name])
                 self._apply_scores(proj, u.name, after[u.name], text=text)
 
-    def function_diff(self, slug: str, name: str) -> dict:
-        """objdiff's diff of the function as it is in the source tree now."""
+    def _best_diff(self, proj, fp: ForkProject, fn) -> dict:
+        """objdiff's diff of a function's best attempt: written into its file like a try, built, and undone, so
+        neither the source nor the object it built stays changed. Cached by what it was built from."""
+        meta = self._meta(fn)
+        unit = fp.unit(fn["unit"])
+        source = fn["best_source"]
+        names = self._names(meta, fn)
+        _, span = self._find(source, names)
+        if span:  # the definition alone: a polishing comment above it isn't placed again
+            source = source[span[0]:span[1]]
+        symbol = meta.get("symbol") or fn["name"]
+        linked = unit.complete and fp.linkable()
+        try:
+            with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), \
+                    self._unit_lock(proj, unit.name):
+                _, after, path, before = self._place(proj, fp, unit, fn, source, names)
+                existed = path.exists()
+                target = unit.target.stat().st_mtime_ns if unit.target is not None and unit.target.exists() else None
+                key = self.net.compile_key(fn, unit.name, source, after, before, str(target))
+                if key in self._best_diffs:
+                    return dict(self._best_diffs[key])
+                _rewrite(path, after)
+                try:
+                    ok, log = self._build_unit(proj, fp, unit)
+                    if not ok:
+                        out = {"kind": "best", "rows": None,
+                               "error": f"The best attempt didn't compile:\n{_tail(log)}"}
+                    else:
+                        d = fp.diff(unit, symbol)
+                        if d.match_percent is None:
+                            out = {"kind": "best", "rows": None}
+                        else:
+                            problems = [f"{'a reference differs' if isinstance(m, MappingConflict) else 'a loaded constant differs'}: "
+                                        f"{m.describe()}" for m in d.literals]
+                            problems += [f"refers to `{mine}` where the original refers to `{orig}`"
+                                         for orig, mine in d.renamed]
+                            out = {"kind": "best", "rows": [list(r) for r in d.rows], "score": None,
+                                   "percent": _floor_pct(d.match_percent, d.matched), "problems": problems}
+                finally:
+                    if existed:
+                        _rewrite(path, before)
+                    else:  # a unit with no source file yet: leave none behind
+                        path.unlink(missing_ok=True)
+                    self._build_unit(proj, fp, unit)  # the file's object is its own source's again
+        except NetworkError as e:
+            return {"kind": "best", "rows": None, "error": str(e)}
+        except (ObjdiffError, ForkError) as e:
+            return {"kind": "best", "rows": None, "error": f"objdiff: {e}"}
+        if len(self._best_diffs) > 32:
+            self._best_diffs.pop(next(iter(self._best_diffs)))
+        self._best_diffs[key] = out
+        return dict(out)
+
+    def function_diff(self, slug: str, name: str, which: str = "latest") -> dict:
+        """objdiff's diff of the function as it is in the source tree now, or of its best attempt (`which`)."""
         proj, fp, cfg = self.get(slug)
         fn = self._fn(slug, name)
         meta = self._meta(fn)
+        if which == "best" and fn["status"] != "matched":
+            if not fn["best_source"]:
+                return {"kind": "best", "rows": None,
+                        "message": "There's no best attempt for this function yet."}
+            return self._best_diff(proj, fp, fn)
         try:
             d = fp.diff(fp.unit(fn["unit"]), meta.get("symbol") or fn["name"])
         except (ObjdiffError, ForkError) as e:
@@ -4305,9 +4455,18 @@ class ForkEngine:
                                       "ON a.id=t.agent_id WHERE t.function_id=? ORDER BY t.id", fn["id"])
         notes = self.net.store.all("SELECT n.text, n.created_at, a.name AS agent FROM notes n LEFT JOIN agents a "
                                    "ON a.id=n.agent_id WHERE n.function_id=? ORDER BY n.id DESC LIMIT 10", fn["id"])
+        best_source = fn["best_source"]
+        best_code = best_source
+        if best_source:
+            _, span = self._find(best_source, self._names(meta, fn))
+            if span:
+                best_code = best_source[span[0]:span[1]]
+        best_differs = (fn["status"] != "matched" and bool(best_source)
+                        and (current is None or _digest(current) != _digest(best_code)))
         return {"name": fn["name"], "vram": fn["vram"] or 0, "rom_offset": 0, "size": fn["size"], "insns": fn["n_insns"],
-                "status": fn["status"], "best": fn["best_score"], "asm": asm, "unit": fn["unit"], **set_aside(fn),
-                "source": current or fn["best_source"], "source_kind": "matched" if fn["status"] == "matched" else
-                ("latest" if current else "best" if fn["best_source"] else None),
+                "status": fn["status"], "best": fn["best_score"], "best_differs": best_differs, "asm": asm,
+                "unit": fn["unit"], **set_aside(fn),
+                "source": current or best_source, "source_kind": "matched" if fn["status"] == "matched" else
+                ("latest" if current else "best" if best_source else None),
                 "match_percent": pct, "scores": [{"score": a["score"], "t": a["created_at"], "agent": a["agent"]} for a in attempts],
                 "notes": [dict(n) for n in notes], "calls": [], "called_by": []}
