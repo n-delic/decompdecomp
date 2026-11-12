@@ -74,9 +74,10 @@ static Color texel(const Tile *tile, int s, int t) {
     if (s < 0) s = 0;
     if (t < 0) t = 0;
     uint32_t row = (uint32_t)(tile->tmem * 8 + t * tile->line * 8);
+    uint32_t odd = (t & 1) && tile->siz < 3 ? 4 : 0; /* TMEM keeps odd rows' 32-bit halves swapped: read them back */
     switch (tile->siz) {
     case 0: { /* 4-bit */
-        uint8_t b = tmem[(row + s / 2) & 4095];
+        uint8_t b = tmem[((row + s / 2) ^ odd) & 4095];
         int v = (s & 1) ? b & 15 : b >> 4;
         if (tile->fmt == 2) return unpack5551(tlut[(tile->palette * 16 + v) & 255]);
         if (tile->fmt == 3) { float i = (v >> 1) / 7.0f; return (Color){i, i, i, (v & 1) ? 1.0f : 0.0f}; }
@@ -84,14 +85,14 @@ static Color texel(const Tile *tile, int s, int t) {
         return (Color){i, i, i, i};
     }
     case 1: { /* 8-bit */
-        uint8_t v = tmem[(row + s) & 4095];
+        uint8_t v = tmem[((row + s) ^ odd) & 4095];
         if (tile->fmt == 2) return unpack5551(tlut[v]);
         if (tile->fmt == 3) { float i = (v >> 4) / 15.0f; return (Color){i, i, i, (v & 15) / 15.0f}; }
         float i = v / 255.0f;
         return (Color){i, i, i, i};
     }
     case 2: { /* 16-bit */
-        uint32_t a = (row + s * 2) & 4094;
+        uint32_t a = ((row + s * 2) ^ odd) & 4094;
         uint16_t v = (uint16_t)(tmem[a] << 8 | tmem[a + 1]);
         if (tile->fmt == 3) { float i = (v >> 8) / 255.0f; return (Color){i, i, i, (v & 255) / 255.0f}; }
         return unpack5551(v);
@@ -215,12 +216,20 @@ static void tex_rect(int tile, float x0, float y0, float x1, float y1, float s, 
 
 /* ---------------------------------------------------------------- texture loads */
 
-static void load_block(int tile, int uls, int ult, int lrs) {
+/* A 64-bit word into TMEM; on an odd line its 32-bit halves are swapped, as the RDP stores them. */
+static void tmem_word(uint32_t at, uint32_t src, int odd) {
+    for (int k = 0; k < 8; k++) tmem[(at + (uint32_t)(odd ? k ^ 4 : k)) & 4095] = R[src + k];
+}
+static void load_block(int tile, int uls, int ult, int lrs, int dxt) {
     Tile *tl = &tiles[tile];
     int bytes = timg_siz == 0 ? 1 : 1 << (timg_siz - 1); /* 4-bit loads are made as 8 or 16-bit ones */
     uint32_t src = phys(timg_addr) + (uint32_t)((ult * timg_width + uls) * bytes);
-    uint32_t len = (uint32_t)(lrs - uls + 1) * bytes;
-    for (uint32_t i = 0; i < len && tl->tmem * 8 + i < 4096; i++) tmem[tl->tmem * 8 + i] = R[src + i];
+    uint32_t words = ((uint32_t)(lrs - uls + 1) * bytes + 7) / 8;
+    uint32_t line = 0; /* the line counter: dxt per word, the line is odd when bit 11 is set */
+    for (uint32_t i = 0; i < words && tl->tmem * 8 + i * 8 < 4096; i++) {
+        tmem_word(tl->tmem * 8 + i * 8, src + i * 8, timg_siz < 3 && ((line >> 11) & 1));
+        line += (uint32_t)dxt;
+    }
 }
 static void load_tile(int tile, int uls, int ult, int lrs, int lrt) {
     Tile *tl = &tiles[tile];
@@ -229,7 +238,7 @@ static void load_tile(int tile, int uls, int ult, int lrs, int lrt) {
         uint32_t src = phys(timg_addr) + (uint32_t)(bpp4 ? (t * timg_width + uls) / 2 : (t * timg_width + uls) * bytes);
         uint32_t dst = (uint32_t)(tl->tmem * 8 + (t - ult) * tl->line * 8);
         int n = bpp4 ? (lrs - uls + 2) / 2 : (lrs - uls + 1) * bytes;
-        for (int i = 0; i < n; i++) if (dst + i < 4096) tmem[dst + i] = R[src + i];
+        for (int i = 0; i < n; i += 8) tmem_word(dst + (uint32_t)i, src + (uint32_t)i, ((t - ult) & 1) && timg_siz < 3);
     }
 }
 static void load_tlut(int tile, int count) {
@@ -261,7 +270,7 @@ static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
     case 0xF2: { Tile *t = &tiles[(w1 >> 24) & 7];
         t->uls = ((w0 >> 12) & 0xFFF) / 4.0f; t->ult = (w0 & 0xFFF) / 4.0f;
         t->lrs = ((w1 >> 12) & 0xFFF) / 4.0f; t->lrt = (w1 & 0xFFF) / 4.0f; break; }
-    case 0xF3: load_block((w1 >> 24) & 7, (w0 >> 12) & 0xFFF, w0 & 0xFFF, (w1 >> 12) & 0xFFF); break;
+    case 0xF3: load_block((w1 >> 24) & 7, (w0 >> 12) & 0xFFF, w0 & 0xFFF, (w1 >> 12) & 0xFFF, w1 & 0xFFF); break;
     case 0xF4: { int tile = (w1 >> 24) & 7;
         load_tile(tile, ((w0 >> 12) & 0xFFF) >> 2, (w0 & 0xFFF) >> 2, ((w1 >> 12) & 0xFFF) >> 2, (w1 & 0xFFF) >> 2);
         Tile *t = &tiles[tile];
@@ -470,11 +479,14 @@ static void s2d_load(uint32_t txtr) { /* uObjTxtr: a block, a tile or a palette 
     int tm = rd16(txtr + 8), b = rd16(txtr + 10), c = rd16(txtr + 12);
     if (type == 0x00000030) { /* a palette: its first entry (phead) and its count minus one (pnum) */
         for (int i = 0; i <= b; i++) if (tm - 256 + i >= 0 && tm - 256 + i < 256) tlut[tm - 256 + i] = rd16(src + i * 2);
-    } else if (type == 0x00001033) {
-        for (int i = 0; i < (b + 1) * 8 && tm * 8 + i < 4096; i++) tmem[tm * 8 + i] = R[src + i];
+    } else if (type == 0x00001033) { /* a block: tsize words minus one, tline the line step (dxt) */
+        uint32_t line = 0;
+        for (int i = 0; i <= b && tm * 8 + i * 8 < 4096; i++) { tmem_word((uint32_t)(tm + i) * 8, src + (uint32_t)i * 8, (line >> 11) & 1); line += (uint32_t)c; }
     } else { /* a tile: its width in 8-byte words times four, minus one, and its height in lines times four, minus one */
-        int bytes = ((b + 1) >> 2) * 8 * ((c + 1) >> 2);
-        for (int i = 0; i < bytes && tm * 8 + i < 4096; i++) tmem[tm * 8 + i] = R[src + i];
+        int words = (b + 1) >> 2, lines = (c + 1) >> 2;
+        for (int l = 0; l < lines; l++)
+            for (int i = 0; i < words && (tm + l * words + i) * 8 < 4096; i++)
+                tmem_word((uint32_t)(tm + l * words + i) * 8, src + (uint32_t)(l * words + i) * 8, l & 1);
     }
 }
 static void s2d_sprite(uint32_t sp) { /* uObjSprite: an unrotated rectangle from TMEM */
@@ -549,7 +561,7 @@ void port_render_task(uint32_t task) {
         for (; tok; tok = strtok(NULL, ",")) {
             uint32_t a = 0x80000000u | (uint32_t)strtoul(tok, NULL, 16);
             fprintf(stderr, "  at %08X:", a);
-            for (int i = 0; i < 16; i++) fprintf(stderr, " %08X", rd32(a + i * 4));
+            for (int i = 0; i < 64; i++) fprintf(stderr, "%s%08X", i % 4 ? " " : "\n   ", rd32(a + i * 4));
             fputc('\n', stderr);
         }
         free(list);
@@ -564,6 +576,12 @@ void port_render_task(uint32_t task) {
         pc += 8;
         if (op == 0xDB && ((w0 >> 16) & 0xFF) == 0x06) segments[((w0 & 0xFFFF) / 4) & 15] = w1 & 0x1FFFFFFF;
         else if (op == 0xDE) { /* G_DL: a call, or a branch when the no-push bit is set */
+            if ((phys(w1) & 0x1FFFFFFF) < 0x400) { /* the boot's vectors, never a display list: a null pointer */
+                static int said;
+                if (!said++) fprintf(stderr, "render: a display list calls address %08X (a null pointer); skipped\n", w1);
+                if ((w0 >> 16) & 1) { if (!depth) break; pc = stack[--depth]; }
+                continue;
+            }
             if (!((w0 >> 16) & 1) && depth < 18) stack[depth++] = pc;
             pc = phys(w1);
         } else if (op == 0xDF) { /* G_ENDDL */

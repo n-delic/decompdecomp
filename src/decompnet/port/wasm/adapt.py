@@ -268,6 +268,11 @@ def adapt(text, report=None, types=None, byval=None):
         # parameter called with an i32), LLVM turns into a trap or a call through the table: a thunk instead
         same = (cret == ret and len(args) >= len(params) and (variadic or len(args) == len(params))
                 and all(a[0] == p for a, p in zip(fixed_args, params)))
+        if same and "..." in cm.group(1) and not variadic:
+            # The C declared a fixed function variadic (`f(void *, u32, s32, s32, ...)`): the call's explicit type
+            # would pass the extra arguments in a varargs buffer the callee never reads. A plain call passes them.
+            out_lines.append(line[:cm.start(1)] + f"{cret} " + line[cm.start(2) - 1:])
+            continue
         if same or any(wclass(t).startswith("other") for t, _ in args) or wclass(ret).startswith("other"):
             out_lines.append(line)
             continue

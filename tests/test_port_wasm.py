@@ -91,3 +91,29 @@ def test_a_call_by_a_functions_older_name_goes_to_the_function(tmp_path):
                  "define void @caller() {\n  call void @func_8007F798(i32 1)\n  ret void\n}\n")
     fixed = ["stream_poll 0x8007F798 func", "caller 0x80001000 func"]
     assert renames([a, b], fixed) == {"func_8007F798": "stream_poll"}  # nothing defined at the others' addresses
+
+
+def test_a_fixed_function_the_c_declared_variadic_gets_its_arguments():
+    """A strip-drawing function declared its texture loader `f(void *, u32, s32, s32, ...)` and passed 17
+    arguments; the loader takes 17 fixed ones. Called as variadic, 13 went into a varargs buffer it never read: every
+    strip of the intro's picture loaded with width and height 0."""
+    from decompnet.port.wasm.adapt import adapt
+    from decompnet.port.wasm.beir import Types
+    ir = ("declare ptr @load(ptr, i32, i32, i32, i32)\n"
+          "define void @caller(ptr %p) {\n"
+          "  %r = call ptr (ptr, i32, ...) @load(ptr noundef %p, i32 noundef 1, i32 noundef 2, i32 noundef 3, i32 noundef 4)\n"
+          "  ret void\n}\n")
+    out = adapt(ir, [], Types(ir), {})
+    assert "call ptr @load(ptr noundef %p, i32 noundef 1, i32 noundef 2, i32 noundef 3, i32 noundef 4)" in out
+    assert "..." not in out.split("define")[1]
+
+
+def test_every_game_load_and_store_is_volatile_so_none_is_narrowed():
+    """`v0 = v & 0xFFFF` compiled to a 16-bit load at v's own address: the high half in big-endian memory. A racing
+    game's vertex index came back 0 and its intro's picture drew one row in four."""
+    from decompnet.port.wasm.beir import volatile
+    lines = ["  %1 = load i32, ptr %v, align 4", "  store i32 %2, ptr %w, align 4", "  %3 = load volatile i8, ptr %x",
+             "  %4 = load atomic i32, ptr %y seq_cst, align 4", "  call void @f(ptr %v)"]
+    assert volatile(lines) == ["  %1 = load volatile i32, ptr %v, align 4", "  store volatile i32 %2, ptr %w, align 4",
+                               "  %3 = load volatile i8, ptr %x", "  %4 = load atomic i32, ptr %y seq_cst, align 4",
+                               "  call void @f(ptr %v)"]

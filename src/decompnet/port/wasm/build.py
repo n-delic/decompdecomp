@@ -230,7 +230,8 @@ def build(repo: Path, *, console: str = "n64", log=print) -> Path:
 
     _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renames(lls, fixed).items())))
     log("placing every symbol at its console address, data big-endian")
-    sigs_changed = max((out / n).stat().st_mtime for n in ("sigs.txt", "fixed.txt", "functions.txt", "renames.txt"))
+    sigs_changed = max([(out / n).stat().st_mtime for n in ("sigs.txt", "fixed.txt", "functions.txt", "renames.txt")]
+                       + [(HERE / n).stat().st_mtime for n in ("beir.py", "adapt.py")])  # a fix to the tools too
 
     def place(ll: Path) -> str | None:
         be, obj = out / "o" / (ll.stem + ".be.ll"), out / "o" / (ll.stem + ".o")
