@@ -966,6 +966,16 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### Library functions a person confirms, for the port
+
+The app names library functions only from full-size signature matches. A game built with a libultra version it
+has no signatures for keeps those functions as its own C, and a port would build them with everything they reach:
+on a finished N64 game, an unrecognised `osCreatePiManager` pulled in the device manager, its queues and the 64DD's
+interrupt code. `POST /api/port-identity` records a person's confirmation (`port/identities.py`): the function is
+renamed to the library's name through the judged rename, and `meta.port_sdk` says who confirmed it. Only the port
+reads it (Compile for PC, the link check, readiness): it is never taken for a signature match. Left: a place in
+the GUI to confirm one, and the link check suggesting candidates.
+
 ### Where each libultra function comes from in a port
 
 The N64 kit said every `os*` and `gu*` function was replaced by libultraship. Read against libultraship's source

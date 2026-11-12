@@ -228,3 +228,28 @@ def test_the_prompt_is_written_for_every_helper():
     finally:
         agent_startup.project_facts = original
     assert "A homemade game" in text and "Work up to 5 functions" in text and "[{old, new}]" in text
+
+
+def test_a_library_function_the_user_confirms_is_left_to_the_kit(project):
+    """A game built with a library version the app has no signatures for keeps its copies as its own C; a person
+    who knows which function it is says so (port/identities.py), and the port treats it as the library's."""
+    from decompnet.port import identities
+    net, cc = project
+    me = agent(net)
+    with net.progress.view():
+        assert "get_first" in {f["name"] for f in pc_compile.functions(net, net.project_row("game"))}
+    with pytest.raises(NetworkError, match="isn't a library function"):
+        identities.confirm(net, me, "game", "get_first", "draw_hud")
+    with net.store.tx() as db:  # the homemade project has no shared header yet; a real one always does
+        db.execute("INSERT INTO context_versions(project_id, version, header, message, created_at, unit) "
+                   "VALUES((SELECT id FROM projects WHERE slug='game'), 1, '', 'start', 0, '')")
+    text = identities.confirm(net, me, "game", "get_first", "osCreatePiManager", "the PI manager's setup")
+    assert text.startswith("✅ get_first is osCreatePiManager for the port (replaced)"), text
+    fn = net._function("osCreatePiManager", "game")  # renamed, judged: still matched
+    assert fn["status"] == "matched"
+    with net.progress.view():
+        proj = net.project_row("game")
+        assert "osCreatePiManager" not in {f["name"] for f in pc_compile.functions(net, proj)}  # libultraship's
+        hint = identities.confirmed(net, proj)[fn["id"]]
+    assert hint["names"] == ["osCreatePiManager"] and "confirmed by" in hint["evidence"]
+    assert fn["id"] not in net.sdk_functions(net.project_row("game"))  # never taken for a signature match
