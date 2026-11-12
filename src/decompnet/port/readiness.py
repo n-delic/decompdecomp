@@ -88,7 +88,8 @@ def readiness(net, slug: str) -> dict:
     rows = net.project_store(proj["id"]).all(
         f"SELECT id, name, vram, size, status, matched_source, meta FROM functions WHERE project_id=? AND {IN_BUILD} "
         "ORDER BY vram, id", proj["id"])
-    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True)
+    from .identities import confirmed
+    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
 
     code = {"total": len(rows), "c": 0, "replaced": [], "native": [], "glue": [], "library_other": [], "game_asm": [],
             "open": [], "unproven": []}

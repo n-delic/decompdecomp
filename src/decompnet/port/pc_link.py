@@ -106,7 +106,8 @@ def _facts(net, proj) -> dict:
     rows = store.all(f"SELECT id, name, vram, status FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
     kit = net.console(proj).port_kit
     replaced, glue = set(), set()
-    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True)
+    from .identities import confirmed
+    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
     for r in rows:
         hint = sdk.get(r["id"])
         names = (hint.get("names") or [display_name(hint, r["name"])]) if hint else []

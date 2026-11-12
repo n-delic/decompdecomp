@@ -256,6 +256,13 @@ def register(app: App) -> None:
         from ...port import pc_compile
         return {"job": jobs.start("pc-compile", lambda log: pc_compile.check(net, slug, log), project=slug)}
 
+    def p_port_identity(slug, request, data):
+        """The user confirms which library function a function is, for the port (port/identities.py)."""
+        from ...port import identities
+        agent, _ = net.local_agent("you")
+        return {"message": identities.confirm(net, agent, slug, str(data.get("function", "")),
+                                              str(data.get("name", "")), str(data.get("note", "")))}
+
     def p_rename_calls(slug, request, data):
         """Rewrite calls by a function's old name to its name now, each function judged twice
         (port/renamed_calls.py), in the background."""
@@ -1085,6 +1092,7 @@ def register(app: App) -> None:
         "/api/pc-compile": (p_pc_compile, ["POST"]),
         "/api/asset-map": (p_asset_map, ["POST"]),
         "/api/rename-calls": (p_rename_calls, ["POST"]),
+        "/api/port-identity": (p_port_identity, ["POST"]),
         "/api/asset-extract": (p_asset_extract, ["POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
