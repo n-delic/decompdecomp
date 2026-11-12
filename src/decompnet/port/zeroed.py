@@ -111,7 +111,7 @@ def _raw(entries: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build(net, proj, names, cc: list[str], log=print) -> dict:
+def build(net, proj, names, cc: list[str], log=print, *, boot_names=()) -> dict:
     """Write and compile the definitions for the zeroed data among `names` (the link check's undefined data):
     {"defines", "typed", "raw", "files": {name: text}}; recorded for the link check."""
     entries = candidates(net, proj, names)
@@ -148,7 +148,7 @@ def build(net, proj, names, cc: list[str], log=print) -> dict:
             typed = [e for e in typed if e["name"] not in refused]
         text, _ = _typed(typed, declared, arrays)
         files[TYPED], files[RAW] = text, _raw(raw)
-    fixed = _fixed(net, proj, names, cc, files, log)
+    fixed = _fixed(net, proj, names, cc, files, log, boot_names)
     result = {"defines": sorted(want | fixed), "typed": len(typed), "raw": len(raw), "fixed": len(fixed),
               "files": files}
     with _store(net, proj).tx() as db:
@@ -163,12 +163,13 @@ def build(net, proj, names, cc: list[str], log=print) -> dict:
     return result
 
 
-def _fixed(net, proj, names, cc: list[str], files: dict, log) -> set[str]:
+def _fixed(net, proj, names, cc: list[str], files: dict, log, boot_names=()) -> set[str]:
     """ROM offsets and the boot's low-memory values (port/fixed_symbols.py), written and assembled/compiled for the
-    PC to check them: the names they define."""
+    PC to check them: the names they define. `boot_names` (the link check's glue) count only at a boot address."""
     from .fixed_symbols import files as fixed_files
     from .fixed_symbols import plan
     offsets, boot = plan(net, proj, names)
+    boot += [b for b in plan(net, proj, boot_names)[1] if b["name"] not in {x["name"] for x in boot}]
     made = fixed_files(offsets, boot)
     files.update(made)
     defined: set[str] = set()

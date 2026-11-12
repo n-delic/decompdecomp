@@ -18,7 +18,8 @@ extern s32 D_80100040;
 extern Local gLocal;
 extern u8 D_100[];
 extern s32 D_80000300;
-void update(void) { *gPlayer = gBuf[3] + D_80100040 + gLocal.b + (s32)D_100 + D_80000300; }
+extern unsigned int osMemSize;
+void update(void) { *gPlayer = gBuf[3] + D_80100040 + gLocal.b + (s32)D_100 + D_80000300 + osMemSize; }
 """
 
 
@@ -81,11 +82,15 @@ def test_rom_offsets_and_boot_values_are_written_for_the_pc(project):  # noqa: F
         pid = db.execute("SELECT id FROM projects WHERE slug='game'").fetchone()[0]
         db.execute("INSERT INTO context_versions(project_id, version, header, message, created_at, unit) "
                    "VALUES(?, 1, 'typedef int s32;\ntypedef unsigned char u8;\n', 'base types', 0, '')", (pid,))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (pid, "osMemSize", 0x80000318, 4, "data"))
     pc_compile.check(net, "game", print)
     asm = (root / "port/src/rom_offsets.S").read_text()
     boot = (root / "port/src/boot_globals.c").read_text()
     assert ".set SYM(D_100), 0x100" in asm and "#define SYM(x) _##x" in asm  # macOS's leading underscore
     assert "int32_t D_80000300 = 0x1; /* 0x80000300: osTvType */" in boot  # NTSC: no game code says otherwise
+    # libultra's own name sorts as glue in the link check, and still gets the boot's value
+    assert "uint32_t osMemSize = 0x400000; /* 0x80000318: osMemSize */" in boot
     # linked into a program on this computer, the ROM offset's address is the offset and the boot value is set
     import shutil
     import subprocess

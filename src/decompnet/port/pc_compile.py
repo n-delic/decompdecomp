@@ -268,7 +268,8 @@ def check(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
         from .zeroed import build as define_zeroed
         missing = undefined(net, proj, zeroed=False)
         if missing is not None:  # (none left still rewrites the files and the record)
-            define_zeroed(net, proj, missing[0].get("data", []), cc, log)
+            # glue names too, for the boot's values only: libultra's own names for them (osRomBase) sort as glue
+            define_zeroed(net, proj, missing[0].get("data", []), cc, log, boot_names=missing[0].get("glue", []))
         result = summary(net, proj)
     sizes = next((k["functions"] for k in result["kinds"] if k["kind"] == "pointer size"), 0)
     log(f"{result['ok'] + result['warned']} of {result['total']} functions compile for a 64-bit PC; "
