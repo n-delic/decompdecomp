@@ -9,6 +9,7 @@ to read the microcode a game loads.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from .. import PortKit
 
@@ -46,14 +47,14 @@ def microcode(image: bytes) -> list[dict]:
 
 
 def _sdk_group(name: str) -> str | None:
-    """Where a libultra or C library function goes in the port: "replaced" (libultraship or the host's C library
-    has it), "native" (the game's copy compiles for the PC as it is: math, the synthesizer), "glue" (console
+    """Where a libultra or C library function goes in the port: "replaced" (libultraship, decompdecomp's glue for it
+    or the host's C library has it), "native" (the game's copy compiles for the PC as it is: math, the synthesizer), "glue" (console
     plumbing libultraship doesn't have: the port's own glue supplies it, a main loop in place of threads, RSP tasks
     handed to the renderer and the mixer, stubs for the 64DD), or None (the game's own code)."""
     bare = name.lstrip("_")
     if name in _MATH:  # before the C library: libultra's __cosf is its own, not the host's cosf
         return "native"
-    if name in LIBULTRASHIP or bare in _LIBC or name in _OS_INTERNAL or re.match(r"(Printf|Litob|Ldtob)$", bare):
+    if name in LIBULTRASHIP or name in GLUE_PROVIDES or bare in _LIBC or name in _OS_INTERNAL or re.match(r"(Printf|Litob|Ldtob)$", bare):
         return "replaced"
     if (re.match(r"gu[A-Z]", bare) or name in _MATH or re.match(r"(n_)?al[A-Z]|Mus[A-Z]", bare)
             or name in _SYNTH_INTERNAL):
@@ -76,6 +77,11 @@ LIBULTRASHIP = frozenset({
     "osViGetCurrentFramebuffer", "osViGetNextFramebuffer", "osViSetEvent", "osViSetMode", "osViSetSpecialFeatures",
     "osViSetXScale", "osViSetYScale", "osViSwapBuffer", "osVirtualToPhysical", "osWritebackDCache",
     "osWritebackDCacheAll"})
+# What decompdecomp's own glue for libultraship adds (port_glue/threads.c): the game's threads kept as threads, one
+# running at a time as on the N64, with message queues that wait (libultraship's never do; its os_mesg is replaced).
+GLUE = Path(__file__).with_name("port_glue")
+GLUE_PROVIDES = frozenset({"osCreateThread", "osStartThread", "osStopThread", "osDestroyThread", "osSetThreadPri",
+                           "osGetThreadPri", "osGetThreadId", "osYieldThread"})
 # libultra's own math, pure computation: the game's copy compiles for the PC (libultraship declares some, defines
 # none); the controller CRCs are the same kind of code
 _MATH = frozenset({"sins", "coss", "__sinf", "__cosf", "__osContAddressCrc", "__osContDataCrc"})

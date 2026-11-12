@@ -46,15 +46,15 @@ def test_each_undefined_symbol_is_sorted_by_what_supplies_it(project):  # noqa: 
     assert groups == {"renamed": ["drawHud (now draw_hud)", "func_80000580 (now draw_hud)"],
                       "static": ["_allocatePVoice"], "assembly": ["boot_stub"],
                       "not matched": ["draw_hud"], "data": ["D_80010000", "g_speed"],
-                      "glue": ["osCreateThread", "osSetIntState"], "kit": ["osInvalDCache", "osInvalICache"],
+                      "glue": ["osSetIntState"], "kit": ["osCreateThread", "osInvalDCache", "osInvalICache"],
                       "other": ["mystery"]}
     assert [g["kind"] for g in link["groups"]] == list(pc_link.GROUPS)  # the order fixes come in
-    assert (link["undefined"], link["provided"], link["unread"], link["functions"]) == (10, 2, 1, 5)
+    assert (link["undefined"], link["provided"], link["unread"], link["functions"]) == (9, 3, 1, 5)
     assert link["duplicates"] == [{"name": "shared_table", "in": ["alSynNew", "helper"]}]
     with net.progress.view():
         report = readiness(net, "game")
     text = " ".join(report["blockers"])
-    assert "the C would need 10 symbols nothing defines: 2 renamed; 1 static; 1 assembly" in text
+    assert "the C would need 9 symbols nothing defines: 2 renamed; 1 static; 1 assembly" in text
     assert "1 defined twice" in text and "1 kit" not in text and "- renamed (2, needed by 1 functions)" in describe(report)
 
 
