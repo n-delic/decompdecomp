@@ -209,6 +209,41 @@ it is; a prototype an agent adds to the header for it is judged with it, and the
 to the rest. Not caught by compiling yet: `Gfx` commands built by hand as two words, which compile for a PC and
 are wrong there. Building the port 32-bit first (Linux, Windows) defers most pointer fixes; macOS needs 64-bit.
 
+### A WebAssembly build: running the game before the port is native
+
+Built for the N64 (`port/wasm/`, `python -m decompnet.port.wasm SAVE`). It's a way to run a finished game on a PC
+before phases 1 to 4 are done. The game's C is compiled to WebAssembly (wasm32, so pointers stay 32-bit) and
+translated back to C by wasm2c, and the host program runs it. The game's memory is a 4 GB WebAssembly memory read
+and written big-endian, with every symbol at its console address:
+- `beir.py` pins each name to its address and writes initialised data big-endian;
+- `bemem.py` byte-swaps wasm2c's loads and stores;
+- the host copies the ROM's image to where the boot puts it.
+
+So data stays as the ROM has it (no phase 1), pointers need no fixes (no phase 4's 64-bit work), and a call through
+a pointer finds its function by console address.
+
+What the matched C gets away with on the console, the build adapts to:
+- arguments left in registers become explicit (`adapt.py`'s thunks, with MIPS register words for the rest);
+- one signature per function (`sigs.py`);
+- calls by a function's older name go to the function (`renames`).
+
+What it can't adapt goes in the game's save repository, `port/wasm/`:
+- `exclude.txt`: matched files the host replaces;
+- `src/`: C only the port has;
+- `overrides/`: the port's version of a matched file, until its fix is in the matched C behind `#ifdef PORT`.
+
+The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`). It implements libultra:
+- the game's threads, one at a time by priority, preempted at calls when a woken thread outranks the one running;
+- message queues, cartridge DMA, the VI retrace, the controllers;
+- the RSP: tasks complete at once, and nothing draws yet.
+
+On macOS the host is built by the system's clang, because Zig 0.14.1 can't link against macOS 27's system library.
+
+Found on the first game, all things the judge can't see:
+- a `switch` whose `case` labels disagreed with its jump table, and still matched;
+- C that reached locals through the console's stack layout;
+- functions the split had left as data.
+
 ### 5. Play, and check that it runs
 
 A **Play port** button builds and starts it. A headless check runs N frames: it starts, doesn't crash, and the

@@ -1,0 +1,49 @@
+osCreateThread	void	ptr, i32, ptr, ptr, ptr, i32
+osStartThread	void	ptr
+osStopThread	void	ptr
+osDestroyThread	void	ptr
+osYieldThread	void	
+osSetThreadPri	void	ptr, i32
+osGetThreadPri	i32	ptr
+osCreateMesgQueue	void	ptr, ptr, i32
+osSendMesg	i32	ptr, ptr, i32
+osJamMesg	i32	ptr, ptr, i32
+osRecvMesg	i32	ptr, ptr, i32
+osSetEventMesg	void	i32, ptr, ptr
+osCreateViManager	void	i32
+osViSetEvent	void	ptr, ptr, i32
+osViSetMode	void	ptr
+osViBlack	void	i8
+osViSetYScale	void	float
+osViSetSpecialFeatures	void	i32
+osViSwapBuffer	void	ptr
+viSetSwapBuffer	void	ptr
+osCreatePiManager	void	i32, ptr, ptr, i32
+osPiStartDma	i32	ptr, i32, i32, i32, ptr, i32, ptr
+osGetTime	i64	
+osVirtualToPhysical	i32	ptr
+osWritebackDCache	void	ptr, i32
+osWritebackDCacheAll	void	
+osInvalDCache	void	ptr, i32
+osInvalICache	void	ptr, i32
+osSetIntState	i32	i32
+osDisableInt	i32	
+osRestoreInt	void	i32
+osSpTaskStartGo	void	ptr
+osSpTaskYielded	i32	ptr
+osContInit	i32	ptr, ptr, ptr
+osContStartReadData	i32	ptr
+osContGetReadData	void	ptr
+osContStartQuery	i32	ptr
+osContGetQuery	void	ptr
+osEepromProbe	i32	ptr
+osMotorInit	i32	ptr, ptr, i32
+__osMotorAccess	i32	ptr, i32
+osPfsIsPlug	i32	ptr, ptr
+osPfsInitPak	i32	ptr, ptr, i32
+osAiSetFrequency	i32	i32
+memcpy	ptr	ptr, ptr, i32
+str_len	i32	ptr
+abs	i32	i32
+func_80091920	void	ptr, i32
+func_8008C4F0	void	

@@ -228,4 +228,5 @@ KIT = PortKit(
     resources=torch_resources,
     boot_globals=boot_globals,
     coprocessor_boot=RSPBOOT,
+    wasm=Path(__file__).parent / "port_wasm",
 )
