@@ -57,3 +57,27 @@ def test_a_wrong_base_symbol_becomes_the_variable_it_reaches(project, cc, monkey
     assert net._function("update", "game")["matched_source"] == (
         "extern char g_speed[];\nextern s32 D_80010000;\nvoid update(void) { *(s32 *)((u8 *)&g_speed) = 1; }")
     assert "*(s32 *)(((char *)&g_speed + 0x2)) = 2;" in net._function("helper", "game")["matched_source"]  # inside it
+
+
+def test_comments_stay_and_a_static_function_others_call_is_made_global(project, cc, monkeypatch):  # noqa: F811
+    """A rewrite changes code only (an earlier one rewrote a comment that described the old expression); and a
+    function its own C defines static, which another function calls, loses `static`."""
+    net, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=? WHERE name='update'",
+                   ('extern char D_80010000[];\n/* stores at D_80010000 + 0x12, "D_80010000 + 0x12" */\n'
+                    "void update(void) { *(s32 *)(D_80010000 + 0x12) = 2; }",))
+        db.execute("UPDATE functions SET matched_source=? WHERE name='_allocatePVoice'",
+                   ("/* static, file-local in libultra */\nstatic void _allocatePVoice(void);\n"
+                    "static void _allocatePVoice(void) {}",))
+    put(net, "update", ["update"], ["D_80010000"])
+    put(net, "helper", ["helper"], ["_allocatePVoice"])
+    put(net, "_allocatePVoice", [], [])  # compiled, exports nothing: static
+    monkeypatch.setattr(net, "regression_test", lambda *a, **k: [])
+    result = renamed_calls.fix(net, "game", print, cc=cc)
+    assert result["statics"] == 1 and set(result["kept"]) == {"update", "_allocatePVoice"}
+    update = net._function("update", "game")["matched_source"]
+    assert '/* stores at D_80010000 + 0x12, "D_80010000 + 0x12" */' in update  # the comment as it was
+    assert "*(s32 *)(((char *)&g_speed + 0x2)) = 2;" in update
+    assert net._function("_allocatePVoice", "game")["matched_source"] == (
+        "/* static, file-local in libultra */\nvoid _allocatePVoice(void);\nvoid _allocatePVoice(void) {}")
