@@ -445,3 +445,80 @@ def test_a_runner_that_worked_survives_one_missed_check(vm, monkeypatch, caplog)
     assert not linuxvm.status()[0]
     monkeypatch.setattr(linuxvm, '_status', (False, why, linuxvm.time.monotonic() - linuxvm.FAILED_FOR - 1))
     assert linuxvm.status() == (True, '')
+
+
+class _Later:
+    """Holds a restart thread for the test to run once the check that started it has returned."""
+    pending = []
+
+    def __init__(self, target, **_):
+        self.target = target
+
+    def start(self):
+        _Later.pending.append(self.target)
+
+
+def _run_restarts():
+    while _Later.pending:
+        _Later.pending.pop(0)()
+
+
+def _colima(monkeypatch, listed, docker=b'Cannot connect to the Docker daemon at unix:///x/docker.sock. '
+                                         b'Is the docker daemon running?'):
+    calls = []
+    def plain(args, timeout=30, **kwargs):
+        calls.append(args)
+        if args[3:5] == ['image', 'inspect']:
+            return subprocess.CompletedProcess(args, 1, b'', docker)
+        if args[1] == 'list':
+            return subprocess.CompletedProcess(args, 0, json.dumps({'name': 'test-compilers', 'status': listed}).encode(), b'')
+        return subprocess.CompletedProcess(args, 0, b'', b'')
+    monkeypatch.setattr(linuxvm, '_plain', plain)
+    monkeypatch.setattr(linuxvm.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(linuxvm.threading, 'Thread', _Later)
+    _Later.pending.clear()
+    monkeypatch.setattr(linuxvm, '_restarted', None)
+    return calls
+
+
+def test_a_vm_that_died_under_colima_is_restarted_once(vm, monkeypatch, caplog):
+    # Twice in one night the VM's process died while Colima listed it as running; every compiler that runs in it
+    # failed until someone ran `colima restart` by hand, and that waited 7 minutes on the dead VM's shutdown.
+    calls = _colima(monkeypatch, 'Running')
+    ok, why = linuxvm.status()
+    assert not ok and why == linuxvm.RESTARTING
+    assert linuxvm.status(refresh=True)[1] == linuxvm.RESTARTING  # while it restarts
+    _run_restarts()
+    restarts = [c for c in calls if c[1] in ('stop', 'start')]
+    assert restarts == [['/usr/bin/colima', 'stop', '--force', 'test-compilers'],
+                        ['/usr/bin/colima', 'start', 'test-compilers', '--activate=false']]
+    assert linuxvm._status is None and not linuxvm._restarting.locked()  # the next check looks again
+    assert 'restarting it' in caplog.text and 'running again' in caplog.text
+    # still dead a minute later: not restarted again until RESTART_EVERY has passed
+    calls.clear()
+    assert not linuxvm.status(refresh=True)[0]
+    assert not [c for c in calls if c[1] in ('stop', 'start')]
+    monkeypatch.setattr(linuxvm, '_restarted', linuxvm.time.monotonic() - linuxvm.RESTART_EVERY - 1)
+    assert linuxvm.status(refresh=True)[1] == linuxvm.RESTARTING
+    _run_restarts()
+
+
+def test_a_restart_in_progress_is_reported_and_not_doubled(vm, monkeypatch):
+    calls = _colima(monkeypatch, 'Running')
+    linuxvm._restarting.acquire()
+    try:
+        assert linuxvm.status() == (False, linuxvm.RESTARTING)
+        assert not [c for c in calls if c[1] in ('list', 'stop', 'start')]
+    finally:
+        linuxvm._restarting.release()
+
+
+@pytest.mark.parametrize('listed, docker', [
+    ('Stopped', b'Cannot connect to the Docker daemon at unix:///x/docker.sock.'),  # the user stopped it
+    ('Running', b'Error: No such image: python:3.12-slim'),  # reachable: Setup pulls the image, not a restart
+])
+def test_a_stopped_vm_or_a_missing_image_is_left_to_setup(vm, monkeypatch, listed, docker):
+    calls = _colima(monkeypatch, listed, docker)
+    ok, why = linuxvm.status()
+    assert not ok and 'Prepare Linux runner' in why
+    assert not [c for c in calls if c[1] in ('stop', 'start')]

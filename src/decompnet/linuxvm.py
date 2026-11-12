@@ -2,7 +2,8 @@
 
 Colima/Docker are user-managed host infrastructure, like WSL on Windows. The
 compiler image is digest pinned; jobs have no network or host-folder mounts.
-Only explicit Setup may start the dedicated VM or download its image.
+Only explicit Setup may start the dedicated VM or download its image; the app restarts the VM by itself only when it
+died under Colima (see `_recover`).
 """
 from __future__ import annotations
 
@@ -36,6 +37,11 @@ _status_lock = threading.Lock()
 _worked = False  # the runner answered once in this process: a failed check after that may be a blip
 BLIP_RETRIES = 2  # looks again 1 s and 2 s later before a runner that worked counts as not ready
 FAILED_FOR = 2  # seconds a failed check is remembered (a working one: 10)
+RESTART_EVERY = 600  # seconds between restarts of a VM that died, so one that can't start isn't restarted forever
+RESTARTING = ('The Linux compiler VM stopped working, so decompdecomp is restarting it. '
+              'Compilers that run in it are back in a few minutes.')
+_restarted: float | None = None  # when the app last restarted the VM
+_restarting = threading.Lock()  # held while a restart runs
 
 
 class VMError(RuntimeError):
@@ -101,9 +107,80 @@ def status(refresh: bool = False) -> tuple[bool, str]:
         if not ok and _worked:
             logging.getLogger('decompdecomp').warning('Linux compiler runner check failed %d times: %s',
                                                       tries + 1, detail[-300:])
+        if not ok and (_restarting.locked() or (_unreachable(detail) and _recover())):
+            why = RESTARTING
         _worked = _worked or ok
         _status = ok, why, time.monotonic()
         return ok, why
+
+
+def _unreachable(detail: str) -> bool:
+    """Docker can't reach the VM at all (not: it answers without the image, which Setup fixes)."""
+    # The socket is relayed by Colima's host agent, which outlives the VM: a dead VM can also read as a dropped
+    # connection or a timeout rather than a refused one.
+    return any(sign in detail for sign in ('Cannot connect to the Docker daemon', 'error during connect', 'EOF',
+                                            'timed out', 'Timeout', 'connection refused', 'connection reset',
+                                            'no such file or directory', 'no longer running'))
+
+
+def _listed_running() -> bool:
+    """Colima still lists the VM as running. Twice in one night the VM's process died under Colima (no crash report,
+    no sleep, no memory kill on the Mac), and Colima went on listing it as running while Docker couldn't reach it. A VM
+    the user stopped is listed as stopped, and stays stopped."""
+    try:
+        result = _plain([executable('colima'), 'list', '--json', '--profile', profile()], 20)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    for line in result.stdout.decode(errors='replace').splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and entry.get('name') == profile():
+            return entry.get('status') == 'Running'
+    return False
+
+
+def _recover() -> bool:
+    """Restart a VM that died under Colima, in the background, at most once every RESTART_EVERY seconds. Until
+    then every compiler that runs in it failed until someone ran `colima restart` by hand. True: a restart started."""
+    global _restarted
+    if _restarted is not None and time.monotonic() - _restarted < RESTART_EVERY:
+        return False
+    if not _restarting.acquire(blocking=False):
+        return False
+    try:
+        if not _listed_running():
+            _restarting.release()
+            return False
+        _restarted = time.monotonic()
+        threading.Thread(target=_restart, name='linux-vm-restart', daemon=True).start()
+        return True
+    except BaseException:
+        _restarting.release()
+        raise
+
+
+def _restart() -> None:
+    global _status
+    log = logging.getLogger('decompdecomp')
+    name = profile()
+    try:
+        log.warning('The Linux compiler VM %s stopped answering while Colima lists it as running: restarting it.', name)
+        # A plain `colima restart` waited 7 minutes on the dead VM's graceful shutdown; force skips it.
+        _plain([executable('colima'), 'stop', '--force', name], 120)
+        result = _plain([executable('colima'), 'start', name, '--activate=false'], 300)
+        if result.returncode:
+            log.error('Could not restart the Linux compiler VM %s: %s', name,
+                      result.stderr.decode(errors='replace')[-1000:])
+        else:
+            log.warning('The Linux compiler VM %s is running again.', name)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        log.error('Could not restart the Linux compiler VM %s: %s', name, error)
+    finally:
+        with _status_lock:
+            _status = None
+        _restarting.release()
 
 
 def _check() -> tuple[bool, str, str]:
