@@ -969,6 +969,34 @@ sha256 = "554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c"
 subdir = "zig-x86_64-windows-0.14.1"
 platforms = ["windows-x86_64"]
 
+[wabt]
+name = "WABT 1.0.42 (wasm2c)"
+kind = "tool"
+license = "Apache-2.0"
+source = "github.com/WebAssembly/wabt releases 1.0.42"
+description = "Turns a WebAssembly build of a finished game's C back into C a PC compiles (port/wasm): the game runs in a sandboxed memory laid out as the console's, big-endian, at the console's addresses."
+binary_name = "wasm2c"
+[[wabt.parts]]
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-macos-arm64.tar.gz"
+sha256 = "3f654779b436c628db3ca4323c51538815f5fbc887a6d5f3bb1c18d36281e240"
+subdir = "wabt-1.0.42"
+platforms = ["macos-arm64"]
+[[wabt.parts]]
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-linux-x64.tar.gz"
+sha256 = "84895407a6bbb80e918f33b16b2fb2206021c150b6bc9ff6f761263a745ab131"
+subdir = "wabt-1.0.42"
+platforms = ["linux-x86_64"]
+[[wabt.parts]]
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-linux-arm64.tar.gz"
+sha256 = "a7632c1cc66f70886441842ecf5a2ffa91a98c79e026059458451234ad013ea8"
+subdir = "wabt-1.0.42"
+platforms = ["linux-aarch64"]
+[[wabt.parts]]
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-windows-x64.tar.gz"
+sha256 = "62f1eb2b51aa57cf0f0b8ba333bf2c72a049930aa9c5de01dcad271c4fe48c88"
+subdir = "wabt-1.0.42"
+platforms = ["windows-x86_64"]
+
 [cmake]
 name = "CMake 4.4.4"
 kind = "tool"

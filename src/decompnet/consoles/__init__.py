@@ -72,6 +72,9 @@ class PortKit:
     # console's boot leaves in low memory, which a port defines with those values
     coprocessor_boot: bytes = b""  # how the coprocessor's boot microcode begins in a ROM (the N64's rspboot): it and
     # the microcode after it are data the C only points at, which a port's renderer replaces: a placeholder
+    wasm: object = None  # the WebAssembly build's console part (port/wasm/): a folder with host.c, the host that
+    # runs the game's translated C (threads, DMA, the hardware's registers), and the library's prototypes
+    # (libultra.sigs: each a name, a return type and parameter types, tab-separated); None: no such build yet
 
 
 class Console:

@@ -973,6 +973,27 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### A finished game runs as a WebAssembly build
+
+`python -m decompnet.port.wasm SAVE` (`src/decompnet/port/wasm/`) builds a finished N64 game from its save
+repository: the matched C goes to WebAssembly by the pinned Zig, then back to C by the pinned wasm2c (WABT 1.0.42),
+and is built with a host (`consoles/n64/port_wasm/host.c`, `PortKit.wasm`). The game runs in a memory laid out as
+the console's: data at the N64's addresses, big-endian, copied from the user's own ROM at start. So the C needs no
+64-bit fixes, and data the ROM holds doesn't have to be in C first.
+
+The host does libultra's work: the game's threads one at a time by priority, with preemption when a woken thread
+outranks the one running; message queues; cartridge DMA; the VI retrace; and the RSP's status register. A racing
+game of 2,125 functions runs its main loop: 740 graphics and 297 audio tasks and 149 frame swaps in 6 seconds.
+
+The game's save repository holds what only the port needs (`port/wasm/`): matched C it leaves out, C only the port
+has, and the port's version of a matched file. The build goes to `port/wasm/build/`, which git ignores.
+
+Left:
+- a renderer for the display lists (F3DEX2: libultraship's Fast3D), audio and input;
+- the overrides moved into the matched C behind `#ifdef PORT` through Fix C for the PC;
+- Play in the GUI;
+- the console's other connector parts for PS1 and the rest: "—" until a host exists.
+
 ### The repair library stands on its own
 
 The repair families that only read a function's C and code (127 of them, with their readers: 161 modules) moved
