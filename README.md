@@ -129,6 +129,14 @@ its git repository, then choose **Open a saved project** with your own copy of t
 **Multiple Claude accounts.** In **Agents & models → Claude Code → Additional accounts**, click **Add account**. Give it a label, run the command shown, sign in
 with `/login`, and choose the account when you start a helper agent.
 
+**Change the prompts and tools of helper agents.** In **Agents & models**, edit the prompt templates for all helper agents,
+or override them for one helper agent. **Agent tools & usage** shows the tools, how often agents use them, and lets you turn off
+the optional tools. A change applies when the next session of a helper agent starts.
+
+**Connect another AI tool with MCP.** In **Agents & models**, choose **Connect another AI tool with MCP**, select a project and
+click **Create connection**. Copy the URL and the token into your tool. Keep the token private: it can change the work of that
+project. Keep decompdecomp open while the tool works. Click **Revoke** to stop the connection.
+
 **ROM library.** In **Settings → ROM library**, choose a folder with your extracted game files. Click **Search ROM library** on an imported project's setup page to fill in a
 verified match.
 

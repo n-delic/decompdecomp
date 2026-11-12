@@ -117,6 +117,9 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Agents & models controls.** Collapsible sections show installed agent apps, prompt templates, optional tool
+  visibility and recorded usage, manual project-scoped MCP connections, and saved API endpoints. Global and
+  per-helper prompt and tool choices take effect on new sessions; disabled tool calls are rejected immediately.
 - **64-bit Windows games (x64).** A 64-bit program (PE32+) imports like a 32-bit one and builds with Visual C++
   2017's 64-bit compiler, the packs' only one: a game built with 2015, 2019 and newer, or 2005 to 2013's 64-bit
   compilers builds with it, and the import says how near that is. Its functions come from the program, not

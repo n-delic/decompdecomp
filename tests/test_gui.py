@@ -29,14 +29,14 @@ def test_foreground_progress_covers_delayed_starts_and_clears_on_every_outcome()
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_progress.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_saved_project_dialog_preserves_state_and_cancels_pending_requests():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_restore.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_a_removed_compiler_range_can_be_reverted_where_it_was_listed():
@@ -45,14 +45,14 @@ def test_a_removed_compiler_range_can_be_reverted_where_it_was_listed():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_compiler.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_launcher.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
@@ -63,7 +63,7 @@ def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_map.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_the_function_view_opens_on_best_and_switches_to_latest_after_a_manual_compile():
@@ -73,7 +73,7 @@ def test_the_function_view_opens_on_best_and_switches_to_latest_after_a_manual_c
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_function.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 @pytest.fixture(scope="module")
@@ -348,3 +348,24 @@ def test_a_ps4_drop_never_requests_codewarrior_and_explains_host_restrictions(gu
         assert drop["extras"] == ["game.functions.jsonl"]
     unsupported = gui["checks"]["ps4Drop"]["unsupported"]
     assert unsupported["disabled"] and not unsupported["consent"] and "WSL 2" in unsupported["note"]
+
+
+def test_agent_prompt_editor_inherits_previews_and_reports_errors():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_prompt_settings.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_agent_tool_controls_save_and_revert_failed_changes():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_tool_settings.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_manual_mcp_connections_handle_failed_project_loads():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_manual_mcp.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)

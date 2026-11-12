@@ -400,7 +400,7 @@ class Network:
     # ------------------------------------------------------------------ agents
 
     def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli") -> str:
-        """Mint an agent token for one of the app's helpers (`trusted` stays on the record for older databases)."""
+        """Mint an agent token for a managed helper or manual MCP connection (`trusted` stays on the record for older databases)."""
         name = name.strip()
         if not name or len(name) > 40 or not all(c.isalnum() or c in "-_." for c in name):
             raise NetworkError("agent name must be 1-40 chars of [A-Za-z0-9-_.]")
@@ -419,7 +419,7 @@ class Network:
     def authenticate(self, token: str | None) -> Agent:
         """The agent a token belongs to (helpers get theirs from the app when it starts them)."""
         if not token:
-            raise NetworkError("missing token: only helpers decompdecomp starts can work on its projects")
+            raise NetworkError("missing token: connect an agent in Agents & models to work on a project")
         row = self.store.one("SELECT id,name,owner,trusted FROM agents WHERE token_hash=?", hash_token(token))
         if row is None:
             raise NetworkError("invalid API token")

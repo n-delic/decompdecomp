@@ -95,6 +95,118 @@ def register(app: App) -> None:
     async def api_state(request: Request) -> Response:
         return guard(request) or JSONResponse(await call(state))
 
+    @mcp.custom_route('/api/agent-prompts', methods=['GET', 'POST'])
+    async def agent_prompts(request: Request) -> Response:
+        from dataclasses import replace
+
+        from .. import prompt_settings
+        if (bad := guard(request, write=request.method == 'POST')):
+            return bad
+        try:
+            data = await body(request) if request.method == 'POST' else request.query_params
+            helper = manager.sessions.get(str(data.get('helper', ''))) if data.get('helper') else None
+            if data.get('helper') and helper is None:
+                raise NetworkError('This agent no longer exists. Refresh the agents list.')
+            if request.method == 'POST':
+                action = data.get('action', 'save')
+                overrides = prompt_settings.validate(data.get('overrides', {}))
+                if action not in {'save', 'preview'}:
+                    raise ValueError('Choose save or preview.')
+                if action == 'preview':
+                    if helper:
+                        draft = replace(helper, options={**helper.options, 'prompts': overrides}, prompt_config=None)
+                        return JSONResponse({'initial': await call(manager.prompt, draft),
+                                             'instructions': manager.app_instructions(draft)})
+                    templates = prompt_settings.defaults() | overrides
+                    return JSONResponse({'initial': '\n\n'.join(prompt_settings.LABELS[k] + '\n' + templates[k]
+                                         for k in prompt_settings.FIELDS if k != 'instructions'),
+                                         'instructions': templates['instructions']})
+                if helper:
+                    await call(manager.set_prompts, helper.id, overrides)
+                else:
+                    await call(prompt_settings.save_global, net, overrides)
+            return JSONResponse(await call(prompt_settings.view, net, helper))
+        except (NetworkError, ValueError, KeyError) as error:
+            return fail(error)
+
+    @mcp.custom_route('/api/agent-tools', methods=['GET', 'POST'])
+    async def agent_tools(request: Request) -> Response:
+        from .. import tool_policy, tools
+        if (bad := guard(request, write=request.method == 'POST')):
+            return bad
+        try:
+            await call(tool_policy.ensure, net)
+            data = await body(request) if request.method == 'POST' else request.query_params
+            helper = manager.sessions.get(str(data.get('helper', ''))) if data.get('helper') else None
+            if data.get('helper') and helper is None:
+                raise NetworkError('This agent no longer exists. Refresh the agents list.')
+            if request.method == 'POST':
+                if 'preset' in data:
+                    names = tool_policy.preset_disabled(data['preset'])
+                    if helper:
+                        await call(manager.set_tools, helper.id, names)
+                    else:
+                        await call(tool_policy.set_preset, net, data['preset'])
+                else:
+                    name, enabled = data.get('name'), data.get('enabled')
+                    tool_policy.validate([name])
+                    if type(enabled) is not bool:
+                        raise NetworkError('Tool enabled must be true or false.')
+                    if helper:
+                        await call(manager.set_tool, helper.id, name, enabled)
+                    else:
+                        await call(tool_policy.set_global, net, name, enabled)
+            blocked = tool_policy.disabled(net)
+            own = set(helper.options.get('disabled_tools', [])) if helper else set()
+            usage = await call(tool_policy.usage, net)
+            definitions = await mcp.list_tools()
+            if helper:
+                names = set(tools.project_tools(net, helper.slug, include_disabled=True))
+                definitions = [t for t in definitions if t.name in names]
+            entries = []
+            for t in definitions:
+                item = t.model_dump(mode='json', by_alias=True)
+                name = t.name
+                item.update(calls=usage.get(name, {}).get('calls', 0), required=name in tool_policy.REQUIRED,
+                            global_disabled=name in blocked, enabled=name not in blocked | own,
+                            schema_chars=len(json.dumps(item)))
+                entries.append(item)
+            return JSONResponse({'tools': entries, 'helper': helper.id if helper else None,
+                                 'presets': [{'id': key, 'label': label,
+                                              'tools': sum(t.name not in tool_policy.preset_disabled(key)
+                                                           for t in definitions)}
+                                             for key, (label, _) in tool_policy.PRESETS.items()],
+                                 'coverage': 'Local counts begin when tool tracking starts. Earlier calls may not be recorded.'})
+        except (NetworkError, ValueError, KeyError) as error:
+            return fail(error)
+
+    @mcp.custom_route("/api/manual-mcp", methods=["GET", "POST"])
+    async def manual_mcp_connection(request: Request) -> Response:
+        from .. import manual_mcp, prompt_settings, tools
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        try:
+            if request.method == "POST":
+                data = await body(request)
+                if data.get('action') == 'revoke':
+                    await call(manual_mcp.revoke, net, settings, int(data['id']))
+                    return JSONResponse({'ok': True})
+                if data.get('action') != 'create':
+                    raise ValueError('Choose create or revoke.')
+                item = await call(manual_mcp.create, net, settings, str(data.get('slug') or ''))
+                return JSONResponse({**item, 'url': mcp_url,
+                                     'instructions': prompt_settings.effective(net, {})['instructions']})
+            slug = request.query_params.get('slug')
+            if slug:
+                await call(net.project_row, slug)
+            keep = set(tools.project_tools(net, slug)) if slug else set()
+            definitions = await mcp.list_tools()
+            return JSONResponse({'url': mcp_url, 'transport': 'Streamable HTTP',
+                                 'connections': manual_mcp.connections(settings),
+                                 'tools': [t.model_dump(mode='json', by_alias=True) for t in definitions if t.name in keep]})
+        except (NetworkError, ValueError, KeyError) as e:
+            return fail(e)
+
     @mcp.custom_route("/api/restore", methods=["POST"])
     async def api_restore(request: Request) -> Response:
         """A project rebuilt from a save (a folder, or a git repository's address) and the user's own copy of the
