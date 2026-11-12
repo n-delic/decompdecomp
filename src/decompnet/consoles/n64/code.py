@@ -42,10 +42,11 @@ def _code_like(words: tuple[int, ...]) -> bool:
     return any(w == JR_RA or is_frame(w) for w in words)
 
 
-def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int, ...] = (), *, log=print) -> list[tuple[int, int, int]]:
+def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int, ...] = (), *, log=print,
+                  declared: tuple[tuple[int, int, int], ...] = ()) -> list[tuple[int, int, int]]:
     """(rom_start, rom_end, vram) of code segments outside `taken` (rom_start, rom_end, vram of the known ones).
     `ends`: where the known segments end, their data included (splat's config): code found after one can begin
-    right there."""
+    right there. `declared`: those segments whole (rom_start, rom_end, vram), where a switch's jump table is read."""
     size = len(rom) & ~3
     known_code = [(s, e) for s, e, _ in taken]
     calls: list[int] = []  # every call the known code makes outside itself: some go into the code found here
@@ -126,7 +127,7 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
     found=complete(rom,sorted(found),taken)
     from .code_references import complete as referenced_gaps
 
-    found=refine(rom,found+referenced_gaps(rom,sorted(taken+found)),taken,log)
+    found=refine(rom,found+referenced_gaps(rom,sorted(taken+found),declared),taken,log)
     return loaded_code(rom,found,verified(rom,taken),taken,log)
 
 
@@ -270,7 +271,9 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         kib = sum(len(d) for _, d in packed) // 1024
         log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
     taken = split.code_ranges(config)
-    found = find_segments(rom, taken, tuple(s.rom_end for s in split.segments_from_config(config)),log=log) if taken else []
+    known = split.segments_from_config(config)
+    found = find_segments(rom, taken, tuple(s.rom_end for s in known), log=log,
+                          declared=tuple((s.rom_start, s.rom_end, s.vram) for s in known)) if taken else []
     from .boot_mapping import recover
 
     recover(config, rom, found, log)

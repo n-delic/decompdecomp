@@ -96,6 +96,13 @@
   use existing background source-restoration locks. Hosts accept legacy permutation
   claim/release requests without leases, and startup clears only legacy permutation claims.
 
+- Done: N64 imports recover a whole gap between two code segments that share a mapping
+  when the game's data stores the gap's start as a pointer and the gap is one balanced
+  frame (a racing game's command handlers, 3.5 and 8 KB, called only through a table).
+  A switch's cases are followed through its table in the data splat's config maps.
+  Planned: the same pointer evidence for raw text inside a segment
+  (`rom/mixed_code.py`, every MIPS console), which still needs a call.
+
 - Done: N64 imports scan all unowned intervals in corroborated loader banks,
   following newly recovered calls and materialized callback addresses to completion.
   Quiet balanced frames need adjacency or independently corroborated callees and
