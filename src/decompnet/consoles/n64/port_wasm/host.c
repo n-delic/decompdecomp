@@ -403,6 +403,24 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
 }
 u32 w2c_env_osSpTaskYielded(struct w2c_env *e, u32 task) { (void)e; (void)task; return 0; }
 
+/* ---------------------------------------------------------------- the CPU's own registers */
+
+/* The MIPS builtins the matched C reaches the R4300's coprocessor 0 and FPU with (the compiler's, for code that
+   reads Status or Count): answered here, as the console's CPU would. */
+static uint32_t cop0_status = 0x3400FF01u, cop0_compare, fcsr = 0x01000800u;
+u32 w2c_env_0x5F_builtin_mips_read_status(struct w2c_env *e) { (void)e; return cop0_status; }
+u32 w2c_env_0x5F_builtin_mips_write_status_return_spacing(struct w2c_env *e, u32 v) { (void)e; cop0_status = v; return 0; }
+u32 w2c_env_0x5F_builtin_mips_write_compare(struct w2c_env *e, u32 v) { (void)e; cop0_compare = v; return 0; }
+u32 w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { /* Count runs at half the CPU's 93.75 MHz */
+    (void)e;
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint32_t)((uint64_t)t.tv_sec * 46875000u + (uint64_t)t.tv_nsec * 46875u / 1000000u);
+}
+u32 w2c_env_0x5F_builtin_mips_exchange_fcsr(struct w2c_env *e, u32 v) { (void)e; uint32_t old = fcsr; fcsr = v; return old; }
+u32 w2c_env_0x5F_builtin_mips_live_return_address(struct w2c_env *e) { (void)e; return 0; } /* none in wasm */
+u32 w2c_env_0x5F_builtin_mips_debug_break(struct w2c_env *e) { (void)e; return 0; } /* a debugger's breakpoint */
+
 /* ---------------------------------------------------------------- controllers, saves */
 
 static uint16_t buttons;
@@ -414,10 +432,46 @@ u32 w2c_env_osContInit(struct w2c_env *e, u32 mq, u32 bits, u32 status) {
 }
 static void si_done(uint32_t mq) { if (!post_event(EV_SI) && mq) put(mq, 0, 0, 0); }
 u32 w2c_env_osContStartReadData(struct w2c_env *e, u32 mq) { (void)e; si_done(mq); return 0; }
+/* PORT_INPUT: the first controller, scripted by frame shown: "300:START,306:-,400:A+UP,500:SX=60+SY=-20".
+   Each entry sets the state from that frame on: buttons joined by +, "-" for none, SX/SY for the stick. */
+static int8_t stick_x, stick_y;
+static void scripted_input(void) {
+    static const char *script;
+    static int loaded;
+    if (!loaded) { loaded = 1; script = getenv("PORT_INPUT"); }
+    if (!script) return;
+    static const struct { const char *name; uint16_t bit; } names[] = {
+        {"A", 0x8000}, {"B", 0x4000}, {"Z", 0x2000}, {"START", 0x1000}, {"UP", 0x0800}, {"DOWN", 0x0400},
+        {"LEFT", 0x0200}, {"RIGHT", 0x0100}, {"L", 0x0020}, {"R", 0x0010}, {"CU", 0x0008}, {"CD", 0x0004},
+        {"CL", 0x0002}, {"CR", 0x0001}};
+    const char *p = script;
+    while (*p) { /* the last entry at or before this frame wins */
+        char *end;
+        unsigned long at = strtoul(p, &end, 10);
+        if (*end != ':') break;
+        p = end + 1;
+        uint16_t b = 0; int sx = 0, sy = 0;
+        while (*p && *p != ',') {
+            size_t n = strcspn(p, "+,");
+            if (!strncmp(p, "SX=", 3)) sx = atoi(p + 3);
+            else if (!strncmp(p, "SY=", 3)) sy = atoi(p + 3);
+            else for (size_t i = 0; i < sizeof names / sizeof *names; i++)
+                if (strlen(names[i].name) == n && !strncmp(p, names[i].name, n)) b |= names[i].bit;
+            p += n;
+            if (*p == '+') p++;
+        }
+        if (at <= swaps) { buttons = b; stick_x = (int8_t)sx; stick_y = (int8_t)sy; }
+        if (*p == ',') p++;
+    }
+}
 void w2c_env_osContGetReadData(struct w2c_env *e, u32 pad) {
     (void)e;
-    for (int i = 0; i < 4; i++) { wbe16(pad + 6 * i, i == 0 ? buttons : 0); M[pad + 6 * i + 2] = 0; M[pad + 6 * i + 3] = 0; M[pad + 6 * i + 4] = i == 0 ? 0 : 8; }
-    return;
+    scripted_input();
+    for (int i = 0; i < 4; i++) {
+        wbe16(pad + 6 * i, i == 0 ? buttons : 0);
+        M[pad + 6 * i + 2] = i == 0 ? (uint8_t)stick_x : 0; M[pad + 6 * i + 3] = i == 0 ? (uint8_t)stick_y : 0;
+        M[pad + 6 * i + 4] = i == 0 ? 0 : 8;
+    }
 }
 u32 w2c_env_osContStartQuery(struct w2c_env *e, u32 mq) { (void)e; si_done(mq); return 0; }
 void w2c_env_osContGetQuery(struct w2c_env *e, u32 status) {

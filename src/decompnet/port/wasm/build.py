@@ -31,8 +31,15 @@ from ...network import NetworkError
 HERE = Path(__file__).parent
 # The game's C as wasm32 IR, unoptimised: LLVM's load combining would assume little-endian memory, which beir.py and
 # bemem.py make big-endian after it.
-IR_FLAGS = ["-target", "wasm32-freestanding", "-std=gnu17", "-DPORT=1", "-DPORT_WASM=1", "-O0", "-g0",
+IR_FLAGS = ["-target", "wasm32-freestanding", "-std=gnu17", "-DPORT_WASM=1", "-O0", "-g0",
             "-fno-sanitize=all", "-ffreestanding", "-fno-strict-aliasing", "-fwrapv", "-Wno-everything"]
+# The console's C, not the native port's: memory here is the console's own 32-bit layout, where the matched C is
+# right, and a fix behind `#ifdef PORT` is for a 64-bit PC (one wrote a display list's address as 0 there: "no
+# meaning on PC", and the racing game's menu text sampled the wrong glyphs). PORT is defined only for a file that
+# needs it here: one using <stdarg.h> (its console branch walks the MIPS stack for its arguments with
+# `__builtin_next_arg`), inline assembly, or one that doesn't compile without it. The other MIPS builtins
+# (`__builtin_mips_read_status`, `__builtin_mips_debug_break`...) stay calls the host answers (port_wasm/host.c).
+NEEDS_PORT = re.compile(r"\bva_start\b|\b__builtin_next_arg\b|\b__asm__\b|\basm\s*\(")
 # The console's memory (4 GB, so every console address is in it), its data placed by the C's own addresses, a
 # stack per thread below it (the host's), and every function exported: the host finds them by address.
 LINK_FLAGS = ["--no-entry", "--allow-undefined", "--export-all", "--export-table", "--growable-table",
@@ -213,7 +220,11 @@ def build(repo: Path, *, console: str = "n64", log=print) -> Path:
         src, ll = out / "src" / name, out / "ll" / (name[:-2] + ".ll")
         if ll.exists() and ll.stat().st_mtime >= src.stat().st_mtime:
             return None
-        done = _run([zig, "cc", *IR_FLAGS, "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll], log, env=env)
+        port = ["-DPORT=1"] if NEEDS_PORT.search(src.read_text(encoding="utf-8")) else []
+        done = _run([zig, "cc", *IR_FLAGS, *port, "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll], log, env=env)
+        if done.returncode and not port:
+            done = _run([zig, "cc", *IR_FLAGS, "-DPORT=1", "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll],
+                        log, env=env)
         return None if done.returncode == 0 else (done.stderr.strip().splitlines() or ["failed"])[0]
     if failed := _parallel(sorted(sources), ir, log, "files"):
         raise NetworkError(f"{len(failed)} of the game's files don't compile for the WebAssembly build: "
