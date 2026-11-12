@@ -257,7 +257,7 @@ class ImportMixin:
                     arch=console.arch,big_endian=picked.big_endian,root=workdir,config=cfg,
                     existing=reimport["id"] if reimport is not None else None) as (db,pid):
                 if reimport is None:
-                    old_functions, gone, old_names = {}, {}, {}
+                    old_functions, gone, old_names = {}, {}, []
                 else:
                     rows = db.execute("SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()
                     # A bank and address identify renamed functions. A bare address is safe only when
@@ -275,9 +275,10 @@ class ImportMixin:
                             old_functions[fn.name] = old
                     paired = {o["id"] for o in old_functions.values()}
                     gone = {r["name"]: r for r in rows if r["id"] not in paired}
-                    # the names agents gave (functions and data), by address: matched C calls them by those names
-                    old_names = {r["address"]: r["name"] for r in db.execute(
-                        "SELECT name, address FROM symbols WHERE project_id=?", (pid,)) if not AUTO_NAME.match(r["name"])}
+                    # the names agents gave (functions and data), every one: matched C calls them by those names
+                    old_names = [(r["address"], r["name"], r["size"], r["kind"]) for r in db.execute(
+                        "SELECT name, address, size, kind FROM symbols WHERE project_id=? ORDER BY rowid", (pid,))
+                                 if not AUTO_NAME.match(r["name"])]
                     db.execute("UPDATE projects SET description=?, arch=?, big_endian=?, config=? WHERE id=?",
                                (f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
                                 console.arch, int(picked.big_endian), json.dumps(cfg), pid))
@@ -300,6 +301,7 @@ class ImportMixin:
 
                 preserved = 0
                 sdk_classified = 0
+                rejudge = []  # (name, C, agent id): matched C whose code is unchanged but whose relocations aren't
                 for fn in res.functions:
                     check_cancel()
                     target = console.target_from_split(fn, symbols.resolve, picked.big_endian, res.gp)
@@ -373,6 +375,11 @@ class ImportMixin:
                             db.execute("DELETE FROM claims WHERE function_id=?", (old["id"],))
                         preserved += old["status"] == "matched" and bool(old["matched_source"])
                     else:
+                        if (old is not None and old["status"] == "matched" and old["matched_source"]
+                                and old["target"] == target.code):
+                            # Same bytes, other relocations (a newer reader annotates more references): the C
+                            # may still match, so it's judged again after the import instead of being dropped.
+                            rejudge.append((old["name"], old["matched_source"], old["matched_agent_id"]))
                         for table in ("claims", "attempts", "twin_misses"):
                             db.execute(f"DELETE FROM {table} WHERE function_id=?", (old["id"],))
                         db.execute(
@@ -384,10 +391,24 @@ class ImportMixin:
                             (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, status,
                              old["id"]))
                 previews = {r[1]: r[4] for r in data_rows}
-                for addr, name in old_names.items():
+                named = set()
+                for addr, name, size, kind in old_names:
+                    if name in symbols.by_name:
+                        continue
                     s = symbols.by_addr.get(addr)
-                    if s is not None and s.name != name and name not in symbols.by_name:
+                    if s is not None and s.name != name and addr not in named:
                         symbols.rename(s.name, name)
+                    elif s is not None:
+                        # A second name for one address (two helpers named it): both resolve. It takes the first's
+                        # size and kind, since a table read back from the database indexes the address by either:
+                        # a 0-byte alias of a 66 KB block would change how every access inside it compiles.
+                        symbols.alias(Symbol(name, addr, s.size, s.kind))
+                    else:
+                        # An address the new split has no symbol at, often inside a block it sized (a field of a
+                        # 70 KB bss struct): the name stays, as matched C links against it.
+                        symbols.add(Symbol(name, addr, size or 0, kind or "data"), alias=True, reindex=False)
+                    named.add(addr)
+                symbols.reindex_symbols()
                 for s in symbols.by_name.values():
                     check_cancel()
                     preview = previews.get(s.address)
@@ -428,6 +449,8 @@ class ImportMixin:
             log(f"reimport kept {preserved} matched functions whose targets were unchanged")
         if sdk_classified:log(f"Identified {sdk_classified} known SDK assembly functions; excluded from C agents.")
         log(f"ready: {len(res.functions)} functions to decompile")
+        if reimport is not None and rejudge:
+            self._reimport_rejudge = rejudge
         return slug
 
     def reimport_rom(self, slug: str, data: bytes | Path, *, confirmed: bool = False, name: str = "",
@@ -442,12 +465,39 @@ class ImportMixin:
         console = consoles.identify(data)
         picked = console.read_game(data, name)
         log("Game recognized; starting the replacement split.")
+        self._reimport_rejudge = []
         self.import_split(console, picked, reimport_slug=slug, log=log)
+        self._judge_kept_matches(slug, self._reimport_rejudge, log)
         counts = self.project_store(proj['id']).one(
             "SELECT COUNT(*) AS functions, SUM(status='matched') AS matched FROM functions WHERE project_id=?",
             proj["id"])
         log(f"Reimport complete: {counts['functions']} functions; {counts['matched'] or 0} still match.")
         return {"slug": slug, "functions": counts["functions"], "matched": counts["matched"] or 0}
+
+    def _judge_kept_matches(self, slug: str, kept: list, log) -> None:
+        """Judge again the matched C of functions whose bytes a reimport left alone but whose relocations it read
+        anew (a newer reader annotates references an older one left as numbers). A reimport used to drop that C:
+        234 matches of a racing game went at once. Each one that still matches keeps its helper's credit."""
+        if not kept:
+            return
+        log(f"judging {len(kept)} matched function(s) again: same code, references read anew")
+        check_cancel = getattr(log, "check_cancel", lambda: None)
+        pid = self._project(slug)["id"]
+        matched = 0
+        for name, source, agent_id in kept:
+            check_cancel()
+            row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
+            agent = self.attribution_agent(row["name"]) if row else self.local_agent("you")[0]
+            try:
+                matched += bool(self.attempt(agent, name, source, slug)["matched"])
+            except NetworkError as error:
+                log(f"{name}: {error}")
+            if self.project_store(pid).one("SELECT status FROM functions WHERE project_id=? AND name=?",
+                                           pid, name)["status"] != "matched":
+                with self.project_store(pid).tx() as db:  # kept as the closest attempt, for whoever goes on
+                    db.execute("UPDATE functions SET best_source=?,best_score=MAX(1,COALESCE(n_insns,1))*100 "
+                               "WHERE project_id=? AND name=? AND best_source IS NULL", (source, pid, name))
+        log(f"{matched} of {len(kept)} still match; the others keep their C as the best attempt")
 
     def _debug_types(self, debug, cfg: dict, workdir: Path, log) -> str:
         """The game's own types from its debug information (consoles/ps2/debuginfo.py), for the first header, once
