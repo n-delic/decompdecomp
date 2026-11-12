@@ -126,7 +126,9 @@ def _facts(net, proj) -> dict:
 def _group(net, proj, name: str) -> str | None:
     """The group an undefined symbol is in, or None for data a matched data unit defines in C (phase 1)."""
     facts = _facts(net, proj)
-    unproven = facts["kit"].sdk_group(name) if facts["kit"] and name not in facts["status"] else None
+    # a name the kit sorts, with no matched C of the game's (none, or its assembly copy, which a port never builds)
+    unproven = (facts["kit"].sdk_group(name) if facts["kit"] and facts["status"].get(name) != "matched"
+                else None)
     if name in facts["replaced"] or unproven == "replaced":
         return "kit"
     if name in facts["glue"] or unproven == "glue":
