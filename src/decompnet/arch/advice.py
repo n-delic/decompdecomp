@@ -2,19 +2,42 @@
 
 import re
 
-from . import get
+from .. import scoring
+from . import get, mips_regions
 
 MAX_ROWS = 8192
 _MIPS_REGISTER = re.compile(r'(?<![\w$])(zero|at|v[01]|a[0-3]|t[0-9]|s[0-8]|k[01]|gp|sp|fp|ra)(?!\w)')
+_DESTINATION = re.compile(r'(0x[0-9a-fA-F]+|\d+)\s*$')
+_BRANCHES = mips_regions.CONDITIONAL | {'b', 'j'}
 
 
-def _objdiff_mips(text):
-    """objdiff prints bare register names; the ROM readers expect dollar-prefixed ones."""
-    return _MIPS_REGISTER.sub(r'$\1', text)
+def _objdiff_mips(text, address=None):
+    """objdiff prints bare register names, and branch destinations as offsets in the object's section; the ROM
+    readers expect dollar-prefixed registers and destinations from the function's start (a branch of a function past
+    the section's first read as one leaving it, and no block or return path was observed)."""
+    text = _MIPS_REGISTER.sub(r'$\1', text)
+    if address and text.split(None, 1)[0:1] and text.split(None, 1)[0] in _BRANCHES:
+        if (dest := _DESTINATION.search(text)) and (offset := int(dest[1], 0) - address) >= 0:
+            text = text[:dest.start()] + hex(offset)
+    return text
 
 
-def diff_lines(processor, rows, *, candidate=None, target=None, relocated=(), big_endian=True, objdiff=False):
-    """Bounded observations from a complete scored diff. Missing readers simply add no advice."""
+def _objdiff_row(mark, target, candidate, addresses=(None, None)):
+    """An objdiff row in the ROM judge's terms: bare registers get their dollar, and an operand mismatch ("i", all
+    objdiff says) becomes "r" or "s" when only registers or stack offsets differ, as scoring marks ROM rows; the
+    register-chain and stack-frame readers look for those (#246 review: they never fired on project diffs)."""
+    target, candidate = _objdiff_mips(target, addresses[0]), _objdiff_mips(candidate, addresses[1])
+    if mark == 'i' and target != candidate:
+        (op_a, _, ops_a), (op_b, _, ops_b) = target.partition(' '), candidate.partition(' ')
+        if op_a == op_b:
+            mark = scoring.operand_marker(ops_a.strip(), ops_b.strip())
+    return mark, target, candidate
+
+
+def diff_lines(processor, rows, *, candidate=None, target=None, relocated=(), big_endian=True, objdiff=False,
+               addresses=(None, None)):
+    """Bounded observations from a complete scored diff. Missing readers simply add no advice. An objdiff diff
+    (project mode) passes `addresses`: where the target's and the build's functions start in their sections."""
     reader = get(processor)
     if (not rows or len(rows) > MAX_ROWS
             or any(not isinstance(row, (list, tuple)) or len(row) != 3
@@ -22,7 +45,7 @@ def diff_lines(processor, rows, *, candidate=None, target=None, relocated=(), bi
             or not any(row[0] != ' ' for row in rows)):
         return []
     if objdiff and processor == 'mips':
-        rows = [(mark, _objdiff_mips(left), _objdiff_mips(right)) for mark, left, right in rows]
+        rows = [_objdiff_row(*row, addresses) for row in rows]
     lines = []
     if reader.stack_layout:
         stack = reader.stack_layout(rows)
@@ -54,13 +77,18 @@ def diff_lines(processor, rows, *, candidate=None, target=None, relocated=(), bi
             + ["- " + line for line in lines[:8]]) if lines else []
 
 
-def assembly_lines(processor, assembly, *, objdiff=False):
+def assembly_lines(processor, assembly, *, objdiff=False, address=None):
+    """Return-path observations from a function's target assembly; objdiff's (project mode) with `address`, where
+    the function starts in its section."""
     reader = get(processor)
     if not reader.source_return_paths or not isinstance(assembly, str) or not assembly or len(assembly) > 2_000_000:
         return []
     if objdiff and processor == 'mips':
-        assembly = '\n'.join(f'/* {i * 4:08X} {0x80000000 + i * 4:08X} 00000000 */ {_objdiff_mips(line)}'
-                             for i, line in enumerate(assembly.splitlines()) if line.strip())
+        # the ROM readers' /* offset vram word */ comments, the vram counted from the function's start like the
+        # rebased branch destinations
+        code = [line for line in assembly.splitlines() if line.strip()]
+        assembly = '\n'.join(f'/* {i * 4:08X} {i * 4:08X} 00000000 */ {_objdiff_mips(line, address)}'
+                              for i, line in enumerate(code))
     paths = reader.source_return_paths(assembly)
     if not paths:
         return []

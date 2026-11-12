@@ -2568,8 +2568,8 @@ class ForkEngine:
             if len(asm) > 500:
                 asm = asm[:500] + [f"... ({len(asm) - 500} more instructions)"]
             lines += [f"current state: {pct}", "", "### Target assembly", "```asm", *asm, "```"]
-            lines += arch_advice.assembly_lines(consoles.get(cfg["platform"]).arch,
-                                                target_assembly, objdiff=True)
+            lines += arch_advice.assembly_lines(consoles.of(cfg).arch, target_assembly, objdiff=True,
+                                                address=d.addresses[0])
             if cfg.get("origin") == "scratch":
                 lines += self._data_used(proj, d.refs)
             if d.literals:
@@ -2577,7 +2577,7 @@ class ForkEngine:
             elif d.match_percent is not None and not d.matched:
                 d.rows = with_constant_values(d.rows, consoles.get(cfg.get("platform")), fp)
                 lines += ["", "### Diff against the current build", d.render()]
-                lines += arch_advice.diff_lines(consoles.get(cfg["platform"]).arch, d.rows, objdiff=True)
+                lines += arch_advice.diff_lines(consoles.of(cfg).arch, d.rows, objdiff=True, addresses=d.addresses)
         except (ObjdiffError, ForkError) as e:
             lines.append(f"(objdiff couldn't diff this function: {e})")
         _, span = self._find(src_text, self._names(meta, fn)) if src_text else (None, None)
@@ -3300,7 +3300,7 @@ class ForkEngine:
             text = f"score {score} (0 = identical). {d.literals_note()}{missing}"
         else:
             text = f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{missing}"
-        text += "\n".join(arch_advice.diff_lines(consoles.get(cfg["platform"]).arch, d.rows, objdiff=True))
+        text += "\n".join(arch_advice.diff_lines(consoles.of(cfg).arch, d.rows, objdiff=True, addresses=d.addresses))
         return {"text": remembered(text, score) + stall, "score": score, "matched": False}
 
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",

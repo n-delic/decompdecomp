@@ -123,6 +123,31 @@ def test_objdiff_mips_text_gets_register_normalisation_for_advice():
     assert mips_return_paths.read(asm('jr $ra', '')) is None
 
 
+def test_objdiff_operand_rows_are_sorted_into_register_and_stack_differences():
+    """objdiff marks every operand mismatch 'i'; the chain and frame readers need scoring's 'r' and 's'."""
+    stack = [('i', 'addiu sp, sp, -0x28', 'addiu sp, sp, -0x20'),
+             ('i', 'sw ra, 0x20(sp)', 'sw ra, 0x18(sp)'),
+             ('i', 'lw ra, 0x20(sp)', 'lw ra, 0x18(sp)'),
+             ('i', 'addiu sp, sp, 0x28', 'addiu sp, sp, 0x20')]
+    assert 'consistently differ by 8 bytes' in '\n'.join(advice.diff_lines('mips', stack, objdiff=True))
+    chain = [('i', 'addu t0, a0, a1', 'addu t1, a0, a1'), ('i', 'addu t1, t0, a2', 'addu t2, t1, a2')]
+    assert 'Register mismatch chain: $t0 → $t1 → $t2.' in '\n'.join(advice.diff_lines('mips', chain, objdiff=True))
+    other = [('i', 'lw a0, 0xc(a2)', 'lw a0, 0x10(a2)')]  # an operand that isn't a register or a stack slot stays 'i'
+    assert advice._objdiff_row(*other[0])[0] == 'i'
+
+
+def test_objdiff_branch_destinations_count_from_the_functions_start():
+    """objdiff prints a branch's destination as a section offset: a function past the section's first had no blocks
+    or return paths until they were counted from its own start."""
+    code = 'lw v0, 0x0(a0)\nbnez v0, 0x110\nnop\naddiu v0, zero, 0x1\njr ra\nnop'
+    assert advice.assembly_lines('mips', code, objdiff=True) == []  # 0x110 isn't in a function read from 0
+    assert 'Observed 1 return site(s)' in '\n'.join(advice.assembly_lines('mips', code, objdiff=True, address=0x100))
+    rows = [(' ' if i else 'i', line, line.replace('0x0(', '0x4(')) for i, line in enumerate(code.splitlines())]
+    assert not any('control-flow blocks' in line for line in advice.diff_lines('mips', rows, objdiff=True))
+    assert any('control-flow blocks' in line
+               for line in advice.diff_lines('mips', rows, objdiff=True, addresses=(0x100, 0x100)))
+
+
 @pytest.mark.parametrize('processor', ['x86', 'ppc', 'arm', 'unknown'])
 def test_other_processors_do_not_get_mips_observations(processor):
     assert get(processor).instruction_regions is None
