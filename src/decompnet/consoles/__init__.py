@@ -60,7 +60,8 @@ class PortKit:
     for the N64. What the port readiness report asks of it; a console with no kit has `port_kit = None`."""
     name: str  # "libultraship and Torch"
     summary: str  # one sentence on what it gives a port
-    sdk_group: object  # function name -> "replaced" (the kit or the host has it), "native" (compiles as is) or None
+    sdk_group: object  # function name -> "replaced" (the kit or the host has it), "native" (compiles as is), "glue"
+    # (console plumbing the kit lacks: the port's own glue supplies it) or None (the game's own)
     microcode: object = None  # the image's bytes -> [{"name", "variant", "version", "support"}], or None
     audio: object = None  # the game's function names -> {"library", "need"}, or None
     asset_map: object = None  # (game facts, resources from port/asset_map.py) -> {file name: text}, or None

@@ -164,7 +164,10 @@ defines them (`port/zeroed.py`, files in the project's `port/src`) with the type
 by the PC compiler; what's left of the data group is data with bytes in the ROM (phase 1's data units), ROM
 offsets the asset map covers, and libultra's low-memory globals the kit provides. Calls by a function's old name are put right by
 **Fix calls by old names** (`port/renamed_calls.py`): the new name in the callers, each judged on the console and
-the PC.
+the PC. Library functions are sorted by the kit: libultraship defines part of libultra
+(46 names at the commit Torch pins), the host's C library the rest of libc, the game's own C compiles libultra's
+math, and what remains of libultra (threads, RSP tasks, the cartridge and Controller Pak internals) is glue the port
+supplies; the link check lists that glue as its own group.
 
 ### 4. Port fixes, an agent task judged twice
 

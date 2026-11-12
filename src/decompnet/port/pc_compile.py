@@ -105,7 +105,8 @@ def diagnostics(output: str, source_file: str, offset: int) -> list[dict]:
 
 def functions(net, proj) -> list[dict]:
     """The matched functions a port keeps, each {"name", "header", "source"}: the game's own and library code the
-    kit doesn't replace (what the readiness report calls replaced is left out, as the port leaves it out)."""
+    kit doesn't replace (what the readiness report calls replaced, or glue, is left out, as the port leaves it
+    out)."""
     from ..app.function_names import canonical_source
     from ..app.sdk_identity import display_name, identify
 
@@ -118,8 +119,9 @@ def functions(net, proj) -> list[dict]:
     out = []
     for r in rows:
         hint = sdk.get(r["id"])
-        if hint and kit and "replaced" in {kit.sdk_group(n) for n in hint.get("names") or [display_name(hint, r["name"])]}:
-            continue
+        if hint and kit and {"replaced", "glue"} & {kit.sdk_group(n) for n in hint.get("names")
+                                                     or [display_name(hint, r["name"])]}:
+            continue  # the kit has it, or the port's glue supplies it: the console's copy isn't built
         r = dict(r)
         unit = net._effective_unit(r, units)
         out.append({"name": r["name"], "header": unit or "", "source": canonical_source(r, r["matched_source"])})

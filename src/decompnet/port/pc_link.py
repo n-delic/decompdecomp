@@ -33,6 +33,8 @@ GROUPS = {
     "assembly": "the game's own functions still in assembly: each needs C for the PC",
     "not matched": "the game's own functions with no C yet",
     "data": "data that exists only as an address in the split's assembly: each needs to be C (phase 1)",
+    "glue": "libultra's console plumbing the kit doesn't have (threads, RSP tasks, the cartridge and Controller Pak "
+            "internals): the port's glue supplies each",
     "kit": "libultra and C library functions the kit (libultraship, the host's C library) provides",
     "other": "symbols nothing in the project names",
 }
@@ -71,7 +73,8 @@ def undefined(net, proj, *, zeroed: bool = True) -> tuple[dict[str, list[str]], 
 
 
 def report(net, proj) -> dict | None:
-    """{"functions", "unread", "zeroed", "undefined", "groups": [{"kind", "about", "symbols", "examples", "users"}],
+    """{"functions", "unread", "zeroed", "undefined" (what nothing will define: not the kit's), "provided" (what the
+    kit provides), "groups": [{"kind", "about", "symbols", "examples", "users"}],
     "duplicates": [{"name", "in"}]}, or None before Compile for PC has run."""
     found = undefined(net, proj)
     if found is None:
@@ -81,7 +84,8 @@ def report(net, proj) -> dict | None:
     duplicates = [{"name": name, "in": sorted(where)} for name, where in sorted(facts["defined"].items())
                   if len(where) > 1]
     return {"functions": facts["rows"], "unread": facts["unread"], "zeroed": facts["zeroed"],
-            "undefined": sum(len(v) for v in groups.values()),
+            "undefined": sum(len(v) for k, v in groups.items() if k != "kit"),  # the kit's resolve at link time
+            "provided": len(groups.get("kit", [])),
             "groups": [{"kind": kind, "about": GROUPS[kind], "symbols": len(groups[kind]),
                         "examples": [_example(net, proj, kind, n) for n in groups[kind][:_LIMIT]],
                         "users": len(set().union(*(needed[n] for n in groups[kind])))}
@@ -101,15 +105,18 @@ def _facts(net, proj) -> dict:
     from ..network import IN_BUILD
     rows = store.all(f"SELECT id, name, vram, status FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
     kit = net.console(proj).port_kit
-    replaced = set()
+    replaced, glue = set(), set()
     sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True)
     for r in rows:
         hint = sdk.get(r["id"])
         names = (hint.get("names") or [display_name(hint, r["name"])]) if hint else []
-        if kit and "replaced" in {kit.sdk_group(n) for n in names}:
+        groups = {kit.sdk_group(n) for n in names} if kit else set()
+        if "replaced" in groups:
             replaced.update([r["name"], *names])
+        elif "glue" in groups:
+            glue.update([r["name"], *names])
     facts = {"status": {r["name"]: r["status"] for r in rows}, "at": {r["vram"]: r["name"] for r in rows},
-             "symbols": net.symbols(proj["id"]), "replaced": replaced, "kit": kit,
+             "symbols": net.symbols(proj["id"]), "replaced": replaced, "glue": glue, "kit": kit,
              "data_c": sorted((a, a + (u["span"] or u["size"] or 0)) for a, u in matched(net, proj).items())}
     cache.clear()
     cache[key] = facts
@@ -119,9 +126,11 @@ def _facts(net, proj) -> dict:
 def _group(net, proj, name: str) -> str | None:
     """The group an undefined symbol is in, or None for data a matched data unit defines in C (phase 1)."""
     facts = _facts(net, proj)
-    if name in facts["replaced"] or (facts["kit"] and facts["kit"].sdk_group(name) == "replaced"
-                                     and name not in facts["status"]):
+    unproven = facts["kit"].sdk_group(name) if facts["kit"] and name not in facts["status"] else None
+    if name in facts["replaced"] or unproven == "replaced":
         return "kit"
+    if name in facts["glue"] or unproven == "glue":
+        return "glue"
     status = facts["status"].get(name)
     if status is not None:
         return "assembly" if status == "asm" else "not matched" if status != "matched" else "other"

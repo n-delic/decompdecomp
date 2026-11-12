@@ -141,3 +141,15 @@ def test_microcode_and_audio_readers():
 def test_agents_get_the_tool_on_rom_projects_only():
     assert "port_readiness" in tool_names(fork=False)
     assert "port_readiness" not in tool_names(fork=True)
+
+
+def test_the_kit_says_where_each_libultra_function_comes_from():
+    """libultraship defines part of libultra (port.LIBULTRASHIP, read from its source at the commit Torch pins); the
+    game's own math compiles for the PC; the rest of libultra's plumbing is the port's glue."""
+    from decompnet.consoles.n64.port import LIBULTRASHIP, _sdk_group
+    assert {_sdk_group(n) for n in ("osRecvMesg", "osPiStartDma", "osViSetMode", "memcpy", "sqrtf")} == {"replaced"}
+    assert {_sdk_group(n) for n in ("guMtxIdent", "guOrthoF", "sins", "__cosf", "__osContDataCrc", "alSynNew")} == {
+        "native"}
+    assert {_sdk_group(n) for n in ("osCreateThread", "osSpTaskYielded", "__osLeoResume", "osRomBase",
+                                    "__osPiAccessQueue")} == {"glue"}
+    assert _sdk_group("draw_hud") is None and "osCreateThread" not in LIBULTRASHIP
