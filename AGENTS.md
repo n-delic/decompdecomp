@@ -137,10 +137,13 @@ is in `app/agents.py`. The rest of the app asks `agents.get(kind)` and never com
 Adding an agent (copy `agents/template.py`, fill in its parts, register it, pass `tests/test_agent_kinds.py`):
 CONTRIBUTING.md, "Adding an agent".
 
-The repair families that propose C changes from a byte difference are a standalone library, `src/decomprepair/`
-(its `__init__.py` says what it is): it never imports `decompnet`, and never compiles or judges (`tests/test_decomprepair.py`).
-A new repair that only reads C and code goes there; one that needs the network or a project stays in `app/` and calls it.
-`forks/csource.py`, `rom/symbols.py`, `arch/mips.py` and `m2cfix.py` are now names for the library's modules.
+The repair families that propose C changes from a byte difference are a library of their own, decomprepair, in its
+own repository: RetroReversing/decomp-repair (public, AGPL-3.0, history kept). decompdecomp depends on a tagged archive
+of it (`pyproject.toml`), so installing needs no git. The library never imports `decompnet`, and never compiles or
+judges. A new repair that only reads C and code goes there: change it in decomp-repair, tag a release, then bump the tag
+in `pyproject.toml` and `uv lock` here. A repair that needs the network or a project stays in `app/` and calls it.
+`forks/csource.py`, `rom/symbols.py`, `arch/mips.py` and `m2cfix.py` are names for the library's modules
+(`tests/test_decomprepair.py`). The ~130 tests here that exercise its families with the app's compilers stay here.
 
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
