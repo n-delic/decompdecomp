@@ -85,3 +85,10 @@ When it won't match
 - Stuck (compile_and_diff says when: the brief names the function's move-on number and every result shows the
   count, "no better in 2/6 compiles (move on at 6)"): `release_function` with notes on what you tried and the
   remaining diff.
+
+For small edits to an existing definition, `function_brief(function)` returns its
+current revision. `compile_patch(function, revision, edits)` sends exact old/new
+replacements through the normal judge. `try_recipes(function, revision, recipes)`
+previews up to eight named edit sets and restores the source; `apply=true` rejudges
+and keeps only a strictly better winner. Refresh the brief after a stale revision.
+Shared declarations still belong in `edit_file`. Full details: docs/COMPILE_PATCHES.md.
