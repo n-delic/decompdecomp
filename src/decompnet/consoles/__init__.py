@@ -503,6 +503,13 @@ class Console:
         pad = arch.get(self.target_arch(fn) if fn is not None else self.arch).is_padding
         return bool(pad and pad(code, self.big_endian))
 
+    def ends_in_delay_branch(self, code: bytes, fn=None) -> bool:
+        """Whether `code`'s last instruction has a delay slot, so the word after it belongs to the function
+        (a delay-slot nop is not alignment padding). The reader is chosen by the function's mode; pass `fn`.
+        A processor with no delay slots says no."""
+        hook = arch.get(self.target_arch(fn) if fn is not None else self.arch).ends_in_delay_branch
+        return bool(hook and hook(code, self.big_endian))
+
     def up_front_guide(self, compiler: str) -> str:
         """The guide every helper gets before its first claim: on matching `compiler`'s code ("" for none)."""
         return self.compiler_guide

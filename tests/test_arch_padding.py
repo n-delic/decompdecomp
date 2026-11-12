@@ -31,6 +31,7 @@ def test_ppc_padding_is_ori_r0_r0_0():
     pad = arch.get("ppc").is_padding
     assert pad is not None
     assert pad(b"\x60\x00\x00\x00" * 2, True)     # nop = ori r0,r0,0, big-endian
+    assert pad(b"\x00" * 8, True)                 # a zero-filled gap is padding too (the PS3 splitter counts zero words)
     assert not pad(b"\x60\x00\x00\x01", True)     # not the nop word
     assert not pad(b"\x60\x00\x00", True)         # not word-aligned
     assert arch.get("ppc64").is_padding(b"\x60\x00\x00\x00", True)  # ppc64 reuses it
@@ -63,3 +64,16 @@ def test_gba_console_picks_the_padding_reader_by_mode():
     assert GBA.is_padding(b"\x00" * 8, thumb_fn)         # zero fill, either mode
     assert not GBA.is_padding(b"\x00\x00\xa0\xe1", thumb_fn)  # ARM-nop bytes are NOT Thumb padding (movs r0,r0; ...)
     assert not GBA.is_padding(b"\x01\x00\xa0\xe1", arm_fn)    # a real ARM instruction
+
+
+def test_gba_reads_an_old_arm_rows_mode_from_its_macro_not_defaulting_to_thumb():
+    """The exact call `_cut` makes is `console.is_padding(code, fn)` with the function's stored row. An old ARM
+    row whose meta carries no 'thumb' key keeps its mode in the luvdis macro (as `function_from_row` reads it);
+    `target_arch` must read that too, or the ARM-nop padding is checked with the Thumb reader and the split
+    sliver is never retired (the review's open GBA `_cut` point)."""
+    from decompnet.consoles.gba import GBA
+    arm_row = {"asm": "arm_func_start sub\n", "meta": "{}"}
+    thumb_row = {"asm": "thumb_func_start sub\n", "meta": "{}"}
+    assert GBA.target_arch(arm_row) == "arm" and GBA.target_arch(thumb_row) == "thumb"
+    assert GBA.is_padding(b"\x00\x00\xa0\xe1", arm_row)        # ARM nop (0xE1A00000) under an ARM row: padding
+    assert not GBA.is_padding(b"\x00\x00\xa0\xe1", thumb_row)  # same bytes under a Thumb row are not padding

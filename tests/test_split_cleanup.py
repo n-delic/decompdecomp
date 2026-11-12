@@ -125,13 +125,24 @@ def _insert_words(net, name, words):
 def test_split_marks_a_pure_padding_tail_done(net):
     from decompnet.network import set_aside
     agent, _ = net.local_agent("tester")
-    vram = _insert_words(net, "mixfn", [JR_RA, 0x0, 0x0])    # a real instruction, then two trailing NOPs
-    reply = net.split_function(agent, SLUG, "mixfn", f"0x{vram + 4:08X}")  # tail = the trailing NOPs
-    tail = net._function("func_80010004", SLUG)
+    vram = _insert_words(net, "mixfn", [JR_RA, 0x0, 0x0])    # jr $ra, its delay-slot NOP, then a trailing NOP
+    reply = net.split_function(agent, SLUG, "mixfn", f"0x{vram + 8:08X}")  # tail = the trailing NOP, past the delay slot
+    tail = net._function("func_80010008", SLUG)
     assert tail["status"] == "asm", tail["status"]          # the pure-padding tail is retired...
     assert "padding" in set_aside(tail)["set_aside"].lower(), set_aside(tail)
     assert net._function("mixfn", SLUG)["status"] != "asm"  # ...the real head stays workable
     assert "continue with mixfn" in reply, reply            # and the reply keeps the user on the head
+
+
+def test_split_does_not_retire_a_tail_that_starts_in_a_delay_slot(net):
+    # Splitting right after a jump puts the branch's delay-slot NOP at the head of the "tail". That NOP belongs to
+    # the head (rom/split.py keeps it), so the tail must NOT be retired as alignment padding even though its bytes
+    # are all NOPs -- otherwise the split quietly drops the delay slot.
+    agent, _ = net.local_agent("tester")
+    vram = _insert_words(net, "jrfn", [JR_RA, 0x0, 0x0])          # jr $ra, delay-slot NOP, trailing NOP
+    net.split_function(agent, SLUG, "jrfn", f"0x{vram + 4:08X}")  # the tail begins at the delay slot
+    tail = net._function("func_80010004", SLUG)
+    assert tail["status"] != "asm", tail["status"]               # not retired: its first word is the head's delay slot
 
 
 def test_padding_head_only_points_at_tail(net):
