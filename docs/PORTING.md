@@ -235,7 +235,9 @@ What it can't adapt goes in the game's save repository, `port/wasm/`:
 The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`). It implements libultra:
 - the game's threads, one at a time by priority, preempted at calls when a woken thread outranks the one running;
 - message queues, cartridge DMA, the VI retrace, the controllers;
-- the RSP: tasks complete at once, and nothing draws yet.
+- the RSP and RDP in software (`render.c`): each graphics task's display list is drawn into the game's own frame
+  buffer, F3DEX2 or S2DEX by the microcode the task loads, and `PORT_FRAMES=folder` saves the frames shown as PNG.
+  2D screens draw correctly; the 3D path is a first one.
 
 On macOS the host is built by the system's clang, because Zig 0.14.1 can't link against macOS 27's system library.
 

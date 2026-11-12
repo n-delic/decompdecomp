@@ -269,7 +269,7 @@ def build(repo: Path, *, console: str = "n64", log=print) -> Path:
     log("building the host")
     rt = wabt / "share" / "wabt" / "wasm2c"
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-mem-impl.c",
-             rt / "wasm-rt-exceptions-impl.c", host / "host.c", out / "funcs.c", out / "stubs.c"]
+             rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), out / "funcs.c", out / "stubs.c"]
     includes = ["-I", wabt / "include", "-I", rt, "-I", out / "c"]
     cc = host_compiler(zig)
 
