@@ -163,13 +163,13 @@ def _own(tid: str):
 
 
 def get(tid: str) -> Toolchain:
-    reg = registry()
-    if tid not in reg and (own := _own(tid)) is not None:
+    data = _registry_data()
+    if tid in data:  # (just this one: making all 66 each time cost the project list half its time)
+        return Toolchain(id=tid, **data[tid])
+    if (own := _own(tid)) is not None:
         return Toolchain(id=tid, name=own.name, license="proprietary", source="your own copy: nothing is downloaded",
                          description="A compiler in your own SDK copy.", flags=list(own.flags))
-    if tid not in reg:
-        raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(reg))}")
-    return reg[tid]
+    raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(data))}")
 
 
 def data_dir() -> Path:
@@ -207,7 +207,7 @@ def installed(tid: str, linux: bool | None = None, *, vm: bool | None = None) ->
         return {"own": True}  # (a compiler in a kit copy is there as long as the copy is: nothing was installed)
     if manifest is None or changed(tid, manifest, path(tid, linux, vm=vm)) or _unbuilt(tid, linux):
         return None
-    tc = registry().get(tid)
+    tc = get(tid) if tid in _registry_data() else None
     if tc is not None and any(installed(h, linux, vm=vm) is None for h in tc.headers):
         return None  # (its compilers can't build without the headers: installing it brings them, install())
     return manifest

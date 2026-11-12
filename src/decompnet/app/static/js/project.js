@@ -483,7 +483,7 @@ function renderNext(ov) {
   if (w.n || !compilerOk || !S.st) { box.hidden = true; return; }
   const ap = ov.autopilot;
   const steps = [`<span class="ok">✓</span> ${ov.kind === "fork" ? "Project set up" : "Game analysed"}: ${plural(ov.functions, "function")}`];
-  if (ap) steps.push(ap.state === "running" ? `<span class="spin-dot"></span> Autopilot trying machine drafts` : `<span class="ok">✓</span> Autopilot: ${ap.matched.toLocaleString()} free match${ap.matched === 1 ? "" : "es"}`);
+  if (ap) steps.push(ap.state === "running" ? `<span class="spin-dot"></span> ${ap.phase === "queued" ? "Autopilot waiting for its turn" : "Autopilot trying machine drafts"}` : `<span class="ok">✓</span> Autopilot: ${ap.matched.toLocaleString()} free match${ap.matched === 1 ? "" : "es"}`);
   steps.push(`<span class="todo">○</span> Agents`, `<span class="todo">○</span> Export`);
   box.hidden = false;
   // the header's Start agents is the one place agents start from: this only points there

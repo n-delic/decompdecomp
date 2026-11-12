@@ -69,7 +69,7 @@ class Core(Network):
     def _project(self, slug: str | None):
         row = super()._project(slug)
         if hasattr(self, "progress") and self.project_missing(row) is None:
-            self.progress.sync(row["slug"])
+            self.progress.sync(row["slug"], background=True)  # (a look at it, not use: Progress.hot)
             row = super()._project(row["slug"])
         return row
 
