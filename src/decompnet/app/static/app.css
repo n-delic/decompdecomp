@@ -962,6 +962,7 @@ button.fn { font: inherit; color: inherit; padding: 0; text-align: left; }
 .parts { display: grid; }
 .parts li { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13.5px; flex-wrap: wrap; }
 .parts li + li { border-top: 1px solid var(--line-soft); }
+.parts li.removed { opacity: .55; }  /* the part a Remove took out, until its Revert or a redraw */
 .parts code { font-size: 12.5px; white-space: nowrap; }
 .part-state { font: 500 11.5px/1 var(--mono); padding: 4px 7px; border-radius: var(--r-sm); border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
 .part-state.confirmed { background: var(--match-bg); color: var(--match-ink); border-color: transparent; }
@@ -1011,3 +1012,12 @@ details.more[open] > summary::before { content: "− "; }
 .copy-path { overflow-wrap: anywhere; }
 .local-form { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .local-form input[type=text] { width: 100%; box-sizing: border-box; }
+
+/* Additional sign-ins stay compact in the agent card; setup and login instructions live in the drawer. */
+.account-list { margin: 10px 0; }
+.account-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 10px 0; border-bottom: 1px solid var(--line-soft); text-align: left; }
+.account-item div { min-width: 0; }
+.account-item b { display: block; overflow-wrap: anywhere; }
+.account-item span { display: block; color: var(--muted); font-size: 12px; }
+.account-link { background: none; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; cursor: pointer; color: inherit; }
+.account-link:hover b { text-decoration: underline; }

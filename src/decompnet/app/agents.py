@@ -375,6 +375,7 @@ class Session:
 
     def snapshot(self, since: int = 0) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_name": agents.get(self.kind).name, "label": self.label,
+                "account_id": self.options.get("account_id") or "", "account_name": self.options.get("account_name") or "",
                 "task": self.options.get("task") or "",  # "readable": it polishes matched code
                 "slug": self.slug, "agent": self.agent_name, "model": self.model, "state": self.state, "why": self.why,
                 "todo": self.todo, "until": self.until, "stopped_by": self.stopped_by,
@@ -517,6 +518,10 @@ class Manager:
                            "json_extract(h.options, '$.task') END FROM helpers h "
                            "WHERE h.id=helper_sessions.helper_id AND h.project=helper_sessions.project "
                            "AND h.name=helper_sessions.agent), '')")
+            columns = {r[1] for r in db.execute("PRAGMA table_info(helper_sessions)")}
+            for column in ("account_id", "account_name"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE helper_sessions ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         self._restore()
         self.refresh_detected()
 
@@ -605,7 +610,7 @@ class Manager:
         chosen = str(options.get("model") or "")
         name_model = chosen
         if agent.command and not chosen:
-            name_model = str(agent.config_model() or "")
+            name_model = str(agent.default_model(options) or "")
             if name_model:
                 pinned = agent.resolve_model(name_model, _which(agent.command))
                 if pinned:
@@ -617,7 +622,11 @@ class Manager:
                 model = name_model
                 if options.get("effort") and "#" not in model:  # an effort is a record of its own, as with the others
                     model = f"{model}#{options['effort']}"
-                name = helper_name(kind, model, self._taken())
+                # #45: a stopped helper keeps its account and totals. Another account of the same model must
+                # get a different record; otherwise its card would inherit the first account's spend.
+                other_accounts = {s.agent_name for s in self.sessions.values() if s.slug == slug
+                                  and s.options.get("account_id", "") != options.get("account_id", "")}
+                name = helper_name(kind, model, self._taken() | other_accounts)
                 s = self._record(slug, kind, name, self._label(kind, name, options), options)
                 s.restarts = 0
                 self._launch(s)
@@ -647,7 +656,7 @@ class Manager:
                 raise ValueError(f"{s.agent_name} works on another game right now: start a new helper instead")
             options = self.options_now(s.kind, dict(s.options))
             if options is None:
-                raise ValueError("its API endpoint was removed: start a new helper on another one")
+                raise ValueError("its account or API endpoint was removed: start a new helper and choose another one")
             s.options, s.restarts = options, 0
             self._prepare(s.slug)
             self._launch(s)
@@ -665,7 +674,7 @@ class Manager:
                     continue
                 options = self.options_now(s.kind, dict(s.options))
                 if options is None:
-                    s.stopped_by, s.why = BY_ITSELF, "its API endpoint was removed"
+                    s.stopped_by, s.why = BY_ITSELF, "its account or API endpoint was removed"
                     self._save(s)
                     continue
                 s.options = options
@@ -889,6 +898,16 @@ class Manager:
         row = self.net.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
         return row["n"]
 
+    def _ruled_out(self, slug: str, agent_name: str) -> int:
+        """How many functions are open when this helper said of every one that no C makes it (0 otherwise): the claim
+        order never hands them back to it (Network.claim_row), so a session could only find nothing to do. Its
+        sessions failed one after another into a pause (FAST_FAILURES_TO_PAUSE) instead, on a demo whose last open
+        function was a hand-written helper both agents of one model had ruled out."""
+        proj = self.net.project_row(slug)
+        waiting = self.net.awaiting_verdict(proj)
+        n = self._left(slug)
+        return n if n and sum(agent_name in said for said in waiting.values()) == n else 0
+
     def account(self, s: Session, usage: dict) -> None:
         """Add what a session spent to the helper, the session and the project (kept in its config)."""
         usd = float(usage.get("usd") or 0)
@@ -903,6 +922,25 @@ class Manager:
         s.tokens += total
         if usd or total:
             self.net.add_spend(s.slug, usd, total)
+
+    def rename_account(self, aid: str, name: str) -> None:
+        """An account's label is local UI text: update its helpers without restarting or changing their login."""
+        with self._lock:
+            for session in list(self.sessions.values()):
+                if session.options.get("account_id") != aid:
+                    continue
+                session.options["account_name"] = name
+                kept = {k: v for k, v in session.options.items() if k != "api_key"}
+                with self.net.store.tx() as db:
+                    db.execute("UPDATE helpers SET options=? WHERE id=?", (json.dumps(kept), session.id))
+
+    def account_usage(self) -> list[dict]:
+        """Finished sessions recorded here, across projects, even after their helper records were removed."""
+        rows = self.net.store.all("SELECT kind, account_id, MAX(account_name) AS name, SUM(tokens) AS tokens, "
+                                  "SUM(usd) AS usd, COUNT(*) AS sessions FROM helper_sessions "
+                                  "WHERE ended_at IS NOT NULL GROUP BY kind, account_id")
+        supported = {a.id for a in agents.AGENTS if a.uses_accounts}
+        return [dict(r) for r in rows if r["kind"] in supported]
 
     def over_budget(self, slug: str) -> float | None:
         """The budget (USD) when the project's agents have spent it, else None."""
@@ -971,6 +1009,12 @@ class Manager:
             if self._left(s.slug, task := s.options.get("task") or "") == 0:
                 self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
                 break
+            if task != "readable" and (ruled := self._ruled_out(s.slug, agent.name)):
+                self._finish(s, f"nothing left it can do: the {ruled} open function{'s' * (ruled != 1)} "
+                                f"{'are ones' if ruled != 1 else 'is one'} it found no C makes. Set "
+                                f"{'them' if ruled != 1 else 'it'} aside in {'their' if ruled != 1 else 'its'} panel, "
+                                "or start a helper of another model to look")
+                break
             if (cap := self.over_budget(s.slug)) is not None:
                 self._finish(s, f"the agents on this project have spent the ${cap:.2f} budget (Setup)")
                 break
@@ -1007,18 +1051,18 @@ class Manager:
             if s.stop.is_set():
                 break
             if s.signed_out:
-                self._pause(s, s.error)
+                self._pause(s, s.error, kind.signin_for(s.options))
                 break
             if s.auth_failed:  # not a failure of the helper's: tried again a few times, then a new sign-in
                 s.auth_failed, auths = False, auths + 1
                 if auths >= AUTH_RETRIES:
                     self._pause(s, f"{kind.name} needs you to sign in again: its sign-in failed {auths} times in a "
-                                   f"row ({s.error})", kind.signin)
+                                   f"row ({s.error})", kind.signin_for(s.options))
                     break
                 s.restarts += 1
                 self._wait(s, f"{kind.name}'s sign-in failed ({s.error}); trying again, and if it keeps failing "
                               "this helper will ask you to sign in again", time.time() + AUTH_WAIT * 2 ** (auths - 1),
-                           kind.signin)
+                           kind.signin_for(s.options))
                 continue
             auths = 0
             if s.limited:  # the plan's allowance is used up for now: it resets, so wait as long as it takes
@@ -1043,7 +1087,7 @@ class Manager:
             failures += 1
             fast = fast + 1 if time.time() - began < FAST_FAILURE else 0
             if fast >= FAST_FAILURES_TO_PAUSE:
-                hint = kind.signin if _SIGNIN.search(s.error) else ""  # not after every failure: it misleads
+                hint = kind.signin_for(s.options) if _SIGNIN.search(s.error) else ""  # not after every failure: it misleads
                 self._pause(s, f"it failed {fast} times in a row, each soon after it started: {s.error}", hint)
                 break
             s.restarts += 1
@@ -1087,9 +1131,11 @@ class Manager:
     def _session_begin(self, s: Session) -> int:
         s.usage = _fresh_usage()
         with self.net.store.tx() as db:
-            return db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task) "
-                              "VALUES(?,?,?,?,?,?,?)", (s.id, s.slug, s.kind, s.model or agents.get(s.kind).config_model() or "",
-                                                        s.agent_name, time.time(), s.options.get("task") or "")).lastrowid
+            return db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task, "
+                              "account_id, account_name) VALUES(?,?,?,?,?,?,?,?,?)",
+                              (s.id, s.slug, s.kind, s.model or agents.get(s.kind).default_model(s.options) or "",
+                               s.agent_name, time.time(), s.options.get("task") or "",
+                               s.options.get("account_id") or "", s.options.get("account_name") or "")).lastrowid
 
     def _session_end(self, s: Session, row: int, agent, began: float, outcome: str) -> None:
         """What a session did and spent, on its row: to compare models on cost per match."""
@@ -1130,21 +1176,40 @@ class Manager:
         if s.options.get("task") == "readable":  # (in either mode: the step that differs is the mode's)
             return tools.READABLE_PROMPT.format(title=ov["title"], count=count, names=tools.READABLE_FORK
                                                 if ov.get("kind") == "fork" else tools.READABLE_ROM)
+        console = consoles.get(ov.get("platform"))
+        scratch = ov.get("origin") == "scratch"
         if ov.get("kind") == "fork":
-            guides = ["fork", "objdiff", *consoles.get(ov.get("platform")).guides]
+            guides = ["fork", "objdiff", *console.guides]
             platform = ov.get("platform_name") or "its platform"
-            what = tools.FORK_SCRATCH if ov.get("origin") == "scratch" else tools.FORK_PUBLIC
-            return tools.FORK_PROMPT.format(title=ov["title"], what=what.format(platform=platform),
+            what = tools.FORK_SCRATCH if scratch else tools.FORK_PUBLIC
+            text = tools.FORK_PROMPT.format(title=ov["title"], what=what.format(platform=platform),
                                             count=count, budget=network.stall_budget_text(),
                                             guides=", ".join(f'guide("{g}")' for g in guides))
-        guide = consoles.get(ov.get("platform")).up_front_guide(ov["compiler"]["toolchain"])
-        return tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
+            if "join_functions" in tools.tool_names(True, console, scratch=scratch):
+                text = text.replace("\nRules:", "\n" + tools.FORK_JOIN + "\n\nRules:", 1)
+            return text
+        guide = console.up_front_guide(ov["compiler"]["toolchain"])
+        text = tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
+        offered = set(tools.tool_names(False, console))
+        # (a ROM prompt may already name a join its engine offers, as #192's does: don't say it twice)
+        extra = [block for tool, block in (("join_functions", tools.ROM_JOIN),
+                                           ("guess_struct", tools.WORK_STRUCTS),
+                                           ("report_boundary", tools.WORK_BOUNDARY))
+                 if tool in offered and (tool != "join_functions" or "join_functions" not in text)]
+        if extra:
+            text = text.replace("\nWrite plausible original code", "\n" + "\n\n".join(extra)
+                                + "\n\nWrite plausible original code", 1)
+        return text
 
     def _command(self, s: Session, token: str, workdir: Path) -> tuple[list[str], dict, str | None]:
         """The agent's command line, environment and what goes in on stdin (the prompt; None when its prompt went in
         a file). Each helper connects only to this app's own MCP server, with its own token."""
         k = agents.get(s.kind)
+        options = self.options_now(s.kind, dict(s.options))
+        if options is None:
+            raise Fatal("Its account or API endpoint was removed. Start a new helper and choose another one.")
+        s.options = options
         exe = _which(k.command)
         if not exe:
             raise RuntimeError(f"{k.name} is not installed")
@@ -1162,6 +1227,10 @@ class Manager:
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
         env = dict(os.environ, PWD=str(workdir), **{HELPER_ENV: str(self.home)}, **more)
+        try:
+            env = k.session_environment(s.options, env)
+        except ValueError as e:
+            raise Fatal(str(e)) from e
         return cmd, env, None if prompt_file is not None else k.stdin(prompt)
 
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
@@ -1245,7 +1314,7 @@ class Manager:
             s.throttled = True
         if code != 0 and _SIGNED_OUT.search(everything):
             s.signed_out = True
-            s.error = f"{k.name} isn't signed in on this computer. {k.signin}"
+            s.error = f"{k.name} isn't signed in on this computer. {k.signin_for(s.options)}"
             s.push("error", s.error)
             return False
         if (code != 0 or not saw_tool) and AUTH_FAILED.search(everything):

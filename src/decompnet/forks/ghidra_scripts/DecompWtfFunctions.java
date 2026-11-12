@@ -33,7 +33,14 @@ public class DecompWtfFunctions extends GhidraScript {
                 if (f.isExternal()) continue;
                 long entry = f.getEntryPoint().getOffset();
                 long end = f.getBody().getMaxAddress().getOffset() + 1;
+                StringBuilder ranges = new StringBuilder();
+                for (ghidra.program.model.address.AddressRange range : f.getBody().getAddressRanges()) {
+                    if (ranges.length() > 0) ranges.append(',');
+                    ranges.append('[').append(range.getMinAddress().getOffset()).append(',')
+                        .append(range.getMaxAddress().getOffset() + 1).append(']');
+                }
                 w.println("{\"entry\": " + entry + ", \"end\": " + end + ", \"name\": " + quote(f.getName())
+                        + ", \"ranges\": [" + ranges + "]"
                         + ", \"source\": " + quote(f.getSymbol().getSource().toString())
                         + ", \"purge\": " + f.getStackPurgeSize()
                         + ", \"convention\": " + quote(String.valueOf(f.getCallingConventionName()))

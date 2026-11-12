@@ -115,6 +115,7 @@ class Agent:
     tool_meta: dict = {}  # what it reads on the definition of each of decompdecomp's MCP tools (tools.ALWAYS_LOAD)
     recommended = False  # the launcher lists it first, and starts on it until the user picks another
     uses_endpoints = False  # its model and key come from the API endpoints saved in Agents & models, not a sign-in
+    uses_accounts = False  # named sign-ins in separate configuration directories
     takes_effort = False  # the launcher offers a reasoning effort: with the model's name ("provider/model#high"), or
     # for an agent whose model is an endpoint's, as the helper's `effort` option
     efforts: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")  # the efforts it offers, when it takes one
@@ -126,7 +127,7 @@ class Agent:
         """What the GUI shows about it, before what app/agents.py `detect` finds out (installed, version, models)."""
         return {"id": self.id, "name": self.name, "vendor": self.vendor, "signin": self.signin, "docs": self.docs,
                 "install": self.install_text(), "recommended": self.recommended, "uses_endpoints": self.uses_endpoints,
-                "takes_effort": self.takes_effort, "efforts": list(self.efforts)}
+                "uses_accounts": self.uses_accounts, "takes_effort": self.takes_effort, "efforts": list(self.efforts)}
 
     def install_text(self) -> str:
         return (self.windows_install or self.install) if sys.platform == "win32" else self.install
@@ -184,6 +185,20 @@ class Agent:
     def read_models(self, lines: list[str]) -> list[dict]:
         """The models in what `<path> <models_args>` printed, a line each: [{"id", "name", "note"}]."""
         return []
+
+    def session_environment(self, options: dict, env: dict) -> dict:
+        """The child's environment after applying this helper's saved account, if this agent supports accounts."""
+        return env
+
+    def account_signin(self, config_dir: str) -> str:
+        """A terminal command to sign in to one isolated account; credentials stay with the agent CLI."""
+        return ""
+
+    def default_model(self, options: dict) -> str | None:
+        return self.config_model()
+
+    def signin_for(self, options: dict) -> str:
+        return self.signin
 
     def config_model(self) -> str | None:
         """The model the user set as default in the agent's own settings, if any: a helper started without a model

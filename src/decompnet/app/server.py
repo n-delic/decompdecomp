@@ -88,8 +88,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     net.restore_links()
 
     def consoles_start() -> None:  # what each console does for its projects at start (Console.on_start)
-        for row in net.store.all("SELECT slug, config FROM projects"):
+        for row in net.store.all("SELECT id, slug, root, config FROM projects"):
             try:
+                if net.project_missing(row):
+                    continue  # its folder is gone: only its records are left, and those are removed, not set up
                 if net.is_rom(row):
                     net.rangechecks.reopen(row["slug"])
                 net.console(row).on_start(net, row["slug"], log=jobs.logger.info)
@@ -102,6 +104,11 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the
         endpoint was removed since). A model it was started on stays: the endpoint's default would record its costs
         against another model."""
+        if options.get("account_id"):
+            try:
+                return options | settings.account_options(kind, str(options["account_id"]))
+            except ValueError:
+                return None
         if not kinds.get(kind).uses_endpoints:
             return options
         saved = settings.endpoint(str(options.get("endpoint") or "")) if options.get("endpoint") else (

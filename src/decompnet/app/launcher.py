@@ -20,10 +20,75 @@ from . import edition
 
 ENTRY_NAME = "decompdecomp"
 OLD_ENTRY_NAME = "decomp-wtf"
+WINDOWS_COMMAND = "decompdecomp's command for Windows"
+# 1.0.2's installer put its `decomp` command here, in front of the Windows-native app's folder on PATH. Its wrapper
+# ran the old WSL distribution, so it kept answering after an upgrade with commands the native app doesn't have.
+LEGACY_COMMAND_MARKS = ("wsl.exe", "/usr/local/bin/decomp")
 
 
 def _decomp_exe() -> str:
     return shutil.which("decomp") or str(Path(sys.argv[0]).resolve())
+
+
+def windows_command_path() -> Path:
+    """`decomp.cmd` where 1.0.2 put it: a PATH an older install made keeps working, and an upgrade replaces it."""
+    local = os.environ.get("LOCALAPPDATA")
+    return ((Path(local) if local else _windows_folder(0x1c)) / ENTRY_NAME / "bin" / "decomp.cmd")
+
+
+def _windows_command_argv() -> list[str]:
+    """What the command runs: this copy's Python, loading the app as its shortcuts do. python.exe, not pythonw.exe,
+    so `decomp --help` and an error are readable in the terminal."""
+    python = PureWindowsPath(sys.executable) if sys.platform == "win32" else Path(sys.executable)
+    if python.name.lower() == "pythonw.exe":
+        python = python.with_name("python.exe")
+    if os.environ.get("DECOMP_PACKAGE") == "windows":
+        return [str(python), str(python.parent.parent / "decomp-launch.pyw")]
+    return [str(python), "-m", "decompnet.app.cli"]
+
+
+def _batch_arg(text: str) -> str:
+    """One argument for a batch file: quoted, with `%` doubled so cmd.exe doesn't expand it as a variable (a folder
+    can have one). Windows file names can't hold a quote."""
+    return '"' + text.replace("%", "%%") + '"'
+
+
+def windows_command(argv: list[str]) -> str:
+    """The `decomp.cmd` wrapper's text. `%*` is every argument exactly as it was typed, so PowerShell's own quoting
+    (spaces, forward or back slashes, a trailing backslash) reaches the CLI unchanged; `%1 %2` would split a path."""
+    return (f"@echo off\n"
+            f"rem {WINDOWS_COMMAND}. %* keeps every argument as typed, spaces and quotes included.\n"
+            f"{' '.join(_batch_arg(part) for part in argv)} %*\n"
+            "exit /b %ERRORLEVEL%\n")
+
+
+def write_windows_command(path: Path | None = None) -> Path:
+    path = path or windows_command_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(windows_command(_windows_command_argv()), encoding="ascii", newline="\r\n")
+    return path
+
+
+def update_windows_command(path: Path | None = None) -> Path | None:
+    """Bring an existing `decomp` command at `path` up to this copy, but only when it is one of ours: 1.0.2's WSL
+    command (which an upgrade leaves behind, still taking `host` and other commands this app no longer has) or one an
+    earlier copy wrote. A command the user wrote themselves is left alone: a fresh install creates none, because that
+    folder is only on PATH where the old installer put it. Returns the path when it wrote it."""
+    if sys.platform != "win32" or edition.DEV:
+        return None
+    target = path or windows_command_path()
+    try:
+        text = target.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    ours = WINDOWS_COMMAND in text
+    if not ours and not all(mark.lower() in text.lower() for mark in LEGACY_COMMAND_MARKS):
+        return None
+    script = windows_command(_windows_command_argv())
+    if text == script:
+        return target
+    target.write_text(script, encoding="ascii", newline="\r\n")
+    return target
 
 
 def _windows_folder(folder: int) -> Path:
@@ -90,6 +155,10 @@ def install_launcher() -> str:
         icons.mkdir(parents=True, exist_ok=True)
         icon = icons / "decompdecomp.ico"
         icon.write_bytes((Path(__file__).with_name("static") / "favicon.ico").read_bytes())
+        try:  # replace the old command an upgrade left; the shortcuts come first
+            update_windows_command()
+        except OSError:
+            pass
         # pythonw uses this installation's environment without leaving a console behind the app. The MSI's bundled
         # runtime loads the app from its adjacent packages folder through this small launcher script.
         bundled = os.environ.get("DECOMP_PACKAGE") == "windows"
