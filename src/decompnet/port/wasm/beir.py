@@ -337,6 +337,19 @@ def pin(text, fixed, functions):
     return "\n".join(out)
 
 
+def volatile(lines):
+    """Every load and store volatile. Memory is big-endian here, and LLVM's instruction selection narrows a load
+    whose value is then masked (`x & 0xFFFF`, `(u8)x`) to a smaller load at the variable's own address, which
+    is the low half only on a little-endian machine: a racing game's vertex index came back 0. Volatile accesses
+    are never narrowed, widened or merged."""
+    out = []
+    for line in lines:
+        line = re.sub(r"(= load )(?!volatile|atomic)", r"\1volatile ", line)
+        line = re.sub(r"^(\s+store )(?!volatile|atomic)", r"\1volatile ", line)
+        out.append(line)
+    return out
+
+
 def main():
     src, dst, *opts = sys.argv[1:]
     absolute, aliases, functions, signatures, fixed, renames = {}, [], set(), {}, {}, {}
@@ -404,6 +417,7 @@ def main():
         base, off = rhs.split("+")
         out.append(f"@{name} = alias i8, getelementptr (i8, ptr @{base}, i32 {int(off, 0)})")
     from adapt import adapt
+    out = volatile(out)
     report = []
     byval = {n: {i: int(m.group(1)) for i, p in enumerate(ps.split(", ")) if (m := re.search(r"#byval(\d+)", p))}
              for n, (r, ps) in signatures.items() if "#byval" in ps}

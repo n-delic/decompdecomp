@@ -990,8 +990,9 @@ has, and the port's version of a matched file. The build goes to `port/wasm/buil
 
 Left:
 - the renderer (`consoles/n64/port_wasm/render.c`, a software RSP and RDP into the game's own frame buffer) draws
-  S2DEX's 2D screens: the racing game's opening screen renders correctly. Its 3D path (F3DEX2) runs but draws the
-  intro's scenes wrongly. Then a window, audio and input;
+  the racing game's opening screen and its title screen correctly. Text on the title screen still lands in the
+  wrong places, and nothing past the title has been seen, since the port has no input yet. Then a window, audio
+  and input;
 - the overrides moved into the matched C behind `#ifdef PORT` through Fix C for the PC;
 - Play in the GUI;
 - the console's other connector parts for PS1 and the rest: "—" until a host exists.
