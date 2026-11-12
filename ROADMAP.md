@@ -990,9 +990,9 @@ has, and the port's version of a matched file. The build goes to `port/wasm/buil
 
 Left:
 - the renderer (`consoles/n64/port_wasm/render.c`, a software RSP and RDP into the game's own frame buffer) draws
-  the racing game's opening screen and its title screen correctly. Text on the title screen still lands in the
-  wrong places, and nothing past the title has been seen, since the port has no input yet. Then a window, audio
-  and input;
+  the racing game's opening and title screens, its language menu (3D flags, menu text) and the Rumble Pak prompt,
+  reached with scripted input (`PORT_INPUT`). Why its 4-bit text needs its texture coordinates halved is still to
+  be confirmed. Next: past the prompt into a race, then a window, keyboard and pad input, and audio;
 - the overrides moved into the matched C behind `#ifdef PORT` through Fix C for the PC;
 - Play in the GUI;
 - the console's other connector parts for PS1 and the rest: "—" until a host exists.

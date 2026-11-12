@@ -382,6 +382,10 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
                 float t = (l0 * a->t * wa + l1 * b->t * wb + l2 * c->t * wc) / q;
                 if (tl->shifts) s = tl->shifts > 10 ? s * (float)(1 << (16 - tl->shifts)) : s / (float)(1 << tl->shifts);
                 if (tl->shiftt) t = tl->shiftt > 10 ? t * (float)(1 << (16 - tl->shiftt)) : t / (float)(1 << tl->shiftt);
+                /* 4-bit textures: a racing game's menu text gives each glyph twice the texel coordinates of its
+                   place in a 128-texel font page (the matched C doubles its table's values); halved, the text reads
+                   as on the console. Found by trying it: the RDP rule behind it is still to be confirmed. */
+                if (tl->siz == 0) { s *= 0.5f; t *= 0.5f; }
                 t0 = texel(tl, (int)floorf(s), (int)floorf(t));
             }
             plot(x, y, z, sh, t0, (geometry & 1) != 0);
@@ -400,14 +404,35 @@ static Vtx lerp(const Vtx *a, const Vtx *b, float f) {
 
 /* A triangle: culled by its winding, clipped against the near plane (z = -w) in clip space, then drawn as a fan. */
 static int debug_tris; /* PORT_TRIDEBUG: the state behind the first triangles of the traced tasks */
+static void save_png(const char *path, const uint8_t *rgb, int w, int h);
+static void dump_tile(const Tile *t) { /* PORT_TEXDUMP=folder: each traced triangle's texture as the sampler sees it */
+    static int n;
+    const char *dir = getenv("PORT_TEXDUMP");
+    if (!dir || n >= 40) return;
+    int w = (int)(t->lrs - t->uls) + 1, h = (int)(t->lrt - t->ult) + 1;
+    if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return;
+    uint8_t *rgb = malloc((size_t)w * h * 3);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            Color c = texel(t, (int)t->uls + x, (int)t->ult + y);
+            uint8_t *p = rgb + ((size_t)y * w + x) * 3;
+            p[0] = (uint8_t)(c.r * 255); p[1] = (uint8_t)(c.g * 255); p[2] = (uint8_t)(c.b * 255);
+        }
+    char path[1024];
+    snprintf(path, sizeof path, "%s/tex_%02d_fmt%d_siz%d_%dx%d.png", dir, n++, t->fmt, t->siz, w, h);
+    save_png(path, rgb, w, h);
+    free(rgb);
+}
 static void triangle(int i0, int i1, int i2) {
     Vtx *in[3] = {&vtx[i0 & 63], &vtx[i1 & 63], &vtx[i2 & 63]};
     if (debug_tris > 0) {
         debug_tris--;
         Tile *t = &tiles[tex_tile];
-        fprintf(stderr, "tri tex %d tile %d fmt %d siz %d line %d tmem %d pal %d size %.0f,%.0f-%.0f,%.0f shift %d,%d mask %d,%d cm %d,%d "
+        static Tile last;
+        if (memcmp(&last, t, sizeof last)) { last = *t; dump_tile(t); }
+        fprintf(stderr, "tri scale %.3f %.3f tex %d tile %d fmt %d siz %d line %d tmem %d pal %d size %.0f,%.0f-%.0f,%.0f shift %d,%d mask %d,%d cm %d,%d "
                 "combine %06X %08X modes %08X %08X geom %08X prim %.2f,%.2f,%.2f,%.2f\n",
-                tex_on, tex_tile, t->fmt, t->siz, t->line, t->tmem, t->palette, t->uls, t->ult, t->lrs, t->lrt,
+                tex_sscale, tex_tscale, tex_on, tex_tile, t->fmt, t->siz, t->line, t->tmem, t->palette, t->uls, t->ult, t->lrs, t->lrt,
                 t->shifts, t->shiftt, t->masks, t->maskt, t->cms, t->cmt, combine0, combine1, mode_h, mode_l, geometry,
                 prim.r, prim.g, prim.b, prim.a);
         for (int i = 0; i < 3; i++) fprintf(stderr, "   v clip %.1f %.1f %.1f %.1f st %.1f %.1f shade %.2f %.2f %.2f %.2f\n",

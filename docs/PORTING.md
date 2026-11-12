@@ -232,9 +232,15 @@ What it can't adapt goes in the game's save repository, `port/wasm/`:
 - `src/`: C only the port has;
 - `overrides/`: the port's version of a matched file, until its fix is in the matched C behind `#ifdef PORT`.
 
+The game's C is the console's: `PORT` is defined only for a file that needs it in WebAssembly (one using
+`<stdarg.h>`, `__builtin_next_arg` or inline assembly), because the native port's `#ifdef PORT` fixes are for a
+64-bit PC and some drop what the console needs (a display list's address written as 0, "no meaning on PC").
+The other MIPS builtins (the coprocessor 0 registers, the FPU's control register) are answered by the host.
+
 The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`). It implements libultra:
 - the game's threads, one at a time by priority, preempted at calls when a woken thread outranks the one running;
-- message queues, cartridge DMA, the VI retrace, the controllers;
+- message queues, cartridge DMA, the VI retrace, the controllers (`PORT_INPUT="300:START,306:-,540:A"`: the
+  first controller's buttons and stick from a given frame on, until a window takes the keyboard);
 - the RSP and RDP in software (`render.c`): each graphics task's display list is drawn into the game's own frame
   buffer, F3DEX2 or S2DEX by the microcode the task loads, and `PORT_FRAMES=folder` saves the frames shown as PNG.
   2D screens draw correctly; the 3D path is a first one.
