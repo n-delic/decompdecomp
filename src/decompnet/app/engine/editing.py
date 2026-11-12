@@ -308,8 +308,10 @@ class EditMixin:
             # An address name (func_8008949C) still resolves once its address has a real name. Two helpers renaming
             # one function at once both got through: the second added a second name at the address and renamed the
             # function, leaving its matched C defining the first name, so it no longer matched.
-            current, _ = syms.name_at(addr)
-            if (old not in syms.by_name and current != old and current in syms.by_name
+            # An address inside a larger data block (a 70 KB bss struct) has no name of its own yet: naming it adds
+            # one, as a save restores them; only an address that already has a name is refused.
+            current, offset = syms.name_at(addr)
+            if (old not in syms.by_name and current != old and current in syms.by_name and offset == 0
                     and not any(r["name"] == old for r in at)):  # (an overlay twin may still go by the address name)
                 raise NetworkError(f"`{old}` is called `{current}` now: rename `{current}` if the name should change")
             renamed = [r for r in at if r["name"] == old] or (at if len(at) == 1 else [])

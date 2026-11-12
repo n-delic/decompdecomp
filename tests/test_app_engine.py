@@ -92,6 +92,23 @@ def test_an_address_name_already_given_a_name_is_not_renamed_again(net):
     assert net._function("second_name", "demo-quest-64")["vram"] == 0x800081A0
 
 
+def test_an_address_inside_a_data_block_can_be_named(net):
+    """A reimport sized a 70 KB bss block over 76 addresses agents had named; naming one of them again was refused
+    as if the block's name were already its own."""
+    agent, _ = net.local_agent("tester5")
+    syms = net.symbols(net._project("demo-quest-64")["id"])
+    block = next(s for s in syms.by_name.values() if s.kind != "func" and s.size >= 8
+                 and not any(s.address < a < s.address + s.size for a in syms.by_addr))
+    inside = block.address + 4
+    assert syms.name_at(inside) == (block.name, 4)
+    out = net.rename_symbol(agent, "demo-quest-64", f"D_{inside:08X}", "inner_field")
+    assert out.startswith("\u2705"), out
+    after = net.symbols(net._project("demo-quest-64")["id"])
+    assert after.resolve("inner_field") == inside and after.resolve(block.name) == block.address
+    with pytest.raises(NetworkError, match="is called `inner_field` now"):
+        net.rename_symbol(agent, "demo-quest-64", f"D_{inside:08X}", "other_name")
+
+
 def test_struct_access_through_an_automatic_name(net):
     agent, _ = net.local_agent("tester2")
     brief = net.get_function("func_80000808", "demo-quest-64")
