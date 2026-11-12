@@ -44,6 +44,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "uv pip install of locked runtime dependencies failed with exit code $LASTEXITCODE" }
     uv pip install --python (Join-Path $bundlePython 'python.exe') --target $packages --no-deps $wheel
     if ($LASTEXITCODE -ne 0) { throw "uv pip install failed with exit code $LASTEXITCODE" }
+    # uv's console-script wrappers in packages/bin hard-code this build folder's python.exe, and each dist-info's
+    # direct_url.json names the build machine's temp path: both are wrong once installed or extracted elsewhere. The
+    # app starts through decomp-launch.pyw and runs its tools as modules, so only ninja.exe (a real binary) stays.
+    Get-ChildItem -Path $packages -Filter 'direct_url.json' -File -Recurse | Remove-Item -Force
+    $packageBin = Join-Path $packages 'bin'
+    if (Test-Path -LiteralPath $packageBin) {
+        Get-ChildItem -LiteralPath $packageBin -Filter '*.exe' -File | Where-Object Name -ne 'ninja.exe' | Remove-Item -Force
+    }
     Copy-Item -LiteralPath (Get-Command uv).Source -Destination (Join-Path $app 'uv.exe') -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'src/decompnet/app/static/favicon.ico') -Destination (Join-Path $app 'decompdecomp.ico') -Force
 
@@ -86,6 +94,8 @@ raise SystemExit(main())
     }
     $portable = Join-Path $dist "decompdecomp-$version-windows-x64-portable.zip"
     Compress-Archive -Path (Join-Path $app '*') -DestinationPath $portable -Force
+    # the portable README tells people to extract the ZIP; Setup's MSI is harvested from the same folder below
+    Remove-Item -LiteralPath (Join-Path $app 'README.txt') -Force
     $relocated = Join-Path $work 'relocated portable app'
     Expand-Archive -LiteralPath $portable -DestinationPath $relocated
     $portableRun = Start-Process -FilePath (Join-Path $relocated 'decompdecomp.exe') `
