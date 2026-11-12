@@ -32,7 +32,18 @@ def test_identical_code_pairs_in_order_and_the_rest_by_place():
     assert pairs[(1, 11)] == pairs[(3, 14)] == 1.0
     assert pairs[(2, 13)] == 0.9  # between two identical pairs, in the same place, alike enough
     assert not any(y == 12 for _, y in pairs)  # nothing in PAL is like the new function
-    assert len([p for p in pairs if p in ((4, 16), (5, 15))]) == 1  # only one of the swapped pair keeps its order
+    assert (4, 16) in pairs and (5, 15) in pairs  # one keeps its order, the other is found where it moved
+
+
+def test_a_function_moved_elsewhere_pairs_where_it_went_unless_two_are_as_likely():
+    pal = [fn(1, 0x100, 'a', ops='abc'), fn(2, 0x200, 'moved', ops='mno'), fn(3, 0x300, 'b', ops='bcd'),
+           fn(4, 0x400, 'twin', ops='tuv'), fn(5, 0x500, 'c', ops='cde')]
+    # NTSC: 'moved' went after 'c' with a changed instruction; 'twin' went too, but NTSC has two copies of it
+    ntsc = [fn(11, 0x100, 'a', ops='abc'), fn(13, 0x300, 'b', ops='bcd'), fn(15, 0x500, 'c', ops='cde'),
+            fn(16, 0x600, 'moved2', ops='mnp'), fn(17, 0x700, 'twin2', ops='tuv'), fn(18, 0x800, 'twin3', ops='tuv')]
+    pairs = {(x.id, y.id): s for x, y, s in pair(pal, ntsc, similar)}
+    assert pairs[(2, 16)] == 0.9
+    assert not any(x == 4 for x, _ in pairs)  # which copy it became isn't known
 
 
 def test_repeated_identical_code_pairs_only_when_both_have_it_as_often():

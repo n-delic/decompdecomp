@@ -38,6 +38,7 @@ _SETTINGS = threading.Lock()  # one compiler-settings change at a time
 SHARED_ENOUGH = 0.4  # without a release key: share of the smaller game's functions that are identical
 NEAR = 0.8  # instruction similarity for two functions in the same place to be paired
 MAX_GAP_CELLS = 40000  # a gap between identical pairs larger than this (functions x functions) stays unpaired
+MAX_MOVED_CELLS = 160000  # more functions left over than this (functions x functions) aren't looked for elsewhere
 MAX_SPREAD = 0x10000  # an address between two learned ones moves with them only this close
 CHUNK = 256  # names renamed together; a rejected chunk is split to find the name that breaks a match
 MIN_BYTES = 32  # as twins.ACROSS_MIN_BYTES: tiny functions are identical across unrelated games
@@ -189,6 +190,38 @@ def pair(a: list[Fn], b: list[Fn], similar) -> list[tuple[Fn, Fn, float]]:
     bounds = [(-1, -1)] + anchors + [(len(a), len(b))]
     for (i0, j0), (i1, j1) in zip(bounds, bounds[1:]):
         out += _align(a[i0 + 1:i1], b[j0 + 1:j1], similar)
+    paired_a, paired_b = {x.id for x, _, _ in out}, {y.id for _, y, _ in out}
+    out += _moved([x for x in a if x.id not in paired_a], [y for y in b if y.id not in paired_b], similar)
+    return out
+
+
+def _moved(xs: list[Fn], ys: list[Fn], similar) -> list[tuple[Fn, Fn, float]]:
+    """Functions left over after pairing in order, paired wherever they are: those that are each other's likeliest
+    and at least NEAR alike, once (two equally likely partners pair neither). One release moves some functions to
+    another part of the game; pairing in order only kept them where they were, and a game's other release left 125
+    of its matched functions unpaired, a dozen of them with the very same instructions in their new place."""
+    if not xs or not ys or len(xs) * len(ys) > MAX_MOVED_CELLS:
+        return []
+    likeliest_x: dict[int, list] = {}
+    likeliest_y: dict[int, list] = {}
+    for x in xs:
+        for y in ys:
+            if min(x.size, y.size) < 0.7 * max(x.size, y.size):
+                continue
+            s = similar(x, y)
+            if s < NEAR:
+                continue
+            for best, me, other in ((likeliest_x, x, y), (likeliest_y, y, x)):
+                was = best.get(me.id)
+                if was is None or s > was[0]:
+                    best[me.id] = [s, other]
+                elif s == was[0]:
+                    was[1] = None  # two equally likely: neither
+    out = []
+    for x in xs:
+        s, y = likeliest_x.get(x.id, (0.0, None))
+        if y is not None and likeliest_y[y.id][1] is x:
+            out.append((x, y, s))
     return out
 
 
