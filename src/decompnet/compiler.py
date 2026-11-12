@@ -150,29 +150,49 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
     proc = subprocess.Popen(_wrap(cfg, work, argv), cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
                             start_new_session=os.name != "nt")
-    limits.attach_job(proc)
+    limits.attach_job(proc)  # (Windows: so what the compiler starts is stopped with it)
     started = time.monotonic()
     try:
-        with limits.CompilerMemoryWatchdog(proc, timeout=timeout) as watchdog:
+        with limits.CompilerMemoryWatchdog(proc) as watchdog:
             while True:
                 if check:
                     check()
                 try:
                     stdout, stderr = proc.communicate(timeout=0.1)
-                    if watchdog.timed_out:
-                        raise subprocess.TimeoutExpired(proc.args, timeout)
-                    if watchdog.exceeded:
-                        return subprocess.CompletedProcess(proc.args, 1, stdout, stderr + "\n" + watchdog.message())
-                    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
                 except subprocess.TimeoutExpired:
-                    if time.monotonic() - started >= timeout or watchdog.timed_out:
-                        raise subprocess.TimeoutExpired(proc.args, timeout)
+                    if time.monotonic() - started >= timeout:
+                        raise subprocess.TimeoutExpired(proc.args, timeout) from None
+                    continue
+                if watchdog.exceeded:
+                    return subprocess.CompletedProcess(proc.args, 1, stdout, stderr + "\n" + watchdog.message())
+                return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
     except BaseException:
         limits.stop_group(proc)
-        proc.communicate()
+        _drain(proc)
         raise
     finally:
         limits.release_job(proc)
+
+
+DRAIN_SECONDS = 2  # after a compiler is stopped, how long what's left of its output may take
+
+
+def _drain(proc: subprocess.Popen) -> None:
+    """Read what's left of a stopped compiler's output, for a while. Not to the end: a process that left the
+    compiler's session (setsid) isn't stopped with it, and one that kept its output open made communicate() wait for
+    as long as it ran, holding a compiler slot (a 0.5-second limit took 4 seconds, or for ever)."""
+    try:
+        proc.communicate(timeout=DRAIN_SECONDS)
+    except subprocess.TimeoutExpired:
+        for pipe in (proc.stdout, proc.stderr):
+            try:
+                pipe.close()
+            except OSError:
+                pass
+        try:
+            proc.wait(timeout=DRAIN_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 300, *,
