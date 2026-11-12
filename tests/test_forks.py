@@ -9,6 +9,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -120,6 +121,11 @@ def test_the_comment_above_a_definition_is_its_own_up_to_a_blank_line_or_a_marke
     # only reccmp's words are markers: a comment with `// NOTE:` in it was dropped
     text = "// Sums them.\n// NOTE: wraps at 65521.\nint f(void) { return 0; }\n"
     assert csource.comment_above(text, text.index("int")) == 0
+    # the annotation right above the comment (a parked definition's, carried with it: ForkEngine._attempt)
+    text = "int g;\n// FUNCTION: 0x00401000 (NONMATCHING: frame size)\n// Adds.\nint add(int a, int b) { return a + b; }\n"
+    lo = csource.comment_above(text, text.index("int add"))
+    assert text[csource.marker_above(text, lo):lo].startswith("// FUNCTION: 0x00401000")
+    assert csource.marker_above(text, text.index("// FUNCTION")) == text.index("// FUNCTION")  # none above it
 
 
 def test_a_wrapper_is_taken_with_the_comment_inside_it():
@@ -261,6 +267,47 @@ def test_search_globs_as_agents_write_them():
         list(Path(".").glob(want))  # pathlib takes it (it raised ValueError for the given form)
 
 
+def test_file_scope_is_outside_every_block_but_a_namespace_or_extern_c():
+    """A definition past a parked one is taken only at file scope: find() reads a call followed by a block as one."""
+    text = 'namespace a {\nextern "C" {\nint f(void) {\n    if (x) {\n        g();\n    }\n}\n}\n}\nint h;\n'
+    assert csource.at_file_scope(text, text.index("int f"))
+    assert not csource.at_file_scope(text, text.index("g();"))
+    assert not csource.at_file_scope(text, text.index("    }\n}"))
+    assert csource.at_file_scope(text, text.index("int h"))
+    call = "int t(int x) {\n    y = scale(x) * 2.0;\n    if (y) {\n        y = 1;\n    }\n}\n"
+    assert csource.find(call, "scale") is not None  # (why the check is needed)
+    assert not csource.at_file_scope(call, csource.find(call, "scale")[0])
+
+
+def test_the_definition_the_build_sees_beside_a_parked_one_is_at_file_scope():
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fp = SimpleNamespace(never_defined=lambda names: set(names))  # (no build defines PARKED)
+    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#else\nint f(void) {\n    return 1;\n}\n#endif\n"
+    seen = ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"])
+    assert seen is not None and text[seen[0]:seen[1]] == "int f(void) {\n    return 1;\n}\n"
+    # past the parked copy, a call in g followed by a block isn't the build's definition
+    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\nint g(void) {\n    x = f() * 2;\n    if (x) {\n    }\n}\n"
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
+    # nor one at file scope, a C++ initialiser's (find() read `* 2.0;` as K&R declarations, up to twice's `{`): a
+    # try on scale matched, and the file lost both bias and twice
+    text = ('#ifdef PARKED_DRAFTS\nextern "C" double scale(double x) { return x * 1.2; }\n#endif\n'
+            'extern "C" double scale(double x);\nstatic double bias = scale(2.0) * 2.0;\n'
+            'extern "C" double twice(double x) { double y = 0.0; y = scale(x) * 2.0; if (y > 1.0) { y = 1.0; } '
+            'return y; }\n')
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "scale"), "scale", ["scale"]) is None
+    # and of an #ifdef _WIN32 / #else pair (a macro the app can't tell), neither is surely the build's: the try went
+    # into the _WIN32 copy, maybe the one the build leaves out, and its #else kept being judged
+    text = ("#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\n#ifdef _WIN32\nint f(void) {\n    return 3;\n}\n"
+            "#else\nint f(void) {\n    return 1;\n}\n#endif\n")
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
+    # a K&R definition isn't taken either (what's between its parameters and its body reads like a call's)
+    assert csource.opens_body("int f(a)\nint a;\n{\n}\n", (0, 20), "f") is False
+    assert csource.opens_body("int Car::f(int a) const throw() {\n}\n", (0, 35), "Car::f")
+
+
 def test_csource_finds_definitions_and_stubs():
     src = ('s32 f(s32 a) {\n    return a; /* } */\n}\nINCLUDE_ASM("asm/nonmatchings/x", g);\n'
            'uLong h(a)\n    uLong a;\n{\n    return a;\n}\nvoid C::m(int x) {\n}\n')
@@ -270,6 +317,18 @@ def test_csource_finds_definitions_and_stubs():
     assert csource.get(src, "C::m").startswith("void C::m")
     assert csource.get(src, "missing") is None
     assert "return 1" in csource.replace(src, "g", "int g(void) { return 1; }")
+
+
+def test_not_in_your_build_names_the_symbol_not_the_rows_unique_name():
+    """A function whose row name was made unique with a trailing "'" (a re-sync after a split) was reported as "its
+    object doesn't define _f@4'": agents spent days saying no C makes a name with a quote, and never looked further."""
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fn = {"name": "_f@4'", "meta": json.dumps({"symbol": "_f@4"}), "vram": None}
+    note = ForkEngine._missing_note(SimpleNamespace(name="u", base=None), fn)
+    assert "doesn't define _f@4," in note and "_f@4'" not in note
 
 
 def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for():
@@ -888,6 +947,63 @@ def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
     assert net.store.conn.total_changes - before < functions
 
 
+def test_a_projects_overview_claims_no_compiler_facts_where_its_build_decides(tmp_path):
+    """A public decomp's own build sets its compilers: the overview adds no compiler facts at all, so the Settings
+    panel stays hidden and a page reading a missing `compiler_map` as false says there's no map (steering.js). The
+    Settings answer refuses rather than calling every fork's map MIPS; the map fact the GUI's wording follows is its
+    own (`compiler_answer`), not the overview's."""
+    from types import SimpleNamespace
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    fp = SimpleNamespace(root=root, manifest={}, units=lambda: [])
+    assert net.forks._compiler_facts(fp, {"platform": "gc"}) == {}
+    net.forks._register("p", "P", "fork", root,
+                        {"kind": "fork", "platform": "gc", "origin": "fork", "ready": True}, "x")
+    with pytest.raises(NetworkError, match="this project's own build sets its compilers"):
+        net.compiler_answer("p")
+
+
+def test_a_join_a_console_cant_make_refuses_before_any_vote_is_counted(tmp_path):
+    """A GameCube project has no join_functions yet: the refusal comes before the votes, so no agent's agreement is
+    kept for a later version and joins_refused gets nothing either (only a real attempted join that fails does)."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root,
+                        {"kind": "fork", "platform": "gc", "origin": "scratch", "ready": True}, "x")
+    with net.store.tx() as db:
+        for k, name in enumerate(("f", "g")):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,vram) "
+                       "VALUES(1,?,8,2,'open','a',?)", (name, 0x80000000 + 8 * k))
+    for who in ("opencode-beam-free-1", "opencode-beam-free-2", "claude-sonnet-5-5-1"):
+        with pytest.raises(NetworkError, match="GameCube projects can't join functions yet"):
+            net.forks.propose_join(net.local_agent(who)[0], "p", "g", "f", "f has no epilogue; g pops it")
+    for row in net.store.all("SELECT meta FROM functions WHERE project_id=1"):
+        assert not json.loads(row["meta"] or "{}").get("joins")
+    cfg = json.loads(net.store.one("SELECT config FROM projects WHERE slug='p'")["config"])
+    assert "joins_refused" not in cfg
+
+
+def test_a_boundary_report_names_the_console_that_cant_cut_functions(tmp_path):
+    """The old refusal said report_boundary works in "a PC game started from scratch" even in a GameCube or DS
+    project: it names the project's own console now."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root,
+                        {"kind": "fork", "platform": "gc", "origin": "scratch", "ready": True}, "x")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,vram) "
+                   "VALUES(1,'f',16,4,'open','a',0x80000000)")
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    with pytest.raises(NetworkError, match="GameCube projects can't report function ends yet"):
+        net.forks.report_boundary(agent, "p", "f", "0x80000008", "padding")
+
+
 def test_the_overview_reads_a_projects_file_compilers_again_only_when_a_file_changed(tmp_path, monkeypatch):
     """The overview goes with every live poll (each second): a PC game's 1,300 source files' compilers were read
     again each time (300-400 ms a poll). They're read again when one of the files they come from changed."""
@@ -934,3 +1050,446 @@ def test_the_overview_reads_a_projects_file_compilers_again_only_when_a_file_cha
     parts()
     parts()
     assert len(asked) == 3
+
+
+def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):
+    """A unit built in steps (here a part compiled, then linked into the unit's object) reports only the step that
+    failed: ninja never tries the object. Counted by the object alone, an x86 game's header edits that broke a step
+    were kept as breaking nothing, and the next compile there was told the file had been broken before it came."""
+    import sys
+
+    from decompnet.forks.project import ForkProject, _tool
+
+    if _tool("ninja") is None:
+        pytest.skip("needs ninja")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "step.py").write_text(
+        "import shutil, sys\n"
+        "if 'BROKEN' in open(sys.argv[1]).read():\n    sys.exit('error: a broken step')\n"
+        "shutil.copy(sys.argv[1], sys.argv[2])\n")
+    for name, text in (("a", "fine\n"), ("b", "BROKEN\n"), ("c", "fine\n")):
+        (tmp_path / "src" / f"{name}.c").write_text(text)
+    py = sys.executable.replace("\\", "/")
+    rules = f'rule step\n  command = "{py}" step.py $in $out\n'
+    for name in "abc":
+        rules += f"build build/{name}/part.o: step src/{name}.c\nbuild build/{name}.o: step build/{name}/part.o\n"
+    rules += "build all_source: phony build/a.o build/b.o build/c.o\n"
+    (tmp_path / "build.ninja").write_text(rules)
+    (tmp_path / "objdiff.json").write_text(json.dumps({"custom_make": "ninja", "units": [
+        {"name": n, "target_path": f"expected/{n}.o", "base_path": f"build/{n}.o",
+         "metadata": {"source_path": f"src/{n}.c"}} for n in "abc"]}))
+    fp = ForkProject(tmp_path)
+    failed: list[str] = []
+    ok, _ = fp.build_all(failed=failed)
+    assert not ok and [Path(t).as_posix() for t in failed] == ["build/b/part.o"]  # the step, not the object
+    assert fp.failed_units(failed) == {"b"}
+    assert fp.failed_units([]) == set()
+    # the build file custom_args names is the one queried (the query ran on build.ninja: no unit failed)
+    (tmp_path / "build.ninja").rename(tmp_path / "other.ninja")
+    cfg = json.loads((tmp_path / "objdiff.json").read_text())
+    (tmp_path / "objdiff.json").write_text(json.dumps({**cfg, "custom_args": ["-f", "other.ninja"]}))
+    shutil.rmtree(tmp_path / "build", ignore_errors=True)
+    fp = ForkProject(tmp_path)
+    failed = []
+    ok, _ = fp.build_all(failed=failed)
+    assert not ok and fp.failed_units(failed) == {"b"}
+    # a build run in a folder of its own (`-C sub`) names its targets from there: b/part.o for sub/b/part.o, which
+    # matched no unit's object; and `ninja -C sub sub/a.o` was an unknown target
+    (tmp_path / "other.ninja").unlink()
+    (tmp_path / "sub").mkdir()
+    rules = f'rule step\n  command = "{py}" ../step.py $in $out\n'
+    for name in "abc":
+        rules += f"build {name}/part.o: step ../src/{name}.c\nbuild {name}.o: step {name}/part.o\n"
+    (tmp_path / "sub" / "build.ninja").write_text(rules + "build all_source: phony a.o b.o c.o\n")
+    (tmp_path / "objdiff.json").write_text(json.dumps({**cfg, "custom_args": ["-C", "sub"], "units": [
+        {**u, "base_path": f"sub/{u['name']}.o"} for u in cfg["units"]]}))
+    fp = ForkProject(tmp_path)
+    failed = []
+    ok, _ = fp.build_all(failed=failed)
+    assert not ok and [Path(t).as_posix() for t in failed] == ["b/part.o"] and fp.failed_units(failed) == {"b"}
+    assert fp.build_unit(fp.unit("a"))[0] and (tmp_path / "sub" / "a.o").exists()
+
+
+def _steps_project(tmp_path: Path, broken: str = "b"):
+    """Units a, b, c, d, each built in two steps (a part, then its object); the step of the units in `broken` fails
+    with an error naming its file."""
+    import sys
+
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "step.py").write_text(
+        "import shutil, sys\n"
+        "if 'BROKEN' in open(sys.argv[1]).read():\n    print(sys.argv[1] + ':1: error: a broken step')\n"
+        "    sys.exit(1)\n"
+        "shutil.copy(sys.argv[1], sys.argv[2])\n")
+    for name in "abcd":
+        (tmp_path / "src" / f"{name}.c").write_text("BROKEN\n" if name in broken else "fine\n")
+    py = sys.executable.replace("\\", "/")
+    rules = f'rule step\n  command = "{py}" step.py $in $out\n'
+    for name in "abcd":
+        rules += f"build build/{name}/part.o: step src/{name}.c\nbuild build/{name}.o: step build/{name}/part.o\n"
+    (tmp_path / "build.ninja").write_text(rules)
+    (tmp_path / "objdiff.json").write_text(json.dumps({"custom_make": "ninja", "units": [
+        {"name": n, "target_path": f"expected/{n}.o", "base_path": f"build/{n}.o",
+         "metadata": {"source_path": f"src/{n}.c"}} for n in "abcd"]}))
+    return ForkProject(tmp_path)
+
+
+def test_units_built_in_one_run_each_hear_only_their_own_failure(tmp_path, monkeypatch):
+    """A project's unit builds asked for together go in one run of ninja (half a unit's build is the run's own
+    cost), and each unit gets what building it alone would say: a unit ninja says is built is built, and one that
+    isn't is built alone, so a unit whose step failed sees that failure (and buildhelp's hints), never another
+    unit's."""
+    fp = _steps_project(tmp_path, broken="bd")
+    runs = []
+    execute = fp._execute
+    monkeypatch.setattr(fp, "_execute", lambda cmd, *a, **k: runs.append(cmd) or execute(cmd, *a, **k))
+    results = fp.build_units([fp.unit(n) for n in "abcd"])
+    assert len([c for c in runs if "-k" in c]) == 1  # one run, going on past a failure
+    assert len([c for c in runs if "-n" in c]) == 4  # (ninja asked which units are built)
+    assert results == [(True, ""), results[1], (True, ""), results[3]] and not results[1][0] and not results[3][0]
+    assert results[1] == fp.build_unit(fp.unit("b")) and results[3] == fp.build_unit(fp.unit("d"))
+    assert "src/b.c:1: error: a broken step" in results[1][1] and "d.c" not in results[1][1]
+    assert "src/d.c:1: error: a broken step" in results[3][1] and "b.c" not in results[3][1]
+    assert results[1][1].count("error: a broken step") == 1
+    assert (tmp_path / "build/a.o").is_file() and (tmp_path / "build/c.o").is_file()
+    # one unit builds alone, as it always did
+    runs.clear()
+    assert fp.build_units([fp.unit("b")]) == [fp.build_unit(fp.unit("b"))] and len(runs) == 2
+
+
+def test_a_unit_without_a_failure_of_its_own_is_built_only_when_ninja_says_so(tmp_path, monkeypatch):
+    """A run can stop short of a unit without a failure that names it (the memory cap ends the whole run, a
+    dependency walk cut short): reported built, its old object was judged as its new file's. Ninja is asked; a
+    unit it would still build is built alone, and says what it says."""
+    import sys
+
+    fp = _steps_project(tmp_path, broken="b")
+    py = sys.executable.replace("\\", "/")
+    rules = (f'rule step\n  command = "{py}" step.py $in $out\n'
+             "build build/a/part.o: step src/a.c\nbuild build/a.o: step build/a/part.o\n"
+             "build build/b.o: step src/b.c\n"
+             "build build/c/part.o: step src/c.c\nbuild build/c.o: step build/c/part.o | build/b.o\n")
+    (tmp_path / "build.ninja").write_text(rules)
+    monkeypatch.setattr(fp, "_made_from", lambda targets: set())  # (a walk that found nothing above the step)
+    alone = []
+    build_unit = fp.build_unit
+    monkeypatch.setattr(fp, "build_unit", lambda u, **k: alone.append(u.name) or build_unit(u, **k))
+    results = fp.build_units([fp.unit(n) for n in "abc"])
+    assert results[0] == (True, "")  # a is built, ninja says: it isn't built again
+    assert not results[1][0] and "src/b.c:1: error: a broken step" in results[1][1]
+    assert not results[2][0] and alone == ["b", "c"]  # c needs b's object: ninja didn't build it, so it isn't built
+    # ninja's progress lines as a user set them, or none (a project's --quiet), don't make a unit built
+    from decompnet.forks.project import _tool
+
+    ninja = [_tool("ninja") or "ninja"]
+    monkeypatch.setenv("NINJA_STATUS", "")
+    assert not fp._no_work([*ninja, "--quiet"], ["build/c.o"])
+    assert fp._no_work(ninja, ["build/a.o"])
+
+
+def test_a_run_ended_by_the_memory_cap_says_nothing_of_its_units(tmp_path, monkeypatch):
+    """The memory cap covers the whole run of several units and kills whichever step is biggest: that step's
+    failure isn't its unit's own. A unit ninja says is built is; the one it killed is built alone (and gets its own
+    verdict there); and a unit whose own build then raises gets the exception alone."""
+    from decompnet.forks import project
+
+    fp = _steps_project(tmp_path, broken="bc")
+    monkeypatch.setattr(project, "killed_for_memory", lambda code: code not in (0, None))
+    build_unit = fp.build_unit
+
+    def alone(u, **k):
+        if u.name == "c":
+            raise PermissionError("ninja.exe is in use")
+        return build_unit(u, **k)
+
+    monkeypatch.setattr(fp, "build_unit", alone)
+    results = fp.build_units([fp.unit(n) for n in "abc"])
+    assert results[0] == (True, "") and not results[1][0] and isinstance(results[2], PermissionError)
+    assert "more memory than decompdecomp allows" in results[1][1]
+
+
+def _running(pid: int) -> bool:
+    import os
+
+    if os.name == "nt":
+        listed = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
+        return f" {pid} " in listed
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def test_a_unit_build_that_hangs_with_its_output_open_is_stopped_with_its_compiler(tmp_path, monkeypatch):
+    """A compiler stuck under wibo kept a unit's build, and the project's build lock, forever: its output was read
+    to the end before the time limit was looked at. Stopped, ninja alone went: the compiler it started ran on."""
+    import sys
+    import time
+
+    from decompnet.forks import project
+
+    fp = _steps_project(tmp_path, broken="")
+    py = sys.executable.replace("\\", "/")
+    pid_file = tmp_path / "compiler.pid"
+    (tmp_path / "hang.py").write_text(f"import os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+                                      "print('compiling', flush=True)\ntime.sleep(60)\n")
+    (tmp_path / "build.ninja").write_text(f'rule hang\n  command = "{py}" hang.py\nbuild build/a.o: hang src/a.c\n'
+                                          "build build/b.o: hang src/b.c\n")
+    monkeypatch.setattr(project, "UNIT_SECONDS", 2)
+    started = time.monotonic()
+    ok, said = fp.build_unit(fp.unit("a"))
+    assert not ok and "didn't finish in 2 seconds" in said  # (ninja holds a step's output until it ends)
+    assert time.monotonic() - started < 20
+    assert not _running(int(pid_file.read_text()))
+    # a run of builds out of time: which unit hung isn't known, so each is built alone, with the whole limit
+    alone = []
+    build_unit = fp.build_unit
+    monkeypatch.setattr(fp, "build_unit", lambda u, **k: alone.append(u.name) or build_unit(u, **k))
+    results = fp.build_units([fp.unit("a"), fp.unit("b")])
+    assert alone == ["a", "b"] and all(not ok and "didn't finish" in said for ok, said in results)
+    assert not _running(int(pid_file.read_text()))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows stops the whole tree by force (taskkill /T /F)")
+def test_a_compiler_that_ignores_being_asked_to_stop_is_killed_at_the_time_limit(tmp_path, monkeypatch):
+    """ninja runs each command in a process group of its own: the step's group was killed, and a compiler that
+    ignored SIGTERM outlived its build."""
+    import sys
+    import time
+
+    from decompnet.forks import project
+
+    fp = _steps_project(tmp_path, broken="")
+    pid_file = tmp_path / "compiler.pid"
+    (tmp_path / "stubborn.py").write_text(f"import os, signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                                          f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n")
+    (tmp_path / "build.ninja").write_text(f'rule hang\n  command = "{sys.executable}" stubborn.py\n'
+                                          "build build/a.o: hang src/a.c\n")
+    monkeypatch.setattr(project, "UNIT_SECONDS", 2)
+    started = time.monotonic()
+    ok, said = fp.build_unit(fp.unit("a"))
+    assert not ok and "didn't finish in 2 seconds" in said and time.monotonic() - started < 20
+    pid = int(pid_file.read_text())
+    for _ in range(20):  # (killed, it's gone once its new parent reaps it)
+        if not _running(pid):
+            break
+        time.sleep(0.1)
+    assert not _running(pid)
+
+
+def test_a_step_that_prints_another_units_failure_doesnt_fail_that_unit(tmp_path):
+    """Each unit's verdict was read from what the run printed: a step's own output saying `FAILED: build/a.o`
+    failed unit a, which builds alone."""
+    import sys
+
+    fp = _steps_project(tmp_path, broken="b")
+    py = sys.executable.replace("\\", "/")
+    (tmp_path / "liar.py").write_text("import shutil, sys\nif 'BROKEN' in open(sys.argv[1]).read():\n"
+                                      "    print('FAILED: build/a.o')\n    sys.exit(1)\nshutil.copy(sys.argv[1], sys.argv[2])\n")
+    (tmp_path / "build.ninja").write_text(f'rule step\n  command = "{py}" liar.py $in $out\n'
+                                          "build build/a.o: step src/a.c\nbuild build/b.o: step src/b.c\n")
+    assert fp.build_unit(fp.unit("a"))[0]
+    results = fp.build_units([fp.unit("a"), fp.unit("b")])
+    assert results[0] == (True, "") and not results[1][0]
+
+
+def test_a_failed_step_that_makes_two_files_is_one_failure_in_the_log(tmp_path):
+    import sys
+
+    fp = _steps_project(tmp_path, broken="b")
+    py = sys.executable.replace("\\", "/")
+    rules = (f'rule step\n  command = "{py}" step.py $in $out\n'
+             "build build/a/part.o: step src/a.c\nbuild build/a.o: step build/a/part.o\n"
+             "build build/b/part.o build/b/part.map: step src/b.c\n"
+             "build build/b.o: step build/b/part.o | build/b/part.map\n")
+    (tmp_path / "build.ninja").write_text(rules)
+    results = fp.build_units([fp.unit(n) for n in "ab"])
+    assert results[0] == (True, "") and not results[1][0]
+    assert results[1][1].count("error: a broken step") == 1
+
+
+def test_a_run_that_stops_before_building_builds_each_unit_alone(tmp_path):
+    """ninja stops before it builds anything when the build file can't be brought up to date (configure failing)
+    or a target has no rule: no failure says whose it is, so each unit is built alone and says what it says."""
+    import os
+    import sys
+    import time
+
+    fp = _steps_project(tmp_path, broken="")
+    py = sys.executable.replace("\\", "/")
+    (tmp_path / "regen.py").write_text("import sys\nprint('configure: a driver it cannot read')\nsys.exit(1)\n")
+    text = (tmp_path / "build.ninja").read_text()
+    (tmp_path / "build.ninja").write_text(
+        f'rule regen\n  command = "{py}" regen.py\n  generator = 1\nbuild build.ninja: regen facts.txt\n{text}')
+    (tmp_path / "facts.txt").write_text("changed\n")
+    os.utime(tmp_path / "facts.txt", (time.time() + 5, time.time() + 5))  # newer than build.ninja
+    results = fp.build_units([fp.unit("a"), fp.unit("b")])
+    assert [ok for ok, _ in results] == [False, False]
+    assert all("configure: a driver it cannot read" in log for _, log in results)
+
+
+def test_builds_asked_for_during_a_run_go_together_in_the_next():
+    """The permuter's four workers and the agents took turns one unit at a time. A build asked for while a run
+    goes waits for the next run (this one may be building an older copy of its file), together with the others
+    asked for meanwhile; an error reaches each of its run, and the next run goes on."""
+    import threading
+    import time
+
+    from decompnet.app.forkengine import _UnitBuilds
+
+    # a unit whose own build raised (build_units puts the exception in its place): its caller alone hears it
+    own = _UnitBuilds()
+    assert own.build("a", lambda units: [(True, "")] if units == ["a"] else None) == (True, "")
+    try:
+        _UnitBuilds().build("b", lambda units: [OSError("b's own")])
+        raise AssertionError("b's error was lost")
+    except OSError as e:
+        assert str(e) == "b's own" and e.__cause__ is None
+
+    builds, runs = _UnitBuilds(), []
+    first, release = threading.Event(), threading.Event()
+
+    def run(units):
+        runs.append(list(units))
+        if units == ["a"]:
+            first.set()
+            assert release.wait(10)
+        if "boom" in units:
+            raise OSError("the build stopped")
+        return [(True, f"built {u}") for u in units]
+
+    got = {}
+
+    def ask(u):
+        try:
+            got[u] = builds.build(u, run)
+        except OSError as e:
+            got[u] = e
+
+    threads = [threading.Thread(target=ask, args=("a",))]
+    threads[0].start()
+    assert first.wait(10)
+    for u in "bcd":  # while a's run goes
+        threads.append(threading.Thread(target=ask, args=(u,)))
+        threads[-1].start()
+    deadline = time.monotonic() + 10
+    while len(builds._queue) < 3 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    release.set()
+    for t in threads:
+        t.join(10)
+    assert runs[0] == ["a"] and sorted(runs[1]) == ["b", "c", "d"] and len(runs) == 2
+    assert got == {u: (True, f"built {u}") for u in "abcd"}
+    t = threading.Thread(target=ask, args=("boom",))
+    t.start()
+    t.join(10)
+    assert isinstance(got["boom"], OSError) and builds.build("e", run) == (True, "built e")
+    # every unit of a run that raised hears it, each thread with an exception of its own
+    first.clear()
+    release.clear()
+
+    def slow_boom(units):
+        if not first.is_set():
+            first.set()
+            assert release.wait(10)
+            return [(True, "")] * len(units)
+        raise OSError("the build stopped")
+
+    errors = {}
+
+    def ask_boom(u):
+        try:
+            builds.build(u, slow_boom)
+        except OSError as e:
+            errors[u] = e
+
+    threads = [threading.Thread(target=ask_boom, args=(u,)) for u in ("x", "y", "z")]
+    threads[0].start()
+    assert first.wait(10)
+    for t in threads[1:]:
+        t.start()
+    deadline = time.monotonic() + 10
+    while len(builds._queue) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    release.set()
+    for t in threads:
+        t.join(10)
+    assert set(errors) == {"y", "z"} and errors["y"] is not errors["z"]
+    assert errors["y"].__cause__ is errors["z"].__cause__ and str(errors["y"]) == "the build stopped"
+
+
+def test_which_if_branch_leaves_code_out_is_told_only_when_certain():
+    """An x86 game's agents parked drafts in `#if defined(SOME_FLAG)` blocks no build defines; the brief showed them as
+    current and every compile wrote into them, judged on other code. A test of a macro that may be defined (the
+    compiler's own, one the build passes) hides nothing: only what is certain is said."""
+    text = ("int a(void) { return 0; }\n"
+            "#if defined(DRAFTS) || defined(MORE_DRAFTS) // parked\n"
+            "int b(void) { return 1; }\n"
+            "#elif defined(_M_IX86)\n"
+            "int c(void) { return 2; }\n"
+            "#else\n"
+            "int d(void) { return 3; }\n"
+            "#endif\n"
+            "#ifndef DRAFTS\n"
+            "int e(void) { return 4; }\n"
+            "#endif\n"
+            "#if 0\n"
+            "/* #endif */ int f(void) { return 5; }\n"
+            "#endif\n"
+            "#if VERSION >= 2\n"
+            "int g(void) { return 6; }\n"
+            "#endif\n")
+    at = {n: text.index(f"int {n}(") for n in "abcdefg"}
+    undefined = {"DRAFTS", "MORE_DRAFTS"}
+    assert csource.condition_names(text, at["d"]) == {"DRAFTS", "MORE_DRAFTS", "_M_IX86"}
+    hidden = {n: csource.hidden_by(text, at[n], undefined) for n in at}
+    assert hidden["b"] == (2, "#if defined(DRAFTS) || defined(MORE_DRAFTS) // parked")
+    assert hidden["a"] is None and hidden["e"] is None
+    assert hidden["c"] is None and hidden["d"] is None  # _M_IX86 may be defined: either branch may be built
+    assert hidden["f"] == (12, "#if 0")  # an #endif in a comment ends nothing
+    assert hidden["g"] is None  # a comparison can't be told
+    assert csource.hidden_by(text, at["b"], {"DRAFTS"}) is None  # MORE_DRAFTS may be defined
+    # with every macro known, each branch is told: the #elif's is out, the #else's is built
+    assert csource.hidden_by(text, at["c"], undefined | {"_M_IX86"}) == (4, "#elif defined(_M_IX86)")
+    assert csource.hidden_by(text, at["d"], undefined | {"_M_IX86"}) is None
+
+
+def test_a_macro_counts_as_never_defined_only_when_nothing_could_define_it(tmp_path):
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include").mkdir()
+    (tmp_path / "build").mkdir()
+    (tmp_path / "src" / "a.c").write_text("#ifdef PARKED\nint f(void) { return 1; }\n#endif\n#if HAS_SOUND\n#endif\n")
+    (tmp_path / "include" / "cfg.h").write_text("#define HAS_SOUND 1\n")
+    (tmp_path / "build.ninja").write_text("cflags = -DFROM_BUILD /DFROM_MSVC\n")
+    (tmp_path / "build" / "flags.txt").write_text("#define PARKED\n")  # build output isn't the project's
+    fp = ForkProject(tmp_path)
+    names = {"PARKED", "HAS_SOUND", "FROM_BUILD", "FROM_MSVC", "_WIN32", "mips", "WIN32"}
+    assert fp.never_defined(names) == {"PARKED"}
+    text = (tmp_path / "src" / "a.c").read_text()
+    assert ForkEngine._hidden(fp, text, text.index("int f")) == (1, "#ifdef PARKED")
+    (tmp_path / "include" / "cfg.h").write_text("#define PARKED\n")
+    assert ForkEngine._hidden(fp, text, text.index("int f")) is None
+    # a header the build generates (build/config.h, which a source includes) can define one: it was taken for never
+    # defined, and code the build compiles for hidden
+    (tmp_path / "build" / "gen").mkdir()
+    (tmp_path / "build" / "gen" / "config.h").write_text("#define HAS_FEATURE 1\n")
+    assert fp.never_defined({"HAS_FEATURE", "NOWHERE"}) == {"NOWHERE"}
+
+
+@pytest.mark.parametrize("macro", ["MACH", "R5900"])
+def test_code_under_a_macro_the_compiler_defines_isnt_hidden(tmp_path, macro):
+    """The pinned KMC GCC 2.7.2 defines MACH and EE-GCC 2.96 R5900 (their `-dM -E`): code under `#ifdef MACH` was
+    said to be left out of the build, though it's compiled."""
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "src").mkdir()
+    text = f"#ifdef {macro}\nint f(void) {{ return 1; }}\n#endif\n"
+    (tmp_path / "src" / "a.c").write_text(text)
+    assert ForkEngine._hidden(ForkProject(tmp_path), text, text.index("int f")) is None

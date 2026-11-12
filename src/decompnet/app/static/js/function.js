@@ -23,7 +23,7 @@ async function openFn(name) {
   if (!again) { giveBack(name); S.editDirty = false; $("tryMsg").hidden = true; }
   S.fn = name;
   showDrawer("drawer");
-  if (!again) { S.ftab = null; S.which = "latest"; S.diffKey = null; $("diff").innerHTML = ""; $("diffSum").textContent = ""; }
+  if (!again) { S.ftab = null; S.which = null; S.diffKey = null; $("diff").innerHTML = ""; $("diffSum").textContent = ""; }
   drawMap();
   document.querySelectorAll("#fnRows tr").forEach((tr) => tr.classList.toggle("sel", tr.dataset.fn === name));
   await refreshFn(true);
@@ -43,13 +43,13 @@ function showFnTab(tab) {
   $("fnCodeView").hidden = tab !== "code";
   if (tab === "diff") loadDiff();
 }
+function setWhich(which) {
+  S.which = which;
+  document.querySelectorAll("#diffWhich [data-which]").forEach((x) => x.classList.toggle("on", x.dataset.which === which));
+}
 document.querySelectorAll("[data-ftab]").forEach((b) => { b.onclick = () => { S.ftab = b.dataset.ftab; showFnTab(S.ftab); }; });
 document.querySelectorAll("#diffWhich [data-which]").forEach((b) => {
-  b.onclick = () => {
-    S.which = b.dataset.which;
-    document.querySelectorAll("#diffWhich [data-which]").forEach((x) => x.classList.toggle("on", x === b));
-    loadDiff();
-  };
+  b.onclick = () => { setWhich(b.dataset.which); loadDiff(); };
 });
 
 let fnBusy = false;
@@ -108,7 +108,12 @@ async function refreshFn(first) {
     if (!S.editDirty || first) setEditor(d.source || "", d);
     $("copySrc").onclick = () => navigator.clipboard.writeText($("fnEdit").value).then(() => toast("Copied."));
     renderFnChart(d);
-    $("diffWhich").hidden = d.status === "matched" || S.ov.kind === "fork" || d.scores.filter((x) => x.score != null).length < 2;
+    const canSwitch = d.status !== "matched" && !!d.best_differs;
+    $("diffWhich").hidden = !canSwitch;
+    if (S.which == null) S.which = canSwitch ? "best" : "latest";
+    const latestWhich = document.querySelector('#diffWhich [data-which="latest"]');
+    if (latestWhich) latestWhich.textContent = S.ov.kind === "fork" ? "In the source now" : "Latest attempt";
+    setWhich(S.which);
     const xr = [];
     if (d.calls.length) xr.push(`<div><b>calls</b>${d.calls.map(fnLink).join("")}</div>`);
     if (d.called_by.length) xr.push(`<div><b>called by</b>${d.called_by.map(fnLink).join("")}</div>`);
@@ -170,6 +175,7 @@ async function tryIt() {
       msg.textContent = r.score == null ? "It didn't compile:" : (r.text.split("\n")[0] || `score ${r.score}`);
       if (r.score == null) msg.textContent += "\n" + r.text.split("\n").slice(1, 12).join("\n");
     }
+    setWhich("latest");
     S.editDirty = false;
     S.diffKey = null;
     await refreshFn(false);
@@ -238,13 +244,14 @@ function renderDiff(d) {
   const sum = $("diffSum"), box = $("diff"), probs = $("diffProblems");
   probs.innerHTML = "";
   if (!d.rows) {
-    sum.innerHTML = d.error ? `<span class="bad">The ${d.kind === "best" ? "best" : "latest"} attempt didn't compile.</span>` : "No attempt yet. The diff appears after the first compile.";
+    sum.innerHTML = d.error ? `<span class="bad">The ${d.kind === "best" ? "best" : "latest"} attempt didn't compile.</span>`
+      : d.message ? esc(d.message) : "No attempt yet. The diff appears after the first compile.";
     box.innerHTML = d.error ? `<pre class="code errlog">${esc(d.error)}</pre>` : "";
     return;
   }
   const rows = d.rows;
   const same = rows.filter((r) => r[0] === " ").length, target = rows.filter((r) => r[1]).length;
-  const label = { matched: "Matching C", best: "Best attempt", latest: S.ov.kind === "fork" ? "The source now" : "Latest attempt" }[d.kind] || "Attempt";
+  const label = { matched: "Matching C", best: "Best attempt", latest: S.ov.kind === "fork" ? "In the source now" : "Latest attempt" }[d.kind] || "Attempt";
   sum.innerHTML = `<b>${label}</b> · ${d.percent === 100 && d.score === 0 ? `<span class="ok">byte-identical</span>` : `${d.percent}%${d.score != null ? ` · score ${d.score}` : ""}`} · ${same} of ${target} instructions identical
     <span class="diff-key"><i class="k arg"></i>operands <i class="k repl"></i>different <i class="k mov"></i>moved</span>`;
   const html = [];

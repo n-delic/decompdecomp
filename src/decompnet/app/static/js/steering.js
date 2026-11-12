@@ -179,7 +179,10 @@ async function renderKnowledge(force = false) {
       <button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
     if (it.status === "accepted") return `<div class="note">${saidHead("agents get this", it.models, it.t, true)}${saidText(it.text)}
       <div class="row"><button class="ghost small-btn" data-know="${it.id}" type="button">Take it back</button></div></div>`;
-    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}</div>`;
+    // the user can be the second opinion: with helpers of one model only, nothing is ever agreed by two
+    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}
+      <div class="row"><button class="ghost small-btn" data-know="${it.id}" data-accept="1" type="button">Give it to agents</button>
+      <button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
   };
   const waiting = k.items.filter((it) => it.status === "agreed").length;
   $("knowState").textContent = waiting ? `${waiting} waiting for you` : k.items.length ? "" : "nothing yet";
@@ -378,9 +381,10 @@ async function exportNow() {
 }
 
 /* ------------------------------------------------------------------ project settings */
-async function renderProjectSettings() {
+async function renderProjectSettings(keepRemoved = false) {
   const ov = S.ov;
   if (!ov) return;
+  if (!keepRemoved) S.removedParts = [];  // a Removed part stays only for the remove that made it, not the next redraw
   renderSaveLocation(ov);
   const fork = ov.kind === "fork";
   $("installedCompilerTest").hidden = fork;
@@ -471,19 +475,56 @@ $("autoAdjust").onchange = async () => {
   } catch (err) { $("autoAdjust").checked = !on; toast(esc(err.message), "err"); }
 };
 $("compilerParts").onclick = async (e) => {
+  const undo = e.target.closest("button[data-revert]");
+  if (undo) {
+    const part = (S.removedParts || [])[Number(undo.dataset.revert)];
+    if (!part || part.slug !== S.slug) return;
+    undo.disabled = true;
+    try {
+      const r = await api("/api/compiler", { method: "POST", body: {
+        slug: S.slug, ranges: `${hexShort(part.start)}-${hex8(part.end)}`, toolchain: part.toolchain, flags: part.flags,
+      } });
+      S.removedParts = (S.removedParts || []).filter((p) => p !== part);
+      S.ov = r;
+      renderStats(S.ov);
+      renderProjectSettings();
+      const n = part.reopened || 0;
+      toast(n
+        ? `That range is built with ${esc(part.compiler)} again. ${n === 1 ? "The function" : `The ${plural(n, "function")}`} it had reopened ${n === 1 ? "stays" : "stay"} open: agents redo ${n === 1 ? "it" : "them"} with that compiler.`
+        : `That range is built with ${esc(part.compiler)} again.`);
+    } catch (err) { undo.disabled = false; toast(esc(err.message), "err"); }
+    return;
+  }
   const b = e.target.closest("button[data-unrange]");
   if (!b) return;
+  const [start, end] = b.dataset.unrange.split("-").map((n) => parseInt(n, 16));
+  const file = b.dataset.file || "";
+  const known = S.ov?.compiler_ranges || [];
+  const found = known.find((r) => r.start === start && r.end === end && (r.file || "") === file)
+    || known.find((r) => r.start === start && r.end === end);
   const remove = (reopen) => api("/api/compiler", { method: "POST", body: { slug: S.slug, ranges: b.dataset.unrange, remove: true, reopen } });
   try {
+    let r;
     try {
-      S.ov = await remove(false);
+      r = await remove(false);
     } catch (err) {  // matched functions need the range: the user may judge it a quirk and redo them
       if (!/wouldn't match/.test(err.message) || !confirm(`${err.message.split(":")[0]}.\n\nRemove the range anyway and reopen them? Their C stays as their best attempt, and agents redo them with the game's compiler.`)) throw err;
-      S.ov = await remove(true);
+      r = await remove(true);
+    }
+    S.ov = r;
+    if (found) {
+      const reopened = Array.isArray(r.reopened) ? r.reopened.length : 0;
+      S.removedParts = (S.removedParts || []).filter((p) => p.slug !== S.slug || p.start !== start || p.end !== end || (p.file || "") !== file);
+      S.removedParts.push({ slug: S.slug, start, end, toolchain: found.toolchain, flags: found.flags || [],
+        compiler: found.name || found.compiler || found.toolchain, file: found.file || "", reopened });
     }
     renderStats(S.ov);
-    renderProjectSettings();
-    toast("That range is built with the project's compiler again.");
+    renderProjectSettings(true);
+    const n = found ? (Array.isArray(r.reopened) ? r.reopened.length : 0) : 0;
+    const puts = found ? " Revert below puts it back." : "";
+    toast(n
+      ? `That range is built with the project's compiler again.${puts} ${n === 1 ? "The function" : `The ${plural(n, "function")}`} it reopened ${n === 1 ? "stays" : "stay"} open for agents to redo with that compiler.`
+      : `That range is built with the project's compiler again.${puts}`);
   } catch (err) { toast(esc(err.message), "err"); }
 };
 $("setTc").onchange = () => { $("setFlags").value = ""; };  // one compiler's flags aren't another's (-G8 vs -sdatathreshold): its defaults
@@ -603,19 +644,23 @@ async function loadCompilerAnswer() {
 function renderCompilerAnswer(a) {
   $("installedCompilerTest").hidden = S.ov.kind === "fork";
   const parts = a.parts || [];
+  const removed = (S.removedParts || []).map((p, at) => ({ ...p, at })).filter((p) => p.slug === S.slug
+    && !parts.some((q) => q.start === p.start && q.end === p.end && (q.file || "") === (p.file || "")));
   setHtml($("compilerAnswer"), `This game was built with <b>${esc(a.compiler)}</b>${a.flags ? ` <span class="flags mono" title="the flags it was given">${esc(a.flags)}</span>` : ""}.${parts.length ? ` ${parts.length === 1 ? "One part" : `${parts.length} parts`} of it with another compiler: below.` : ""}`
     + (a.elsewhere_count ? ` <span class="muted">${a.elsewhere_count === 1 ? "One more stretch of code looks" : `${a.elsewhere_count.toLocaleString()} more stretches of code look`} like another compiler's work; the app suggests a change once agents' C proves it.</span>` : ""));
   $("compilerState").textContent = a.checking ? "checking…" : "";
-  setHtml($("compilerParts"), parts.length ? `<ol class="parts">${parts.map((p) => {
+  setHtml($("compilerParts"), parts.length || removed.length ? `<ol class="parts">${parts.map((p) => {
     const [word, why] = PART_STATE[p.check] || PART_STATE[""];
     return `<li><code>${hexShort(p.start)}–${hexShort(p.end)}</code><span class="grow">${esc(p.compiler)} <span class="flags mono">${esc(p.flags)}</span></span>
       ${p.file ? `<span class="muted small mono">${esc(p.file)}</span>` : ""}<span class="part-state ${esc(p.check || "none")}" title="${esc(p.said || why)}">${word}</span>
-      <button class="ghost small-btn" type="button" data-unrange="${hexShort(p.start)}-${hex8(p.end)}" aria-label="Build ${hexShort(p.start)} to ${hexShort(p.end)} with ${esc(a.compiler)} again" title="Build this part with ${esc(a.compiler)} again">Remove</button></li>`;
-  }).join("")}</ol>` : "");
+      <button class="ghost small-btn" type="button" data-unrange="${hexShort(p.start)}-${hex8(p.end)}" data-file="${esc(p.file || "")}" aria-label="Build ${hexShort(p.start)} to ${hexShort(p.end)} with ${esc(a.compiler)} again" title="Build this part with ${esc(a.compiler)} again">Remove</button></li>`;
+  }).join("")}${removed.map((p) => `<li class="removed"><code>${hexShort(p.start)}–${hexShort(p.end)}</code><span class="grow">${esc(p.compiler)} <span class="flags mono">${esc(Array.isArray(p.flags) ? p.flags.join(" ") : p.flags)}</span></span>
+      ${p.file ? `<span class="muted small mono">${esc(p.file)}</span>` : ""}<span class="muted small">removed</span>
+      <button class="ghost small-btn" type="button" data-revert="${p.at}" aria-label="Build ${hexShort(p.start)} to ${hexShort(p.end)} with ${esc(p.compiler)} again" title="Build this part with ${esc(p.compiler)} again">Revert</button></li>`).join("")}</ol>` : "");
   const sv = a.survey || {};
   const checks = (a.checks || []).slice(-20).reverse();
   setHtml($("compilerEvidence"), `<p class="small">The app works out which compiler built each part by itself: it tries agents' C for functions that don't match yet with the other compilers the game uses (${
-      sv.state === "running" ? `running now: ${plural(sv.running_tried || 0, a.unit || "function")} tried` : sv.t ? `last run ${since(sv.t)}: ${plural(sv.tried || 0, a.unit || "function")} tried, ${sv.confirmed || 0} matched with another compiler` : a.mips ? "not run yet: it runs once the game uses two compilers" : "it reads MIPS code only"}),
+      sv.state === "running" ? `running now: ${plural(sv.running_tried || 0, a.unit || "function")} tried` : sv.t ? `last run ${since(sv.t)}: ${plural(sv.tried || 0, a.unit || "function")} tried, ${sv.confirmed || 0} matched with another compiler` : (a.compiler_map ?? a.mips) ? "not run yet: it runs once the game uses two compilers" : "this console has no compiler map"}),
       and it tests each part on the functions next to it before a part counts. A part applies by itself only when you let proven changes apply.</p>
     ${a.elsewhere.length ? `<p class="col-title">Code that looks like another compiler's</p><ol class="parts">${a.elsewhere.map((r) => `<li><code>${hexShort(r.start)}–${hexShort(r.end)}</code><span class="grow">${esc(r.compiler)}</span><span class="muted small">${plural(r.functions, "function")}${r.confirmed ? `, ${r.confirmed} proven` : ""}</span></li>`).join("")}</ol>` : ""}
     ${checks.length ? `<p class="col-title">Checks</p><ol class="parts">${checks.map((c) => `<li><span class="part-state ${esc(c.status)}">${(PART_STATE[c.status] || PART_STATE[""])[0]}</span><span class="grow small">${c.audit ? "part" : "suggested"} ${c.ranges.map(([s, e]) => `${hexShort(s)}–${hexShort(e)}`).join(", ")} · ${esc(c.compiler)}${c.said ? `<br><span class="muted">${esc(c.said)}</span>` : ""}</span></li>`).join("")}</ol>` : ""}

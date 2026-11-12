@@ -584,8 +584,11 @@ class CompilerMixin:
                           "flags": " ".join(r["flags"]),
                           "check": c.get("status", ""), "said": c.get("said", "")})
         elsewhere = sorted((r for r in (cmap.runs if cmap else []) if r.differs()), key=lambda r: -r.functions)
+        has_map = cmap is not None
         # the compiler's name and its flags apart: "built with KMC GCC 2.7.2" reads at a glance, the flags are details
-        return {"compiler": consoles.compiler_name(main[0]), "flags": " ".join(main[1]), "parts": parts, "mips": cmap is not None,
+        # (`mips` is what older pages called this fact: a map now also covers a project's source files, PC and DS)
+        return {"compiler": consoles.compiler_name(main[0]), "flags": " ".join(main[1]), "parts": parts,
+                "compiler_map": has_map, "mips": has_map,
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": self._short(r.label), "functions": r.functions,
                                "confirmed": r.confirmed} for r in elsewhere[:self.ANSWER_STRETCHES]],
                 "elsewhere_count": len(elsewhere),
@@ -746,11 +749,12 @@ class CompilerMixin:
             "status", "applied" if apply else "dismissed"))
 
     def set_compiler_ranges(self, slug: str, ranges: list[list[int]], toolchain: str | None,
-                            flags: list[str] | None = None, reopen: bool = False) -> None:
+                            flags: list[str] | None = None, reopen: bool = False) -> list[str]:
         """Address ranges built by another compiler than the rest of the game (replacing ranges they overlap), or
         with toolchain None: those ranges back to the project's compiler. Matched functions that wouldn't match any
         more stop it, unless `reopen` (removing a range the user judged a quirk: Ridge Racer V's two GCC 2.96 ranges
-        held two functions whose C only matched with 2.96): then they're open again, their C their best attempt."""
+        held two functions whose C only matched with 2.96): then they're open again, their C their best attempt.
+        Returns the functions `reopen` opened, so the page can say which the range no longer matches."""
         if self.fork_slug(slug):
             raise NetworkError("a fork builds with the project's own compilers and flags")
         if toolchain:
@@ -773,8 +777,9 @@ class CompilerMixin:
                   if any(a <= (f["vram"] or -1) < b for a, b in ranges)]
         broken = self.regression_test(proj, None, only=inside,
                                       header_for=lambda f: self._context(proj["id"], f["unit"])["header"]) if inside else []
+        reopened = []
         if broken and reopen and not toolchain:
-            self._reopen(proj, [n for n, _ in broken], "its range was removed")
+            reopened = self._reopen(proj, [n for n, _ in broken], "its range was removed")
         elif broken:
             self._update_cfg(slug, lambda cfg: cfg.__setitem__("compiler_ranges", before))
             raise NetworkError(f"{len(broken)} matched function(s) in those ranges wouldn't match with it any more "
@@ -784,11 +789,13 @@ class CompilerMixin:
             where = ", ".join(f"0x{a:X}-0x{b:X}" for a, b in ranges)
             self._event(db, proj["id"], None, "compiler", f"{consoles.compiler_name(toolchain)} {' '.join(flags)} for {where}"
                         if toolchain else f"the project's compiler again for {where}")
+        return reopened
 
-    def _reopen(self, proj, names: list[str], why: str) -> None:
+    def _reopen(self, proj, names: list[str], why: str) -> list[str]:
         """Matched functions open again: their matching C becomes their best attempt, scored with the compiler they're
-        built with now, so the next agent starts from it."""
+        built with now, so the next agent starts from it. Returns the ones it opened."""
         cfg = self.cfg(proj)
+        opened = []
         for name in names:
             fn = self.store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name)
             if fn is None or fn["status"] != "matched":
@@ -800,6 +807,8 @@ class CompilerMixin:
                            "best_score=?, matched_source=NULL, matched_agent_id=NULL, matched_at=NULL WHERE id=?",
                            (d.score if d is not None else None, fn["id"]))
                 self._event(db, proj["id"], None, "reopen", f"{name}: open again ({why})")
+            opened.append(name)
+        return opened
 
     def set_compiler(self, slug: str, toolchain: str, flags: list[str] | None = None, guard: bool = False) -> None:
         """`guard` (auto-adjust, unattended): matched functions must still match with it, checked on up to 40 of them

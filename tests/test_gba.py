@@ -12,6 +12,7 @@ import re
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,8 @@ from elftools.elf.elffile import ELFFile
 
 from decompnet import consoles, toolchains
 from decompnet.app.engine import RomNetwork
-from decompnet.consoles.gba import GBA, header
+from decompnet.consoles.gba import GBA, candidates, header
+from decompnet.consoles.gba import split as gba_split
 from decompnet.forks import csource
 from decompnet.rom import RomError
 
@@ -100,11 +102,180 @@ def test_the_checksum_follows_the_title_and_version():
     assert not GBA.sniff(bytes(changed), b"game.gba")
 
 
+def test_gba_candidates_ignore_prologue_shaped_data_far_from_the_code():
+    """#187, #188: a cartridge's graphics and sound are mostly bytes that decode as returns and prologues. Only
+    starts in the region the first round's code reaches (or points into) may be functions; far data stays data."""
+    rom = bytearray(0x10000)
+    rom[0xC0:0xC4] = bytes.fromhex("00b500bd")  # the known function: push {lr}; pop {pc}
+    rom[0xFE:0x100] = b"\0\0"  # padding, so the prologue after it starts a function
+    rom[0x100:0x104] = bytes.fromhex("10b500bd")  # push {r4, lr}; pop {pc}
+    rom[0x140:0x144] = bytes.fromhex("00bd7047")  # a return, then a leaf `bx lr`
+    for off in range(0x4000, 0x8000, 0x20):  # prologue-shaped data far from any known code
+        rom[off - 2:off] = b"\0\0"
+        rom[off:off + 4] = bytes.fromhex("10b500bd")
+    found = candidates.candidates(bytes(rom), [header.BASE + 0xC0])
+    assert header.BASE + 0x100 in found
+    assert header.BASE + 0x142 in found
+    assert not any(address >= header.BASE + 0x4000 for address in found), \
+        [hex(address) for address in found if address >= header.BASE + 0x4000]
+
+
+def test_gba_candidates_keep_leaf_callbacks_in_a_table_known_code_loads():
+    """A callback table's address is even, so the literal load alone doesn't look like a code pointer. Its entries
+    are the pointers: a distant `movs r0, #1; bx lr` callback must stay a candidate even without a prologue."""
+    rom = bytearray(0x5000)
+    # Known function: ldr r0, [pc, #4]; ldr r0, [r0]; bx lr; nop, then the table's address as its literal.
+    rom[0xC0:0xC8] = bytes.fromhex("014800687047c046")
+    rom[0xC8:0xCC] = (header.BASE + 0x1000).to_bytes(4, "little")
+    rom[0x1000:0x1004] = (header.BASE + 0x4001).to_bytes(4, "little")
+    rom[0x4000:0x4004] = bytes.fromhex("01207047")  # movs r0, #1; bx lr (a leaf callback)
+    found = candidates.candidates(bytes(rom), [header.BASE + 0xC0])
+    assert header.BASE + 0x4000 in found
+
+
 def test_the_gba_tools_are_pinned_free_builds():
     agbcc, luvdis = toolchains.get("agbcc"), toolchains.get("luvdis")
     assert agbcc.license == "GPL-2.0" and not agbcc.proprietary and agbcc.requires == ["arm-gnu"]
     assert all(part["sha256"] for part in agbcc.parts)
     assert luvdis.license == "MIT" and luvdis.commit and not luvdis.proprietary
+
+
+@pytest.mark.parametrize("reason", [
+    "luvdis (the GBA disassembler) ran out of memory on this ROM and was stopped",
+    "luvdis (the GBA disassembler) didn't finish within 5 minutes on this ROM and was stopped",
+])
+def test_gba_round_2_keeps_the_first_round_when_luvdis_stops(tmp_path, monkeypatch, reason):
+    """#187, #188: a later round that runs out of memory or time isn't the import's end: the functions the first
+    round found are kept, and the log says what happened and what to do next."""
+    rom = tmp_path / "game.gba"
+    rom.write_bytes(bytes(0x400))
+
+    def luvdis(rom_path, workdir, cfg_in, **kwargs):
+        if cfg_in is None:
+            return "the first round\n", [header.BASE + 0xC0]
+        raise RomError(reason)
+
+    monkeypatch.setattr(gba_split, "_luvdis", luvdis)
+    monkeypatch.setattr(gba_split.candidates, "candidates",
+                        lambda rom_bytes, known: [header.BASE + 0xC0, header.BASE + 0x100])
+    said: list[str] = []
+    asm, found = gba_split.find_functions(rom, tmp_path, log=said.append)
+    assert (asm, found) == ("the first round\n", [header.BASE + 0xC0])
+    logged = "\n".join(said)
+    assert reason in logged
+    assert "keeping the 1 functions found so far" in logged
+    assert "Please report" not in logged
+
+
+def test_gba_round_2_timeout_follows_the_first_pass(tmp_path, monkeypatch):
+    """#188: on a ROM where the first pass takes most of five minutes, every later pass needs at least that long:
+    the round-2 limit follows round 1's time instead of a fixed BATCH_SECONDS."""
+    rom = tmp_path / "game.gba"
+    rom.write_bytes(bytes(0x400))
+    monkeypatch.setattr(gba_split, "BATCH_SECONDS", 0.2)
+    timeouts: list[float] = []
+
+    def luvdis(rom_path, workdir, cfg_in, **kwargs):
+        if cfg_in is None:
+            time.sleep(0.3)
+            return "the first round\n", [header.BASE + 0xC0]
+        timeouts.append(kwargs["timeout"])
+        raise RomError("stop the test here")
+
+    monkeypatch.setattr(gba_split, "_luvdis", luvdis)
+    monkeypatch.setattr(gba_split.candidates, "candidates",
+                        lambda rom_bytes, known: [header.BASE + 0xC0, header.BASE + 0x100])
+    gba_split.find_functions(rom, tmp_path, log=lambda *_: None)
+    assert timeouts and timeouts[0] >= 0.6 and timeouts[0] > gba_split.BATCH_SECONDS
+
+
+def test_gba_round_2_tries_later_batches_after_an_empty_one(tmp_path, monkeypatch):
+    """#188: one batch of data must not end the search when another batch is untried; a later one may hold code."""
+    rom = tmp_path / "game.gba"
+    rom.write_bytes(bytes(0x400))
+    monkeypatch.setattr(gba_split, "BATCH_CANDIDATES", 2)
+    calls: list[str] = []
+
+    def luvdis(rom_path, workdir, cfg_in, **kwargs):
+        if cfg_in is None:
+            return "the first round\n", [header.BASE + 0xC0]
+        calls.append(cfg_in.read_text(encoding="utf-8"))
+        if len(calls) == 1:
+            return "the first round\n", [header.BASE + 0xC0]  # this batch was data
+        return "a later round\n", [header.BASE + 0xC0, header.BASE + 0x100]
+
+    monkeypatch.setattr(gba_split, "_luvdis", luvdis)
+    monkeypatch.setattr(gba_split.candidates, "candidates", lambda rom_bytes, known: [
+        header.BASE + 0xC0, header.BASE + 0x100, header.BASE + 0x102,
+        header.BASE + 0x104, header.BASE + 0x106,
+    ])
+    asm, found = gba_split.find_functions(rom, tmp_path, log=lambda *_: None)
+    assert len(calls) == 2
+    assert (asm, found) == ("a later round\n", [header.BASE + 0xC0, header.BASE + 0x100])
+
+
+@pytest.mark.skipif(MILESTONE_MISSING, reason="needs " + ", ".join(MILESTONE_MISSING))
+def test_a_big_rom_keeps_round_two_bounded_and_keeps_round_one_functions(tmp_path, monkeypatch):
+    """#188: 16 MiB of padding that decodes as a prologue every 0x400 bytes must not become 16 MiB of candidates.
+    The first round's functions stay, and the second round finishes instead of spending an hour on data."""
+    _build_demo()
+    demo = ROM.read_bytes()
+    size = 16 << 20
+    data = bytearray(size)
+    data[:len(demo)] = demo
+    for off in range(len(demo) + 0x1000, size - 4, 0x400):
+        data[off - 2:off] = b"\0\0"  # padding, then a real-looking prologue and return
+        data[off:off + 4] = bytes.fromhex("10b500bd")
+    big = tmp_path / "big.gba"
+    big.write_bytes(data)
+
+    first_asm, first = gba_split._luvdis(big, tmp_path, None)
+    extra = candidates.candidates(bytes(data), first)
+    assert len(extra) < 500, f"{len(extra)} candidates for data that isn't code"
+
+    real = gba_split._luvdis
+
+    def cached(rom_path, workdir, cfg_in, **kwargs):
+        return (first_asm, first) if cfg_in is None else real(rom_path, workdir, cfg_in, **kwargs)
+
+    monkeypatch.setattr(gba_split, "_luvdis", cached)
+    said: list[str] = []
+    asm, found = gba_split.find_functions(big, tmp_path, log=said.append)
+    assert set(first) <= set(found) and len(found) >= len(first)
+    assert any(line.startswith("round 2:") for line in said), said
+
+
+@pytest.mark.skipif(toolchains.installed("luvdis") is None, reason="needs luvdis")
+def test_gba_luvdis_survives_data_that_decodes_as_stack_adjustments(tmp_path):
+    """#187: `add sp, #508` halves of graphics data doubled luvdis's emulated stack each time until MemoryError.
+    A bounded stack makes the run finish quickly, and the memory cap keeps a regression from filling the machine."""
+    rom = bytearray(0x1000)
+    rom[0xC0:0xC0 + 2 * 80] = bytes.fromhex("7fb0") * 80  # add sp, #508
+    rom[0xC0 + 2 * 80:0xC0 + 2 * 80 + 2] = bytes.fromhex("00bd")  # pop {pc}
+    game = tmp_path / "stack.gba"
+    game.write_bytes(rom)
+    functions = tmp_path / "provided.cfg"
+    functions.write_text("thumb_func 0x080000C0\n", encoding="utf-8")
+    asm, found = gba_split._luvdis(game, tmp_path, functions, timeout=60, memory=512 << 20)
+    assert header.BASE + 0xC0 in found and asm
+
+
+def test_gba_luvdis_memory_errors_and_timeouts_become_a_sentence(tmp_path, monkeypatch):
+    """#187: a MemoryError in luvdis's traceback and a run stopped for time say what happened, instead of handing
+    the traceback to the user."""
+    monkeypatch.setattr(gba_split.toolchains, "ensure", lambda *args, **kwargs: tmp_path)
+    monkeypatch.setattr(gba_split.toolchains, "venv_bin", lambda venv, name: tmp_path / name)
+    monkeypatch.setattr(gba_split.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(
+        args[0], 1, "", "Traceback ...\nMemoryError"))
+    with pytest.raises(RomError, match="ran out of memory"):
+        gba_split._luvdis(tmp_path / "game.gba", tmp_path, None)
+
+    def stopped(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 1)
+
+    monkeypatch.setattr(gba_split.subprocess, "run", stopped)
+    with pytest.raises(RomError, match="didn't finish within 5 minutes"):
+        gba_split._luvdis(tmp_path / "game.gba", tmp_path, None, timeout=300)
 
 
 @pytest.mark.skipif(DEMO_MISSING, reason="needs agbcc, the Arm GNU toolchain"

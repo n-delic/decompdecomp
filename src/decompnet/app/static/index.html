@@ -81,8 +81,8 @@
       <div class="drop-idle" id="dropIdle">
         <div class="cart" aria-hidden="true"><span></span></div>
         <p class="drop-title">Drop a game here</p>
-        <p class="muted small">ROM, disc image or program file (a PC game's .pdb or .map with it) · or <span class="link">choose a file</span></p>
-        <div class="plat-row" id="platRow"><span data-p="n64">N64</span><span data-p="ps">PS1</span><span data-p="ps2">PS2</span><span data-p="psp">PSP</span><span data-p="gc">GameCube</span><span data-p="wii">Wii</span><span data-p="pc">PC</span><span data-p="xbox">Xbox</span><span data-p="nds">DS</span><span data-p="gba">GBA</span></div>
+        <p class="muted small">ROM, disc image or program file (PS4 function maps or PC .pdb / .map files can go with it) · or <span class="link">choose a file</span></p>
+        <div class="plat-row" id="platRow"><span data-p="n64">N64</span><span data-p="ps">PS1</span><span data-p="ps2">PS2</span><span data-p="ps4">PS4</span><span data-p="psp">PSP</span><span data-p="gc">GameCube</span><span data-p="wii">Wii</span><span data-p="pc">PC</span><span data-p="xbox">Xbox</span><span data-p="nds">DS</span><span data-p="gba">GBA</span></div>
         <p class="plat-legend muted small" id="platLegend" hidden><span class="rec-mark">★</span> recommended: the most tested path to a full decomp you can port and mod · the rest are beta</p>
         <button class="link-btn" id="pathPick" type="button">Big disc, or a PC game with its DLLs? Use its path or folder instead</button>
       </div>
@@ -355,7 +355,7 @@
       <section class="panel">
         <header class="panel-head"><h2>What agents learned</h2><span class="muted small" id="knowState"></span></header>
         <div class="pad">
-          <p class="muted small">Agents propose what every agent on this game should know. A proposal counts once two different AI models notice the same thing on their own, so run helpers of several models: they check each other.</p>
+          <p class="muted small">Agents propose what every agent on this game should know. A proposal counts once two different AI models notice the same thing on their own, so run helpers of several models: they check each other. Or be the second opinion yourself: give agents a proposal you've checked.</p>
           <label class="check"><input type="checkbox" id="knowAuto"><span>Give agents what two models agree on without asking me</span></label>
           <div id="knowList"></div>
         </div>
@@ -525,7 +525,7 @@
           <button role="tab" class="tab on" data-ftab="diff" type="button">Diff</button>
           <button role="tab" class="tab" data-ftab="code" type="button">Edit</button>
         </div>
-        <div class="seg small" id="diffWhich" hidden><button type="button" data-which="latest" class="on">Latest attempt</button><button type="button" data-which="best">Best</button></div>
+        <div class="seg small" id="diffWhich" hidden><button type="button" data-which="latest" class="on">Latest attempt</button><button type="button" data-which="best">Best attempt</button></div>
       </div>
       <div id="fnDiffView">
         <p class="diff-sum" id="diffSum"></p>
