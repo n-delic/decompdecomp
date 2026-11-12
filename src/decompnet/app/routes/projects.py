@@ -240,8 +240,9 @@ def register(app: App) -> None:
                 return {"job": active["id"]}
             if any(job.get("slug") == slug for job in running):
                 raise NetworkError("Another function is being deep permuted in this project; stop it or wait for it to finish.")
-            if len(running) >= 2:
-                raise NetworkError("Two deep searches are already running. Wait for one to finish.")
+            if len(running) >= deep_permuter.max_searches():
+                raise NetworkError(f"{len(running)} deep {'search is' if len(running) == 1 else 'searches are'} "
+                                   "already running, as many as this computer runs at once. Wait for one to finish.")
             deep_permuter.validate(net, slug, name, minutes, variants)
             jid = jobs.start("deep-permuter", lambda log: deep_permuter.run(net, slug, name, minutes, variants, log))
             jobs.jobs[jid].update({"slug": slug, "function": name})

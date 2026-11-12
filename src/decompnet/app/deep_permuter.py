@@ -17,6 +17,17 @@ from ..project import compiler_for
 from . import permuter_local, workers
 from .permute import Permuter, State
 
+# Its own worker, not the automatic permuter's "permuter" (network.MACHINE_AGENTS): sharing that name, a claim the
+# automatic permuter took between this search's turns looked like the search's own, and ended it (#244).
+AGENT = "deep-permuter"
+
+
+def max_searches() -> int:
+    """How many deep searches the app runs at once. Each fills one of the shared background workers (workers.pool)
+    for its whole length, so one worker is always left for the automatic permuter and the drafts (a fixed 2 took
+    every worker of a machine with 2). With a single worker there's nothing to leave, and one search may still run."""
+    return max(1, min(2, workers.WORKERS - 1))
+
 
 class SearchLimit(Exception):
     pass
@@ -67,9 +78,8 @@ class Search(Permuter):
 
     def _hold(self, agent, fn):
         # A manual search must not exhaust the automatic permuter's turn allowance.
-        if not super()._hold(agent, fn, count_turn=False):
+        if not super()._hold(agent, fn, count_turn=False) or not self._renew(agent, fn):
             return False
-        self._renew(agent, fn)
         self.held = True
         return True
 
@@ -77,13 +87,16 @@ class Search(Permuter):
         self.held = False
         return super()._let_go(agent, fn)
 
-    def _renew(self, agent, fn):
-        expires = time.time() + max(0, self.deadline - time.monotonic()) + 120
+    def _renew(self, agent, fn) -> bool:
+        """The hold counted to the search's deadline; False when the claim isn't this search's any more.
+
+        Permuter._permute ends a turn when this is False, so it must say True when the renewal worked: returning
+        None made every project-mode turn end right after trial_run, untried (#244)."""
+        now = time.time()
+        expires = now + max(0, self.deadline - time.monotonic()) + 120
         with self.net.store.tx() as db:
-            changed = db.execute("UPDATE claims SET expires_at=? WHERE function_id=? AND agent_id=?",
-                                 (expires, fn["id"], agent.id)).rowcount
-        if not changed:
-            raise SearchLimit("Function is not held by this search")
+            return db.execute("UPDATE claims SET expires_at=? WHERE function_id=? AND agent_id=? AND expires_at>?",
+                              (expires, fn["id"], agent.id, now)).rowcount > 0
 
     def _random_seed(self, fn):
         self.turns += 1
@@ -156,8 +169,8 @@ class Search(Permuter):
         if self.tested >= self.limit:
             raise SearchLimit("Variant limit reached")
         self.tested += 1
-        if self.held:
-            self._renew(agent, fn)
+        if self.held and not self._renew(agent, fn):  # (another worker may have it by now: record nothing for it)
+            raise SearchLimit("The function is no longer held by this search")
         score = super()._score(agent, proj, fn, source, best, fork)
         if self.input_scope(proj, fn, fork) != scope:
             raise SearchLimit("Compiler, header or target changed; run the search again")
@@ -192,7 +205,7 @@ def _run(net, slug: str, name: str, minutes: int, max_variants: int, log):
     search = Search(net, minutes, max_variants, log)
     search.report()
     state = State()
-    agent, _ = net.local_agent("permuter")
+    agent, _ = net.local_agent(AGENT)
     reason = "Search ended"
     log("Deep permuter is testing this function with the project's compiler and byte comparison.")
     try:
@@ -222,8 +235,11 @@ def _run(net, slug: str, name: str, minutes: int, max_variants: int, log):
             before = state.variants
             search._permute(agent, proj, current, state)
             if state.variants == before:
-                if net.store.one("SELECT 1 FROM claims WHERE function_id=? AND agent_id!=?",
-                                 current["id"], agent.id):
+                # A turn that couldn't hold the function: another worker has it between this search's turns (the
+                # automatic permuter, an agent). Wait for it rather than end the search as if nothing was left. This
+                # search's own claim is let go at the end of each turn, so a claim still there is someone else's.
+                if net.store.one("SELECT 1 FROM claims WHERE function_id=? AND expires_at>?",
+                                 current["id"], time.time()):
                     log("Another worker holds this function; waiting for its claim to end.")
                     time.sleep(min(0.25, max(0, search.deadline - time.monotonic())))
                     continue
