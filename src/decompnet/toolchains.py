@@ -79,6 +79,7 @@ class Toolchain:
     local_files: list[str] = field(default_factory=list)
     local_places: list[str] = field(default_factory=list)
 
+    native_only: bool = False  # this pack cannot run through WSL or a Linux VM
     linux_vm: bool = False  # optional local macOS Linux runner for this pack
 
     def __post_init__(self):
@@ -99,11 +100,11 @@ class Toolchain:
     @property
     def via_wsl(self) -> bool:
         """A Linux-only toolchain on Windows: installed from its Linux build and run inside WSL 2 (see wsl.py)."""
-        return wsl.wanted() and not self.git and not self.parts_for() and bool(self.parts_for(LINUX))
+        return not self.native_only and wsl.wanted() and not self.git and not self.parts_for() and bool(self.parts_for(LINUX))
 
     @property
     def via_vm(self) -> bool:
-        return (self.linux_vm and not self.via_wsl and current_platform().startswith("macos-")
+        return (not self.native_only and self.linux_vm and not self.via_wsl and current_platform().startswith("macos-")
                 and linuxvm.wanted() and not self.parts_for() and bool(self.parts_for(LINUX)))
 
     def linux_parts(self) -> list[dict]:
@@ -568,6 +569,8 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
 
 def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | None, vm: bool | None) -> Path:
     tc = get(tid)
+    if tc.native_only and not tc.parts_for():
+        raise ToolchainError(f"{tc.name} needs its native host build. {tc.description}")
     vm = tc.via_vm if vm is None else vm
     linux = (tc.via_wsl or vm) if linux is None else linux
     location = {'vm': True} if vm else {}

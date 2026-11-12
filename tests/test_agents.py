@@ -887,6 +887,23 @@ def test_the_prompt_gives_the_compile_budget_the_guide_gives(tmp_path, monkeypat
     assert network.stall_budget_text() in m._prompt(s) and "8 claims" in m._prompt(s)
 
 
+def test_the_prompt_only_names_the_tools_the_projects_console_offers(tmp_path, monkeypatch):
+    """A GameCube helper was told to join functions and a DS one to report function ends though neither console can:
+    the prompt says a capability tool only where the console has it (the same facts as its tool list)."""
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    s = agents.Session("1", "claude", "claude-1", "game", "claude-1", {})
+    for platform, joins in (("gc", False), ("wii", False), ("nds", True), ("pc", True)):
+        monkeypatch.setattr(net, "overview", lambda slug, p=platform: {
+            "kind": "fork", "origin": "scratch", "title": "Game", "platform": p, "platform_name": p})
+        assert ("join_functions" in m._prompt(s)) is joins
+    for platform, structs in (("n64", True), ("gba", False), ("ps3", False)):
+        monkeypatch.setattr(net, "overview", lambda slug, p=platform: {
+            "kind": "rom", "title": "Game", "platform": p, "compiler": {"toolchain": "gcc-2.7.2-kmc"}})
+        text = m._prompt(s)
+        assert ("guess_struct" in text) is structs and "report_boundary" in text
+
+
 def test_a_project_started_from_scratch_isnt_called_a_public_decomp(tmp_path, monkeypatch):
     """Told a new DS project was "a public matching-decompilation project", a model spent its first 7 minutes
     looking for the project's conventions in config/ and build.ninja; on an N64 game one went to fetch
@@ -1143,6 +1160,25 @@ def test_the_tests_never_run_an_agent_to_find_it(monkeypatch):
         raise AssertionError(f"ran {args[0]}")
     monkeypatch.setattr(agents.subprocess, "run", never)
     assert {row["id"] for row in agents.detect()} == {a.id for a in kinds.AGENTS}
+
+
+def test_a_helper_stops_when_all_that_is_open_is_what_it_said_no_c_makes(tmp_path, monkeypatch):
+    """The claim order never hands an agent back a function it said no C makes, so with only those open a session
+    can only find nothing to do: the helper stops at once and says what the user can do, where its sessions failed
+    one after another into a pause. Another helper, which hasn't said so, still works."""
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    m.prompt = lambda s: "task"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET meta=? WHERE name='f0'",
+                   (json.dumps({"not_c": {"api-m-1": {"model": "m", "why": "hand-written", "t": 0}}}),))
+    s = m._record("game", "api", "api-m-1", "box #1", {"base_url": "http://mock/v1", "model": "m"})
+    s.stop = Quick()
+    m._run(s)
+    assert s.state == "stopped" and s.stopped_by == agents.BY_ITSELF and s.runs == 0
+    assert "nothing left it can do: the 1 open function is one it found no C makes" in s.why
+    assert m._ruled_out("game", "api-m-2") == 0  # (another helper's sessions go on)
 
 
 def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monkeypatch):

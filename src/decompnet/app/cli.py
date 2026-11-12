@@ -165,6 +165,13 @@ def run(args) -> int:
     internal.mkdir(parents=True, exist_ok=True)
     log = file_log(internal / "logs" / "decomp.log")  # from the first line on: whatever stops the app is in it
     log.info("%s %s starting (%s)", edition.NAME, __import__("decompnet").__version__, sys.executable)
+    if sys.platform == "win32" and not os.environ.get("DECOMP_HOME"):  # a test or experiment leaves the user's alone
+        from .launcher import update_windows_command
+        try:
+            if updated := update_windows_command():
+                log.info("updated the old decomp command: %s", updated)
+        except OSError:
+            log.exception("couldn't update the old decomp command")
     state_file = internal / "server.json"
     restarted = _restart_state()
     prev = None if restarted else replace_older(state_file)

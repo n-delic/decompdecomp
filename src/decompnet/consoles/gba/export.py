@@ -102,7 +102,7 @@ def _check_c(net, proj, row, thumb: bool, units, f: dict) -> str | None:
     if sym is not None and sym["st_info"]["bind"] == "STB_LOCAL":
         return "a static function: kept as assembly so its callers link to its Thumb symbol"
     linked = arm.link(compiled.obj, row["name"], arm.ArmTarget(row["name"], row["vram"], row["target"], thumb),
-                      net.symbols(proj["id"]), net.reader(proj))
+                      net.symbols(proj["id"]), net.reader(proj, row))
     if not linked.exact:
         return "no longer matches"
     own = {}

@@ -962,6 +962,7 @@ button.fn { font: inherit; color: inherit; padding: 0; text-align: left; }
 .parts { display: grid; }
 .parts li { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13.5px; flex-wrap: wrap; }
 .parts li + li { border-top: 1px solid var(--line-soft); }
+.parts li.removed { opacity: .55; }  /* the part a Remove took out, until its Revert or a redraw */
 .parts code { font-size: 12.5px; white-space: nowrap; }
 .part-state { font: 500 11.5px/1 var(--mono); padding: 4px 7px; border-radius: var(--r-sm); border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
 .part-state.confirmed { background: var(--match-bg); color: var(--match-ink); border-color: transparent; }
