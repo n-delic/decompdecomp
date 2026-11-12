@@ -117,6 +117,8 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Portable Windows app.** A release ZIP bundles a relocatable `decompdecomp.exe`, Python and app dependencies. It needs the Microsoft window prerequisites already installed. CI extracts the ZIP to a different path and checks the EXE, server import and isolated startup/Stop.
+
 - **64-bit Windows games (x64).** A 64-bit program (PE32+) imports like a 32-bit one and builds with Visual C++
   2017's 64-bit compiler, the packs' only one: a game built with 2015, 2019 and newer, or 2005 to 2013's 64-bit
   compilers builds with it, and the import says how near that is. Its functions come from the program, not
