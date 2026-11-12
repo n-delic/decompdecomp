@@ -25,14 +25,16 @@ import json
 import logging
 import queue
 import random
+import re
 import subprocess
 import threading
 import time
 from concurrent.futures import wait
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import consoles, scoring, seeds, toolchains
+from .. import consoles, permuter_gen, scoring, seeds, toolchains
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from ..permuter import mutate
@@ -54,6 +56,9 @@ REWRITE_MISSES = 200  # simple rewrites in a row that change nothing: none appli
 MAX_INSNS = 400  # bigger near misses are left to agents: one variant takes too long to judge
 IDLE_SECONDS = 180  # with no near misses, how long until the permuter looks again
 IDLE_LOOKS = 20  # looks in a row with nothing to do (an hour) and it's done until agents start again
+_NAME = re.compile(r"[A-Za-z_]\w*")
+_CXX = re.compile(r"::|\btemplate\s*<|\b(?:class|operator|static_cast|reinterpret_cast|this)\b")
+_COMMENT_OR_STRING = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.S)
 HOLD_SPARE_SECONDS = 120  # a turn's hold on a function lasts this much longer than the turn, in case it runs over
 _EOF = object()
 # decomp-permuter's weights per compiler (its default_weights.toml), by the start of a toolchain's id
@@ -71,6 +76,22 @@ def weight_family(cfg: dict, vram: int | None, fork: bool) -> str:
 
 def available() -> bool:
     return toolchains.installed(TOOL) is not None
+
+
+def permuter_header(header: str, source: str) -> str:
+    """The part of `header` the function's C uses (seeds.HeaderIndex), which is all decomp-permuter has to read.
+    One construct pycparser can't read anywhere in the header stopped it on every function: an x86 game's headers
+    are C++ with MSVC's words, thousands of lines of them, where one function needs a few dozen declarations.
+    MSVC's words go first (permuter_gen.msvc_as_c): `struct __declspec(align(16)) CVec4` was a struct named
+    `__declspec` to the reader, so the vector type every near miss used was left out."""
+    index = seeds.HeaderIndex(permuter_gen.msvc_as_c(header))
+    return "\n".join(d.text for d in index.used(_NAME.findall(source)))
+
+
+def is_cxx(source: str) -> bool:
+    """A function written in C++: a method or a scoped name, a template, a class, an operator, a C++ cast, `this`;
+    in its code, not in a comment or a string (`/* this adds one */` is C's)."""
+    return bool(_CXX.search(_COMMENT_OR_STRING.sub(" ", source)))
 
 
 def generator_argv() -> list[str]:
@@ -244,6 +265,13 @@ class Permuter:
             db.execute("UPDATE functions SET permuted = permuted + 1 WHERE id=?", (fn["id"],))
         return True
 
+    def _renew(self, agent, fn) -> bool:
+        """The turn's hold counted from now; False when it's no longer this turn's."""
+        now = time.time()
+        with self.net.store.tx() as db:
+            return db.execute("UPDATE claims SET expires_at=? WHERE function_id=? AND agent_id=? AND expires_at>?",
+                              (now + SECONDS + HOLD_SPARE_SECONDS, fn["id"], agent.id, now)).rowcount > 0
+
     def _let_go(self, agent, fn) -> None:
         with self.net.store.tx() as db:
             db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
@@ -256,12 +284,22 @@ class Permuter:
         fork = self.net.fork_slug(proj["slug"])
         rng = random.Random(f"{fn['id']}-{fn['permuted']}")
         gen = None
+        held = ExitStack()
         try:
+            if fork:  # its unit is held for the turn and built once at its end, not after every variant (trial_run)
+                held.enter_context(self.net.forks.trial_run(proj, fn["unit"]))
+                # (waiting for another turn on the unit can take most of the hold: it's counted from here, and a hold
+                # that ran out meanwhile, the function an agent's now, ends the turn)
+                if not self._renew(agent, fn):
+                    return
             if available():
-                # (as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole header)
-                header = seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
-                                      self.net._context(proj["id"], fn["unit"])["header"])
+                # (a C function's as m2c reads it: what's only for C++ made pycparser refuse a PC game's whole
+                # header; a C++ function's with its C++ branch, where its classes are)
+                header = permuter_header(seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
+                                                      self.net._context(proj["id"], fn["unit"])["header"],
+                                                      cxx=is_cxx(fn["best_source"])), fn["best_source"])
                 family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork))
+                name = self.net.forks.permuter_name(fork, fn["name"], fn["best_source"]) if fork else fn["name"]
                 try:
                     gen = Generator()
                 except OSError as e:  # its environment is broken: the simple rewrites still work
@@ -270,6 +308,7 @@ class Permuter:
             best = cur = fn["best_score"]
             deadline = time.monotonic() + SECONDS
             batches = misses = 0
+            refused, taken = None, 0  # the last refusal of a variant (NetworkError), variants the project took
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
                 if gen is not None:
                     # a batch of decomp-permuter's variants, of the C the turn started from and of the best so far in
@@ -277,7 +316,7 @@ class Permuter:
                     # the demo ROM (at 45); taking turns, every one matched within 12 s
                     base = best_src if batches % 2 else start_src
                     batches += 1
-                    batch = gen.batch({"header": header, "source": base, "function": fn["name"], "family": family,
+                    batch = gen.batch({"header": header, "source": base, "function": name, "family": family,
                                        "seed": rng.randrange(MAX_SEED), "count": BATCH})
                     if batch is None:  # C it can't read: the simple rewrites can still try
                         gen.close()
@@ -295,7 +334,16 @@ class Permuter:
                     if cand is None or time.monotonic() >= deadline or st.stop.is_set():
                         break
                     st.add(variants=1)
-                    score = self._score(agent, proj, fn, cand, best, fork)
+                    try:
+                        score = self._score(agent, proj, fn, cand, best, fork)
+                    except NetworkError as e:
+                        # A variant the project won't take: decomp-permuter's inlining writes a helper function
+                        # beside the function, which compile_and_diff refuses in a fork. It's skipped like one that
+                        # doesn't compile; the refusal used to end the function's permuting for good (_turn) within
+                        # seconds of its first turn: 2 of 3 of an Xbox game's near misses
+                        refused = e
+                        continue
+                    taken += 1
                     if score is None:
                         continue
                     if score < best:
@@ -307,11 +355,16 @@ class Permuter:
                             break
                     if score <= cur or rng.random() < 0.02:  # mostly downhill, now and then sideways off a plateau
                         cur, cur_src = score, cand
+            if refused is not None and not taken:  # every variant refused: it's the C the turn started from
+                raise refused
         finally:
-            if gen is not None:
-                gen.close()
-            st.holding(fn["name"], False)
-            self._let_go(agent, fn)
+            try:
+                if gen is not None:
+                    gen.close()
+                held.close()  # (the unit built again as its file is)
+            finally:  # (that build can fail: the function is let go all the same)
+                st.holding(fn["name"], False)
+                self._let_go(agent, fn)
 
     def _score(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
         """A variant's score; recorded (as the function's best attempt, or its match) only when it beats `best`."""

@@ -8,12 +8,13 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
 from decompnet import agents as kinds
 from decompnet import network, scoring
-from decompnet.agents import antigravity, opencode, zcode
+from decompnet.agents import antigravity, ohmy, opencode, zcode
 from decompnet.app import agents
 from decompnet.app.engine import RomNetwork
 
@@ -196,6 +197,190 @@ def test_an_over_long_zcode_prompt_pauses_without_retrying(tmp_path, monkeypatch
     assert any("paused:" in f["text"] and "too long for zcode" in f["text"] for f in s.feed)
 
 
+def test_omp_stream_json_is_read():
+    """omp 18's --mode json: a message's text, thinking and usage come with its message_end, tool calls with
+    tool_execution_start (omp names MCP tools mcp__decomp_claim_function), a failed tool as an error item, and the
+    end of the session once it went through."""
+    state: dict = {}
+    usage = {"input": 2380, "output": 92, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 2472,
+             "cost": {"input": 0.000357, "output": 5.52e-05, "cacheRead": 0, "cacheWrite": 0, "total": 0.0004122}}
+    lines = [
+        {"type": "session", "version": 3, "id": "s", "cwd": "/w"},
+        {"type": "agent_start"},
+        {"type": "turn_start"},
+        {"type": "message_start", "message": {"role": "user", "content": [{"type": "text", "text": "go"}]}},
+        {"type": "message_end", "message": {"role": "user", "content": [{"type": "text", "text": "go"}]}},
+        {"type": "message_start", "message": {"role": "assistant", "content": [{"type": "text", "text": "I"}]}},
+        {"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "I'll claim it."}},
+        {"type": "message_end", "message": {"role": "assistant", "stopReason": "toolUse", "usage": usage,
+                                            "content": [{"type": "text", "text": "Claiming the next one."},
+                                                        {"type": "toolCall", "name": "mcp__decomp_claim_function",
+                                                         "arguments": {"count": 4}}]}},
+        {"type": "tool_execution_start", "toolName": "mcp__decomp_claim_function",
+         "args": {"strategy": "easiest", "count": 4}},
+        {"type": "tool_execution_end", "toolName": "mcp__decomp_claim_function", "isError": True,
+         "result": {"content": [{"type": "text", "text": "Error: the tool exploded"}], "isError": True}},
+        {"type": "message_start", "message": {"role": "assistant", "content": []}},
+        {"type": "message_end", "message": {"role": "assistant", "stopReason": "stop", "usage": usage,
+                                            "content": [{"type": "thinking", "thinking": "The tool failed.",
+                                                         "thinkingSignature": "reasoning_content"},
+                                                        {"type": "text", "text": "It failed."}]}},
+        {"type": "agent_end", "isTerminal": True},
+    ]
+    out = [item for line in lines for item in kinds.get("omp").parse_line(json.dumps(line), state)]
+    spent = json.dumps({"usd": 0.0004122, "input": 2380, "output": 92, "turns": 1})
+    assert out == [("text", "Claiming the next one."), ("usage", spent),
+                   ("tool", "claim_function(easiest, 4)"), ("error", "Error: the tool exploded"),
+                   ("think", "The tool failed."), ("text", "It failed."), ("usage", spent),
+                   ("info", "session finished")]
+    # every one of omp's own error words: the message, then its stack and the lines of its bundle
+    assert kinds.get("omp").clean_stderr("error: No API key found for openai.") == \
+        "error: No API key found for openai."
+    assert kinds.get("omp").clean_stderr("16480 | ` + \"Then use /model\"") == ""
+    assert kinds.get("omp").clean_stderr("      at #$n (B:/~BUN/root/chunks/cli.js:16485:15)") == ""
+    assert kinds.get("omp").clean_stderr("Use /login, set an API key environment variable") == \
+        "Use /login, set an API key environment variable"
+
+
+def test_omp_a_failed_turn_is_an_error_and_not_a_finished_session():
+    state: dict = {}
+    line = json.dumps({"type": "message_end", "message": {
+        "role": "assistant", "stopReason": "error", "content": [],
+        "errorStatus": 401, "errorMessage": "401 Incorrect API key provided: sk-x"}})
+    out = kinds.get("omp").parse_line(line, state)
+    assert [k for k, _ in out] == ["error"] and "Incorrect API key" in out[0][1]
+    assert kinds.get("omp").parse_line(json.dumps({"type": "agent_end"}), state) == []
+
+
+def test_omp_sessions_read_only_through_decomp_and_write_no_secret_to_argv(tmp_path, monkeypatch):
+    """omp keeps its sign-in and its own mcp.json in one folder, so the session leaves the user's sign-in alone and
+    switches their own MCP servers off in its settings instead: the folder's .mcp.json names only the app's server,
+    with the token in the file (never on the command line, where every process can read it)."""
+    m = _manager(tmp_path, monkeypatch, "omp")
+    s = agents.Session("omp-1", "omp", "o", "demo", "omp-1",
+                       {"model": "opencode-go/deepseek-v4.1-flash#high"})
+    work = tmp_path / "omp"
+    work.mkdir()
+    cmd, env, stdin = m._command(s, "tok", work)
+    assert stdin == m.prompt(s) and not any("line one" in arg for arg in cmd)
+    assert cmd[:3] == [cmd[0], "-p", "--mode"] and cmd[cmd.index("--mode") + 1] == "json"
+    for flag in ("--no-session", "--no-extensions", "--no-skills", "--no-rules", "--no-context-files", "--no-lsp",
+                 "--no-tools", "--no-title"):
+        assert flag in cmd, flag
+    assert cmd[cmd.index("--model") + 1] == "opencode-go/deepseek-v4.1-flash"
+    assert cmd[cmd.index("--thinking") + 1] == "high"
+    assert not any("tok" in arg for arg in cmd)
+    settings = (work / ohmy.SETTINGS_FILE).read_text(encoding="utf-8")
+    assert "enabledProviders: []" in settings and "- native" in settings       # the user's own MCP servers: off
+    assert "enableProjectConfig: true" in settings                            # this folder's .mcp.json: on
+    assert "approvalMode: yolo" in settings and "backend: \"off\"" in settings  # no prompts, no memory
+    servers = json.loads((work / ohmy.MCP_FILE).read_text(encoding="utf-8"))["mcpServers"]
+    assert list(servers) == [ohmy.MCP_SERVER]
+    assert servers[ohmy.MCP_SERVER] == {"type": "http", "url": "http://127.0.0.1:6464/mcp",
+                                        "headers": {"Authorization": "Bearer tok"}}
+    assert env[ohmy.READY_ENV] == "1"  # a session that can't reach the app fails before its first turn
+
+
+def test_omp_takes_its_own_thinking_suffix_off_the_model(tmp_path, monkeypatch):
+    """omp's config default carries a thinking suffix ("provider/model:max"), and the launcher's effort comes as
+    "#high": either becomes --thinking, and the model stays the bare selector (so a helper's name has no suffix)."""
+    m = _manager(tmp_path, monkeypatch, "omp")
+    for model, name, effort in (("zai/glm-5.3:max", "zai/glm-5.3", "max"),
+                                ("zai/glm-5.3#low", "zai/glm-5.3", "low"),
+                                ("zai/glm-5.3:max#low", "zai/glm-5.3", "low"),
+                                ("opencode-go/deepseek-v4.1-flash", "opencode-go/deepseek-v4.1-flash", "")):
+        cmd, _, _ = m._command(agents.Session("omp-1", "omp", "o", "demo", "omp-1", {"model": model}), "t", tmp_path)
+        assert cmd[cmd.index("--model") + 1] == name, model
+        assert ("--thinking" in cmd) == bool(effort)
+        if effort:
+            assert cmd[cmd.index("--thinking") + 1] == effort
+
+
+def test_omp_models_come_from_its_json_catalog():
+    line = json.dumps({"models": [
+        {"provider": "zai", "kind": "chat", "selector": "zai/glm-5.3", "name": "GLM 5.3"},
+        {"provider": "zai", "kind": "chat", "selector": "zai/glm-5.3-flash", "name": "GLM 5.3 Flash"},
+        {"provider": "web", "kind": "search", "selector": "web/duckduckgo", "name": "DuckDuckGo"},
+        {"provider": "opencode-go", "kind": "chat", "selector": "opencode-go/deepseek-v4.1-flash",
+         "name": "DeepSeek V4.1 Flash"},
+        {"provider": "zai", "kind": "chat", "selector": "zai/glm-5.4", "name": "GLM 5.4"}]})
+    # one model per provider per round: `omp models` lists a provider's whole catalog in turn, and the launcher keeps
+    # only the first 200, which were all one provider's (nothing else could be picked)
+    assert ohmy.OMP.read_models([line]) == [
+        {"id": "zai/glm-5.3", "name": "GLM 5.3", "note": "zai"},
+        {"id": "opencode-go/deepseek-v4.1-flash", "name": "DeepSeek V4.1 Flash", "note": "opencode-go"},
+        {"id": "zai/glm-5.3-flash", "name": "GLM 5.3 Flash", "note": "zai"},
+        {"id": "zai/glm-5.4", "name": "GLM 5.4", "note": "zai"}]
+    assert ohmy.OMP.read_models(["not json"]) == [] and ohmy.OMP.read_models([]) == []
+
+
+def test_omp_default_model_is_the_one_in_its_own_settings(tmp_path, monkeypatch):
+    agent_home = tmp_path / "agent"
+    agent_home.mkdir()
+    (agent_home / "config.yml").write_text(
+        "theme:\n  dark: titanium\nmodelRoles:\n  smol: zai/glm-5.3-flash:auto\n"
+        "  default: opencode-go/deepseek-v4.1-flash:max\nmodelTags: {}\n", encoding="utf-8")
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(agent_home))
+    assert ohmy.agent_dir() == agent_home
+    assert ohmy.OMP.config_model() == "opencode-go/deepseek-v4.1-flash:max"
+    (agent_home / "config.yml").write_text("modelRoles:\n  smol: zai/glm-5.3-flash\n", encoding="utf-8")
+    assert ohmy.OMP.config_model() is None
+    # a one-line flow mapping and a block opened by a comment are the same setting
+    (agent_home / "config.yml").write_text("modelRoles: {smol: zai/glm-5.3, default: zai/glm-5.4:high}\n")
+    assert ohmy.OMP.config_model() == "zai/glm-5.4:high"
+    (agent_home / "config.yml").write_text("modelRoles:  # who does what\n  default: 'zai/glm-5.4'  # quoted\n")
+    assert ohmy.OMP.config_model() == "zai/glm-5.4"
+    # omp reads config.yml, or config.yaml when there is no config.yml: a stale config.yaml never wins
+    (agent_home / "config.yml").write_text("modelRoles:\n  smol: zai/glm-5.3\n", encoding="utf-8")
+    (agent_home / "config.yaml").write_text("modelRoles:\n  default: stale/model\n", encoding="utf-8")
+    assert ohmy.OMP.config_model() is None
+    (agent_home / "config.yml").unlink()
+    assert ohmy.OMP.config_model() == "stale/model"
+
+
+def test_omp_settings_folder_is_the_one_omp_resolves(tmp_path, monkeypatch):
+    """omp joins PI_CONFIG_DIR to the home folder (even an absolute one), takes a named profile before
+    PI_CODING_AGENT_DIR, and treats an empty or `default` OMP_PROFILE as the default profile."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(ohmy.Path, "home", classmethod(lambda cls: tmp_path))
+    for name in ("PI_CODING_AGENT_DIR", "PI_CONFIG_DIR", "OMP_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    assert ohmy.agent_dir() == tmp_path / ".omp" / "agent"
+    monkeypatch.setenv("PI_CONFIG_DIR", ".omp2")
+    assert ohmy.agent_dir() == tmp_path / ".omp2" / "agent"
+    monkeypatch.setenv("PI_CONFIG_DIR", str(tmp_path / "abs"))
+    # omp glues PI_CONFIG_DIR onto the home folder as text, so an absolute one nests instead of replacing it
+    nested = Path(str(tmp_path) + os.sep + str(tmp_path / "abs")) / "agent"
+    assert ohmy.agent_dir() == nested and ohmy.agent_dir() != (tmp_path / "abs" / "agent")
+    monkeypatch.delenv("PI_CONFIG_DIR")
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "own"))
+    for profile in ("", "default"):
+        monkeypatch.setenv("OMP_PROFILE", profile)
+        assert ohmy.agent_dir() == tmp_path / "own"  # the default profile still uses PI_CODING_AGENT_DIR
+    monkeypatch.setenv("OMP_PROFILE", "work")
+    assert ohmy.agent_dir() == tmp_path / ".omp" / "profiles" / "work" / "agent"  # a profile ignores it
+
+
+@pytest.mark.parametrize("channel", ["stderr", "stdout"])
+def test_an_omp_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch, channel):
+    """omp says a lack of sign-in on both channels, and both must stop the helper at its first failure instead of
+    retrying it five times: `No default model selected. Use /login, ...` on stderr when nobody signed in, and a
+    failed request's `401 Incorrect API key provided: ...` as the `errorMessage` of a stdout `message_end`."""
+    manager = agents.Manager(RomNetwork(tmp_path / "app.db", tmp_path), tmp_path, "http://127.0.0.1:9/mcp")
+    if channel == "stderr":
+        code = "import sys; print('No default model selected. Use /login, set an API key environment variable'," \
+               " file=sys.stderr); raise SystemExit(1)"
+    else:
+        event = json.dumps({"type": "message_end", "message": {
+            "role": "assistant", "content": [], "stopReason": "error", "errorStatus": 401,
+            "errorMessage": "401 Incorrect API key provided: sk-x"}})
+        code = f"import sys; print({event!r}); raise SystemExit(1)"
+    monkeypatch.setattr(manager, "_command", lambda s, token, workdir: ([sys.executable, "-c", code], dict(os.environ), ""))
+    s = agents.Session("omp-1", "omp", "Oh My Pi #1", "game", "omp-1", {})
+    assert manager._run_cli(s, "token", tmp_path) is False
+    assert s.signed_out and "isn't signed in" in s.error and "omp login" in s.error
+
+
 def test_opencode_2_starts_and_its_quota_error_says_so(tmp_path, monkeypatch):
     """opencode 2.0 takes `--log-level error` only, earlier versions `ERROR` only, and either stops the other at once
     (an `InvalidValue` stack trace, shown with "run opencode auth login" though the user was signed in). The command
@@ -231,11 +416,12 @@ def test_a_concurrency_limit_is_a_throttle_not_a_plan_limit():
 def _manager(tmp_path, monkeypatch, kind):
     (tmp_path / "bin").mkdir(exist_ok=True)
     exe = tmp_path / "bin" / {"claude": "claude", "codex": "codex", "antigravity": "agy", "opencode": "opencode",
-                              "zcode": "zcode"}[kind]
+                              "zcode": "zcode", "omp": "omp"}[kind]
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)
     monkeypatch.setattr(agents, "_which", lambda cmd: str(exe))
     m = agents.Manager.__new__(agents.Manager)
+    m.options_now = lambda kind, options: options
     m.mcp_url, m.home = "http://127.0.0.1:6464/mcp", tmp_path
     m.prompt = lambda s: "line one\nline two with \"quotes\" & <ampersands>"
     return m
@@ -245,7 +431,7 @@ def test_prompts_go_in_on_stdin_never_the_command_line(tmp_path, monkeypatch):
     """On Windows, npm installs agents as .cmd scripts: cmd.exe cuts a multi-line argument at its first line break
     and caps the command line at 8191 characters. zcode has no stdin prompt: its prompt is a file, checked in
     test_zcode_prompt_reaches_it_by_file_never_as_argv."""
-    for kind in ("claude", "codex", "antigravity", "opencode"):
+    for kind in ("claude", "codex", "antigravity", "opencode", "omp"):
         m = _manager(tmp_path, monkeypatch, kind)
         s = agents.Session(f"{kind}-1", kind, kind, "demo", f"{kind}-1", {"model": "some-model"})
         work = tmp_path / kind
@@ -701,6 +887,23 @@ def test_the_prompt_gives_the_compile_budget_the_guide_gives(tmp_path, monkeypat
     assert network.stall_budget_text() in m._prompt(s) and "8 claims" in m._prompt(s)
 
 
+def test_the_prompt_only_names_the_tools_the_projects_console_offers(tmp_path, monkeypatch):
+    """A GameCube helper was told to join functions and a DS one to report function ends though neither console can:
+    the prompt says a capability tool only where the console has it (the same facts as its tool list)."""
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    s = agents.Session("1", "claude", "claude-1", "game", "claude-1", {})
+    for platform, joins in (("gc", False), ("wii", False), ("nds", True), ("pc", True)):
+        monkeypatch.setattr(net, "overview", lambda slug, p=platform: {
+            "kind": "fork", "origin": "scratch", "title": "Game", "platform": p, "platform_name": p})
+        assert ("join_functions" in m._prompt(s)) is joins
+    for platform, structs in (("n64", True), ("gba", False), ("ps3", False)):
+        monkeypatch.setattr(net, "overview", lambda slug, p=platform: {
+            "kind": "rom", "title": "Game", "platform": p, "compiler": {"toolchain": "gcc-2.7.2-kmc"}})
+        text = m._prompt(s)
+        assert ("guess_struct" in text) is structs and "report_boundary" in text
+
+
 def test_a_project_started_from_scratch_isnt_called_a_public_decomp(tmp_path, monkeypatch):
     """Told a new DS project was "a public matching-decompilation project", a model spent its first 7 minutes
     looking for the project's conventions in config/ and build.ninja; on an N64 game one went to fetch
@@ -957,6 +1160,25 @@ def test_the_tests_never_run_an_agent_to_find_it(monkeypatch):
         raise AssertionError(f"ran {args[0]}")
     monkeypatch.setattr(agents.subprocess, "run", never)
     assert {row["id"] for row in agents.detect()} == {a.id for a in kinds.AGENTS}
+
+
+def test_a_helper_stops_when_all_that_is_open_is_what_it_said_no_c_makes(tmp_path, monkeypatch):
+    """The claim order never hands an agent back a function it said no C makes, so with only those open a session
+    can only find nothing to do: the helper stops at once and says what the user can do, where its sessions failed
+    one after another into a pause. Another helper, which hasn't said so, still works."""
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    m.prompt = lambda s: "task"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET meta=? WHERE name='f0'",
+                   (json.dumps({"not_c": {"api-m-1": {"model": "m", "why": "hand-written", "t": 0}}}),))
+    s = m._record("game", "api", "api-m-1", "box #1", {"base_url": "http://mock/v1", "model": "m"})
+    s.stop = Quick()
+    m._run(s)
+    assert s.state == "stopped" and s.stopped_by == agents.BY_ITSELF and s.runs == 0
+    assert "nothing left it can do: the 1 open function is one it found no C makes" in s.why
+    assert m._ruled_out("game", "api-m-2") == 0  # (another helper's sessions go on)
 
 
 def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monkeypatch):

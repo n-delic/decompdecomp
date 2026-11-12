@@ -408,7 +408,10 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
     def claim(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
         fn = net.claim_row(agent, room.slug, d.get("function") or None, str(d.get("strategy") or "easiest"))
-        return {"function": fn["name"] if fn else None, "vram": fn["vram"] if fn else None}
+        if fn is None:  # what's left and why, as the host's own agents hear it (functions this agent said no C makes,
+            # its own releases; the user told when only verdicts are left): a guest got a bare "nothing left"
+            return {"function": None, "vram": None, "why": net.nothing_to_claim(agent, net._project(room.slug))}
+        return {"function": fn["name"], "vram": fn["vram"]}
 
     def attempt(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
@@ -708,8 +711,11 @@ class Link:
 
     # -- actions, called by RomNetwork for a linked project
 
-    def claim(self, agent: Agent, function: str | None, strategy: str) -> str | None:
-        return self._req("POST", "/collab/claim", {"agent": agent.name, "function": function, "strategy": strategy})["function"]
+    def claim(self, agent: Agent, function: str | None, strategy: str) -> tuple[str | None, str]:
+        """(the function the host handed out, or None; and then why: what the host says is left, "" from a host
+        that doesn't say)."""
+        said = self._req("POST", "/collab/claim", {"agent": agent.name, "function": function, "strategy": strategy})
+        return said["function"], ("" if said["function"] else str(said.get("why") or ""))
 
     def attempt(self, agent: Agent, function: str, source: str) -> dict:
         return self._req("POST", "/collab/attempt", {"agent": agent.name, "function": function, "source": source})

@@ -95,6 +95,7 @@ through one file: the connector, `consoles/__init__.py`.
 | `consoles/ps3/` | PlayStation 3 | ROM | `elf.py` the decrypted program, its descriptor and `.opd` · `split.py` the program's function list, calls and prologues · `imports.py`, `nids.py` imports and kernel calls named · `symbols.py` its own symbols · `guides/` (the processor: `arch/ppc64.py`) |
 | `consoles/gba/` | Game Boy Advance | ROM | `header.py` the cartridge header · `split.py` luvdis and the candidate finder, its editing and joining · `candidates.py`, `luvdis_run.py` · `export.py`, `export_build.py` · `guides/` |
 | `consoles/gc_wii/` | GameCube, Wii | PROJECT | `scratch.py` a dtk-template project for the game · `guides/` |
+| `consoles/ps4/` | PlayStation 4 | PROJECT | `scratch.py` reads decrypted Orbis ELF segments and function maps; `project_template/` builds strict objdiff targets with public clang; `guides/` |
 | `consoles/pc/` | Windows PC | PROJECT | `scratch.py` Ghidra finds the functions, decompdecomp cuts them out of the .exe · `project_template/` · `guides/` |
 | `consoles/xbox/` | Xbox | PROJECT | `scratch.py` the XBE (or disc) made a Windows program, then the PC path · kernel import names · `guides/` |
 | `consoles/nds/` | Nintendo DS | PROJECT | `scratch.py` a ds-decomp project for the ROM, a CodeWarrior version per source file · `project_template/` · `guides/` |
@@ -318,6 +319,7 @@ connector, `agents/__init__.py`.
 | `agents/cursor.py` | Cursor Agent | Headless stream JSON with private settings and MCP allowlist |
 | `agents/kimi.py` | Kimi Code | npm CLI, stdin prompt bridge and private settings |
 | `agents/zcode.py` | ZCode CLI | `zcode --output-format stream-json`, its own settings file for the app's MCP server, the prompt in an attached file |
+| `agents/ohmy.py` | Oh My Pi | `omp -p --mode json`, a settings overlay that keeps the user's own MCP servers out and the session's `.mcp.json` in |
 | `agents/api.py` | API helper | No program: the app's own loop for any OpenAI-compatible API, and the saved endpoints' presets |
 
 Around them:
@@ -331,11 +333,11 @@ Around them:
 
 An agent is one of two sorts:
 
-- **A program** the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, Cursor Agent, Kimi Code, ZCode CLI). The app
-  runs it headless, a session at a time, in a private folder. It connects only to the app's own MCP server, with a
-  token of its own, and may use only decompdecomp's tools. The prompt goes in on stdin, or in a file the agent is
-  given by path when its CLI has no stdin prompt (zcode's `--attach`), never as text on the command line; what it
-  prints is read into the feed.
+- **A program** the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, Cursor Agent, Kimi
+  Code, ZCode CLI, Oh My Pi). The app runs it headless, a session at a time, in a private folder. It connects only to
+  the app's own MCP server, with a token of its own, and may use only decompdecomp's tools. The prompt goes in on
+  stdin, or in a file the agent is given by path when its CLI has no stdin prompt (zcode's `--attach`), never as text
+  on the command line; what it prints is read into the feed.
 - **A loop in the app** (the API helper). It talks to a model's API itself and calls the tools directly.
 
 ### Improving an agent
