@@ -373,7 +373,11 @@
       <section class="panel" id="compilerPanel" aria-labelledby="compilerH">
         <header class="panel-head"><h2 id="compilerH">Compiler</h2><span class="muted small" id="compilerState"></span></header>
         <div class="pad">
-          <p class="answer" id="compilerAnswer"></p>
+          <div class="compiler-view-controls" id="compilerViewControls" hidden>
+            <label class="field">Group by <select id="compilerGroup"><option value="settings">Compiler + arguments</option><option value="family">Compiler family</option><option value="range">Address ranges</option></select></label>
+            <label class="field">Sort <select id="compilerSort"><option value="count">Most ranges</option><option value="status">Verification status</option><option value="address">Address ↑</option><option value="address-desc">Address ↓</option><option value="compiler">Compiler name</option></select></label>
+          </div>
+          <div class="answer" id="compilerAnswer"></div>
           <div id="compilerParts"></div>
           <div id="compilerWaiting"></div>
           <label class="check" id="autoAdjustRow"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label>
@@ -555,6 +559,7 @@
 <script src="/assets/js/map.js"></script>
 <script src="/assets/js/agents.js"></script>
 <script src="/assets/js/function.js"></script>
+<script src="/assets/js/compiler-groups.js"></script>
 <script src="/assets/js/steering.js"></script>
 <script src="/assets/js/pages.js"></script>
 </body>

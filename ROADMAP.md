@@ -117,6 +117,10 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Browse compiler profiles.** Group applied ranges by compiler and arguments, compiler family, or address;
+  sort by range count, verification status, compiler name, or address. Expand profiles and the default settings to see function links,
+  argument lists and verification details. ROM profiles can be compared with the default, tested as a replacement,
+  or tried against saved unmatched C; changing settings rechecks affected matches before publishing.
 - **64-bit Windows games (x64).** A 64-bit program (PE32+) imports like a 32-bit one and builds with Visual C++
   2017's 64-bit compiler, the packs' only one: a game built with 2015, 2019 and newer, or 2005 to 2013's 64-bit
   compilers builds with it, and the import says how near that is. Its functions come from the program, not

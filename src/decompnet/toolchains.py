@@ -53,6 +53,7 @@ class Toolchain:
     license: str
     source: str
     description: str = ""
+    family: str = ""  # display grouping for related compiler builds
     kind: str = "compiler"  # compiler | runtime | tool
     platform: str = ""
     arch: str = ""
@@ -146,6 +147,26 @@ def _registry_data() -> dict:
 
 def registry() -> dict[str, Toolchain]:
     return {tid: Toolchain(id=tid, **spec) for tid, spec in _registry_data().items()}
+
+
+def compiler_family(tid: str) -> str:
+    """Backend family for display grouping; unknown custom tools keep their own identity."""
+    declared = _registry_data().get(tid, {}).get("family")
+    if declared:
+        return declared
+    prefix = tid.split("/", 1)[0].lower()
+    if prefix == "msvc":
+        return "msvc"
+    from . import kits
+    for kit in kits.KITS:
+        if prefix == kit.id and (family := getattr(kit, "compiler_family", None)):
+            return family
+    if prefix in ("gc", "wii", "ds"):
+        return "metrowerks"
+    for family in ("gcc", "ido", "sn64", "metrowerks", "msvc"):
+        if family in tid.split("-"):
+            return family
+    return tid
 
 
 def known(tid: str) -> bool:

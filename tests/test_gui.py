@@ -348,3 +348,9 @@ def test_a_ps4_drop_never_requests_codewarrior_and_explains_host_restrictions(gu
         assert drop["extras"] == ["game.functions.jsonl"]
     unsupported = gui["checks"]["ps4Drop"]["unsupported"]
     assert unsupported["disabled"] and not unsupported["consent"] and "WSL 2" in unsupported["note"]
+
+def test_compiler_profiles_group_sort_and_route_all_profile_actions():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_compiler_groups.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
