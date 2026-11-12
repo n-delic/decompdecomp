@@ -68,6 +68,8 @@ class PortKit:
     boot: int = 0  # bytes at the image's start that the console's boot reads, never the game: in no resource
     extract: object = None  # (asset map folder, image, output folder, log) -> the archive the extractor wrote
     resources: object = None  # archive -> {resource name: the bytes it holds}, for checking each against the image
+    boot_globals: object = None  # project config -> {address: (libultra name, C type, size, value)}: what the
+    # console's boot leaves in low memory, which a port defines with those values
 
 
 class Console:

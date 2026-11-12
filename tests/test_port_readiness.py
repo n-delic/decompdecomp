@@ -153,3 +153,10 @@ def test_the_kit_says_where_each_libultra_function_comes_from():
     assert {_sdk_group(n) for n in ("osSpTaskYielded", "__osLeoResume", "osRomBase", "__osPiAccessQueue")} == {"glue"}
     assert _sdk_group("osCreateThread") == "replaced"  # decompdecomp's glue for libultraship has threads
     assert _sdk_group("draw_hud") is None and "osCreateThread" not in LIBULTRASHIP
+
+
+def test_the_boot_values_follow_the_games_country():
+    from decompnet.consoles.n64.port import boot_globals
+    tv = lambda code: boot_globals({"rom": {"game_code": code}})[0x80000300][3]
+    assert (tv("NVLP"), tv("NSMJ"), tv("NSME"), tv("NABB"), tv("")) == (0, 1, 1, 2, 1)  # PAL, NTSC, NTSC, MPAL
+    assert boot_globals({})[0x80000318][1:] == ("uint32_t", 4, 0x400000)  # osMemSize: 4 MB, no Expansion Pak

@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import tempfile
 import time
 from pathlib import Path
 
+from .. import limits
 from . import pc_compile
 
 FOLDER = "port/src"
@@ -146,7 +148,9 @@ def build(net, proj, names, cc: list[str], log=print) -> dict:
             typed = [e for e in typed if e["name"] not in refused]
         text, _ = _typed(typed, declared, arrays)
         files[TYPED], files[RAW] = text, _raw(raw)
-    result = {"defines": sorted(want), "typed": len(typed), "raw": len(raw), "files": files}
+    fixed = _fixed(net, proj, names, cc, files, log)
+    result = {"defines": sorted(want | fixed), "typed": len(typed), "raw": len(raw), "fixed": len(fixed),
+              "files": files}
     with _store(net, proj).tx() as db:
         db.execute("INSERT OR REPLACE INTO port_zeroed(project_id, defines, typed, raw, checked_at) VALUES(?,?,?,?,?)",
                    (proj["id"], json.dumps(result["defines"]), len(typed), len(raw), time.time()))
@@ -157,6 +161,36 @@ def build(net, proj, names, cc: list[str], log=print) -> dict:
     log(f"Defined {len(want)} pieces of zeroed memory for the PC: {len(typed)} with their declared types, {len(raw)} "
         f"as zeroed bytes (in {FOLDER})")
     return result
+
+
+def _fixed(net, proj, names, cc: list[str], files: dict, log) -> set[str]:
+    """ROM offsets and the boot's low-memory values (port/fixed_symbols.py), written and assembled/compiled for the
+    PC to check them: the names they define."""
+    from .fixed_symbols import files as fixed_files
+    from .fixed_symbols import plan
+    offsets, boot = plan(net, proj, names)
+    made = fixed_files(offsets, boot)
+    files.update(made)
+    defined: set[str] = set()
+    with tempfile.TemporaryDirectory(prefix="pc-fixed-") as tmp:
+        for name, text in made.items():
+            source = Path(tmp) / name
+            source.write_text(text, encoding="utf-8")
+            obj = source.with_suffix(".o")
+            argv = [*cc, "-target", pc_compile.TARGET, "-c", "-o", str(obj), str(source)]
+            try:
+                done = subprocess.run(limits.capped(argv), cwd=tmp, env=pc_compile._environment(), capture_output=True,
+                                      text=True, timeout=pc_compile.TIMEOUT)
+            except subprocess.TimeoutExpired:
+                continue
+            found = pc_compile.symbols(obj) if done.returncode == 0 else None
+            if found is None:
+                log(f"{name} didn't build for the PC: {(done.stderr or done.stdout).strip()[-300:]}")
+                continue
+            defined |= set(found["defines"])
+    if offsets or boot:
+        log(f"Defined {len(offsets)} ROM offsets and {len(boot)} of the boot's low-memory values for the PC")
+    return defined & {e["name"] for e in [*offsets, *boot]}
 
 
 def defined(net, proj) -> list[str]:

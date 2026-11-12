@@ -16,7 +16,9 @@ extern s32 *gPlayer;
 extern u8 gBuf[];
 extern s32 D_80100040;
 extern Local gLocal;
-void update(void) { *gPlayer = gBuf[3] + D_80100040 + gLocal.b; }
+extern u8 D_100[];
+extern s32 D_80000300;
+void update(void) { *gPlayer = gBuf[3] + D_80100040 + gLocal.b + (s32)D_100 + D_80000300; }
 """
 
 
@@ -44,8 +46,9 @@ def test_zeroed_memory_is_defined_with_the_size_the_pc_needs(project, tmp_path):
         proj = net.project_row("game")
         link = pc_link.report(net, proj)
         made = zeroed.summary(net, proj)
-    assert "data" not in {g["kind"] for g in link["groups"]} and link["zeroed"] == 4, link
-    assert (made["symbols"], made["typed"], made["raw"]) == (4, 3, 1)
+    # zeroed memory, and a ROM offset (0x100, where the game reads from its cartridge) and the boot's TV type
+    assert "data" not in {g["kind"] for g in link["groups"]} and link["zeroed"] == 6, link
+    assert (made["symbols"], made["typed"], made["raw"]) == (6, 3, 1)  # and a ROM offset and a boot value
     typed = (root / "port/src/zeroed_data.c").read_text()
     raw = (root / "port/src/zeroed_data_raw.c").read_text()
     assert "__typeof__(gPlayer) gPlayer;" in typed and "extern s32 *gPlayer;" in typed  # its declaration, copied
@@ -67,3 +70,32 @@ def test_zeroed_memory_is_defined_with_the_size_the_pc_needs(project, tmp_path):
                             typed.split("\n", 1)[1])
         found = sizes(work / "obj/f0.o")
     assert (found["gPlayer"], found["gBuf"], found["D_80100040"]) == (8, 96, 4)
+
+
+def test_rom_offsets_and_boot_values_are_written_for_the_pc(project):  # noqa: F811
+    if not toolchains.installed(pc_compile.TOOL):
+        pytest.skip("The pinned Zig is not installed; never download it here.")
+    net, root = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=? WHERE name='update'", (UPDATE,))
+        pid = db.execute("SELECT id FROM projects WHERE slug='game'").fetchone()[0]
+        db.execute("INSERT INTO context_versions(project_id, version, header, message, created_at, unit) "
+                   "VALUES(?, 1, 'typedef int s32;\ntypedef unsigned char u8;\n', 'base types', 0, '')", (pid,))
+    pc_compile.check(net, "game", print)
+    asm = (root / "port/src/rom_offsets.S").read_text()
+    boot = (root / "port/src/boot_globals.c").read_text()
+    assert ".set SYM(D_100), 0x100" in asm and "#define SYM(x) _##x" in asm  # macOS's leading underscore
+    assert "int32_t D_80000300 = 0x1; /* 0x80000300: osTvType */" in boot  # NTSC: no game code says otherwise
+    # linked into a program on this computer, the ROM offset's address is the offset and the boot value is set
+    import shutil
+    import subprocess
+    cc = shutil.which("cc") or shutil.which("clang")
+    if cc is None:
+        return
+    main = root / "main.c"
+    main.write_text('#include <stdio.h>\n#include <stdint.h>\nextern unsigned char D_100[]; extern int32_t D_80000300;\n'
+                    'int main(void) { printf("%x %d", (unsigned)(uintptr_t)D_100, D_80000300); return 0; }\n')
+    program = root / "fixed"
+    subprocess.run([cc, "-o", str(program), str(main), str(root / "port/src/rom_offsets.S"),
+                    str(root / "port/src/boot_globals.c")], check=True, capture_output=True)
+    assert subprocess.run([str(program)], capture_output=True, text=True).stdout == "100 1"

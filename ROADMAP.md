@@ -966,6 +966,18 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### ROM offsets and the boot's values defined for an N64 port
+
+Two kinds of symbol a finished game's C reaches are neither code nor data: names the original linker gave
+positions in the cartridge (a finished N64 game passes `D_15DB10`, where its ZIP archive starts, to its DMA reads),
+and what the N64's boot leaves at 0x80000300 for libultra (TV type, ROM base, memory size, the buffer kept over a
+reset). Compile for PC now defines both (`port/fixed_symbols.py`, the N64 kit's `boot_globals`): ROM offsets as
+symbols at those addresses in an assembly file (`.set`, which links on macOS and Linux alike, checked by linking and
+running one), and the boot's values with libultra's types and the values the boot would leave (PAL, NTSC or MPAL
+from the game code's country, a cartridge, a cold boot, 4 MB). Both go in the project's `port/src`, and the link
+check counts them as defined. Left: the port's DMA glue reading those offsets from the user's ROM; symbols at a
+segment's end (memory the game fills itself).
+
 ### An N64 port keeps the game's threads
 
 libultraship's message queues never wait, because the ports built on it rewrite the game's threads into one main

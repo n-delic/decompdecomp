@@ -176,6 +176,10 @@ that never waits; a game that spins on a flag another thread sets would stop, an
 higher-priority thread had to wait. Which runtime a port uses (libultraship with this glue, or N64ModernRuntime with
 RT64) is to be the user's choice per game (ROADMAP.md, "A choice of runtime for a port").
 
+ROM offsets the game uses as numbers (where an archive starts in the cartridge) and the values the N64's boot leaves
+in low memory for libultra are defined by Compile for PC too (`port/fixed_symbols.py`): offsets as symbols at those
+addresses, boot values with what the boot would leave, the TV system from the game code's country.
+
 ### 4. Port fixes, an agent task judged twice
 
 Like **Polish matched code**, a task agents take from **Start agents**, offered once a game is at 100% and its
