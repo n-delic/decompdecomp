@@ -967,10 +967,18 @@ def _try_open(net, agent, proj, donor, a, b, source, score, how='') -> str:
     """match | miss | skip for the other release's C on an open function, recorded as a cross-game attempt."""
     twins = net.twins
     missed = twins._missed(b['id'], source, project_id=proj['id'])
-    if missed and twins._missed(b['id'], source + _THEIR_SETTINGS, project_id=proj['id']):
+    same = missed and _same_settings(net, proj, donor, a, b)
+    again = source + (_SAME_SETTINGS if same else _THEIR_SETTINGS)
+    if missed and twins._missed(b['id'], again, project_id=proj['id']):
         return 'skip'
     origin = f" in {donor['name']}, another release of this game{how}"
-    if missed:
+    theirs = None
+    if same:
+        # Its settings are the other release's already, and the remembered miss may be from before they were: the
+        # C gets one try with them. A try that went stale once left the other release's settings on two functions
+        # of an N64 game; the pass then had no other settings to try and skipped the plain try as missed.
+        outcome, why = twins._attempt_twin(agent, proj, a, b, source, origin=origin, similar=score < 1.0)
+    elif missed:
         # A miss another matcher remembers (twins, similar code) was built with this project's settings only: the
         # other release's settings still get their one try. Skipping it left six library functions of an N64
         # game open that matched with the other release's flags once nothing else had tried their C first.
@@ -989,8 +997,11 @@ def _try_open(net, agent, proj, donor, a, b, source, score, how='') -> str:
                        "outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)",
                        (proj['id'], b['id'], donor['id'], a['id'], outcome, why[:200], time.time()))
         if outcome == 'miss':
-            keys = () if theirs == 'skip' else (source + _THEIR_SETTINGS,)  # (unsure: tried again next pass)
-            for key in keys if missed else (source, *keys):
+            if missed:
+                keys = () if theirs == 'skip' else (again,)  # (unsure: tried again next pass)
+            else:
+                keys = (source,) if theirs == 'skip' else (source, source + _THEIR_SETTINGS)
+            for key in keys:
                 db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
                            "VALUES(?,?,?,?,?)", (b['id'], twins._miss_key(key), proj['id'], time.time(), why))
     return outcome
@@ -999,6 +1010,18 @@ def _try_open(net, agent, proj, donor, a, b, source, score, how='') -> str:
 # Added to a source's miss key once the other release's compiler settings were tried on it too. (Its first wording
 # also marked builds another job's settings change outdated as misses: those don't count.)
 _THEIR_SETTINGS = "\n/* with the other release's compiler settings, built to the end */"
+
+
+# Added instead when its settings were already the other release's, and its C was tried with them.
+_SAME_SETTINGS = "\n/* with the other release's compiler settings, already this function's */"
+
+
+def _same_settings(net, proj, donor, a, b) -> bool:
+    """Whether this function is built with the settings the other release builds its twin with."""
+    from ..project import compiler_for
+    theirs = compiler_for(net.cfg(donor), a['vram'], a)
+    mine = compiler_for(net.cfg(_row(net, proj['slug'])), b['vram'], b)
+    return (theirs['toolchain'], list(theirs['flags'])) == (mine['toolchain'], list(mine['flags']))
 
 
 def _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) -> str | None:

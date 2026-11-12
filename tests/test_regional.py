@@ -306,6 +306,21 @@ def test_a_try_that_never_finishes_is_not_remembered_as_a_miss(built, tmp_path, 
     assert regional.transfer(net, "other-release")["matched"] == 1  # the next pass tries their settings again
 
 
+def test_a_miss_from_before_its_settings_became_the_other_releases_gets_one_more_try(built, tmp_path, monkeypatch):  # noqa: F811
+    """A stale try left the other release's settings on a function; its remembered miss was from before. With no
+    other settings to try, the pass skipped it as missed and the C that matches with them was never built."""
+    from decompnet.app import regional
+
+    from .test_app_engine import CLAMP
+
+    net, slug, agent = _two_releases(tmp_path)
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    monkeypatch.setattr(regional, "_try_fitted", lambda *a, **k: None)
+    monkeypatch.setattr(net.twins, "_missed", lambda b_id, source, **k: not source.endswith("already this function's */"))
+    assert regional.transfer(net, "other-release")["matched"] == 1
+    assert net._function("func_800007D0", "other-release")["status"] == "matched"
+
+
 def test_a_compiler_this_computer_cannot_run_only_skips_its_function(built, tmp_path, monkeypatch):  # noqa: F811
     from decompnet.app import regional
     from decompnet.app.prepared_evidence import scoped_config
