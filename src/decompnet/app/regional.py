@@ -563,6 +563,63 @@ def defines(item: str) -> tuple[str, set[str]]:
     return 'decl', {pointer.group(1)} if pointer else set(words[-1:])
 
 
+_CONDITION = re.compile(r'#\s*(ifdef|ifndef|if|elif|else|endif)\b(.*)', re.S)
+
+
+def built_items(text: str) -> list[str]:
+    """header_items, without the ones in a conditional branch the game's own build leaves out. A header kept for a
+    port too says `#ifdef PORT typedef uintptr_t AddrWord; #else typedef s32 AddrWord; #endif`: both branches
+    define the name, and copying the first gave another release the PC's type, which the game's compiler can't
+    build. A macro counts as defined when the header defines it before; a condition this can't read keeps
+    every branch, as before."""
+    defined, out, stack = set(), [], []  # stack: [taken now, a branch was taken, readable]
+    for item in header_items(text):
+        m = _CONDITION.match(item) if item.startswith('#') else None
+        if m:
+            word, rest = m.group(1), m.group(2).strip()
+            if word in ('ifdef', 'ifndef', 'if'):
+                value = _condition(word, rest, defined)
+                stack.append([value is not False, bool(value), value is not None])
+            elif stack and word == 'elif':
+                value = _condition('if', rest, defined)
+                top = stack[-1]
+                top[2] = top[2] and value is not None
+                top[0] = (not top[1] and value is not False) if top[2] else True
+                top[1] = top[1] or bool(value)
+            elif stack and word == 'else':
+                top = stack[-1]
+                top[0] = not top[1] if top[2] else True
+            elif stack and word == 'endif':
+                stack.pop()
+            continue
+        if not all(level[0] for level in stack):
+            continue
+        name = re.match(r'#\s*define\s+([A-Za-z_]\w*)', item)
+        if name:
+            defined.add(name.group(1))
+        undefine = re.match(r'#\s*undef\s+([A-Za-z_]\w*)', item)
+        if undefine:
+            defined.discard(undefine.group(1))
+        out.append(item)
+    return out
+
+
+def _condition(word: str, rest: str, defined: set[str]) -> bool | None:
+    """Whether an #if/#ifdef/#ifndef is true for the game's build: True, False, or None when it can't be read."""
+    rest = _COMMENT.sub(' ', rest).strip()
+    if word in ('ifdef', 'ifndef'):
+        name = _IDENT.match(rest)
+        if not name:
+            return None
+        return (name.group(0) in defined) == (word == 'ifdef')
+    m = re.fullmatch(r'(!)?\s*defined\s*\(?\s*([A-Za-z_]\w*)\s*\)?', rest)
+    if m:
+        return (m.group(2) in defined) != bool(m.group(1))
+    if re.fullmatch(r'\d+', rest):
+        return int(rest) != 0
+    return None
+
+
 def missing_items(donor_header: str, header: str, rename, known) -> list[str]:
     """The donor header's types and declarations this header lacks, in the donor's order, written with this
     project's names (`rename(name)`: this project's, or None). A declaration comes only for a name this project
@@ -571,7 +628,7 @@ def missing_items(donor_header: str, header: str, rename, known) -> list[str]:
     header already defines."""
     have = set().union(*(defines(i)[1] for i in header_items(header))) if header.strip() else set()
     out = []
-    for item in header_items(donor_header):
+    for item in built_items(donor_header):
         kind, names = defines(item)
         if not names:
             continue
@@ -909,21 +966,34 @@ def _their_declarations(net, donor, a, own, header, source) -> str:
 def _try_open(net, agent, proj, donor, a, b, source, score, how='') -> str:
     """match | miss | skip for the other release's C on an open function, recorded as a cross-game attempt."""
     twins = net.twins
-    if twins._missed(b['id'], source, project_id=proj['id']):
+    missed = twins._missed(b['id'], source, project_id=proj['id'])
+    if missed and twins._missed(b['id'], source + _THEIR_SETTINGS, project_id=proj['id']):
         return 'skip'
     origin = f" in {donor['name']}, another release of this game{how}"
-    outcome, why = twins._attempt_twin(agent, proj, a, b, source, origin=origin, similar=score < 1.0)
-    if outcome == 'miss':
-        outcome = _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) or outcome
+    if missed:
+        # A miss another matcher remembers (twins, similar code) was built with this project's settings only: the
+        # other release's settings still get their one try. Skipping it left six library functions of an N64
+        # game open that matched with the other release's flags once nothing else had tried their C first.
+        outcome = _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) or 'miss'
+        why = "with the other release's compiler settings"
+    else:
+        outcome, why = twins._attempt_twin(agent, proj, a, b, source, origin=origin, similar=score < 1.0)
+        if outcome == 'miss':
+            outcome = _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) or outcome
     with net.project_store(proj['id']).tx() as db:
         if outcome != 'skip':
             db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,source_function_id,"
                        "outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)",
                        (proj['id'], b['id'], donor['id'], a['id'], outcome, why[:200], time.time()))
         if outcome == 'miss':
-            db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
-                       "VALUES(?,?,?,?,?)", (b['id'], twins._miss_key(source), proj['id'], time.time(), why))
+            for key in ((source + _THEIR_SETTINGS,) if missed else (source, source + _THEIR_SETTINGS)):
+                db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
+                           "VALUES(?,?,?,?,?)", (b['id'], twins._miss_key(key), proj['id'], time.time(), why))
     return outcome
+
+
+# Added to a source's miss key once the other release's compiler settings were tried on it too.
+_THEIR_SETTINGS = "\n/* with the other release's compiler settings */"
 
 
 def _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) -> str | None:

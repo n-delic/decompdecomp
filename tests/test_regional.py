@@ -1,6 +1,6 @@
 """Another release of the same game (app/regional.py): detection, pairing, how addresses move, and names."""
 from decompnet import consoles
-from decompnet.app.regional import AddressMap, Fn, defines, header_items, missing_items, pair
+from decompnet.app.regional import AddressMap, Fn, built_items, defines, header_items, missing_items, pair
 
 from .test_rom import ROM, built  # noqa: F401  (fixture that builds the demo ROM)
 
@@ -91,6 +91,31 @@ void func_80002000(void);
     items = missing_items(donor, header, translate.get, lambda n: n in have)
     assert items == ['typedef struct Car { s32 speed; } Car;', 'extern Car gPlayerCar;', 'extern s32 D_800A1130;',
                      'void func_80001020(Car *car);']
+
+
+def test_a_port_branch_of_the_other_releases_header_is_not_copied():
+    """A header kept for a PC port too defines a type in both branches of `#ifdef PORT`: the game's build is the
+    `#else`, and the first one (`uintptr_t`) didn't build for an N64 game's compiler."""
+    donor = """#ifdef PORT
+typedef uintptr_t AddrWord;
+#else
+typedef s32 AddrWord;
+#endif
+#define FAST 1
+#if defined(FAST)
+typedef s16 Speed;
+#elif 1
+typedef s32 Speed;
+#endif
+#if SOMETHING > 2
+typedef u8 Odd;
+#else
+typedef u16 Odd;
+#endif
+"""
+    assert missing_items(donor, "", lambda n: None, lambda n: True) == [
+        "typedef s32 AddrWord;", "#define FAST 1", "typedef s16 Speed;", "typedef u8 Odd;"]  # (unread: as before)
+    assert built_items("#ifndef PORT\ntypedef s32 A;\n#endif\n") == ["typedef s32 A;"]
 
 
 def test_a_linked_release_gives_its_names_and_header_types(built, tmp_path):  # noqa: F811
@@ -205,6 +230,28 @@ def test_a_function_built_with_other_settings_takes_them_when_they_match(built, 
     fn = net._function("func_800007D0", "other-release")
     assert fn["status"] == "matched"
     assert compiler_for(net.cfg(net.project_row("other-release")), fn["vram"], fn)["flags"] == other["flags"]
+
+
+def test_a_miss_another_matcher_remembers_still_tries_the_other_releases_settings(built, tmp_path, monkeypatch):  # noqa: F811
+    """Similar-code reuse tried the other release's C with this project's settings and remembered the miss; the
+    pass skipped that C and never tried the other release's flags, which build it."""
+    from decompnet.app import regional
+    from decompnet.app.prepared_evidence import scoped_config
+
+    from .test_app_engine import CLAMP
+
+    net, slug, agent = _two_releases(tmp_path)
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    own = net.cfg(net.project_row(slug))["compiler"]
+    net._apply_compiler_config(net.project_row(slug), scoped_config(
+        net.project_row(slug), net._function("func_800007D0", slug), dict(toolchain=own["toolchain"], flags=[*own["flags"], "-g"])))
+    monkeypatch.setattr(regional, "_try_fitted", lambda *a, **k: None)
+    monkeypatch.setattr(net.twins, "_missed", lambda b_id, source, **k: "other release's compiler" not in source)
+    tried = []
+    monkeypatch.setattr(net.twins, "_attempt_twin", lambda *a, **k: tried.append(1) or ("miss", "score 20"))
+    assert regional.transfer(net, "other-release")["matched"] == 1
+    assert not tried  # its own settings weren't tried again
+    assert net._function("func_800007D0", "other-release")["status"] == "matched"
 
 
 def test_a_compiler_this_computer_cannot_run_only_skips_its_function(built, tmp_path, monkeypatch):  # noqa: F811
