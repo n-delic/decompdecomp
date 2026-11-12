@@ -195,6 +195,18 @@ def torch_resources(archive) -> dict:
     return out
 
 
+def boot_globals(cfg: dict) -> dict:
+    """What the N64's boot code leaves at 0x80000300 for libultra (os.h's osTvType ... osAppNMIBuffer), with the
+    values a port gives them: the game's TV system from its game code's country letter, a cartridge, a cold boot, the
+    standard 4 MB (a game that looks for the Expansion Pak sees none)."""
+    country = (cfg.get("rom", {}).get("game_code") or "    ")[3:4]
+    tv = 0 if country in "PDFISUXY" and country else 2 if country == "B" else 1  # PAL 0, NTSC 1, MPAL 2
+    return {0x80000300: ("osTvType", "int32_t", 4, tv), 0x80000304: ("osRomType", "int32_t", 4, 0),
+            0x80000308: ("osRomBase", "uint32_t", 4, 0xB0000000), 0x8000030C: ("osResetType", "int32_t", 4, 0),
+            0x80000310: ("osCicId", "int32_t", 4, 0), 0x80000314: ("osVersion", "int32_t", 4, 0),
+            0x80000318: ("osMemSize", "uint32_t", 4, 0x400000), 0x8000031C: ("osAppNMIBuffer", "uint8_t", 64, 0)}
+
+
 def _quote(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -210,4 +222,5 @@ KIT = PortKit(
     boot=0x1000,  # the header and IPL3, which the console's boot ROM runs
     extract=torch_extract,
     resources=torch_resources,
+    boot_globals=boot_globals,
 )
