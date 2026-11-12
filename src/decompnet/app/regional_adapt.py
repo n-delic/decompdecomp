@@ -341,9 +341,16 @@ def _code_only(source: str) -> str:
                   flags=re.S | re.M)
 
 
-def variants(net, proj, header, source, fn, old, new) -> list[str]:
-    """Up to MAX_VARIANTS versions of the other release's C fitted to this release's numbers, most changed first."""
+def variants(net, proj, header, source, fn, old, new, fields=None) -> list[str]:
+    """Up to MAX_VARIANTS versions of the other release's C fitted to this release's numbers, most changed first.
+    `fields`: (moved, kept) offsets of big variables' fields, from where this release's relocations put them
+    (regional.Plan.field_moves): a struct reached by a variable's name moves by those, as one reached by a pointer
+    moves by the instructions' offsets."""
     moves, kept, constants, floats = differences(old, new, proj['arch'])
+    if fields:
+        for u, v in fields[0].items():
+            moves.setdefault(u, v)
+        kept |= fields[1]
     if not moves and not constants and not floats:
         return []
     floated = adapt_floats(source, floats)  # a float is the same float whatever else changed
