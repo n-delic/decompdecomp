@@ -974,32 +974,39 @@ def _try_open(net, agent, proj, donor, a, b, source, score, how='') -> str:
         # A miss another matcher remembers (twins, similar code) was built with this project's settings only: the
         # other release's settings still get their one try. Skipping it left six library functions of an N64
         # game open that matched with the other release's flags once nothing else had tried their C first.
-        outcome = _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) or 'miss'
+        theirs = _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score)
+        outcome = theirs or 'miss'
         why = "with the other release's compiler settings"
     else:
         outcome, why = twins._attempt_twin(agent, proj, a, b, source, origin=origin, similar=score < 1.0)
-        if outcome == 'miss':
-            outcome = _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) or outcome
+        theirs = _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) \
+            if outcome == 'miss' else None
+        if theirs == 'match':
+            outcome = 'match'
     with net.project_store(proj['id']).tx() as db:
         if outcome != 'skip':
             db.execute("INSERT INTO cross_game_attempts(project_id,function_id,source_project_id,source_function_id,"
                        "outcome,reason,created_at) VALUES(?,?,?,?,?,?,?)",
                        (proj['id'], b['id'], donor['id'], a['id'], outcome, why[:200], time.time()))
         if outcome == 'miss':
-            for key in ((source + _THEIR_SETTINGS,) if missed else (source, source + _THEIR_SETTINGS)):
+            keys = () if theirs == 'skip' else (source + _THEIR_SETTINGS,)  # (unsure: tried again next pass)
+            for key in keys if missed else (source, *keys):
                 db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
                            "VALUES(?,?,?,?,?)", (b['id'], twins._miss_key(key), proj['id'], time.time(), why))
     return outcome
 
 
-# Added to a source's miss key once the other release's compiler settings were tried on it too.
-_THEIR_SETTINGS = "\n/* with the other release's compiler settings */"
+# Added to a source's miss key once the other release's compiler settings were tried on it too. (Its first wording
+# also marked builds another job's settings change outdated as misses: those don't count.)
+_THEIR_SETTINGS = "\n/* with the other release's compiler settings, built to the end */"
 
 
 def _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) -> str | None:
     """'match' when the other release builds this function with other compiler settings and the C matches with
     them here too: they become this function's settings. The other release's match is the evidence that those
-    settings built it; the judge checks they build this one."""
+    settings built it; the judge checks they build this one. 'skip' when it builds but the try couldn't finish
+    (the project's settings changed meanwhile, a helper took the function): not a miss, so the next pass tries
+    again. None otherwise."""
     from ..project import compiler_for
     from .prepared_evidence import scoped_config
     theirs = compiler_for(net.cfg(donor), a['vram'], a)
@@ -1018,14 +1025,35 @@ def _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) -
     if not ok:
         return None
     settings = dict(toolchain=theirs['toolchain'], flags=list(theirs['flags']))
-    with _SETTINGS:  # tries run side by side: each reads the settings it changes after the last one's change
-        current = _row(net, proj['slug'])  # (the pass's row is older than the settings other matches set)
+    for _ in range(STALE_TRIES):
+        with _SETTINGS:  # tries run side by side: each reads the settings it changes after the last one's change
+            current = _row(net, proj['slug'])  # (the pass's row is older than the settings other matches set)
+            try:
+                net._apply_compiler_config(current, scoped_config(current, b, settings))
+                result = net.try_quietly(agent, _row(net, proj['slug']), b, note + source, synchronize=False)
+            except NetworkError as error:
+                # Another job changed the project's settings while this built (similar-code reuse's compiler
+                # trials run beside the pass): the build was right and only went stale, so it's built again.
+                # Recorded as a miss, it left two functions of an N64 game open that match one at a time.
+                if str(error).startswith(_STALE):
+                    continue
+                break  # (a helper's claim, say)
+            except ToolchainError:
+                break
+        return 'match' if result.get('matched') else None
+    # Unsure: its own settings come back, so the next pass sees the settings still differ and tries them again.
+    with _SETTINGS:
         try:
-            net._apply_compiler_config(current, scoped_config(current, b, settings))
-            result = net.try_quietly(agent, _row(net, proj['slug']), b, note + source, synchronize=False)
+            current = _row(net, proj['slug'])
+            net._apply_compiler_config(current, scoped_config(
+                current, b, dict(toolchain=mine['toolchain'], flags=list(mine['flags']))))
         except (NetworkError, ToolchainError):
-            return None  # the project changed meanwhile (a helper's match): the next pass tries again
-    return 'match' if result.get('matched') else None
+            pass
+    return 'skip'
+
+
+STALE_TRIES = 3
+_STALE = 'Compiler settings changed while'  # network.py's message for a build the settings outdated
 
 
 # ------------------------------------------------------------------ the other release in a helper's brief

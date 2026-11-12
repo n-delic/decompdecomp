@@ -254,6 +254,58 @@ def test_a_miss_another_matcher_remembers_still_tries_the_other_releases_setting
     assert net._function("func_800007D0", "other-release")["status"] == "matched"
 
 
+def test_a_build_another_jobs_settings_change_outdated_is_built_again(built, tmp_path, monkeypatch):  # noqa: F811
+    """Similar-code reuse changed the project's settings while the other release's settings built a function: the
+    stale build was recorded as a miss, and two functions of an N64 game that match one at a time stayed open."""
+    from decompnet.app import regional
+    from decompnet.app.prepared_evidence import scoped_config
+    from decompnet.network import NetworkError
+
+    from .test_app_engine import CLAMP
+
+    net, slug, agent = _two_releases(tmp_path)
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    own = net.cfg(net.project_row(slug))["compiler"]
+    net._apply_compiler_config(net.project_row(slug), scoped_config(
+        net.project_row(slug), net._function("func_800007D0", slug), dict(toolchain=own["toolchain"], flags=[*own["flags"], "-g"])))
+    monkeypatch.setattr(regional, "_try_fitted", lambda *a, **k: None)
+    monkeypatch.setattr(net.twins, "_attempt_twin", lambda *a, **k: ("miss", "score 20"))
+    real, stale = net.try_quietly, []
+
+    def outdated(*a, **k):
+        if len(stale) < 2:
+            stale.append(1)
+            raise NetworkError("Compiler settings changed while this candidate was compiling. Compile it again.")
+        return real(*a, **k)
+    monkeypatch.setattr(net, "try_quietly", outdated)
+    assert regional.transfer(net, "other-release")["matched"] == 1
+    assert len(stale) == 2
+
+
+def test_a_try_that_never_finishes_is_not_remembered_as_a_miss(built, tmp_path, monkeypatch):  # noqa: F811
+    from decompnet.app import regional
+    from decompnet.app.prepared_evidence import scoped_config
+    from decompnet.network import NetworkError
+
+    from .test_app_engine import CLAMP
+
+    net, slug, agent = _two_releases(tmp_path)
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    own = net.cfg(net.project_row(slug))["compiler"]
+    net._apply_compiler_config(net.project_row(slug), scoped_config(
+        net.project_row(slug), net._function("func_800007D0", slug), dict(toolchain=own["toolchain"], flags=[*own["flags"], "-g"])))
+    monkeypatch.setattr(regional, "_try_fitted", lambda *a, **k: None)
+    monkeypatch.setattr(net.twins, "_attempt_twin", lambda *a, **k: ("miss", "score 20"))
+
+    def outdated(*a, **k):
+        raise NetworkError("Compiler settings changed while this candidate was compiling. Compile it again.")
+    monkeypatch.setattr(net, "try_quietly", outdated)
+    assert regional.transfer(net, "other-release")["matched"] == 0
+    monkeypatch.undo()
+    monkeypatch.setattr(regional, "_try_fitted", lambda *a, **k: None)
+    assert regional.transfer(net, "other-release")["matched"] == 1  # the next pass tries their settings again
+
+
 def test_a_compiler_this_computer_cannot_run_only_skips_its_function(built, tmp_path, monkeypatch):  # noqa: F811
     from decompnet.app import regional
     from decompnet.app.prepared_evidence import scoped_config
