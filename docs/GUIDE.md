@@ -107,6 +107,7 @@ decompdecomp helps with these steps:
 | **Permuter** | Rewrites near misses (at most 6% of the function differs) thousands of ways in the background, with decomp-permuter (install it in Compilers & tools). It uses spare cores at a low priority. The judge decides what matches. Without decomp-permuter, a few simple rewrites run instead. |
 | **Batches** | Agents write many small functions in one turn. decompdecomp judges them in one call. |
 | **Editor** | Each function has an editor. Write C, push Ctrl+Enter and look at the diff. |
+| **Processor observations** | MIPS function briefs and compile feedback (ROM and project mode) include bounded observations about stack frames, register mismatches, delay slots, control-flow blocks and return-register paths. They are clues for the next investigation; the compiler and byte comparison still decide matches. |
 | **Suggestions** | Agents can suggest a different compiler, for the full game or for address ranges. decompdecomp tests each suggestion first. You apply it with one click, or let proven suggestions apply automatically (a setting of each game). |
 | **Flag search** | `search_flags` builds a function again with each flag of its compiler changed, one at a time (up to 12 builds), and says which change gets closer. MIPS for now. |
 | **Shared header** | Structs and prototypes go into one header. decompdecomp accepts a change only if all matches stay matches. |

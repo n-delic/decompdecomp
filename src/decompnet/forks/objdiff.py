@@ -90,6 +90,9 @@ class FunctionDiff:
     renamed: list[tuple[str, str]] = field(default_factory=list)
     literals: list = field(default_factory=list)  # literals.Mismatch: constants that differ although the code matches
     refs: list[str] = field(default_factory=list)  # the symbols the original's relocations name, in order
+    # where the original's function and yours start in their sections: objdiff prints branch destinations as section
+    # offsets, which the processor observations (arch/advice.py) count from the function's start
+    addresses: tuple[int | None, int | None] = (None, None)
 
     @property
     def matched(self) -> bool:
@@ -395,5 +398,7 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
         wrong = literals.mismatches(target, base, symbol, insns)
         wrong += mapping_conflicts(base, symbol)  # (an LTCG unit's address and data checks, tools/dll2coff.py)
     refs = list(dict.fromkeys(n for lr in lrows if (n := _reloc_name(data.get("left"), lr))))
+    addresses = tuple(int(side["address"]) if side and side.get("address") is not None else None
+                      for side in (left, right))
     return FunctionDiff(symbol, float(pct) if pct is not None else None, rows, int(left.get("size", 0)), scores, order, ops,
-                        renamed, wrong, refs)
+                        renamed, wrong, refs, addresses)

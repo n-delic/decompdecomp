@@ -1493,3 +1493,30 @@ def test_code_under_a_macro_the_compiler_defines_isnt_hidden(tmp_path, macro):
     text = f"#ifdef {macro}\nint f(void) {{ return 1; }}\n#endif\n"
     (tmp_path / "src" / "a.c").write_text(text)
     assert ForkEngine._hidden(ForkProject(tmp_path), text, text.index("int f")) is None
+
+
+@needs_tools
+def test_project_briefs_and_compiles_get_the_consoles_processor_observations(fork):
+    """#246: fork projects are registered with no arch, so the observations read nothing until they asked the console
+    for its processor; and a project whose settings name no platform must still brief rather than fail."""
+    net, slug, agent = fork
+    name = "entity_update_physics"
+    if net.store.one("SELECT status FROM functions WHERE name=?", name)["status"] != "open":
+        pytest.skip(f"{name} isn't open in this run")
+    brief = net.claim(agent, slug, name)
+    # the target's branches are section offsets past the unit's first function: both reach the return
+    assert "### Processor observations" in brief and "Observed 1 return site(s)" in brief, brief
+    res = net.attempt(agent, name, _ref(name).replace("+= e->vel_x", "+= e->vel_y"), slug)
+    net.release(agent, name, "testing processor observations", slug)
+    assert not res["matched"] and "Processor observations (advisory" in res["text"], res["text"]
+    assert "control-flow blocks" in res["text"], res["text"]
+    proj = net.project_row(slug)
+    cfg = json.loads(proj["config"])
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=? WHERE id=?",
+                   (json.dumps({k: v for k, v in cfg.items() if k != "platform"}), proj["id"]))
+    try:
+        assert "Target assembly" in net.forks.get_function(agent, slug, name)
+    finally:
+        with net.store.tx() as db:
+            db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))

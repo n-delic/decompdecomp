@@ -13,7 +13,21 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import arm, mips, mips_fields, ppc, ppc64, x86, x86_fields
+from . import (
+    arm,
+    mips,
+    mips_arguments,
+    mips_fields,
+    mips_regions,
+    mips_return_paths,
+    mips_returns,
+    mips_search,
+    mips_stack,
+    ppc,
+    ppc64,
+    x86,
+    x86_fields,
+)
 
 # What decompdecomp's readers can do with a processor's code (each is a module of its own that reads MIPS, and some
 # x86):
@@ -46,12 +60,23 @@ class Arch:
     # variants of it capstone can't decode (Console.cpu_variant) -> their own reader: (code, big_endian) ->
     # [(offset, mnemonic, operands)], for scoring's diffs (MIPS: the PSP's Allegrex, read by rabbitizer)
     variants: dict[str, Callable[[bytes, bool], list[tuple[int, str, str]]]] = field(default_factory=dict)
+    # Advisory evidence for briefs and compile feedback; none of these readers establishes a match or C ABI.
+    stack_frame_growth: Callable[..., int | None] | None = None
+    stack_layout: Callable[..., dict] | None = None
+    instruction_regions: Callable[..., dict | None] | None = None
+    repair_search_hints: Callable[..., dict] | None = None
+    argument_register_evidence: Callable[..., tuple | None] | None = None
+    source_return_contract: Callable[..., dict | None] | None = None
+    source_return_paths: Callable[..., dict | None] | None = None
 
 
 ARCHES = [
     Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
          frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts,
-         variants={mips.ALLEGREX: mips.allegrex_lines}),
+         variants={mips.ALLEGREX: mips.allegrex_lines}, stack_frame_growth=mips_stack.frame_growth,
+         stack_layout=mips_stack.layout, instruction_regions=mips_regions.read, repair_search_hints=mips_search.read,
+         argument_register_evidence=mips_arguments.evidence, source_return_contract=mips_returns.result,
+         source_return_paths=mips_return_paths.read),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
     Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES})),
     Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, features=frozenset({CLASSES, STRUCTS}),
