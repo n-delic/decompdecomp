@@ -152,3 +152,32 @@ def test_a_pairs_own_relocations_place_its_names_before_the_game_wide_map():
     assert own.local == {0x800D0000: 0x800C8000}
     assert own.text('x = gRecords;') == 'x = D_800C8000;'
     assert p.offsets('*(gPtr + 0x245) = 0;') == '*(gPtr + 0x245) = 0;'
+
+
+def test_a_big_variable_reached_by_its_fields_starts_where_most_of_them_say():
+    """The C reaches a big struct's fields by name and never its start: each field's address here, less its offset
+    there, says where it starts; a field that moved says how the struct is laid out here."""
+    base = 0x800B2218
+    pal = [fn(1, 0x100, 'k1', size=12, ops=('lui', 'lw', 'lw'),
+              relocs=[(0, 5, 0x800B0100), (4, 6, 0x800B0100), (8, 6, 0x800B6E30)])]
+    ntsc = [fn(11, 0x100, 'k1', size=12, ops=('lui', 'lw', 'lw'),
+               relocs=[(0, 5, base + 0x100), (4, 6, base + 0x100), (8, 6, base + 0x6E38)])]
+    p = _plan([Symbol('gOrderState', 0x800B0000, 0x8000)], [Symbol('D_800A0000', 0x800A0000, 0x20000)], pal, ntsc)
+    own = p.for_pair(pal[0], ntsc[0])
+    assert own.start_of('gOrderState') == base
+    assert own.field_moves('gOrderState') == ({0x6E30: 0x6E38}, {0x100})
+    assert own.text('gOrderState.count = 0;') == f'D_{base:08X}.count = 0;'
+
+
+def test_the_other_releases_declarations_come_for_names_only_it_declares():
+    from types import SimpleNamespace
+
+    from decompnet.app.regional import _their_declarations
+
+    donor_header = 'typedef struct Rec { int a; } Rec;\nextern Rec gRec;\nextern int gOther;\n'
+    net = SimpleNamespace(_context=lambda *_: {'header': donor_header})
+    own = SimpleNamespace(name=lambda word: None)
+    out = _their_declarations(net, {'id': 1}, {'unit': ''}, own, 'extern int gHere;\n',
+                              'void f(void) { gRec.a = gHere; }')
+    assert out == 'typedef struct Rec { int a; } Rec;\nextern Rec gRec;'
+    assert _their_declarations(net, {'id': 1}, {'unit': ''}, own, 'extern int gHere;\n', 'void f(void) { gHere = 1; }') == ''

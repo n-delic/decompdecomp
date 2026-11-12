@@ -309,3 +309,28 @@ def test_bringing_polished_code_does_not_sync_saved_files_per_function(built, tm
     assert regional.transfer(net, "other-release")["polished"] == 1
     assert len(synced) <= 4  # opening the two projects
     assert "value" in net._function("func_800007D0", "other-release")["matched_source"]
+
+
+def test_a_function_a_helper_holds_waits_for_the_end_of_the_pass_and_is_reported(built, tmp_path):  # noqa: F811
+    """A helper's claim comes first: the pass leaves the function, tries it once more at the end, and says how many
+    it couldn't try, so a second pass when they're free picks them up."""
+    import time
+
+    from decompnet.app import regional
+
+    from .test_app_engine import CLAMP
+
+    net, slug, agent = _two_releases(tmp_path)
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    fn = net._function("func_800007D0", "other-release")
+    helper, _ = net.local_agent("claude-opus-5.5-2")
+    store = net.project_store(fn["project_id"])
+    with store.tx() as db:
+        db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], helper.id, time.time(), time.time() + 300))
+    lines = []
+    result = regional.transfer(net, "other-release", log=lines.append)
+    assert result["held"] == 1 and result["matched"] == 0
+    assert any("held by helpers" in line for line in lines)
+    with store.tx() as db:
+        db.execute("DELETE FROM claims")
+    assert regional.transfer(net, "other-release")["matched"] == 1

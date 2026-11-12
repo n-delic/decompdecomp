@@ -352,15 +352,48 @@ class Plan:
     def _here(self, address: int) -> int | None:
         return self.local.get(address, self.addresses.get(address))
 
+    def start_of(self, word: str) -> int | None:
+        """Where one of the other release's big variables starts here, from the fields of it this pair reaches (each
+        field's address here, less its offset in the other release), as most of them say; None without such fields.
+        C that reaches a big struct's fields by name never says where the struct starts: a game's 70 functions
+        used its fields alone, so the address map never learned it."""
+        at = self.their_address(word) if self.their_address is not None else None
+        size = self.their_size(word) if self.their_size is not None and at is not None else 0
+        if not size or not self.local:
+            return None
+        votes = Counter(b - (a - at) for a, b in self.local.items() if at <= a < at + size)
+        if not votes:
+            return None
+        start, count = votes.most_common(1)[0]
+        return start if count * 2 >= sum(votes.values()) or count >= 2 else None
+
+    def field_moves(self, word: str) -> tuple[dict[int, int], set[int]]:
+        """({offset in the other release: offset here} for the fields of one of its big variables this pair reaches
+        whose offset changed, {offsets that stayed}): what regional_adapt lays the variable's struct out by."""
+        at = self.their_address(word) if self.their_address is not None else None
+        start = self.start_of(word) if at is not None else None
+        if start is None:
+            return {}, set()
+        size = self.their_size(word)
+        moved, kept = {}, set()
+        for a, b in self.local.items():
+            if at <= a < at + size:
+                if b - start == a - at:
+                    kept.add(a - at)
+                else:
+                    moved[a - at] = b - start
+        return moved, kept
+
     def name(self, word: str) -> str | None:
         """This project's name for one of the other release's: given, or an address name (D_8009B5D0) moved as
         the address map says (inside one of this project's own symbols, the address's own name: see plan). None: no
         name here (unmapped)."""
         if self.local and self.their_address is not None:
             at = self.their_address(word)
-            if at is not None and at in self.local:
-                name, offset = self.name_at(self.local[at])
-                return f'D_{self.local[at]:08X}' if offset else name
+            here = None if at is None else self.local.get(at, self.start_of(word))
+            if here is not None:
+                name, offset = self.name_at(here)
+                return f'D_{here:08X}' if offset else name
         if word in self.translate:
             return self.translate[word]
         m = AUTO_NAME.fullmatch(word)
@@ -693,6 +726,12 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
             show("Trying the other release's code")
         try:
             b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=?", y.id)
+            if b is not None and b['status'] == 'open' and _held(net, proj, b['id']):
+                with lock:  # a helper is on it: tried again at the end of the pass, if it's free by then
+                    held.append(item)
+                    active.pop(y.id, None)
+                    tally['done'] += 1
+                return
             outcome = 'skip' if b is None or b['status'] != 'open' else \
                 _try_open(net, agent, proj, donor, a, b, p.text(a['matched_source']), score)
             if outcome != 'match' and b is not None and b['status'] == 'open':
@@ -743,10 +782,18 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
     from . import workers
     from .purpose_work import Executor
     open_work = [t for t in work if t[1].status == 'open']
+    held: list = []
     for run, items in ((one, open_work), (polish, work[len(open_work):])):
         with Executor(max_workers=max(1, min(WIDTH, workers.WORKERS)), purpose="Other release's code",
                       project=slug, stop=stop.set if stop is not None else None) as pool:
             list(pool.map(run, items))
+            if run is one and held:  # what helpers held when the pass reached it, once more
+                again, held[:] = list(held), []
+                tally['done'] -= len(again)
+                list(pool.map(run, again))
+    counts['held'] = len(held)
+    if held:
+        log(f"{len(held)} functions were held by helpers and weren't tried: Try its code again when they're free.")
     progress(dict(phase="Trying the other release's code", done=len(work), total=len(work)))
     log(f"{counts['matched']} matched and {counts['polished']} polished from {donor['name']}; "
         f"{counts['tried']} tried.")
@@ -759,6 +806,12 @@ def _likeliest(x: Fn, y: Fn, score: float) -> tuple:
     1.0 for the same instructions can still differ in their operands (a struct field at 0x42 in one release, 0x4c
     in the other), and those rarely match as they are."""
     return (y.status != 'open', x.key != y.key, -score)
+
+
+def _held(net, proj, function_id: int) -> bool:
+    """Whether a helper holds the function now (an unexpired claim): its own work comes first."""
+    return net.project_store(proj['id']).one("SELECT 1 FROM claims WHERE function_id=? AND expires_at > ?",
+                                             function_id, time.time()) is not None
 
 
 def _try_fitted(net, agent, proj, donor, p, a, b, pair=None) -> str | None:
@@ -778,8 +831,17 @@ def _try_fitted(net, agent, proj, donor, p, a, b, pair=None) -> str | None:
     own = p.for_pair(*pair) if pair else p
     moved = own.text(own.offsets(a['matched_source']))
     tries = [moved] if moved != plain else []
+    fields = ({}, set())
+    for word in set(_IDENT.findall(a['matched_source'])):
+        moved_fields, kept_fields = own.field_moves(word)
+        for u, v in moved_fields.items():
+            fields[0].setdefault(u, v)
+        fields[1].update(kept_fields)
     for base in (moved, plain) if moved != plain else (plain,):
-        tries += [v for v in regional_adapt.variants(net, proj, header, base, b, old, new) if v not in tries]
+        tries += [v for v in regional_adapt.variants(net, proj, header, base, b, old, new, fields) if v not in tries]
+    declared = _their_declarations(net, donor, a, own, header, moved)
+    if declared:  # without them none of these builds: each takes them
+        tries = [declared + '\n' + t for t in ([plain] if moved == plain else []) + tries]
     outcome = None
     for source in tries[:regional_adapt.MAX_VARIANTS + 1]:
         result = _try_open(net, agent, proj, donor, a, b, source, 1.0, how=', fitted to this release\'s offsets')
@@ -787,6 +849,31 @@ def _try_fitted(net, agent, proj, donor, p, a, b, pair=None) -> str | None:
             return 'match'
         outcome = outcome or (result if result != 'skip' else None)
     return outcome
+
+
+def _their_declarations(net, donor, a, own, header, source) -> str:
+    """The other release's header declarations (and the types they need) for the names this C uses that neither
+    this project's header nor the C declares, written with this project's names; '' when it needs none. Its header
+    can declare what the function's C left to it (a global, a prototype), and this project's header can lack it."""
+    def declared(text):
+        return set().union(set(), *(defines(i)[1] for i in header_items(text))) if text.strip() else set()
+    have = {n.split()[-1] for n in declared(header) | declared(source)}
+    used = set(_IDENT.findall(_COMMENT.sub(' ', source))) - _KEYWORDS
+    if not used - have:
+        return ''
+    items = [(i, {n.split()[-1] for n in defines(i)[1]})
+             for i in missing_items(net._context(donor['id'], a['unit'])['header'], header, own.name, lambda _: True)]
+    wanted, out = used - have, []
+    for _ in range(3):  # what they need in turn: a type a declaration names
+        found = [(i, names) for i, names in items if names & wanted and i not in out]
+        if not found:
+            break
+        out += [i for i, _ in found]
+        wanted = set().union(*(set(_IDENT.findall(i)) for i, _ in found)) - have - _KEYWORDS
+    if not out:
+        return ''
+    order = {i: k for k, (i, _) in enumerate(items)}
+    return '\n'.join(sorted(out, key=order.get))
 
 
 def _try_open(net, agent, proj, donor, a, b, source, score, how='') -> str:

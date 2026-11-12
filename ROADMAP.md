@@ -1905,7 +1905,10 @@ reached by byte offset moved as the address map says; and a variable inside one 
 by its address (on a Europe/North America N64 pair: 177 of 719 open functions matched, 81 of them fitted). The
 numbers are read from the instructions both releases have, lined up around added or removed ones; floats built from
 immediates too (MIPS: `Arch.built_floats`); and each pair's names placed by its own relocations before the
-game-wide address map (data inside a big block moves unevenly): 22 more of the 536 left. Next:
+game-wide address map (data inside a big block moves unevenly): 22 more of the 536 left. A big variable the C
+reaches only by its fields starts where most of the pair's field addresses say, and fields that moved lay its struct
+out again; the other release's header declarations come with C that needs them; a function a helper holds is tried
+again at the end of the pass, and those still held are reported: 89 more of 524. Next:
 - Structs from a shared header whose fields moved between releases: this release's own copy of the type, through
   the checked header edit (that game's header had none: its functions define their structs).
 - Near pairs (80-99% alike) that still miss: what's left after fitting is real code change (an added call, a
