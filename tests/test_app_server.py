@@ -39,6 +39,77 @@ def app(tmp_path_factory):
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
 
 
+def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monkeypatch):
+    from decompnet.app import deep_permuter
+
+    client, _, _ = app
+    started = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(deep_permuter, "validate", lambda *args: None)
+
+    def run(net, slug, name, minutes, variants, log):
+        log.progress({"tested": 2, "starting_score": 40, "best_score": 20})
+        started.set()
+        release.wait(2)
+        log.check_cancel()
+        return {"function": name}
+
+    monkeypatch.setattr(deep_permuter, "run", run)
+    payload = {"slug": "game", "name": "f", "minutes": 1, "variants": 10}
+    try:
+        response = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json=payload)
+        assert response.status_code == 200, response.text
+        jid = response.json()["job"]
+        assert started.wait(1)
+        found = client.get("/api/deep-permuter", params={"slug": "game", "name": "f"}).json()
+        assert found["job"] == jid and found["last"]["function"] == "f"
+        assert found["last"]["progress"]["tested"] == 2
+        again = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json=payload)
+        assert again.json()["job"] == jid
+        other = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json={**payload, "name": "g"})
+        assert other.status_code == 400 and "Another function" in other.json()["error"]
+        assert client.post("/api/job/cancel", headers={"X-Decomp": "1"}, json={"id": jid}).json() == {"cancelled": True}
+    finally:
+        release.set()
+    for _ in range(100):
+        state = client.get("/api/job", params={"id": jid}).json()["state"]
+        if state != "running":
+            break
+        time.sleep(.01)
+    found = client.get("/api/deep-permuter", params={"slug": "game", "name": "f"}).json()
+    assert found["job"] is None and found["last"]["state"] == "cancelled"
+    assert found["last"]["progress"]["best_score"] == 20
+
+
+def test_deep_searches_are_capped_app_wide_below_the_shared_workers(app, monkeypatch):
+    """#244: a fixed cap of 2 searches could take every shared worker of a small machine."""
+    from decompnet.app import deep_permuter
+
+    client, _, _ = app
+    started, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(deep_permuter, "validate", lambda *args: None)
+    monkeypatch.setattr(deep_permuter.workers, "WORKERS", 2)
+
+    def run(net, slug, name, minutes, variants, log):
+        started.set()
+        release.wait(2)
+        return {"function": name}
+
+    monkeypatch.setattr(deep_permuter, "run", run)
+    payload = {"slug": "capped-a", "name": "f", "minutes": 1, "variants": 10}
+    try:
+        jid = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json=payload).json()["job"]
+        assert started.wait(1)
+        other = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json={**payload, "slug": "capped-b"})
+        assert other.status_code == 400 and "1 deep search is already running" in other.json()["error"]
+    finally:
+        release.set()
+    for _ in range(100):
+        if client.get("/api/job", params={"id": jid}).json()["state"] != "running":
+            break
+        time.sleep(.01)
+
+
 def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp_path):
     from .test_loading import tiny_game
 

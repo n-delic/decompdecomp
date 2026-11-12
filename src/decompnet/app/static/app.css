@@ -620,6 +620,56 @@ a.ghost, a.primary { text-decoration: none; }
 .said-check.ok { color: var(--match); }
 #knowList .note { overflow-wrap: anywhere; }
 .note-box { display: grid; gap: 8px; }
+#drawer.expanded .drawer-card { width: 100vw; }
+.fn-menu { position: relative; }
+.fn-menu > summary { list-style: none; cursor: pointer; font-size: 23px; }
+.fn-menu > summary::-webkit-details-marker { display: none; }
+.fn-menu-body { position: absolute; right: 0; top: calc(100% + 8px); z-index: 3; width: max-content; padding: 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); box-shadow: var(--shadow); }
+.fn-history { display: grid; gap: 24px; }
+.code-cols > * { min-width: 0; }
+#fnAsm { height: min(58vh, 560px); }
+.deep-panel { width: 100%; max-width: 1080px; margin: 6px auto 0; display: grid; gap: 24px; }
+.deep-heading { display: flex; gap: 20px; justify-content: space-between; align-items: flex-start; }
+.deep-heading h3 { font-size: 24px; margin-bottom: 8px; letter-spacing: -.02em; }
+.deep-heading p { max-width: 580px; font-size: 14px; line-height: 1.6; }
+.deep-heading .badge { white-space: nowrap; margin-top: 4px; font-size: 10px; }
+.deep-controls { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.deep-controls .field { width: 170px; }
+.deep-controls input { width: 100%; }
+.deep-controls button { min-height: 40px; }
+.deep-results { display: grid; gap: 18px; }
+.deep-status-row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.deep-status-row strong { font-size: 15px; }
+#deepProgress { display: block; width: 100%; height: 6px; border: 0; border-radius: 4px; overflow: hidden; background: var(--line-soft); accent-color: var(--match); }
+#deepProgress::-webkit-progress-bar { background: var(--line-soft); }
+#deepProgress::-webkit-progress-value { background: var(--match); border-radius: 4px; }
+#deepProgress::-moz-progress-bar { background: var(--match); }
+.deep-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); padding: 12px 0 6px; gap: 24px; }
+.deep-metrics > div { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.deep-metrics span { font-size: 12px; color: var(--muted); }
+.deep-metrics strong { font: 750 clamp(26px,3.5vw,42px)/1.1 var(--sans); letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+.deep-metrics small { font-size: 12px; color: var(--muted); min-height: 18px; }
+#deepBest, #deepGain { color: var(--match-ink); }
+.deep-run-chart { margin-top: 6px; }
+.deep-run-chart.fn-chart svg { height: auto; max-height: 220px; min-height: 140px; background: none; border: none; }
+.deep-run-chart .axis-start { text-anchor: start; }
+.deep-area { fill: var(--match); opacity: .09; }
+.deep-output { border-top: 1px solid var(--line-soft); padding-top: 16px; }
+.deep-output summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+#deepLog { margin-top: 12px; max-height: 200px; white-space: pre-wrap; }
+.deep-empty { border: 1px dashed var(--line); border-radius: var(--r); padding: 36px 24px; text-align: center; color: var(--muted); }
+.deep-empty strong { color: var(--ink-2); font-size: 15px; }
+.deep-empty p { margin: 10px auto 0; max-width: 420px; line-height: 1.6; font-size: 13px; }
+#deepError { color: var(--miss); }
+@media (max-width: 620px) {
+  .deep-heading { flex-direction: column; gap: 10px; }
+  .deep-controls .field { flex: 1; width: 130px; }
+  .deep-metrics { gap: 14px; }
+  .deep-metrics strong { font-size: 26px; }
+  .deep-metrics small { font-size: 11px; }
+  .deep-controls button { flex: 1 0 auto; }
+  #drawer .fn-tabs .tabs { flex-wrap: wrap; }
+}
 .note-box textarea { width: 100%; border-radius: var(--r); border: 1px solid var(--line); background: var(--raise); padding: 9px 11px; font: 13px/1.5 var(--sans); color: var(--ink); resize: vertical; }
 .pin.on { background: var(--hl); color: var(--hl-ink); border-color: transparent; }
 .tabs { display: flex; gap: 4px; }
