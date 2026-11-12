@@ -280,6 +280,26 @@ def test_remove_paused_removes_only_paused_helpers_on_the_project(app, monkeypat
     assert removed == ["paused-here"]
 
 
+def test_restart_paused_restarts_only_paused_helpers_on_the_project(app, monkeypatch):
+    from types import SimpleNamespace
+
+    client, _, manager = app
+    monkeypatch.setattr(manager, "sessions", {
+        "paused-here": SimpleNamespace(id="paused-here", slug="game", state="paused"),
+        "working-here": SimpleNamespace(id="working-here", slug="game", state="working"),
+        "paused-elsewhere": SimpleNamespace(id="paused-elsewhere", slug="other", state="paused"),
+    })
+    restarted = []
+    monkeypatch.setattr(manager, "restart", lambda sid: restarted.append(sid))
+
+    response = client.post("/api/agents/restart", json={"slug": "game", "restart_paused": True},
+                           headers={"X-Decomp": "1"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "restarted": 1, "skipped": 0}
+    assert restarted == ["paused-here"]
+
+
 def test_selected_models_start_only_the_chosen_models_within_the_helper_limit(tmp_path, monkeypatch):
     """Starting multiple models uses only the explicit selection, with `count` sessions for each model."""
     from .test_loading import tiny_game

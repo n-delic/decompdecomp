@@ -761,6 +761,24 @@ class Manager:
                 self.remove(sid)
         return len(paused)
 
+    def restart_paused(self, slug: str) -> tuple[int, int]:
+        """Start again every paused helper on this project (by the user), returning (started, skipped). A helper that
+        can't start again (its account or endpoint was removed, or it is still stopping) is skipped, and an unexpected
+        failure on one is logged and skipped too, so neither one blocks the rest."""
+        with self._lock:
+            paused = [s.id for s in self.sessions.values() if s.slug == slug and s.state == "paused"]
+        started = skipped = 0
+        for sid in paused:
+            try:
+                self.restart(sid)
+                started += 1
+            except ValueError:
+                skipped += 1  # expected: still stopping, or its account/endpoint was removed
+            except Exception:  # an unexpected failure (e.g. a thread that won't start) must not block the rest
+                log.exception("a paused helper did not start again")
+                skipped += 1
+        return started, skipped
+
     def costs(self, slug: str) -> list[dict]:
         """What each model's helpers spent on a project and what they matched (helper_sessions): which models to run
         more of. Cheapest per match first; models with no match last. A model spinning in the last SPIN_WINDOW gets

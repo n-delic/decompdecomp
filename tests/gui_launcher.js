@@ -328,5 +328,29 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   await pendingSave;
   requireOk(get("dialog").hidden && accountBox.html.includes("Saved after closing"),
     "a save finishing after the drawer closes must update the list without reopening it");
+  // --- Restart paused button is present in the page, bound to the bulk route, and reports N of M (PR #272 review) ---
+  const indexHtml = fs.readFileSync(path.join(__dirname, "..", "src", "decompnet", "app", "static", "index.html"), "utf8");
+  const agentsSource = fs.readFileSync(path.join(__dirname, "..", "src", "decompnet", "app", "static", "js", "agents.js"), "utf8");
+  for (const idName of ["restartPaused", "removePaused", "stopAll", "sessions"]) {
+    requireOk(indexHtml.includes(`id="${idName}"`), `index.html must carry id="${idName}" for the agents panel`);
+    requireOk(agentsSource.includes(`$("${idName}")`), `agents.js must reference $("${idName}")`);
+  }
+  nodes.set("sessions", new Box());
+  Object.assign(ctx.S, { slug: "game", claims: [], ov: null, stats: { agents: [] }, logFor: null, costsAt: Date.now(), costsSlug: "game" });
+  ctx.renderSessions([{ id: "h1", agent: "helper-a", label: "Helper A", state: "paused", kind: "claude", kind_name: "Claude Code", model: "opus", task: "decompile" }]);
+  requireOk(get("restartPaused").hidden === false && get("restartPaused").textContent === "Restart paused (1)",
+    "a paused helper must reveal the Restart paused button with its count");
+  requireOk(nodes.get("sessions").querySelectorAll('[data-again="h1"]').length === 1,
+    "a paused helper's row must offer Start again, bound by id");
+  calls.length = 0;
+  ctx.api = async (url, options = {}) => { calls.push({ url, body: options.body }); return { restarted: 1, skipped: 2 }; };
+  let pausedToast = "";
+  ctx.toast = (message) => { pausedToast = message; };
+  await get("restartPaused").onclick();
+  const restartCall = calls.find((c) => c.url === "/api/agents/restart");
+  requireOk(restartCall && restartCall.body.slug === "game" && restartCall.body.restart_paused === true,
+    "Restart paused must POST the bulk restart for this project");
+  requireOk(pausedToast === "Started 1 of 3 paused agents again.",
+    `skipped helpers must be reported as N of M (got "${pausedToast}")`);
   console.log("launcher model selections and accounts passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

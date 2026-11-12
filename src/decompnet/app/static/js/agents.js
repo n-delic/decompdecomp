@@ -124,6 +124,8 @@ function renderSessions(sessions) {
   $("stopAll").hidden = running.length < 2;
   $("removePaused").hidden = paused.length === 0;
   $("removePaused").textContent = paused.length ? `Remove paused (${paused.length})` : "Remove paused";
+  $("restartPaused").hidden = paused.length === 0;
+  $("restartPaused").textContent = paused.length ? `Restart paused (${paused.length})` : "Restart paused";
   // decompiling helpers, then polishing ones (task "readable"), each group under its heading when both are at work
   const sorted = [...sessions].sort(sessionOrder);
   const both = sorted.some((s) => s.task === "readable") && sorted.some((s) => s.task !== "readable");
@@ -177,6 +179,21 @@ $("removePaused").onclick = async () => {
   try {
     const { removed } = await api("/api/agents/stop", { method: "POST", body: { slug: S.slug, remove_paused: true } });
     toast(`Removed ${plural(removed, "paused agent")}.`);
+    poll(false);
+  } catch (e) {
+    toast(esc(e.message), "err");
+  } finally {
+    button.disabled = false;
+  }
+};
+
+$("restartPaused").onclick = async () => {
+  const button = $("restartPaused");
+  button.disabled = true;
+  try {
+    const { restarted, skipped } = await api("/api/agents/restart", { method: "POST", body: { slug: S.slug, restart_paused: true } });
+    toast(skipped ? `Started ${restarted} of ${plural(restarted + skipped, "paused agent")} again.`
+                  : `Started ${plural(restarted, "paused agent")} again.`);
     poll(false);
   } catch (e) {
     toast(esc(e.message), "err");
