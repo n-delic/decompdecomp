@@ -974,7 +974,9 @@ its size in its order (`rsp_placeholders.S`), so `ucode_boot_size = D_80001DE0 -
 counts only when its ROM bytes begin with libultra's rspboot (`PortKit.coprocessor_boot`), or it starts where such
 one ends. Two more were base symbols the decompiler chose wrongly, labels inside code used as `(u8 *)&D_x + 0x58F4`
 to reach a variable: **Fix calls by old names** now also rewrites each such use to the variable at that address (a
-place inside one keeps its offset), judged on the console and the PC like the renamed calls. Left: the last two,
+place inside one keeps its offset), judged on the console and the PC like the renamed calls. The same pass takes `static` off a function its own C keeps file-local
+while another function calls it (libultra's `_decodeChunk`), and every rewrite now changes code only: an earlier one
+rewrote a comment that described the old expression. Left: the last two,
 functions in stretches of the ROM the split took for data (new-function adoption, above).
 
 ### ROM offsets and the boot's values defined for an N64 port

@@ -37,6 +37,21 @@ def plan(net, proj) -> tuple[dict[str, str], dict[str, set[str]]]:
     return names, users
 
 
+# a comment or a string or character literal: the rewrites change code only
+_NOT_CODE = re.compile(r'(//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')', re.S)
+
+
+def _in_code(source: str, change) -> str:
+    """`source` with `change` applied to its code, and its comments and literals as they were."""
+    parts = _NOT_CODE.split(source)
+    return "".join(part if i % 2 else change(part) for i, part in enumerate(parts))
+
+
+def _unstatic(source: str, name: str) -> str:
+    """`source` with `static` taken off the definition (and prototypes) of `name`, so other files can call it."""
+    return _in_code(source, lambda code: re.sub(rf"\bstatic\s+(?=[^;{{}}()]*\b{re.escape(name)}\s*\()", "", code))
+
+
 _BYTE = r"(?:u8|s8|char|unsigned char|signed char)"
 _NUMBER = r"(0x[0-9A-Fa-f]+|\d+)"
 
@@ -67,6 +82,8 @@ def bases(net, proj, rows, groups, facts) -> dict[str, list[tuple[str, int, str,
 def _uses(source: str, base: str):
     """(text, offset) of each `(T *)&base + N`, and `base + N` where base is declared a byte array."""
     b = re.escape(base)
+    source = "".join(part if i % 2 == 0 else " " * len(part)  # comments and literals blanked: code only
+                     for i, part in enumerate(_NOT_CODE.split(source)))
     found = [(m.group(0), m.group(2)) for m in re.finditer(
         rf"(\(\s*{_BYTE}\s*\*\s*\)\s*&\s*{b})\s*\+\s*{_NUMBER}", source)]
     if re.search(rf"\b{_BYTE}\s+{b}\s*\[\s*\]", source):
@@ -80,10 +97,14 @@ def _rebase(source: str, base: str, offset: int, target: str, inside: int = 0, h
     b = re.escape(base)
     n = rf"(?:0x0*{offset:X}|0x0*{offset:x}|{offset})\b"
     more = f" + 0x{inside:X}" if inside else ""
-    out = re.sub(rf"\((\s*{_BYTE}\s*\*\s*)\)\s*&\s*{b}\s*\+\s*{n}", rf"(\1)&{target}{more}", source)
-    element = re.search(rf"\b({_BYTE})\s+{b}\s*\[\s*\]", out)
-    if element:
-        out = re.sub(rf"(?<![\w&)])\b{b}\s*\+\s*{n}", f"(({element.group(1)} *)&{target}{more})", out)
+    element = re.search(rf"\b({_BYTE})\s+{b}\s*\[\s*\]", source)
+
+    def change(code: str) -> str:
+        code = re.sub(rf"\((\s*{_BYTE}\s*\*\s*)\)\s*&\s*{b}\s*\+\s*{n}", rf"(\1)&{target}{more}", code)
+        if element:
+            code = re.sub(rf"(?<![\w&)])\b{b}\s*\+\s*{n}", f"(({element.group(1)} *)&{target}{more})", code)
+        return code
+    out = _in_code(source, change)
     if out != source and not re.search(rf"\b{re.escape(target)}\b", source + header):
         out = f"extern char {target}[];\n" + out
     return out
@@ -102,24 +123,27 @@ def fix(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
         units = net._unit_contexts(proj["id"])
         groups, facts = pc_link.undefined(net, proj)
         rebased = bases(net, proj, rows, groups, facts)
-    if not names and not rebased:
-        log("No call uses an old name, and no base symbol needs putting right.")
-        return {"names": 0, "bases": 0, "functions": 0, "kept": [], "refused": []}
-    log(f"{len(names)} old names, called from {len(users)} functions, and {len(rebased)} functions with a wrong base "
-        "symbol: rewriting them and judging each function twice")
+        statics = {n for n in groups.get("static", []) if n in rows}
+    if not names and not rebased and not statics:
+        log("No call uses an old name, no base symbol needs putting right and no function is static.")
+        return {"names": 0, "bases": 0, "statics": 0, "functions": 0, "kept": [], "refused": []}
+    log(f"{len(names)} old names, called from {len(users)} functions; {len(rebased)} functions with a wrong base symbol; "
+        f"{len(statics)} static functions others call: rewriting them and judging each function twice")
 
     def header(fn) -> str:
         context = net._context(proj["id"], net._effective_unit(fn, units))
         return context["header"] if context is not None else ""
 
     rewritten, refused = {}, []
-    for function in sorted(set(users) | set(rebased)):
+    for function in sorted(set(users) | set(rebased) | statics):
         row = rows.get(function)
         if row is None:  # library code the kit replaces, or no longer matched: nothing of ours to rewrite
             continue
         source = row["matched_source"]
         for old in sorted(users.get(function, ())):
-            source = re.sub(rf"\b{re.escape(old)}\b", names[old], source)
+            source = _in_code(source, lambda code, old=old: re.sub(rf"\b{re.escape(old)}\b", names[old], code))
+        if function in statics:
+            source = _unstatic(source, function)
         for base, offset, target, inside in rebased.get(function, ()):
             source = _rebase(source, base, offset, target, inside, header(row))
         if source != row["matched_source"]:
@@ -153,11 +177,11 @@ def fix(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
                            "needs": sorted({names.get(n, n) for n in last["needs"]} - set(last["defines"]))}
         kept.append((fn, found, symbols))
     done = _keep(net, proj, kept, rewritten)
-    log(f"{len(done)} functions now call {len(names)} functions by their names"
+    log(f"{len(done)} functions rewritten and kept (old names, wrong bases, static)"
         + (f"; {len(refused)} kept their C: " + "; ".join(f"{r['function']} ({r['why']})" for r in refused[:8])
            if refused else ""))
-    return {"names": len(names), "bases": len(rebased), "functions": len(set(users) | set(rebased)), "kept": done,
-            "refused": refused}
+    return {"names": len(names), "bases": len(rebased), "statics": len(statics),
+            "functions": len(set(users) | set(rebased) | statics), "kept": done, "refused": refused}
 
 
 def _keep(net, proj, kept, rewritten) -> list[str]:
