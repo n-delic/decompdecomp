@@ -42,8 +42,8 @@ parser.add_argument("--msvc", required=True, action="append",
                          "with MSVC_VERSION")
 parser.add_argument("--wibo", default="", help="runs the Windows compilers on Linux and macOS")
 parser.add_argument("--own", default=[], action="append",
-                    help="a compiler of the user's own (a kit: decompdecomp's kits/): VERSION=RUNNER,CL[,INCLUDE...], "
-                         "RUNNER wibo, wine or none")
+                    help="a compiler of the user's own (a kit: decompdecomp's kits/): VERSION=RUNNER,CL[,INCLUDE...]"
+                         "[,dll=DIR...], RUNNER wibo, wine or none; dll=: more folders its DLLs are in")
 parser.add_argument("--facts", action="store_true", help="only bring build/VERSION/configure.facts up to date (the "
                                                          "build runs this, see facts())")
 args = parser.parse_args()
@@ -55,8 +55,12 @@ INCLUDES = "includes.txt"  # in a version's folder: more header folders, relativ
 
 VERSION = args.version
 # the user's own compilers by version: [runner, compiler, header folders...] (decompdecomp names those its kits have;
-# a version no --own names is in the --msvc folders)
-OWN = {own.split("=", 1)[0]: own.split("=", 1)[1].split(",") for own in args.own}
+# a version no --own names is in the --msvc folders), and the more folders their DLLs are in (a 64-bit cross compiler
+# loads its 32-bit host's mspdb DLLs: compile.py --dlls), given after OWN_DLLS
+OWN_DLLS = "dll="
+_OWN = {own.split("=", 1)[0]: own.split("=", 1)[1].split(",") for own in args.own}
+OWN = {v: [p for p in parts if not p.startswith(OWN_DLLS)] for v, parts in _OWN.items()}
+OWN_DLL_DIRS = {v: [p[len(OWN_DLLS):] for p in parts if p.startswith(OWN_DLLS)] for v, parts in _OWN.items()}
 CONFIG = Path("config") / VERSION / "functions.json"
 FILE_COMPILERS = CONFIG.parent / "file_compilers.json"  # {"src/auto/text_00401000.cpp": "7.1"}: files built with another
 FILE_FLAGS = CONFIG.parent / "file_flags.json"  # {"src/auto/text_00401000.cpp": ["/Oy-"]}: files built with more flags
@@ -105,12 +109,14 @@ def pack_of(version: str) -> Path | None:
 def runner(version: str) -> list[str]:
     """What runs a Visual C++ version's compiler here: nothing on Windows, else wibo, or wine for a pack decompdecomp
     says wine runs ($DECOMPNET_WINE_PACKS, folders separated by os.pathsep; without it, the versions from WINE_FROM
-    on)."""
+    on); and, for a compiler of the user's own, the more folders its DLLs are in (--dlls)."""
+    dlls = [a for d in OWN_DLL_DIRS.get(version, []) for a in ("--dlls", d)]
     if sys.platform == "win32":
-        return []
+        return dlls
     if version in OWN:
         runner = OWN[version][0]
-        return [] if runner == "none" else ["--wine"] if runner == "wine" else ["--wrapper", args.wibo] if args.wibo else []
+        return dlls + ([] if runner == "none" else ["--wine"] if runner == "wine" else
+                       ["--wrapper", args.wibo] if args.wibo else [])
     wine_packs = {os.path.normcase(os.path.abspath(d)) for d in os.environ.get(WINE_PACKS, "").split(os.pathsep) if d}
     folder = pack_of(version)
     by_wine = os.path.normcase(os.path.abspath(folder)) in wine_packs if wine_packs and folder is not None else \

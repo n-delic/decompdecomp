@@ -103,7 +103,8 @@ RICH_BUILDS = {("6.0", 8168): "6.0", ("7.0", 9466): "7.0", ("7.1", 3077): "7.1",
                ("9.0", 21022): "9.0", ("9.0", 30729): "9.0SP1", ("10.0", 30319): "10.0", ("10.0", 40219): "10.0SP1",
                ("14.1", 27027): "14.16"}
 # a 64-bit game builds with a 64-bit compiler: 2017's (14.16-x64) is the packs' only one, so a game built with 2015,
-# 2019 or newer (or 2005 to 2013, whose 64-bit compilers few games used) builds with it, the nearest, saying so
+# 2019 or newer (or 2005 to 2013, whose 64-bit compilers few games used) builds with it, the nearest, saying so, unless
+# the user's own copy of its version has its 64-bit compiler (own_copy, #278)
 RICH_BUILDS_X64 = {("14.1", 27027): "14.16-x64"}
 X64_DEFAULT = "14.16-x64"  # a 64-bit program that doesn't say which Visual C++ built it
 # toolchains.toml's packs, each named after its first version: 6.0-7.1, 2005-2010, and 2017 (msvc2015: 2015 is to
@@ -111,6 +112,7 @@ X64_DEFAULT = "14.16-x64"  # a 64-bit program that doesn't say which Visual C++ 
 MSVC_PACKS = ("msvc", "msvc2005", "msvc2015")
 FIRST_YEAR = 1998  # Visual C++ 6.0's, whose name (VISUAL_STUDIO) has no year
 KIT = "visualcpp"  # the kit PC games take: the user's own Visual C++ copies
+OWN_DLLS = "dll="  # in configure.py's --own: a folder the compiler's DLLs are in (tools/configure.py OWN_DLLS)
 LINKER_VERSION_AT = 2  # in the optional header: the linker's major and minor version, a byte each
 # DRM and packers, by the sections they add to a program, as Detect It Easy's rules find them (github.com/horsicq/
 # Detect-It-Easy, db/PE) and Steamless finds Steam's (github.com/atom0s/Steamless: a ".bind" section)
@@ -453,9 +455,13 @@ class Build:
                            f"what {year}'s compiler generates differently won't match until decompdecomp has it "
                            "(ROADMAP.md, Newer Windows games)")
             elif _version_key(self.version)[0] != _version_key(near[0])[0]:
+                # (#278: no pack has 2005 to 2013's 64-bit compilers; a copy of the user's own with its 64-bit
+                # compiler builds such a game, which the import should say)
+                own = (f"; or set up your own Visual C++ {year} copy with its 64-bit compiler in Setup (Visual C++, "
+                       "your own copy)" if self.x64 else "")
                 out.append(f"it was built with {self.compiler}, and decompdecomp has no {bits}Visual C++ {year} "
                            f"yet: it builds with {theirs}, the nearest it has, so little of it matches until {year}'s "
-                           "comes (ROADMAP.md, Newer Windows games)")
+                           f"comes (ROADMAP.md, Newer Windows games){own}")
         if self.whole_program:
             out.append(f"{self.whole_program} of its {self.compiled} compiled files were built with whole-program "
                        "optimisation (/GL): their functions can't match")
@@ -494,14 +500,17 @@ def rich_version(build: str) -> tuple[str, int]:
     return ("5.0" if major == 11 else f"{major - 6}.0"), number
 
 
-def own_copy(version: str | None, number: int | None) -> kits.OwnCompiler | None:
+def own_copy(version: str | None, number: int | None, x64: bool = False) -> kits.OwnCompiler | None:
     """The user's own Visual C++ that should build a game the packs have no exact build for: the copy of its build,
     else the nearest build of the same version (Visual Studio's, "9.0"); none: they have no copy of that version.
-    A game that names only its linker's version (number None) takes the newest copy of it."""
-    if version is None or (version, number) in RICH_BUILDS:
+    A game that names only its linker's version (number None) takes the newest copy of it. A 64-bit game (`x64`)
+    takes a copy's 64-bit compiler, which only copies that have one give (kits/visualcpp.py, #278)."""
+    from . import X64_SUFFIX
+
+    if version is None or (version, number) in (RICH_BUILDS_X64 if x64 else RICH_BUILDS):
         return None
     same = [(rich_version(c.build)[1], c) for c in kits.compilers((KIT,)) if c.build
-            and rich_version(c.build)[0] == version]
+            and c.version.endswith(X64_SUFFIX) == x64 and rich_version(c.build)[0] == version]
     if not same:
         return None
     return (min(same, key=lambda nc: (abs(nc[0] - number), -nc[0])) if number else max(same, key=lambda nc: nc[0]))[1]
@@ -554,10 +563,10 @@ def describe(data: bytes) -> Build:
     if wrapper is None and len(names) >= DENUVO_MIN_SECTIONS and \
             len({n for n in names if DENUVO_SECTION.fullmatch(n)}) >= DENUVO_MIN_NAMES:
         wrapper = "Denuvo"
-    # (a copy of the user's own is read for its 32-bit compiler only, kits/visualcpp.py: a 64-bit game takes the packs')
+    # (a 64-bit game takes a copy's 64-bit compiler, when the copy has one: kits/visualcpp.py)
     machine = MACHINES.get(machine_id, f"machine type {machine_id:#x}")
     return Build(machine, version, number, whole, sum(files.values()), wrapper,
-                 None if machine == X64 else own_copy(version, number))
+                 own_copy(version, number, machine == X64))
 
 
 def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
@@ -574,7 +583,7 @@ def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
     out = []
     machine = describe(data).machine  # (a 64-bit program's files build with a 64-bit compiler)
     for (version, number), n in sorted(files.items(), key=lambda item: -item[1]):
-        built = Build(machine, version, number, own=None if machine == X64 else own_copy(version, number))
+        built = Build(machine, version, number, own=own_copy(version, number, machine == X64))
         try:
             installed = built.own is not None or toolchains.installed(compiler_pack(built.pack_version)) is not None
         except ForkError:
@@ -2500,7 +2509,8 @@ def builds_md(pe: PE, compiler: str) -> bool:
     """Whether a program's files build with /MD: it imports its C runtime from DLLs (dll_runtime), and it builds
     with Visual C++ 2015 or newer, a pack's or the user's own (DLL_RUNTIME_FROM: older ones' runtimes, msvcrt and
     msvcr71, aren't yet)."""
-    if own := re.fullmatch(r"own-(\d+\.\d+\.\d+)", compiler or ""):  # (a copy's: its cl.exe's, "own-19.29.30137")
+    # (a copy's: its cl.exe's, "own-19.29.30137", its 64-bit compiler's "own-19.29.30137-x64")
+    if own := re.fullmatch(r"own-(\d+\.\d+\.\d+)(?:-x64)?", compiler or ""):
         version = rich_version(own.group(1))[0]
     else:
         version = m.group() if (m := re.match(r"\d+\.\d+", compiler or "")) else None
@@ -2577,9 +2587,12 @@ def tool_args(kit_ids=()) -> list[str]:
 
 
 def own_compiler_args(compilers) -> list[str]:
-    """configure.py's arguments for compilers of the user's own (kits.OwnCompiler: a kit's, not a pack's)."""
+    """configure.py's arguments for compilers of the user's own (kits.OwnCompiler: a kit's, not a pack's): its runner,
+    its cl.exe, its header folders, and the more folders its DLLs are in (OwnCompiler.dlls), each after "dll=" (no
+    header folder starts so: they're absolute paths)."""
     return [arg for c in compilers for arg in ("--own", ",".join([f"{c.version}={c.runner or 'none'}", str(c.exe),
-                                                                  *map(str, c.includes)]))]
+                                                                  *map(str, c.includes),
+                                                                  *(f"{OWN_DLLS}{d}" for d in c.dlls)]))]
 
 
 def own_versions(args: list[str]) -> set[str]:

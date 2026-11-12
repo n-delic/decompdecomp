@@ -203,6 +203,59 @@ def test_visualcpp_reads_old_32_bit_copies_from_their_folders_and_refuses_16_bit
     assert kit.compilers(sixteen) == [] and "16-bit" in kit.verify(sixteen)
 
 
+
+def add_x64(copy: Path, c2: str, sub: str) -> Path:
+    """A 64-bit compiler beside a make_vc copy's: an empty cl.exe and a c2.dll in `sub` (bin/x86_amd64...)."""
+    at = copy / sub
+    at.mkdir(parents=True)
+    (at / "cl.exe").write_bytes(b"")
+    (at / "c2.dll").write_bytes(version_resource(c2))
+    return at
+
+
+@pytest.mark.parametrize("layout,x64,c2,runner", [
+    ("VC/bin", "bin/x86_amd64", "14.0.50727.42", "wibo"),  # 2005 (#278's game), 2008 to 2015 the same
+    ("VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86", "bin/Hostx86/x64", "19.16.27023.0", "wine")])  # 2017 and newer
+def test_a_copy_with_its_64_bit_compiler_gives_it_beside_the_32_bit_one(tmp_path, layout, x64, c2, runner):
+    """#278: a Visual C++ 2005 copy set up with its 64-bit compiler gave its 32-bit one only, so a 64-bit 2005 game
+    still built with 2017's. The 64-bit one (its 32-bit computer's: what wibo runs) is the copy's too, named as the
+    packs' 64-bit compiler is (-x64), with the same headers, and with the 32-bit compiler's folder and Visual Studio's
+    Common7/IDE for the program database DLLs it loads from there."""
+    copy = make_vc(tmp_path / "vs", c2, layout)
+    at = add_x64(copy, c2, x64)
+    ide = tmp_path / "vs" / "Common7" / "IDE"
+    ide.mkdir(parents=True)
+    kit = kits.get("visualcpp")
+    assert kit.locate(tmp_path / "vs") == copy.resolve()
+    x86, wide = kit.compilers(copy.resolve())
+    short = ".".join(c2.split(".")[:3])
+    assert (x86.version, wide.version) == (f"own-{short}", f"own-{short}-x64") and "64-bit" in wide.name
+    assert wide.exe == at.resolve() / "cl.exe" and wide.runner == x86.runner == runner and wide.build == c2
+    assert wide.includes == x86.includes and x86.dlls == ()
+    assert wide.dlls == (x86.exe.parent, ide.resolve())
+    assert kit.verify(copy).startswith(f"Visual C++ {c2} and its 64-bit compiler")
+    # what tools/configure.py --own reads: the DLL folders after the headers, each after "dll="
+    arg = pc.own_compiler_args([wide])[1]
+    assert arg == ",".join([f"own-{short}-x64={runner}", str(wide.exe), *map(str, wide.includes),
+                            *(f"dll={d}" for d in wide.dlls)])
+
+
+def test_a_copy_with_only_the_64_bit_computers_compiler_says_wibo_cant_run_it(tmp_path):
+    """bin/amd64 (2005 to 2015) is a 64-bit program, which wibo can't run: no 64-bit compiler, and Setup says why.
+    2017's Hostx64/x64 runs through wine, so a copy wine runs takes it when it has no Hostx86/x64."""
+    kit = kits.get("visualcpp")
+    old = make_vc(tmp_path / "a", "14.0.50727.42")
+    add_x64(old, "14.0.50727.42", "bin/amd64")
+    assert [c.version for c in kit.compilers(old)] == ["own-14.0.50727"]
+    assert "bin/amd64) is a 64-bit program, which wibo can't run" in kit.verify(old)
+    new = make_vc(tmp_path / "b", "19.16.27023.0", "VC/Tools/MSVC/14.16.27023/bin/Hostx64/x86")
+    add_x64(new, "19.16.27023.0", "bin/Hostx64/x64")
+    assert [c.version for c in kit.compilers(new)] == ["own-19.16.27023", "own-19.16.27023-x64"]
+    plain = make_vc(tmp_path / "c", "15.0.30729.1")  # (a copy without one: as before, its 32-bit compiler alone)
+    assert [c.version for c in kit.compilers(plain)] == ["own-15.0.30729"]
+    assert kit.verify(plain) == "Visual C++ 15.0.30729.1"
+
+
 # ---- the PS3 SDK kit, and a kit's compiler in ROM mode (stand-ins: a shell script is the "compiler")
 
 STAMP = b"4.1.1 (SDK270, $Rev: 3019 $)"

@@ -3244,6 +3244,124 @@ def test_a_game_of_a_build_no_pack_has_builds_with_the_users_own_visual_cpp(tmp_
     assert {"MSVC/own-15.0.30411", "MSVC/own-15.0.21022", "MSVC/own-19.29.30137", "MSVC/9.0"} <= ids
 
 
+
+def _own_x64_copy(tmp_path, monkeypatch, build="14.0.50727.42", x64="bin/x86_amd64"):
+    """A Visual C++ copy of the user's own with its 64-bit compiler (homemade stand-ins), set up in Setup."""
+    from tests.test_kits import add_x64
+
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path / "vs8", build)
+    if x64:
+        add_x64(copy, build, x64)
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    return copy
+
+
+def test_a_64_bit_2005_game_builds_with_the_users_own_64_bit_visual_cpp(tmp_path, monkeypatch):
+    """#278: a 64-bit game built with Visual C++ 2005 (no Rich header: its linker, 8.0, names it) built with 2017's
+    64-bit compiler even with the user's own 2005 copy set up with its 64-bit compiler, and the import didn't say a
+    copy would build it. A copy's 64-bit compiler builds a 64-bit game of its version, its 32-bit one never does."""
+    game = tmp_path / "game.exe"
+    game.write_bytes(_windows_program(machine=0x8664, linker=(8, 0)))
+    built = scratch_pe.describe(game.read_bytes())
+    assert (built.version, built.build, built.own, built.pack_version) == ("8.0", None, None, "14.16-x64")
+    [why] = built.cannot_match()
+    assert "no 64-bit Visual C++ 2005 yet" in why and "your own Visual C++ 2005 copy with its 64-bit compiler" in why
+    _own_x64_copy(tmp_path, monkeypatch, x64="")  # (a copy with no 64-bit compiler: as before, 2017's)
+    assert scratch_pe.describe(game.read_bytes()).pack_version == "14.16-x64"
+    _own_x64_copy(tmp_path / "with", monkeypatch)
+    built = scratch_pe.describe(game.read_bytes())
+    assert built.own.version == built.pack_version == "own-14.0.50727-x64" and built.cannot_match() == []
+    info = scratch_pe.game_info(game)
+    assert (info["compiler"], info["target"], info["cannot_match"]) == ("own-14.0.50727-x64", "x64", [])
+    assert "your newest copy of it, your Visual C++ 14.0.50727.42 (64-bit), builds it" in info["compiler_why"]
+    # with a Rich header of its build: the very build, and the files it counts build with it too
+    rich = _windows_program(machine=0x8664, rich=[(0x6D, 50727, 300), (0x78, 50727, 1)])
+    exact = scratch_pe.describe(rich)
+    assert exact.pack_version == "own-14.0.50727-x64" and exact.own.build == "14.0.50727.42"
+    assert [row[0] for row in scratch_pe.program_compilers(rich)] == ["MSVC/own-14.0.50727-x64"]
+    # a 32-bit game of that version builds with the copy's 32-bit compiler, never its 64-bit one
+    assert scratch_pe.describe(_windows_program(rich=[(0x6D, 50000, 300), (0x78, 50000, 1)])).pack_version == \
+        "own-14.0.50727"
+
+
+def test_a_copys_compilers_are_offered_only_to_games_of_their_processor(tmp_path, monkeypatch):
+    """#278: the copy's compilers had no processor, so a 64-bit game's list (the import's, Settings') offered a 32-bit
+    one, whose code can't match it, and the 64-bit one was never there. Each is its processor's, as the packs' are."""
+    _own_x64_copy(tmp_path, monkeypatch)
+    pc = consoles.get("pc")
+    targets = {c.id: c.target for c in pc.compilers if "own-" in c.id}
+    assert targets == {"MSVC/own-14.0.50727": "x86", "MSVC/own-14.0.50727-x64": "x64"}
+    for machine, target in ((0x14C, "x86"), (0x8664, "x64")):
+        (tmp_path / "orig").mkdir(exist_ok=True)
+        (tmp_path / "orig" / "game.exe").write_bytes(_windows_program(machine=machine))
+        fp = type("FP", (), {"root": tmp_path, "manifest": {"game": {"path": "orig/game.exe"}}})()
+        ids = [c.id for c in pc.project_compilers(fp)]
+        assert all(c.target == target for c in pc.compilers if c.id in ids)
+        assert ("MSVC/own-14.0.50727-x64" in ids, "MSVC/own-14.0.50727" in ids) == (target == "x64", target == "x86")
+    # a 64-bit copy's compiler reads the C runtime from DLLs as its 32-bit one does (2015 and newer: /MD)
+    pe = scratch_pe.read_pe(_windows_program(machine=0x8664))
+    pe.dlls = ["VCRUNTIME140.dll"]
+    assert scratch_pe.builds_md(pe, "own-19.29.30137-x64") and scratch_pe.builds_md(pe, "own-19.29.30137")
+
+
+def test_a_64_bit_copys_compiler_finds_its_dlls_in_the_32_bit_compilers_folder(tmp_path):
+    """#278: a 64-bit cross compiler loads its 32-bit host's program database DLLs (mspdb80.dll...), which aren't
+    beside it: configure.py passes the copy's DLL folders to compile.py (--dlls), which puts them in WINEPATH, where
+    wibo and wine look after the compiler's own folder."""
+    root = tmp_path / "project"
+    shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
+    (root / "src/auto").mkdir(parents=True)
+    (root / "src/auto/one.cpp").write_text("int f(void) { return 1; }\n")
+    config = root / "config/TEST/functions.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"exe": "orig/test.exe", "units": {"one": {}}}))
+    (root / "include").mkdir()
+    pack = tmp_path / "pack"
+    (pack / "6.0" / "Bin").mkdir(parents=True)
+    (pack / "6.0" / "Bin" / "CL.EXE").write_bytes(b"")
+    (pack / "6.0" / "Include").mkdir()
+    host, ide = tmp_path / "VC" / "bin", tmp_path / "Common7" / "IDE"
+    said = tmp_path / "said.txt"
+    cl = tmp_path / "VC" / "bin" / "x86_amd64" / "cl"  # (a stand-in: says where it was told to find its DLLs)
+    cl.parent.mkdir(parents=True)
+    cl.write_text(f"#!/bin/sh\nprintf '%s' \"$WINEPATH\" > '{said}'\nexit 3\n")
+    cl.chmod(0o755)
+    ide.mkdir(parents=True)
+    own = kits.OwnCompiler("own-14.0.50727-x64", "x", cl, (tmp_path / "VC" / "include",), runner="none",
+                           build="14.0.50727.42", dlls=(host, ide))
+    config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/one.cpp": own.version}))
+    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(pack),
+                    *scratch_pe.own_compiler_args([own])], check=True, capture_output=True, timeout=30, cwd=root)
+    ninja = re.sub(r"\$\n\s*", "", (root / "build.ninja").read_text(encoding="utf-8"))  # (ninja_syntax's wrapping)
+    assert f"--dlls {host} --dlls {ide}" in ninja and f"--include {own.includes[0]}" in ninja
+    assert "--include dll=" not in ninja  # (never a header folder)
+    if sys.platform == "win32":
+        return  # (there the folders go in PATH, and a shell script is no compiler)
+    run = subprocess.run([sys.executable, "tools/compile.py", "--config", str(config), "--dlls", str(host), "--dlls",
+                          str(ide), "--compiler", str(cl), "--include", str(own.includes[0]), "--output",
+                          "build/one.obj", "--source", "src/auto/one.cpp", "--", "/c"],
+                         cwd=root, capture_output=True, timeout=30, env={**os.environ, "WINEPATH": "/before"})
+    assert run.returncode == 3 and said.read_text() == f"{host};{ide};/before"
+
+
+
+def test_a_build_with_the_users_own_2017_copy_is_given_wine_without_the_pack(tmp_path, monkeypatch):
+    """#278: wine reached a PC build only when a pack wine runs was installed, so a copy of the user's own that wine
+    runs (2015 and newer, its 64-bit compiler too) failed to build without the 2017 pack ("this computer has no
+    wine"). A 2008 copy (wibo) still gets nothing."""
+    from decompnet import wine
+
+    monkeypatch.setattr(wine, "needed", lambda: True)
+    monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(tmp_path / "prefix"))
+    _own_x64_copy(tmp_path, monkeypatch, build="15.0.30729.1")
+    assert consoles.get("pc").build_env() == {}
+    _own_x64_copy(tmp_path / "new", monkeypatch, build="19.29.30137.0", x64="bin/Hostx86/x64")
+    assert consoles.get("pc").build_env() == {"DECOMPNET_WINE": "/opt/wine/bin/wine",
+                                              "DECOMPNET_WINE_PREFIX": str(tmp_path / "prefix")}
+
+
 def test_configure_names_each_of_two_own_copies_compilers_in_the_ninja_build(tmp_path):
     root = tmp_path / "project"
     shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
