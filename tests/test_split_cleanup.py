@@ -141,3 +141,33 @@ def test_padding_head_only_points_at_tail(net):
     assert net._function("mixfn", SLUG)["status"] == "asm"          # the padding head is retired...
     assert net._function("func_80010008", SLUG)["status"] != "asm"  # ...the real tail stays workable
     assert "func_80010008" in reply, reply                          # and the reply sends the user there
+
+
+def test_retiring_a_padding_head_releases_its_claim(net):
+    # An agent that claims a function then splits its leading alignment NOPs off gets the head retired ('asm');
+    # its claim must go too, or the dead sliver is handed straight back on the next claim and asking for a
+    # different function says "you already hold <it>".
+    agent, _ = net.local_agent("tester")
+    vram = _insert_words(net, "mixfn", [0x0, 0x0, JR_RA])          # two leading NOPs, then real code
+    net.claim_row(agent, SLUG, "mixfn")
+    head_id = net._function("mixfn", SLUG)["id"]
+    assert net.store.one("SELECT 1 FROM claims WHERE function_id=?", head_id) is not None
+    net.split_function(agent, SLUG, "mixfn", f"0x{vram + 8:08X}")  # head = the leading NOPs -> retired
+    assert net._function("mixfn", SLUG)["status"] == "asm"
+    assert net.store.one("SELECT 1 FROM claims WHERE function_id=?", head_id) is None   # the claim is released
+    nxt = net.claim_row(agent, SLUG)                               # a fresh function, not the dead sliver
+    assert nxt is not None and nxt["status"] != "asm" and nxt["name"] != "mixfn", nxt
+
+
+def test_split_keeps_a_supplied_boundary_reason_over_padding(net):
+    # resolve_boundary cuts a function and passes the user/agent's reason as tail_meta; when that tail is also
+    # zero fill, _cut must keep the reason instead of replacing it with the generic "alignment padding" label.
+    from decompnet.network import set_aside
+    agent, _ = net.local_agent("tester")
+    vram = _insert_words(net, "mixfn", [JR_RA, 0x0, 0x0])          # real head, two trailing zero (NOP) words
+    proj = net._project(SLUG)
+    fn = net._function("mixfn", SLUG)
+    net._cut(proj, fn, vram + 4, "pad_tail", net.symbols(proj["id"]), agent.id, "boundary",
+             "mixfn ends early", {"asm_code": "data table, not code"})
+    aside = set_aside(net._function("pad_tail", SLUG))
+    assert aside["set_aside"] == "data table, not code", aside     # the supplied reason survived

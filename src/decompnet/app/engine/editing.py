@@ -111,7 +111,9 @@ class EditMixin:
             meta = console.function_meta(tail)
             if tail_meta:
                 meta.update(tail_meta)
-            if tail_padding:
+            if tail_padding and not (tail_meta and tail_meta.get("asm_code")):
+                # a caller (resolve_boundary) that already gave a reason keeps it; only unexplained
+                # zero fill gets the generic alignment-padding label.
                 meta["asm_code"] = "alignment padding (all nops)"
             head_meta = json.loads(fn["meta"] or "{}")
             if head_padding:
@@ -121,6 +123,10 @@ class EditMixin:
                        (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
                         console.function_asm(head), "asm" if head_padding else fn["status"],
                         json.dumps(head_meta) if head_meta else None, fn["id"]))
+            if head_padding:
+                # the head is retired (set aside as padding); an agent must not keep holding a dead
+                # sliver and get it handed back on the next claim (as set_aside_by_you also deletes it).
+                db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
                        "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (proj["id"], new_name, tail.size, console.function_insns(tail), tt.code, json.dumps(tt.to_json()),
