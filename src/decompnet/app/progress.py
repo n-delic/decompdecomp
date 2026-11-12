@@ -343,7 +343,7 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
             if name in projected:
                 pending[name] = projected[name]
     manifest["headers"] = headers
-    renamed_files = {f"{d}/{n}.c" for n in renamed_db for d in ("src", "best")}
+    renamed_files = {f"{d}/{saves._source_file(n)}" for n in renamed_db for d in ("src", "best")}
     for name, text in projected.items():
         if name.startswith(("src/", "best/")) and name not in disk and name not in renamed_files:
             pending[name] = text
@@ -369,22 +369,50 @@ def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]
     return {row["name"] for row in rows}
 
 
-def _adopt_saved_names(net, pid: int, saved_manifest: dict, auto_only: bool = False) -> None:
+def _adopt_check(saved_manifest, cfg=None) -> list:
+    """Validate a saved folder enough to adopt names from it, and return its layout. A `[]` where an object is
+    expected, or a manifest for another game, raises the folder's own NetworkError (never a bare AttributeError)
+    before any row is renamed, so a refused folder leaves the database unchanged (#174 review 1)."""
+    try:
+        if not isinstance(saved_manifest, dict):
+            raise ValueError("progress/decompdecomp.json must be an object")
+        if cfg is not None and (saved_manifest.get("format") != saves.FORMAT
+                                or saved_manifest.get("game", {}).get("sha1") != cfg["rom"]["sha1"]):
+            raise ValueError("it is another game, or not format %d" % saves.FORMAT)
+        layout = saved_manifest.get("layout") or []
+        if not isinstance(layout, list):
+            raise ValueError("layout must be a list")
+        for entry in layout:
+            if (not isinstance(entry, dict) or not NAME.fullmatch(entry.get("name", ""))
+                    or not isinstance(entry.get("vram"), int)
+                    or not isinstance(entry.get("size"), int) or entry["size"] <= 0):
+                raise ValueError("a layout entry needs a name, an integer vram and a size above 0")
+        return layout
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
+        why = e.args[0] if isinstance(e, ValueError) and e.args else f"{type(e).__name__} {e}"
+        raise NetworkError(f"Fix progress/decompdecomp.json: it must describe this game and reference existing "
+                           f"headers ({why}).") from None
+
+
+def _adopt_saved_names(net, pid: int, saved_manifest: dict, auto_only: bool = False, cfg=None) -> None:
     """Before a first sync renders, give a database function the saved (older) name the folder still uses for it:
     when exactly one database function at a saved entry's address matches it (by unit, or by size when no unit can
     tell siblings apart) and that saved name is gone from the database, rename the row to the saved name. Then the
     render, the merge and later publishes all agree on the name, instead of the database's new name being republished
     or quietly replacing the saved one on the next change (#174)."""
-    saved_layout = saved_manifest.get("layout") or []
+    saved_layout = _adopt_check(saved_manifest, cfg)
     saved_names = {entry.get("name") for entry in saved_layout}
-    rows = net.store.all("SELECT id, name, vram, size, unit FROM functions WHERE project_id=?", pid)
-    db_names = {r["name"] for r in rows}
-    pairs = []
+    by_vram: dict[int, list[dict]] = {}
+    db_names = set()
+    for r in net.store.all("SELECT id, name, vram, size, unit FROM functions WHERE project_id=?", pid):
+        by_vram.setdefault(r["vram"], []).append(dict(r))
+        db_names.add(r["name"])
+    renames = []  # decided without touching the database, so a refused entry leaves every row unchanged
     for saved in saved_layout:
         new = saved.get("name")
         if new in db_names:
             continue  # the saved name is still a database function: nothing was renamed
-        matching = [r for r in rows if r["name"] not in saved_names and r["vram"] == saved.get("vram")
+        matching = [r for r in by_vram.get(saved.get("vram"), []) if r["name"] not in saved_names
                     and (r["unit"] == saved.get("unit")
                          if saved.get("unit") is not None and r["unit"] is not None
                          else saved.get("size") is not None and r["size"] == saved.get("size"))]
@@ -393,15 +421,22 @@ def _adopt_saved_names(net, pid: int, saved_manifest: dict, auto_only: bool = Fa
         row = matching[0]
         if auto_only and not AUTO_NAME.match(row["name"]):
             continue  # later syncs adopt only over an auto name (a re-analysis reset), never a deliberate rename
-        with net.store.tx() as db:  # rename this one row and its symbol only -- never a same-address overlay sibling
-            db.execute("UPDATE functions SET name=? WHERE id=?", (new, row["id"]))
-            db.execute("UPDATE symbols SET name=? WHERE project_id=? AND address=? AND name=?",
-                       (new, pid, row["vram"], row["name"]))
-        pairs.append((row["name"], new))
+        renames.append((row["id"], row["vram"], row["size"], row["name"], new))
         db_names.discard(row["name"]); db_names.add(new)
-        rows = [{**r, "name": new} if r["id"] == row["id"] else r for r in rows]
-    if pairs:
-        net._rename_in_code(pid, dict(pairs))  # callers and headers that still name the old symbols follow (review 2)
+        row["name"] = new  # a later saved entry sees the new name, so this row is not matched a second time
+    if not renames:
+        return
+    with net.store.tx() as db:  # one transaction for every rename: each row and its own symbol, never a sibling's
+        for rid, vram, size, old, new in renames:
+            db.execute("UPDATE functions SET name=? WHERE id=?", (new, rid))
+            if db.execute("UPDATE symbols SET name=? WHERE project_id=? AND address=? AND name=?",
+                          (new, pid, vram, old)).rowcount == 0:
+                # the symbol row at this address carries a sibling's name, so the rename hit nothing; add the saved
+                # name as its own symbol, as rename_symbols does, or symbols.resolve(new) stays None (review 3)
+                db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                           (pid, new, vram, size, "func"))
+    net._rename_in_code(pid, {old: new for _, _, _, old, new in renames})  # callers and headers follow (review 2)
+    net._syms.pop(pid, None)  # the symbol rows changed; drop the cached table so symbols.resolve() rebuilds (review 2)
 
 
 class Progress:
@@ -923,9 +958,10 @@ class Progress:
             manifest_path = folder / saves.MANIFEST
             if manifest_path.exists():
                 try:
-                    _adopt_saved_names(net, pid, json.loads(manifest_path.read_text(encoding="utf-8")), auto_only=True)
-                except (OSError, UnicodeError, ValueError):
-                    pass
+                    _adopt_saved_names(net, pid, json.loads(manifest_path.read_text(encoding="utf-8")),
+                                       auto_only=True, cfg=cfg)
+                except (OSError, UnicodeError, ValueError, NetworkError):
+                    pass  # a foreign or corrupt folder is left for _manifest below to reject; nothing changed here
         if baseline is not None and self.signatures.get(slug) == signature:
             if not db_changed and not config_changed:
                 return False
@@ -958,7 +994,7 @@ class Progress:
             if before is None and slug not in self.adopting and saves.MANIFEST in disk:
                 # Give a database function the saved (older) name the folder still uses, before anything renders,
                 # so the render, the merge and later publishes agree on the name (#174).
-                _adopt_saved_names(net, pid, json.loads(disk[saves.MANIFEST]))
+                _adopt_saved_names(net, pid, json.loads(disk[saves.MANIFEST]), cfg=cfg)
             # Preserve work on unrelated functions even if a helper finished while a contribution was pulled.
             comparison = None if before is not None else saves._render(net, slug)[0]
             comparison_manifest = before.manifest if before is not None else comparison[saves.MANIFEST]

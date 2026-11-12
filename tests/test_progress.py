@@ -1205,6 +1205,8 @@ def test_a_piece_named_by_its_label_saves_and_opens_again(project):
     net.progress.sync("game", force=True)
     names = [row["name"] for row in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
     assert ".L00001004" in names
+
+
 def test_a_first_sync_keeps_a_new_function_at_an_address_another_overlay_has():
     """Overlays load different functions at one address. A function the database gained at an address another
     overlay's function already has in the folder's layout joins the layout (and its source is published): the
@@ -1275,6 +1277,8 @@ def test_a_later_merge_keeps_both_set_aside_functions_at_one_address():
     b = {"name": "ovl_b_004BF720", "vram": 0x4BF720}
     merged = _merge_manifest({"set_aside": [a]}, {"set_aside": [a, b]}, {"set_aside": [a]})
     assert [f["name"] for f in merged["set_aside"]] == ["ovl_a_004BF720", "ovl_b_004BF720"]
+
+
 def test_a_first_sync_keeps_a_same_size_overlay_sibling_by_unit():
     """Two overlay functions of the same size at one address: the saved name matches the database entry of its own
     unit, so the sibling in the other overlay still joins instead of being taken as the same rename and dropped.
@@ -1407,3 +1411,63 @@ def test_adopt_updates_callers_and_the_header_to_the_saved_name(tmp_path):
     assert "draw_sprite()" in caller["matched_source"] and "ovl_a_disp_004BF720" not in caller["matched_source"]
     header = net._context(pid, "")["header"]
     assert "draw_sprite" in header and "ovl_a_disp_004BF720" not in header
+
+
+def test_adopt_refuses_a_foreign_or_malformed_folder_and_changes_nothing(tmp_path):
+    """#174 review 1: the folder is validated before adopting. A manifest for another game, or a bare [] where an
+    object is expected, raises the folder's NetworkError (not an AttributeError) and renames nothing in the database."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'func_00001000',?,36,9,'open','ovl_a')", (pid, 0x1000))
+    cfg = {"rom": {"sha1": "x"}}
+    before = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+    foreign = {"format": saves.FORMAT, "game": {"sha1": "other"},                     # right format, wrong game
+               "layout": [{"name": "draw_sprite", "vram": 0x1000, "size": 36, "unit": "ovl_a"}]}
+    with pytest.raises(NetworkError):
+        _adopt_saved_names(net, pid, foreign, cfg=cfg)
+    with pytest.raises(NetworkError):
+        _adopt_saved_names(net, pid, [], cfg=cfg)                                      # a bare list, not an object
+    after = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+    assert after == before == {"func_00001000"}                                       # nothing was renamed
+
+
+def test_adopt_invalidates_the_symbol_cache_so_callers_resolve(tmp_path):
+    """#174 review 2: a brief or judge may have built the symbol table before a first sync adopts. Adoption must
+    drop that cache, or symbols.resolve(saved_name) stays None and a caller rewritten to the saved name is lost."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'func_00001000',?,36,9,'matched','ovl_a')", (pid, 0x1000))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,'func_00001000',?,36,'func')", (pid, 0x1000))
+    net.symbols(pid)                                                                  # warm the cache with the auto name
+    assert net.symbols(pid).resolve("draw_sprite") is None
+    saved = {"layout": [{"name": "draw_sprite", "vram": 0x1000, "size": 36, "unit": "ovl_a"}]}
+    _adopt_saved_names(net, pid, saved, auto_only=True)
+    assert net.symbols(pid).resolve("draw_sprite") == 0x1000                          # the cache was rebuilt from the rows
+
+
+def test_adopt_adds_the_saved_name_when_the_symbol_row_is_a_siblings(tmp_path):
+    """#174 review 3: at an overlay address the single symbol row can carry the other twin's name, so renaming the
+    adopted row's symbol hits nothing. The saved name must still be added, or symbols.resolve(saved_name) is None
+    after a cache rebuild and rewritten callers fail."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'ovl_a_disp_004BF720',?,36,9,'matched','ovl_a')", (pid, 0x4BF720))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'ovl_b_crit_004BF720',?,36,9,'open','ovl_b')", (pid, 0x4BF720))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,'ovl_b_crit_004BF720',?,36,'func')", (pid, 0x4BF720))
+    saved = {"layout": [{"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"},
+                        {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_b"}]}
+    _adopt_saved_names(net, pid, saved)
+    assert net.symbols(pid).resolve("draw_sprite") == 0x4BF720    # added, though the only symbol row named the sibling
