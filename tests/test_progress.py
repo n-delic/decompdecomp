@@ -1267,3 +1267,30 @@ def test_a_project_unused_for_a_while_lets_go_of_its_baseline_and_still_saves(pr
         db.execute("UPDATE functions SET best_source='later attempt',best_score=10 WHERE name='g'")
     assert saves.Autosave(net).run_once() == ["game"]  # read again from the database, and saved as before
     assert (folder / "best/g.c").read_text() == "later attempt\n"
+
+
+def test_a_folder_check_that_fails_doesnt_stop_the_autosave(project, monkeypatch):
+    """Review of #279: the folder check moved out of the per-project try, so one failure ended the thread."""
+    net, folder, _ = project
+    monkeypatch.setattr(net, "project_missing", lambda row: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    synced = []
+    monkeypatch.setattr(net.progress, "sync", lambda slug, **kw: synced.append(slug))
+    saves.Autosave(net).run_once()  # (raised, and the thread died)
+    assert synced == ["game"]  # the check counts as present and the pass goes on
+
+
+def test_a_failed_autosave_pass_doesnt_end_the_thread(project, monkeypatch):
+    net, _, _ = project
+    autosave = saves.Autosave(net)
+    passes = []
+
+    def run_once():
+        passes.append(1)
+        if len(passes) >= 2:
+            autosave.stop.set()
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(autosave, "run_once", run_once)
+    monkeypatch.setattr(autosave.stop, "wait", lambda seconds: None)
+    autosave._loop()
+    assert len(passes) == 2

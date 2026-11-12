@@ -964,7 +964,10 @@ class Autosave:
 
     def _loop(self) -> None:
         while not self.stop.is_set():
-            self.run_once()
+            try:
+                self.run_once()
+            except Exception:  # (one bad pass mustn't end saving for the rest of the session)
+                log.exception("an autosave pass failed")
             if time.monotonic() - self.optimized > self.OPTIMIZE_SECONDS:
                 self.optimized = time.monotonic()
                 try:
@@ -973,12 +976,20 @@ class Autosave:
                     log.exception("refreshing the database's statistics failed")
             self.stop.wait(1)
 
+    def _missing(self, row) -> bool:
+        """Whether a project's folder is gone; a check that fails counts as present, so the pass carries on."""
+        try:
+            return bool(self.net.project_missing(row))
+        except Exception:
+            log.exception("checking %s's folder failed", row["slug"])
+            return False
+
     def run_once(self) -> list[str]:
         """Synchronize every ROM project, including file changes that have no database event."""
         progress = self.net.progress
         # (a project whose folder is gone has nothing to save into, only records to remove)
         rows = [row for row in self.net.store.all("SELECT id, slug, root FROM projects ORDER BY id")
-                if not self.net.project_missing(row)]
+                if not self._missing(row)]
         slugs = [row["slug"] for row in rows]
         hot = {slug for slug in slugs if progress.hot(slug, self.HOT_SECONDS)}
         quiet = [slug for slug in slugs if slug not in hot]
