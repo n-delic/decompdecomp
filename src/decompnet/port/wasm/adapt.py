@@ -119,6 +119,7 @@ def convert(lines, n, value, src, dst):
 # that passes more arguments than its callee declares leaves them here, and a call that leaves arguments out finds
 # them here, as they'd have stayed in the registers
 REGS = 0x00090000
+INDIRECT = [0]  # numbers the conversions before calls through pointers
 
 
 def reg(i):
@@ -238,6 +239,20 @@ def adapt(text, report=None, types=None, byval=None):
                 t = p.split()[0]
                 nm = p.split()[-1] if p.split()[-1].startswith("%") else f"%{i}"
                 current.append((t, nm))
+        im = re.search(r"\bcall ([^%@]*?)(%[\w.$]+)\(", line)
+        if im and not stripped.startswith(("define", "declare")):
+            # A call through a pointer: on MIPS its first arguments are in $a0-$a3 when the callee starts, and a
+            # callee whose C declares fewer of them passes them on from there (a text-table loader handed its
+            # record to the next call that way). They go to the register words, as direct calls' thunks put them.
+            close_i = balanced(line, im.end() - 1)
+            for i, a in enumerate(split_top(line[im.end():close_i])[:4]):
+                t, v = parse_arg(a)
+                if t == "ptr" or re.fullmatch(r"i(8|16|32)", t):
+                    INDIRECT[0] += 1
+                    pre = []
+                    w = convert(pre, 10_000_000 + INDIRECT[0] * 1000, v, t, "i32")
+                    out_lines.extend(pre)
+                    out_lines.append(f"  store i32 {w}, ptr {reg(i)}, align 4")
         cm = re.search(r"\bcall ([^@]*?)@([\w.$]+)\(", line)
         if not cm or cm.group(2) not in sigs or stripped.startswith(("define", "declare")):
             out_lines.append(line)
@@ -268,6 +283,12 @@ def adapt(text, report=None, types=None, byval=None):
         # parameter called with an i32), LLVM turns into a trap or a call through the table: a thunk instead
         same = (cret == ret and len(args) >= len(params) and (variadic or len(args) == len(params))
                 and all(a[0] == p for a, p in zip(fixed_args, params)))
+        if same and variadic and params and "..." not in cm.group(1):  # (`f(...)` alone is C's unprototyped `f()`)
+            # The C declared a variadic function fixed (`format_to_buffer(u8 *, u8 *, u8 *)` for a sprintf): its
+            # arguments past the fixed ones go in the varargs buffer the callee reads, so the call takes its type.
+            ftype = f"{ret} ({', '.join(params + ['...'])})"
+            out_lines.append(line[:cm.start(1)] + f"{ftype} " + line[cm.start(2) - 1:])
+            continue
         if same and "..." in cm.group(1) and not variadic:
             # The C declared a fixed function variadic (`f(void *, u32, s32, s32, ...)`): the call's explicit type
             # would pass the extra arguments in a varargs buffer the callee never reads. A plain call passes them.
