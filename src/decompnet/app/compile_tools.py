@@ -64,7 +64,7 @@ def snapshot(engine, slug, function):
     if not unit.source:
         raise NetworkError('This function needs a unit source file before using patches or recipes.')
     try:
-        text = _read(fp.safe_path(unit.source)).decode('utf-8')
+        text = _read(fp.safe_path(unit.source)).decode('utf-8').replace('\r\n', '\n').replace('\r', '\n')
     except (OSError, UnicodeError) as exc:
         raise NetworkError('Cannot read the unit source; fix its path and encoding before using patches.') from exc
     _, span = engine._find(text, engine._names(engine._meta(fn), fn))

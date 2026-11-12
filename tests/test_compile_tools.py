@@ -90,7 +90,7 @@ def test_preview_restores_source_outputs_and_database_even_for_an_exact_match(ri
     database = list(rig.net.store.conn.iterdump())
     result = compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', revision(rig), recipes())
     assert 'Preview only' in result and '100' in result
-    assert rig.path.read_bytes() == before and rig.base.read_bytes() == before
+    assert rig.path.read_bytes() == before and rig.base.read_bytes() == before.replace(b"\r\n", b"\n")
     assert not rig.state.placements
     assert list(rig.net.store.conn.iterdump()) == database
     assert rig.net.store.one('SELECT COUNT(*) n FROM attempts')['n'] == 0
@@ -141,7 +141,7 @@ def test_rejected_or_failed_trials_are_restored_and_never_published(rig, state):
     before = rig.path.read_bytes()
     setattr(rig.state, state, True)
     result = compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', revision(rig), recipes(), apply=True)
-    assert rig.path.read_bytes() == before and rig.base.read_bytes() == before
+    assert rig.path.read_bytes() == before and rig.base.read_bytes() == before.replace(b"\r\n", b"\n")
     assert not rig.state.placements
     assert 'Applying' not in result
 
@@ -282,4 +282,14 @@ def test_unexpected_diff_exceptions_still_restore_the_original_source_and_object
     before = rig.path.read_bytes()
     with pytest.raises(RuntimeError, match='unexpected error'):
         compile_tools.preview(rig.engine, rig.agent, 'test', 'work', SOURCE.replace('+ 1', '+ 2'))
-    assert rig.path.read_bytes() == before and rig.base.read_bytes() == before
+    assert rig.path.read_bytes() == before and rig.base.read_bytes() == before.replace(b"\r\n", b"\n")
+
+
+def test_crlf_source_is_restored_byte_for_byte_and_revisions_stay_stable(rig):
+    rig.path.write_bytes((SOURCE + 'int neighbor(void) { return 4; }\n').replace('\n', '\r\n').encode())
+    raw, before = rig.path.read_bytes(), revision(rig)
+    fn, definition, _ = compile_tools.snapshot(rig.engine, 'test', 'work')
+    assert definition == SOURCE
+    result = compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', before, recipes())
+    assert 'Preview only' in result
+    assert rig.path.read_bytes() == raw and revision(rig) == before
