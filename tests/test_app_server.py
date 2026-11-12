@@ -296,7 +296,7 @@ def test_restart_paused_restarts_only_paused_helpers_on_the_project(app, monkeyp
                            headers={"X-Decomp": "1"})
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "restarted": 1}
+    assert response.json() == {"ok": True, "restarted": 1, "skipped": 0}
     assert restarted == ["paused-here"]
 
 
