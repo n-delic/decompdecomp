@@ -690,7 +690,7 @@ $("deleteBtn").onclick = () => {
 };
 
 let compilerRows = [], compilerJob = null, compilerJobSlug = null, compilerResultsSlug = null;
-let compilerHasRun = false, compilerResultFilter = "all";
+let compilerHasRun = false, compilerResultFilter = "all", compilerSeenCompleted = -1, compilerRefreshing = false;
 
 function compilerScope() {
   const used = $("compilerUsedProfilesOnly"), flags = $("compilerFlagsOnly");
@@ -729,7 +729,24 @@ function renderCompilerProgress(p, finished = false) {
     `${p.applied || 0} applied · select a count to review the results` : p.profile ?
       `Best settings: ${p.profile[0]} ${p.profile[1].join(" ")}` : "Comparing the saved C. Compiler settings stay unchanged.");
   box.dataset.improved = String(p.best != null && (p.before == null || p.best > p.before + .001));
-  if (p.results) { compilerRows = p.results; compilerHasRun = true; renderCompilerResults(); }
+  compilerHasRun = true;
+  // the job's progress carries counts only (#241: every result so far, every 500 ms, grew to megabytes); an open
+  // results drawer reads the saved results again when another function finishes
+  if (!finished && completed !== compilerSeenCompleted) { compilerSeenCompleted = completed; refreshCompilerResults(); }
+}
+
+async function refreshCompilerResults() {
+  if (S.dialogKind !== "compiler-results" || compilerRefreshing) return;
+  const slug = S.slug;
+  compilerRefreshing = true;
+  try {
+    const data = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}&compiler_results=1`);
+    if (S.slug !== slug) return;
+    compilerRows = data.results || [];
+    compilerHasRun = compilerHasRun || !!data.ran;
+    renderCompilerResults();
+  } catch (e) { if (S.dialogKind === "compiler-results") $("dialogBody").textContent = e.message; }
+  finally { compilerRefreshing = false; }
 }
 
 function renderCompilerResults() {
@@ -775,6 +792,7 @@ $("compilerProgress").onclick = (e) => {
   const titles = {all: "Functions finished", improved: "Better settings found", exact: "Exact matches found"};
   dialog(titles[compilerResultFilter], "", "compiler-results");
   renderCompilerResults();
+  refreshCompilerResults();  // the saved results, which the job's progress no longer carries
 };
 
 async function loadCompilerComparison() {
@@ -798,7 +816,9 @@ async function followCompilerComparison(job, slug) {
   if (compilerJob === job && compilerJobSlug === slug) return;
   compilerJob = job; compilerJobSlug = slug;
   const button = $("testInstalledCompilers"), error = $("compilerTestError");
-  button.textContent = "Stop comparison"; $("compilerRunState").textContent = "· Running";
+  // the start disabled the button until the job existed; following it, the button is Stop and has to be clickable
+  button.disabled = false; button.textContent = "Stop comparison"; $("compilerRunState").textContent = "· Running";
+  compilerSeenCompleted = -1;
   $("installedCompilerTest").open = true;
   error.hidden = true; error.textContent = "";
   try {
@@ -830,7 +850,8 @@ async function followCompilerComparison(job, slug) {
   }
 }
 
-$("testInstalledCompilers").onclick = async () => {
+// one button: Find better settings, and while a comparison runs, Stop comparison (named for tests/gui_polls.js)
+async function startOrStopCompilerComparison() {
   if (compilerJob && compilerJobSlug === S.slug) {
     const button = $("testInstalledCompilers"); button.disabled = true; button.textContent = "Stopping…";
     try { await api("/api/job/cancel", {method: "POST", body: {id: compilerJob}}); }
@@ -847,7 +868,8 @@ $("testInstalledCompilers").onclick = async () => {
       untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked}});
     followCompilerComparison(job, slug);
   } catch (e) { error.textContent = e.message; error.hidden = false; startButton.disabled = false; }
-};
+}
+$("testInstalledCompilers").onclick = startOrStopCompilerComparison;
 $("dialogBody").addEventListener("click", (e) => {
   const button = e.target.closest("[data-open-compiler-function]");
   if (S.dialogKind !== "compiler-results" || !button) return;

@@ -1415,7 +1415,8 @@ class Network:
         proj = self._project(slug)
         with self.store.tx() as db:
             ids = [r["id"] for r in db.execute("SELECT id FROM functions WHERE project_id=?", (proj["id"],))]
-            for table in ("claims", "attempts"):
+            # compiler_tests too: function ids are reused, so a later project would show this one's comparison
+            for table in ("claims", "attempts", "compiler_tests"):
                 db.executemany(f"DELETE FROM {table} WHERE function_id=?", [(i,) for i in ids])
             for table in ("notes", "events", "context_versions", "functions", "symbols", "twin_misses"):
                 db.execute(f"DELETE FROM {table} WHERE project_id=?", (proj["id"],))

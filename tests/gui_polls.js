@@ -515,5 +515,33 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       });
     } finally { S.ov = previous; document.getElementById = original; }
   })()`, ctx);
+  // #241: the start disabled the button until the job existed, and only the end of the job enabled it again, so its
+  // Stop comparison couldn't be clicked while a comparison ran. The job here stays running (the poll's sleep never
+  // ends), as a long comparison's does.
+  const cancelled = [];
+  answers["/api/compilermap"] = (url) => (url.includes("compiler_results") ? { results: [], ran: true, job: null } : { job: "cmp1" });
+  answers["/api/job?id=cmp1"] = () => ({ id: "cmp1", state: "running", log: [], result: null,
+    progress: { phase: "testing", function: "f", tested: 1, combinations: 4, completed: 0, total: 3 } });
+  answers["/api/job/cancel"] = (url) => { cancelled.push(url); return { ok: true }; };
+  ctx.cancelledJobs = cancelled;
+  checks.compilerStop = await vm.runInContext(`(async () => {
+    const original = document.getElementById, elements = new Map();
+    document.getElementById = (id) => { if (!elements.has(id)) elements.set(id, makeStub(id)); return elements.get(id); };
+    function makeStub(id) {
+      const el = { id, hidden: false, disabled: false, checked: false, textContent: '', dataset: {},
+                   querySelector: () => ({ textContent: '', dataset: {} }) };
+      return el;
+    }
+    try {
+      const button = $('testInstalledCompilers');
+      const starting = startOrStopCompilerComparison();
+      const whileStarting = button.disabled;
+      await starting;
+      for (let i = 0; i < 50; i++) await null;  // the job's first poll (fetch answers at once)
+      const running = { disabled: button.disabled, text: button.textContent };
+      await startOrStopCompilerComparison();
+      return { whileStarting, running, stopping: button.textContent, cancels: cancelledJobs.length };
+    } finally { document.getElementById = original; }
+  })()`, ctx);
   process.stdout.write(JSON.stringify({ toasts, notes, unread, errors, checks }));
 })().catch((e) => { console.error(e); process.exit(1); });

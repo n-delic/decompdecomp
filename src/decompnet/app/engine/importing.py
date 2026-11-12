@@ -254,7 +254,7 @@ class ImportMixin:
 
                 lost = []
                 for name, old in gone.items():
-                    for table in ("claims", "attempts", "twin_misses"):
+                    for table in ("claims", "attempts", "twin_misses", "compiler_tests"):
                         db.execute(f"DELETE FROM {table} WHERE function_id=?", (old["id"],))
                     db.execute("UPDATE notes SET function_id=NULL, text=? || COALESCE(text, '') "
                                "WHERE function_id=?", (f"[{name} before reimport] ", old["id"]))
@@ -297,7 +297,7 @@ class ImportMixin:
                             (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, old["id"]))
                         preserved += old["status"] == "matched" and bool(old["matched_source"])
                     else:
-                        for table in ("claims", "attempts", "twin_misses"):
+                        for table in ("claims", "attempts", "twin_misses", "compiler_tests"):
                             db.execute(f"DELETE FROM {table} WHERE function_id=?", (old["id"],))
                         db.execute(
                             "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,unit=?,vram=?,"

@@ -258,8 +258,7 @@ class CompilerMixin:
                 progress({"phase": "testing", "function": fn["name"], "tested": n,
                           "combinations": len(candidates), "completed": index - 1, "total": len(pending),
                           "before": baseline, "best": best, "profile": best_profile,
-                          "improved": improved, "exact": exact, "skipped": skipped,
-                          "results": results})
+                          "improved": improved, "exact": exact, "skipped": skipped})
             ranked.sort(key=lambda r: (not r["exact"], r["percent"] is None,
                                        -(r["percent"] or 0), r["toolchain"], r["flags"]))
             own = compiler_for(self.cfg(proj), fn["vram"])
@@ -284,7 +283,7 @@ class CompilerMixin:
                 progress({"phase": "applying", "function": fn["name"], "completed": index - 1,
                           "total": len(pending), "before": baseline, "best": best,
                           "improved": improved, "exact": exact, "skipped": skipped,
-                          "applied": applied, "results": results})
+                          "applied": applied})
                 try:
                     self.apply_compiler_test_result(slug, fn["name"], best_profile[0], best_profile[1])
                     result["applied"] = True
@@ -296,13 +295,15 @@ class CompilerMixin:
                     db.execute("UPDATE compiler_tests SET result=? WHERE function_id=?",
                                (json.dumps(result), fn["id"]))
             results.append(result)
+            # counts only: /api/job sends the progress every 500 ms, and every result so far grew to megabytes on a
+            # large game (#241). The results drawer fetches the saved results (compiler_comparison_results) instead.
             progress({"phase": "testing", "completed": index, "total": len(pending),
                       "improved": improved, "exact": exact, "applied": applied,
-                      "skipped": skipped, "results": results})
+                      "skipped": skipped})
         log(f"Finished: {len(pending)} functions tested; {skipped} unchanged skipped; "
             f"{improved} improved, {exact} exact, {applied} applied.")
         return {"tried": len(pending), "skipped": skipped, "total": len(pending),
-                "improved": improved, "confirmed": exact, "applied_count": applied, "results": results}
+                "improved": improved, "confirmed": exact, "applied_count": applied}
 
     def compiler_comparison_results(self, slug: str) -> list[dict]:
         proj = self._project(slug)

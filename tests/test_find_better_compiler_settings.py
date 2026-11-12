@@ -54,9 +54,10 @@ def test_find_better_settings_is_local_and_report_only(tmp_path, monkeypatch):
     monkeypatch.setattr(net, "_judge_with", judge)
     result = net.find_better_compiler_settings("demo", log=lambda *_: None)
     assert result["tried"] == 1
-    assert result["results"][0]["best"] == 100.0
-    assert result["results"][0]["profile"] == ["gcc-2.7.2-psx", ["-O3", "-G8"]]
-    assert result["results"][0]["before_profile"] == ["gcc-2.7.2-psx", ["-O2", "-G8"]]
+    saved = net.compiler_comparison_results("demo")[0]  # the job's result has counts; the drawer reads these
+    assert saved["best"] == 100.0
+    assert saved["profile"] == ["gcc-2.7.2-psx", ["-O3", "-G8"]]
+    assert saved["before_profile"] == ["gcc-2.7.2-psx", ["-O2", "-G8"]]
     assert all(tc == "gcc-2.7.2-psx" and candidate == source for tc, _, candidate in judged)
     assert json.loads(net._project("demo")["config"]) == cfg
     assert net.compiler_comparison_results("demo")[0]["stale"] is False
@@ -69,10 +70,12 @@ def test_find_better_settings_is_local_and_report_only(tmp_path, monkeypatch):
     def report(_line):
         pass
 
-    report.progress = lambda value: phases.append(value["phase"])
+    report.progress = phases.append
     again = net.find_better_compiler_settings("demo", log=report, untested_only=False, auto_apply=True)
     assert again["applied_count"] == 1 and applied[0][1] == "f"
-    assert "testing" in phases and "applying" in phases
+    assert {"testing", "applying"} <= {p["phase"] for p in phases}
+    # #241: /api/job sends the progress every 500 ms; every result so far was megabytes on a large game
+    assert not any("results" in p or "ranked" in p for p in phases) and "results" not in again
     applied.clear()
     monkeypatch.setattr(net, '_judge_with', lambda *args: (False, SimpleNamespace(percent=95.0), ''))
     partial = net.find_better_compiler_settings('demo', log=lambda *_: None,
@@ -140,3 +143,17 @@ def test_saved_result_is_rechecked_before_applying_one_function(tmp_path, monkey
         db.execute("UPDATE functions SET best_source=? WHERE id=?", ("int f(void) { return 2; }", fid))
     with pytest.raises(Exception, match="inputs changed"):
         net.apply_compiler_test_result("demo", "f", "gcc-2.7.2-psx", ["-O3", "-G8"])
+
+
+def test_saved_comparisons_go_with_their_project(tmp_path):
+    """#241: function ids are reused, so a comparison left behind by a removed project showed in the next one."""
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    cfg = {"kind": "rom", "platform": "ps", "compiler": {"toolchain": "gcc-2.7.2-psx", "flags": ["-O2"]}}
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)",
+                         ("demo", "Demo", str(tmp_path), json.dumps(cfg))).lastrowid
+        fid = db.execute("INSERT INTO functions(project_id,name,vram,n_insns,status) VALUES(?,?,?,?,?)",
+                         (pid, "f", 0x80010000, 1, "open")).lastrowid
+        db.execute("INSERT INTO compiler_tests VALUES(?,?,?,?)", (fid, "digest", 0.0, "{}"))
+    net.remove_project("demo")
+    assert net.store.one("SELECT 1 FROM compiler_tests WHERE function_id=?", fid) is None

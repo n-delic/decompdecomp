@@ -122,6 +122,15 @@ def test_compiler_comparison_is_available_on_all_rom_consoles(gui):
         ['gba', False], ['ps3', False], ['n64', False], ['pc', True]]
 
 
+def test_a_running_compiler_comparison_can_be_stopped(gui):
+    """#241: the start disabled the button until the job existed, and only the job's end enabled it again, so its
+    Stop comparison couldn't be clicked while a comparison ran."""
+    stop = gui['checks']['compilerStop']
+    assert stop['whileStarting'] is True  # a second click can't start a second job
+    assert stop['running'] == {'disabled': False, 'text': 'Stop comparison'}
+    assert stop['stopping'] == 'Stopping…' and stop['cancels'] == 1
+
+
 def test_a_gba_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     gba = gui["checks"]["gba"]
     assert gba["good"] == ["gba", "ADQE", "DEMOQUEST"]
