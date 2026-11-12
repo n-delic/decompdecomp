@@ -962,6 +962,7 @@ button.fn { font: inherit; color: inherit; padding: 0; text-align: left; }
 .parts { display: grid; }
 .parts li { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13.5px; flex-wrap: wrap; }
 .parts li + li { border-top: 1px solid var(--line-soft); }
+.parts li.removed { opacity: .55; }  /* the part a Remove took out, until its Revert or a redraw */
 .parts code { font-size: 12.5px; white-space: nowrap; }
 .part-state { font: 500 11.5px/1 var(--mono); padding: 4px 7px; border-radius: var(--r-sm); border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
 .part-state.confirmed { background: var(--match-bg); color: var(--match-ink); border-color: transparent; }
@@ -1039,12 +1040,12 @@ details.more[open] > summary::before { content: "− "; }
 .prompt-setting-body { padding: 16px; display: grid; gap: 12px; }
 .prompt-setting-body > p { margin: 0; line-height: 1.6; }
 .prompt-setting-body > .check { border: 0; padding: 0; background: transparent; }
-.prompt-setting textarea { width: 100%; box-sizing: border-box; font: 12px/1.6 var(--mono); resize: vertical; min-height: 220px; max-height: 65vh; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper); color: var(--ink); }
+.prompt-setting textarea { width: 100%; box-sizing: border-box; font: 12px/1.6 var(--mono); resize: vertical; min-height: 220px; max-height: 65vh; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); color: var(--ink); }
 .prompt-setting textarea:focus-visible { outline: 2px solid var(--hl); outline-offset: 2px; }
 .tool-preset-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin: 16px 0 12px; }
 .tool-preset-controls > .field { flex: 1 1 200px; min-width: 0; }
 .tool-preset-controls select { width: 100%; }
-.tool-settings-stats { margin: 0 0 16px; padding: 10px 12px; border-radius: var(--r); background: var(--paper); font-size: 12px; color: var(--ink-2); }
+.tool-settings-stats { margin: 0 0 16px; padding: 10px 12px; border-radius: var(--r); background: var(--bg-alt); font-size: 12px; color: var(--ink-2); }
 .tool-coverage { margin: 12px 0; }
 .tool-coverage > summary { font-size: 12px; color: var(--ink-2); cursor: pointer; }
 .tool-catalog .transcript-tool { margin: 8px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }

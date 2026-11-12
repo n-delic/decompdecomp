@@ -93,8 +93,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     net.restore_links()
 
     def consoles_start() -> None:  # what each console does for its projects at start (Console.on_start)
-        for row in net.store.all("SELECT slug, config FROM projects"):
+        for row in net.store.all("SELECT id, slug, root, config FROM projects"):
             try:
+                if net.project_missing(row):
+                    continue  # its folder is gone: only its records are left, and those are removed, not set up
                 if net.is_rom(row):
                     net.rangechecks.reopen(row["slug"])
                 net.console(row).on_start(net, row["slug"], log=jobs.logger.info)

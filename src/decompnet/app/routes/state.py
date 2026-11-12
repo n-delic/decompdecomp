@@ -22,7 +22,7 @@ from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, job_error, static_file
 from . import App
 
-DEBUG_SUFFIXES = (".pdb", ".map")  # files sent with a game: debug information its import reads (consoles/pc/debuginfo.py)
+DEBUG_SUFFIXES = (".pdb", ".map", ".functions.jsonl")  # sidecars read by the PC and PS4 importers
 
 
 def system_name() -> str:
@@ -158,7 +158,7 @@ def register(app: App) -> None:
                         await call(tool_policy.set_global, net, name, enabled)
             blocked = tool_policy.disabled(net)
             own = set(helper.options.get('disabled_tools', [])) if helper else set()
-            usage = {r['name']: dict(r) for r in net.store.all('SELECT * FROM agent_tool_usage')}
+            usage = await call(tool_policy.usage, net)
             definitions = await mcp.list_tools()
             if helper:
                 names = set(tools.project_tools(net, helper.slug, include_disabled=True))
@@ -247,16 +247,17 @@ def register(app: App) -> None:
 
     def split_extras(game: Path, size: int, extras: str | None) -> None:
         """The files dropped with a game, sent after it in one upload (`extras`: [[name, bytes], ...]): a PC game's
-        program database or linker map, cut off the end and put beside it, where its import looks for them."""
+        program database or linker map, or PS4 function map. Put them beside the uploaded program."""
         if not extras:
             return
         try:
             wanted = [(Path(str(name)).name, int(n)) for name, n in json.loads(extras)]
         except (ValueError, TypeError):
             raise ValueError("the files sent with the game aren't listed right") from None
-        if any(not name.lower().endswith(DEBUG_SUFFIXES) or name == game.name or n < 0 for name, n in wanted) or \
+        if any(not (name.lower().endswith(DEBUG_SUFFIXES) or name.lower() == "functions.jsonl")
+               or name == game.name or n < 0 for name, n in wanted) or \
                 sum(n for _, n in wanted) >= size:
-            raise ValueError("only a PC game's .pdb or .map can be sent with it")
+            raise ValueError("only .pdb, .map or functions.jsonl sidecars can be sent with a game")
         with open(game, "r+b") as f:
             f.seek(size - sum(n for _, n in wanted))
             for name, n in wanted:

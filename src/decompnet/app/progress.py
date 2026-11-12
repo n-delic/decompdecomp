@@ -639,8 +639,10 @@ class Progress:
     def flush(self) -> dict[str, str]:
         """Synchronize every ROM project's final database work before the process exits."""
         failures = {}
-        for row in self.net.store.all("SELECT slug FROM projects"):
+        for row in self.net.store.all("SELECT id, slug, root FROM projects"):
             try:
+                if self.net.project_missing(row):
+                    continue  # nothing to write: its folder is gone, and only its records can be removed
                 self.sync(row["slug"], force=True)
             except NetworkError as error:
                 failures[row["slug"]] = str(error)

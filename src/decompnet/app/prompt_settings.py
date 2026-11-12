@@ -42,14 +42,24 @@ def global_overrides(net):
     return json.loads(row['value']) if row else {}
 
 
+def usable(value, whose):
+    """The saved overrides that still validate, each field on its own. A template saved before a placeholder was
+    removed would fail in .format() when a session starts and stop the helper: that field falls back to what it
+    inherits, with a warning, and the other fields (a helper's own app instructions, say) stay in effect."""
+    if not isinstance(value, dict):
+        return {}
+    kept = {}
+    for key, text in value.items():
+        try:
+            kept.update(validate({key: text}))
+        except NetworkError as error:
+            logging.getLogger(__name__).warning('Ignoring the invalid %s prompt override %s: %s', whose, key, error)
+    return kept
+
+
 def effective(net, options):
-    inherited = defaults() | global_overrides(net)
-    custom = options.get('prompts') or {}
-    try:
-        return inherited | validate(custom)
-    except NetworkError as error:
-        logging.getLogger(__name__).warning('Ignoring invalid helper prompt override: %s', error)
-        return inherited
+    inherited = defaults() | usable(global_overrides(net), 'global')
+    return inherited | usable(options.get('prompts') or {}, 'helper')
 
 
 def for_session(net, session):
@@ -69,7 +79,7 @@ def key_for(net, session):
 
 def view(net, session=None):
     builtin = defaults()
-    inherited = builtin | global_overrides(net) if session else builtin
+    inherited = builtin | usable(global_overrides(net), 'global') if session else builtin
     overrides = session.options.get('prompts') or {} if session else global_overrides(net)
     keys = [key_for(net, session), 'instructions'] if session else list(FIELDS)
     return {'helper':session.id if session else None, 'overrides':overrides,

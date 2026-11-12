@@ -857,6 +857,11 @@ class Manager:
         self.stop()
         _end_groups(groups | self._strays())
         try:
+            from .tool_policy import flush
+            flush(self.net)  # the tool calls counted since the last write (tool_policy.FLUSH_SECONDS)
+        except Exception:  # the app quits anyway
+            log.exception("saving the tool call counts while quitting failed")
+        try:
             self.on_stop()
         except Exception:  # the app quits anyway
             log.exception("closing rooms while quitting failed")
@@ -951,6 +956,16 @@ class Manager:
             return self.net.readability.left(proj)
         row = self.net.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
         return row["n"]
+
+    def _ruled_out(self, slug: str, agent_name: str) -> int:
+        """How many functions are open when this helper said of every one that no C makes it (0 otherwise): the claim
+        order never hands them back to it (Network.claim_row), so a session could only find nothing to do. Its
+        sessions failed one after another into a pause (FAST_FAILURES_TO_PAUSE) instead, on a demo whose last open
+        function was a hand-written helper both agents of one model had ruled out."""
+        proj = self.net.project_row(slug)
+        waiting = self.net.awaiting_verdict(proj)
+        n = self._left(slug)
+        return n if n and sum(agent_name in said for said in waiting.values()) == n else 0
 
     def account(self, s: Session, usage: dict) -> None:
         """Add what a session spent to the helper, the session and the project (kept in its config)."""
@@ -1052,6 +1067,12 @@ class Manager:
         while not s.stop.is_set():
             if self._left(s.slug, task := s.options.get("task") or "") == 0:
                 self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
+                break
+            if task != "readable" and (ruled := self._ruled_out(s.slug, agent.name)):
+                self._finish(s, f"nothing left it can do: the {ruled} open function{'s' * (ruled != 1)} "
+                                f"{'are ones' if ruled != 1 else 'is one'} it found no C makes. Set "
+                                f"{'them' if ruled != 1 else 'it'} aside in {'their' if ruled != 1 else 'its'} panel, "
+                                "or start a helper of another model to look")
                 break
             if (cap := self.over_budget(s.slug)) is not None:
                 self._finish(s, f"the agents on this project have spent the ${cap:.2f} budget (Setup)")
@@ -1211,23 +1232,47 @@ class Manager:
         return text
 
     def _prompt(self, s: Session) -> str:
+        from types import SimpleNamespace
+
         from .prompt_settings import for_session
+        from .tool_policy import visible
         templates = for_session(self.net, s)
+
+        def offers(fork: bool, console, **kw) -> set[str]:
+            """The tools this helper gets: its console's, less those Agents & models turned off, so the prompt
+            never points it at a tool its calls would be refused."""
+            return set(visible(self.net, s.slug, tools.tool_names(fork, console, **kw),
+                               SimpleNamespace(name=s.agent_name)))
         ov = self.net.overview(s.slug)
         count = s.options.get("per_session", PER_SESSION)
         if s.options.get("task") == "readable":  # (in either mode: the step that differs is the mode's)
             return templates['initial_readable'].format(title=ov["title"], count=count, names=tools.READABLE_FORK
                                                 if ov.get("kind") == "fork" else tools.READABLE_ROM)
+        console = consoles.get(ov.get("platform"))
+        scratch = ov.get("origin") == "scratch"
         if ov.get("kind") == "fork":
-            guides = ["fork", "objdiff", *consoles.get(ov.get("platform")).guides]
+            guides = ["fork", "objdiff", *console.guides]
             platform = ov.get("platform_name") or "its platform"
-            what = tools.FORK_SCRATCH if ov.get("origin") == "scratch" else tools.FORK_PUBLIC
-            return templates['initial_project'].format(title=ov["title"], what=what.format(platform=platform),
+            what = tools.FORK_SCRATCH if scratch else tools.FORK_PUBLIC
+            text = templates['initial_project'].format(title=ov["title"], what=what.format(platform=platform),
                                             count=count, budget=network.stall_budget_text(),
                                             guides=", ".join(f'guide("{g}")' for g in guides))
-        guide = consoles.get(ov.get("platform")).up_front_guide(ov["compiler"]["toolchain"])
-        return templates['initial_rom'].format(title=ov["title"], count=count, budget=network.stall_budget_text(),
+            if "join_functions" in offers(True, console, scratch=scratch):
+                text = text.replace("\nRules:", "\n" + tools.FORK_JOIN + "\n\nRules:", 1)
+            return text
+        guide = console.up_front_guide(ov["compiler"]["toolchain"])
+        text = templates['initial_rom'].format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
+        offered = offers(False, console)
+        # (a ROM prompt may already name a join its engine offers, as #192's does: don't say it twice)
+        extra = [block for tool, block in (("join_functions", tools.ROM_JOIN),
+                                           ("guess_struct", tools.WORK_STRUCTS),
+                                           ("report_boundary", tools.WORK_BOUNDARY))
+                 if tool in offered and (tool != "join_functions" or "join_functions" not in text)]
+        if extra:
+            text = text.replace("\nWrite plausible original code", "\n" + "\n\n".join(extra)
+                                + "\n\nWrite plausible original code", 1)
+        return text
 
     def _command(self, s: Session, token: str, workdir: Path) -> tuple[list[str], dict, str | None]:
         """The agent's command line, environment and what goes in on stdin (the prompt; None when its prompt went in

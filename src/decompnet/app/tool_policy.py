@@ -1,5 +1,7 @@
 """Persistent optional-tool visibility and local lifetime call counters."""
 import json
+import sqlite3
+import threading
 import time
 
 from ..network import NetworkError
@@ -67,8 +69,11 @@ def disabled(net):
 def visible(net, slug, names, agent=None):
     ensure(net)
     blocked = disabled(net)
-    if agent and net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='helpers'"):
-        row = net.store.one('SELECT options FROM helpers WHERE project=? AND name=?', slug, agent.name)
+    if agent:
+        try:
+            row = net.store.one('SELECT options FROM helpers WHERE project=? AND name=?', slug, agent.name)
+        except sqlite3.OperationalError:
+            row = None  # an engine without a helper manager (a test, a command) has no helpers table yet
         if row:
             blocked.update(json.loads(row['options'] or '{}').get('disabled_tools', []))
     return [name for name in names if name in REQUIRED or name not in blocked]
@@ -85,12 +90,42 @@ def set_global(net, name, enabled):
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (KEY, json.dumps(sorted(names))))
 
 
-def record(net, agent, slug, name, *, count=True):
+# Calls are counted in memory and written at most this often: a write transaction on every tool call would queue
+# behind the agents' own writes (store.py: busy agents made the GUI wait). A crash loses at most this much counting.
+FLUSH_SECONDS = 30.0
+_counting = threading.Lock()
+
+
+def record(net, agent, slug, name):
+    """Refuse a tool Agents & models turned off for every helper or for this one; count the others."""
     from .tools import HANDLERS
     if name not in visible(net, slug, list(HANDLERS), agent):
         raise NetworkError(f'{name} is disabled in agent tool settings. Use an enabled tool instead.')
-    if not count:
-        return  # App-only connection probes are not agent tool usage.
+    now = time.time()
+    with _counting:
+        pending = net.__dict__.setdefault('_tool_calls', {})
+        calls, _ = pending.get(name, (0, now))
+        pending[name] = (calls + 1, now)
+        due = now - net.__dict__.get('_tool_calls_flushed', 0.0) >= FLUSH_SECONDS
+    if due:
+        flush(net)
+
+
+def flush(net):
+    """Write the counted calls to agent_tool_usage."""
+    with _counting:
+        pending, net._tool_calls = net.__dict__.get('_tool_calls', {}), {}
+        net._tool_calls_flushed = time.time()
+    if not pending:
+        return
     with net.store.tx() as db:
-        db.execute('INSERT INTO agent_tool_usage VALUES(?,1,?) ON CONFLICT(name) DO UPDATE SET '
-                   'calls=calls+1,last_used=excluded.last_used', (name, time.time()))
+        db.executemany('INSERT INTO agent_tool_usage VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET '
+                       'calls=calls+excluded.calls,last_used=MAX(COALESCE(last_used,0),excluded.last_used)',
+                       [(name, calls, last) for name, (calls, last) in pending.items()])
+
+
+def usage(net):
+    """Each tool's recorded calls and last use, the ones still in memory included."""
+    ensure(net)
+    flush(net)
+    return {r['name']: dict(r) for r in net.store.all('SELECT * FROM agent_tool_usage')}

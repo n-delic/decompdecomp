@@ -18,7 +18,7 @@ from pathlib import Path
 
 from ... import toolchains
 from ...arch.arm import arm_b_dest, thumb_bl_dest
-from ...limits import capped
+from ...limits import capped, killed_for_memory
 from ...rom import RomError
 from ...rom.split import Segment, SplitResult
 from . import candidates
@@ -26,6 +26,12 @@ from . import candidates
 BASE = 0x08000000
 LUVDis_SECONDS = 3600
 SEARCH_SECONDS = 1800
+# A later round is one bounded luvdis run: a few hundred starts at most, with its own time and memory cap. Each run
+# disassembles the whole ROM again, so more candidates per run are not free; four rounds cap the whole search
+# (SEARCH_SECONDS) and a failed run keeps what the rounds before it found (#187, #188).
+BATCH_CANDIDATES = 128
+BATCH_SECONDS = 300
+BATCH_MEMORY = 2 << 30
 
 
 @dataclass
@@ -47,7 +53,14 @@ class GbaFunction:
         return len(self.code)
 
 
-def _luvdis(rom: Path, workdir: Path, cfg_in: Path | None) -> tuple[str, list[int]]:
+def _duration(seconds: float) -> str:
+    if seconds >= LUVDis_SECONDS:
+        return "an hour"
+    return f"{round(seconds / 60)} minutes" if seconds >= 120 else f"{max(1, round(seconds))} seconds"
+
+
+def _luvdis(rom: Path, workdir: Path, cfg_in: Path | None, *, timeout: float = LUVDis_SECONDS,
+            memory: int | None = None) -> tuple[str, list[int]]:
     """Run luvdis (in its own pinned environment) on the ROM and return (assembly, function addresses)."""
     python = toolchains.venv_bin(toolchains.ensure("luvdis", log=lambda *_: None) / "venv", "python")
     out, cfg = workdir / "rom.s", workdir / "functions.cfg"
@@ -56,40 +69,61 @@ def _luvdis(rom: Path, workdir: Path, cfg_in: Path | None) -> tuple[str, list[in
     if cfg_in is not None:
         args[5:5] = ["-c", str(cfg_in)]
     try:
-        res = subprocess.run(capped(args), capture_output=True, text=True, timeout=LUVDis_SECONDS,
+        res = subprocess.run(capped(args, memory=memory), capture_output=True, text=True, timeout=timeout,
                              encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
-        raise RomError("luvdis (the GBA disassembler) took more than an hour on this ROM and was stopped. Please "
-                       "report it with the log: the game's size and title help") from None
+        raise RomError(f"luvdis (the GBA disassembler) didn't finish within {_duration(timeout)} on this ROM and was "
+                       "stopped") from None
+    said = res.stderr or res.stdout
     if res.returncode != 0 or not out.exists():
-        raise RomError("luvdis couldn't disassemble the ROM: " + (res.stderr or res.stdout)[-400:])
+        if "MemoryError" in said or killed_for_memory(res.returncode):
+            raise RomError("luvdis (the GBA disassembler) ran out of memory on this ROM and was stopped")
+        raise RomError("luvdis couldn't disassemble the ROM: " + said[-400:])
     found = sorted({int(m.group(1), 16) for m in re.finditer(r"^(?:[a-z_]+[ \t]+)?(0x[0-9A-Fa-f]+)",
                                                              cfg.read_text(encoding="utf-8"), re.M)})
     return out.read_text(encoding="utf-8"), found
 
 
-def find_functions(rom_path: Path, workdir: Path, rounds: int = 4, log=lambda *_: None,
+def find_functions(rom_path: Path, workdir: Path, log=lambda *_: None,
                    budget: float = SEARCH_SECONDS) -> tuple[str, list[int]]:
-    """(assembly, function addresses) for the ROM, with prologue hunting in what luvdis left as data. The extra
-    rounds stop once `budget` seconds have gone by (a 32 MiB ROM takes minutes a round)."""
+    """(assembly, function addresses) for the ROM, with prologue hunting in what luvdis left as data. Each extra
+    round is one bounded luvdis run; when one fails (memory, time) the functions found before it are kept. The
+    rounds continue while candidates are untried and `budget` seconds remain (a 32 MiB ROM takes minutes a round)."""
     rom = rom_path.read_bytes()
     started = time.time()
     asm, found = _luvdis(rom_path, workdir, None)
-    log(f"luvdis followed the code from the start: {len(found)} functions ({time.time() - started:.0f}s)")
-    for k in range(rounds):
-        if time.time() - started > budget:
+    first_seconds = time.time() - started
+    log(f"luvdis followed the code from the start: {len(found)} functions ({first_seconds:.0f}s)")
+    # each later round disassembles the whole ROM again, so its time limit has to allow at least one pass (#188's
+    # round 1 took 352s on a 32 MiB ROM: a fixed five minutes would fail every later round there)
+    batch_seconds = max(BATCH_SECONDS, 2 * first_seconds)
+    tried: set[int] = set()
+    k = 0
+    while True:
+        remaining = budget - (time.time() - started)
+        if remaining <= 0:
             log("stopping the search for more here: it has run half an hour (agents can split what's left)")
             break
-        extra = [a for a in candidates.candidates(rom, found) if a not in found]
+        extra = [a for a in candidates.candidates(rom, found) if a not in found and a not in tried]
         if not extra:
             break
-        log(f"round {k + 2}: {len(extra)} more function starts in code nothing calls directly")
+        batch = extra[:BATCH_CANDIDATES]
+        log(f"round {k + 2}: {len(extra)} more function starts in code nothing calls directly"
+            + (f", trying {len(batch)} of them" if len(batch) < len(extra) else ""))
+        tried.update(batch)
         cfg = workdir / "candidates.cfg"
-        cfg.write_text("".join(f"thumb_func 0x{a:X}\n" for a in sorted(set(found) | set(extra))), encoding="utf-8")
-        asm, found2 = _luvdis(rom_path, workdir, cfg)
-        if set(found2) == set(found):
+        cfg.write_text("".join(f"thumb_func 0x{a:X}\n" for a in sorted(set(found) | set(batch))), encoding="utf-8")
+        timeout = max(1.0, min(budget - (time.time() - started), batch_seconds))
+        try:
+            asm2, found2 = _luvdis(rom_path, workdir, cfg, timeout=timeout, memory=BATCH_MEMORY)
+        except RomError as error:
+            log(f"round {k + 2} stopped: {error}; keeping the {len(found)} functions found so far "
+                "(agents can split what's left)")
             break
-        found = found2
+        if set(found2) != set(found):
+            asm, found = asm2, found2
+        # an empty batch only means that batch was data: later batches may still hold functions
+        k += 1
     return asm, found
 
 

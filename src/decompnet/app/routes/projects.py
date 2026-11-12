@@ -33,7 +33,8 @@ def register(app: App) -> None:
             try:
                 def perform():
                     result = fn(slug, request, data)
-                    if request.method == "POST" and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    project = net.store.one("SELECT * FROM projects WHERE slug=?", slug)
+                    if request.method == "POST" and project and not net.project_missing(project):
                         net.progress.sync(slug, force=True)
                     return result
                 return JSONResponse(await call(perform))
@@ -45,7 +46,8 @@ def register(app: App) -> None:
         settings.data["last_project"] = slug
         settings.save()
         overview = net.overview(slug)
-        net.warm_briefs_soon(slug)  # the project is open: agents' first briefs come next
+        if not overview.get("missing"):
+            net.warm_briefs_soon(slug)  # the project is open: agents' first briefs come next
         return overview
 
     def p_live(slug, request, data):
@@ -64,16 +66,17 @@ def register(app: App) -> None:
             if not str(data.get("ranges") or "").strip():  # the whole game: every file, one at a time
                 return {"job": jobs.start("compiler", lambda log: net.forks.set_compiler_everywhere(slug, tc, log))}
             said = net.forks.set_compiler_ranges(slug, parse_ranges(str(data["ranges"])), None if data.get("remove") else tc)
-            return net.overview(slug) | {"said": said}
+            return net.overview(slug) | {"said": said, "reopened": []}
+        reopened = []
         if "auto" in data:  # this project's suggestions apply by themselves once proven, or wait for the user
             net.set_auto_adjust(slug, bool(data["auto"]))
         elif str(data.get("ranges") or "").strip():  # these address ranges only (or back to the project's: remove)
-            net.set_compiler_ranges(slug, parse_ranges(str(data["ranges"])),
-                                    None if data.get("remove") else str(data.get("toolchain", "")), data.get("flags") or None,
-                                    reopen=bool(data.get("reopen")))
+            reopened = net.set_compiler_ranges(slug, parse_ranges(str(data["ranges"])),
+                                               None if data.get("remove") else str(data.get("toolchain", "")),
+                                               data.get("flags") or None, reopen=bool(data.get("reopen")))
         else:
             net.set_compiler(slug, str(data.get("toolchain", "")), data.get("flags") or None)
-        return net.overview(slug)
+        return net.overview(slug) | {"reopened": reopened}
 
     def p_export(slug, request, data):
         def work(log):
