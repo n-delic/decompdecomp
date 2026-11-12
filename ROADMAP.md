@@ -996,6 +996,9 @@ Left:
 
 ### The repair library stands on its own
 
+It now lives in its own public repository, RetroReversing/decomp-repair (v0.1.0, history kept), which decompdecomp
+pins by tag.
+
 The repair families that only read a function's C and code (127 of them, with their readers: 161 modules) moved
 from `app/` into `src/decomprepair/`, a library that imports nothing from decompdecomp
 (`tests/test_decomprepair.py` checks it). It only proposes C; compiling and judging stay in the app. The 36
@@ -1777,7 +1780,8 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 - Read C with tree-sitter instead of regular expressions (comments, strings and nesting handled once), keeping
   the regular expressions for code tree-sitter can't parse (macros, old dialects).
 - Readers for PowerPC, x86 and ARM (today the evidence is MIPS).
-- Its own repository and package once its interface stops changing; decompdecomp then pins it.
+- Publish it on PyPI, so other projects can depend on it by version.
+- Move the tests here that only need a compiler to decomp-repair, with the compilers as an optional part.
 
 ### ROM Explorer: image adapters and deeper asset analysis
 
