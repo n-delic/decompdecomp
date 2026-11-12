@@ -3436,8 +3436,10 @@ def test_the_64_bit_sweep_stops_where_the_loaded_code_ends():
     pe = scratch_pe.read_pe(bytes(exe))
     assert [(s.vsize, s.size, s.loaded_size) for s in pe.sections[:1]] == [(0x20, 0x200, 0x20)]
     assert [(f.addr - X64_BASE, f.size) for f in scratch_pe.analyse(pe, [])] == [(0x1000, 3)]
-    struct.pack_into("<I", exe, text + 8, 0)  # (no VirtualSize: the file's size)
-    assert scratch_pe.read_pe(bytes(exe)).sections[0].loaded_size == 0x200
+    struct.pack_into("<I", exe, text + 8, 0)  # (no VirtualSize: the file's size, and the sweep reads all of it)
+    pe = scratch_pe.read_pe(bytes(exe))
+    assert pe.sections[0].loaded_size == 0x200
+    assert [(f.addr - X64_BASE, f.size) for f in scratch_pe.analyse(pe, [])] == [(0x1000, 3), (0x1020, 5)]
 
 
 @pytest.mark.parametrize("shape", ["rvas", "offsets", "a constant"])
