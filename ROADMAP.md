@@ -1960,6 +1960,11 @@ again at the end of the pass, and those still held are reported: 89 more of 524.
 - Done: near pairs that still miss are real code change (an added call, a branch), not a single edit: a helper's
   brief shows the other release's C with this release's names, offsets and declarations, and the instructions
   only one release has or that differ (regional.brief).
+- Done: before a helper gets it, the closest fitted C is edited where the code still differs (regional_edits): each
+  differing instruction traced to its C line (the compiler's line table) and the edit it asks for tried there
+  (`Arch.edit_hint`, MIPS: a constant, an operator, a comparison turned around, a load's width or sign, a call
+  dropped or added), the best kept for a few rounds; then moved struct fields, array indexes and global offsets
+  from the whole diff. On a Europe/North America N64 pair: 9 more of 441, 104 closer.
 - Run it on PS1, PS2 and PSP games (their serials differ by region, so by identical code) and mark the table.
 - Project mode: pair object files' functions (GameCube/Wii by game ID, DS by game code, PC by its executable).
 Related: "Names from another build you own", for a build with symbols (a demo, a port).
