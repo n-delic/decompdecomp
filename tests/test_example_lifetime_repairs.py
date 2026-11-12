@@ -3,8 +3,8 @@ import subprocess
 
 import pytest
 
-from decompnet.app import example_lifetime_repairs as repairs
 from decompnet.app.address_repairs import variants as addresses
+from decomprepair import example_lifetime_repairs as repairs
 
 
 def test_merge_branch_declarations_preserves_initializer_order():

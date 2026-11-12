@@ -973,6 +973,13 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### The repair library stands on its own
+
+The repair families that only read a function's C and code (127 of them, with their readers: 161 modules) moved
+from `app/` into `src/decomprepair/`, a library that imports nothing from decompdecomp
+(`tests/test_decomprepair.py` checks it). It only proposes C; compiling and judging stay in the app. The 36
+families that drive work through the network, a project or the ranking stay in `app/` and call it.
+
 ### Microcode and wrong base symbols put right for a port
 
 Of the last data a finished N64 game's link check listed, two were the RSP's microcode (rspboot, 208 bytes, and the
@@ -1736,6 +1743,16 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### decomprepair: its own repository, a C parser, and other processors
+
+- Move the 36 repair families still in `app/` that need a project or the network behind an interface the app
+  passes in, so they can move too.
+- One entry point (`propose(source, candidate, target, arch)`) and a command line beside objdiff and the permuter.
+- Read C with tree-sitter instead of regular expressions (comments, strings and nesting handled once), keeping
+  the regular expressions for code tree-sitter can't parse (macros, old dialects).
+- Readers for PowerPC, x86 and ARM (today the evidence is MIPS).
+- Its own repository and package once its interface stops changing; decompdecomp then pins it.
 
 ### ROM Explorer: image adapters and deeper asset analysis
 

@@ -1,6 +1,6 @@
 from decompnet.app import draft_repairs, repair_ranking
-from decompnet.app import record_lifetime_repairs as repairs
-from decompnet.app.structured_loop_repairs import variants as loops
+from decomprepair import record_lifetime_repairs as repairs
+from decomprepair.structured_loop_repairs import variants as loops
 
 
 def test_existing_record_forwards_only_one_scalar_lifetime():

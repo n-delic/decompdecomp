@@ -1,5 +1,5 @@
-from decompnet.app import independent_address_repairs as repair
-from decompnet.arch.mips_materializations import addresses
+from decomprepair import independent_address_repairs as repair
+from decomprepair.mips_materializations import addresses
 
 
 def evidence():

@@ -1,6 +1,6 @@
 import pytest
 
-from decompnet.app.increment_expression_repairs import variants
+from decomprepair.increment_expression_repairs import variants
 
 
 @pytest.mark.parametrize('body,expected,family', [

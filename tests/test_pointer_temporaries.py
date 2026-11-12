@@ -1,7 +1,7 @@
 """Pointer staging reuses only a spare local and keeps the original load in place."""
 import pytest
 
-from decompnet.app import temporary_repairs
+from decomprepair import temporary_repairs
 
 SOURCE='void f(){void *spare;u8 *p;p=*((void **)(base+4));send(p);spare=next();use(spare);}'
 

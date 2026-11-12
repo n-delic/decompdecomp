@@ -1,9 +1,10 @@
 """Measured line and scalar-conversion lifetime candidates; ordinary judges decide."""
 import re
 
+from decomprepair.integer_repair_support import IDENT, edit, locals_for
+from decomprepair.repair_source_view import read
+
 from ..arch import get
-from .integer_repair_support import IDENT, edit, locals_for
-from .repair_source_view import read
 
 FAMILY='hazard_statement_lines'
 

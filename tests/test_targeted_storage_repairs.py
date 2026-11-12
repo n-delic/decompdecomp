@@ -1,8 +1,9 @@
 import pytest
 
-from decompnet.app import repair_localisation, trial_evidence
 from decompnet.app import targeted_storage_repairs as repairs
+from decompnet.app import trial_evidence
 from decompnet.arch.mips_local_storage import read
+from decomprepair import repair_localisation
 
 STACK=[(' ','addiu $sp, $sp, -0x60','addiu $sp, $sp, -0x60'),('s','sw $t0, 0x14($sp)','sw $t0, 0x34($sp)'),('s','lw $t0, 0x14($sp)','lw $t0, 0x34($sp)')]
 REG=[('r','lw $v1, 0x6c($a1)','lw $v0, 0x6c($a1)'),('r','lw $a1, 0x24($v1)','lw $a1, 0x24($v0)')]

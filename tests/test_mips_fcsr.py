@@ -4,10 +4,11 @@ import struct
 import pytest
 
 from decompnet import toolchains
-from decompnet.arch import mips_debug_break, mips_fcsr, mips_live_return_address
+from decompnet.arch import mips_debug_break, mips_fcsr
 from decompnet.compiler import SourceRejected, check_source, compile_source, run_in
 from decompnet.elfobj import extract_function
 from decompnet.project import compiler_config
+from decomprepair import mips_live_return_address
 
 SOURCE='unsigned f(unsigned value){return __builtin_mips_exchange_fcsr(value);}'
 

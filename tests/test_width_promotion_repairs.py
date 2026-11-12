@@ -1,4 +1,4 @@
-from decompnet.app import width_promotion_repairs as promote
+from decomprepair import width_promotion_repairs as promote
 
 SOURCE = '''u8 f(void *a) {
     u8 *p;

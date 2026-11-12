@@ -20,7 +20,7 @@ def proposals(net, proj, fn, source, header, measurement):
     from .retail_context_repairs import commented_conditions, draft_prefix, pointer_lifetimes
     proof=arch.source_pointer_lifetime(fn['asm'] or '') if arch.source_pointer_lifetime else []
     result=draft_prefix(source,fn['name'],header,dict(fn).get('best_source'),rows,proj['arch'])
-    from .typed_draft_repairs import variants as typed_fields
+    from decomprepair.typed_draft_repairs import variants as typed_fields
     result=aligned+[p for _,s,h in result for p in typed_fields(s,fn['name'],h)]+result
     result+=pointer_lifetimes(source,fn['name'],header,proof,rows)
     import re

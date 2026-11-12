@@ -65,8 +65,8 @@ def measured(source, name, arch, rows):
     A consistent frame/save delta is evidence for storage, not its original purpose.
     Existing objects and callee contracts keep their types and extents.
     """
-    from .integer_repair_support import view
-    from .pattern_repairs import close
+    from decomprepair.integer_repair_support import view
+    from decomprepair.pattern_repairs import close
     part=view(source,name)
     fresh='__repair_stack_padding'
     if not part or re.search(r'\b(?:volatile|asm|__asm__|'+fresh+r')\b',part.clean):return []

@@ -1,6 +1,7 @@
 """Conservative reverse phases and pure local capture; no private source fixtures."""
-from decompnet.app import draft_repairs, local_flow, phase_union_repairs
-from decompnet.app.integer_repair_support import locals_for, view
+from decompnet.app import draft_repairs
+from decomprepair import local_flow, phase_union_repairs
+from decomprepair.integer_repair_support import locals_for, view
 
 FLAGS = ('-O2', '-g3', '-mgp32')
 SOURCE = '''

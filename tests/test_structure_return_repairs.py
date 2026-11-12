@@ -2,8 +2,8 @@
 import pytest
 
 from decompnet.app import draft_repairs
-from decompnet.app import sdk_shape_repairs as sdk
-from decompnet.app import structure_return_repairs as repair
+from decomprepair import sdk_shape_repairs as sdk
+from decomprepair import structure_return_repairs as repair
 
 HEADER = 'typedef struct {float x,y,z;} Result;'
 SOURCE = 'void f(Result *out, int input)\n{\n Result result;\n calculate(&result,input);\n *out=result;\n}\n'

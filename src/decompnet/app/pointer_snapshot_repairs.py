@@ -1,12 +1,13 @@
 """Target-led fresh snapshots before byte stores; no global rename or speculative address inference."""
 import re
 
+from decomprepair import branch_call_support as support
+from decomprepair.call_lifetime_repairs import block_path
+from decomprepair.integer_abi import scalar
+from decomprepair.integer_repair_support import IDENT, edit
+
 from .. import arch as arches
 from ..forks.csource import _blank
-from . import branch_call_support as support
-from .call_lifetime_repairs import block_path
-from .integer_abi import scalar
-from .integer_repair_support import IDENT, edit
 
 FAMILY = 'typed_pointer_snapshot'
 FAMILIES = (FAMILY,)

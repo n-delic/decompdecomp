@@ -1,4 +1,4 @@
-from decompnet.app import global_store_repairs as repair
+from decomprepair import global_store_repairs as repair
 
 
 def test_scalar_global_address_stays_live_across_call_with_same_width_result():

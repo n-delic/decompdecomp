@@ -1,10 +1,10 @@
 """Optional loop/counter representations for matching; the original draft remains available."""
 import re
 
-from . import integer_abi, local_flow, repair_localisation
-from .allocator_call_guards import dominators
-from .integer_repair_support import edit, refs
-from .pattern_repairs import close
+from decomprepair import integer_abi, local_flow, repair_localisation
+from decomprepair.allocator_call_guards import dominators
+from decomprepair.integer_repair_support import edit, refs
+from decomprepair.pattern_repairs import close
 
 FAMILIES = ('explicit_loop_backedge', 'row_number_staging')
 LIMIT = 4
@@ -20,7 +20,7 @@ def variants(source, name, header='', arch=None, locations=None, *, mapped_only=
     if not flow:return []
     part=flow.part
     dom=dominators(flow)
-    from .equal_value_flow import macros_safe
+    from decomprepair.equal_value_flow import macros_safe
     if not macros_safe(source,header,part.body,{d['name']:d['type'] for d in flow.locals}):return []
     if re.search(r'\b(?:__LINE__|__COUNTER__|__FILE__)\b',source+'\n'+header):return []
     relevant=repair_localisation.lines(source,locations)

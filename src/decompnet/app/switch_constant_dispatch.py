@@ -5,9 +5,10 @@ hypothesis, not a match: shared ROM and PROJECT judges still verify every byte.
 """
 import re
 
+from decomprepair.integer_repair_support import edit, view
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank
-from .integer_repair_support import edit, view
-from .pattern_repairs import close
 
 FAMILY = 'switch_constant_dispatch'
 PREFIX = '__repair_switch_'

@@ -5,8 +5,9 @@ Only the ordinary exact judge may accept it. Unknown/aliased/qualified storage i
 """
 import re
 
+from decomprepair.integer_repair_support import IDENT, edit, view
+
 from .. import arch as architectures
-from .integer_repair_support import IDENT, edit, view
 
 FAMILY = 'plain_float_slots'
 

@@ -1,7 +1,8 @@
 """Synthetic scalar normalization hypotheses and conservative span guards."""
 import pytest
 
-from decompnet.app import copy_lifetime_repairs, draft_repairs, scalar_normalization_scope
+from decompnet.app import draft_repairs
+from decomprepair import copy_lifetime_repairs, scalar_normalization_scope
 
 SOURCE = '''
 #define CONVERT(out, value) {double d=(value); if(d<0)out=0;else out=(int)d;}

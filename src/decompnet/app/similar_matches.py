@@ -317,7 +317,7 @@ def run(twins, slug: str, job) -> int:
         current = net.project_store(proj['id']).one('SELECT status FROM functions WHERE id=?', b['id'])
         if not current or current['status'] != 'open':
             return 'skip', ''
-        from .repair_preflight import invalid_call
+        from decomprepair.repair_preflight import invalid_call
         if invalid_call(candidate, b['name'], header):
             return 'skip', 'Generated call disagrees with a fixed prototype'
         signature = trial_key(candidate, header, settings, b, [names, symbol_state])

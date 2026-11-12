@@ -15,13 +15,14 @@ def variants(source, report, target, big, known_symbols):
     are left alone.
     These are candidate-local hypotheses: never rename the project's symbols or change shared declarations.
     """
+    from decomprepair.raw_address_repairs import variants as raw_variants
+
     from .addend_repairs import variants as addend_variants
     from .argument_repairs import variants as argument_variants
     from .constant_repairs import variants as constant_variants
     from .global_addresses import alias_variant, normalize
     from .layout_repairs import variants as layout_variants
     from .pointer_steps import variants as step_variants
-    from .raw_address_repairs import variants as raw_variants
     from .similar_matches import INTEGER, TOKENS, literal_variants
 
     # Raw target words remain useful even when cached symbolic feedback is misleading.

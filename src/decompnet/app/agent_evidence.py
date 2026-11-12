@@ -118,10 +118,10 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
         from ..source_lines import mismatches, render
         mapped = mismatches(compiled.obj, fn['name'], diff.rows, source,
                             filename='func.cpp' if getattr(compiled,'language','c') == 'c++' else 'func.c',arch=proj['arch'])
-        from .repair_localisation import bind
+        from decomprepair.repair_localisation import bind
         measured['repair_locations']=bind(source,mapped)
         measured['line_note'] = render(mapped, source, limit=4)
-        from .repair_localisation import bind
+        from decomprepair.repair_localisation import bind
         measured['repair_locations'] = bind(source,mapped)
         measured['header_sha256']=hashlib.sha256(context['header'].encode()).hexdigest()
         measured['compiler']=(getattr(compiled,'effective_settings',None) or {}).get('compiler')

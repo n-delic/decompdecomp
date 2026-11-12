@@ -185,7 +185,7 @@ def test_scaled_pointer_candidate_reaches_the_normal_mode_judge(imported):
 
 @pytest.mark.parametrize('imported', [False,True])
 def test_linked_byte_chain_reaches_normal_judge_without_accepting_intermediate_steps(imported):
-    from decompnet.app import narrow_chains
+    from decomprepair import narrow_chains
     source='void f1(){s32 wide;s32 copy;u8 narrow;wide=read();copy=wide;copy=(u16)copy&0xFF;narrow=wide&0xFF;if(narrow)return;send(wide&0xFF);}'
     expected=narrow_chains.variants(source,'f1')[0]
     net=setup_repair_net()
@@ -206,7 +206,7 @@ def test_linked_byte_chain_reaches_normal_judge_without_accepting_intermediate_s
 
 @pytest.mark.parametrize('imported',[False,True])
 def test_inline_expression_candidate_is_kept_only_by_the_normal_mode_judge(imported):
-    from decompnet.app import expression_repairs
+    from decomprepair import expression_repairs
     source='void f1(){int x;int a;int b;x=a+b;}'
     expected=next(c for c in expression_repairs.variants(source,'f1','mips') if c.startswith('static inline'))
     net=setup_repair_net()
@@ -227,7 +227,7 @@ def test_inline_expression_candidate_is_kept_only_by_the_normal_mode_judge(impor
 
 @pytest.mark.parametrize('imported',[False,True])
 def test_spare_pointer_staging_uses_the_normal_mode_judge(imported):
-    from decompnet.app import temporary_repairs
+    from decomprepair import temporary_repairs
     source='void f1(){void *spare;u8 *p;p=*((void **)(base+4));send(p);spare=next();use(spare);}'
     expected=temporary_repairs.variants(source,'f1')[0]
     net=setup_repair_net()

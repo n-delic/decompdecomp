@@ -2,8 +2,9 @@
 import ast
 import re
 
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank, find
-from .pattern_repairs import close
 
 LABEL = re.compile(r"\bcase\s+('(?:\\.|[^'\\])'|-?(?:0[xX][0-9a-fA-F]+|\d+))\s*:|\bdefault\s*:")
 

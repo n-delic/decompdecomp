@@ -1,4 +1,4 @@
-from decompnet.app import local_inline_repairs as inline
+from decomprepair import local_inline_repairs as inline
 
 SOURCE = '''extern u8 T[];
 

@@ -4,7 +4,7 @@ import json
 import pytest
 
 from decompnet.app import draft_repairs, local_experiments
-from decompnet.app import zero_argument_repairs as repair
+from decomprepair import zero_argument_repairs as repair
 from tests.test_claims import _game
 
 SOURCE = 'void helper(int); int sample(int x){int y; y=x; helper(y); return y+1;}'

@@ -1,7 +1,7 @@
 import pytest
 
 from decompnet.app import draft_repairs
-from decompnet.app import macro_address_repairs as repair
+from decomprepair import macro_address_repairs as repair
 
 FLAGS=['-mgp32']
 MACRO='#define LOAD(p,o) (*(char**)((char*)(p)+(o)))\n'

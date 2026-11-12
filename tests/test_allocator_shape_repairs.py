@@ -3,8 +3,8 @@ import subprocess
 
 import pytest
 
-from decompnet.app import allocator_shape_repairs as repairs
 from decompnet.app import repair_ranking
+from decomprepair import allocator_shape_repairs as repairs
 
 
 def test_index_candidates_keep_store_value_pointer_and_conditional_scope():

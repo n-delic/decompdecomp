@@ -1,6 +1,7 @@
 import pytest
 
-from decompnet.app import draft_repairs, local_experiments, pointer_cast_repairs
+from decompnet.app import draft_repairs, local_experiments
+from decomprepair import pointer_cast_repairs
 
 SOURCE = 'typedef struct { unsigned char *data; } Node; void f(Node *n) { int x; x=(int)n->data; use(x); x=(int)n->data; use(x); }'
 

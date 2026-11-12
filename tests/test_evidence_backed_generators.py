@@ -3,8 +3,9 @@ import subprocess
 
 import pytest
 
-from decompnet.app import draft_repairs, pattern_repairs, repair_ranking, scalar_normalization_scope
-from decompnet.app.repair_preflight import drop_argument_allowed
+from decompnet.app import draft_repairs, repair_ranking
+from decomprepair import pattern_repairs, scalar_normalization_scope
+from decomprepair.repair_preflight import drop_argument_allowed
 
 
 def test_unrelated_macro_does_not_hide_known_arity():

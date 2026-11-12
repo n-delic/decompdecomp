@@ -7,14 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from decompnet.app import (
-    allocation_search,
-    draft_repairs,
-    integer_abi,
-    later_local_repairs,
-    repair_ranking,
-    search_frontier,
-)
+from decompnet.app import allocation_search, draft_repairs, repair_ranking, search_frontier
+from decomprepair import integer_abi, later_local_repairs
 
 HEADER = 'typedef long s32; typedef unsigned long u32; typedef short s16;'
 SOURCE = '''int f(int a,int b) { int value; int later; int unused;
@@ -138,7 +132,7 @@ def test_private_frozen_allocation_replay():
 
 
 def test_identity_family_accepts_abi_equivalent_long_aliases():
-    from decompnet.app import identity_lifetime_repairs
+    from decomprepair import identity_lifetime_repairs
     from tests.test_register_cycle_search import SOURCE as IDENTITY_SOURCE
     assert identity_lifetime_repairs.variants(IDENTITY_SOURCE,'f',HEADER,'mips')
     assert not identity_lifetime_repairs.variants(IDENTITY_SOURCE,'f',HEADER.replace('long u32','long long u32'),'mips')

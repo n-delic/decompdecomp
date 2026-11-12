@@ -1,4 +1,4 @@
-from decompnet.app import param_mask_repairs as masks
+from decomprepair import param_mask_repairs as masks
 
 SOURCE = '''void f(u16 arg0)
 {

@@ -410,7 +410,9 @@ class Permuter:
                 continue
             # Autopilot's deterministic pass must reach joint hypotheses too, before
             # source-only scores discard their corrected loop exit. No claim is held yet.
-            from . import guarded_loop_repairs, matching_preflight
+            from decomprepair import guarded_loop_repairs
+
+            from . import matching_preflight
             if (not fork and hasattr(self.net,'_comparison_digest')
                     and guarded_loop_repairs.probes(proj,fn,compiler_for(self.net.cfg(proj),fn['vram'],fn),header)):
                 try:
@@ -430,7 +432,9 @@ class Permuter:
                     continue
             labels = {}
             candidates = draft_repairs.variants(fn['best_source'], fn['name'], proj['arch'], fn['asm'] or '', flags=compiler_for(self.net.cfg(proj),fn['vram'], fn).get('flags',[]) if not fork else [], labels=labels,header=header,limit=None,tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,fn['best_source']),entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
-            from . import normalization_repairs, repair_ranking
+            from decomprepair import normalization_repairs
+
+            from . import repair_ranking
             normalization_repairs.extend_frame(candidates, labels, fn['best_source'], fn['name'], proj['arch'], repair_ranking.evidence(self.net,fn['id'],agent.id))
             ranked = repair_ranking.order(dict.fromkeys(labels.get(text, 'draft_repair') for text in candidates),repair_ranking.evidence(self.net,fn['id'],agent.id))
             effect_scope=repair_ranking.effect_scope(self.net,fn,fn['best_source']) if hasattr(self.net,'_context') else None
@@ -787,7 +791,9 @@ class Permuter:
         from . import permuter_inputs, permuter_local, source_preparation
         state = (st.started_at, proj['config'], self.net.forks.permuter_header(fork, fn['name']),
                  permuter_inputs.build_state(proj)) if fork else source_preparation.inputs(self.net, proj, fn)
-        from . import independent_address_repairs, pointer_index_scope, repair_ranking
+        from decomprepair import independent_address_repairs
+
+        from . import pointer_index_scope, repair_ranking
         rows=repair_ranking.evidence(self.net,fn['id'],agent.id)
         header=(self.net._context(proj['id'],fn['unit']) or {'header':''})['header'] if not fork else ''
         independent=independent_address_repairs.variants(best_src,fn['name'],proj['arch'],rows,header) if not fork else []
@@ -878,7 +884,7 @@ class Permuter:
                 self._trial_locations=res.get('repair_locations')
             return res.get("score")
         ctx = self.net._context(proj["id"], fn["unit"])
-        from .repair_preflight import invalid_call
+        from decomprepair.repair_preflight import invalid_call
         if source != fn['best_source'] and invalid_call(source, fn['name'], ctx['header']):
             return None
         guard = None
@@ -925,9 +931,10 @@ class Permuter:
         from .experiment_evidence import output
         self._trial_output = output(cand)
         self._trial_output_granularity = 'function'
+        from decomprepair.repair_localisation import bind
+
         from ..repair_feedback import current_trial
         from ..source_lines import mismatches
-        from .repair_localisation import bind
         lean = ((current_trial() or {}).get('kind') == 'random rewrite' and source != fn['best_source'])
         target = self.net._target_obj(fn, proj)
         # Use this actual compiled object; never recompile with different debug flags.

@@ -1,7 +1,8 @@
 """Common successor placement uses real computations, never duplicate dead stores."""
 import pytest
 
-from decompnet.app import branch_layout_repairs, draft_repairs
+from decompnet.app import draft_repairs
+from decomprepair import branch_layout_repairs
 
 
 def proposals(body, header=''):

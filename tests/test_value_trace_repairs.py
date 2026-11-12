@@ -21,13 +21,8 @@ def test_bundles_two_distinct_small_edits_at_explicit_traced_lines():
 
 
 def test_inert_trace_does_not_enable_broad_priority_without_heldout_approval(monkeypatch):
-    from decompnet.app import (
-        draft_repairs,
-        first_difference,
-        iterative_repairs,
-        normalization_repairs,
-        stack_padding_repairs,
-    )
+    from decompnet.app import draft_repairs, first_difference, iterative_repairs, stack_padding_repairs
+    from decomprepair import normalization_repairs
     def candidates(s,n,a,asm,flags,labels,**kw):labels['ordinary']='ordinary';return ['ordinary']
     monkeypatch.setattr(draft_repairs,'variants',candidates)
     monkeypatch.setattr(draft_repairs.affine_operand_repairs,'operand_variants',lambda *a:[])

@@ -12,7 +12,7 @@ FAMILY = 'verified_unit_helpers'
 
 def apply(source, name, donors):
     """Private standalone definitions only; never replace externs or invent private ABI types."""
-    from .integer_repair_support import IDENT, INTEGER, NUMBER, edit
+    from decomprepair.integer_repair_support import IDENT, INTEGER, NUMBER, edit
     candidates={};helpers=set();used=set(re.findall(IDENT,_blank(source)))
     for donor in donors:
         clean=_blank(donor)

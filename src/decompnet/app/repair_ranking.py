@@ -17,8 +17,9 @@ def order(families, rows):
     focus = classify(rows)
     diagnosis = diagnose(rows)
     markers = {row[0] for row in rows if row[0] != ' '}
+    from decomprepair.normalization_repairs import frame_gap
+
     from .matching_investigations import paired_loads
-    from .normalization_repairs import frame_gap
     register_priority = (
             'record_layout_sequence', 'branch_packing_tail', 'frame_branch_tail_sequence', 'inferred_frame_reservation', 'record_lifetime_sequence', 'pointer_result_reuse', 'coordinated_field_store_order', 'narrow_store_sequence', 'dead_assignment_narrow_capture', 'narrow_field_update_fold',
             'scratch_role_reuse',

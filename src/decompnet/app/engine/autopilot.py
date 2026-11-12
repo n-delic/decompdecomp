@@ -276,8 +276,9 @@ class AutopilotMixin:
             self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match,
                          effective_settings=getattr(result, 'effective_settings', None),
                          before_record=before_record, **({"exact_inputs":exact_inputs} if exact_only else {}))
+            from decomprepair.repair_localisation import bind
+
             from ...source_lines import mismatches
-            from ..repair_localisation import bind
             locations=bind(source,mismatches(result.obj,fn['name'],d.rows,source,
                 filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c',arch=proj['arch']))
             from ..compiler_diagnostics import output_fingerprint
@@ -413,9 +414,10 @@ class AutopilotMixin:
                         return
                     yield family, f"{note}{seeds.M2C_MACROS}\n{source}\n"
 
+            from decomprepair.compiler_shape_repairs import machine_draft_copies
+            from decomprepair.narrow_store_repairs import machine_drafts as narrow_drafts
+
             from ..carrier_sequence_repairs import machine_drafts as carrier_drafts
-            from ..compiler_shape_repairs import machine_draft_copies
-            from ..narrow_store_repairs import machine_drafts as narrow_drafts
             outcomes, seen = [], set()
             for family, source in chain(carrier_drafts(narrow_drafts(machine_draft_copies(chain(draft_candidates(), local_candidates()), fn['name'], ctx['header']),fn['name'],ctx['header'],proj['arch']),fn['name'],ctx['header'],proj['arch']), recovery_candidates()):
                 if source in seen:

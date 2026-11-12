@@ -2,7 +2,7 @@
 import pytest
 
 from decompnet.app import draft_repairs, local_experiments, recent_capture_repairs
-from decompnet.app.callee_name_repairs import FAMILY, variants
+from decomprepair.callee_name_repairs import FAMILY, variants
 
 OLD='func_80101000_ovl_02'
 NEW='func_80102000_overlay_003'

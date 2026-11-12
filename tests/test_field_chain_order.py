@@ -1,7 +1,8 @@
 """Equal field conversions permit one bounded chain alternative, without moving its RHS."""
 import pytest
 
-from decompnet.app import draft_repairs, field_order_repairs
+from decompnet.app import draft_repairs
+from decomprepair import field_order_repairs
 
 SOURCE = '''typedef struct { short first; short second; float unused; } Record;
 void work(Record *out, int value) {

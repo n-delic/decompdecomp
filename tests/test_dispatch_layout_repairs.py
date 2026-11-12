@@ -6,9 +6,10 @@ import time
 import pytest
 
 from decompnet.app import compiler_phase_routing as phases
-from decompnet.app import dispatch_specialization as dispatch
 from decompnet.app import layout_frontiers as layouts
-from decompnet.app import repair_benchmark, repair_localisation, targeted_debug_layout
+from decompnet.app import repair_benchmark, targeted_debug_layout
+from decomprepair import dispatch_specialization as dispatch
+from decomprepair import repair_localisation
 
 HEADER = 'typedef unsigned char u8; extern int result; int lookup(int); void callback(void);'
 SOURCE = '''void f(void) {

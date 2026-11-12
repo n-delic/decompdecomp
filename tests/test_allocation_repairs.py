@@ -1,7 +1,7 @@
 """Homemade allocator-shape examples; no game source or expected game bytes."""
 from decompnet.app import allocation_evidence as evidence
-from decompnet.app import allocation_repairs as repairs
 from decompnet.app import draft_repairs, repair_ranking, search_frontier
+from decomprepair import allocation_repairs as repairs
 
 
 def test_mixed_pointer_scalar_declarations_and_combined_lifetime_bridge():

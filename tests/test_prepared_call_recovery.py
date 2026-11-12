@@ -1,11 +1,5 @@
-from decompnet.app import (
-    allocation_evidence,
-    allocation_search,
-    donor_structure,
-    draft_repairs,
-    prepared_call_repairs,
-    repair_ranking,
-)
+from decompnet.app import allocation_evidence, allocation_search, donor_structure, draft_repairs, repair_ranking
+from decomprepair import prepared_call_repairs
 
 SOURCE = '''extern int classify(unsigned char *);
 extern unsigned char buffer[];

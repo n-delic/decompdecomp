@@ -358,7 +358,7 @@ class Search(Permuter):
             return choices,set()
         self.log(allocation_evidence.text(rows,proj['arch']))
         evidence = {}
-        from . import prepared_call_repairs
+        from decomprepair import prepared_call_repairs
         pending_call = bool(diagnosis['return_copy_rotation'] and any(
             candidate not in self.local_seen for _,candidate in prepared_call_repairs.variants(source,fn['name'],header,proj['arch'])))
         if not fork and proj['slug'] not in self.net.links and getattr(self.net,'is_rom',lambda _:False)(proj):
@@ -447,7 +447,7 @@ class Search(Permuter):
             from . import frame_plateau
             frame_choices = [(family,child) for family,child in frame_plateau.proposals(source,fn['name'],header,rows,proj['arch']) if child not in self.local_seen]
             frame_pass = bool(frame_choices)
-            from . import bit_predicate_repairs
+            from decomprepair import bit_predicate_repairs
             shape=allocation_evidence.diagnose(rows,proj['arch'])
             bit_choices = [(family,child) for family,child in bit_predicate_repairs.variants(
                 source,fn['name'],header,proj['arch'],**options['entry_scope'])
@@ -510,7 +510,7 @@ class Search(Permuter):
                 for family,candidate in branch_frames:labels[candidate]=family
                 choices += [s for _,s in branch_frames]
                 choices += stack
-                from . import normalization_repairs
+                from decomprepair import normalization_repairs
                 normalization_repairs.extend_frame(choices, labels, source, fn['name'], proj['arch'], rows)
                 for family, candidate in permuter_local.variants(source, fn['name']):
                     labels.setdefault(candidate, family)
@@ -539,7 +539,7 @@ class Search(Permuter):
                     choices=[c for _,c in compiler_phase_routing.order(source,
                         [(labels.get(c,'local_repair'),c) for c in choices],phase_evidence.get('value_trace'),header,allocation=phase_evidence.get('allocation'))]
 
-                from . import repair_localisation
+                from decomprepair import repair_localisation
                 localised=repair_localisation.proposals(source,[(labels.get(c,'local_repair'),c) for c in choices],source_locations.get(source))
                 choices=[c for family,c in localised]
                 labels.update({c:family for family,c in localised})
@@ -875,7 +875,7 @@ class Search(Permuter):
             self.report()
             return duplicate[0]
         if not fork and not self.measuring_baseline and source != fn['best_source']:
-            from .repair_preflight import invalid_call
+            from decomprepair.repair_preflight import invalid_call
             header = self.net._context(proj['id'], fn['unit'])['header']
             if invalid_call(source, fn['name'], header):
                 self.rejected += 1

@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from decompnet.app import terminal_guard_repairs as repair
+from decomprepair import terminal_guard_repairs as repair
 
 
 def test_void_nested_actions_become_terminal_guard():

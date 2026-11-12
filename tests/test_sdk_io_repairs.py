@@ -1,4 +1,5 @@
-from decompnet.app import draft_repairs, profile_hypotheses, sdk_io_repairs
+from decompnet.app import draft_repairs, profile_hypotheses
+from decomprepair import sdk_io_repairs
 
 ASM='''/* 0 80001000 3c08a450 */ lui $t0, %hi(D_A4500010)
 /* 4 80001004 ad090010 */ sw $t1, %lo(D_A4500010)($t0)

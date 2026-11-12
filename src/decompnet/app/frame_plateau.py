@@ -1,6 +1,8 @@
 """Body-correct frame alternatives and focused guidance; no adoption or compiler work here."""
+from decomprepair import halfword_store_repairs
+
 from .. import arch as arches
-from . import halfword_store_repairs, permuter_focus
+from . import permuter_focus
 
 
 def gap(rows,arch=None):

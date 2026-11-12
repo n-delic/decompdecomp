@@ -49,7 +49,7 @@ def test_unknown_width_qualified_alias_or_hidden_call_has_no_candidate(source):
 
 
 def test_existing_wrapper_removal_keeps_scope_and_new_family_is_shared():
-    from decompnet.app import compiler_shape_repairs
+    from decomprepair import compiler_shape_repairs
     text='void f(void) { int x; x=1; do { int x; x=2; use(x); } while(0); use(x); }'
     choices=compiler_shape_repairs.variants(text,'f','mips')
     assert any(family=='one_shot_scope' and '{ int x; x=2; use(x); }' in candidate for family,candidate in choices)

@@ -5,9 +5,9 @@ Keep both reads, their order and the final assignment; never cross a memory effe
 """
 import re
 
-from . import integer_abi, pointer_pair_repairs
-from .call_lifetime_repairs import block_path
-from .integer_repair_support import IDENT, edit, split_plain_declarations, view
+from decomprepair import integer_abi, pointer_pair_repairs
+from decomprepair.call_lifetime_repairs import block_path
+from decomprepair.integer_repair_support import IDENT, edit, split_plain_declarations, view
 
 FAMILY = 'narrow_load_subtraction'
 FAMILIES = (FAMILY,)

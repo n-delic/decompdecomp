@@ -1,4 +1,4 @@
-from decompnet.app import global_array_repairs as arrays
+from decomprepair import global_array_repairs as arrays
 
 TABLE = '''extern M2C_UNK D_801FAE30;
 

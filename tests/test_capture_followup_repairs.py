@@ -4,7 +4,8 @@ import subprocess
 import pytest
 
 from decompnet.app import capture_followup_repairs as repairs
-from decompnet.app import draft_repairs, macro_repairs, stack_repairs
+from decompnet.app import draft_repairs
+from decomprepair import macro_repairs, stack_repairs
 
 
 def family(source, name, kind, header='', callees=''):

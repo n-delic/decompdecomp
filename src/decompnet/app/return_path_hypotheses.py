@@ -1,12 +1,13 @@
 """Target-backed branching return hypotheses, always isolated diagnostics, never ordinary rewrites."""
 import re
 
+from decomprepair import integer_abi
+from decomprepair.equal_value_flow import macros_safe
+from decomprepair.integer_repair_support import IDENT, edit, locals_for, view
+from decomprepair.pattern_repairs import close
+
 from .. import arch as architectures
 from ..forks.csource import _blank, find
-from . import integer_abi
-from .equal_value_flow import macros_safe
-from .integer_repair_support import IDENT, edit, locals_for, view
-from .pattern_repairs import close
 
 LIMIT = 4
 

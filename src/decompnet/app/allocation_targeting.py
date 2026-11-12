@@ -2,7 +2,9 @@
 import hashlib
 import math
 
-from . import allocation_evidence, field_order_repairs, loop_weight_repairs, narrow_store_repairs, rtl_value_trace
+from decomprepair import field_order_repairs, loop_weight_repairs, narrow_store_repairs
+
+from . import allocation_evidence, rtl_value_trace
 from .value_trace_repairs import changes, touches
 
 

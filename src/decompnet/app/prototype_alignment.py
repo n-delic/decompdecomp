@@ -5,9 +5,10 @@ human review; the ordinary compiler and exact judge decide whether this candidat
 """
 import re
 
+from decomprepair.integer_repair_support import IDENT, INTEGER, edit, split_args
+from decomprepair.repair_preflight import _PROTO
+
 from ..forks.csource import _blank, find
-from .integer_repair_support import IDENT, INTEGER, edit, split_args
-from .repair_preflight import _PROTO
 
 
 def prepare(header):

@@ -5,9 +5,11 @@ never invent an assembly-to-source location.
 """
 import re
 
-from . import layout_frontiers, local_flow, repair_localisation
-from .call_lifetime_repairs import block_path
-from .integer_repair_support import edit, view
+from decomprepair import local_flow, repair_localisation
+from decomprepair.call_lifetime_repairs import block_path
+from decomprepair.integer_repair_support import edit, view
+
+from . import layout_frontiers
 
 FAMILY = 'targeted_debug_layout'
 

@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from decompnet.app import guarded_loop_repairs as loops
 from decompnet.app import matching_preflight
+from decomprepair import guarded_loop_repairs as loops
 from tests.test_matching_preflight import setup
 
 SOURCE = '''char *f(char *p, char *end) {

@@ -4,8 +4,8 @@ import subprocess
 
 import pytest
 
-from decompnet.app import call_lifetime_repairs as repairs
 from decompnet.app import draft_repairs, permuter_focus, repair_ranking
+from decomprepair import call_lifetime_repairs as repairs
 
 SOURCE = '''void f(int condition, int a, int b) {
  int x;

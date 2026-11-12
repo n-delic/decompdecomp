@@ -5,16 +5,15 @@ spliced rather than pretty-printed. The ordinary judge and existing budgets appl
 """
 import re
 
-from . import (
+from decomprepair import (
     branch_tail_distribution,
-    carrier_sequence_repairs,
-    loop_storage_shapes,
     loop_weight_repairs,
     narrow_store_repairs,
-    parameter_carriers,
     repair_localisation,
     scalar_storage_reuse,
 )
+
+from . import carrier_sequence_repairs, loop_storage_shapes, parameter_carriers
 
 FAMILY = 'record_layout_sequence'
 LIMIT = 24

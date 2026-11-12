@@ -1,6 +1,6 @@
 """Source-shape hypotheses preserve surrounding code and leave acceptance to the judge."""
-from decompnet.app import compiler_shape_repairs as repair
 from decompnet.app import draft_repairs
+from decomprepair import compiler_shape_repairs as repair
 
 
 def shapes(source, header=''):

@@ -3,7 +3,9 @@
 Maps are source-hash bound. Residual rows only establish a storage/lifetime hypothesis;
 association with a source line is advice, never physical-register or equivalence proof.
 """
-from . import allocation_evidence, region_repairs, repair_localisation
+from decomprepair import repair_localisation
+
+from . import allocation_evidence, region_repairs
 
 
 def order(source, flow, donors, start, end, rows, locations, arch):

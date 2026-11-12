@@ -4,8 +4,8 @@ import random
 import pytest
 
 from decompnet import scoring
-from decompnet.app.integer_repair_support import view
 from decompnet.elfobj import FunctionObj, Reloc
+from decomprepair.integer_repair_support import view
 
 
 @pytest.mark.parametrize('arch,big', [('mips',True),('mips',False),('x86',False),('arm',False)])

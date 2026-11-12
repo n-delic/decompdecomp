@@ -3,8 +3,8 @@ import subprocess
 
 import pytest
 
-from decompnet.app import branch_pointer_repairs as repairs
 from decompnet.app import draft_repairs
+from decomprepair import branch_pointer_repairs as repairs
 
 SOURCE='''
 void use(int *);

@@ -1,4 +1,4 @@
-from decompnet.app import record_slot_repairs as slots
+from decomprepair import record_slot_repairs as slots
 
 CAST = '''extern u8 D_8011F2F2[];
 

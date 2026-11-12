@@ -8,10 +8,10 @@ with separate initialization transfer rules: its liveness definitions include ba
 import re
 from functools import lru_cache
 
-from . import local_flow
-from .integer_repair_support import IDENT, INTEGER, NUMBER, view
-from .pattern_repairs import close
-from .pointer_pair_repairs import qualified_types
+from decomprepair import local_flow
+from decomprepair.integer_repair_support import IDENT, INTEGER, NUMBER, view
+from decomprepair.pattern_repairs import close
+from decomprepair.pointer_pair_repairs import qualified_types
 
 # Pointer captures need the same must-initialization check as integer captures.
 # Keep unknown pointee aliases, qualifiers, arrays and function pointers opaque.
@@ -175,7 +175,7 @@ def _unsafe_binding(part, candidate, flow, decl, macros, combined, one_shot_cond
     names = {decl['name']}
     declarations = [decl]
     pointers = names if '*' in decl['type'] else set()
-    from .permuter_macro_effects import transparent_macros
+    from decomprepair.permuter_macro_effects import transparent_macros
     opaque_macros = macros - transparent_macros(combined, names)
     local_names = set(flow.names)
     transfers = []

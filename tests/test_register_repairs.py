@@ -1,4 +1,5 @@
-from decompnet.app import draft_repairs, local_experiments, register_repairs
+from decompnet.app import draft_repairs, local_experiments
+from decomprepair import register_repairs
 
 
 def test_dead_comparison_temporary_reuse_is_bounded_and_scoped():

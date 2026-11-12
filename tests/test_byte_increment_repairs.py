@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from decompnet.app.byte_increment_repairs import FAMILY, variants
+from decomprepair.byte_increment_repairs import FAMILY, variants
 
 HEADER = '''typedef signed char s8; typedef unsigned char u8;
 typedef unsigned short u16; typedef int s32;
