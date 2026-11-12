@@ -148,6 +148,9 @@ def registry() -> dict[str, Toolchain]:
     return {tid: Toolchain(id=tid, **spec) for tid, spec in _registry_data().items()}
 
 
+_REGISTRY = registry
+
+
 def known(tid: str) -> bool:
     """Whether the registry has this toolchain id. A project's config can name one it doesn't: the project was made
     with another tool (#118: a Windows project named a 64-bit Visual C++ one), and it must still open."""
@@ -162,10 +165,19 @@ def _own(tid: str):
     return None if tid in _registry_data() else kits.own_compiler(tid)
 
 
+def _entry(tid: str) -> Toolchain | None:
+    """One registry entry, made alone: making all 66 for each look-up cost the project list half its time. Through
+    registry() when something stands in for it (tests give it their own toolchains)."""
+    if registry is not _REGISTRY:
+        return registry().get(tid)
+    spec = _registry_data().get(tid)
+    return None if spec is None else Toolchain(id=tid, **spec)
+
+
 def get(tid: str) -> Toolchain:
-    data = _registry_data()
-    if tid in data:  # (just this one: making all 66 each time cost the project list half its time)
-        return Toolchain(id=tid, **data[tid])
+    if (tc := _entry(tid)) is not None:
+        return tc
+    data = _registry_data() if registry is _REGISTRY else registry()
     if (own := _own(tid)) is not None:
         return Toolchain(id=tid, name=own.name, license="proprietary", source="your own copy: nothing is downloaded",
                          description="A compiler in your own SDK copy.", flags=list(own.flags))
@@ -207,7 +219,7 @@ def installed(tid: str, linux: bool | None = None, *, vm: bool | None = None) ->
         return {"own": True}  # (a compiler in a kit copy is there as long as the copy is: nothing was installed)
     if manifest is None or changed(tid, manifest, path(tid, linux, vm=vm)) or _unbuilt(tid, linux):
         return None
-    tc = get(tid) if tid in _registry_data() else None
+    tc = _entry(tid)
     if tc is not None and any(installed(h, linux, vm=vm) is None for h in tc.headers):
         return None  # (its compilers can't build without the headers: installing it brings them, install())
     return manifest
