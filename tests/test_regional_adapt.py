@@ -181,3 +181,19 @@ def test_the_other_releases_declarations_come_for_names_only_it_declares():
                               'void f(void) { gRec.a = gHere; }')
     assert out == 'typedef struct Rec { int a; } Rec;\nextern Rec gRec;'
     assert _their_declarations(net, {'id': 1}, {'unit': ''}, own, 'extern int gHere;\n', 'void f(void) { gHere = 1; }') == ''
+
+
+def test_a_functions_own_name_is_never_placed_by_the_addresses_its_code_reaches():
+    """start_of reads big variables only: a function's name placed by addresses inside it renamed the function in
+    its own C, which then had no function of that name."""
+    from decompnet.app.regional import _data_size
+
+    pal = [fn(1, 0x100, 'k1', size=8, ops=('lui', 'lw'), relocs=[(0, 5, 0x80008E38), (4, 6, 0x80008E38)])]
+    ntsc = [fn(11, 0x100, 'k1', size=8, ops=('lui', 'lw'), relocs=[(0, 5, 0x80008E48), (4, 6, 0x80008E48)])]
+    addresses = AddressMap(pair(pal, ntsc, lambda *_: 0.0))
+    mine, theirs = SymbolTable([]), SymbolTable([Symbol('vtx_pool_add', 0x80008E28, 0x100, 'func')])
+    p = Plan([], addresses, [], 0, 0, 0, {'vtx_pool_add': 'func_80008E28'}, mine.name_at, their_address=theirs.resolve,
+             their_size=lambda name: _data_size(theirs.by_name.get(name)), address_of=mine.resolve)
+    own = p.for_pair(pal[0], ntsc[0])
+    assert own.start_of('vtx_pool_add') is None
+    assert own.text('void vtx_pool_add(void)') == 'void func_80008E28(void)'

@@ -488,7 +488,15 @@ def plan(net, proj, donor) -> Plan:
         else:
             offer(current, s.name, address)
     return Plan(pairs, addresses, rows, kept, unmapped, taken, translate, syms.name_at, donor_syms.resolve,
-                lambda name: getattr(donor_syms.by_name.get(name), 'size', 0) or 0, syms.resolve)
+                lambda name: _data_size(donor_syms.by_name.get(name)), syms.resolve)
+
+
+def _data_size(sym) -> int:
+    """A data symbol's size, 0 for a function or an unknown one: start_of and offsets read variables only (a
+    function's own name placed by the addresses its code reaches renamed the function: its C had no such function)."""
+    if sym is None or sym.kind in ('func', 'function'):
+        return 0
+    return sym.size or 0
 
 
 # ------------------------------------------------------------------ header types
