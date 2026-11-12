@@ -234,3 +234,49 @@ def test_boundary_reports_wait_for_the_user(net):
     [req] = [r for r in net.overview(slug)["boundaries"] if r["function"] == other["name"]]
     net.resolve_boundary(slug, req["id"], apply=False)
     assert net.store.one("SELECT size FROM functions WHERE id=?", other["id"])["size"] == other["size"]
+
+
+def test_only_a_few_autopilots_compile_at_once_across_projects(tmp_path, monkeypatch):
+    """Importing many games started an autopilot each, three compiles apiece, all at once. Past MAX_RUNNING the
+    others wait their turn ("queued"); one stopped while it waits ends without trying anything."""
+    import threading
+    import time
+
+    from decompnet.app.engine import autopilot
+
+    from .test_loading import tiny_game
+
+    monkeypatch.setattr(autopilot, "_slots", threading.Semaphore(2))
+    monkeypatch.setattr(autopilot, "QUEUE_POLL_SECONDS", 0.01)
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    monkeypatch.setattr(net.twins, "full_pass", lambda slug: type("Job", (), {"matched": 0})())
+    release, tried = threading.Event(), []
+
+    def try_one(agent, proj, fid):
+        tried.append(proj["slug"])
+        release.wait(10)
+        return "fail"
+    states = {}
+    for slug in ("a", "b", "c", "d"):
+        proj = tiny_game(net, slug, functions=1)
+        ids = [r["id"] for r in net.store.all("SELECT id FROM functions WHERE project_id=?", proj["id"])]
+        states[slug] = state = {"state": "running", "total": 1, "tried": 0, "matched": 0, "near": 0, "twins": 0,
+                                "phase": "queued", "stop": threading.Event()}
+        net.autopilots[slug] = state
+        threading.Thread(target=net._autopilot_run, args=(slug, ids, state, 1, try_one), daemon=True).start()
+        time.sleep(0.05)
+    deadline = time.time() + 5
+    while len(tried) < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.1)
+    assert sorted(tried) == ["a", "b"]
+    assert states["c"]["phase"] == states["d"]["phase"] == "queued"
+    assert net.summary("c")["autopilot_phase"] == "queued"
+    states["d"]["stop"].set()
+    while states["d"]["state"] == "running" and time.time() < deadline:
+        time.sleep(0.01)
+    assert states["d"]["state"] == "stopped" and states["d"]["tried"] == 0
+    release.set()
+    while states["c"]["state"] == "running" and time.time() < deadline:
+        time.sleep(0.01)
+    assert states["c"]["state"] == "done" and "c" in tried and "d" not in tried

@@ -940,32 +940,79 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
 
 
 class Autosave:
-    """Follow local work and contributions in progress/, including while no project window is open."""
+    """Follow local work and contributions in progress/, including while no project window is open.
+
+    Each pass reads every file of the projects in use (Progress.hot: opened, judged or changed in the last
+    HOT_SECONDS), so an editor's in-place edit there is saved within a second. The others get the cheap check (the
+    database's changes and the folders' own dates, which catch files added, removed or renamed) and, in turns, the
+    deep one, DEEP_BUDGET_SECONDS of it per pass: reading every file of every project each second cost 300 ms a pass
+    with 200 small projects, and grows with every game imported."""
+
+    HOT_SECONDS = 120
+    DEEP_BUDGET_SECONDS = 0.05
+    RELEASE_SECONDS = 600  # a project unused this long lets go of what it keeps in memory (Progress.release)
+    OPTIMIZE_SECONDS = 3600  # how often the database refreshes its statistics (Store.optimize)
 
     def __init__(self, net):
         self.net = net
         self.stop = threading.Event()
+        self.turn = 0  # where the next pass's deep reads of the quiet projects start
+        self.optimized = time.monotonic()
 
     def start(self) -> None:
         threading.Thread(target=self._loop, daemon=True, name="autosave").start()
 
     def _loop(self) -> None:
         while not self.stop.is_set():
-            self.run_once()
+            try:
+                self.run_once()
+            except Exception:  # (one bad pass mustn't end saving for the rest of the session)
+                log.exception("an autosave pass failed")
+            if time.monotonic() - self.optimized > self.OPTIMIZE_SECONDS:
+                self.optimized = time.monotonic()
+                try:
+                    self.net.store.optimize()
+                except Exception:  # (statistics are a nicety)
+                    log.exception("refreshing the database's statistics failed")
             self.stop.wait(1)
+
+    def _missing(self, row) -> bool:
+        """Whether a project's folder is gone; a check that fails counts as present, so the pass carries on."""
+        try:
+            return bool(self.net.project_missing(row))
+        except Exception:
+            log.exception("checking %s's folder failed", row["slug"])
+            return False
 
     def run_once(self) -> list[str]:
         """Synchronize every ROM project, including file changes that have no database event."""
+        progress = self.net.progress
+        # (a project whose folder is gone has nothing to save into, only records to remove)
+        rows = [row for row in self.net.store.all("SELECT id, slug, root FROM projects ORDER BY id")
+                if not self._missing(row)]
+        slugs = [row["slug"] for row in rows]
+        hot = {slug for slug in slugs if progress.hot(slug, self.HOT_SECONDS)}
+        quiet = [slug for slug in slugs if slug not in hot]
+        start = self.turn % len(quiet) if quiet else 0
+        quiet = quiet[start:] + quiet[:start]
         saved = []
-        for row in self.net.store.all("SELECT id, slug, root FROM projects"):
+        began = time.monotonic()
+        deep_done = 0
+        for slug in [*sorted(hot), *quiet]:
+            deep = slug in hot or time.monotonic() - began < self.DEEP_BUDGET_SECONDS or not deep_done
+            if deep and slug not in hot:
+                deep_done += 1
             try:
-                if self.net.project_missing(row):
-                    continue  # its folder is gone: there is nothing to save into, only records to remove
-                if self.net.progress.sync(row["slug"], force=True, retry=False):  # (a failed one waits: RETRY_FAILED_SECONDS)
-                    saved.append(row["slug"])
+                # (a failed one waits: RETRY_FAILED_SECONDS)
+                if progress.sync(slug, force=deep, retry=False, background=True):
+                    saved.append(slug)
             except Exception as e:  # never stands between the user and their work
                 from .progress import _StillFailing
 
                 if not isinstance(e, _StillFailing):  # (#167: the same failure, logged once, not every second)
-                    log.exception("saving %s failed", row["slug"])
+                    log.exception("saving %s failed", slug)
+        self.turn += max(1, deep_done)
+        for row in rows:
+            if not progress.hot(row["slug"], self.RELEASE_SECONDS):
+                progress.release(row["slug"], row["id"])
         return saved

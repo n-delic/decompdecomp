@@ -13,6 +13,12 @@ from ... import scoring, seeds, toolchains
 from ...network import Agent, NetworkError
 from ...project import compiler_for, unknown_compiler_message
 
+# Autopilots that compile at once, across every project: importing a hundred games started a hundred, three compiles
+# each, all fighting for the same cores. The others wait their turn ("queued"), first come first served.
+MAX_RUNNING = 2
+_slots = threading.Semaphore(MAX_RUNNING)
+QUEUE_POLL_SECONDS = 0.5  # how often a queued one looks for a slot (and whether it was stopped meanwhile)
+
 
 class AutopilotMixin:
     def start_autopilot(self, slug: str, workers: int = 3) -> dict:
@@ -52,7 +58,7 @@ class AutopilotMixin:
         except NetworkError as e:
             ids, try_one, no_drafts = [], None, str(e)
         state = {"state": "running", "total": len(ids), "tried": 0, "matched": 0, "near": 0, "twins": 0,
-                 "phase": "twins", "no_drafts": no_drafts, "started_at": time.time(), "stop": threading.Event()}
+                 "phase": "queued", "no_drafts": no_drafts, "started_at": time.time(), "stop": threading.Event()}
         self.autopilots[slug] = state
         threading.Thread(target=self._autopilot_run, args=(slug, ids, state, workers, try_one),
                          daemon=True, name=f"autopilot-{slug}").start()
@@ -70,13 +76,27 @@ class AutopilotMixin:
         return {"state": "done", **last} if last else None
 
     def _autopilot_run(self, slug: str, ids: list[int], state: dict, workers: int, try_one=None) -> None:
+        """One project's autopilot, once a slot is free (MAX_RUNNING): until then its phase is "queued"."""
+        while not _slots.acquire(timeout=QUEUE_POLL_SECONDS):
+            if state["stop"].is_set():
+                break
+        else:
+            try:
+                self._autopilot_work(slug, ids, state, workers, try_one)
+            finally:
+                _slots.release()
+            return
+        self._autopilot_work(slug, [], state, workers, try_one)  # stopped while queued: recorded as stopped
+
+    def _autopilot_work(self, slug: str, ids: list[int], state: dict, workers: int, try_one=None) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
         agent, _ = self.local_agent("autopilot")
         proj = self._project(slug)
         try_one = try_one or self._autopilot_one
+        state["phase"] = "twins"
         try:  # identical code first: free, and it takes those functions off the drafts' list
-            if slug not in self.links:  # (a room member's matches come from the host)
+            if slug not in self.links and not state["stop"].is_set():  # (a room member's matches come from the host)
                 job = self.twins.full_pass(slug)
                 state["twins"] = job.matched
                 state["matched"] += job.matched

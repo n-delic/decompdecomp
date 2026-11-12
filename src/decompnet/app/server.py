@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import secrets
 import threading
+import time
 from pathlib import Path
 
 import anyio
@@ -28,6 +29,8 @@ from . import agents, collab, routes, saves, tools, updates, window
 from .engine import RomNetwork
 from .routes import forks, life, pages, projects, rooms, setup, state
 from .support import Jobs, Settings, session_options
+
+START_PAUSE_SECONDS = 0.02  # between projects in the console work at start (consoles_start)
 
 
 def build(net: RomNetwork, home: Path, port: int, secret: str):
@@ -88,7 +91,14 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     net.restore_links()
 
     def consoles_start() -> None:  # what each console does for its projects at start (Console.on_start)
-        for row in net.store.all("SELECT id, slug, root, config FROM projects"):
+
+        # the most recently used first, with a breath between projects: with hundreds of games, the ones the user
+        # opens first are ready first, and this never stands in the way of their work
+        for n, row in enumerate(net.store.all(
+                "SELECT p.id, p.slug, p.root, p.config FROM projects p ORDER BY (SELECT MAX(created_at) FROM events e "
+                "WHERE e.project_id=p.id) DESC, p.id DESC")):
+            if n:
+                time.sleep(START_PAUSE_SECONDS)
             try:
                 if net.project_missing(row):
                     continue  # its folder is gone: only its records are left, and those are removed, not set up

@@ -44,6 +44,7 @@ def register(app: App) -> None:
 
     def p_overview(slug, request, data):
         settings.data["last_project"] = slug
+        net.progress.touch(slug)  # its page is open: an editor's edit in its folder is saved within a second
         settings.save()
         overview = net.overview(slug)
         if not overview.get("missing"):
@@ -52,6 +53,7 @@ def register(app: App) -> None:
 
     def p_live(slug, request, data):
         q = request.query_params
+        net.progress.touch(slug)  # its page is open (this is its poll): Progress.hot
         out = net.live(slug, int(q.get("e", 0) or 0), int(q.get("a", 0) or 0))
         try:
             since = json.loads(q.get("s") or "{}")
