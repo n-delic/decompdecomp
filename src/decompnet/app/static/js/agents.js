@@ -191,8 +191,9 @@ $("restartPaused").onclick = async () => {
   const button = $("restartPaused");
   button.disabled = true;
   try {
-    const { restarted } = await api("/api/agents/restart", { method: "POST", body: { slug: S.slug, restart_paused: true } });
-    toast(`Started ${plural(restarted, "paused agent")} again.`);
+    const { restarted, skipped } = await api("/api/agents/restart", { method: "POST", body: { slug: S.slug, restart_paused: true } });
+    toast(skipped ? `Started ${restarted} of ${plural(restarted + skipped, "paused agent")} again.`
+                  : `Started ${plural(restarted, "paused agent")} again.`);
     poll(false);
   } catch (e) {
     toast(esc(e.message), "err");

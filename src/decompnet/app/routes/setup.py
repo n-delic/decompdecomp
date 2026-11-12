@@ -259,8 +259,8 @@ def register(app: App) -> None:
             return bad
         data = await body(request)
         if data.get("restart_paused") and data.get("slug"):
-            restarted = await call(manager.restart_paused, str(data["slug"]))
-            return JSONResponse({"ok": True, "restarted": restarted})
+            started, skipped = await call(manager.restart_paused, str(data["slug"]))
+            return JSONResponse({"ok": True, "restarted": started, "skipped": skipped})
         try:
             await call(manager.restart, str(data.get("id", "")))
         except ValueError as e:
