@@ -8,6 +8,8 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -59,6 +61,29 @@ def test_each_source_file_can_have_its_own_codewarrior(tmp_path):
     assert json.loads((tmp_path / rel).read_text()) == {}
     with pytest.raises(ForkError):  # a public DS decomp's own build sets its compilers
         NDS.set_file_compiler(ForkProject(tmp_path / "public"), "src/a.c", "DS/1.2/sp4")
+
+
+def test_the_survey_tries_the_projects_codewarriors_when_the_program_names_none(tmp_path):
+    """A DS ROM's program names no compiler (no Rich header there): the survey used to try only each file's own, so a
+    game the project builds with another CodeWarrior could never be found. It tries the project's versions instead,
+    nearest to its own first, and keeps that bounded."""
+    root = tmp_path / "game"
+    arm9 = root / "config" / "game" / "arm9"
+    arm9.mkdir(parents=True)
+    (root / ".decomp.wtf.json").write_text(json.dumps({"version": "game", "compiler": "DS/2.0/sp1p5"}))
+    (arm9 / "file_compilers.json").write_text("{}\n")
+    (arm9 / "delinks.txt").write_text(
+        "src/auto/main_02000000.c:\n    .text start:0x02000000 end:0x02000400\n")
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                   ("game", "Game", "", "arm", 0, str(root),
+                    json.dumps({"kind": "fork", "platform": "nds", "ready": True})))
+    assert NDS.program_compilers(net.forks.get("game")[1]) == []  # (the ROM says nothing)
+    candidates = net.filecompilers.candidates("game")
+    assert candidates[0] == "DS/2.0/sp1p5" and len(candidates) > 1
+    assert {"DS/2.0/sp1p6", "DS/2.0/sp1p2"} <= set(candidates)  # the nearest versions, before the rest
+    assert len(candidates) <= 6  # (SURVEY_COMPILERS bounds a run)
 
 
 def test_a_call_to_code_dsd_found_no_function_for_is_analysed_again(tmp_path, monkeypatch):
@@ -284,7 +309,11 @@ def test_the_settings_panel_switches_files_only_where_their_matches_hold(per_fil
     monkeypatch.setattr(N64, "set_own_compiler", lambda fp, compiler, sources: owned.append((compiler, sources)) or [])
     ov = net.overview(slug)
     assert ov["compiler"]["toolchain"] == GOOD and ov["compilers"] == [GOOD, BAD] and ov["compiler_ranges"] == []
-    assert net.compiler_answer(slug)["parts"] == []
+    answer = net.compiler_answer(slug)
+    assert answer["parts"] == []
+    # the GUI's survey line follows `compiler_map` (steering.js), not the old `mips` it didn't get: a DS project whose
+    # files each have a CodeWarrior has a map now, so it says the survey can run rather than "it reads MIPS code only"
+    assert answer["compiler_map"] is True and answer["mips"] is True
     with pytest.raises(NetworkError, match="no longer match"):  # -O0 breaks game.c's matched functions
         net.forks.set_compiler_ranges(slug, [[0x80000500, 0x80000600]], BAD)
     with pytest.raises(NetworkError, match="no source file"):
@@ -921,3 +950,95 @@ def test_a_symbol_of_the_game_is_renamed_in_its_config(tmp_path):
     (gc / "symbols.txt").write_text("fn_80003100 = .text:0x80003100; // type:function size:0x40\n")
     consoles.get("gc").rename_symbol(fp, "v2", "fn_80003100", "OSInit")
     assert (gc / "symbols.txt").read_text() == "OSInit = .text:0x80003100; // type:function size:0x40\n"
+
+
+# ---------------------------------------------------------------------------------------------- autopilot
+
+DEMO_DS = ROOT / "projects" / "demo-ds"
+
+
+@pytest.fixture(scope="module")
+def ds_demo(tmp_path_factory):
+    """projects/demo-ds, built and imported: a real ds-decomp project (skips without its tools)."""
+    missing = []
+    for tool in NDS.demo_tools:
+        try:
+            if toolchains.installed(tool) is None:
+                missing.append(tool)
+        except toolchains.ToolchainError:
+            missing.append(tool)
+    if not (ROOT / "projects" / "zlib-n64" / "original").exists():
+        missing.append("zlib (projects/zlib-n64/prepare.py)")
+    if missing:
+        pytest.skip(f"the DS demo needs {', '.join(missing)}")
+    key = DEMO_DS / "build" / "demo.json"
+    if not key.exists():
+        subprocess.run([sys.executable, str(DEMO_DS / "build.py")], check=True)
+    built = json.loads(key.read_text())
+    work = tmp_path_factory.mktemp("demo-ds")
+    net = RomNetwork(work / "app.db", work)
+    slug = net.import_rom(DEMO_DS / "build" / built["game"], confirmed=True, log=lambda *_: None)
+    return net, slug, Path(net.project_row(slug)["root"])
+
+
+def test_autopilot_refuses_a_project_with_no_assembly_and_writes_no_macros(ds_demo):
+    """A ds-decomp project's sources are comments over the delinked code: m2c has no assembly to read. Autopilot used
+    to return every open function, fail each, and commit the M2C macros for nothing (#232). It says why instead,
+    before anything is written; the automatic start after an import records that calmly, as the other refusals are."""
+    net, slug, root = ds_demo
+    header = root / "include" / "common.h"
+    before = header.read_text()
+    with pytest.raises(NetworkError) as said:
+        net.forks.autopilot_prepare(slug)
+    assert "no assembly for m2c to read" in str(said.value) and "helpers still work on it" in str(said.value)
+    assert header.read_text() == before and "M2C_DEFINES" not in header.read_text()
+    state = net.start_autopilot(slug)  # what routes/state.py does after an import
+    assert state["no_drafts"] == str(said.value) and state["total"] == 0
+    for _ in range(200):
+        if net.autopilot_status(slug)["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert header.read_text() == before
+
+
+def _fake_fork(tmp_path, asm: str | None = None):
+    """A from-scratch project with one open function and, with `asm`, its assembly where m2c reads it (dtk's
+    build/<version>/asm/<unit>.s): no compiler or real game needed."""
+    root = tmp_path / "ws" / "game"
+    (root / "include").mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / "include" / "common.h").write_text("#ifndef COMMON_H\n#define COMMON_H\n#endif\n")
+    (root / "src" / "main.c").write_text('#include "common.h"\n')
+    (root / "objdiff.json").write_text(json.dumps({"units": [
+        {"name": "main", "path": "main", "metadata": {"source_path": "src/main.c"}}]}))
+    if asm:
+        (root / asm).parent.mkdir(parents=True)
+        (root / asm).write_text(".text\n")
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    cfg = {"kind": "fork", "origin": "scratch", "platform": "gc" if asm else "nds", "version": "v", "ready": True}
+    net.forks._register("p", "P", "fork", root, cfg, "made")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(1,?,8,2,'open','main')",
+                   ("func_02000000",))
+    return net, root
+
+
+def test_autopilot_without_assembly_refuses_before_the_macros(tmp_path, monkeypatch):
+    net, root = _fake_fork(tmp_path)
+    commits = []
+    monkeypatch.setattr(net.forks, "_commit", lambda *a, **k: commits.append(a))
+    header = root / "include" / "common.h"
+    before = header.read_text()
+    with pytest.raises(NetworkError, match="no assembly for m2c to read"):
+        net.forks.autopilot_prepare("p")
+    assert header.read_text() == before and "M2C_DEFINES" not in header.read_text() and not commits
+
+
+def test_autopilot_with_assembly_still_returns_the_open_functions(tmp_path, monkeypatch):
+    net, root = _fake_fork(tmp_path, asm="build/v/asm/main.s")
+    monkeypatch.setattr(toolchains, "installed", lambda tool: object() if tool == "m2c" else None)
+    commits = []
+    monkeypatch.setattr(net.forks, "_commit", lambda *a, **k: commits.append(a))
+    ids = net.forks.autopilot_prepare("p")
+    assert ids == [net.store.one("SELECT id FROM functions WHERE project_id=1")["id"]]
+    assert "M2C_DEFINES" in (root / "include" / "common.h").read_text() and len(commits) == 1

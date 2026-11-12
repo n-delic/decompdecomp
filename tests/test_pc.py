@@ -1819,6 +1819,43 @@ def test_functions_before_the_first_one_ghidra_found_are_found_too():
     assert [f.addr for f in scratch_pe.analyse(pe, [_row(0x401010, 0x401015)])] == [0x401010]
 
 
+def test_an_incrementally_linked_programs_thunk_table_is_no_function_before_the_first_one():
+    """Visual C++ 6.0 links with /DEBUG incrementally: the code starts with a table of `jmp` thunks to the program's
+    functions (Ghidra's thunks, left out). Looking for functions before the first one Ghidra found (2017's inlined
+    mix_score) took the table for one, a source file of its own beside the ones the demo's PDB names (text_00401005,
+    tests/test_pc_debug.py). A thunk Ghidra didn't mark, between two it did, is still the table's."""
+    pad = lambda code: code + b"\xcc" * (-len(code) % 16)
+    jmp = lambda at, to: b"\xe9" + struct.pack("<i", to - (at + 5))
+    thunks = b"\xcc" * 5 + jmp(0x401005, 0x401020) + jmp(0x40100A, 0x401030) + jmp(0x40100F, 0x401020)
+    code = thunks.ljust(0x20, b"\xcc") + pad(bytes.fromhex("8b442404c3")) + pad(bytes.fromhex("33c0c3"))
+    pe = scratch_pe.read_pe(_tiny_exe(code))
+    rows = [{**_row(0x401005, 0x40100A), "thunk": True}, {**_row(0x40100F, 0x401014), "thunk": True},
+            _row(0x401020, 0x401025), _row(0x401030, 0x401033)]
+    assert [(f.addr, f.size) for f in scratch_pe.analyse(pe, rows)] == [(0x401020, 5), (0x401030, 3)]
+
+
+def test_only_a_leading_run_of_jmp_thunks_is_a_thunk_table():
+    """Only a run of at least two `jmp` thunks from a section's start (padding between them) is a thunk table: a leaf
+    before a thunk, the thunk, and a lone `jmp` at the start are functions, as before. A thunk Ghidra didn't mark
+    after the last one it did is still the table's, though Ghidra lists it as a function."""
+    pad = lambda code: code + b"\xcc" * (-len(code) % 16)
+    jmp = lambda at, to: b"\xe9" + struct.pack("<i", to - (at + 5))
+    leaf, function = pad(bytes.fromhex("8bc1c3")), pad(bytes.fromhex("8b442404c3"))
+    thunk = lambda at, to: {**_row(at, at + 5), "thunk": True}
+    cases = [  # (code at 0x401000, Ghidra's rows, the functions)
+        (leaf + pad(jmp(0x401010, 0x401020)) + function, [thunk(0x401010, 0x401020), _row(0x401020, 0x401025)],
+         [(0x401000, 3), (0x401010, 5), (0x401020, 5)]),
+        (pad(jmp(0x401000, 0x401010)) + function, [thunk(0x401000, 0x401010), _row(0x401010, 0x401015)],
+         [(0x401000, 5), (0x401010, 5)]),
+        (pad(jmp(0x401000, 0x401020)) + pad(jmp(0x401010, 0x401030)) + function + pad(bytes.fromhex("33c0c3")),
+         [thunk(0x401000, 0x401020), _row(0x401010, 0x401015), _row(0x401020, 0x401025), _row(0x401030, 0x401033)],
+         [(0x401020, 5), (0x401030, 3)]),
+    ]
+    for code, rows, functions in cases:
+        pe = scratch_pe.read_pe(_tiny_exe(code))
+        assert [(f.addr, f.size) for f in scratch_pe.analyse(pe, rows)] == functions
+
+
 def test_the_padding_the_linker_aligns_every_function_with_doesnt_end_a_source_file():
     """Visual C++ 2005 on aligns each function to 16 bytes with int3: a 2005 game got a source file for almost every
     function (19,028 for 20,863). More than that padding still ends a file, and so does int3 where the compiler pads
@@ -3426,6 +3463,20 @@ def test_a_constant_past_a_64_bit_leaf_with_no_pdata_is_not_a_function():
     code = code.ljust(0x10, b"\xcc") + bytes.fromhex("33c0c3")  # 0x1010 a leaf nothing calls
     functions = scratch_pe.analyse(scratch_pe.read_pe(_tiny_exe64(code)), [])
     assert [(f.addr - X64_BASE, f.size) for f in functions] == [(0x1000, 7), (0x1010, 3)]
+
+
+def test_a_64_bit_incrementally_linked_programs_thunk_table_is_no_function():
+    """A 64-bit program linked incrementally starts its code with a table of `jmp rel32` thunks too: two thunks before
+    two .pdata functions are two functions, not four, though Ghidra lists the entry point, one of the thunks."""
+    t, jmp = X64_BASE, lambda at, to: b"\xe9" + struct.pack("<i", to - (at + 5))
+    code = (jmp(t + 0x1000, t + 0x1010) + jmp(t + 0x1005, t + 0x1020)).ljust(0x10, b"\xcc")
+    code += bytes.fromhex("4883ec2833c04883c428c3").ljust(0x10, b"\xcc")  # 0x1010: sub rsp, 0x28; xor eax, eax; ...
+    code += bytes.fromhex("4883ec28b8010000004883c428c3")  # 0x1020: sub rsp, 0x28; mov eax, 1; add rsp, 0x28; ret
+    unwind = bytes.fromhex("0104010004420000")  # (sub rsp, 0x28)
+    pdata = struct.pack("<6I", 0x1010, 0x101B, 0x2000, 0x1020, 0x102E, 0x2000)
+    pe = scratch_pe.read_pe(_tiny_exe64(code, unwind + pdata, {scratch_pe.EXCEPTIONS: (0x2008, 24)}))
+    entry = {**_row(t + 0x1000, t + 0x1005), "name": "entry", "source": "IMPORTED"}  # (as Ghidra gives it)
+    assert [(f.addr - t, f.size) for f in scratch_pe.analyse(pe, [entry])] == [(0x1010, 0xB), (0x1020, 0xE)]
 
 
 def test_a_load_through_image_base_into_its_own_register_keeps_its_relocation():

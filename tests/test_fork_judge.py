@@ -123,6 +123,49 @@ def _status(net, slug, name):
     return net._function(name, slug)["status"]
 
 
+def test_a_forks_best_attempt_can_be_diffed(fork):
+    """The GUI's diff switch asks for the best attempt, not the source now: it is built like a try, diffed and
+    undone, so the file keeps the later attempt an agent left there."""
+    net, slug, agent = fork
+    near = SCALE.replace("* 1.1", "+ 1.1")
+    out = net.compile_and_diff(agent, "scale", near, slug)
+    assert not out.startswith("✅"), out
+    latest = net.function_diff(slug, "scale")
+    assert latest["kind"] == "latest" and latest["rows"]
+    assert net.function_detail(slug, "scale")["best_differs"] is False  # the file holds the best attempt now
+    # An edit leaves a worse version in the file; the first attempt stays the best one.
+    worse = SCALE.replace("* 1.1", "- 1.1")
+    out = net.forks.edit_file(agent, slug, "src/lit.c", near, worse, "a worse version")
+    assert out.startswith("✅"), out
+    root = Path(net.project_row(slug)["root"])
+    before = (root / "src" / "lit.c").read_text()
+    assert "- 1.1" in before
+    assert net.function_detail(slug, "scale")["best_differs"] is True
+    best = net.function_diff(slug, "scale", "best")
+    assert best["kind"] == "best"
+    assert best["rows"] == latest["rows"] and best["percent"] == latest["percent"]
+    assert (root / "src" / "lit.c").read_text() == before  # the best attempt was built and undone
+    assert net.function_diff(slug, "scale")["rows"] != latest["rows"]  # the source now is the other attempt
+
+
+def test_a_best_diff_does_not_create_a_missing_source_file(fork):
+    """A unit with no source file yet gets one for the try and must have none again after it, not an empty one."""
+    net, slug, agent = fork
+    out = net.compile_and_diff(agent, "scale", SCALE.replace("* 1.1", "+ 1.1"), slug)
+    assert not out.startswith("✅"), out
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    path.unlink()
+    assert net.function_diff(slug, "scale", "best")["kind"] == "best"
+    assert not path.exists()
+
+
+def test_a_fork_without_a_best_attempt_says_so(fork):
+    net, slug, _ = fork
+    d = net.function_diff(slug, "scale", "best")
+    assert d["kind"] == "best" and d["rows"] is None
+    assert "no best attempt" in d["message"].lower()
+
+
 def test_a_literal_named_and_placed_differently_matches(fork):
     net, slug, agent = fork
     assert _status(net, slug, "offset") == "matched"  # the progress report's verdict

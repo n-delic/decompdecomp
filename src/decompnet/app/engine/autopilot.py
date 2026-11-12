@@ -23,6 +23,8 @@ class AutopilotMixin:
         state = self.autopilots.get(slug)
         if state and state["state"] == "running":
             return state
+        if missing := self.project_missing(self._project(slug)):
+            raise NetworkError(missing)
         fork = self.fork_slug(slug)
         # #118: a project from another tool may name a compiler decompdecomp doesn't have. Say which and where to pick
         # one, rather than failing later as "m2c can't read this project's code" or the registry's list of ids.

@@ -46,6 +46,15 @@ def test_saved_project_dialog_preserves_state_and_cancels_pending_requests():
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_a_removed_compiler_range_can_be_reverted_where_it_was_listed():
+    """The Remove button left no way back; the part stays greyed in the list with a Revert that adds the same range,
+    compiler and flags again, and says the functions it reopened stay open for agents."""
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_compiler.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
@@ -56,10 +65,21 @@ def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
 def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
     """A poll that brought one better score redrew all of a big game's map (28,900 cells), and every frame of the
     working functions' pulse copied the whole canvas; the project list's asks piled up behind a slow one, and the live
-    poll went on in a minimised window (tests/gui_map.js)."""
+    poll went on in a minimised window. The compiler answer says a project without a map has none, and not that it
+    reads MIPS code only (tests/gui_map.js)."""
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_map.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_the_function_view_opens_on_best_and_switches_to_latest_after_a_manual_compile():
+    """A DS game's function drawer had no latest/best switch: every fork's function was hidden from it. It shows
+    wherever a best attempt differs from the source now, opens on the best (what someone fixing a function builds
+    on), and switches to the source now after their own compile (tests/gui_function.js)."""
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_function.js"))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
@@ -75,6 +95,18 @@ def gui():
     result = json.loads(out.stdout)
     assert result["errors"] == []
     return result
+
+
+def test_a_project_whose_folder_is_missing_says_so_and_can_be_removed(gui):
+    """A project the user deleted from disk used to have no way to its Settings: its home card now says the folder is
+    missing and removes its database records (never a folder that isn't there) after a confirmation."""
+    missing = gui["checks"]["missingProject"]
+    assert 'data-remove-project="gone"' in missing["html"] and "Gone &lt;Game&gt;" in missing["html"]
+    assert "folder is missing" in missing["html"]
+    assert missing["title"] == "Remove project" and "Gone &lt;Game&gt;" in missing["text"] and "records" in missing["text"]
+    assert missing["calls"][0] == ["/api/delete", {"method": "POST", "body": {"slug": "gone"}}]
+    assert ["home"] in missing["calls"] and ["nav"] in missing["calls"]
+    assert missing["notes"] == ["Project removed from decompdecomp."]
 
 
 def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
@@ -311,3 +343,15 @@ def test_linux_vm_setup_shows_readiness_and_uses_progress():
         pytest.skip('needs node to run GUI scripts')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_linuxvm.js'))], check=True,
                    capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+def test_ps4_decrypted_executables_are_accepted_but_other_elfs_are_not(gui):
+    assert gui["checks"]["ps4"] == ["ps4", "ps4", None, None]
+
+
+def test_a_ps4_drop_never_requests_codewarrior_and_explains_host_restrictions(gui):
+    for drop in gui["checks"]["ps4Drop"]["drops"]:
+        assert drop["pack"] == "" and not drop["consent"] and not drop["disabled"]
+        assert "free" in drop["note"] and "Clang 5.0.2" in drop["note"]
+        assert drop["extras"] == ["game.functions.jsonl"]
+    unsupported = gui["checks"]["ps4Drop"]["unsupported"]
+    assert unsupported["disabled"] and not unsupported["consent"] and "WSL 2" in unsupported["note"]

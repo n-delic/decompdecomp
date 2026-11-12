@@ -887,6 +887,23 @@ def test_the_prompt_gives_the_compile_budget_the_guide_gives(tmp_path, monkeypat
     assert network.stall_budget_text() in m._prompt(s) and "8 claims" in m._prompt(s)
 
 
+def test_the_prompt_only_names_the_tools_the_projects_console_offers(tmp_path, monkeypatch):
+    """A GameCube helper was told to join functions and a DS one to report function ends though neither console can:
+    the prompt says a capability tool only where the console has it (the same facts as its tool list)."""
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    s = agents.Session("1", "claude", "claude-1", "game", "claude-1", {})
+    for platform, joins in (("gc", False), ("wii", False), ("nds", True), ("pc", True)):
+        monkeypatch.setattr(net, "overview", lambda slug, p=platform: {
+            "kind": "fork", "origin": "scratch", "title": "Game", "platform": p, "platform_name": p})
+        assert ("join_functions" in m._prompt(s)) is joins
+    for platform, structs in (("n64", True), ("gba", False), ("ps3", False)):
+        monkeypatch.setattr(net, "overview", lambda slug, p=platform: {
+            "kind": "rom", "title": "Game", "platform": p, "compiler": {"toolchain": "gcc-2.7.2-kmc"}})
+        text = m._prompt(s)
+        assert ("guess_struct" in text) is structs and "report_boundary" in text
+
+
 def test_a_project_started_from_scratch_isnt_called_a_public_decomp(tmp_path, monkeypatch):
     """Told a new DS project was "a public matching-decompilation project", a model spent its first 7 minutes
     looking for the project's conventions in config/ and build.ninja; on an N64 game one went to fetch
