@@ -106,7 +106,10 @@ class EditMixin:
             # padding off a function can leave a padding head, and splitting into trailing padding leaves a padding
             # tail. The console asks the right reader for the function's mode (GBA: ARM vs Thumb).
             head_padding = bool(head.size) and console.is_padding(th.code, fn)
-            tail_padding = bool(tail.size) and console.is_padding(tt.code, fn)
+            # a tail that starts in the head's branch delay slot is not padding: that first word belongs to the
+            # head, so don't retire the tail even when its bytes are all the processor's nop.
+            tail_padding = (bool(tail.size) and console.is_padding(tt.code, fn)
+                            and not console.ends_in_delay_branch(th.code, fn))
             meta = console.function_meta(tail)
             if tail_meta:
                 meta.update(tail_meta)

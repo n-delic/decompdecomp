@@ -140,8 +140,9 @@ class GameBoyAdvance(Console):
     def target_arch(self, fn) -> str:
         if hasattr(fn, "thumb"):
             return "thumb" if fn.thumb else "arm"
-        meta = json.loads((fn.get("meta") if isinstance(fn, dict) else "") or "{}")
-        return "thumb" if meta.get("thumb", True) else "arm"
+        from .split import _stored_mode
+
+        return "thumb" if _stored_mode(dict(fn)) else "arm"
 
     def link_function(self, obj: bytes, name: str, target, symbols, read):
         from ...arch import arm
