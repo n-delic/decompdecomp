@@ -7,7 +7,7 @@ from concurrent.futures import as_completed
 from .. import toolchains
 from ..network import NetworkError
 from ..project import compiler_for
-from .compiler_cleanup import commit_config, profile, replace_range, restore_config
+from .compiler_cleanup import commit_config, profile, replace_range, restore_config, saved_attempts
 
 
 def selected_profile(selected):
@@ -94,6 +94,7 @@ def apply(net, slug, selected, functions, log=print):
                 # adjacent code shares the compiler. Never widen the override.
                 replace_range(cfg, fn['vram'], end, profile(selected))
                 original = net.cfg(proj)
+                attempts = saved_attempts(net, [fn['id']])
                 commit_config(net, proj, cfg, log)
                 try:
                     agent, _ = net.local_agent('autopilot')
@@ -103,7 +104,7 @@ def apply(net, slug, selected, functions, log=print):
                         raise NetworkError('The function changed during application. Retest before applying again.')
                 except Exception:
                     # A successful range change must never outlive a failed match.
-                    restore_config(net, net._project(slug), original, cfg)
+                    restore_config(net, net._project(slug), original, cfg, attempts)
                     raise
                 state['passed'] += 1
                 state['matches'].append(name)

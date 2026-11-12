@@ -217,6 +217,39 @@ def test_commit_ignores_unrelated_function_and_symbol_updates(net, monkeypatch):
     assert net.cfg(net._project('game'))['compiler']['flags'] == ['-O1']
 
 
+def test_commit_rejects_a_project_wide_header_change_for_functions_with_their_own_unit(net, monkeypatch):
+    """A ROM import's functions carry units like 'main' but compile with the project-wide header (unit ''): an edit
+    to that header during verification must refuse the save, not slip past a filter on the raw unit."""
+    from decompnet.app.compiler_cleanup import commit_config
+
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET unit='main'")
+    proj = net._project('game')
+    proposed = copy.deepcopy(net.cfg(proj))
+    proposed['compiler'] = dict(PROFILE)
+
+    def judge(*args):
+        with net.store.tx() as db:
+            db.execute("INSERT OR IGNORE INTO context_versions(project_id,version,unit,header) VALUES(1,2,'','int x;')")
+        return True, NS(score=0), ''
+
+    monkeypatch.setattr(net, '_judge_with', judge)
+    with pytest.raises(NetworkError, match='changed during verification'):
+        commit_config(net, proj, proposed)
+    assert net._project('game')['config'] == proj['config']
+
+
+def test_failed_apply_restores_score_and_seed(net, monkeypatch):
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=42, seed='old seed' WHERE name='f3'")
+    monkeypatch.setattr(net, '_judge_with', lambda *args: (True, NS(score=0), ''))
+    monkeypatch.setattr(net, 'try_quietly', lambda *args: {'matched': False})
+    out = trial.apply_matches(net, 'game', PROFILE, ['f3'])
+    fn = net.store.one("SELECT status, best_score, seed FROM functions WHERE name='f3'")
+    assert out['failed'] == 1
+    assert tuple(fn) == ('open', 42, 'old seed')
+
+
 def test_failed_apply_restores_original_compiler_range(net, monkeypatch):
     from decompnet.project import compiler_for
 

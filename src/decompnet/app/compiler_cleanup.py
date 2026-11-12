@@ -103,7 +103,9 @@ def commit_config(net, proj, proposed, log=print):
     rows = net.store.all('SELECT * FROM functions WHERE project_id=? ORDER BY id', proj['id'])
     affected = [f for f in rows if compiler_for(before, f['vram']) != compiler_for(proposed, f['vram'])]
     trial = dict(proj) | {'config': json.dumps(proposed)}
-    units = {fn['unit'] for fn in affected}
+    # A function compiles with its own unit's header or, without one, the project-wide header (unit '', network's
+    # _context): a ROM import's functions carry units like 'main' but use the '' header, so that one is always watched.
+    units = {fn['unit'] or '' for fn in affected} | {''}
     contexts = [tuple(r) for r in net.store.all('SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version', proj['id'])
                 if r['unit'] in units]
     sources = [f['matched_source'] if f['status'] == 'matched' else net._source_of(f) for f in affected]
@@ -148,8 +150,17 @@ def commit_config(net, proj, proposed, log=print):
     net.progress.sync(proj['slug'], force=True)
 
 
-def restore_config(net, proj, previous, applied):
-    """Undo our compiler range after a failed match without rejecting a new claim."""
+def saved_attempts(net, function_ids):
+    """What commit_config overwrites for an open function (its score under the old compiler, its seed), kept so a
+    failed apply can put it back with the old range."""
+    rows = (net.store.one('SELECT id,best_score,seed FROM functions WHERE id=?', fid) for fid in function_ids)
+    return {row['id']: (row['best_score'], row['seed']) for row in rows if row}
+
+
+def restore_config(net, proj, previous, applied, attempts=None):
+    """Undo our compiler range after a failed match without rejecting a new claim. `attempts` (saved_attempts) puts
+    back the scores and seeds commit_config replaced: a score from a compiler the function no longer uses misleads
+    agents, and the seed is their draft."""
     import json
 
     keys = ('compiler', 'compiler_ranges')
@@ -160,5 +171,8 @@ def restore_config(net, proj, previous, applied):
             raise NetworkError('Compiler settings changed during application. Review this function before retrying.')
         current.update({key: previous.get(key, [] if key == 'compiler_ranges' else None) for key in keys})
         db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(current), proj['id']))
+        for fid, (score, seed) in (attempts or {}).items():
+            # a function the apply matched after all keeps its new state
+            db.execute("UPDATE functions SET best_score=?,seed=? WHERE id=? AND status='open'", (score, seed, fid))
     net.bump_generation(proj['id'])
     net.progress.sync(proj['slug'], force=True)
