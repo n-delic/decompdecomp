@@ -463,7 +463,9 @@ def test_hermes_runs_the_helpers_endpoint_with_only_decomps_tools(tmp_path, monk
     assert 'base_url: "http://127.0.0.1:18083/v1"' in config and 'api_key: "sk-box"' in config
     assert "platform_toolsets:\n  cli: []\n" in config
     assert 'url: "http://127.0.0.1:6464/mcp"' in config and 'Authorization: "Bearer tok"' in config
-    assert config.count("url:") == 2  # the endpoint and the app's MCP server: no other server
+    import yaml
+    parsed = yaml.safe_load(config)
+    assert set(parsed["mcp_servers"].keys()) == {"decomp"}  # the app's MCP server only, no other
 
 
 def test_hermes_binds_the_endpoint_over_an_inherited_one(tmp_path, monkeypatch):
@@ -1590,3 +1592,79 @@ def test_an_api_helper_asks_its_model_for_the_effort_it_was_given(tmp_path, monk
         s.stop = Quick()
         m._run(s)
         assert sent[-1].get("reasoning_effort") == effort  # none at all without one: the model's default
+
+
+def test_hermes_config_is_not_world_readable(tmp_path):
+    """The saved endpoint key and the bearer token live in config.yaml, so it must be owner-only (0600) like
+    settings.json, and its home 0700 -- another local user should not be able to read the key."""
+    hermes.HERMES.session_command("hermes", tmp_path, "http://127.0.0.1:6464/mcp", "tok", "m",
+                                  options={"base_url": "http://127.0.0.1:1/v1", "api_key": "sk-secret"})
+    cfg = tmp_path / ".hermes" / "config.yaml"
+    assert oct(cfg.stat().st_mode & 0o777) == "0o600"
+    assert oct((tmp_path / ".hermes").stat().st_mode & 0o777) == "0o700"
+
+
+def test_hermes_is_found_in_its_installer_dir(tmp_path, monkeypatch):
+    """install.ps1 stages hermes in %LOCALAPPDATA%\\hermes\\bin, off PATH until a shell restart; detection must look
+    there, so a fresh "Install it for me" is seen without restarting the app."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    bindir = tmp_path / "hermes" / "bin"
+    bindir.mkdir(parents=True)
+    exe = bindir / ("hermes.exe" if os.name == "nt" else "hermes")
+    exe.write_text("")
+    exe.chmod(0o755)
+    monkeypatch.setattr(hermes.shutil, "which", lambda *a, **k: None)  # not on PATH
+    assert str(bindir) in [str(d) for d in hermes.HERMES.search_dirs()]
+    assert hermes.HERMES.resolve_exe() == str(exe)
+
+
+def test_hermes_stops_gateway_via_its_installer_dir(tmp_path, monkeypatch):
+    """end_leftovers must resolve hermes the same way detection does (PATH plus the installer dir), so an install
+    off PATH is still told to stop its gateway -- not only when hermes happens to be on PATH."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    bindir = tmp_path / "hermes" / "bin"
+    bindir.mkdir(parents=True)
+    exe = bindir / ("hermes.exe" if os.name == "nt" else "hermes")
+    exe.write_text("")
+    exe.chmod(0o755)
+    monkeypatch.setattr(hermes.shutil, "which", lambda *a, **k: None)  # off PATH
+    calls = []
+    monkeypatch.setattr(hermes.subprocess, "run", lambda argv, **kw: calls.append(argv))
+    hermes.HERMES.end_leftovers({"HERMES_HOME": str(tmp_path / "sess" / ".hermes")})
+    assert [str(exe), "gateway", "stop"] in calls
+
+
+def test_hermes_uses_result_text_when_nothing_streamed():
+    """On a replay_gap Hermes streams no text events and puts the whole reply in the result event's text; parse must
+    surface it instead of losing the final answer."""
+    state: dict = {}
+    out = [o for o in hermes.HERMES.parse({"type": "result", "text": "the whole answer", "tokens": {}}, state) if o]
+    assert ("text", "the whole answer") in out
+
+
+def test_hermes_does_not_repeat_streamed_text_on_result():
+    """When text did stream, the buffered text is flushed once and the result event's echo of it is not added again."""
+    state: dict = {}
+    hermes.HERMES.parse({"type": "text", "text": "streamed "}, state)
+    hermes.HERMES.parse({"type": "text", "text": "answer"}, state)
+    out = [o for o in hermes.HERMES.parse({"type": "result", "text": "streamed answer", "tokens": {}}, state) if o]
+    assert [t for (k, t) in out if k == "text"] == ["streamed answer"]
+
+
+def test_shutdown_stops_leftover_gateways(tmp_path, monkeypatch):
+    """At quit the app must tell each live helper to end what it left running; a Hermes gateway daemonises out of the
+    process group, so without this its gateway can outlive the app on Windows."""
+    m = agents.Manager.__new__(agents.Manager)
+    m._down = False
+    m.sessions = {}
+    s = agents.Session("hermes-1", "hermes", "h", "demo", "hermes-1", {})
+    s.env = {"HERMES_HOME": str(tmp_path / "x" / ".hermes")}
+    m.sessions["hermes-1"] = s
+    m.stop = lambda *a, **k: None
+    m._strays = lambda: set()
+    m.on_stop = lambda: None
+    ended = []
+    monkeypatch.setattr(hermes.HERMES, "end_leftovers", lambda env: ended.append(env.get("HERMES_HOME")))
+    monkeypatch.setattr(agents, "_end_groups", lambda groups: None)
+    m.shutdown()
+    assert ended == [str(tmp_path / "x" / ".hermes")]

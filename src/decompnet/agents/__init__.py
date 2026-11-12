@@ -271,6 +271,29 @@ class Agent:
         `session_command` made it): Hermes Agent starts a gateway that daemonises and outlives its session. Called
         before a session starts and after it ends."""
 
+    def search_dirs(self) -> list[Path]:
+        """Extra folders to look in for `command`, beyond PATH and the app's known bin folders: an agent whose
+        installer stages it off PATH (Hermes' %LOCALAPPDATA%\\hermes\\bin) names them here, so detection and
+        teardown resolve the same program."""
+        return []
+
+    def resolve_exe(self) -> str | None:
+        """The agent's program: on PATH, else in one of `search_dirs`. Detection (`_which`) falls back to this and
+        `end_leftovers` uses it, so a teardown reaches a gateway an install off PATH started, not only one on PATH."""
+        if not self.command:
+            return None
+        found = shutil.which(self.command)
+        if found:
+            return found
+        for d in self.search_dirs():
+            if os.name == "nt":
+                hit = shutil.which(self.command, path=str(d))
+                if hit:
+                    return hit
+            elif (Path(d) / self.command).exists():
+                return str(Path(d) / self.command)
+        return None
+
     # ------------------------------------------------------------------ an agent built into the app
 
     def run(self, manager, session, agent) -> bool:

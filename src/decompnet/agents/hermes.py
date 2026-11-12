@@ -84,6 +84,11 @@ class Hermes(Agent):
             f"    timeout: {MCP_TIMEOUT}\n"
             "    headers:\n"
             f"      Authorization: {_quoted('Bearer ' + token)}\n", encoding="utf-8")
+        try:  # the file holds the endpoint key and the bearer token: owner-only, like settings.json
+            os.chmod(home, 0o700)
+            os.chmod(home / "config.yaml", 0o600)
+        except OSError:
+            pass
         cmd = [exe, "chat", "--query-file", "-", "--format", "stream-json"]
         if model:
             cmd += ["-m", model]
@@ -114,6 +119,7 @@ class Hermes(Agent):
         out: list[tuple[str, str] | None] = []
         if t in ("tool_use", "result") and state.get("hermes_text", "").strip():
             out.append(("text", state.pop("hermes_text").strip()))
+            state["hermes_said"] = True
         if t == "text":
             state["hermes_text"] = state.get("hermes_text", "") + str(event.get("text") or "")
         elif t == "tool_use":
@@ -122,6 +128,9 @@ class Hermes(Agent):
             out.append(("error", str(event.get("output") or "the tool failed")[:SAID_CHARS]))
         elif t == "result":
             state.pop("hermes_text", None)
+            reply = str(event.get("text") or "").strip()
+            if reply and not state.get("hermes_said"):
+                out.append(("text", reply))  # a replay_gap streams no text: the whole reply is in the result event
             if event.get("error") or event.get("exit_code"):
                 out.append(("error", error_text(event.get("error") or f"exited with code {event.get('exit_code')}")
                             [:SAID_CHARS]))
@@ -139,7 +148,7 @@ class Hermes(Agent):
         # Ask Hermes to stop the gateway for this home: `gateway stop` is its own cross-platform teardown (it
         # parks a profile's gateway, macOS launchd and Windows service included), so it reaches the detached
         # gateway where a POSIX-only process sweep can't. Best-effort: the gateway may already be gone.
-        exe = shutil.which(self.command)
+        exe = self.resolve_exe()
         if exe:
             try:
                 subprocess.run([exe, "gateway", "stop"], env={**os.environ, **env}, timeout=STOP_TIMEOUT,
@@ -161,6 +170,18 @@ class Hermes(Agent):
                 os.kill(int(entry.name), signal.SIGTERM)
             except OSError:
                 continue
+
+
+    def search_dirs(self) -> list[Path]:
+        """Where Hermes' installer stages the program off PATH: the Windows install.ps1 puts it in $HermesHome\\bin,
+        default %LOCALAPPDATA%\\hermes\\bin. On other systems that path doesn't exist, so the entry is harmless there
+        (the unix install.sh's ~/.local/bin is already searched)."""
+        local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        dirs = [Path(local) / "hermes" / "bin"]
+        home = os.environ.get("HERMES_HOME")
+        if home:
+            dirs.insert(0, Path(home) / "bin")
+        return dirs
 
 
 HERMES = Hermes()
