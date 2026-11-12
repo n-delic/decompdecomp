@@ -1934,9 +1934,9 @@ out again; the other release's header declarations come with C that needs them; 
 again at the end of the pass, and those still held are reported: 89 more of 524. Next:
 - Structs from a shared header whose fields moved between releases: this release's own copy of the type, through
   the checked header edit (that game's header had none: its functions define their structs).
-- Near pairs (80-99% alike) that still miss: what's left after fitting is real code change (an added call, a
-  branch), not a single edit: the fitted C is the function's best start, and its instruction-by-instruction
-  difference belongs in the agent's brief.
+- Done: near pairs that still miss are real code change (an added call, a branch), not a single edit: a helper's
+  brief shows the other release's C with this release's names, offsets and declarations, and the instructions
+  only one release has or that differ (regional.brief).
 - Run it on PS1, PS2 and PSP games (their serials differ by region, so by identical code) and mark the table.
 - Project mode: pair object files' functions (GameCube/Wii by game ID, DS by game code, PC by its executable).
 Related: "Names from another build you own", for a build with symbols (a demo, a port).

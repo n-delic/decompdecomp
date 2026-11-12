@@ -926,3 +926,106 @@ def _with_their_compiler(net, agent, proj, donor, a, b, source, origin, score) -
         except (NetworkError, ToolchainError):
             return None  # the project changed meanwhile (a helper's match): the next pass tries again
     return 'match' if result.get('matched') else None
+
+
+# ------------------------------------------------------------------ the other release in a helper's brief
+
+BRIEF_TTL = 600  # seconds a brief's release plan is kept (names change as helpers rename; layouts by key)
+BRIEF_SOURCE = 6000  # characters of the other release's C a brief shows at most
+BRIEF_ROWS = 40  # instruction differences a brief shows at most
+_plans: dict = {}
+_plans_lock = threading.Lock()
+
+
+def _brief_plan(net, proj, donor) -> Plan:
+    key = (proj['id'], donor['id'], net._layout_key(proj), net._layout_key(donor))
+    with _plans_lock:
+        found = _plans.get(key)
+        if found and time.monotonic() - found[0] < BRIEF_TTL:
+            return found[1]
+    p = plan(net, proj, donor)
+    with _plans_lock:
+        for old in [k for k in _plans if k[:2] == key[:2]]:
+            del _plans[old]
+        _plans[key] = (time.monotonic(), p)
+    return p
+
+
+def brief(net, proj, fn) -> list[str]:
+    """For an open function's brief, when its project is linked with another release that matched the function's
+    pair: that C with this release's names, offsets and declarations, and where the two releases' instructions
+    differ. What Try its code couldn't match is real change between the releases (a call added, a branch moved): the
+    helper starts from the other release's C and makes just that change."""
+    if fn['status'] != 'open':
+        return []
+    link_ = linked(net, proj)
+    if not link_:
+        return []
+    try:
+        donor = _row(net, link_['slug'])
+        p = _brief_plan(net, proj, donor)
+    except (NetworkError, KeyError, ValueError):
+        return []
+    found = next(((x, y, s) for x, y, s in p.pairs if y.id == fn['id']), None)
+    if found is None:
+        return []
+    x, y, score = found
+    from ..function_rows import selected
+    rows = selected(net.project_store(donor['id']), donor['id'], [x.id])
+    a = rows[0] if rows else None
+    if a is None or a['status'] != 'matched' or not a['matched_source']:
+        return []
+    own = p.for_pair(x, y)
+    source = own.text(own.offsets(a['matched_source']))
+    header = net._context(proj['id'], fn['unit'])['header']
+    declared = _their_declarations(net, donor, a, own, header, source)
+    alike = 'the same instructions' if score == 1.0 else f'{score * 100:.0f}% the same instructions'
+    out = ["", f"### Another release of this game: {donor['name']} matched this function as {a['name']} ({alike})",
+           "Its C with this release's names, offsets and declarations. Where it still differs is a change between the "
+           "releases: start from this and make that change."]
+    text = (declared + '\n' + source if declared else source).strip()
+    if len(text) <= BRIEF_SOURCE:
+        out += ["```c", text, "```"]
+    else:
+        out.append(f"(its C is {len(text):,} characters: read {a['name']} in {donor['slug']} with get_function)")
+    out += _instruction_changes(net, proj, donor, a, fn)
+    return out
+
+
+_RELOCATED = re.compile(r'%\w+\([^)]*\)|\b(?:func|D|jtbl|L)_[0-9A-Fa-f]{8}\b')
+
+
+def _instruction_changes(net, proj, donor, a, fn) -> list[str]:
+    """Where the two releases' machine code differs, lined up (regional_adapt.align): instructions only one has, and
+    those whose operands differ but for the addresses they name."""
+    from .. import scoring
+    from .regional_adapt import align
+    try:
+        old = scoring.disassemble(net._target_obj(a, donor))
+        new = scoring.disassemble(net._target_obj(fn, proj))
+    except (NetworkError, ValueError, KeyError):
+        return []
+    rows = align(old, new)
+    lines = []
+    seen_old, seen_new = {i for i, _ in rows}, {j for _, j in rows}
+    events = [(j, f"- here only: `{new[j].mnemonic} {new[j].operands}`") for j in range(len(new)) if j not in seen_new]
+    events += [(next((jj for ii, jj in rows if ii > i), len(new)),
+                f"- {donor['name']} only: `{old[i].mnemonic} {old[i].operands}`")
+               for i in range(len(old)) if i not in seen_old]
+    def plain(ins):  # addresses aside; a branch or jump's target moves with the code around it
+        text = _RELOCATED.sub('@', ins.operands)
+        return re.sub(r'[^,\s]+$', '@', text) if ins.mnemonic.startswith(('b', 'j')) else text
+
+    for i, j in rows:
+        if plain(old[i]) != plain(new[j]):
+            events.append((j, f"- at +0x{new[j].offset:X}: here `{new[j].mnemonic} {new[j].operands}`, "
+                              f"{donor['name']} `{old[i].mnemonic} {old[i].operands}`"))
+    if not events:
+        return []
+    events.sort(key=lambda e: e[0])
+    lines = ["", f"Instructions that differ from {donor['name']}'s ({len(events)}, in this release's order; "
+                 "addresses aside):"]
+    lines += [text for _, text in events[:BRIEF_ROWS]]
+    if len(events) > BRIEF_ROWS:
+        lines.append(f"- … and {len(events) - BRIEF_ROWS} more")
+    return lines

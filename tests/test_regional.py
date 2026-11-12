@@ -334,3 +334,40 @@ def test_a_function_a_helper_holds_waits_for_the_end_of_the_pass_and_is_reported
     with store.tx() as db:
         db.execute("DELETE FROM claims")
     assert regional.transfer(net, "other-release")["matched"] == 1
+
+
+def test_a_helpers_brief_shows_the_other_releases_c_for_its_function(built, tmp_path):  # noqa: F811
+    """What Try its code couldn't match is a change between the releases: the brief gives the other release's C with
+    this release's names, and where the instructions differ, so the helper makes just that change."""
+    from decompnet.app import regional
+
+    from .test_app_engine import CLAMP
+
+    net, slug, agent = _two_releases(tmp_path)
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    assert net.rename_symbol(agent, slug, "func_800007D0", "clamp_s32").startswith("✅")
+    proj = net.project_row("other-release")
+    fn = net._function("func_800007D0", "other-release")
+    lines = regional.brief(net, proj, fn)
+    text = "\n".join(lines)
+    assert "Another release of this game" in text and "clamp_s32" in text and "the same instructions" in text
+    assert "func_800007D0" in text.split("```c", 1)[1]  # its C says this release's name for the function
+    assert "Instructions that differ" not in text  # the same code: nothing to list
+    assert "Another release of this game" in "\n".join(net._extra_brief(fn, proj))
+    assert regional.brief(net, net.project_row(slug), net._function("clamp_s32", slug)) == []  # matched, or no link
+
+
+def test_the_brief_lists_the_instructions_only_one_release_has():
+    from types import SimpleNamespace
+
+    from decompnet.app import regional
+    from decompnet.scoring import Insn
+
+    old = [Insn(0, 'lw', '$v0, 0x178($a0)', ''), Insn(4, 'jal', 'func_80027CFC', ''), Insn(8, 'jr', '$ra', '')]
+    new = [Insn(0, 'lw', '$v0, 0x170($a0)', ''), Insn(4, 'jr', '$ra', '')]
+    net = SimpleNamespace(_target_obj=lambda f, p: f)
+    from unittest import mock
+    with mock.patch('decompnet.scoring.disassemble', side_effect=lambda f: f):
+        lines = regional._instruction_changes(net, {}, {'name': 'EUROPE'}, old, new)
+    assert any('here `lw $v0, 0x170($a0)`, EUROPE `lw $v0, 0x178($a0)`' in line for line in lines)
+    assert any('EUROPE only: `jal func_80027CFC`' in line for line in lines)
