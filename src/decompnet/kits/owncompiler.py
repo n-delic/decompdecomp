@@ -44,7 +44,7 @@ def packs(platform: str) -> dict[str, tuple[str, str, str, tuple[str, ...]]]:
                         if m != "include"), None)
         if program:
             out[tid] = (program, spec.get("name", tid), repr((spec.get("cc"), spec.get("cmd"), spec.get("requires"))),
-                        tuple(spec.get("flags", ())))
+                        tuple(spec.get("flags", ())), spec.get("version_mark", ""))
     return out
 
 
@@ -78,12 +78,15 @@ class OwnCompilers(Kit):
 
     def compilers(self, folder: Path) -> list[OwnCompiler]:
         by_program: dict[Path, list[tuple[str, str, str]]] = {}
-        for tid, (program, name, runs, _) in packs(self.platform).items():
+        marks = {}  # a pack's build as its program writes it, where its id has no dotted version (the SN64 builds)
+        for tid, (program, name, runs, _, mark) in packs(self.platform).items():
             if (exe := find(folder, program)) is not None:
                 by_program.setdefault(exe, []).append((tid, name, runs))
+                marks[tid] = mark
         read = {}  # program -> (its hash, its version record, the kinds whose version it names)
         for exe, kinds in by_program.items():
-            versions = {tid: v.group() for tid, _, _ in kinds if (v := _VERSION.search(tid))}
+            versions = {tid: marks[tid] or v.group() for tid, _, _ in kinds
+                        if marks[tid] or (v := _VERSION.search(tid))}
             stat = exe.stat()
             built = file_version(exe) if exe.suffix.lower() == ".exe" else ""  # (CodeWarrior's says 3.0.1.145)
             digest, seen = _read(str(exe), stat.st_mtime_ns, stat.st_size, str(folder), built, tuple(versions.values()))

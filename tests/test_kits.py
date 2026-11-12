@@ -393,6 +393,16 @@ def test_pc_and_xbox_kit_compilers_are_in_picker_state(tmp_path, monkeypatch, ki
     assert row['name'] == own.name and row['use'] == own.built
 
 
+@pytest.mark.parametrize("build,text", [("sn-n64-272-0001", b"2.7.2.SN32.3.7 Build 0001"),
+                                        ("sn-n64-272-0006", b"cygnus-2.7.2-970404 SN32.3.7.0006 0x0001")])
+def test_a_copy_of_an_sn64_build_runs_like_that_build(tmp_path, build, text):
+    """#198: the two SN64 2.7.2 builds run alike and their ids name no dotted version, so a copy of build 0006 was
+    offered as 0001 (the first). Each is told by how its cc1n64.exe writes its build (`version_mark`); "0x0001", in
+    both, names neither."""
+    folder = _own(tmp_path / "sn", "cc1n64.exe", b"MZ..." + text + b"...")
+    assert [c.like for c in kits.get("own-n64").compilers(folder)] == [build]
+
+
 def test_own_n64_gnu_compiler_gets_its_matching_guide(monkeypatch):
     from types import SimpleNamespace
 

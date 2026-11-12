@@ -71,6 +71,9 @@ class Toolchain:
     driver: str = ""  # packaged console compiler adapter, mounted read-only
     build: str = ""  # native build step after verified extraction
     family: str = ""  # backend family when the id has a different prefix
+    # how its program writes its build, where the id names none a copy could be told by (kits/owncompiler.py: two SN64
+    # 2.7.2 builds run alike, and only "Build 0001" or "SN32.3.7.0006" in cc1n64.exe tells a copy of one from the other)
+    version_mark: str = ""
     case_sensitive: bool = False  # Linux archive cannot be safely extracted on Windows
     wine: bool = False  # Windows programs wibo can't run: through wine on Linux and macOS (wine.py)
     # toolchains whose Include folder a pack's compilers search after their own, in order: a Windows SDK several packs

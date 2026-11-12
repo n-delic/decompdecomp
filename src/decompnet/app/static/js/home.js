@@ -482,7 +482,9 @@ function fillCompilers(select, current, platform, only) {
   const tcs = [...available, ...versions];
   select.innerHTML = tcs.map((t) => {
     const note = !t.supported ? " (not available on this computer)" : t.installed ? "" : t.license === "proprietary" ? " (install in Compilers & tools)" : " (will be installed)";
-    return `<option value="${esc(t.id)}" ${t.id === current ? "selected" : ""} ${t.supported ? "" : "disabled"}>${esc(t.name)} · ${esc(t.use)}${note}</option>`;
+    // a pack's version may say nothing about the games it built (the PC's and DS's): no separator before nothing
+    const use = t.use ? ` · ${esc(t.use)}` : "";
+    return `<option value="${esc(t.id)}" ${t.id === current ? "selected" : ""} ${t.supported ? "" : "disabled"}>${esc(t.name)}${use}${note}</option>`;
   }).join("");
 }
 
