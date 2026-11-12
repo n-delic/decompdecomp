@@ -3742,6 +3742,37 @@ def test_own_compiler_selection_never_crosses_targets(tmp_path, monkeypatch):
     assert scratch_pe.own_copy("14.2", None, "x64").version == "own-19.29.30137-x64"
 
 
+def test_locate_prefers_an_x86_toolset_over_a_newer_x64_only_one(tmp_path, monkeypatch):
+    """A Visual Studio root whose newest MSVC folder is x64-only (no Hostx86/x86) must not hide an older folder that
+    has the x86 compiler: locate checks every candidate for an x86 compiler before accepting an x64-only one, so a
+    32-bit game of the older toolset still reaches the user's own copy instead of falling back to the pack."""
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    root = tmp_path / "VS"
+    make_vc(root, "19.38.33130.0", "Tools/MSVC/14.38.33130.0/bin/Hostx64/x64")  # newer, x64-only (sorts first)
+    make_vc(root, "19.29.30133.0", "Tools/MSVC/14.29.30133.0/bin/Hostx86/x86")  # older, has the x86 compiler
+    toolchains.install("visualcpp", folder=root, accept_license=True, log=lambda *_: None)
+    own = scratch_pe.own_copy("14.2", 30133, "x86")
+    assert own is not None and own.version == "own-19.29.30133"  # the x86 copy, not None (the x64-only hid it before)
+
+
+def test_build_env_survives_an_unreadable_own_copy(tmp_path, monkeypatch):
+    """wine.build_env scans the user's kits on every PC build step to see whether an own copy needs wine. A copy
+    whose folder can't be read (wrong permissions, a dropped mount) must be skipped, not abort every build with a
+    raw PermissionError -- including a pack-built project, which needs no own copy at all."""
+    from decompnet import wine
+    if not wine.needed():
+        pytest.skip("Windows runs the compilers itself; build_env reads no kits")
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.29.30133.0", "VC/bin/Hostx86/x86")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    broken = copy / "bin" / "Hostx86" / "x86"  # where cl.exe and c2.dll are
+    broken.chmod(0o000)
+    try:
+        assert wine.build_env() == {}  # no wine packs installed and the only copy is unreadable: nothing to do
+    finally:
+        broken.chmod(0o755)
+
+
 def test_x86_pack_does_not_hide_a_matching_own_x64_copy(tmp_path, monkeypatch):
     monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
     copy = make_vc(tmp_path, "15.0.30729.1", "VC/bin/amd64")

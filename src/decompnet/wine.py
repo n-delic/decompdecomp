@@ -1,5 +1,5 @@
-"""wine: how Linux and macOS run the Windows compilers wibo can't, those of the packs toolchains.toml marks
-`wine = true` (Visual C++ 2017).
+"""wine: how Linux and macOS run the Windows compilers wibo can't -- the packs toolchains.toml marks
+`wine = true` (Visual C++ 2017), and the user's own 2015-and-newer or x64 copies (kits/visualcpp.py, runner="wine").
 
 wibo runs Visual C++ 6.0 to 2010 by itself. 2017's cl.exe calls much more of Windows: under a patched wibo a hello
 world compiled but exited 99, and `#include <windows.h>` failed without a word, where an unmodified wine 9.0 built

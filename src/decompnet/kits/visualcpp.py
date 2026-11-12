@@ -62,11 +62,16 @@ class VisualCpp(Kit):
     files = ("bin/cl.exe", "bin/c2.dll")
 
     def locate(self, folder: Path) -> Path | None:
+        # Prefer a folder with an x86 compiler: a 32-bit game needs it, and the newest version (sorted first) may be
+        # x64-only (2017+ drops Hostx64/x86 for some toolsets). Fall back to an x64-only copy only if no folder has x86.
         msvc = [find(folder, p, dirs=True) for p in ("Tools/MSVC", "VC/Tools/MSVC")]
+        x64_only = None
         for base in (folder, *_children(folder), *(c for m in msvc for c in _children(m))):
-            if _bin(base) is not None or _bin(base, X64_BIN) is not None:
+            if _bin(base) is not None:
                 return base.resolve()
-        return None
+            if x64_only is None and _bin(base, X64_BIN) is not None:
+                x64_only = base
+        return x64_only.resolve() if x64_only is not None else None
 
     def build(self, folder: Path) -> str | None:
         """c2.dll's file version, "9.0.30729.1": Visual Studio's version, then the build number."""

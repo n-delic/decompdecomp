@@ -6,7 +6,8 @@ compiler builds every 64-bit x64 game (the packs have no other 64-bit one), whos
 not Ghidra's guesses (scratch._analyse_x64). The user's own Visual C++ copies
 (kits/visualcpp.py, any number, any version from 2.0 on) build a game whose compiler build the packs don't have:
 its Rich header's build picks the copy (scratch.own_copy) before the nearest pack's, and the project stores
-MSVC/own-<version>. A copy is read for its 32-bit compiler only, so a 64-bit game builds with the pack's.
+MSVC/own-<version>. Both its x86 and x64 compilers are read: a 32-bit game takes the x86 copy, a 64-bit game the
+x64 one (own-<version>-x64), each before the pack's build.
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object

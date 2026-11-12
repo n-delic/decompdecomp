@@ -501,8 +501,7 @@ def own_copy(version: str | None, number: int | None, target: str) -> kits.OwnCo
     architecture. A game that names only its linker's version (number None) takes the newest copy of it."""
     if target not in ("x86", "x64"):
         return None
-    builds = {key: name for key, name in RICH_BUILDS.items()
-              if target == "x86" or name + "-x64" in _pack()}
+    builds = RICH_BUILDS if target == "x86" else RICH_BUILDS_X64  # the exact downloadable builds for this target
     if version is None or (version, number) in builds:
         return None
     same = [(rich_version(c.build)[1], c) for c in kits.compilers((KIT,)) if c.build
