@@ -168,9 +168,9 @@ def _fixed(net, proj, names, cc: list[str], files: dict, log, boot_names=()) -> 
     PC to check them: the names they define. `boot_names` (the link check's glue) count only at a boot address."""
     from .fixed_symbols import files as fixed_files
     from .fixed_symbols import plan
-    offsets, boot = plan(net, proj, names)
+    offsets, boot, microcode = plan(net, proj, names)
     boot += [b for b in plan(net, proj, boot_names)[1] if b["name"] not in {x["name"] for x in boot}]
-    made = fixed_files(offsets, boot)
+    made = fixed_files(offsets, boot, microcode)
     files.update(made)
     defined: set[str] = set()
     with tempfile.TemporaryDirectory(prefix="pc-fixed-") as tmp:
@@ -189,9 +189,10 @@ def _fixed(net, proj, names, cc: list[str], files: dict, log, boot_names=()) -> 
                 log(f"{name} didn't build for the PC: {(done.stderr or done.stdout).strip()[-300:]}")
                 continue
             defined |= set(found["defines"])
-    if offsets or boot:
-        log(f"Defined {len(offsets)} ROM offsets and {len(boot)} of the boot's low-memory values for the PC")
-    return defined & {e["name"] for e in [*offsets, *boot]}
+    if offsets or boot or microcode:
+        log(f"Defined {len(offsets)} ROM offsets, {len(boot)} of the boot's low-memory values and "
+            f"{len(microcode)} pieces of microcode (as zeroed room) for the PC")
+    return defined & {e["name"] for e in [*offsets, *boot, *microcode]}
 
 
 def defined(net, proj) -> list[str]:

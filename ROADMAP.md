@@ -966,6 +966,17 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### Microcode and wrong base symbols put right for a port
+
+Of the last data a finished N64 game's link check listed, two were the RSP's microcode (rspboot, 208 bytes, and the
+text after it), which the game only points at when it builds a task: Compile for PC now gives each zeroed room of
+its size in its order (`rsp_placeholders.S`), so `ucode_boot_size = D_80001DE0 - D_80001D10` still holds; a symbol
+counts only when its ROM bytes begin with libultra's rspboot (`PortKit.coprocessor_boot`), or it starts where such
+one ends. Two more were base symbols the decompiler chose wrongly, labels inside code used as `(u8 *)&D_x + 0x58F4`
+to reach a variable: **Fix calls by old names** now also rewrites each such use to the variable at that address (a
+place inside one keeps its offset), judged on the console and the PC like the renamed calls. Left: the last two,
+functions in stretches of the ROM the split took for data (new-function adoption, above).
+
 ### ROM offsets and the boot's values defined for an N64 port
 
 Two kinds of symbol a finished game's C reaches are neither code nor data: names the original linker gave
