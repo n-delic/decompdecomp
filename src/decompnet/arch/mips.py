@@ -511,3 +511,63 @@ def built_floats(insns) -> dict[int, int]:
                 out[i] = bits
                 break
     return out
+
+
+# What a different instruction asks of the C, for regional_edits: (target mnemonic, compiled mnemonic) -> a hint.
+_LOAD_WIDTH = {'lb': (1, True), 'lbu': (1, False), 'lh': (2, True), 'lhu': (2, False), 'lw': (4, True),
+               'lwu': (4, False), 'sb': (1, None), 'sh': (2, None), 'sw': (4, None)}
+_BRANCHES = {'beq', 'bne', 'beqz', 'bnez', 'blez', 'bgtz', 'bltz', 'bgez', 'beql', 'bnel', 'beqzl', 'bnezl', 'blezl',
+             'bgtzl', 'bltzl', 'bgezl', 'bc1t', 'bc1f', 'bc1tl', 'bc1fl'}
+_OPERATORS = {'addu': '+', 'addiu': '+', 'subu': '-', 'and': '&', 'andi': '&', 'or': '|', 'ori': '|', 'xor': '^',
+              'xori': '^', 'sll': '<<', 'sllv': '<<', 'srl': '>>', 'srlv': '>>', 'sra': '>>', 'srav': '>>',
+              'mult': '*', 'multu': '*', 'div': '/', 'divu': '/', 'slt': '<', 'slti': '<', 'sltu': '<', 'sltiu': '<'}
+
+
+def _small_constant(text: str) -> int | None:
+    """The constant a `move $r, $zero` (0) or `addiu`/`ori $r, $zero, N` (N) puts in a register, else None."""
+    mnemonic, _, operands = text.partition(' ')
+    parts = [o.strip() for o in operands.split(',')]
+    if mnemonic == 'move' and len(parts) == 2 and parts[1] == '$zero':
+        return 0
+    if mnemonic in ('addiu', 'ori', 'li') and len(parts) == 3 and parts[1] == '$zero':
+        try:
+            return int(parts[2], 0)
+        except ValueError:
+            return None
+    if mnemonic == 'li' and len(parts) == 2:
+        try:
+            return int(parts[1], 0)
+        except ValueError:
+            return None
+    return None
+
+
+def edit_hint(target_text: str, compiled_text: str) -> tuple | None:
+    """What C change could turn the compiled instruction into the target's (capstone's text of each), for a search
+    to try (regional_edits): ('width', bytes, signed or None) for a load or store of another width or sign;
+    ('compare',) for another branch condition; ('operator', theirs, ours) for another arithmetic operator; ('signed',
+    target is signed) for slt/sltu and the like; ('call',) for a call one side lacks; ('constant', ours, theirs) for
+    another small constant (`move $v0, $zero` against `addiu $v0, $zero, 1`: return 0 against return 1). None:
+    nothing a small edit is known to change."""
+    theirs_k, ours_k = _small_constant(target_text), _small_constant(compiled_text)
+    if theirs_k is not None and ours_k is not None and theirs_k != ours_k:
+        return ('constant', ours_k, theirs_k)
+    target, compiled = target_text.split(' ', 1)[0], compiled_text.split(' ', 1)[0]
+    if target == compiled and target in ('slt', 'sltu') and target_text != compiled_text:
+        ours = [o.strip() for o in compiled_text.split(' ', 1)[1].split(',')]
+        theirs = [o.strip() for o in target_text.split(' ', 1)[1].split(',')]
+        if len(ours) == len(theirs) == 3 and ours[1:] == theirs[:0:-1]:
+            return ('compare',)  # `a < b` against `b < a`: a comparison turned around (`<=` for `<`)
+    if target in _LOAD_WIDTH and compiled in _LOAD_WIDTH and target != compiled:
+        return ('width', *_LOAD_WIDTH[target])
+    if target in _BRANCHES and compiled in _BRANCHES:
+        return ('compare',)
+    if target in ('jal', 'jalr') or compiled in ('jal', 'jalr'):
+        return ('call',)
+    if target in _OPERATORS and compiled in _OPERATORS:
+        theirs, ours = _OPERATORS[target], _OPERATORS[compiled]
+        if theirs != ours:
+            return ('operator', theirs, ours)
+        unsigned = target.endswith('u') and target not in ('addu', 'subu', 'mult', 'div') or target in ('srl', 'srlv')
+        return ('signed', not unsigned)
+    return None

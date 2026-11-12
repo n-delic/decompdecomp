@@ -822,11 +822,11 @@ def _held(net, proj, function_id: int) -> bool:
                                              function_id, time.time()) is not None
 
 
-def _try_fitted(net, agent, proj, donor, p, a, b, pair=None) -> str | None:
-    """'match' or 'miss' for the other release's C fitted to this release's numbers (regional_adapt: its own
-    structs laid out as this release reads them, offsets, constants and floats that changed, read from the
-    instructions both have; Plan.offsets: fields of a big global reached by byte offset); None when nothing differs
-    that the C could change."""
+def _fitted_sources(net, proj, donor, p, a, b, pair=None) -> tuple[list[str], str] | None:
+    """(the other release's C fitted to this release's numbers, most changed first; the header it builds against):
+    regional_adapt's versions (its own structs laid out as this release reads them, offsets, constants and floats
+    that changed, read from the instructions both have), Plan.offsets' (fields of a big global reached by byte
+    offset), each with the declarations it needs. None when the instructions can't be read."""
     from .. import scoring
     from . import regional_adapt
     try:
@@ -850,9 +850,31 @@ def _try_fitted(net, agent, proj, donor, p, a, b, pair=None) -> str | None:
     declared = _their_declarations(net, donor, a, own, header, moved)
     if declared:  # without them none of these builds: each takes them
         tries = [declared + '\n' + t for t in ([plain] if moved == plain else []) + tries]
+    return tries[:regional_adapt.MAX_VARIANTS + 1], header
+
+
+def _try_fitted(net, agent, proj, donor, p, a, b, pair=None) -> str | None:
+    """'match' or 'miss' for the other release's C fitted to this release's numbers (_fitted_sources), then edited
+    where the releases' code still differs (regional_edits); None when nothing differs that the C could change."""
+    found = _fitted_sources(net, proj, donor, p, a, b, pair)
+    if found is None:
+        return None
+    tries, header = found
     outcome = None
-    for source in tries[:regional_adapt.MAX_VARIANTS + 1]:
+    for source in tries:
         result = _try_open(net, agent, proj, donor, a, b, source, 1.0, how=', fitted to this release\'s offsets')
+        if result == 'match':
+            return 'match'
+        outcome = outcome or (result if result != 'skip' else None)
+    from . import regional_edits
+    plain = p.text(a['matched_source'])
+    starts = tries + ([plain] if plain not in tries else [])
+    edited = regional_edits.search(net, proj, header, starts, b)
+    for source in ([edited[0]] + edited[2]) if edited else []:
+        if source in starts:
+            continue
+        result = _try_open(net, agent, proj, donor, a, b, source, 1.0,
+                           how=', edited where this release\'s code differs')
         if result == 'match':
             return 'match'
         outcome = outcome or (result if result != 'skip' else None)
