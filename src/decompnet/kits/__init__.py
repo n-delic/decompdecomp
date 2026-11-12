@@ -45,6 +45,8 @@ class OwnCompiler:
     args: tuple[str, ...] = ()
     flags: tuple[str, ...] = ()
     like: str = ""  # a pinned compiler it runs as (its command, with this copy's folder, `root`, in the pack's place)
+    # more folders it loads DLLs from, after its own (a Visual C++ 64-bit cross compiler: its 32-bit host's mspdb DLLs)
+    dlls: tuple[Path, ...] = ()
 
 
 class Kit:

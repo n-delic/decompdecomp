@@ -25,6 +25,22 @@ def windows_path(path: str) -> str:
     return ("Z:" if path.startswith("/") else "") + path.replace("/", "\\")
 
 
+def with_dlls(env, dlls: list, wine: bool) -> dict | None:
+    """The environment that lets the compiler load DLLs from more folders (a 64-bit cross compiler of the user's own
+    loads its 32-bit host's mspdb DLLs): WINEPATH, which wine and wibo both search after the compiler's own folder
+    (wine reads Windows paths), or on Windows the PATH. `env` as it was when there's nothing to add (None: the
+    build's own)."""
+    if not dlls:
+        return env
+    env = dict(os.environ if env is None else env)
+    if sys.platform == "win32":
+        env["PATH"] = os.pathsep.join([*dlls, *filter(None, [env.get("PATH")])])
+    else:
+        found = [windows_path(d) if wine else d for d in dlls]
+        env["WINEPATH"] = ";".join([*found, *filter(None, [env.get("WINEPATH")])])
+    return env
+
+
 def keep_wine_server(wine: str, env: dict) -> None:
     """A wine server that stays between compiles (`wineserver -p<seconds>`): wine started afresh for every file takes
     seconds. One already running stays, and the new one leaves at once. It's given no pipe of the build's: a server
@@ -64,6 +80,7 @@ def main() -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--wrapper", default="")  # wibo
     parser.add_argument("--wine", action="store_true")  # through wine: Visual C++ 2015+ (configure.py's WINE_FROM)
+    parser.add_argument("--dlls", default=[], action="append")  # more folders the compiler's DLLs are in (configure.py)
     parser.add_argument("--output", required=True)
     parser.add_argument("--source", required=True)
     parser.add_argument("flags", nargs=argparse.REMAINDER)
@@ -75,6 +92,7 @@ def main() -> int:
         wine, env = wine_setup()
         keep_wine_server(wine, env)
         path = windows_path
+    env = with_dlls(env, args.dlls, bool(wine))
     command = ([wine] if wine else [args.wrapper] if args.wrapper else []) + [
         args.compiler, *flags, f"/I{path('include')}", *(f"/I{path(d)}" for d in args.include),
         f"/Fo{path(args.output)}", path(args.source)]
@@ -94,7 +112,7 @@ def main() -> int:
                 sys.stdout.write(text)
                 sys.stdout.flush()
     else:
-        result = subprocess.run(command, timeout=COMPILE_SECONDS, creationflags=NO_WINDOW)
+        result = subprocess.run(command, env=env, timeout=COMPILE_SECONDS, creationflags=NO_WINDOW)
     if result.returncode:
         return result.returncode
     return subprocess.run([sys.executable, str(Path(__file__).with_name("names.py")), args.config, args.output],

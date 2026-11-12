@@ -6,7 +6,8 @@ compiler builds every 64-bit x64 game (the packs have no other 64-bit one), whos
 not Ghidra's guesses (scratch._analyse_x64). The user's own Visual C++ copies
 (kits/visualcpp.py, any number, any version from 2.0 on) build a game whose compiler build the packs don't have:
 its Rich header's build picks the copy (scratch.own_copy) before the nearest pack's, and the project stores
-MSVC/own-<version>. A copy is read for its 32-bit compiler only, so a 64-bit game builds with the pack's.
+MSVC/own-<version>. A copy's 64-bit compiler, when it has one, builds a 64-bit game the same way
+(MSVC/own-<version>-x64, #278); without one a 64-bit game builds with the pack's.
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object
@@ -160,15 +161,21 @@ class WindowsPC(Console):
     def kit_compilers(self) -> tuple[Compiler, ...]:
         from ... import kits
 
-        return tuple(Compiler(f"MSVC/{c.version}", c.name, "your own copy") for c in kits.compilers(self.kits))
+        # (each for its processor, as the packs' are: a copy's 32-bit compiler is never offered to a 64-bit game, nor
+        # its 64-bit one to a 32-bit game, #278)
+        return tuple(Compiler(f"MSVC/{c.version}", c.name, "your own copy",
+                              target="x64" if c.version.endswith(X64_SUFFIX) else "x86")
+                     for c in kits.compilers(self.kits))
 
     def build_env(self) -> dict[str, str]:
         """Where wine and the app's prefix are, which tools/compile.py reads when a Visual C++ 2015+ file builds: read
         then, not written into build.ninja, so a project configured before the pack or wine was installed builds such
-        a file as soon as they are, and an older configure.py is never given an argument it doesn't know."""
-        from ... import wine
+        a file as soon as they are, and an older configure.py is never given an argument it doesn't know. A copy of
+        the user's own that wine runs (Visual C++ 2015 and newer: kits/visualcpp.py) needs it too, with or without the
+        2017 pack installed (#278)."""
+        from ... import kits, wine
 
-        return wine.build_env()
+        return wine.build_env(always=any(c.runner == "wine" for c in kits.compilers(self.kits)))
 
     def on_start(self, net, slug: str, log=print) -> None:
         """A project made by an older decompdecomp gets what its import has learnt since, one step at a time from the
