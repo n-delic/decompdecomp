@@ -169,6 +169,13 @@ the PC. Library functions are sorted by the kit: libultraship defines part of li
 math, and what remains of libultra (threads, RSP tasks, the cartridge and Controller Pak internals) is glue the port
 supplies; the link check lists that glue as its own group.
 
+The game's threads stay threads (`consoles/n64/port_glue/threads.c`): libultraship's queues never wait, so the glue
+replaces them with queues that do and runs each game thread on a host thread, one at a time by priority, as the N64
+does. That spares rewriting the game's threads into a main loop by hand. What it can't do yet is preempt a thread
+that never waits; a game that spins on a flag another thread sets would stop, and the glue counts the times a woken
+higher-priority thread had to wait. Which runtime a port uses (libultraship with this glue, or N64ModernRuntime with
+RT64) is to be the user's choice per game (ROADMAP.md, "A choice of runtime for a port").
+
 ### 4. Port fixes, an agent task judged twice
 
 Like **Polish matched code**, a task agents take from **Start agents**, offered once a game is at 100% and its

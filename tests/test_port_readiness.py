@@ -150,6 +150,6 @@ def test_the_kit_says_where_each_libultra_function_comes_from():
     assert {_sdk_group(n) for n in ("osRecvMesg", "osPiStartDma", "osViSetMode", "memcpy", "sqrtf")} == {"replaced"}
     assert {_sdk_group(n) for n in ("guMtxIdent", "guOrthoF", "sins", "__cosf", "__osContDataCrc", "alSynNew")} == {
         "native"}
-    assert {_sdk_group(n) for n in ("osCreateThread", "osSpTaskYielded", "__osLeoResume", "osRomBase",
-                                    "__osPiAccessQueue")} == {"glue"}
+    assert {_sdk_group(n) for n in ("osSpTaskYielded", "__osLeoResume", "osRomBase", "__osPiAccessQueue")} == {"glue"}
+    assert _sdk_group("osCreateThread") == "replaced"  # decompdecomp's glue for libultraship has threads
     assert _sdk_group("draw_hud") is None and "osCreateThread" not in LIBULTRASHIP

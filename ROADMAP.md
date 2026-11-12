@@ -966,6 +966,19 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### An N64 port keeps the game's threads
+
+libultraship's message queues never wait, because the ports built on it rewrite the game's threads into one main
+loop. decompdecomp's glue for it (`consoles/n64/port_glue/threads.c`, plain C and POSIX threads) keeps them instead:
+each game thread is a host thread and, as on the N64's one CPU, only the highest-priority one that can runs; it gives
+the CPU up when it waits on a message queue, yields, finishes or wakes a higher-priority thread. Its message queues
+wait, and replace libultraship's whole `os_mesg` at link time (every symbol of it, the event table a real
+definition), so libultraship's VI timer posts through them from its own thread. Tested by a C program (priority
+on send, a one-slot queue, jams, yields among equals, events from a host thread) and under ThreadSanitizer; linked
+against libultraship built on a Mac with only the Command Line Tools. The kit counts the thread functions as
+provided. Left: preempting a thread that never waits (counted, `port_thread_stalls`), RSP tasks handed to
+libultraship's renderer and mixer, the rest of the glue.
+
 ### Library functions a person confirms, for the port
 
 The app names library functions only from full-size signature matches. A game built with a libultra version it
@@ -1940,6 +1953,17 @@ The export rebuilds the game byte for byte; mods need code that can move. Build 
 and report every address that is still hard-coded ("93% movable, 41 addresses left"). The matching build stays as
 it is. A Windows PC project's rebuild puts each function back at the game's address in the user's copy
 (tools/rebuild.py): moving code there needs its data delinked too, and a linker that lays the program out.
+
+### A choice of runtime for a port
+
+The user picks which runtime a game's port is built on, per game, where the console has more than one: for the N64,
+libultraship (MIT; Fast3D renderer on Metal, OpenGL, DirectX; Torch's archive; builds on macOS with only the Command
+Line Tools; queues that never wait, so decompdecomp's thread glue) or N64ModernRuntime (GPL-3.0; real libultra threads,
+queues and timers; the RT64 renderer, complete S2DEX; reads the ROM at run time, so no extraction; RT64 needs full
+Xcode on macOS for its Metal shaders). The kit becomes a list per console (`Console.port_kits`), the readiness report
+and link check read the chosen one, and Port readiness shows the choice with what each needs on this computer.
+Tried on a Mac: libultraship and its libraries built from source; N64ModernRuntime built; RT64 stopped for want of
+Xcode's `metal`.
 
 ### Ports: a native build of a finished game
 
