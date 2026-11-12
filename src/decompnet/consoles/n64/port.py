@@ -207,6 +207,10 @@ def boot_globals(cfg: dict) -> dict:
             0x80000318: ("osMemSize", "uint32_t", 4, 0x400000), 0x8000031C: ("osAppNMIBuffer", "uint8_t", 64, 0)}
 
 
+# libultra's rspboot, the program the RSP starts every task with, as every game links it: the microcode text follows it.
+RSPBOOT = bytes.fromhex("09000419 20010fc0 8c220010 20030f7f 20071080 40870000 40820800 40831000")
+
+
 def _quote(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
@@ -223,4 +227,5 @@ KIT = PortKit(
     extract=torch_extract,
     resources=torch_resources,
     boot_globals=boot_globals,
+    coprocessor_boot=RSPBOOT,
 )

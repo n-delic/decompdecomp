@@ -104,3 +104,26 @@ def test_rom_offsets_and_boot_values_are_written_for_the_pc(project):  # noqa: F
     subprocess.run([cc, "-o", str(program), str(main), str(root / "port/src/rom_offsets.S"),
                     str(root / "port/src/boot_globals.c")], check=True, capture_output=True)
     assert subprocess.run([str(program)], capture_output=True, text=True).stdout == "100 1"
+
+
+def test_microcode_gets_room_and_keeps_its_order(project):  # noqa: F811
+    """The game points at the RSP's microcode (rspboot, then the text after it) when it builds a task; a port's renderer
+    replaces it, so each symbol gets zeroed room of its size, in order."""
+    from decompnet.consoles.n64.port import RSPBOOT
+    from decompnet.port import fixed_symbols
+    net, root = project
+    image = bytearray((root / "game.z64").read_bytes())
+    image[0x40:0x40 + len(RSPBOOT)] = RSPBOOT  # ROM 0x40 is 0x80000400, the start of the code segment
+    (root / "game.z64").write_bytes(bytes(image))
+    with net.store.tx() as db:
+        pid = db.execute("SELECT id FROM projects WHERE slug='game'").fetchone()[0]
+        for name, address, size in (("D_80000400", 0x80000400, 0x20), ("D_80000420", 0x80000420, 0x10),
+                                    ("D_80000430", 0x80000430, 0x10)):
+            db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                       (pid, name, address, size, "data"))
+    with net.progress.view():
+        _, _, microcode = fixed_symbols.plan(net, net.project_row("game"), ["D_80000400", "D_80000420", "D_80000430"])
+    # rspboot, and what starts where it ends; the datum after that is real data, not microcode
+    assert [(m["name"], m["size"]) for m in microcode] == [("D_80000400", 0x20), ("D_80000420", 0x10)]
+    text = fixed_symbols.files([], [], microcode)[fixed_symbols.MICROCODE]
+    assert text.index("SYM(D_80000400):") < text.index(".space 32") < text.index("SYM(D_80000420):")

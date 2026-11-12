@@ -38,3 +38,22 @@ def test_calls_by_old_names_are_rewritten_and_judged(project, cc, monkeypatch): 
     with net.progress.view():
         link = pc_link.report(net, net.project_row("game"))
     assert {g["kind"]: g["examples"] for g in link["groups"]}.get("renamed") == ["drawHud (now draw_hud)"]
+
+
+def test_a_wrong_base_symbol_becomes_the_variable_it_reaches(project, cc, monkeypatch):  # noqa: F811
+    """The decompiler counted from a label it shouldn't have (`(u8 *)&D_80010000 + 0x10`): the variable there is
+    g_speed, so the C names it, and the console's bytes are the same."""
+    net, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=? WHERE name='update'",
+                   ("extern s32 D_80010000;\nvoid update(void) { *(s32 *)((u8 *)&D_80010000 + 0x10) = 1; }",))
+        db.execute("UPDATE functions SET matched_source=? WHERE name='helper'",
+                   ("extern char D_80010000[];\nvoid helper(char *s) { *(s32 *)(D_80010000 + 0x12) = 2; }",))
+    put(net, "update", ["update"], ["D_80010000"])
+    put(net, "helper", ["helper"], ["D_80010000"])
+    monkeypatch.setattr(net, "regression_test", lambda *a, **k: [])
+    result = renamed_calls.fix(net, "game", print, cc=cc)
+    assert result["bases"] == 2 and result["kept"] == ["helper", "update"]
+    assert net._function("update", "game")["matched_source"] == (
+        "extern char g_speed[];\nextern s32 D_80010000;\nvoid update(void) { *(s32 *)((u8 *)&g_speed) = 1; }")
+    assert "*(s32 *)(((char *)&g_speed + 0x2)) = 2;" in net._function("helper", "game")["matched_source"]  # inside it

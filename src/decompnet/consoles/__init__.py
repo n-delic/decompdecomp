@@ -70,6 +70,8 @@ class PortKit:
     resources: object = None  # archive -> {resource name: the bytes it holds}, for checking each against the image
     boot_globals: object = None  # project config -> {address: (libultra name, C type, size, value)}: what the
     # console's boot leaves in low memory, which a port defines with those values
+    coprocessor_boot: bytes = b""  # how the coprocessor's boot microcode begins in a ROM (the N64's rspboot): it and
+    # the microcode after it are data the C only points at, which a port's renderer replaces: a placeholder
 
 
 class Console:

@@ -6,6 +6,11 @@ never notices; a PC link refuses it. The link check (port/pc_link.py) knows each
 now, so the callers are rewritten here, whole words only, in the functions that use the old name and nowhere else,
 and each rewritten function is judged twice like a port fix: its console build must still be the game's exact
 bytes, and the PC compiler must find it no worse. A function that fails either keeps its C, and is listed.
+
+The same pass puts right a base symbol the decompiler chose wrongly: `*(s32 *)((u8 *)&D_8009693C + 0x58F4)`, where
+D_8009693C is a label inside code and the variable meant is the one at 0x8009C230. The link check lists such a base
+as data nothing defines; each use, cast to a byte pointer or on a byte array, becomes the variable at that address
+(`(u8 *)&D_8009C230`), declared where the function lacks it. The address is the same, so the console's bytes are.
 """
 
 from __future__ import annotations
@@ -32,6 +37,58 @@ def plan(net, proj) -> tuple[dict[str, str], dict[str, set[str]]]:
     return names, users
 
 
+_BYTE = r"(?:u8|s8|char|unsigned char|signed char)"
+_NUMBER = r"(0x[0-9A-Fa-f]+|\d+)"
+
+
+def bases(net, proj, rows, groups, facts) -> dict[str, list[tuple[str, int, str, int]]]:
+    """{function: [(base symbol, offset, target, offset into the target)]} for the data the link check lists that the
+    C uses as a byte-pointer base plus an offset reaching another variable (or a place inside one)."""
+    symbols = net.symbols(proj["id"])
+    out: dict[str, list[tuple[str, int, str]]] = {}
+    for base in groups.get("data", []):
+        address = symbols.resolve(base)
+        if address is None:
+            continue
+        for function in facts["needed"].get(base, ()):
+            row = rows.get(function)
+            if row is None:
+                continue
+            for _, number in _uses(row["matched_source"], base):
+                offset = int(number, 0)
+                target = address + offset
+                name, inside = symbols.name_at(target)
+                if not name or symbols.resolve(name) is None or symbols.resolve(name) + inside != target:
+                    name, inside = f"D_{target:08X}", 0
+                out.setdefault(function, []).append((base, offset, name, inside))
+    return out
+
+
+def _uses(source: str, base: str):
+    """(text, offset) of each `(T *)&base + N`, and `base + N` where base is declared a byte array."""
+    b = re.escape(base)
+    found = [(m.group(0), m.group(2)) for m in re.finditer(
+        rf"(\(\s*{_BYTE}\s*\*\s*\)\s*&\s*{b})\s*\+\s*{_NUMBER}", source)]
+    if re.search(rf"\b{_BYTE}\s+{b}\s*\[\s*\]", source):
+        found += [(m.group(0), m.group(1)) for m in re.finditer(rf"(?<![\w&)])\b{b}\s*\+\s*{_NUMBER}", source)]
+    return found
+
+
+def _rebase(source: str, base: str, offset: int, target: str, inside: int = 0, header: str = "") -> str:
+    """`source` with each use of `base + offset` naming `target` (plus `inside`, a place within it), and `target`
+    declared if it isn't."""
+    b = re.escape(base)
+    n = rf"(?:0x0*{offset:X}|0x0*{offset:x}|{offset})\b"
+    more = f" + 0x{inside:X}" if inside else ""
+    out = re.sub(rf"\((\s*{_BYTE}\s*\*\s*)\)\s*&\s*{b}\s*\+\s*{n}", rf"(\1)&{target}{more}", source)
+    element = re.search(rf"\b({_BYTE})\s+{b}\s*\[\s*\]", out)
+    if element:
+        out = re.sub(rf"(?<![\w&)])\b{b}\s*\+\s*{n}", f"(({element.group(1)} *)&{target}{more})", out)
+    if out != source and not re.search(rf"\b{re.escape(target)}\b", source + header):
+        out = f"extern char {target}[];\n" + out
+    return out
+
+
 def fix(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
     """Rewrite every call by an old name, judged: {"names", "functions", "kept", "refused": [{"function", "why"}]}."""
     with net.progress.view():
@@ -43,24 +100,30 @@ def fix(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
         rows = {r["name"]: r for r in store.all(
             "SELECT * FROM functions WHERE project_id=? AND status='matched' AND gone_mark IS NULL", proj["id"])}
         units = net._unit_contexts(proj["id"])
-    if not names:
-        log("No call uses an old name.")
-        return {"names": 0, "functions": 0, "kept": [], "refused": []}
-    log(f"{len(names)} old names, called from {len(users)} functions: rewriting them and judging each function twice")
-    rewritten, refused = {}, []
-    for function, olds in sorted(users.items()):
-        row = rows.get(function)
-        if row is None:  # library code the kit replaces, or no longer matched: nothing of ours to rewrite
-            continue
-        source = row["matched_source"]
-        for old in sorted(olds):
-            source = re.sub(rf"\b{re.escape(old)}\b", names[old], source)
-        if source != row["matched_source"]:
-            rewritten[row["id"]] = source
+        groups, facts = pc_link.undefined(net, proj)
+        rebased = bases(net, proj, rows, groups, facts)
+    if not names and not rebased:
+        log("No call uses an old name, and no base symbol needs putting right.")
+        return {"names": 0, "bases": 0, "functions": 0, "kept": [], "refused": []}
+    log(f"{len(names)} old names, called from {len(users)} functions, and {len(rebased)} functions with a wrong base "
+        "symbol: rewriting them and judging each function twice")
 
     def header(fn) -> str:
         context = net._context(proj["id"], net._effective_unit(fn, units))
         return context["header"] if context is not None else ""
+
+    rewritten, refused = {}, []
+    for function in sorted(set(users) | set(rebased)):
+        row = rows.get(function)
+        if row is None:  # library code the kit replaces, or no longer matched: nothing of ours to rewrite
+            continue
+        source = row["matched_source"]
+        for old in sorted(users.get(function, ())):
+            source = re.sub(rf"\b{re.escape(old)}\b", names[old], source)
+        for base, offset, target, inside in rebased.get(function, ()):
+            source = _rebase(source, base, offset, target, inside, header(row))
+        if source != row["matched_source"]:
+            rewritten[row["id"]] = source
 
     judged = [r for r in rows.values() if r["id"] in rewritten]
     broken = dict(net.regression_test(proj, None, sources=rewritten, only=judged, header_for=header))
@@ -93,7 +156,8 @@ def fix(net, slug: str, log=print, *, cc: list[str] | None = None) -> dict:
     log(f"{len(done)} functions now call {len(names)} functions by their names"
         + (f"; {len(refused)} kept their C: " + "; ".join(f"{r['function']} ({r['why']})" for r in refused[:8])
            if refused else ""))
-    return {"names": len(names), "functions": len(users), "kept": done, "refused": refused}
+    return {"names": len(names), "bases": len(rebased), "functions": len(set(users) | set(rebased)), "kept": done,
+            "refused": refused}
 
 
 def _keep(net, proj, kept, rewritten) -> list[str]:
