@@ -43,7 +43,8 @@ def _repair_rules():
     # there, and the library's own families count like app/'s (same names, so fingerprints keep their keys).
     import decomprepair
     library = Path(decomprepair.__file__).parent
-    paths = [p if p.exists() else library / p.name for p in paths]
+    # a name in the library is read there (the app's file of that name, if any, is only an alias of it)
+    paths = [library / p.name if (library / p.name).exists() else p for p in paths]
     paths = sorted(set(paths) | set(library.glob('*repairs.py')), key=lambda p: p.name)
     return [(p.name,file_digest(p)) for p in paths]
 
