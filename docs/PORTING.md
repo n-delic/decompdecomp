@@ -250,7 +250,8 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   and, with `PORT_AUDIO=file.wav`, saved. The interface's registers answer in real time at the game's rate, so the
   game paces its sound as on the console. Not yet: the resampler's exact taps (linear for now);
 - the app's **Play in browser** (Porting): builds the game from the project's last save, starts it with
-  `PORT_LIVE` on a free port and opens it in the browser; Stop the game ends it, and so does quitting the app.
+  `PORT_LIVE` on a free port and opens it in a window of its own (the app window's program; the browser where no
+  window can open); closing the window, Stop the game or quitting the app ends it.
   Its saves stay in the build folder (`game.eep`);
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
   machine only, which shows each frame and sends the keyboard or a gamepad to the first controller (arrows steer, X is A,

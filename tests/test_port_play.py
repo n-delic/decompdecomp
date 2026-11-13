@@ -25,3 +25,9 @@ def test_one_game_runs_per_project_until_it_is_stopped():
     assert play.running("game") == "http://127.0.0.1:1/"
     assert play.stop("game") and proc.wait(10) is not None
     assert play.running("game") is None and not play.stop("game")
+
+
+def test_without_a_window_the_game_goes_to_the_browser(monkeypatch):
+    """Tests (DECOMP_WINDOW=0) and a browser session open no window: Play says so and the page opens the browser."""
+    monkeypatch.setenv("DECOMP_WINDOW", "0")
+    assert play._open_window("game", "http://127.0.0.1:1/", 1, "Game (PC port)") is False

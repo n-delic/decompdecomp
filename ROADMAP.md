@@ -980,7 +980,7 @@ similar C through objdiff. Other processors need an instruction reader for this 
 ### A finished game runs as a WebAssembly build
 
 The Porting tab's **Play in browser** builds the game from its last save (only what changed) and opens it
-in the browser (`port/wasm/play.py`).
+in a window of its own (the browser where no window can open) (`port/wasm/play.py`).
 
 `python -m decompnet.port.wasm SAVE` (`src/decompnet/port/wasm/`) builds a finished N64 game from its save
 repository: the matched C goes to WebAssembly by the pinned Zig, then back to C by the pinned wasm2c (WABT 1.0.42),
@@ -1002,7 +1002,7 @@ Left:
   be confirmed. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
-  saves other games use, a native window, the
+  saves other games use, the
   resampler's exact taps, and a run of the host and its live view on Windows (they compile for it, untried);
 - the judge to compare a switch's jump table too: it compares code, and the table is data, so a matched function
   can keep wrong case labels (19 of a racing game's 29 did; the port has overrides for them);

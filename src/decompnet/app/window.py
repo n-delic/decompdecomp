@@ -230,6 +230,28 @@ class Window:
             self.on_close()
 
 
+def open_page(url: str, title: str, size: tuple[int, int] = (1440, 920)) -> subprocess.Popen | None:
+    """Another page in a window of its own, with the app window's program: a game the app plays (port/wasm/play.py).
+    None when no window can open here (tests, a missing package): the caller opens the page in the browser."""
+    missing.cache_clear()
+    if not wanted() or missing():
+        return None
+    win_icon = Path(__file__).with_name("static") / ("favicon-dev.ico" if edition.DEV else "favicon.ico")
+    if IS_WINDOWS or IS_MACOS:
+        program, python, icon = (WIN_WINDOW_PROGRAM if IS_WINDOWS else MAC_WINDOW_PROGRAM), sys.executable, win_icon
+    else:
+        program, python, icon = WINDOW_PROGRAM, SYSTEM_PYTHON, ""
+    argv = [python, "-I", str(program), "--url", url, "--title", title, "--window-class", edition.WINDOW_CLASS + "-game",
+            "--icon", str(icon), "--size", f"{size[0]}x{size[1]}"]
+    try:
+        return subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0,
+                                env=window_env(""))
+    except OSError:
+        log.exception("the game's window didn't start")
+        return None
+
+
 def window_env(secret: str) -> dict[str, str]:
     """The window program's environment. On NVIDIA's driver WebKitGTK's DMA-BUF renderer kills the window at once
     under Wayland ("Error 71 (Protocol error) dispatching to Wayland display", the app quits with it), so there it

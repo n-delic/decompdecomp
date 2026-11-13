@@ -237,8 +237,8 @@ async function playGame() {
     if (result && result.url) {
       const link = document.createElement("a");
       link.href = result.url; link.target = "_blank"; link.rel = "noopener"; link.textContent = result.url;
-      log.append("\nThe game runs at ", link, " (opened in your browser).");
-      window.open(result.url, "_blank", "noopener");
+      if (result.window) log.append("\nThe game opened in its own window; closing it stops the game. Or play in the browser at ", link, ".");
+      else { log.append("\nThe game runs at ", link, " (opened in your browser)."); window.open(result.url, "_blank", "noopener"); }
       $("portStop").hidden = false;
     }
   } catch (error) {

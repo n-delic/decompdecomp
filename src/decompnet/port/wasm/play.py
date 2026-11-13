@@ -1,6 +1,8 @@
 """Play: the app's button that builds a game's WebAssembly build and runs it in the browser (docs/PORTING.md).
 
-The build comes from the project's save repository (the folder Save writes, its progress/ inside), as
+The game opens in a window of its own, made by the app window's program (app/window.py), and the browser where no
+window can open (a browser session, tests); closing the window stops the game. The build comes from the project's
+save repository (the folder Save writes, its progress/ inside), as
 `python -m decompnet.port.wasm` builds it; only what changed is rebuilt. The game then runs with its live view
 (the host's PORT_LIVE, on 127.0.0.1 only, on a free port), its saves in the build folder (game.eep, beside the
 program: game data, kept out of git), until it's stopped or the app quits. One game runs per project: Play again
@@ -20,6 +22,7 @@ from pathlib import Path
 from ...network import NetworkError
 
 _running: dict[str, tuple[subprocess.Popen, str]] = {}
+_windows: dict[str, subprocess.Popen] = {}  # each game's own window, closed when the game stops
 _lock = threading.Lock()
 
 
@@ -59,6 +62,9 @@ def running(slug: str) -> str | None:
 def stop(slug: str) -> bool:
     with _lock:
         entry = _running.pop(slug, None)
+        win = _windows.pop(slug, None)
+    if win is not None and win.poll() is None:
+        win.terminate()
     if entry and entry[0].poll() is None:
         entry[0].terminate()
         return True
@@ -109,4 +115,23 @@ def play(net, slug: str, log=print) -> dict:
     with _lock:
         _running[slug] = (proc, url)
     log(f"playing at {url}")
-    return {"url": url}
+    return {"url": url, "window": _open_window(slug, url, proc.pid, f"{cfg['rom'].get('title') or slug} (PC port)")}
+
+
+def _open_window(slug: str, url: str, pid: int, title: str) -> bool:
+    """The game's own window; closing it stops the game. False when none opened (the page then goes to the browser)."""
+    from ...app import window
+    win = window.open_page(url, title, (960, 800))
+    if win is None:
+        return False
+    with _lock:
+        _windows[slug] = win
+
+    def watch():
+        win.wait()
+        with _lock:
+            entry = _running.get(slug)
+        if entry and entry[0].pid == pid:  # (not a game started again since)
+            stop(slug)
+    threading.Thread(target=watch, daemon=True, name=f"play-{slug}").start()
+    return True

@@ -105,5 +105,10 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    await t.run('playGame()');
    assert.match(t.c.$('portPlayLog').textContent+JSON.stringify(t.c.$('portPlayLog').children),/Save the project first/);
    assert.equal(t.c.$('portPlay').disabled,false,'a failure gives the button back');}
+  {const t=setup();const opened=[];t.c.window={open:u=>opened.push(u)};t.c.followJob=async()=>({url:'http://127.0.0.1:5/',window:true});
+   t.c.reply=async url=>url==='/api/play'?{job:'p2'}:report;
+   await t.run('playGame()');
+   assert.deepEqual(opened,[],'a game in its own window opens no browser tab');
+   assert.equal(t.c.$('portStop').hidden,false);}
   console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, renamed calls and play passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
