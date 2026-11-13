@@ -151,13 +151,24 @@ def gather(repo: Path, out: Path) -> dict[str, Path]:
         if not re.search(r'^#include "common(_\w+)?\.h"', text, re.M):
             text = f'#include "{header}"\n' + text
         _write(out / "src" / name, big_endian_bitfields(text))
+    # By name in any case: on a case-insensitive disk (macOS, Windows) a file an old save wrote as SelectStateReset.c
+    # is the one just written as selectStateReset.c, and deleting it as stale deleted that function's C
+    kept = {name.casefold() for name in chosen}
     for stale in (out / "src").glob("*.c"):
-        if stale.name not in chosen:
+        if stale.name.casefold() not in kept:
             stale.unlink()
     for folder in (progress / "include", port / "include"):
         for header in folder.glob("*.h"):
             _write(out / "include" / header.name, big_endian_bitfields(header.read_text(encoding="utf-8")))
     return chosen
+
+
+def linked(objects: Path, sources) -> list[Path]:
+    """The objects of the files the build compiled, by name in any case: on a case-insensitive disk the object an old
+    save's SelectStateReset.c made keeps that name when selectStateReset.o is written over it, and leaving it out
+    linked the game without that function (a racing game's menu then never finished opening)."""
+    compiled = {name.casefold() for name in sources}
+    return sorted(p for p in objects.glob("*.o") if (p.stem + ".c").casefold() in compiled)
 
 
 def addresses(manifest: dict) -> tuple[list[str], set[str]]:
@@ -311,8 +322,9 @@ def build(repo: Path, *, console: str = "n64", log=print) -> Path:
     if failed := _parallel(sorted(sources), ir, log, "files"):
         raise NetworkError(f"{len(failed)} of the game's files don't compile for the WebAssembly build: "
                            + "; ".join(failed[:3]))
+    compiled = {name.casefold() for name in sources}
     for stale in (out / "ll").glob("*.ll"):
-        if stale.name[:-3] + ".c" not in sources:
+        if (stale.name[:-3] + ".c").casefold() not in compiled:
             stale.unlink()
 
     log("one signature per function")
@@ -338,7 +350,7 @@ def build(repo: Path, *, console: str = "n64", log=print) -> Path:
         return None if done.returncode == 0 else (done.stderr.strip().splitlines() or ["failed"])[0]
     if failed := _parallel(lls, place, log, "functions"):
         raise NetworkError(f"{len(failed)} functions couldn't be placed at their addresses: " + "; ".join(failed[:3]))
-    objects = sorted(p for p in (out / "o").glob("*.o") if p.stem + ".c" in sources)
+    objects = linked(out / "o", sources)
     _write(out / "objects.txt", "\n".join(str(p) for p in objects) + "\n")
 
     log(f"linking {len(objects)} functions")
