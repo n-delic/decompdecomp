@@ -97,7 +97,7 @@ function portSteps(report) {
         : "map not written yet", buttons: ["portAssets", "portExtract"], logs: ["portAssetsLog", "portExtractLog"] },
     { title: "Play it", pct: null, play: true,
       detail: "The WebAssembly build of your last save, in the browser: no native port needed",
-      buttons: ["portPlay", "portStop"], logs: ["portPlayLog"] },
+      buttons: ["portPlay", "portStop", "portExportMenu"], logs: ["portPlayLog", "portExportLog", "portExportActions"] },
   ];
   return steps;
 }
@@ -106,10 +106,12 @@ function renderPortSteps(report) {
   const list = $("portSteps");
   if (!list) return;
   const steps = portSteps(report), parked = $("portParked");
-  for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portAssets", "portExtract", "portPlay", "portStop"]) {
+  for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portAssets", "portExtract", "portPlay", "portStop",
+    "portExportMenu"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
-  for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portAssetsLog", "portExtractLog", "portPlayLog"]) {
+  for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portAssetsLog", "portExtractLog", "portPlayLog",
+    "portExportLog", "portExportActions"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
@@ -287,9 +289,70 @@ async function stopGame() {
   finally { stop.disabled = false; playStopLabel(); }
 }
 
-/* The report says whether this project's game is building or running; a build started elsewhere is followed. */
+/* Export (port/wasm/export.py): the game as a standalone app for this computer, or a browser build (a folder with
+   index.html), from the last save. Its bar counts the build's steps; Stop cancels it; Show the folder opens it. */
+let exportJob = null;
+const EXPORTS = { app: "a standalone app", web: "a browser build" };
+
+function closeExportMenu(focus = true) {
+  const menu = $("portExportMenu");
+  if (menu && menu.open) { menu.open = false; if (focus) menu.querySelector("summary").focus(); }
+}
+
+async function exportGame(kind, existing = null) {
+  if (exportJob) return;
+  closeExportMenu();
+  const slug = S.slug, log = $("portExportLog"), stop = $("portExportStop"), show = $("portExportShow");
+  exportJob = existing ? existing.id : "starting";
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  $("portExportActions").hidden = false; show.hidden = true; stop.hidden = false; stop.disabled = false;
+  stop.textContent = "Stop the export";
+  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWeb")],
+    "Exported.");
+  if (existing?.progress) updateWorkProgress(log, existing.progress);
+  try {
+    let result = existing ? { job: existing.id } : await api("/api/play-export", { method: "POST", body: { slug, kind } });
+    if (result.job) { exportJob = result.job; result = await followJob(result.job, log, null, () => S.slug === slug); }
+    if (result && result.path) {
+      show.dataset.kind = result.kind;
+      show.hidden = false;
+      log.append(`\nExported ${EXPORTS[result.kind]} to ${result.path}. `
+        + (result.kind === "web" ? "Serve that folder over http to play it (its README.txt says how)."
+          : "Open it to play: it asks for your ROM the first time."));
+    }
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally {
+    exportJob = null; finish();
+    stop.hidden = true;
+  }
+}
+
+async function stopExport() {
+  const stop = $("portExportStop");
+  if (!exportJob || exportJob === "starting") return;
+  stop.disabled = true; stop.textContent = "Stopping the export…";
+  try { await api("/api/job/cancel", { method: "POST", body: { id: exportJob } }); }
+  catch (error) { showJobError($("portExportLog"), error.message); stop.disabled = false; stop.textContent = "Stop the export"; }
+}
+
+async function showExport() {
+  const show = $("portExportShow");
+  show.disabled = true;
+  try {
+    const result = await api("/api/play-export", { method: "POST", body: { slug: S.slug, kind: show.dataset.kind, show: true } });
+    if (result && result.ok === false && result.message) showJobError($("portExportLog"), result.message);
+  } catch (error) { showJobError($("portExportLog"), error.message); }
+  finally { show.disabled = false; }
+}
+
+/* The report says whether this project's game is building or running, or being exported: work started elsewhere
+   (another window, before navigating away) is followed, not started again. */
 function attachPlay(play) {
-  if (!play || playJob) return;
+  if (!play) return;
+  if (play.export_job && !exportJob) exportGame(null, play.export_job);
+  if (playJob) return;
   if (play.job) { playGame(play.job); return; }
   $("portStop").hidden = !play.url; playStopLabel();
 }
@@ -297,6 +360,15 @@ function attachPlay(play) {
 if ($("portPanel")) {
   $("portPlay").onclick = () => playGame();
   $("portStop").onclick = stopGame;
+  $("portExportApp").onclick = () => exportGame("app");
+  $("portExportWeb").onclick = () => exportGame("web");
+  $("portExportStop").onclick = stopExport;
+  $("portExportShow").onclick = showExport;
+  $("portExportMenu").addEventListener("keydown", (e) => { if (e.key === "Escape") closeExportMenu(); });
+  document.addEventListener("click", (e) => {
+    const menu = $("portExportMenu");
+    if (menu && menu.open && !menu.contains(e.target)) closeExportMenu(false);
+  });
   $("portRenameCalls").onclick = fixRenamedCalls;
   $("portExtract").onclick = extractAssets;
   $("portAssets").onclick = writeAssetMap;

@@ -257,6 +257,25 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   for placing, its IR and its own rows of the signature and address tables; for the host, the wasm2c part), so a
   Save that changed one function recompiles that function and the one wasm2c part holding it.
   Its saves stay in the build folder (`game.eep`);
+- the app's **Export…** (Porting, beside Play; `port/wasm/export.py`): the game as something to keep and share,
+  into the save repository's `port/wasm/export/` (git ignores it: it's built from the game). Neither export holds
+  the ROM; each asks the player for their own.
+  - *Standalone app for this computer*: the native program with a launcher. On macOS an app (`Game.app`, macOS 11
+    and up) that asks for the ROM once, keeps its saves in its own Application Support folder and opens the game
+    in the browser; quitting it stops the game. On Linux and Windows the program with `play.sh` / `play.bat`
+    (they take the ROM's path and remember it).
+  - *For a web browser*: the browser build (`port/wasm/web.py`), a folder with `index.html` for any static web
+    server (browsers load WebAssembly only over http). It runs the game's WebAssembly itself, so what wasm2c's C
+    was made to do is done to each function's IR instead (`webir.py`): every load and store through big-endian
+    helpers (`web/be.c`, uncached addresses through the host), each variadic call's extra arguments byte-swapped
+    so the varargs buffer is big-endian too, and calls through pointers by console address through each
+    function's universal entry (no wasm type check, as the N64 had none). The kit's host (`host.c`, `render.c`,
+    `audio.c`, with `PORT_WEB`) is compiled to WebAssembly beside it, sharing its 4 GB memory (its own data from
+    0xB0000000). The host's threads are coroutines switched with JavaScript Promise Integration (`web/co.c`,
+    `web/runtime.js`: Chrome and Edge 137 and later); a thread spinning on memory gives the page a turn every
+    10 ms for the retrace, as the native host's main thread runs beside it. The page (the kit's `web/`) shows the
+    frames, plays the sound, reads the keyboard and gamepads, and keeps the ROM and the saves in the browser. The
+    racing game's frames are byte for byte the native build's (its opening, menus and a race);
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
   machine only, which shows each frame and sends the keyboard or a gamepad to the first controller (arrows steer, X is A,
   Z is B, Enter is Start; a gamepad in the browser's standard layout), and can go full screen. A key held wins over `PORT_INPUT`, so a script can bring the game to a race and leave it to

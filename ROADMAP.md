@@ -977,6 +977,22 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### A finished game exports as an app or a browser build
+
+Play it's **Export…** (Porting) makes the game something to keep and share, from the last save, without
+decompdecomp (`port/wasm/export.py`, docs/PORTING.md): a standalone app for the computer it runs on (a macOS app;
+the program and a launcher on Linux and Windows), or a browser build, a folder with `index.html` for any static web
+server. Neither holds the ROM: each asks the player for their own. The browser build (`port/wasm/web.py`) runs the
+game's own WebAssembly in the page with the kit's host compiled beside it; a racing game's opening, menus and races
+are byte for byte the native build's frames, at the native build's speed. Play shows a step-by-step progress bar,
+and only what changed is built again.
+
+Left:
+- the browser build in Firefox and Safari: it needs JavaScript Promise Integration (Chrome and Edge 137 and later
+  today), or an Asyncify build where it's missing;
+- the Linux and Windows apps run untried (the macOS app is tried end to end), and signing the macOS app;
+- the browser build for consoles other than the N64: "—" until their kits have a host.
+
 ### A finished game runs as a WebAssembly build
 
 The Porting tab's **Play in browser** builds the game from its last save (only what changed) and opens it

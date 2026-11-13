@@ -9,6 +9,10 @@
  * Threads: each game thread is a host thread; one runs at a time, the highest-priority ready one, as on the N64's
  * one CPU (the same scheduler as consoles/n64/port_glue/threads.c). Each has its own wasm shadow stack, in memory
  * below the game's data, swapped into the module's __stack_pointer when it gets the CPU.
+ *
+ * PORT_WEB: the browser build (port/wasm/web.py). This file is compiled to WebAssembly beside the game's module,
+ * sharing its memory (based at 0); its threads are coroutines (port/wasm/web/co.c), the game's functions it calls
+ * go through the page's table (the generated game.h), and the page drives the retrace instead of main().
  */
 #include <pthread.h>
 #include <stdarg.h>
@@ -55,6 +59,9 @@ void *port_func(uint32_t address) {
     /* LLVM calls some functions through the table when the call's types differ from the function's only as
        pointer and integer: an index, never a console address (those are 0x80000000 and up) */
     port_preempt();
+#ifdef PORT_WEB
+    return (void *)(uintptr_t)address; /* not used: the game's own port_icall finds its functions (web/be.c) */
+#endif
     wasm_rt_funcref_table_t *table = &game.w2c_0x5F_indirect_function_table;
     if (address < table->size && table->data[address].func) return (void *)table->data[address].func;
     unsigned lo = 0, hi = port_func_count;
@@ -90,7 +97,17 @@ typedef struct PortThread {
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static PortThread *threads, *running;
+#ifdef PORT_WEB
+#define self (*(PortThread **)port_web_self_slot()) /* each coroutine's own */
+uint32_t port_web_game_sp(void);
+void port_web_set_game_sp(uint32_t sp);
+#define GAME_SP port_web_game_sp()
+#define SET_GAME_SP(v) port_web_set_game_sp(v)
+#else
 static _Thread_local PortThread *self;
+#define GAME_SP game.w2c_0x5F_stack_pointer0x2E1
+#define SET_GAME_SP(v) (game.w2c_0x5F_stack_pointer0x2E1 = (v))
+#endif
 static unsigned long long ticks;
 static int thread_count;
 static int booted; /* the boot code runs on the host's main thread: no game thread runs until it returns */
@@ -113,10 +130,10 @@ static void schedule(void) {
 }
 /* Give the CPU up and wait (lock held) until it's this thread's again: its shadow stack goes with it. */
 static void wait_turn(PortThread *me) {
-    if (me->has_run) me->sp = game.w2c_0x5F_stack_pointer0x2E1; /* a new thread's is its fresh stack */
+    if (me->has_run) me->sp = GAME_SP; /* a new thread's is its fresh stack */
     me->has_run = 1;
     while (running != me || me->state != READY) pthread_cond_wait(&me->turn, &lock);
-    game.w2c_0x5F_stack_pointer0x2E1 = me->sp;
+    SET_GAME_SP(me->sp);
 }
 static void after_wake(PortThread *woken) {
     if (self && woken && woken->pri > self->pri) {
@@ -174,7 +191,11 @@ static void *host_entry(void *arg) {
         fprintf(stderr, "thread %d stopped: %s\n", me->number, wasm_rt_strerror(trap));
         _exit(3);
     }
+#ifdef PORT_WEB
+    w2c_game_port_call1(&game, me->entry, me->arg);
+#else
     ((void (*)(void *, uint32_t))port_func(me->entry))(&game, me->arg);
+#endif
     LOG("thread %d returned", me->number);
     pthread_mutex_lock(&lock);
     me->state = DONE;
@@ -506,6 +527,21 @@ void w2c_env_osContGetReadData(struct w2c_env *e, u32 pad) {
 /* The cartridge's save EEPROM: 4 Kbit, 64 blocks of 8 bytes, kept in a file (PORT_SAVE=path, else game.eep in the
    folder the game runs from), written through as the game writes, so its saves outlive the program. */
 static uint8_t eeprom[512];
+#ifdef PORT_WEB /* the page keeps it (the browser's storage) */
+__attribute__((import_module("port_web"), import_name("eeprom_load"))) void port_web_eeprom_load(uint8_t *chip, uint32_t size);
+__attribute__((import_module("port_web"), import_name("eeprom_save"))) void port_web_eeprom_save(const uint8_t *chip, uint32_t size);
+static void eeprom_load(void) {
+    static int loaded;
+    if (loaded) return;
+    loaded = 1;
+    memset(eeprom, 0xFF, sizeof eeprom);
+    port_web_eeprom_load(eeprom, sizeof eeprom);
+}
+static void eeprom_write(int block, const uint8_t *data) {
+    memcpy(eeprom + block * 8, data, 8);
+    port_web_eeprom_save(eeprom, sizeof eeprom);
+}
+#else
 static const char *eeprom_path(void) { return getenv("PORT_SAVE") ? getenv("PORT_SAVE") : "game.eep"; }
 static void eeprom_load(void) {
     static int loaded;
@@ -521,6 +557,7 @@ static void eeprom_write(int block, const uint8_t *data) {
     if (f) { fwrite(eeprom, 1, sizeof eeprom, f); fclose(f); }
     else LOG("can't write the save to %s", eeprom_path());
 }
+#endif
 
 /* The serial bus as the game drives it itself (its own __osSiRawStartDma: Controller Pak and EEPROM access): the
    64 bytes of PIF RAM, answered as the PIF would: the first controller, with no Controller Pak in it, the EEPROM on
@@ -607,6 +644,53 @@ void w2c_env_D_8000A840(struct w2c_env *e, u32 a, u32 b, u32 c, u32 d, u32 f, u3
 
 /* ---------------------------------------------------------------- start */
 
+#ifdef PORT_WEB
+/* The page's start: the ROM the player chose (in memory the page got from port_web_alloc), then the boot, as main()
+   does; then the page calls port_web_retrace 50 times a second and runs whichever thread is to run between. */
+__attribute__((import_module("port_web"), import_name("memory_base"))) uint8_t *port_web_memory_base(void);
+__attribute__((export_name("port_web_alloc"))) void *port_web_alloc(uint32_t size) { return malloc(size); }
+__attribute__((export_name("port_preempt"))) void port_web_preempt(void) { port_preempt(); }
+/* A game thread that spins on memory asks this every so often (web/be.c): once it has had 10 ms, the page gets a
+   turn for the retrace, and the thread goes on where it was. Only that: a thread the retrace wakes that outranks it
+   still takes over at the next safe point (port_preempt, a call through a pointer), as natively, never in the
+   middle of whatever the running thread was doing between two of them. */
+__attribute__((export_name("port_yield"))) void port_web_yield(void) {
+    static double slice;
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    double now = t.tv_sec + t.tv_nsec / 1e9;
+    if (now - slice < 0.010) return;
+    slice = now;
+    if (self && running == self) {
+        self->sp = GAME_SP; /* (the page doesn't keep the game's stack pointer: the host does, as in wait_turn) */
+        co_yield();
+        SET_GAME_SP(self->sp);
+    }
+}
+__attribute__((export_name("port_web_boot"))) int port_web_boot(uint8_t *image, uint32_t size) {
+    rom = image;
+    rom_size = size;
+    if (getenv("PORT_VERBOSE")) verbose = atoi(getenv("PORT_VERBOSE"));
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    M = port_web_memory_base(); /* 0, from the page: never a constant the compiler could fold */
+    port_live_start();
+    memcpy(M + 0x80000400u, rom + 0x1000, IMAGE_END - 0x1000);
+    wbe32(SP_STATUS, 1);
+    wbe32(0x80000300, 0);
+    wbe32(0x80000308, 0xB0000000);
+    wbe32(0x8000030C, 0);
+    wbe32(0x80000318, 0x400000);
+    LOG("boot_start");
+    w2c_game_boot_start(&game);
+    LOG("boot_start returned; the game's threads run");
+    booted = 1;
+    schedule();
+    return 0;
+}
+__attribute__((export_name("port_web_retrace"))) void port_web_retrace(void) { retrace(); }
+__attribute__((import_module("port_web"), import_name("trace"))) void port_web_trace(void);
+void port_trace(void) { port_web_trace(); }
+#else
 static uint8_t *read_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -710,8 +794,10 @@ int main(int argc, char **argv) {
     return 0;
 }
 
+#endif /* PORT_WEB */
 /* An indirect call to nothing: say which, before the trap stops the thread. */
-#ifdef _WIN32
+#ifdef PORT_WEB
+#elif defined(_WIN32)
 void port_trace(void) { fprintf(stderr, "(no backtrace on Windows)\n"); }
 #else
 #include <execinfo.h>

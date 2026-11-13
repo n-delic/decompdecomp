@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>N64 game (browser build)</title>
+<style>
+  :root { color-scheme: dark; --bg: #111; --fg: #ccc; --muted: #888; --accent: #c9a227; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 16px; }
+  canvas { display: block; margin: 12px auto; width: min(100%, calc((100vh - 140px) * 4 / 3)); aspect-ratio: 4 / 3;
+           image-rendering: pixelated; background: #000; }
+  canvas:fullscreen { width: auto; height: 100vh; margin: auto; object-fit: contain; }
+  p { text-align: center; margin: 6px 0; }
+  .muted { color: var(--muted); }
+  button, label.button { background: #222; color: var(--fg); border: 1px solid #444; border-radius: 6px; padding: 6px 12px;
+                         font: inherit; cursor: pointer; }
+  button.primary, label.button { background: var(--accent); color: #111; border-color: var(--accent); }
+  input[type=file] { display: none; }
+  #error { color: #f88; white-space: pre-wrap; }
+  #start[hidden], #play[hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <section id="start">
+    <p>This plays the game in your browser, from your own copy of its ROM. Nothing is uploaded: the ROM stays on this
+      computer (the browser remembers it for next time), and so do the game's saves.</p>
+    <p><label class="button" for="rom">Choose your ROM…</label> <input id="rom" type="file" accept=".z64,.n64,.v64,.bin">
+      <button id="again" type="button" hidden>Play with the ROM you chose before</button></p>
+    <p class="muted" id="status"></p>
+  </section>
+  <section id="play" hidden>
+    <canvas id="screen" width="320" height="240"></canvas>
+    <p class="muted">Arrows steer · X: A · Z: B · Enter: Start · Space: Z · Q/W: L/R · I/J/K/L: C buttons · or a gamepad</p>
+    <p><button id="sound" type="button">Sound on</button> <button id="full" type="button">Full screen</button>
+      <span class="muted" id="rate"></span></p>
+  </section>
+  <p id="error" role="alert"></p>
+</main>
+<script type="module" src="play.js"></script>
+</body>
+</html>
