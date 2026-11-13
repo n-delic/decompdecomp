@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -540,6 +541,10 @@ class Progress:
         self.net = net
         self.lock = threading.RLock()
         self.local = threading.local()
+        # When each project's last full (forced) check took its lock, for checks that finished: a forced sync asked
+        # for before then is already covered (sync)
+        self._checked_since: dict[str, int] = {}
+        self._asks = itertools.count()  # orders asks and checks (a clock a test sets back would not)
         self.activity_lock = threading.Lock()
         self.activity: dict[str, dict] = {}
         self.paused: set[str] = set()
@@ -1334,22 +1339,43 @@ class Progress:
             lease[1]()
 
     def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
-        """See _sync_checked. Inside a tool call (deferring) only the first ordinary sync of a project runs."""
+        """See _sync_checked. Inside a tool call (deferring) only the first ordinary sync of a project runs.
+
+        A forced sync another forced sync of the project already covers is skipped: one that took the project's lock
+        after this one was asked for read every edit made before it and published every change committed before it.
+        Each helper's tool call forces one before and one after its work; with 25 helpers on a 2,700-file save each
+        call waited about a second for others' identical checks and then made its own, 4 s of a 5.6 s call."""
+        asked = next(self._asks)
+        if force:
+            self.local.began = None
         synced = getattr(self.local, "synced", None) if getattr(self.local, "deferring", False) else None
         if synced is not None and not force and slug in synced:
             return False
         if synced is None or self._batching(slug) or self.applying or in_transaction():
-            return self._sync_checked(slug, force=force, logger=logger, retry=retry)
+            changed = self._sync_checked(slug, force=force, logger=logger, retry=retry, asked=asked if force else None)
+            self._covered(slug, force)
+            return changed
         first = slug not in synced
         synced.add(slug)  # (before: the sync's own project lookup syncs again inside it)
         try:
-            return self._sync_checked(slug, force=force, logger=logger, retry=retry)
+            changed = self._sync_checked(slug, force=force, logger=logger, retry=retry, asked=asked if force else None)
+            self._covered(slug, force)
+            return changed
         except BaseException:
             if first:
                 synced.discard(slug)
             raise
 
-    def _sync_checked(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
+    def _covered(self, slug: str, force: bool) -> None:
+        """A forced check that finished: later asks from before it took the lock need not check again."""
+        began = getattr(self.local, "began", None)
+        if force and began is not None and began[0] == slug:
+            self._checked_since[slug] = max(self._checked_since.get(slug, -1), began[1])
+        if force:
+            self.local.began = None
+
+    def _sync_checked(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None,
+                      asked: int | None = None) -> bool:
         """Read contributions first, then publish only work changed locally since the last synchronization.
 
         A no-op non-forced check stats the manifest and the three folders; a forced check stats every file too, so an
@@ -1366,6 +1392,8 @@ class Progress:
         from ..request_timing import span, timed_lock
         with (span('progress_sync'),
               timed_lock(self._project_lock(slug), 'progress_project_lock_wait')):
+            if asked is not None and self._checked_since.get(slug, -1) > asked and slug not in self.rechecking:
+                return False  # a full check that took the lock after this was asked has just finished
             while slug in self.rechecking:
                 if getattr(self.local, 'foreground', False) and self.rechecking[slug].ready:
                     self._check_rechecking_files(slug)
@@ -1398,6 +1426,8 @@ class Progress:
                 threading.Condition(self._project_lock(slug)).wait(timeout=.1)
             if logger is not None:getattr(logger, "check_cancel", lambda: None)()
             self._check_paused(slug)
+            if force:  # the full check starts here: the early returns above checked nothing
+                self.local.began = (slug, next(self._asks))
             self._activity(slug, phase="Reading saved files", done=0, total=None, function=None, full_recheck=False)
             self.local.busy = True
             try:
