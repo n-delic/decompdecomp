@@ -277,6 +277,9 @@ def register(app: App) -> None:
         from ...port.wasm import play
         if data.get("stop"):
             return {"stopped": play.stop(slug)}
+        if data.get("runtime", "wasm") != "wasm":
+            raise NetworkError(f"Play runs the WebAssembly build only for now; {data['runtime']} is planned "
+                               "(ROADMAP.md, Ports): choose WebAssembly")
         if (url := play.running(slug)):
             return {"url": url}
         return {"job": jobs.start("play", lambda log: play.play(net, slug, log), project=slug)}
