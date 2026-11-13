@@ -1079,3 +1079,71 @@ def test_splitting_a_function_voids_join_votes_that_name_it(built, tmp_path):  #
     net.split_function(agent, slug, "func_800007D0", hex(0x800007D0 + 4))  # splitting TAIL must void FN's FN+TAIL vote
     meta = json.loads(net._function("func_800007C4", slug)["meta"] or "{}")
     assert key not in meta.get("joins", {}), meta
+
+
+def test_apply_remote_layout_keeps_a_function_the_over_long_tail_spans(built, tmp_path):  # noqa: F811
+    # #192 (blocker): the guest holds an over-split head + a tail that runs past where the host ends the head, on
+    # into a following function the host holds separately. Folding the pieces only up to the host's end truncated
+    # the tail (join_saved_functions drops its lines past the end) and then deleted it whole, and the split pass
+    # couldn't recreate the following function -- the head now ended exactly at its address, so no owner spanned it.
+    # The following function must survive: the split pass recreates it from the un-folded tail.
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("tester")
+    orig = net._function("func_800007C4", slug)
+    start, orig_size, pid = orig["vram"], orig["size"], orig["project_id"]
+    assert orig_size >= 0x30, orig_size                                   # room for the host's split + a follower
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")        # head [C4, D0) + tail [D0, C4+size)
+    follow = start + 0x18
+    follow_name = f"func_{follow:08X}"                                    # the function the host holds after the head
+    layout = [{"name": "func_800007C4", "vram": start, "size": 0x18},     # host ends func_800007C4 here (before D0+)...
+              {"name": follow_name, "vram": follow, "size": orig_size - 0x18}]  # ...and holds this one after it
+    net.apply_remote_layout(slug, layout, [])
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?", pid, follow_name) is not None, \
+        "the following function the over-long tail spanned was lost"
+
+
+def test_a_guests_join_note_keeps_check_again_from_setting_the_head_aside(built, tmp_path):  # noqa: F811
+    # #192 review point 2: the guest's agents said no C makes the tail (not_c notes). The host joins the pieces and
+    # the tail's notes move onto the head. Without a local "joined" note the guest writes, a later check-again
+    # (not_c_from_notes) reads those older notes as a verdict on the head and sets it aside -- the host sends notes
+    # only on first/sync, never with a merge layout.
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    orig = net._function("func_800007C4", slug)
+    orig_size, pid = orig["size"], orig["project_id"]
+    tester, _ = net.local_agent("tester")
+    net.split_function(tester, slug, "func_800007C4", "0x800007D0")       # head + tail
+    for name in ("claude-1", "codex-1", "claude-2"):                      # 3 agents, 2 models: no C makes the tail
+        ag, _ = net.local_agent(name)
+        net.claim(ag, slug, "func_800007D0")
+        net.release(ag, "func_800007D0", "no C makes it: a hand-written asm stub", slug, not_c=True)
+    net.apply_remote_layout(slug, [{"name": "func_800007C4", "vram": orig["vram"], "size": orig_size}], [])
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='func_800007D0'", pid) is None  # folded
+    net.not_c_from_notes(slug)                                            # a check-again pass
+    assert net._function("func_800007C4", slug)["status"] == "open", "the joined head was set aside by old notes"
+
+
+def test_apply_remote_layout_join_clears_the_heads_not_c_votes(built, tmp_path):  # noqa: F811
+    # #192 review point 3: two old not_c votes sit on the over-split head (short of the quorum that sets it aside).
+    # Once the host's join makes it a longer function, joined() must drop them -- they were about the short piece --
+    # even though the head was never set aside. Otherwise one fresh verdict reaches quorum and sets it aside wrongly.
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    tester, _ = net.local_agent("tester")
+    orig = net._function("func_800007C4", slug)
+    orig_size = orig["size"]
+    net.split_function(tester, slug, "func_800007C4", "0x800007D0")
+    head = net._function("func_800007C4", slug)
+    votes = {"not_c": {"claude-1": {"model": "claude", "why": "asm", "t": 1.0},   # two votes, still open (quorum is 3)
+                       "codex-1": {"model": "codex", "why": "asm", "t": 2.0}}}
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET meta=? WHERE id=?", (json.dumps(votes), head["id"]))
+    net.apply_remote_layout(slug, [{"name": "func_800007C4", "vram": orig["vram"], "size": orig_size}], [])
+    joined = net._function("func_800007C4", slug)
+    assert joined["size"] == orig_size                                   # the pieces were joined
+    assert "not_c" not in json.loads(joined["meta"] or "{}"), "the head's old votes survived the join"
+    fresh, _ = net.local_agent("claude-2")                               # one fresh verdict on the joined function
+    net.claim(fresh, slug, "func_800007C4")
+    net.release(fresh, "func_800007C4", "no C makes it: a hand-written asm stub", slug, not_c=True)
+    assert net._function("func_800007C4", slug)["status"] == "open", "one fresh vote wrongly set the head aside"

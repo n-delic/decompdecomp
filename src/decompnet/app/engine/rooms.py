@@ -234,6 +234,14 @@ class RoomMixin:
             head, tails = rows[0], rows[1:]
             if any(t["status"] == "matched" or t["matched_source"] for t in tails):
                 continue  # never fold a matched function away
+            if max(r["vram"] + (r["size"] or 0) for r in rows) > h["vram"] + h["size"]:
+                # The last piece runs past the host's end: join_saved_functions drops its lines past the end
+                # (truncating it), and the tail would then be deleted whole -- losing a function the host holds
+                # separately after this one (its head would end exactly at that function's address, so the split
+                # pass below finds no owner to recreate it). Leave the over-split as it is instead: the split pass
+                # recreates that following function from this un-folded tail, which still spans its address
+                # (#192 review: the over-long-tail data loss).
+                continue
             try:
                 joined = console.join_saved_functions([head, *tails], h["vram"], h["vram"] + h["size"],
                                                        lambda address, n: self.reader(proj)(address, n))
@@ -267,6 +275,15 @@ class RoomMixin:
             self._syms.pop(pid, None)
             self._xrefs.pop(pid, None)
             self.joined(head["name"], proj["slug"])  # reopen a set-aside head via the shared path (clears its verdict)
+            # A local "joined" note, as _apply_join writes on the host, so a later check-again (not_c_from_notes)
+            # discounts the pieces' older no-C notes -- moved onto the head above -- instead of setting the joined
+            # function aside. The host sends notes only on first/sync or a note event, never with a merge layout,
+            # so the guest must write its own (#192 review point 2).
+            decompdecomp = self.local_agent("decompdecomp")[0]
+            with self.store.tx() as db:
+                db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
+                           (pid, head["id"], decompdecomp.id, "The shared layout joined pieces into this function; "
+                            "it is one function now, whatever older notes say.", time.time()))
 
         for f in sorted(functions, key=lambda f: f["vram"]):
             at = by_vram.get(f["vram"], [])
