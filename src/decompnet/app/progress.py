@@ -1374,6 +1374,31 @@ class Progress:
         if force:
             self.local.began = None
 
+    @contextmanager
+    def _sync_lock(self, slug: str, force: bool):
+        """The project's lock for one check; yields False when a tool call's ordinary check need not wait for it.
+
+        An agent's claim waited almost five minutes behind the progress-commit job's sync, which held the lock while
+        parsing the save manifest on a busy machine: every tool call's first engine lookup makes an ordinary
+        (non-forced) check, and it queued for the lock even though such a check skips the folder anyway when one ran
+        under CHECK_SECONDS ago. While another thread holds the lock, that thread's check is the recent one. Forced
+        checks still wait: the judge's (judging) and the saves', whose verdicts depend on the folder being read, and
+        a recheck in progress still holds tool calls back until its inputs are ready."""
+        from ..request_timing import timed_lock
+        lock = self._project_lock(slug)
+        if (not force and slug not in self.rechecking
+                and (getattr(self.local, 'deferring', False) or getattr(self.local, 'foreground', False))):
+            if not lock.acquire(blocking=False):
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                lock.release()
+            return
+        with timed_lock(lock, 'progress_project_lock_wait'):
+            yield True
+
     def _sync_checked(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None,
                       asked: int | None = None) -> bool:
         """Read contributions first, then publish only work changed locally since the last synchronization.
@@ -1389,9 +1414,10 @@ class Progress:
             return False
         if logger is not None:getattr(logger, "check_cancel", lambda: None)()
         self._check_paused(slug)
-        from ..request_timing import span, timed_lock
-        with (span('progress_sync'),
-              timed_lock(self._project_lock(slug), 'progress_project_lock_wait')):
+        from ..request_timing import span
+        with span('progress_sync'), self._sync_lock(slug, force) as held:
+            if not held:
+                return False  # the check holding the lock reads the folder for this call too (_sync_lock)
             if asked is not None and self._checked_since.get(slug, -1) > asked and slug not in self.rechecking:
                 return False  # a full check that took the lock after this was asked has just finished
             while slug in self.rechecking:
