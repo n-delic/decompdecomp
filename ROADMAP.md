@@ -994,7 +994,8 @@ Left:
   reached with scripted input (`PORT_INPUT`). Why its 4-bit text needs its texture coordinates halved is still to
   be confirmed. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
-  with the keyboard (`PORT_LIVE`); then a native window and pads, audio, and the live view on Windows;
+  with the keyboard and its sound (`PORT_LIVE`); then saves (EEPROM, Controller Pak), a native window and pads, the
+  sound's effects filter, and the live view on Windows;
 - the judge to compare a switch's jump table too: it compares code, and the table is data, so a matched function
   can keep wrong case labels (19 of a racing game's 29 did; the port has overrides for them);
 - the overrides moved into the matched C behind `#ifdef PORT` through Fix C for the PC;

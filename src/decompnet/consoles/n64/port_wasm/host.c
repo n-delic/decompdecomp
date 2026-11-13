@@ -340,14 +340,18 @@ enum { EV_SP = 4, EV_SI = 5, EV_AI = 6, EV_VI = 7, EV_PI = 8, EV_DP = 9 };
 /* ---------------------------------------------------------------- the console's uncached addresses */
 
 #define IO_SCRATCH 0x000A0000u /* a word for reads the host answers and writes it drops (below the game's data) */
+int port_ai_register(uint32_t addr, int write, uint32_t value, uint32_t *read); /* audio.c */
 uint64_t port_io_load(uint64_t addr) {
     if (addr < 0xA0800000u) return addr - 0x20000000u; /* RAM, uncached: the same RAM */
     if (addr == SP_STATUS) { wbe32(IO_SCRATCH, 1); return IO_SCRATCH; } /* halted: a task finishes at once */
+    uint32_t v;
+    if (port_ai_register((uint32_t)addr, 0, 0, &v)) { wbe32(IO_SCRATCH, v); return IO_SCRATCH; }
     return addr;
 }
-uint64_t port_io_store(uint64_t addr) {
+uint64_t port_io_store(uint64_t addr, uint64_t value) {
     if (addr < 0xA0800000u) return addr - 0x20000000u;
     if (addr == SP_STATUS) return IO_SCRATCH + 4; /* a command (clear halt, set a signal): nothing to keep */
+    if (port_ai_register((uint32_t)addr, 1, (uint32_t)value, NULL)) return IO_SCRATCH + 4;
     return addr;
 }
 
@@ -394,14 +398,16 @@ u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u
 }
 u32 w2c_env_osVirtualToPhysical(struct w2c_env *e, u32 a) { (void)e; return a & 0x1FFFFFFF; }
 
-/* ---------------------------------------------------------------- RSP tasks (none run yet) */
+/* ---------------------------------------------------------------- RSP tasks: graphics (render.c) and audio (audio.c) */
 
 static unsigned long gfx_tasks, audio_tasks;
+void port_audio_task(uint32_t task); /* audio.c */
 void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     (void)e;
     uint32_t type = be32(task);
     if (type == 1) gfx_tasks++; else audio_tasks++;
     if (type == 1) port_render_task(task);
+    if (type == 2) port_audio_task(task);
     if (gfx_tasks + audio_tasks <= 4) LOG("RSP task type %u: data %08X, %X bytes", type, be32(task + 48), be32(task + 52));
     if (type == 1 && gfx_tasks == 2 && getenv("PORT_TASK")) {
         uint32_t ud = be32(task + 24) & 0x1FFFFFFF, uds = be32(task + 28), dl = be32(task + 48) & 0x1FFFFFFF;
@@ -543,7 +549,8 @@ u32 w2c_env_osPfsInitPak(struct w2c_env *e, u32 mq, u32 pfs, u32 ch) { (void)e; 
 
 /* ---------------------------------------------------------------- the rest of libultra and libc */
 
-u32 w2c_env_osAiSetFrequency(struct w2c_env *e, u32 f) { (void)e; return f; }
+void port_ai_frequency(uint32_t hz); /* audio.c */
+u32 w2c_env_osAiSetFrequency(struct w2c_env *e, u32 f) { (void)e; LOG("osAiSetFrequency(%u)", f); port_ai_frequency(f); return f; }
 void w2c_env_osInvalDCache(struct w2c_env *e, u32 a, u32 n) { (void)e; (void)a; (void)n; }
 void w2c_env_osInvalICache(struct w2c_env *e, u32 a, u32 n) { (void)e; (void)a; (void)n; }
 void w2c_env_osWritebackDCache(struct w2c_env *e, u32 a, u32 n) { (void)e; (void)a; (void)n; }

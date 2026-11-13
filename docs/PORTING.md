@@ -242,6 +242,10 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
 - message queues, cartridge DMA, the VI retrace, the controllers (`PORT_INPUT="300:START,306:-,540:A"`: the
   first controller's buttons and stick from a given frame on) and the serial bus the game may drive itself (the
   first controller, no Controller Pak, no EEPROM);
+- the sound (`audio.c`): libultra's audio tasks (the "ABI 1" command list: ADPCM, resampling, envelopes, mixing) run
+  in software, and each buffer the game gives the audio interface is played in the live view (its Sound button)
+  and, with `PORT_AUDIO=file.wav`, saved. The interface's registers answer in real time at the game's rate, so the
+  game paces its sound as on the console. Not yet: the effects filter (`A_POLEF`), and the resampler's exact taps;
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
   machine only, which shows each frame and sends the keyboard to the first controller (arrows steer, X is A, Z is
   B, Enter is Start). A key held wins over `PORT_INPUT`, so a script can bring the game to a race and leave it to

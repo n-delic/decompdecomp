@@ -2,7 +2,8 @@
  * that shows each frame as the game shows it and sends the keyboard to the first controller.
  *
  * Keys: arrows steer (the stick and the d-pad), X is A, Z (or C) is B, Enter is Start, Space is Z, Q and W are L and
- * R, I/J/K/L are the C buttons. No dependency: plain sockets and a page that draws the frames on a canvas. */
+ * R, I/J/K/L are the C buttons. The page's Sound button plays the game's sound (audio.c) as it's made. No dependency:
+ * plain sockets and a page that draws the frames on a canvas and plays the sound through Web Audio. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,7 @@ void port_live_start(void) {
 int port_live_active(void) { return 0; }
 void port_live_frame(const uint8_t *rgb, int w, int h) { (void)rgb; (void)w; (void)h; }
 int port_live_input(uint16_t *buttons, int8_t *x, int8_t *y) { (void)buttons; (void)x; (void)y; return 0; }
+void port_live_audio(const int16_t *lr, int frames, int hz) { (void)lr; (void)frames; (void)hz; }
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -29,6 +31,11 @@ static unsigned long frame_number;
 static uint16_t live_buttons;
 static int8_t live_x, live_y;
 static int active;
+/* the sound: the last few seconds of 16-bit stereo, numbered by frame, which the page fetches as it plays */
+#define RING (1 << 17)
+static int16_t ring[RING * 2];
+static unsigned long long ring_end; /* frames written so far */
+static uint32_t ring_hz = 22050;
 
 static const char page[] =
     "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
@@ -36,7 +43,7 @@ static const char page[] =
     "canvas{display:block;margin:12px auto;width:min(96vw,calc((100vh - 90px)*4/3));image-rendering:pixelated;"
     "background:#000}p{text-align:center;margin:4px}</style></head><body><canvas id=c width=320 height=240></canvas>"
     "<p>Arrows steer &middot; X: A &middot; Z: B &middot; Enter: Start &middot; Space: Z &middot; Q/W: L/R &middot; "
-    "I/J/K/L: C buttons</p><p id=s></p><script>\n"
+    "I/J/K/L: C buttons &middot; <button id=snd>Sound on</button></p><p id=s></p><script>\n"
     "const c=document.getElementById('c'),g=c.getContext('2d'),s=document.getElementById('s');let last=-1,shown=0,t0=performance.now();\n"
     "const keys={ArrowUp:0x0800,ArrowDown:0x0400,ArrowLeft:0x0200,ArrowRight:0x0100,KeyX:0x8000,KeyZ:0x4000,KeyC:0x4000,"
     "Enter:0x1000,Space:0x2000,KeyQ:0x0020,KeyW:0x0010,KeyI:0x0008,KeyK:0x0004,KeyJ:0x0002,KeyL:0x0001};\n"
@@ -52,6 +59,14 @@ static const char page[] =
     "for(let i=0,j=12;i<w*h;i++,j+=3){p[i*4]=b[j];p[i*4+1]=b[j+1];p[i*4+2]=b[j+2];p[i*4+3]=255;}g.putImageData(im,0,0);shown++;"
     "const now=performance.now();if(now-t0>1000){s.textContent=Math.round(shown*1000/(now-t0))+' frames a second';shown=0;t0=now;}}}"
     "catch(e){await new Promise(r=>setTimeout(r,500));}requestAnimationFrame(loop);}loop();\n"
+    "let ac=null,next=0,heard=-1;document.getElementById('snd').onclick=e=>{if(!ac){ac=new AudioContext();e.target.textContent='Sound playing';sound();}};\n"
+    "async function sound(){try{const r=await fetch('/audio?after='+heard);const b=await r.arrayBuffer();if(b.byteLength>16){"
+    "const d=new DataView(b),hz=d.getUint32(0,true),first=Number(d.getBigUint64(4,true)),n=(b.byteLength-16)>>2;"
+    "if(heard>=0&&first>heard){next=0;}heard=first+n;const buf=ac.createBuffer(2,n,hz),L=buf.getChannelData(0),R=buf.getChannelData(1);"
+    "for(let i=0;i<n;i++){L[i]=d.getInt16(16+i*4,true)/32768;R[i]=d.getInt16(18+i*4,true)/32768;}"
+    "const src=ac.createBufferSource();src.buffer=buf;src.connect(ac.destination);"
+    "if(next<ac.currentTime+0.02||next>ac.currentTime+0.5)next=ac.currentTime+0.08;src.start(next);next+=n/hz;}}"
+    "catch(e){}setTimeout(sound,40);}\n"
     "</script></body></html>";
 
 static void reply(int fd, const char *type, const void *body, size_t n) {
@@ -98,6 +113,23 @@ static void *serve(void *arg) {
             }
             reply(fd, "application/octet-stream", copy ? (const void *)copy : "", size);
             free(copy);
+        } else if (!strncmp(req, "GET /audio", 10)) { /* hz, the first frame's number, then the frames after `after` */
+            const char *a = strstr(req, "after=");
+            long long after = a ? atoll(a + 6) : -1;
+            pthread_mutex_lock(&live_lock);
+            unsigned long long end = ring_end, start = end > RING / 2 ? end - RING / 2 : 0;
+            if (after < 0) start = end > (unsigned long long)ring_hz / 10 ? end - ring_hz / 10 : 0; /* begin near now */
+            else if ((unsigned long long)after > start) start = (unsigned long long)after;
+            if (start > end) start = end;
+            size_t n = (size_t)(end - start), size = 16 + n * 4;
+            uint8_t *out = malloc(size);
+            memcpy(out, &ring_hz, 4);
+            memcpy(out + 4, &start, 8);
+            memset(out + 12, 0, 4);
+            for (size_t i = 0; i < n; i++) memcpy(out + 16 + i * 4, &ring[((start + i) % RING) * 2], 4);
+            pthread_mutex_unlock(&live_lock);
+            reply(fd, "application/octet-stream", out, size);
+            free(out);
         } else if (!strncmp(req, "POST /input", 11)) {
             const char *b = strstr(req, "b="), *x = strstr(req, "x="), *y = strstr(req, "y=");
             pthread_mutex_lock(&live_lock);
@@ -154,5 +186,18 @@ int port_live_input(uint16_t *buttons, int8_t *x, int8_t *y) {
     *buttons = live_buttons; *x = live_x; *y = live_y;
     pthread_mutex_unlock(&live_lock);
     return 1;
+}
+#endif
+
+#ifndef _WIN32
+void port_live_audio(const int16_t *lr, int frames, int hz) {
+    if (!active) return;
+    pthread_mutex_lock(&live_lock);
+    ring_hz = (uint32_t)hz;
+    for (int i = 0; i < frames; i++, ring_end++) {
+        ring[(ring_end % RING) * 2] = lr[i * 2];
+        ring[(ring_end % RING) * 2 + 1] = lr[i * 2 + 1];
+    }
+    pthread_mutex_unlock(&live_lock);
 }
 #endif

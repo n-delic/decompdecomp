@@ -79,6 +79,7 @@ def test_the_n64_kit_has_the_hosts_part():
     kit = get("n64").port_kit
     assert (kit.wasm / "host.c").is_file() and (kit.wasm / "libultra.sigs").is_file()
     assert "127.0.0.1" in (kit.wasm / "live.c").read_text() or "INADDR_LOOPBACK" in (kit.wasm / "live.c").read_text()
+    assert "port_audio_task" in (kit.wasm / "audio.c").read_text()
     for row in (kit.wasm / "libultra.sigs").read_text().splitlines():
         assert len(row.split("\t")) == 3, row
 
