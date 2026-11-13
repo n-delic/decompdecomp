@@ -241,7 +241,8 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
 - the game's threads, one at a time by priority, preempted at calls when a woken thread outranks the one running;
 - message queues, cartridge DMA, the VI retrace, the controllers (`PORT_INPUT="300:START,306:-,540:A"`: the
   first controller's buttons and stick from a given frame on) and the serial bus the game may drive itself (the
-  first controller, no Controller Pak, no EEPROM);
+  first controller, no Controller Pak, and a 4 Kbit save EEPROM kept in a file: `PORT_SAVE=path`, else `game.eep`
+  in the folder the game runs from, written as the game saves);
 - the sound (`audio.c`): libultra's audio tasks (the "ABI 1" command list: ADPCM, resampling, envelopes, mixing) run
   in software, and each buffer the game gives the audio interface is played in the live view (its Sound button)
   and, with `PORT_AUDIO=file.wav`, saved. The interface's registers answer in real time at the game's rate, so the

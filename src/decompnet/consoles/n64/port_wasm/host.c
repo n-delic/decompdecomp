@@ -503,10 +503,29 @@ void w2c_env_osContGetReadData(struct w2c_env *e, u32 pad) {
         M[pad + 6 * i + 4] = i == 0 ? 0 : 8;
     }
 }
+/* The cartridge's save EEPROM: 4 Kbit, 64 blocks of 8 bytes, kept in a file (PORT_SAVE=path, else game.eep in the
+   folder the game runs from), written through as the game writes, so its saves outlive the program. */
+static uint8_t eeprom[512];
+static const char *eeprom_path(void) { return getenv("PORT_SAVE") ? getenv("PORT_SAVE") : "game.eep"; }
+static void eeprom_load(void) {
+    static int loaded;
+    if (loaded) return;
+    loaded = 1;
+    memset(eeprom, 0xFF, sizeof eeprom); /* a blank chip */
+    FILE *f = fopen(eeprom_path(), "rb");
+    if (f) { if (fread(eeprom, 1, sizeof eeprom, f) != sizeof eeprom) LOG("%s: shorter than an EEPROM", eeprom_path()); fclose(f); }
+}
+static void eeprom_write(int block, const uint8_t *data) {
+    memcpy(eeprom + block * 8, data, 8);
+    FILE *f = fopen(eeprom_path(), "wb");
+    if (f) { fwrite(eeprom, 1, sizeof eeprom, f); fclose(f); }
+    else LOG("can't write the save to %s", eeprom_path());
+}
+
 /* The serial bus as the game drives it itself (its own __osSiRawStartDma: Controller Pak and EEPROM access): the
-   64 bytes of PIF RAM, answered as the PIF would: the first controller, with no Controller Pak in it, and nothing on
-   the other channels (no EEPROM, as osEepromProbe says). Each transfer raises the SI event the game waits for: a
-   racing game's save after its car selection waited for it for ever. */
+   64 bytes of PIF RAM, answered as the PIF would: the first controller, with no Controller Pak in it, the EEPROM on
+   channel 4, and nothing else. Each transfer raises the SI event the game waits for: a racing game's save after its
+   car selection waited for it for ever, and without the EEPROM it said its battery backup was damaged. */
 static uint8_t pif[64];
 static void pif_run(void) {
     int ch = 0;
@@ -522,7 +541,10 @@ static void pif_run(void) {
         else if (ch == 0 && cmd == 0x01 && rx >= 4) {
             scripted_input();
             out[0] = (uint8_t)(buttons >> 8); out[1] = (uint8_t)buttons; out[2] = (uint8_t)stick_x; out[3] = (uint8_t)stick_y;
-        } else pif[i + 1] |= 0x80; /* no device answers: no Controller Pak, no EEPROM, no other controller */
+        } else if (ch == 4 && (cmd == 0x00 || cmd == 0xFF) && rx >= 3) { out[0] = 0x00; out[1] = 0x80; out[2] = 0x00; }
+        else if (ch == 4 && cmd == 0x04 && tx >= 2 && rx >= 8) { eeprom_load(); memcpy(out, eeprom + (pif[i + 3] & 63) * 8, 8); }
+        else if (ch == 4 && cmd == 0x05 && tx >= 10) { eeprom_load(); eeprom_write(pif[i + 3] & 63, pif + i + 4); if (rx) out[0] = 0; }
+        else pif[i + 1] |= 0x80; /* no device answers: no Controller Pak, no other controller */
         i += 2 + tx + rx;
         ch++;
     }
@@ -541,7 +563,7 @@ void w2c_env_osContGetQuery(struct w2c_env *e, u32 status) {
     for (int i = 0; i < 4; i++) { wbe16(status + 4 * i, i == 0 ? 5 : 0); M[status + 4 * i + 2] = 0; M[status + 4 * i + 3] = i == 0 ? 0 : 8; }
     return;
 }
-u32 w2c_env_osEepromProbe(struct w2c_env *e, u32 mq) { (void)e; (void)mq; return 0; }
+u32 w2c_env_osEepromProbe(struct w2c_env *e, u32 mq) { (void)e; (void)mq; return 1; } /* EEPROM_TYPE_4K */
 u32 w2c_env_osMotorInit(struct w2c_env *e, u32 mq, u32 pfs, u32 ch) { (void)e; (void)mq; (void)pfs; (void)ch; return 1; }
 u32 w2c_env_0x5F_osMotorAccess(struct w2c_env *e, u32 pfs, u32 on) { (void)e; (void)pfs; (void)on; return 1; }
 u32 w2c_env_osPfsIsPlug(struct w2c_env *e, u32 mq, u32 pattern) { (void)e; (void)mq; M[pattern] = 0; return 0; }
