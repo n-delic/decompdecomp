@@ -130,6 +130,22 @@ def segments_from_config_data(cfg: dict) -> list[Segment]:
     return out
 
 
+def load_images(cfg: dict) -> list[tuple[int, int, int]]:
+    """(rom_start, vram, vram_end) of each loaded image a splat config describes: a code segment whose BSS has an
+    address loads everything from its start to its BSS at one offset, its data included. The judge reads a
+    candidate's own data (jump tables, strings, constants) from these when no code segment holds the address: the
+    code segments alone stop where the code does, and a matched function's wrong jump table went unchecked."""
+    out = []
+    for seg in cfg.get("segments", []):
+        if not isinstance(seg, dict) or seg.get("type") != "code" or "vram" not in seg or "start" not in seg:
+            continue
+        bss = [sub["vram"] for sub in seg.get("subsegments", []) if isinstance(sub, dict) and sub.get("type") == "bss"
+               and isinstance(sub.get("vram"), int)]
+        if bss and bss[0] > seg["vram"]:
+            out.append((int(seg["start"]), int(seg["vram"]), int(bss[0])))
+    return out
+
+
 def code_ranges(path: Path) -> list[tuple[int, int, int]]:
     """(rom_start, rom_end, vram) of what splat's config disassembles as code: the code subsegments, not the data
     after them (create_config can file a whole segment's tail as data: GoldenEye's game code is in there)."""

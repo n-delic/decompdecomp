@@ -232,12 +232,18 @@ class Core(Network):
             extra = overlay_reader(Path(proj["root"]), self.cfg(proj)["rom"]["sha1"], owner.name)
         ordered = ([owner] + [s for s in segs if s is not owner]) if owner else segs
 
+        images = _load_images(self, proj)
+
         def read(addr: int, n: int) -> bytes | None:
             if extra is not None and (data := extra(addr, n)) is not None:
                 return data
             for seg in ordered:
                 if seg.contains(addr, n):
                     at = seg.rom_start + addr - seg.vram
+                    return rom[at:at + n]
+            for start, vram, end in images:  # data after the code, in the same loaded image
+                if vram <= addr and addr + n <= end and start + addr - vram + n <= len(rom):
+                    at = start + addr - vram
                     return rom[at:at + n]
             return None
         return read
@@ -402,3 +408,23 @@ class Core(Network):
         # Archive before deleting any records or files. An archive failure keeps the project intact.
         self.match_library.archive_project(self.project_row(slug))
         return super().remove_project(slug)
+
+
+def _load_images(net, proj) -> list[tuple[int, int, int]]:
+    """The ROM project's loaded images (split.load_images), from its splat config."""
+    cache = net.__dict__.setdefault("_images", {})
+    rom_entry = id(net._rom(proj))  # rebuilt with the ROM's segments (a reimport drops both)
+    key = proj["root"]  # (a project's folder: every row the reader is given has one)
+    if cache.get(key, (None,))[0] != rom_entry:
+        import yaml
+        images = []
+        for config in sorted(Path(proj["root"]).glob("*.yaml")):
+            try:
+                data = yaml.safe_load(config.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError):
+                continue
+            if isinstance(data, dict) and isinstance(data.get("segments"), list):
+                images = split.load_images(data)
+                break
+        cache[key] = (rom_entry, images)
+    return cache[key][1]

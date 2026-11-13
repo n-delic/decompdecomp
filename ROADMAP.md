@@ -1004,8 +1004,8 @@ Left:
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
   saves other games use, the
   resampler's exact taps, and a run of the host and its live view on Windows (they compile for it, untried);
-- the judge to compare a switch's jump table too: it compares code, and the table is data, so a matched function
-  can keep wrong case labels (19 of a racing game's 29 did; the port has overrides for them);
+- the 19 switches with wrong case labels corrected in the racing game's decomp (the judge now catches them: Check
+  again unmatches them, and the port's overrides are the corrected C), then their overrides go;
 - the overrides moved into the matched C behind `#ifdef PORT` through Fix C for the PC;
 - the console's other connector parts for PS1 and the rest: "—" until a host exists.
 
