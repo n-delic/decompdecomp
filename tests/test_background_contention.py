@@ -254,3 +254,33 @@ def test_manual_header_cleanup_starts_during_background_maintenance(monkeypatch)
         jid=header_cleanup.start(None,jobs,'headers')
         assert entered.wait(2)
     assert 'Waiting for the background maintenance lane' not in jobs.jobs[jid]['log']
+
+
+def test_claim_order_does_not_wait_for_another_games_pass(monkeypatch):
+    """Agents starting on one game waited (up to ORDER_WAIT, "Waiting for function ordering") while another game's
+    reuse pass held the shared maintenance lane: the claim order is stored before queuing for it."""
+    from types import SimpleNamespace
+
+    from decompnet.app.twins import Twins
+    twin=Twins.__new__(Twins)
+    twin._lock=threading.RLock();twin.jobs={}
+    ordered=[]
+    twin.net=SimpleNamespace(links={},recheck=lambda *a,**k:None)
+    monkeypatch.setattr(twin,'_checked',lambda slug:True)
+    monkeypatch.setattr(twin,'set_aside_asm',lambda proj:ordered.append(proj) or 0)
+    monkeypatch.setattr(twin,'update_boosts',lambda proj,pending=False:0)
+    twin.net.project_row=lambda slug:{'slug':slug}
+    passed=[]
+    monkeypatch.setattr(twin,'_execute_full_pass',lambda slug,job:passed.append(slug))
+    holding=threading.Event();release=threading.Event()
+    def other_game():
+        with maintenance.slot():
+            holding.set();release.wait(5)
+    other=threading.Thread(target=other_game);other.start()
+    try:
+        assert holding.wait(2)
+        job=twin.refresh('game')
+        assert job.ordered.wait(2) and ordered==[{'slug':'game'}]
+        assert not passed  # the rest of the pass still waits its turn
+    finally:
+        release.set();other.join(2)

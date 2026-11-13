@@ -565,6 +565,16 @@ class Twins:
             from . import maintenance, workers
             workers.lower_priority()
             try:
+                # Starting agents wait for the claim order (job.ordered). It takes seconds and touches only this
+                # project, so it doesn't queue for the shared maintenance lane, where another game's reuse pass
+                # kept it (and the agents) waiting up to ORDER_WAIT. After an update the recheck below comes first:
+                # the console's work there can change the functions (a DS game's pieces joined).
+                if self._checked(slug):
+                    try:
+                        self.order(slug, job)
+                    except Exception as e:  # the full pass tries again
+                        log.info("twins: ordering %s: %s", slug, e)
+                    job.progress = {"phase": "Waiting for background CPU"}
                 with maintenance.foreground(job.foreground), maintenance.slot(job.stop) as ready:
                     if not ready:
                         job.state = "done"
@@ -607,14 +617,29 @@ class Twins:
                 return job
             return self._execute_full_pass(slug, job)
 
+    def _checked(self, slug: str) -> bool:
+        """This version of decompdecomp has rechecked the project already (Network.recheck, only_if_updated)."""
+        from .. import __version__
+        return self.net.cfg(self.net.project_row(slug)).get("checked") == __version__
+
+    def order(self, slug: str, job: Job) -> None:
+        """Hand-written assembly set aside and the claim order stored (functions.boost), then job.ordered: what
+        starting agents wait for. Once per job."""
+        if job.ordered.is_set():
+            return
+        from .cross_game_progress import report
+        report(job, 'Putting functions in order')
+        proj = self.net.project_row(slug)
+        job.asm += self.set_aside_asm(proj)
+        self.update_boosts(proj, pending=True)
+        job.ordered.set()
+
     def _execute_full_pass(self, slug, job):
         from .cross_game_progress import report
         try:
+            self.order(slug, job)
             report(job, 'Preparing reusable-code search')
             proj = self.net.project_row(slug)
-            job.asm += self.set_aside_asm(proj)
-            self.update_boosts(proj, pending=True)
-            job.ordered.set()
             self.run(slug, job)
             job.state = "running"  # run() finishes its local pass; cross-project work is still cancellable
             from . import regional  # another release of this game first: its pairs are the surest donors
