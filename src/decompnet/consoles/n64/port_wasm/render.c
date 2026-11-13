@@ -463,6 +463,13 @@ static void f3dex2(uint8_t op, uint32_t w0, uint32_t w1) {
     switch (op) {
     case 0x01: { int n = (w0 >> 12) & 0xFF, end = (w0 >> 1) & 0x7F; load_vertices(phys(w1), n, end - n); break; }
     case 0x05: triangle(((w0 >> 16) & 0xFF) / 2, ((w0 >> 8) & 0xFF) / 2, (w0 & 0xFF) / 2); break;
+    case 0x02: { /* G_MODIFYVTX: one attribute of a loaded vertex. A racing game sets every road polygon's colours and
+                    texture coordinates this way: without it its roads were drawn with one texel each */
+        int where = (w0 >> 16) & 0xFF, n = (int)(w0 & 0xFFFF) / 2;
+        if (n < 0 || n >= 64) break;
+        if (where == 0x10) vtx[n].shade = unpack8888(w1);
+        else if (where == 0x14) { vtx[n].s = (int16_t)(w1 >> 16) / 32.0f; vtx[n].t = (int16_t)w1 / 32.0f; }
+        break; }
     case 0x06: case 0x07:
         triangle(((w0 >> 16) & 0xFF) / 2, ((w0 >> 8) & 0xFF) / 2, (w0 & 0xFF) / 2);
         triangle(((w1 >> 16) & 0xFF) / 2, ((w1 >> 8) & 0xFF) / 2, (w1 & 0xFF) / 2); break;

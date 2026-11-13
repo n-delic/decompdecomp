@@ -192,3 +192,15 @@ def test_a_struct_passed_by_value_keeps_every_word_the_caller_passed():
     from decompnet.port.wasm.adapt import word_thunk
     out = word_thunk("t", "load", "void", ["ptr"], {0: 8}, "void", [("ptr", "%b")], [16])
     assert "alloca [4 x i32]" in out and out.count("store i32") == 4
+
+
+def test_an_unsigned_byte_argument_widens_without_its_sign():
+    """A road polygon's texture coordinates were u8 in the caller and s32 in the callee. Widened with their sign,
+    255 became -1 and every road quad sampled one texel: the road came out as a checkerboard."""
+    from decompnet.port.wasm.adapt import adapt
+    from decompnet.port.wasm.beir import Types
+    ir = ("declare void @set_uv(ptr, i32)\n"
+          "define void @caller(ptr %p, i8 %s) {\n  call void @set_uv(ptr noundef %p, i8 noundef zeroext %s)\n"
+          "  ret void\n}\n")
+    out = adapt(ir, [], Types(ir), {})
+    assert "zext i8" in out and "sext i8" not in out

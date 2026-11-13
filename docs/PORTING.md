@@ -248,7 +248,7 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   the player. With `PORT_LIVE` the game runs until it's stopped. Not on Windows yet;
 - the RSP and RDP in software (`render.c`): each graphics task's display list is drawn into the game's own frame
   buffer, F3DEX2 or S2DEX by the microcode the task loads, and `PORT_FRAMES=folder` saves the frames shown as PNG.
-  2D screens draw correctly; the 3D path draws a racing game's races, with textures still to check.
+  2D screens draw correctly; the 3D path draws a racing game's races, textured.
 
 On macOS the host is built by the system's clang, because Zig 0.14.1 can't link against macOS 27's system library.
 

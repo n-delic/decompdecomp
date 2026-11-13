@@ -81,8 +81,9 @@ def zero(t):
     return {"f32": "0.0", "f64": "0.0"}.get(c, "null" if t == "ptr" else "0")
 
 
-def convert(lines, n, value, src, dst):
-    """Instructions (appended to `lines`) turning `value` of type src into dst; the name of the result."""
+def convert(lines, n, value, src, dst, unsigned=False):
+    """Instructions (appended to `lines`) turning `value` of type src into dst; the name of the result. A narrower
+    integer widens as its C type says: `unsigned` (the call's `zeroext`) zero-extends, as MIPS passes a u8 or u16."""
     if src == dst:
         return value
     tmp = f"%c{n}"
@@ -90,14 +91,14 @@ def convert(lines, n, value, src, dst):
     s_int, d_int = ints.match(src), ints.match(dst)
     if src == "ptr" and d_int:
         lines.append(f"  {tmp}a = ptrtoint ptr {value} to i32")
-        return convert(lines, n + 100, f"{tmp}a", "i32", dst)
+        return convert(lines, n + 100, f"{tmp}a", "i32", dst, unsigned)
     if dst == "ptr" and s_int:
-        v = convert(lines, n + 100, value, src, "i32")
+        v = convert(lines, n + 100, value, src, "i32", unsigned)
         lines.append(f"  {tmp} = inttoptr i32 {v} to ptr")
         return tmp
     if s_int and d_int:
         a, b = int(s_int.group(1)), int(d_int.group(1))
-        op = "trunc" if a > b else ("zext" if a == 1 else "sext")
+        op = "trunc" if a > b else ("zext" if a == 1 or unsigned else "sext")
         lines.append(f"  {tmp} = {op} {src} {value} to {dst}")
         return tmp
     if src in ("float", "double") and dst in ("float", "double"):
@@ -278,7 +279,7 @@ def adapt(text, report=None, types=None, byval=None):
                 if t == "ptr" or re.fullmatch(r"i(8|16|32)", t):
                     INDIRECT[0] += 1
                     pre = []
-                    w = convert(pre, 10_000_000 + INDIRECT[0] * 1000, v, t, "i32")
+                    w = convert(pre, 10_000_000 + INDIRECT[0] * 1000, v, t, "i32", "zeroext" in a)
                     out_lines.extend(pre)
                     out_lines.append(f"  store i32 {w}, ptr {reg(i)}, align 4")
         cm = re.search(r"\bcall ([^@]*?)@([\w.$]+)\(", line)
@@ -341,20 +342,21 @@ def adapt(text, report=None, types=None, byval=None):
             REPORT.append(f"{CALLER[0]} calls {name} with {len(args)} of its {len(params)} arguments: "
                           f"the next {len(missing)} come from {CALLER[0]}'s own")
         args_full = args + [(t, v) for t, v in missing]
-        key = (name, cret, tuple(t for t, _ in args_full))
+        unsigned = tuple("zeroext" in a for a in raw_args) + (False,) * len(missing)
+        key = (name, cret, tuple(t for t, _ in args_full), unsigned)
         if key not in thunks:
             thunks[key] = f"{name}.port_thunk_{len(thunks)}"
             body = []
             values = []
             for i, p in enumerate(params):
                 if i < len(args_full):
-                    values.append(f"{p} " + convert(body, i, f"%a{i}", args_full[i][0], p))
+                    values.append(f"{p} " + convert(body, i, f"%a{i}", args_full[i][0], p, unsigned[i]))
                 else:
                     values.append(f"{p} {zero(p)}")
             extra = [f"{t} %a{i}" for i, (t, _) in enumerate(args) if i >= len(params)] if variadic else []
             if not variadic:  # arguments the callee doesn't declare stay in their registers for it to pass on
                 for i in range(len(params), min(len(args_full), 4)):
-                    body.append(f"  store i32 {convert(body, 600 + i, f'%a{i}', args_full[i][0], 'i32')}, ptr {reg(i)}, align 4")
+                    body.append(f"  store i32 {convert(body, 600 + i, f'%a{i}', args_full[i][0], 'i32', unsigned[i])}, ptr {reg(i)}, align 4")
             ftype = f"{ret} ({', '.join(params + (['...'] if variadic else []))})"
             callee = f"{ftype} @{name}" if variadic else f"{ret} @{name}"
             if ret == "void":
