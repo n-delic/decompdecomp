@@ -347,7 +347,10 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     functions.sort(key=lambda f: f["vram"])
 
     objects, private, as_fallback = [], [], []
-    for f in functions:
+    for index, f in enumerate(functions):
+        if hasattr(log, 'check_cancel'):log.check_cancel()
+        if hasattr(log, 'progress'):
+            log.progress({'phase': 'Checking exported functions', 'done': index, 'total': len(functions), 'function': f['name']})
         row = rows.get(f["vram"])
         f["obj_asm"] = f"build/{Path(f['asm']).with_suffix('.o').as_posix()}"
         if row is None or row["status"] != "matched" or not row["matched_source"]:
@@ -392,6 +395,9 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         f["src"] = src.relative_to(out).as_posix()
         f["obj"] = f"build/src/{f['seg']}/{f['name']}.o"
         private += [(f["obj"], section, base) for section, base in bases.items()]
+
+    if hasattr(log, 'progress'):
+        log.progress({'phase': 'Writing data and layout', 'done': len(functions), 'total': len(functions)})
 
     # 3. everything else splat wrote: entry code, data, bss, binary blobs
     config = yaml.safe_load((out / "splat.yaml").read_text(encoding="utf-8"))
@@ -561,6 +567,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
 
     # 6. prove it
     log("building the exported project to check it rebuilds the game byte for byte")
+    if hasattr(log, 'progress'):log.progress({'phase': 'Rebuilding exported image'})
     from .export_process import run as verify_build
     proc = verify_build([console_python(), "build.py"], out, log)
     identical = proc.returncode == 0 and "identical" in proc.stdout

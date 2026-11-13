@@ -32,7 +32,13 @@ def _export_game(net, slug, out, log=print):
             raise NetworkError('PROJECT-mode variant export needs an object-build adapter; export that target separately.')
         folder = out / 'variants' / target['variant']
         sources = variants.shared_sources(net, target['project'])
-        result = export_rom(net, target['project'], folder, net.console(proj), log, sources=sources)
+        def variant_log(line):log(line)
+        def progress(value, variant=target['variant'], completed=index):
+            log.progress(dict(value, variant=variant, variants_done=completed, variants_total=len(targets),
+                              phase=f"{variant}: {value.get('phase', 'Exporting')}"))
+        if hasattr(log, 'progress'):variant_log.progress = progress
+        if hasattr(log, 'check_cancel'):variant_log.check_cancel = log.check_cancel
+        result = export_rom(net, target['project'], folder, net.console(proj), variant_log, sources=sources)
         # Conditional implementations share their actual body; defines remain in target wrappers.
         # Substantial overrides stay local, while unrelated identical C may also share a body.
         import hashlib
@@ -76,6 +82,7 @@ def _export_game(net, slug, out, log=print):
     # Rebuild the final wrapper structure, not only the intermediate exports.
     from ..hostenv import console_python
     from .export_process import run as verify_build
+    if hasattr(log, 'progress'):log.progress({'phase': 'Verifying final repository', 'variants_total': len(targets)})
     proc = verify_build([console_python(), 'build.py', '--all-variants'], out, log,
                         timeout=max(3600, 3600 * len(targets)))
     identical = proc.returncode == 0 and all(r['identical'] for r in results)

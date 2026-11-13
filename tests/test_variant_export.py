@@ -31,7 +31,20 @@ def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tm
     logical = variants.bind(net, slug, 'clamp', instances)
     source = csource.get((GAME / 'game.c').read_text(), 'clamp_s32')
     variants.publish(net, slug, logical, '#if REGION == 1\n' + source + '\n#else\n' + source + '\n#endif')
-    result = net.export_rom(slug, log=lambda *_: None)
+    class Log:
+        def __init__(self):self.progress_events = []
+        def __call__(self, _):pass
+        def progress(self, value):self.progress_events.append(dict(value))
+    log = Log()
+    result = net.export_rom(slug, log=log)
+    checks = [event for event in log.progress_events if event['phase'].endswith('Checking exported functions')]
+    assert {event['variant'] for event in checks} == {'pal','us'}
+    for variant in ('pal','us'):
+        events = [event for event in checks if event['variant'] == variant]
+        assert [event['done'] for event in events] == list(range(events[0]['total']))
+        assert all(event['variants_total'] == 2 for event in events)
+    rebuilds = [event for event in log.progress_events if event['phase'].endswith('Rebuilding exported image')]
+    assert len(rebuilds) == 2 and all('total' not in event for event in rebuilds)
     assert result['identical'], result['log']
     root = Path(result['path'])
     assert len(result['variants']) == 2
