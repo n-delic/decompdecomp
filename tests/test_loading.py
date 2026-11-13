@@ -7,8 +7,11 @@ import sqlite3
 import threading
 import time
 
+import pytest
+
 from decompnet.app.engine import RomNetwork
 from decompnet.app.engine import core as engine_core
+from decompnet.network import Network, NetworkError
 from decompnet.store import WAL_SIZE_LIMIT_BYTES, Store
 
 GCC = {"toolchain": "ee-gcc-2.95.3", "flags": ["-O2", "-G8"]}
@@ -267,7 +270,38 @@ def test_the_counts_marks_follow_meta_and_come_to_an_older_database_once(tmp_pat
     assert marks(store) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
     # a database from before the marks: its functions get theirs when it opens
     store.conn.executescript("DROP TRIGGER functions_marks_insert; DROP TRIGGER functions_marks_update; "
-                             "DROP INDEX idx_functions_tally; ALTER TABLE functions DROP COLUMN aside_mark; "
+                             "DROP INDEX idx_functions_tally; DROP INDEX idx_functions_map; "
+                             "ALTER TABLE functions DROP COLUMN aside_mark; "
                              "ALTER TABLE functions DROP COLUMN gone_mark")
     store.conn.close()
     assert marks(Store(tmp_path / "app.db")) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
+
+
+def test_project_sync_is_keyword_only_and_rejects_unknown_arguments(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    tiny_game(net)
+    calls = []
+    monkeypatch.setattr(net, "project_missing", lambda row: None)
+    monkeypatch.setattr(net.progress, "sync", lambda slug: calls.append(slug))
+    assert net._project("game", sync=False)["slug"] == "game"
+    assert calls == []
+    assert net._project("game")["slug"] == "game"
+    assert calls == ["game"]
+    with pytest.raises(TypeError, match="sync_flase"):
+        net._project("game", sync_flase=False)
+    with pytest.raises(TypeError):
+        net._project("game", False)
+    with pytest.raises(TypeError, match="sync_flase"):
+        Network._project(net, "game", sync_flase=False)
+
+
+@pytest.mark.parametrize("method", ["summary", "map_signature", "function_map"])
+def test_fast_project_reads_keep_known_progress_errors_without_syncing(tmp_path, monkeypatch, method):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    tiny_game(net)
+    monkeypatch.setattr(net.progress, "sync", lambda slug: pytest.fail("a cheap read ran filesystem sync"))
+    assert getattr(net, method)("game")
+    net.progress.errors["game"] = "Could not read or write progress. Check the folder's permissions."
+    net.progress.failed["game"] = ((), 0)
+    with pytest.raises(NetworkError, match="Could not read or write progress"):
+        getattr(net, method)("game")

@@ -1029,6 +1029,8 @@ def test_the_map_brings_polished_and_set_aside_and_changes_when_a_function_is_po
     assert {"polished", "not_c"} <= set(after["keys"]) and "same" not in after
     rows = {r[after["keys"].index("name")]: dict(zip(after["keys"], r)) for r in after["rows"]}
     assert rows["func_0"]["polished"] and not rows["func_1"]["polished"]
+    same = client.get(f"/api/map?slug=game&since={after['sig']}").json()
+    assert same.get("same") is True and same.get("sig") == after["sig"]
 
 
 def test_rom_library_setting_and_background_lookup(app, tmp_path, monkeypatch):

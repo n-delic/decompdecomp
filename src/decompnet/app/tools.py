@@ -468,9 +468,14 @@ def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str
 ALWAYS_LOAD = agents.TOOL_META
 
 
+HEAVY_TOOLS = frozenset({"compile_and_diff", "search_code", "search_flags", "try_compiler",
+                         "edit_file", "split_file", "join_functions"})
+
+
 def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]]) -> MCPServer:
     """MCP server for CLI agents. `agent_of` maps a request to (agent, project slug)."""
     mcp = MCPServer(name="decomp", title="decompdecomp", instructions=INSTRUCTIONS, version=__version__)
+    heavy_limiter = anyio.CapacityLimiter(16)
 
     async def run(ctx: Context, name: str, **args) -> str:
         try:
@@ -478,7 +483,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         except NetworkError as e:
             raise ToolError(str(e)) from None
         try:
-            return await anyio.to_thread.run_sync(lambda: _invoke(net, agent, slug, name, args))
+            limiter = heavy_limiter if name in HEAVY_TOOLS else None
+            return await anyio.to_thread.run_sync(lambda: _invoke(net, agent, slug, name, args), limiter=limiter)
         except NetworkError as e:
             raise ToolError(str(e)) from None
 

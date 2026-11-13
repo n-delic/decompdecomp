@@ -266,6 +266,9 @@ class Store:
         # the room looks a function up by its address for every match, best attempt and note the host sends: without
         # this each lookup read every function's assembly and sources (89 ms for 18,800 functions; now 0.02)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_vram ON functions(project_id, vram)")
+        # every function of the project for the map and list (app/engine/gui.py: function_map): without this, sorting
+        # by address, unit and id required a temporary B-tree on every map query (13,800 functions: 130 ms -> 90 ms)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_map ON functions(project_id, gone_mark, vram, unit, id)")
         # a note the host sends is saved only when this function doesn't have it already: that look-up read every
         # note saved so far (3 ms each at 7,000 notes, so 60,000 incoming notes took over three minutes; now 0.01)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_lookup ON notes(project_id, function_id)")

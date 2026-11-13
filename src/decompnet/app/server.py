@@ -158,8 +158,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         except ValueError:
             return {}
 
+    gui_limiter = anyio.CapacityLimiter(50)
+
     async def call(fn, *args):
-        return await anyio.to_thread.run_sync(fn, *args)
+        return await anyio.to_thread.run_sync(fn, *args, limiter=gui_limiter)
 
     def fail(e: Exception, code: int = 400) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=code)

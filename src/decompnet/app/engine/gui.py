@@ -117,7 +117,7 @@ class GuiMixin:
         """A project for the project list (the sidebar asks every 5 s, for every project): what it is and how far it
         got, from the database alone. It used to be each project's whole overview, a fork's files included, and with
         agents at work the list took 2.5-3.7 s."""
-        proj = self._project(slug)
+        proj = self._project(slug, sync=False)
         cfg = self.cfg(proj)
         agg = self.store.one(f"SELECT {PROGRESS_COLUMNS} FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
         console = self.console(proj)
@@ -152,7 +152,7 @@ class GuiMixin:
     def function_map(self, slug: str) -> list[dict]:
         """Every function of the project for the map and the list; not one gone from the build (network.IN_BUILD: a
         piece joined to its function, kept for its attempts and notes), which the totals leave out too."""
-        proj = self._project(slug)
+        proj = self._project(slug, sync=False)
         rows = self.store.all(
             "SELECT f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
             "f.last_checked, f.last_improved, "
@@ -207,7 +207,7 @@ class GuiMixin:
         without fetching tens of thousands of functions (renames and splits come with events, which refetch anyway).
         Not the claims or how many attempts: the live poll brings both every second and the GUI applies them; with them
         here, agents at work changed it every few seconds and a big game's whole map (3 MB) came again each time."""
-        proj = self._project(slug)
+        proj = self._project(slug, sync=False)
         f = self.store.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS hi, "
                            "COALESCE(SUM(status='matched'), 0) AS m, COALESCE(SUM(best_score), 0) AS bs, "
                            "COALESCE(MAX(matched_at), 0) AS ma, COALESCE(SUM(readable), 0) AS rd, "
