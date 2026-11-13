@@ -51,7 +51,7 @@ TOO_LONG_STATUSES = (400, 413, 422, 500)  # what servers answer a request too lo
 TOO_LONG_READ = 2000  # characters of that answer read for why
 API_RETRIES, API_RETRY_WAIT = 3, 10  # a dropped request or a gateway's 5xx, asked again after 10, 20, 40 seconds
 # a function is done with when the helper compiled it to a match or released it: its work then folds into a line
-FINISHING = ("compile_and_diff", "release_function")
+FINISHING = ("compile_and_diff", "compile_patch", "try_recipes", "release_function")
 FOLDED = 2  # messages a fold leaves: one call and its result
 
 
@@ -251,7 +251,7 @@ def _done_line(net, slug: str, span: list[dict], done: int, count: int) -> str:
             fn = c["function"]
             if fn["name"] not in FINISHING:
                 continue
-            compiles += fn["name"] == "compile_and_diff"
+            compiles += fn["name"] in ("compile_and_diff", "compile_patch")
             try:
                 said = json.loads(fn.get("arguments") or "{}").get("function") or ""
             except ValueError:
@@ -378,6 +378,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
     st = lambda desc, req=False: {"type": "string", "description": desc, "req": req}
     it = lambda desc: {"type": "integer", "description": desc}
     bo = lambda desc: {"type": "boolean", "description": desc}
+    edits = {"type": "array", "minItems": 1, "maxItems": 16,
+             "items": {"type": "object", "properties": {"old": {"type": "string"}, "new": {"type": "string"}},
+                       "required": ["old", "new"], "additionalProperties": False}}
     defs = {
         "project_info": ("Which game, compiler and progress.", s()),
         "claim_function": ("Claim the next function (or one by name/address). Returns assembly, data, best attempt, "
@@ -385,6 +388,18 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                            s(function=st("optional name or address"), strategy=st("finish | easiest | closest | hardest | random"),
                              count=it("up to 6 small functions at once"))),
         "get_function": ("Show any function by name or address.", s(function=st("name or address", True))),
+        "function_brief": ("Current source-tree definition, score and revision; get_function has assembly and notes.",
+                           s(function=st("function", True))),
+        "compile_patch": ("Apply exact edits to a current revision through the normal judge.",
+                          s(function=st("function", True), revision=st("function_brief revision", True),
+                            edits={**edits, "req": True})),
+        "try_recipes": ("Preview named edit sets without recording trials; optionally rejudge/apply a better winner.",
+                        s(function=st("function", True), revision=st("function_brief revision", True),
+                          recipes={"type": "array", "minItems": 1, "maxItems": 8, "req": True,
+                                   "items": {"type": "object", "properties": {
+                                       "name": {"type": "string"}, "edits": edits},
+                                             "required": ["name", "edits"], "additionalProperties": False}},
+                          apply=bo("true to apply the strictly better winner through the normal judge"))),
         "compile_and_diff": ("Compile C for the function, link it at its address and diff against the ROM. "
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
                              s(function=st("function name, or several: a, b, c", True), source=st("C source", True))),
