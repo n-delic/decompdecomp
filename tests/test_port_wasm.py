@@ -93,6 +93,9 @@ def test_a_call_by_a_functions_older_name_goes_to_the_function(tmp_path):
                  "define void @caller() {\n  call void @func_8007F798(i32 1)\n  ret void\n}\n")
     fixed = ["stream_poll 0x8007F798 func", "caller 0x80001000 func"]
     assert renames([a, b], fixed) == {"func_8007F798": "stream_poll"}  # nothing defined at the others' addresses
+    c = tmp_path / "c.ll"  # a call by a data-style automatic name goes to the function there too
+    c.write_text("declare void @D_8007F798(i32)\ndefine void @hud() {\n  call void @D_8007F798(i32 1)\n  ret void\n}\n")
+    assert renames([a, c], fixed)["D_8007F798"] == "stream_poll"
 
 
 def test_a_fixed_function_the_c_declared_variadic_gets_its_arguments():

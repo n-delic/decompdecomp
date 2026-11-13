@@ -32,6 +32,8 @@ HERE = Path(__file__).parent
 # The game's C as wasm32 IR, unoptimised: LLVM's load combining would assume little-endian memory, which beir.py and
 # bemem.py make big-endian after it.
 IR_FLAGS = ["-target", "wasm32-freestanding", "-std=gnu17", "-DPORT_WASM=1", "-O0", "-g0",
+            # WebAssembly has no return address to read: the heap's `#ifdef PORT` branch records 0 as its caller
+            "-D__builtin_return_address(n)=((void *)0)",
             "-fno-sanitize=all", "-ffreestanding", "-fno-strict-aliasing", "-fwrapv", "-Wno-everything"]
 # The console's C, not the native port's: memory here is the console's own 32-bit layout, where the matched C is
 # right, and a fix behind `#ifdef PORT` is for a 64-bit PC (one wrote a display list's address as 0 there: "no
@@ -225,7 +227,9 @@ def renames(lls: list[Path], fixed: list[str]) -> dict[str, str]:
     out = {}
     for n in declared - defined:
         address = where.get(n)
-        if address is None and (auto := re.fullmatch(r"func_([0-9A-Fa-f]{8})", n)):
+        # a function the C calls by an automatic name, `func_` or a data-style `D_` (a split that once took the
+        # function for data: a racing game's HUD called D_8000A840 for the sprite drawer there)
+        if address is None and (auto := re.fullmatch(r"(?:func|D)_([0-9A-Fa-f]{8})", n)):
             address = int(auto.group(1), 16)
         if address is not None and len(at.get(address, ())) == 1:
             out[n] = next(iter(at[address]))
