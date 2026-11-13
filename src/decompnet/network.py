@@ -908,7 +908,11 @@ class Network:
         c = cfg['compiler']
         if 'toolchain' in c and not c.get('ro_paths') and not any(
                 flag.startswith(('-I','-include','-imacros','/I','/FI')) for flag in c.get('flags',[])):
-            invocation.identity = (proj['id'], proj['root'], proj['config'],
+            # The compiler's own settings, not the whole project config: rooms, saves, prepared evidence and
+            # auto-push rewrite that config for reasons no compiler sees, and every rewrite made identical attempts
+            # miss the object caches. What the compiler does see is in `invocation` itself, which the compile key
+            # hashes in full (compiler.py), as the judge's identity already relies on (engine/judging.py).
+            invocation.identity = (proj['id'], proj['root'], json.dumps(c, sort_keys=True),
                                    *(identity.get(k) for k in ('id','name','vram','meta','target','relocs')))
         try:
             result = compile_source(invocation, header, source)
