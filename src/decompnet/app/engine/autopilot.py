@@ -121,6 +121,10 @@ class AutopilotMixin:
             "SELECT id FROM functions WHERE project_id=? AND status='open'", proj['id'])}
         ids = [fid for fid in ids if fid in open_ids]
         state["total"] = len(ids)
+        # What autopilot will still try, read by the automatic claim (Network._claim_plan, `machine_pending`): helpers
+        # take those after everything else while it runs, so a model doesn't spend a claim on a function whose draft
+        # the judge would match for free minutes later (both queues go smallest first: they met at the front).
+        state["_pending"] = set(ids)
 
         def one(fid: int) -> None:
             if state["stop"].is_set():
@@ -169,6 +173,7 @@ class AutopilotMixin:
                 while not state['stop'].is_set():
                     with queue_lock:
                         fid = next(remaining, None)
+                        state["_pending"].discard(fid)
                     if fid is None:return
                     token=_draft_pipeline.set(True)
                     try:one(fid)
@@ -188,6 +193,7 @@ class AutopilotMixin:
                         "SELECT id FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
                         "AND id IN (SELECT value FROM json_each(?)) ORDER BY n_insns,vram",proj['id'],json.dumps(ids))]
                     state.update(phase='repairs',repair_total=len(repairs),repair_done=0)
+                    state["_pending"] = set(repairs)  # (deterministic repairs of saved C come before a model too)
                     remaining=iter(repairs)
                     try_one=self._autopilot_repair_one
                     if repairs:
@@ -195,6 +201,7 @@ class AutopilotMixin:
                                       project=slug,stop=state['stop'].set) as pool:
                             list(pool.map(lambda _: lane(),range(min(count,len(repairs)))))
         finally:
+            state["_pending"] = set()
             state["state"] = "stopped" if state["stop"].is_set() else "done"
             state["finished_at"] = time.time()
             state['timings']=timing.snapshot()
