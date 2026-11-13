@@ -47,3 +47,4 @@ str_len	i32	ptr
 abs	i32	i32
 func_80091920	void	ptr, i32
 func_8008C4F0	void	
+__osSiRawStartDma	i32	i32, ptr

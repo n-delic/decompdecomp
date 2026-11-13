@@ -993,7 +993,8 @@ Left:
   the racing game's opening and title screens, its language menu (3D flags, menu text) and the Rumble Pak prompt,
   reached with scripted input (`PORT_INPUT`). Why its 4-bit text needs its texture coordinates halved is still to
   be confirmed. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
-  credits). Then a race from the menus, a window, keyboard and pad input, and audio;
+  credits), and a race started from its menus (Arcade, car selection, the start line, driving). Then a window,
+  keyboard and pad input, and audio;
 - the judge to compare a switch's jump table too: it compares code, and the table is data, so a matched function
   can keep wrong case labels (19 of a racing game's 29 did; the port has overrides for them);
 - the overrides moved into the matched C behind `#ifdef PORT` through Fix C for the PC;

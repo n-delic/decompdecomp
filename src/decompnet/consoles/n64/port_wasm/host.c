@@ -488,6 +488,38 @@ void w2c_env_osContGetReadData(struct w2c_env *e, u32 pad) {
         M[pad + 6 * i + 4] = i == 0 ? 0 : 8;
     }
 }
+/* The serial bus as the game drives it itself (its own __osSiRawStartDma: Controller Pak and EEPROM access): the
+   64 bytes of PIF RAM, answered as the PIF would: the first controller, with no Controller Pak in it, and nothing on
+   the other channels (no EEPROM, as osEepromProbe says). Each transfer raises the SI event the game waits for: a
+   racing game's save after its car selection waited for it for ever. */
+static uint8_t pif[64];
+static void pif_run(void) {
+    int ch = 0;
+    for (int i = 0; i < 63;) {
+        uint8_t t = pif[i];
+        if (t == 0xFE) break;
+        if (t == 0xFF) { i++; continue; }
+        if (t == 0) { ch++; i++; continue; }
+        int tx = t & 0x3F, rx = pif[i + 1] & 0x3F, cmd = pif[i + 2];
+        uint8_t *out = pif + i + 2 + tx;
+        if (i + 2 + tx + rx > 63) break;
+        if (ch == 0 && (cmd == 0x00 || cmd == 0xFF) && rx >= 3) { out[0] = 0x05; out[1] = 0x00; out[2] = 0x02; }
+        else if (ch == 0 && cmd == 0x01 && rx >= 4) {
+            scripted_input();
+            out[0] = (uint8_t)(buttons >> 8); out[1] = (uint8_t)buttons; out[2] = (uint8_t)stick_x; out[3] = (uint8_t)stick_y;
+        } else pif[i + 1] |= 0x80; /* no device answers: no Controller Pak, no EEPROM, no other controller */
+        i += 2 + tx + rx;
+        ch++;
+    }
+    pif[63] = 0;
+}
+u32 w2c_env_0x5F_osSiRawStartDma(struct w2c_env *e, u32 direction, u32 dram) {
+    (void)e;
+    if (direction == 1) { for (int i = 0; i < 64; i++) pif[i] = M[dram + i]; pif_run(); }
+    else for (int i = 0; i < 64; i++) M[dram + i] = pif[i];
+    post_event(EV_SI);
+    return 0;
+}
 u32 w2c_env_osContStartQuery(struct w2c_env *e, u32 mq) { (void)e; si_done(mq); return 0; }
 void w2c_env_osContGetQuery(struct w2c_env *e, u32 status) {
     (void)e;
@@ -558,7 +590,13 @@ static void sample(void) {
     pthread_t t = r ? r->host : 0;
     int n = r ? r->number : -1;
     pthread_mutex_unlock(&lock);
-    if (r) { fprintf(stderr, "running: thread %d\n", n); pthread_kill(t, SIGUSR1); }
+    if (r && !getenv("PORT_SAMPLE_THREAD")) { fprintf(stderr, "running: thread %d\n", n); pthread_kill(t, SIGUSR1); }
+    if (getenv("PORT_SAMPLE_THREAD")) { /* PORT_SAMPLE_THREAD=n: thread n instead, running or waiting */
+        pthread_mutex_lock(&lock);
+        for (PortThread *p = threads; p; p = p->next)
+            if (p->state != DONE && p->started && p->number == atoi(getenv("PORT_SAMPLE_THREAD"))) { fprintf(stderr, "thread %d:\n", p->number); pthread_kill(p->host, SIGUSR1); }
+        pthread_mutex_unlock(&lock);
+    }
     if (getenv("PORT_THREADS")) {
         static const char *names[] = { "created", "ready", "waiting", "stopped", "done" };
         pthread_mutex_lock(&lock);

@@ -183,3 +183,11 @@ def test_bitfields_get_the_consoles_bits():
         "u16 : 4;", "u16 values : 12;", "u16 : 0;"]
     padding = "struct M {\n  s16 h[9];\n  unsigned int :16;\n  unsigned int :32;\n};\n"
     assert big_endian_bitfields(padding) == padding  # padding alone may start mid-unit: as it was
+
+
+def test_a_struct_passed_by_value_keeps_every_word_the_caller_passed():
+    """A loader's C declared its by-value block 640 bytes; its caller passed 708, and on MIPS the loader read the
+    words past 640 from the caller's stack. The thunk copied 640: the last texture name was cut short."""
+    from decompnet.port.wasm.adapt import word_thunk
+    out = word_thunk("t", "load", "void", ["ptr"], {0: 8}, "void", [("ptr", "%b")], [16])
+    assert "alloca [4 x i32]" in out and out.count("store i32") == 4

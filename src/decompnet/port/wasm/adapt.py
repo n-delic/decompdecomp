@@ -179,7 +179,10 @@ def word_thunk(tname, name, ret, params, pbyval, cret, args, abyval):
     values, w = [], 0
     for i, p in enumerate(params):
         if i in pbyval:
-            count = (pbyval[i] + 3) // 4
+            # all the words the caller passed, if more than the callee's C declares: on MIPS they're on the stack
+            # after its struct, where it reads them (a loader's C declared a 640-byte block, its caller passed 708
+            # and the last name in it was cut short at 640: the texture lookup never ended)
+            count = max((pbyval[i] + 3) // 4, len(words) - w)
             buf = tmp()
             body.append(f"  {buf} = alloca [{count} x i32], align 8")
             for j in range(count):
