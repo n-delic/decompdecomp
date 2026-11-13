@@ -248,8 +248,8 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   and, with `PORT_AUDIO=file.wav`, saved. The interface's registers answer in real time at the game's rate, so the
   game paces its sound as on the console. Not yet: the effects filter (`A_POLEF`), and the resampler's exact taps;
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
-  machine only, which shows each frame and sends the keyboard to the first controller (arrows steer, X is A, Z is
-  B, Enter is Start). A key held wins over `PORT_INPUT`, so a script can bring the game to a race and leave it to
+  machine only, which shows each frame and sends the keyboard or a gamepad to the first controller (arrows steer, X is A,
+  Z is B, Enter is Start; a gamepad in the browser's standard layout), and can go full screen. A key held wins over `PORT_INPUT`, so a script can bring the game to a race and leave it to
   the player. With `PORT_LIVE` the game runs until it's stopped. Not on Windows yet;
 - the RSP and RDP in software (`render.c`): each graphics task's display list is drawn into the game's own frame
   buffer, F3DEX2 or S2DEX by the microcode the task loads, and `PORT_FRAMES=folder` saves the frames shown as PNG.

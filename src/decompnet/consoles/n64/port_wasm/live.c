@@ -2,7 +2,8 @@
  * that shows each frame as the game shows it and sends the keyboard to the first controller.
  *
  * Keys: arrows steer (the stick and the d-pad), X is A, Z (or C) is B, Enter is Start, Space is Z, Q and W are L and
- * R, I/J/K/L are the C buttons. The page's Sound button plays the game's sound (audio.c) as it's made. No dependency:
+ * R, I/J/K/L are the C buttons. A gamepad works too (the browser's standard layout: the left stick steers, the right
+ * stick is the C buttons, the triggers Z), and the page can go full screen. The page's Sound button plays the game's sound (audio.c) as it's made. No dependency:
  * plain sockets and a page that draws the frames on a canvas and plays the sound through Web Audio. */
 #include <stdint.h>
 #include <stdio.h>
@@ -41,15 +42,25 @@ static const char page[] =
     "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width'>"
     "<title>Port</title><style>html,body{margin:0;height:100%;background:#111;color:#bbb;font:13px system-ui}"
     "canvas{display:block;margin:12px auto;width:min(96vw,calc((100vh - 90px)*4/3));image-rendering:pixelated;"
-    "background:#000}p{text-align:center;margin:4px}</style></head><body><canvas id=c width=320 height=240></canvas>"
+    "background:#000}canvas:fullscreen{width:auto;height:100vh;margin:auto;object-fit:contain}"
+    "p{text-align:center;margin:4px}</style></head><body><canvas id=c width=320 height=240></canvas>"
     "<p>Arrows steer &middot; X: A &middot; Z: B &middot; Enter: Start &middot; Space: Z &middot; Q/W: L/R &middot; "
-    "I/J/K/L: C buttons &middot; <button id=snd>Sound on</button></p><p id=s></p><script>\n"
+    "I/J/K/L: C buttons &middot; or a gamepad &middot; <button id=snd>Sound on</button> <button id=fs>Full screen</button></p><p id=s></p><script>\n"
     "const c=document.getElementById('c'),g=c.getContext('2d'),s=document.getElementById('s');let last=-1,shown=0,t0=performance.now();\n"
     "const keys={ArrowUp:0x0800,ArrowDown:0x0400,ArrowLeft:0x0200,ArrowRight:0x0100,KeyX:0x8000,KeyZ:0x4000,KeyC:0x4000,"
     "Enter:0x1000,Space:0x2000,KeyQ:0x0020,KeyW:0x0010,KeyI:0x0008,KeyK:0x0004,KeyJ:0x0002,KeyL:0x0001};\n"
-    "let down=new Set();function send(){let b=0;for(const k of down)b|=keys[k];"
-    "const x=(down.has('ArrowRight')?80:0)-(down.has('ArrowLeft')?80:0),y=(down.has('ArrowUp')?80:0)-(down.has('ArrowDown')?80:0);"
-    "fetch('/input?b='+b+'&x='+x+'&y='+y,{method:'POST'}).catch(()=>{});}\n"
+    /* a gamepad in the browser's standard layout: A and X are A, B and Y are B, Start, the shoulders L and R, the
+       triggers Z, the d-pad, the left stick, the right stick as the C buttons */
+    "const pad={0:0x8000,2:0x4000,1:0x4000,3:0x4000,9:0x1000,4:0x0020,5:0x0010,6:0x2000,7:0x2000,12:0x0800,13:0x0400,14:0x0200,15:0x0100};\n"
+    "let down=new Set(),sent='';function send(){let b=0;for(const k of down)b|=keys[k];"
+    "let x=(down.has('ArrowRight')?80:0)-(down.has('ArrowLeft')?80:0),y=(down.has('ArrowUp')?80:0)-(down.has('ArrowDown')?80:0);"
+    "for(const gp of (navigator.getGamepads?navigator.getGamepads():[])){if(!gp)continue;"
+    "gp.buttons.forEach((v,i)=>{if((v.pressed||v.value>0.5)&&pad[i])b|=pad[i];});"
+    "const ax=gp.axes[0]||0,ay=gp.axes[1]||0,cx=gp.axes[2]||0,cy=gp.axes[3]||0;"
+    "if(Math.abs(ax)>0.15)x=Math.round(ax*80);if(Math.abs(ay)>0.15)y=Math.round(-ay*80);"
+    "if(cx>0.5)b|=0x0001;if(cx<-0.5)b|=0x0002;if(cy>0.5)b|=0x0004;if(cy<-0.5)b|=0x0008;}"
+    "const q='b='+b+'&x='+x+'&y='+y;if(q!=sent){sent=q;fetch('/input?'+q,{method:'POST'}).catch(()=>{});}}\n"
+    "setInterval(send,16);addEventListener('gamepadconnected',e=>{s.dataset.pad=e.gamepad.id;});\n"
     "addEventListener('keydown',e=>{if(e.code in keys){e.preventDefault();if(!down.has(e.code)){down.add(e.code);send();}}});\n"
     "addEventListener('keyup',e=>{if(e.code in keys){e.preventDefault();down.delete(e.code);send();}});\n"
     "addEventListener('blur',()=>{down.clear();send();});\n"
@@ -59,6 +70,7 @@ static const char page[] =
     "for(let i=0,j=12;i<w*h;i++,j+=3){p[i*4]=b[j];p[i*4+1]=b[j+1];p[i*4+2]=b[j+2];p[i*4+3]=255;}g.putImageData(im,0,0);shown++;"
     "const now=performance.now();if(now-t0>1000){s.textContent=Math.round(shown*1000/(now-t0))+' frames a second';shown=0;t0=now;}}}"
     "catch(e){await new Promise(r=>setTimeout(r,500));}requestAnimationFrame(loop);}loop();\n"
+    "document.getElementById('fs').onclick=()=>c.requestFullscreen&&c.requestFullscreen();\n"
     "let ac=null,next=0,heard=-1;document.getElementById('snd').onclick=e=>{if(!ac){ac=new AudioContext();e.target.textContent='Sound playing';sound();}};\n"
     "async function sound(){try{const r=await fetch('/audio?after='+heard);const b=await r.arrayBuffer();if(b.byteLength>16){"
     "const d=new DataView(b),hz=d.getUint32(0,true),first=Number(d.getBigUint64(4,true)),n=(b.byteLength-16)>>2;"

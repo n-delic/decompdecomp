@@ -705,7 +705,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, embedded ZIP packs) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
 | Audio browser, filters, sortable samples and explicit WAV preparation | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
-| Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / metadata | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / linked records | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Text/pointer record inspectors and PSF2 glyph atlas | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Model browser and automatic indexed geometry / local mesh wireframes (raw, RNC 1/2, embedded ZIP) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | PD3V textures, static assemblies, linked scenery and glTF export | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | B1 / libmus PtrTablesV2 audio banks, table evidence and mono VADPCM/PCM16 previews | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -995,8 +996,8 @@ Left:
   reached with scripted input (`PORT_INPUT`). Why its 4-bit text needs its texture coordinates halved is still to
   be confirmed. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
-  with the keyboard and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
-  saves other games use, a native window and pads, the
+  with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
+  saves other games use, a native window, the
   sound's effects filter, and the live view on Windows;
 - the judge to compare a switch's jump table too: it compares code, and the table is data, so a matched function
   can keep wrong case labels (19 of a racing game's 29 did; the port has overrides for them);
@@ -1258,7 +1259,11 @@ node/part/section tables, byte-plane vertices and cache-relative polygon runs; r
 models offer mesh selection and local wireframes. Other native formats, assembled skeleton poses,
 animation playback and textured model rendering remain planned. A validated indexed cartridge
 directory supplies typed animation, collision, grid/bounds, placement, sequence and demo
-metadata. Empty records stay explicit, and failed zlib/gzip probes no longer classify bytes
+metadata and paged records. Skeleton parent/child and part-variant tables, material/texture links,
+collision wireframes with neighbours/surface IDs, object bounds/animation types and placement
+records now share sortable inspectors. Portable text/pointer inspection and PSF2 glyph atlases
+reach all ROM adapters. ADPCM track playback, assembled poses, semantic surface labels and
+headerless game-font recognition remain planned. Empty records stay explicit, and failed zlib/gzip probes no longer classify bytes
 as compressed. Scene reconstruction, sequence synthesis and other native schemas remain planned.
 
 A project tab maps every byte of an imported ROM analysis image, including unknown and

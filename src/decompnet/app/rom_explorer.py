@@ -18,7 +18,7 @@ from ..rom.explorer import analyse
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=12
+ANALYSIS_REVISION=14
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'animation', 'collision', 'object placements', 'world grid', 'music sequence', 'demo', 'font', 'container', 'repeated bytes')
 
 
@@ -113,7 +113,7 @@ def _run(net, slug, log):
     with path.open('rb') as stream, mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ) as image:
         from .analysis_image import verify
         verify(image,proj,cfg,check=log.check_cancel)
-        from ..rom import asset_flow
+        from ..rom import asset_flow, resource_catalog
         console=net.console(proj)
         flow=asset_flow.trace(image,cfg['segments'],functions,arch.get(proj['arch']).asset_flow,
                               contracts=console.asset_calls | _contracts(net,proj),argument_count=console.asset_argument_count,
@@ -121,7 +121,8 @@ def _run(net, slug, log):
                               check=log.check_cancel,progress=log.progress)
         report = analyse(image,cfg['segments'],functions,symbols,big_endian=bool(proj['big_endian']),
                          progress=log.progress,check=log.check_cancel,ranges=[c['source'] for c in flow['chains']],
-                         assets=console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=cfg['segments'],gp=cfg.get('gp',0)),check=log.check_cancel,progress=log.progress))
+                         assets=resource_catalog.regions(image,check=log.check_cancel)+console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=cfg['segments'],gp=cfg.get('gp',0)),check=log.check_cancel,progress=log.progress))
+        resource_catalog.attach(report)
         asset_flow.attach(report,flow)
     log.check_cancel()
     if revision!=_revision(net,proj):raise NetworkError('The project layout changed during the scan. Scan again to use the current mappings.')
@@ -227,11 +228,11 @@ def loader_contracts(net,slug,data=None):
 def _preview_settings(options):
     from ..rom.asset_formats import FORMATS, PALETTES
     if not isinstance(options,dict):raise NetworkError('Preview settings must be named fields.')
-    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','assembly'}
+    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','record_page','record_component','assembly'}
     if set(options)-allowed:raise NetworkError('Use only the listed preview controls.')
     if options.get('format','auto') not in FORMATS or options.get('palette_format','rgba5551-be') not in PALETTES:
         raise NetworkError('Choose a listed preview format and palette format.')
-    if options.get('source','rom') not in ('rom','decoded','archive'):raise NetworkError('Choose ROM bytes or a decompressed block.')
+    if options.get('source','rom') not in ('rom','decoded','archive'):raise NetworkError('Choose ROM bytes, a decompressed block or a validated archive member.')
     if any(isinstance(v,(dict,list,bool)) or len(str(v))>40 for v in options.values()):raise NetworkError('Preview controls must contain short text or numeric values.')
     return options
 
@@ -261,7 +262,11 @@ def _asset_read(net,slug,data,read, *, detect=False):
         selection=dict(options)
         options=dict(detected['preview_settings'])
         original_read=read
-        read=lambda image,settings:net.console(proj).asset_preview(image,detected,selection) or original_read(image,settings)
+        if detected.get('provider') in ('portable-font','portable-records'):
+            from ..rom import resource_catalog
+            read=lambda image,settings:resource_catalog.preview(image,detected,selection,net.cfg(proj)['segments'],bool(proj['big_endian']))
+        else:
+            read=lambda image,settings:net.console(proj).asset_preview(image,detected,selection) or original_read(image,settings)
     path=Path(proj['root'])/net.cfg(proj)['rom']['file']
     with path.open('rb') as stream,mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ) as image:
         if hashlib.sha256(image).hexdigest()!=data['image_hash']:raise NetworkError('The image changed. Reopen ROM Explorer before previewing assets.')
@@ -284,6 +289,9 @@ def _asset_read(net,slug,data,read, *, detect=False):
             result['decoded']=dict(codec=codec,bytes=len(raw),block_offset=block)
         else:
             result=read(image,{**options,'offset':options.get('offset',row['start'])})
+    if using_detected:
+        _resource_links(result,detected,state['report'])
+        result['settings']={**result.get('settings',{}),'record_page':selection.get('record_page',0)}
     if 'settings' not in result:result['settings']=options
     return result
 
@@ -300,3 +308,34 @@ def asset_inspect(net,slug,data):
             return asset_inspection.textures(image,options)
         return _asset_read(net,slug,data,read)
     except AssetError as exc:raise NetworkError(str(exc)) from None
+
+
+def _resource_links(result,asset,report):
+    """Resolve directory/ID links only inside the same validated directory root."""
+    import bisect
+    rows=report['regions'];starts=[r['start'] for r in rows]
+    assets={r['detected_asset']['offset']:r['detected_asset'] for r in rows if r.get('detected_asset')}
+    root=asset.get('directory_offset');objects={};textures={};related=[]
+    for candidate in assets.values():
+        if root is None or candidate.get('directory_offset')!=root:continue
+        info=candidate.get('resource_fields',{})
+        if candidate.get('resource_type')=='object' and info.get('object_id') is not None:objects[info['object_id']]=candidate['offset']
+        path=candidate.get('resource_path','')
+        if path.startswith('directory/textures/texture bank['):
+            try:textures[int(path.split('[')[-1].rstrip(']'))]=candidate['offset']
+            except ValueError:pass
+        parent=asset.get('resource_path','').split('/geometry')[0].split('/animations')[0]
+        if '/object[' in parent and candidate.get('resource_path') in (parent,parent+'/animations',parent+'/geometry') and candidate['offset']!=asset['offset']:
+            related.append(dict(label=candidate.get('label','Related resource'),offset=candidate['offset']))
+    def link(offset,label):
+        i=bisect.bisect_right(starts,offset)-1
+        if i>=0 and offset<rows[i]['end']:return dict(label=label,region=rows[i]['id'],offset=offset)
+    for row in result.get('table',{}).get('rows',[]):
+        links=[]
+        if row.get('object_id') in objects:links.append(link(objects[row['object_id']],f"Object {row['object_id']}"))
+        if root is not None and 'offset' in row and row.get('size',1)>0:links.append(link(row['offset'],'Open resource'))
+        for offset in row.get('destinations',[]):links.append(link(offset,f'ROM {offset:#x}'))
+        row['links']=[v for v in links if v]
+    material=result.get('material',{})
+    if material.get('texture_id') in textures:related.append(dict(label=f"Texture {material['texture_id']}",offset=textures[material['texture_id']]))
+    result['links']=[value for row in related if (value:=link(row['offset'],row['label']))]

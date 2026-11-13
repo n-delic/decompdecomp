@@ -6,7 +6,7 @@ const base=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/b
 const tick=async()=>{for(let i=0;i<25;i++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 function element(){return {disabled:false,hidden:false,textContent:'',value:'',dataset:{},children:[],style:{setProperty(){}},attrs:{},
-  addEventListener(){},append(c){this.children.push(c);},before(c){},remove(){},setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];},replaceChildren(...c){this.children=c;},
+  addEventListener(){},append(...c){this.children.push(...c);},before(c){},remove(){},setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];},replaceChildren(...c){this.children=c;},
   querySelectorAll(){return [];},querySelector(k){return this.fields[k] || (this.fields[k]=element());},fields:{},classList:{add(){},remove(){}},getContext(){return {scale(){},fillRect(){}};}};}
 function setup(){
   const nodes=new Map(),calls=[],renders=[];
@@ -256,6 +256,21 @@ function setup(){
     t.context.reply=async()=>{throw Error('Resource header changed. Rescan.');};await button.onclick();assert.match(body.querySelector('[data-asset-work]').textContent,/Rescan/);
     t.run("romView().report={regions:[{id:'anim',kind:'animation',symbols:[],mappings:[],functions:[],detected_asset:region.detected_asset}]};romView().query='object[9]'");
     assert.equal(t.run('romRows(romView()).length'),1);assert.equal(t.run('romRegionType({kind:"animation"})[1]'),'Animation');
+  }
+  // Record tables keep row identities while sorting and retain a chosen sort
+  // across pages; empty values stay last in either direction.
+  {
+    const t=setup(),host=element(),state={},pages=[],opened=[];
+    t.context.host=host;t.context.state=state;t.context.page=n=>pages.push(n);t.context.openRomRegion=id=>opened.push(id);
+    t.context.preview={media:'metadata',title:'Records',table:{title:'Placements',columns:['index','object_id'],total:70,page:0,page_size:64,rows:[{index:0,object_id:10,links:[{label:'Ten',region:'ten'}]},{index:1,object_id:2,links:[{label:'Two',region:'two'}]},{index:2,object_id:null}]}};
+    t.run('renderRomResource(host,preview,page,()=>true,state)');
+    const wrapper=host.children.find(c=>c.className==='table-scroll'),table=wrapper.children[0];
+    let [head,body]=table.children;head.children[0].children[1].children[0].onclick();
+    [head,body]=table.children;assert.equal(head.children[0].children[1].attrs['aria-sort'],'ascending');assert.equal(body.children[0].children[1].textContent,'2');
+    body.children[0].children[2].children[0].onclick();assert.deepEqual(opened,['two']);
+    head.children[0].children[1].children[0].onclick();[head,body]=table.children;assert.equal(body.children[0].children[1].textContent,'10');assert.equal(body.children[2].children[1].textContent,'—');
+    const pager=host.children.find(c=>c.className==='row');pager.children[1].onclick();pager.children[1].onclick();assert.deepEqual(pages,[1]);
+    const nextHost=element();t.context.host=nextHost;t.run('renderRomResource(host,preview,page,()=>true,state)');const nextTable=nextHost.children.find(c=>c.className==='table-scroll').children[0];assert.equal(nextTable.children[0].children[0].children[1].attrs['aria-sort'],'descending');
   }
   {
     // A ZIP member's path names its region, and searching for the file finds it.
