@@ -522,3 +522,33 @@ def test_a_stopped_vm_or_a_missing_image_is_left_to_setup(vm, monkeypatch, liste
     ok, why = linuxvm.status()
     assert not ok and 'Prepare Linux runner' in why
     assert not [c for c in calls if c[1] in ('stop', 'start')]
+
+
+def test_a_new_vm_is_sized_from_this_computer(vm, monkeypatch):
+    monkeypatch.setattr(linuxvm.os, 'cpu_count', lambda: 10)
+    monkeypatch.setattr(linuxvm.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 0, str(32 << 30).encode(), b''))
+    assert linuxvm.wanted_size() == (5, 7)
+    monkeypatch.setattr(linuxvm.os, 'cpu_count', lambda: 64)
+    monkeypatch.setattr(linuxvm.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 0, str(8 << 30).encode(), b''))
+    assert linuxvm.wanted_size() == (8, 3)  # never more than a quarter of the memory, never under the old 3 GB
+    checks = iter([(False, 'not ready'), (True, '')])
+    monkeypatch.setattr(linuxvm, 'status', lambda **_: next(checks))
+    monkeypatch.setattr(linuxvm, 'wanted_size', lambda: (5, 7))
+    calls = []
+    monkeypatch.setattr(linuxvm, '_plain', lambda argv, timeout: calls.append(argv) or subprocess.CompletedProcess(argv, 0, b'', b''))
+    linuxvm.setup(log=lambda *_: None)
+    start = calls[0]
+    assert start[start.index('--cpus') + 1] == '5' and start[start.index('--memory') + 1] == '7'
+
+
+def test_setup_says_how_to_grow_a_small_vm_but_never_restarts_it(vm, monkeypatch):
+    monkeypatch.setattr(linuxvm, 'status', lambda **_: (True, ''))
+    monkeypatch.setattr(linuxvm, 'wanted_size', lambda: (5, 7))
+    calls, said = [], []
+    def plain(argv, timeout):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, b'2\n', b'')
+    monkeypatch.setattr(linuxvm, '_plain', plain)
+    assert linuxvm.setup(log=said.append)['ready']
+    assert any('--cpus 5 --memory 7' in line and 'colima stop test-compilers' in line for line in said)
+    assert not any('colima' in Path(argv[0]).name for argv in calls)  # only `docker info` ran

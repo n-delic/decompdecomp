@@ -120,3 +120,23 @@ Persistent cache, same Mac and compiler (KMC GCC 2.7.2, `-O2`, synthetic unique 
 stores) and a warm row of 0.15 seconds (48 hits, no compiler run). Two separate processes
 compiling the same 32 candidates in one scratch home, one thread: 24.8 seconds, then 0.82
 seconds with 32 hits. The cache held 32 entries in 128 KiB. Only repeated candidates gain.
+
+## Compilers in the macOS Linux VM
+
+Packs marked `linux_vm` (the PS2's EE-GCC, IRIX compilers) run each compile in a fresh container in the app's
+Colima VM. Measured on a 10-core Apple Silicon Mac with Setup's old VM (2 CPUs, 3 GB):
+
+- One small compile takes about 0.8 s, about 0.7 s of it the container and its Python starting under emulation.
+- The VM tops out at roughly 1.4 compiles a second whatever the host sends: it is bound by its CPUs.
+- The host admits `cpu_count - 1` compiles. Sent all at once, each took 5.6 to 6.3 s inside the VM, where its
+  timeout runs, and nine containers of up to 1 GB each shared 3 GB.
+
+A gate admitting one job per VM CPU was tried and dropped: 36 compiles at limits of 2, 4, 6 and 9 jobs each ran at
+1.05 to 1.51 a second with no trend (the VM was shared with other work), and on the PS2 demo the gated run made
+fewer compiles in 60 s (62 against 100). No timeouts appeared ungated. Two jobs at once took 0.95 s each against
+0.8 s for one, so throughput grew with the VM's CPUs as far as this VM could show.
+
+More throughput needs a bigger VM: Setup now creates one with half the host's cores (2 to 8) and a GB per job plus
+two, at most a quarter of the host's memory. An existing VM keeps its size, since resizing restarts it; Prepare
+Linux runner prints the `colima` commands to grow it. The container start per compile is the remaining fixed cost;
+a long-lived worker container would remove it but gives up a fresh container per job, so it is not done.
