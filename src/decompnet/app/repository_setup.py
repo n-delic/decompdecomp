@@ -173,11 +173,13 @@ def checkpoint(net, slug, root, path, log, *, message='Save decompilation progre
 
 def run(net, slug, action, origin, log, *, github_name="", visibility="private"):
     path, proj = folder(net, slug)
-    with net.progress._project_lock(slug):
-        with repository_operations.operation(root_at(path) or path, slug, 'Setting up progress repository', log) as output:
-            if output is None:
-                raise NetworkError('Another operation or queued push is using this repository. Wait for it to finish.')
-            log = output
+    # The user clicked this: wait in the repository's queue (cancellable, showing what holds it) rather than fail
+    # because an automatic commit or a push has the repository right now. The repository turn comes before the
+    # project lock, so a background commit holding the project never waits on us while we wait on it.
+    check = getattr(log, 'check_cancel', None) or (lambda: None)
+    with repository_operations.push(root_at(path) or path, slug, log, check, label='Setting up progress repository') as output:
+        log = output
+        with net.progress._project_lock(slug):
             root = root_at(path)
             if action in ('init', 'checkpoint', 'github') and net.is_rom(proj):
                 from . import rebuildable_repository

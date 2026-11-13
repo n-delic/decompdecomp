@@ -307,9 +307,9 @@ def run(net, slug, folder, log=print, *, commit_push=False):
     """Stage, verify and publish commit-ready source additions; preserve the live checkout on failure."""
     store = net.project_store(slug)
     root=checkout(folder, clean=False)
-    with repository_operations.operation(root, slug, 'Syncing saved progress', log) as output:
-        if output is None:
-            raise NetworkError('Another operation or queued push is using this repository. Wait for it to finish.')
+    # User-started: queue for the repository like a push instead of failing while an automatic commit holds it.
+    check = getattr(log, 'check_cancel', None) or (lambda: None)
+    with repository_operations.push(root, slug, log, check, label='Syncing saved progress') as output:
         log = output
         proj=net.project_row(slug)
         if not net.is_rom(proj):

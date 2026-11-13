@@ -8,8 +8,9 @@ from pathlib import Path
 
 
 class Watchdog:
-    def __init__(self, path, *, threshold=5, interval=1):
+    def __init__(self, path, *, threshold=5, interval=1, cpu=None):
         self.path=Path(path)
+        self.cpu=cpu  # thread_cpu.Sampler: which threads held the processor while the loop waited
         self.threshold,self.interval=threshold,interval
         self.last_beat=time.monotonic()
         self.last_dump=float('-inf')
@@ -26,6 +27,11 @@ class Watchdog:
         # request URLs, tokens or game data. Replace one bounded local report.
         names={t.ident:t.name for t in threading.enumerate()}
         lines=[f'Event loop unresponsive for {elapsed:.1f}s; captured at {time.strftime("%Y-%m-%d %H:%M:%S %z")}\n']
+        if self.cpu is not None:
+            busy=self.cpu.recent(elapsed+1)
+            if busy:
+                lines.append(f'\nProcessor time by thread over the last {elapsed+1:.0f}s:\n')
+                lines.extend(f'  {seconds:6.2f}s  {name}\n' for name,seconds in busy[:20])
         frames=sorted(sys._current_frames().items(),key=lambda item:item[0]!=threading.main_thread().ident)
         for ident,frame in frames[:256]:
             lines.append(f'\nThread {ident}: {names.get(ident,"unknown")}\n')

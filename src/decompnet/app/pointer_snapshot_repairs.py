@@ -29,7 +29,7 @@ def variants(source, name, header='', arch=None, asm=''):
             for previous in reversed(nodes[max(0,pos-4):pos]):
                 # Only constant byte-array writes on this same object; never cross a call or another load/write.
                 byte=re.fullmatch(rf'\s*{re.escape(owner)}->({IDENT})\s*\[\s*\d+\s*\]\s*=\s*(0[xX][0-9a-fA-F]+|\d+)\s*;',part.clean[previous.start:previous.end])
-                if not byte or int(byte[2],0)>255 or block_path(part,previous.start)!=block_path(part,node.start):break
+                if not byte or int(byte[2],16 if byte[2].lower().startswith('0x') else 10)>255 or block_path(part,previous.start)!=block_path(part,node.start):break
                 # The member must actually be a byte array in the owner's declared record.
                 records=re.findall(r'\btypedef\s+struct(?:\s+'+IDENT+r')?\s*{([^{}]*)}\s*('+IDENT+r')\s*;',context,re.S)
                 owners=re.findall(r'\b('+IDENT+r')\s*\*\s*'+re.escape(owner)+r'\s*(?=[;=])',part.body)

@@ -288,6 +288,53 @@ def test_the_generator_answers_in_json_lines(tmp_path, monkeypatch):
     assert gen.batch({**job, "source": "hang"}) is None and gen.proc.poll() is not None
 
 
+@pytest.mark.parametrize("stream", [True, False])
+def test_exited_generator_keeps_failed_job_fallback_and_closes_pipes(tmp_path, stream):
+    """A small buffered request can fail at flush and again at close after the child exits."""
+    script = tmp_path / "exited.py"
+    script.write_text("raise SystemExit(3)\n")
+    gen = permute.Generator([sys.executable, str(script)])
+    gen.proc.wait(timeout=5)
+    job = {"source": "int f(void) { return 1; }", "function": "f"}
+    try:
+        if stream:
+            assert list(gen.chunks(job, lambda: None)) == []
+            assert gen.failed and gen.empty
+        else:
+            assert gen.batch(job) is None
+        gen.close()
+        gen.close()  # search cleanup may repeat after the failed stream closed itself
+        assert gen.proc.returncode == 3
+        assert not gen._reader.is_alive()
+        assert gen.proc.stdin.closed and gen.proc.stdout.closed
+    finally:
+        # Baseline cleanup itself raises; still release stdout in the failing control.
+        try:
+            gen.close()
+        finally:
+            gen.proc.stdout.close()
+
+
+@pytest.mark.parametrize("error", [permute.GenerationStopped, ValueError])
+def test_generator_cleanup_preserves_cancellation_and_other_failures(tmp_path, error):
+    script = tmp_path / "waiting.py"
+    script.write_text("import sys, time\nsys.stdin.readline()\ntime.sleep(30)\n")
+    gen = permute.Generator([sys.executable, str(script)])
+
+    def stop():
+        gen.proc.stdin.write(b"buffered but obsolete")
+        raise error("original failure")
+
+    try:
+        with pytest.raises(error, match="original failure"):
+            list(gen.chunks({"source": "int f(void) { return 1; }"}, stop))
+        assert gen.proc.poll() is not None
+        assert not gen._reader.is_alive()
+        assert gen.proc.stdin.closed and gen.proc.stdout.closed
+    finally:
+        gen.close()
+
+
 needs_tool = pytest.mark.skipif(toolchains.installed(permute.TOOL) is None, reason="needs decomp-permuter")
 
 
