@@ -18,7 +18,7 @@ from ..rom.explorer import analyse
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=14
+ANALYSIS_REVISION=15
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'animation', 'collision', 'object placements', 'world grid', 'music sequence', 'demo', 'font', 'container', 'repeated bytes')
 
 
@@ -228,7 +228,7 @@ def loader_contracts(net,slug,data=None):
 def _preview_settings(options):
     from ..rom.asset_formats import FORMATS, PALETTES
     if not isinstance(options,dict):raise NetworkError('Preview settings must be named fields.')
-    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','record_page','record_component','assembly'}
+    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','record_page','record_component','assembly','animation'}
     if set(options)-allowed:raise NetworkError('Use only the listed preview controls.')
     if options.get('format','auto') not in FORMATS or options.get('palette_format','rgba5551-be') not in PALETTES:
         raise NetworkError('Choose a listed preview format and palette format.')
@@ -274,7 +274,10 @@ def _asset_read(net,slug,data,read, *, detect=False):
         header=image[offset:offset+4]
         compressed=header in (b'Yaz0',b'Yay0',b'MIO0',b'RNC\x01',b'RNC\x02') or header.startswith(b'\x1f\x8b\x08') or len(header)>=2 and header[0]==0x78 and int.from_bytes(header[:2],'big')%31==0
         auto_decode=not using_detected and options.get('source','rom')=='rom' and options.get('format','auto')=='auto' and compressed
-        if options.get('source')=='archive':
+        scene=net.console(proj).asset_scene(image,detected,selection,list({r['detected_asset']['offset']:r['detected_asset'] for r in state['report']['regions'] if r.get('detected_asset')}.values())) if using_detected else None
+        if scene is not None:
+            result=scene
+        elif options.get('source')=='archive':
             from ..rom.asset_archives import member_bytes
             member=(row.get('detected_asset') or {}).get('archive')
             if not member:raise NetworkError('This region has no validated archive member. Choose ROM bytes or a supported detected archive.')

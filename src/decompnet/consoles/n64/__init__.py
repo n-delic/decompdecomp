@@ -4,6 +4,9 @@
 - audio.py: source-assisted B1 sound banks, sample tables and mono VADPCM previews.
 - resources.py: validated directory schemas, animation/world metadata and RNC extents.
 - models.py: validated indexed geometry and local mesh wireframes.
+- animation.py: bounded shared-header three-bit ADPCM and local transform tracks.
+- native_scene.py: directory-linked textures, rigid node assemblies and animation.
+- fonts.py: named-writer I4 glyph tables with corroborated data mappings.
 - archived_models.py: CRC-checked PD3V meshes, static assembly and material previews.
 - model_links.py: bounded loader-script links to textures and companion streams.
 - model_scenery.py: split XZ/Y scenery with checked triangle/quad commands.
@@ -83,14 +86,28 @@ class Nintendo64(Console):
     def asset_regions(self, image, *, context=None, **kwargs):
         from . import archived_models, audio, models, ptr_audio, resources, texture_packs, textures
         known=textures.regions(image, **kwargs)+texture_packs.regions(image, **kwargs)+audio.regions(image, context=context, **kwargs)+ptr_audio.regions(image, **kwargs)+ptr_audio.sequences(image, **kwargs)+models.regions(image, **kwargs)+archived_models.regions(image, **kwargs)
-        return known+resources.regions(image,known=known,**kwargs)
+        from . import fonts, native_scene
+        assets=known+resources.regions(image,known=known,**kwargs)
+        native_scene.link(assets)
+        return assets+fonts.regions(image,context=context,known=assets,**kwargs)
 
     def asset_preview(self, data, asset, selection):
         from . import archived_models, audio, models, ptr_audio, resources, texture_packs, textures
+        if asset.get('font_layout')=='native-i4-pointer-glyphs':
+            from . import fonts
+            return fonts.preview(data,asset,selection)
         if asset.get('audio_kind') in ('libmus sample bank','libmus sequence'):return ptr_audio.preview(data,asset,selection)
         if asset.get('layout')=='archived-pd3v-model':return archived_models.preview(data,asset,selection)
         if asset.get('layout')=='trailer-count-texture-pack':return texture_packs.preview(data,asset,selection)
         return {'audio':audio.preview,'model':models.preview,'metadata':resources.preview}.get(asset.get('media'),textures.preview)(data, asset, selection)
+
+    def asset_scene(self, image, asset, selection, assets):
+        from ...rom.asset_formats import AssetError
+        from . import native_scene
+        from .models import ModelError
+        from .resources import SchemaError
+        try:return native_scene.preview(image,asset,selection,assets)
+        except (ModelError,SchemaError) as exc:raise AssetError(str(exc)+' Rescan ROM Explorer or choose another resource.') from None
 
     def asset_decode(self, data):
         from .textures import decode

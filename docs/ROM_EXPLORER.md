@@ -386,8 +386,8 @@ orientation records are flagged. Collision, bounds, placement and grid collectio
 record widths and extents. Binary resources need additional sequence or demo header checks
 before receiving those types; arbitrary binary data retains its generic role. Sequence
 headers validate track offsets and time division, not the complete event program. Demo
-headers validate frame counts and ordered bitstream offsets, not playback. No skeleton pose,
-scene reconstruction, animation playback, demo playback or music synthesis is implied.
+headers validate frame counts and ordered bitstream offsets, not playback. These header labels alone do not imply a skeleton pose, scene reconstruction, demo playback
+or music synthesis. Supported linked-model animation is described below.
 
 Resource inspectors now show up to 64 records per page, with numeric column sorting on the
 current page. Directory entries link to their mapped regions; empty entries have no link.
@@ -397,11 +397,10 @@ Links stay within the same validated directory root and analysis image.
 
 Model previews include a skeleton table (parent, children and alternative part mappings),
 with cycle and multiple-parent checks, plus material colors, UV multipliers, shading flags
-and a texture-bank link when that index is present. The wireframe still displays one mesh
-in local coordinates; alternative parts are not assembled into a guessed character.
+and a texture-bank link when that index is present. Local mesh mode remains available; supported linked animations can assemble the first
+alternative part per node as described below.
 Animation tables expose node track indices, initial positions/quaternions and track encoding.
-The frame input reads supported uncompressed XYZ tracks. ADPCM translation/rotation tracks
-are identified but not decoded or played. Missing initial orientations stay missing.
+The frame input reads supported uncompressed XYZ tracks. ADPCM translation/rotation tracks are decoded in the linked animated-model preview. Missing initial orientations stay missing.
 
 Collision inspection deinterleaves attribute/corner/region byte planes, checks the selected
 page's corner, attribute and neighbour indices, and renders those surfaces as a rotatable
@@ -419,8 +418,7 @@ integer coincidences and runtime use remain unresolved. These inspectors do not 
 tentative classifications and read at most 4 MiB. Automatic font detection currently supports
 PSF2 bitmap fonts with a version-zero 32-byte header, exact glyph extents, and no Unicode table.
 The glyph atlas uses stored order, without guessing a character mapping. The weak two-byte
-PSF1 signature and headerless console fonts are not automatically classified. Game-specific
-fonts, non-UTF-8 encodings, animation playback and reconstructed scenes remain planned.
+PSF1 signature and uncorroborated headerless console fonts are not automatically classified. Other game-specific font layouts, non-UTF-8 encodings and reconstructed scenes remain planned.
 
 Compression is retained as a separate property alongside the semantic type. Standalone RNC
 streams also receive validated extents and output sizes without a recognized directory.
@@ -491,3 +489,37 @@ or supported decoded block. Recipes run structural checks before being stored, a
 independently critiqued and become local saved interpretations only on acceptance.
 No generated executable decoder code is installed. New proprietary formats beyond
 the layout controls remain research findings requiring a code-reviewed adapter.
+
+### Native animated models and source-family fonts
+
+For the supported indexed N64 directory, model previews resolve texture-bank indices within
+the same directory and use byte-plane UV coordinates, material UV scale, stored colors, source pseudocolor ramps,
+clamp/repeat/mirror modes and alpha blending. Texture frame/palette zero is displayed.
+Lighting is an unlit approximation; reflection coordinates, runtime material effects and
+transparency sorting are not reproduced. Missing/unsupported texture links remain visible
+in Model browser's relationship details. Standalone meshes never guess nearby textures.
+
+Choose **Animated assembly** in a model region or Model browser, select an animation, then
+prepare the preview. **Play animation** starts local playback; Pause and the frame slider
+stop/scrub it. Preview rate is adjustable from 1–60 frames per second and is not a claim about
+the game's playback speed. Navigation, closing, replacing the preview and hiding the window
+stop playback. No network requests run per frame. glTF exports bake frame zero for animated
+assemblies; they do not export animation tracks.
+
+The decoder checks shared six-bit block headers and three-bit ADPCM signals, big-endian frame
+counts, signal extents, 32-bit predictor arithmetic, translation scales/offsets and quantized
+quaternions. RNC containers still require both checksums. Parent/child transforms assemble
+rigid node meshes using the first alternative part per node. Root motion is retained; runtime
+blending, root-motion removal, skinning, gameplay overrides and camera effects are not applied.
+Missing required initial transforms or mismatched geometry/animation node counts produce an
+actionable error. Limits are 256 nodes, 4096 frames, 65,536 node frames, 32,768 assembled vertices,
+65,536 triangles, 256 mesh sections and 16 MiB of texture decoding per preview.
+
+Native 16 × 16 I4 font recognition requires a named source-family text writer and a complete
+mapped table of 10 or 26 contiguous, nonconstant glyphs. A base-minus-one indexing reference
+is handled explicitly. Character order is inferred from this source family, not proved by a
+bitmap signature. When imported segments omit program data, mapping is extended only inside
+a checked expanded-program byte match with consistent imported segment mappings. Ambiguous
+overlays, incomplete glyphs and unnamed consumers do not classify a font. The atlas preserves
+four-bit intensity and exposes digit/alphabet order; runtime color ramps and text effects
+remain outside this preview. PSF2 detection and portable text/pointer inspection remain shared.
