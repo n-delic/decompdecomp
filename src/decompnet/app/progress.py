@@ -286,8 +286,8 @@ def case_clash(store, pid: int, folder: Path) -> str | None:
     shown = "; ".join(" and ".join(f"`{name}`" for name in names) for names in list(groups.values())[:3])
     more = f" (and {len(groups)-3} more)" if len(groups) > 3 else ""
     return (f"Functions {shown}{more} differ only in capitals, and this disk ignores capitals in file names, so their "
-            "saved C would be one file. Ask a helper to rename one of each pair with rename_symbol (the app has no "
-            "rename button yet); saving continues after the rename.")
+            "saved C would be one file. Rename one of each pair (Rename… on its function page, or a helper's "
+            "rename_symbol); saving continues after the rename.")
 
 
 # #158: preserve assembly-local names in progress manifests.
