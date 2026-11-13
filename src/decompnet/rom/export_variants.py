@@ -12,6 +12,7 @@ def export_game(net, slug, out, log=print):
     """Freeze shared revisions and membership for the whole export."""
     from ..app import variants
     own = variants.member(net, slug)
+    if own is None:raise NetworkError('This target was detached. Refresh Variants before exporting.')
     with variants.edit_lock(net, own['game'], 'export'):
         return _export_game(net, slug, out, log)
 

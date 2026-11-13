@@ -320,9 +320,14 @@ def job_status(net, jobs, slug):
     result = []
     for row in rows:
         value = dict(row)
-        if value['state'] == 'running' and value['runtime_id'] not in jobs.jobs:
+        runtime = jobs.jobs.get(value['runtime_id'])
+        if value['state'] == 'running' and runtime is None:
             value['state'] = 'interrupted'
             value['error'] = 'The app stopped during this job. Start it again to verify every affected variant.'
+        elif value['state'] == 'running' and runtime['state'] != 'running':
+            # Admission can be cancelled before our worker enters its persistence wrapper.
+            value['state'] = runtime['state']
+            value['error'] = runtime.get('error')
         value['progress'] = json.loads(value['progress'])
         value['result'] = json.loads(value['result']) if value['result'] else None
         result.append(value)

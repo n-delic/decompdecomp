@@ -218,3 +218,13 @@ def test_overlapping_function_ids_in_project_databases_stay_variant_scoped(net, 
     assert len(variants.shared_sources(net, 'pal')) == len(variants.shared_sources(net, 'us')) == 1
     other.close_readers()
     other.conn.close()
+
+
+def test_cancelled_job_admission_does_not_reattach_forever(net):
+    attached(net)
+    own = variants.member(net, 'pal')
+    with net.store.tx() as db:
+        db.execute('INSERT INTO variant_jobs VALUES(?,?,?,?,?,?,?,?,?)',
+                   ('durable',own['game'],'pal','running','{}',None,None,1,'cancelled-before-worker'))
+    jobs = SimpleNamespace(jobs={'cancelled-before-worker':{'state':'cancelled','error':'Stopped before verification'}})
+    assert variants.job_status(net, jobs, 'pal')[0]['state'] == 'cancelled'

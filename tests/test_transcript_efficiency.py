@@ -77,7 +77,7 @@ def test_compact_project_facts_keep_progress_and_do_not_list_every_range(monkeyp
     ov={'title':'Demo','rom':{'game_code':'TEST','region':'Europe'},'compiler':{'name':'Compiler','flags':[]},
         'compiler_ranges':ranges,'compilers':['Compiler'],'matched_bytes':20,'bytes':100,
         'matched':2,'functions':10,'attempts':30,'context_version':1,'suggestions':[]}
-    net=SimpleNamespace(_project=lambda _: {'id':1,'name':'Demo'}, cfg=lambda _: {'platform':'n64','compiler':{'toolchain':'gcc-2.7.2-kmc'}}, project_store=lambda _: SimpleNamespace(one=lambda *a: {'matched':2,'total':10,'attempts':30}), instructions=lambda _:'Keep this instruction.',overview=lambda _:ov,fork_slug=lambda _:None,
+    net=SimpleNamespace(_project=lambda _: {'id':1,'name':'Demo','slug':'game'}, claim_order=lambda _:None, cfg=lambda _: {'platform':'n64','compiler':{'toolchain':'gcc-2.7.2-kmc'}}, project_store=lambda _: SimpleNamespace(one=lambda *a: {'matched':2,'total':10,'attempts':30}), instructions=lambda _:'Keep this instruction.',overview=lambda _:ov,fork_slug=lambda _:None,
                         knowledge=SimpleNamespace(for_prompt=lambda _:''))
     compact=tools.project_info(net,'game')
     assert 'Compact saved metadata' in compact and '2/10 functions' in compact
