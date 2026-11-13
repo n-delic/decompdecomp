@@ -12,6 +12,8 @@ def identify(net, proj, recorded, *, include_asm=False):
     Nothing is written to project settings or counted as matching C. Naming may
     include exact assembly identities; the default C-work queue still excludes them.
     """
+    from .sdk_builtin import ensure
+    ensure(net)  # the libraries the app ships, loaded before the index's version is read
     version = (net.project_store(proj['id']).read_version('fingerprints', proj['id']), net.store.read_version('sdk_names'),
                net.project_store(proj['id']).read_version('naming', proj['id']),
                repr(net.cfg(proj).get('sdk_libraries')), include_asm)

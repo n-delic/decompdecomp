@@ -141,6 +141,9 @@ class Console:
     # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
     sets_aside = False
     sdk_corpus = ""  # optional public binary fingerprint corpus; local SDK archives work on every console
+    # a table of library signatures the app ships, from the library rebuilt byte for byte from public source (the
+    # N64's from decompals/ultralib: tools/ultralib_signatures.py), loaded like an indexed SDK (app/sdk_builtin.py)
+    sdk_table = ""
     # PROJECT mode: choices the import asks about besides the compiler and scope, as (id, question, ((value, text), ...))
     # with the first value the default; create_project takes each as a keyword (Xbox: ltcg)
     import_options: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = ()
