@@ -49,6 +49,10 @@ CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare p
 # after this long. Retried on every one, two such projects cost 2.9 s each second in the autosave alone, and each try
 # claimed a function anew. A user's action or a compile (forced) always tries again: a compiler installed meanwhile.
 RETRY_FAILED_SECONDS = 60
+# A write refused because the folder isn't what the sync read is usually an editor saving meanwhile, and the next sync
+# reads it. This many refusals in a row is not: say which files stop it (an N64 game's saves rolled back silently for
+# days because two functions' files were one file on a disk that ignores capitals).
+REFUSALS_BEFORE_ERROR = 3
 PARTIAL_FUNCTIONS = 256  # more changed functions than this: one full query beats this many per-name lookups
 # Saved-progress verifications (one per project) that compile at the same time. One shared lane made a small
 # game's import wait 40 s behind a big game's check. Compiling is already capped for the whole app by
@@ -569,6 +573,7 @@ class Progress:
         self.adopting: set[str] = set()
         self.blocked: dict[str, tuple] = {}  # slug -> (folder, dirty token, settings) while a compiler waits
         self.case_checked: dict[str, tuple] = {}  # slug -> (dirty token, why saving waits for a rename, or None)
+        self.refusals: dict[str, int] = {}  # slug -> syncs in a row whose write found the folder not as it read it
         self.failed: dict[str, tuple] = {}  # slug -> ((dirty token, settings, folder), when) of the last failed sync
 
     @staticmethod
@@ -905,7 +910,7 @@ class Progress:
             self.states.pop(project_id, None)
             for cache in (self.disk, self.projected, self.checked, self.results, self.revisions,
                           self.signatures, self.stamps, self.published, self.sync_changes, self.errors, self.blocked,
-                          self.failed, self.case_checked):
+                          self.failed, self.case_checked, self.refusals):
                 cache.pop(slug, None)
 
     @contextmanager
@@ -1501,6 +1506,7 @@ class Progress:
                     proj = self.net._project(slug)
                     rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
                 if rom and result:
+                    self.refusals.pop(slug, None)
                     self.prune_matched_drafts(slug)
                 self.checked[slug] = time.monotonic()
                 self.sync_changes[slug] = store.conn.total_changes
@@ -1715,6 +1721,20 @@ class Progress:
         self._remember_changes(pid, {**changes, **removed}, files[saves.MANIFEST], config_key,
                                dirty.token, dirty_tokens)
         return bool(changes or removed)
+
+    def _refused(self, slug: str, folder: Path, names, disk: dict[str, str], token, config_key) -> bool:
+        """A write found the folder not as this sync read it, and rolled back. Return False (the next sync reads the
+        folder again); once that keeps happening, keep an error naming the files, so it is no longer silent."""
+        count = self.refusals[slug] = self.refusals.get(slug, 0) + 1
+        if count >= REFUSALS_BEFORE_ERROR:
+            changed = saves.unexpected_files(folder, names, disk)
+            if changed:
+                shown = ", ".join(changed[:3]) + (f" and {len(changed)-3} more" if len(changed) > 3 else "")
+                self.blocked[slug] = (self._signature(folder), token, config_key)
+                self.errors[slug] = (f"Saving keeps stopping: {shown} changed on disk while each save was being "
+                                     f"prepared ({count} tries in a row), so the save rolled back to keep it. "
+                                     "Check what writes there (an editor, a sync tool, git), then save again.")
+        return False
 
     def _sync(self, slug: str, logger=None, *, admit=None) -> bool:
         net = self.net
@@ -1999,7 +2019,7 @@ class Progress:
                                           chosen=bool(cfg.get("progress_folder"))):
                         raise _FolderChanged
             except _FolderChanged:
-                return False
+                return self._refused(slug, folder, set(pending) | set(removed), disk, dirty.token, config_key)
             # Notes/instructions do not change the bytes being judged. Invalidating on every
             # metadata import discarded concurrent compiles even though their inputs survived.
             if judging_change:
@@ -2056,7 +2076,8 @@ class Progress:
                 transitions[saves.MANIFEST] = rendered[saves.MANIFEST]
                 if not saves._publish(folder, transitions, obsolete, expected=disk,
                                       chosen=bool(cfg.get("progress_folder"))):
-                    return False  # an editor wrote meanwhile; leave dirty tokens for the retry
+                    # an editor wrote meanwhile; leave dirty tokens for the retry
+                    return self._refused(slug, folder, set(transitions) | set(obsolete), disk, dirty.token, config_key)
                 disk = _read(folder)
                 saves._remember_revision(net, slug, json.loads(rendered[saves.MANIFEST]))
                 proj = net._project(slug)
