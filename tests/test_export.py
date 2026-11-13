@@ -403,3 +403,45 @@ def test_default_repository_is_rebuildable_and_reopens_all_progress(tmp_path, re
     assert restored_root and (restored_root/'build.py').is_file()
     assert (restored_root/'.git').exists()
     assert git(restored_root, 'rev-parse', 'HEAD') == git(root, 'rev-parse', 'HEAD')
+
+
+@pytest.mark.parametrize("platform", ["n64", "ps1", "ps2", "psp"])
+@pytest.mark.parametrize("kind,mnemonic", [(16, "bltzal"), (17, "bgezal"), (18, "bltzall"), (19, "bgezall")])
+def test_export_preserves_link_branches_with_ra_as_raw_words(platform, kind, mnemonic):
+    from decompnet.consoles import get
+
+    console = get(platform)
+    order = "big" if console.big_endian else "little"
+    word = (1 << 26) | (31 << 21) | (kind << 16) | 0xFFFE
+    encoded = word.to_bytes(4, order).hex().upper()
+    prefix = f"/* 000000 80001000 {encoded} */ "
+    line = f"{prefix}{mnemonic} $ra, target\n"
+    expected = f"{prefix}.word 0x{word:08X}\n"
+    assert console.export_asm(line) == expected
+    assert console.export_asm(expected) == expected
+    valid = word & ~(31 << 21) | (4 << 21)
+    valid_prefix = f"/* 000000 80001000 {valid.to_bytes(4, order).hex().upper()} */ "
+    valid_line = f"{valid_prefix}{mnemonic} $a0, target\n"
+    assert console.export_asm(valid_line) == valid_line
+
+
+@pytest.mark.parametrize("platform", ["n64", "ps1", "ps2", "psp"])
+def test_exported_ra_link_words_assemble_byte_exactly(tmp_path, platform):
+    from decompnet.consoles import get
+
+    if toolchains.installed("binutils-mips") is None:
+        pytest.skip("needs pinned MIPS binutils")
+    console = get(platform)
+    order = "big" if console.big_endian else "little"
+    words = [(1 << 26) | (31 << 21) | (kind << 16) | 0xFFFE for kind in (16, 17, 18, 19)]
+    source = ".text\n.set noreorder\n" + "".join(
+        f"/* {index * 4:06X} {0x80001000 + index * 4:08X} {word.to_bytes(4, order).hex()} */ "
+        f"{mnemonic} $ra, target\n"
+        for index, (word, mnemonic) in enumerate(zip(words, ("bltzal", "bgezal", "bltzall", "bgezall"))))
+    (tmp_path / "raw.s").write_text(console.export_asm(source))
+    assembler = toolchains.binary("binutils-mips").parent / "mips-ps2-decompals-as"
+    subprocess.run([str(assembler), "-EB" if console.big_endian else "-EL", "-mips2",
+                    "-no-pad-sections", "-o", "raw.o", "raw.s"], cwd=tmp_path, check=True, capture_output=True)
+    with (tmp_path / "raw.o").open("rb") as obj:
+        assert ELFFile(obj).get_section_by_name(".text").data() == b"".join(
+            word.to_bytes(4, order) for word in words)
