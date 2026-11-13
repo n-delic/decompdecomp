@@ -29,6 +29,9 @@ os.environ["DECOMP_MCP_GATEWAY"] = "0"
 # turns the persistent object cache on for itself)
 os.environ["DECOMP_OBJECT_CACHE_MB"] = "0"
 os.environ["DECOMP_RENDER_WORKERS"] = "0"  # progress renders in this process, except tests/test_render_worker.py
+# PS1/PS2 imports would download libretro's title lists (consoles/playstation_titles): tests read an empty folder,
+# and tests/test_playstation_titles.py gives itself small lists
+os.environ["DECOMPNET_PLAYSTATION_TITLES"] = tempfile.mkdtemp(prefix="decomp-tests-titles-")
 os.environ.setdefault("BROWSER", "true")
 os.environ.setdefault("DECOMP_TRAY", "0")
 # nor the wine prefix the user's app runs Visual C++ 2017 in (toolchains/.wine, a development copy's .wine-dev: #146):

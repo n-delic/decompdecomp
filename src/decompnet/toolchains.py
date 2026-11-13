@@ -712,6 +712,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                     ("config_sub_url", "config_sub_sha256", "config.sub"),
                 ):
                     pinned.append({"url": part[url_key], "sha256": part[hash_key]})
+            elif part.get("copy"):  # a plain file, not an archive (a data list)
+                shutil.copyfile(archive, dest / part["copy"])
             elif part.get("binary"):  # a plain executable, not an archive
                 shutil.copyfile(archive, dest / part["binary"])
                 os.chmod(dest / part["binary"], 0o755)
