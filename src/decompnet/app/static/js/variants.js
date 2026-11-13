@@ -25,10 +25,11 @@ async function variantAction(slug, log, label, work) {
   const controls = [...document.querySelectorAll('[data-pane="variants"] button, [data-pane="variants"] input, [data-pane="variants"] select, [data-pane="variants"] textarea')].filter(el => el.id !== 'variantsStop');
   const finish = beginWork(log, label, controls, '');
   try { return await work(); }
-  catch (error) { state.error = error.message; if (S.slug === slug) showJobError(log, error.message); }
+  catch (error) { state.error = error.message; if (S.slug === slug && variantViews.get(slug) === state) showJobError(log, error.message); }
   finally {
     finish(); state.busy = false;
-    if (S.slug === slug && S.tab === 'variants') await loadVariants(slug);
+    if (variantViews.get(slug) !== state && variantViews.get(slug)?.busy) controls.forEach(control => { control.disabled = true; });
+    if (S.slug === slug && S.tab === 'variants' && variantViews.get(slug) === state) await loadVariants(slug);
   }
 }
 async function followVariantJob(slug, id) {
@@ -45,7 +46,7 @@ async function followVariantJob(slug, id) {
   try { return await followJob(id, log, null, () => S.slug === slug && S.tab === 'variants' && variantViews.get(slug) === state); }
   finally {
     state.following = null;
-    if (S.slug === slug) { stop.hidden = true; stop.textContent = 'Stop'; }
+    if (S.slug === slug && variantViews.get(slug) === state) { stop.hidden = true; stop.textContent = 'Stop'; }
   }
 }
 async function loadVariants(slug) {
@@ -57,7 +58,7 @@ async function loadVariants(slug) {
   try {
     // Discover server-owned work before reading counts from potentially slow target stores.
     const activity = await api(`/api/variants?slug=${encodeURIComponent(slug)}&view=jobs`);
-    if (S.slug !== slug || S.tab !== 'variants') return;
+    if (S.slug !== slug || S.tab !== 'variants' || variantViews.get(slug) !== state) return;
     const active = activity.jobs.find(j => j.state === 'running');
     if (active && !state.following) {
       state.loading = false;
@@ -65,7 +66,7 @@ async function loadVariants(slug) {
       return loadVariants(slug);
     }
     const data = await api(`/api/variants?slug=${encodeURIComponent(slug)}`);
-    if (S.slug !== slug || S.tab !== 'variants') return;
+    if (S.slug !== slug || S.tab !== 'variants' || variantViews.get(slug) !== state) return;
     state.data = data;
     summary.textContent = data.supported ? (data.game?.title || 'This project has no attached variants yet.') : 'Variant grouping currently supports local ROM projects. PROJECT-mode adapters are planned.';
     $('variantIdentityPanel').hidden = $('variantSourcePanel').hidden = !data.game;
@@ -108,7 +109,7 @@ async function loadVariants(slug) {
     logical.onchange();
     $('variantPublish').disabled = !data.logical.length;
     const projects = await api('/api/projects?brief=1');
-    if (S.slug !== slug || S.tab !== 'variants') return;
+    if (S.slug !== slug || S.tab !== 'variants' || variantViews.get(slug) !== state) return;
     $('variantAttachProject').innerHTML = projects.filter(p => p.slug !== slug && !data.variants.some(v => v.project === p.slug)).map(p => `<option value="${esc(p.slug)}">${esc(p.name)}</option>`).join('');
     const running = data.jobs.find(j => j.state === 'running');
     if (running && !state.following) {
@@ -116,7 +117,7 @@ async function loadVariants(slug) {
       await variantAction(slug, $('variantsLog'), 'Following variant work', () => followVariantJob(slug, running.runtime_id));
       await loadVariants(slug);
     } else if (!running && data.jobs[0]?.error) showJobError($('variantsLog'), data.jobs[0].error);
-  } catch (error) { if (S.slug === slug) { summary.textContent = ''; showJobError($('variantsLog'), error.message); } }
+  } catch (error) { if (S.slug === slug && variantViews.get(slug) === state) { summary.textContent = ''; showJobError($('variantsLog'), error.message); } }
   finally { state.loading = false; }
 }
 if ($('variantAttach')) $('variantAttach').onclick = () => {
