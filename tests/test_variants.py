@@ -73,12 +73,15 @@ def test_membership_is_atomic_and_variant_ids_cannot_escape_export(net):
 def test_logical_identity_supports_split_merged_missing_and_inlined_instances(net):
     variants.attach(net, 'pal', 'us', 'us', 'pal')
     variants.attach(net, 'pal', 'jp', 'jp')
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(id,project_id,name,target,status,unit) VALUES(4,1,'second_piece',?,'open','')", (b'piece',))
     logical = variants.bind(net, 'pal', 'operation', [
         {'variant':'pal','function_id':1,'relation':'split'},
+        {'variant':'pal','function_id':4,'relation':'split'},
         {'variant':'us','relation':'absent'}, {'variant':'jp','relation':'inlined'}])
     other = variants.bind(net, 'pal', 'another operation', [{'variant':'pal','function_id':1,'relation':'merged'}])
     assert logical != other
-    assert len(net.store.all('SELECT * FROM variant_bindings WHERE logical=?', logical)) == 3
+    assert len(net.store.all('SELECT * FROM variant_bindings WHERE logical=?', logical)) == 4
     # IDs survive target symbol changes; a function can implement more than one logical operation.
     with net.store.tx() as db:db.execute('UPDATE functions SET name=? WHERE id=1', ('renamed',))
     assert net.store.one('SELECT function_id FROM variant_bindings WHERE logical=? AND variant=?', logical, 'pal')['function_id'] == 1
@@ -146,7 +149,8 @@ def test_jobs_persist_progress_and_reattach_without_starting_twice(net, tmp_path
         return {'verified':2}
     jid = variants.start_job(net, jobs, 'pal', 'shared-test', work)
     assert entered.wait(5)
-    assert variants.start_job(net, jobs, 'us', 'shared-test', work) == jid
+    with pytest.raises(NetworkError, match='already running'):
+        variants.start_job(net, jobs, 'us', 'shared-test', work)
     snapshot = variants.job_status(net, jobs, 'us')[0]
     assert snapshot['runtime_id'] == jid and snapshot['progress']['done'] == 1
     finish.set()
@@ -228,3 +232,27 @@ def test_cancelled_job_admission_does_not_reattach_forever(net):
                    ('durable',own['game'],'pal','running','{}',None,None,1,'cancelled-before-worker'))
     jobs = SimpleNamespace(jobs={'cancelled-before-worker':{'state':'cancelled','error':'Stopped before verification'}})
     assert variants.job_status(net, jobs, 'pal')[0]['state'] == 'cancelled'
+
+
+def test_database_upgrade_keeps_group_identity_and_shared_history_in_catalog(tmp_path):
+    from decompnet.network import Network
+
+    from .test_project_database_migration import close, legacy
+    path = tmp_path / 'catalog.db'
+    legacy(path)
+    net = Network(path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO variant_games VALUES('game','first','Game')")
+        db.execute("INSERT INTO game_variants VALUES('game','pal','first','PAL')")
+        db.execute("INSERT INTO game_variants VALUES('game','us','second','US')")
+        db.execute("INSERT INTO logical_functions VALUES('operation','game','operation')")
+        db.execute("INSERT INTO variant_bindings VALUES('game','operation','pal',10,'implementation','{}','','hash')")
+        db.execute("INSERT INTO variant_sources VALUES('operation','revision','C','header','[]','user',1)")
+    close(net)
+    upgraded = Network(path, project_databases=True)
+    assert upgraded.store.one('SELECT source FROM variant_sources')['source'] == 'C'
+    assert variants.member(upgraded, 'second')['variant'] == 'us'
+    assert upgraded.project_store('first').one('SELECT id FROM functions WHERE id=10')['id'] == 10
+    for store, _ in upgraded.project_stores():
+        assert not store.all('SELECT * FROM variant_sources')
+    close(upgraded)

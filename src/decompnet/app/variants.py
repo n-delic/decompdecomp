@@ -284,7 +284,7 @@ def start_job(net, jobs, slug, kind, work):
         active = next((j for j in jobs.jobs.values() if j['kind'] == kind and j['state'] == 'running'
                        and member(net, j.get('activity_project') or '') and
                        member(net, j['activity_project'])['game'] == own['game']), None)
-        if active:return active['id']
+        if active:raise NetworkError('This variant task is already running. Follow its existing progress before starting another edit.')
         durable = uuid.uuid4().hex
         with net.store.tx() as db:
             db.execute('INSERT INTO variant_jobs VALUES(?,?,?,?,?,?,?,?,?)',
