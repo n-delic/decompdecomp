@@ -17,6 +17,9 @@ const context = vm.createContext({$,S:state,Map,Set,Promise,Error,JSON,Object,co
 vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/variants.js','utf8'),context);
 const flush=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
 (async()=>{
+  assert.match(context.variantOutcome({state:'done',result:{path:'/export',identical:true,variants:[{},{}]}}).message,/All 2 variants rebuild exactly/);
+  assert.equal(context.variantOutcome({state:'done',result:{path:'/export',identical:false}}).error,true);
+  assert.match(context.variantOutcome({state:'done',result:{verified:2}}).message,/2 implementations independently verified/);
   const a=context.renderVariantSelector('pal');
   state.slug='us';const b=context.renderVariantSelector('us');
   calls[1].resolve({variants:[{project:'us',label:'US'}]});await b;

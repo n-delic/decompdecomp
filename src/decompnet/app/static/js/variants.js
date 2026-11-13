@@ -22,6 +22,7 @@ async function variantAction(slug, log, label, work) {
   if (state.busy) return;
   state.busy = true; variantViews.set(slug, state);
   log.hidden = false; showJobError(log, '');
+  $('variantsOutcome').textContent = label + '…';
   const controls = [...document.querySelectorAll('[data-pane="variants"] button, [data-pane="variants"] input, [data-pane="variants"] select, [data-pane="variants"] textarea')].filter(el => el.id !== 'variantsStop');
   const finish = beginWork(log, label, controls, '');
   try { return await work(); }
@@ -49,6 +50,15 @@ async function followVariantJob(slug, id) {
     if (S.slug === slug && variantViews.get(slug) === state) { stop.hidden = true; stop.textContent = 'Stop'; }
   }
 }
+function variantOutcome(job) {
+  if (!job) return {message:''};
+  const result = job.result;
+  if (job.state === 'done' && result?.path) return result.identical
+    ? {message:`All ${result.variants?.length || 1} variants rebuild exactly. Repository: ${result.path}`}
+    : {message:`Repository: ${result.path}. One or more variants did not rebuild exactly. Check the export log and recheck the affected source.`,error:true};
+  if (job.state === 'done' && result?.verified != null) return {message:`Shared source saved: ${result.verified} implementations independently verified.`};
+  return {message:job.error || '',error:!!job.error};
+}
 async function loadVariants(slug) {
   if (!slug) return;
   const state = variantViews.get(slug) || {};
@@ -68,6 +78,9 @@ async function loadVariants(slug) {
     const data = await api(`/api/variants?slug=${encodeURIComponent(slug)}`);
     if (S.slug !== slug || S.tab !== 'variants' || variantViews.get(slug) !== state) return;
     state.data = data;
+    const outcome = variantOutcome(data.jobs[0]);
+    $('variantsOutcome').textContent = outcome.message;
+    if (outcome.error) showJobError($('variantsLog'), outcome.message);
     summary.textContent = data.supported ? (data.game?.title || 'This project has no attached variants yet.') : 'Variant grouping currently supports local ROM projects. PROJECT-mode adapters are planned.';
     $('variantIdentityPanel').hidden = $('variantSourcePanel').hidden = !data.game;
     $('variantAttach').disabled = !data.supported;

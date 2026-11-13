@@ -78,8 +78,13 @@ def _export_game(net, slug, out, log=print):
     from .export_process import run as verify_build
     proc = verify_build([console_python(), 'build.py', '--all-variants'], out, log,
                         timeout=max(3600, 3600 * len(targets)))
-    if hasattr(log, 'progress'):log.progress({'done': len(targets), 'total': len(targets), 'phase': 'Export verified'})
-    return {'path': str(out), 'identical': proc.returncode == 0 and all(r['identical'] for r in results),
+    identical = proc.returncode == 0 and all(r['identical'] for r in results)
+    log(f'All variants rebuild exactly. Repository: {out}' if identical else
+        f'Export needs attention: one or more variants did not rebuild exactly. Repository: {out}')
+    if not identical:log((proc.stdout + proc.stderr)[-3000:])
+    if hasattr(log, 'progress'):log.progress({'done': len(targets), 'total': len(targets),
+                                             'phase': 'Export verified' if identical else 'Export needs attention'})
+    return {'path': str(out), 'identical': identical,
             'variants': results, 'matched': sum(r['matched'] for r in results),
             'functions': sum(r['functions'] for r in results), 'fallback': [f for r in results for f in r['fallback']],
             'log': (proc.stdout + proc.stderr)[-3000:]}
