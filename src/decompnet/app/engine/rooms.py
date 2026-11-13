@@ -201,6 +201,90 @@ class RoomMixin:
 
     def _mirror_layout(self, proj, console, functions, symbols, local, by_vram, rename, free_name) -> None:
         pid = proj["id"]
+        # Mirror the host's joins (the reverse of the split pass below): where the host has one function spanning
+        # what we hold as several -- an over-split head plus tails -- join them back, as the saved-layout join does.
+        for h in sorted(functions, key=lambda f: f["vram"]):
+            # Mirror _join_saved_layout's disambiguation: the head is the piece at the host's address carrying the
+            # host's name (or the sole function there); an overlay that shares the address is never guessed at. The
+            # tails are this instance's own ROM run (by rom_offset), so a same-address alias is never folded and a
+            # cross-unit over-split is still joined (#192 review points 1 and 3).
+            at = by_vram.get(h["vram"], [])
+            head = next((r for r in at if r["name"] == h["name"]), None)
+            if head is None:
+                if len(at) != 1:
+                    continue  # an ambiguous overlay address (or a rename): never guess which function is meant
+                head = at[0]
+            if head["status"] == "matched" or head["matched_source"]:
+                continue  # the head already matches at its own extent; don't fold it into a longer function
+            if (head["size"] or 0) >= h["size"]:
+                continue  # already the host's function: there is no split to undo
+            if head["rom_offset"] is not None:
+                # this overlay instance's own ROM run, the way _apply_join selects it: an aliased copy shares the
+                # vram window but lies elsewhere in the ROM, and a real tail may sit in another unit (join across
+                # overlay unit labels), so pick by rom_offset, not by vram and unit.
+                rows = sorted((r for r in local.values() if r["rom_offset"] is not None
+                               and head["rom_offset"] <= r["rom_offset"] < head["rom_offset"] + h["size"]),
+                              key=lambda r: r["rom_offset"])
+            else:
+                rows = sorted((r for r in local.values()
+                               if head["vram"] <= r["vram"] < h["vram"] + h["size"] and r["unit"] == head["unit"]),
+                              key=lambda r: (r["vram"], r["id"]))
+            if len(rows) < 2 or rows[0]["id"] != head["id"]:
+                continue  # only the head's own run here, or another function starts the run
+            head, tails = rows[0], rows[1:]
+            if any(t["status"] == "matched" or t["matched_source"] for t in tails):
+                continue  # never fold a matched function away
+            if max(r["vram"] + (r["size"] or 0) for r in rows) > h["vram"] + h["size"]:
+                # The last piece runs past the host's end: join_saved_functions drops its lines past the end
+                # (truncating it), and the tail would then be deleted whole -- losing a function the host holds
+                # separately after this one (its head would end exactly at that function's address, so the split
+                # pass below finds no owner to recreate it). Leave the over-split as it is instead: the split pass
+                # recreates that following function from this un-folded tail, which still spans its address
+                # (#192 review: the over-long-tail data loss).
+                continue
+            try:
+                joined = console.join_saved_functions([head, *tails], h["vram"], h["vram"] + h["size"],
+                                                       lambda address, n: self.reader(proj)(address, n))
+            except ValueError:
+                continue  # a real gap between them in this analysis; leave the layout as it is
+            tgt = self._make_target(proj, joined, self.symbols(pid))
+            with self.store.tx() as db:
+                db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, "
+                           "best_score=NULL, best_source=NULL, attempts=attempts+? WHERE id=?",
+                           (joined.size, console.function_insns(joined), tgt.code, json.dumps(tgt.to_json()),
+                            console.function_asm(joined), sum(t["attempts"] or 0 for t in tails), head["id"]))
+                for t in tails:
+                    db.execute("UPDATE attempts SET function_id=? WHERE function_id=?", (head["id"], t["id"]))
+                    db.execute("UPDATE OR IGNORE twin_misses SET function_id=? WHERE function_id=?", (head["id"], t["id"]))
+                    db.execute("DELETE FROM twin_misses WHERE function_id=?", (t["id"],))
+                    db.execute("DELETE FROM claims WHERE function_id=?", (t["id"],))
+                    db.execute("DELETE FROM waits WHERE function_id=? OR needs_id=?", (t["id"], t["id"]))
+                    db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (head["id"], t["id"]))
+                    db.execute("DELETE FROM functions WHERE id=?", (t["id"],))
+                    db.execute("DELETE FROM symbols WHERE project_id=? AND name=? AND address=? AND kind='func'",
+                               (pid, t["name"], t["vram"]))
+                db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=? AND kind='func'",
+                           (joined.size, pid, head["name"]))
+            local[head["id"]] = {**head, "size": joined.size}
+            for t in tails:
+                local.pop(t["id"], None)
+                if t["vram"] in by_vram:
+                    by_vram[t["vram"]] = [i for i in by_vram[t["vram"]] if i["id"] != t["id"]]
+            by_vram[head["vram"]] = [local[head["id"]] if i["id"] == head["id"] else i
+                                     for i in by_vram.get(head["vram"], [])]
+            self._syms.pop(pid, None)
+            self._xrefs.pop(pid, None)
+            self.joined(head["name"], proj["slug"])  # reopen a set-aside head via the shared path (clears its verdict)
+            # A local "joined" note, as _apply_join writes on the host, so a later check-again (not_c_from_notes)
+            # discounts the pieces' older no-C notes -- moved onto the head above -- instead of setting the joined
+            # function aside. The host sends notes only on first/sync or a note event, never with a merge layout,
+            # so the guest must write its own (#192 review point 2).
+            decompdecomp = self.local_agent("decompdecomp")[0]
+            with self.store.tx() as db:
+                db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
+                           (pid, head["id"], decompdecomp.id, "The shared layout joined pieces into this function; "
+                            "it is one function now, whatever older notes say.", time.time()))
+
         for f in sorted(functions, key=lambda f: f["vram"]):
             at = by_vram.get(f["vram"], [])
             if any(row["name"] == f["name"] for row in at):

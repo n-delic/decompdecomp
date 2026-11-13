@@ -21,10 +21,10 @@ CASES = [
      {"report_boundary", "get_class", "guess_struct", "redraft", "search_flags"}),
     ("pc", True, {"join_functions", "report_boundary", "get_class", "guess_struct", "compiler_map", "redraft",
                   "search_flags"}, set()),
-    ("n64", False, {"report_boundary", "get_class", "guess_struct", "compiler_map", "redraft", "search_flags"},
-     {"join_functions", "read_file", "split_file"}),
-    ("ps2", False, {"report_boundary", "get_class", "guess_struct", "compiler_map", "redraft", "search_flags"},
-     {"join_functions", "read_file", "split_file"}),
+    ("n64", False, {"join_functions", "report_boundary", "get_class", "guess_struct", "compiler_map", "redraft",
+                    "search_flags"}, {"read_file", "split_file"}),
+    ("ps2", False, {"join_functions", "report_boundary", "get_class", "guess_struct", "compiler_map", "redraft",
+                    "search_flags"}, {"read_file", "split_file"}),
 ]
 
 
@@ -66,22 +66,21 @@ def test_a_rom_engine_that_can_join_offers_it_to_rom_consoles(monkeypatch):
 
 
 def test_the_rom_prompt_names_joins_only_when_the_engine_has_them(tmp_path, monkeypatch):
-    """A ROM prompt follows the same gate as its tool list: no join_functions before #192, and the join guidance
-    once the engine has it."""
+    """A ROM prompt follows the same gate as its tool list: the join guidance once the engine has join_functions
+    (#192), and none when it can't."""
     net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
     manager = agents.Manager(net, tmp_path, "http://127.0.0.1:1/mcp")
     session = agents.Session("1", "claude", "claude-1", "rom", "claude-1", {})
     monkeypatch.setattr(net, "overview", lambda slug: {
         "kind": "rom", "title": "Game", "platform": "n64", "compiler": {"toolchain": "gcc-2.7.2-kmc"}})
+    assert "join_functions" in manager._prompt(session)        # the engine joins (#192)
+    monkeypatch.setattr(tools, "_rom_joins", lambda: False)     # an engine that can't join names no join tool
     assert "join_functions" not in manager._prompt(session)
-    monkeypatch.setattr(tools, "FORK_ONLY", tools.FORK_ONLY - {"join_functions"})
-    monkeypatch.setattr(tools.RomNetwork, "join_functions", lambda *args, **kwargs: "", raising=False)
-    assert "join_functions" in manager._prompt(session)
 
 
 def test_a_rom_project_without_engine_joins_names_the_engine(tmp_path, monkeypatch):
     """The refusal follows the same gate: ROM joins are the engine's (#192), not a console's, so say so."""
-    monkeypatch.setattr(tools, "FORK_ONLY", tools.FORK_ONLY - {"join_functions"})
+    monkeypatch.setattr(tools, "_rom_joins", lambda: False)  # an engine that can't join: the refusal names the engine
     net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
     with net.store.tx() as db:
         db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
