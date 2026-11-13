@@ -248,7 +248,7 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
 - the sound (`audio.c`): libultra's audio tasks (the "ABI 1" command list: ADPCM, resampling, envelopes, mixing) run
   in software, and each buffer the game gives the audio interface is played in the live view (its Sound button)
   and, with `PORT_AUDIO=file.wav`, saved. The interface's registers answer in real time at the game's rate, so the
-  game paces its sound as on the console. Not yet: the effects filter (`A_POLEF`), and the resampler's exact taps;
+  game paces its sound as on the console. Not yet: the resampler's exact taps (linear for now);
 - the app's **Play in browser** (Porting): builds the game from the project's last save, starts it with
   `PORT_LIVE` on a free port and opens it in the browser; Stop the game ends it, and so does quitting the app.
   Its saves stay in the build folder (`game.eep`);

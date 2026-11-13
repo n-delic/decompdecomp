@@ -1,7 +1,8 @@
 /*
  * The N64's sound, in software (port/wasm): the audio tasks libultra's synthesizer sends the RSP (the "ABI 1" command
  * list: ADPCM decoding, resampling, envelopes and mixing in the RSP's 4 KB of data memory), and the audio interface
- * (AI) the game hands each finished buffer of 16-bit stereo samples to.
+ * (AI) the game hands each finished buffer of 16-bit stereo samples to. The resampler's 4-tap table is linear
+ * interpolation here, not the microcode's own.
  *
  * The finished samples go to the live view (live.c, PORT_LIVE) and, with PORT_AUDIO=file.wav, to a WAV file.
  * The AI's registers are answered as the hardware would at that moment: the length of the buffer still playing, and
@@ -87,6 +88,31 @@ static void adpcm(int init, int loop, uint32_t state) {
         count -= 32;
     }
     for (int i = 0; i < 16; i++) wr16(ram(state + 2 * i), (uint16_t)last[i]);
+}
+
+/* A_POLEF: libultra's effects low-pass, a two-pole filter whose coefficients are the loaded ADPCM table: the first 8
+   for the previous two outputs, the next 8 (scaled by the gain) for the frame's own earlier samples. */
+static void polef(int init, int16_t gain, uint32_t state) {
+    uint32_t in = st.in + DMEM_BASE, out = st.out + DMEM_BASE;
+    int count = (int)align(st.count, 16);
+    const int16_t *h1 = st.table;
+    int16_t h2[8], h2_before[8], l1, l2;
+    if (init) { l1 = 0; l2 = 0; }
+    else { l1 = (int16_t)rd16(ram(state + 4)); l2 = (int16_t)rd16(ram(state + 6)); }
+    for (int i = 0; i < 8; i++) { h2_before[i] = st.table[8 + i]; h2[i] = (int16_t)(((int32_t)st.table[8 + i] * gain) >> 14); }
+    int16_t last[8] = {0};
+    while (count > 0) {
+        int16_t frame[8];
+        for (int i = 0; i < 8; i++, in += 2) frame[i] = ds(in);
+        for (int i = 0; i < 8; i++) {
+            int32_t accu = frame[i] * gain + h1[i] * l1 + h2_before[i] * l2 + rdot(i, h2, frame);
+            last[i] = clamp16(accu >> 14);
+            ds_set(out + 2 * (uint32_t)i, last[i]);
+        }
+        l1 = last[6]; l2 = last[7];
+        out += 16; count -= 16;
+    }
+    for (int i = 0; i < 4; i++) wr16(ram(state + 2 * (uint32_t)i), (uint16_t)last[4 + i]); /* the frame's last four */
 }
 
 static void resample(int init, uint32_t pitch, uint32_t state) {
@@ -203,7 +229,7 @@ void port_audio_task(uint32_t task) {
             uint32_t l = (w1 >> 16) + DMEM_BASE, r = (w1 & 0xFFFF) + DMEM_BASE, o = st.out + DMEM_BASE;
             for (uint32_t i = 0; i < st.count; i += 2, o += 4) { ds_set(o, ds(l + i)); ds_set(o + 2, ds(r + i)); }
             break; }
-        case 0x0E: break; /* A_POLEF: a filter for effects; their sound goes without it for now */
+        case 0x0E: polef(flags & 1, (int16_t)w0, address(w1)); break;
         case 0x0F: st.loop = address(w1); break; /* A_SETLOOP */
         default:
             if (unknown_commands++ < 4) fprintf(stderr, "audio: command %02X not known\n", w0 >> 24);
