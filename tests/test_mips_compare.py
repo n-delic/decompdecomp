@@ -14,16 +14,16 @@ ASM=('glabel sample\n/* 0 80001000 40845800 */ mtc0 $a0,$11\n'
 
 
 def test_seed_is_a_complete_compare_write_leaf_for_registered_backend():
-    assert mips_compare.candidate(ASM,'f','gcc-2.7.2-kmc')==SOURCE+'\n'
+    assert seeds.intrinsic_leaf(ASM,'f','gcc-2.7.2-kmc')==SOURCE+'\n'
     assert seeds.generate_from_asm(ASM,'f','gcc-2.7.2-kmc')==SOURCE+'\n'
     for bad in (ASM.replace('40845800','40845000'),ASM.replace('40845800','40855800'),
                 ASM.replace('40845800','40045800'),ASM.replace('03E00008','03200008'),
                 ASM.replace('00000000','00000001'),ASM.replace('80001004','80001008'),
                 ASM+'nop\n',ASM+'/* extra */ nop\n',ASM+'#define X 1\n',ASM.replace('40845800','40845801')):
-        assert mips_compare.candidate(bad,'f','gcc-2.7.2-kmc') is None
+        assert mips_compare.candidate(bad,'f',True) is None
     for tc in ('ido-5.3','unknown','mwcc-2.6'):
-        assert mips_compare.candidate(ASM,'f',tc) is None
-    assert mips_compare.candidate(ASM,'f()','gcc-2.7.2-kmc') is None
+        assert seeds.intrinsic_leaf(ASM,'f',tc) is None
+    assert seeds.intrinsic_leaf(ASM,'f()','gcc-2.7.2-kmc') is None
 
 
 def test_export_only_adds_used_fixed_intrinsic():

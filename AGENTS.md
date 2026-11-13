@@ -145,8 +145,9 @@ own repository: RetroReversing/decomp-repair (public, AGPL-3.0, history kept). d
 of it (`pyproject.toml`), so installing needs no git. The library never imports `decompnet`, and never compiles or
 judges. A new repair that only reads C and code goes there: change it in decomp-repair, tag a release, then bump the tag
 in `pyproject.toml` and `uv lock` here. A repair that needs the network or a project stays in `app/` and calls it.
-`forks/csource.py`, `rom/symbols.py`, `arch/mips.py` and `m2cfix.py` are names for the library's modules
-(`tests/test_decomprepair.py`). The ~130 tests here that exercise its families with the app's compilers stay here.
+`forks/csource.py`, `rom/symbols.py`, `arch/mips.py`, `m2cfix.py` and the MIPS evidence readers in `arch/`
+(`mips_stack`, `mips_regions`, `mips_runtime`, the CP0/FPU leaves `mips_count` etc., since 0.2.0) are names for the
+library's modules (`tests/test_decomprepair.py`); `seeds.intrinsic_leaf` decides which compilers get the leaves. The ~130 tests here that exercise its families with the app's compilers stay here.
 
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes

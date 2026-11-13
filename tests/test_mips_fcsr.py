@@ -87,7 +87,7 @@ ASM=('glabel sample\n/* 0 80001000 4442F800 */ cfc1 $v0,$31\n'
 
 def test_machine_seed_requires_complete_architectural_leaf_and_registered_compiler():
     from decompnet import seeds
-    seed=mips_fcsr.candidate(ASM,'f','gcc-2.7.2-kmc')
+    seed=seeds.intrinsic_leaf(ASM,'f','gcc-2.7.2-kmc')
     assert seed=='unsigned int f(unsigned int value) { return __builtin_mips_exchange_fcsr(value); }\n'
     assert seed and '__asm__' not in seed
     assert seeds.generate_from_asm(ASM,'f','gcc-2.7.2-kmc')==seed
@@ -95,10 +95,10 @@ def test_machine_seed_requires_complete_architectural_leaf_and_registered_compil
                  ASM.replace('F800','F000'),ASM.replace('00000000','00000001'),
                  ASM.replace('80001004','80001008'),ASM.replace('03E00008','03200008'),
                  ASM+'nop\n',ASM+'/* extra */ nop\n'):
-        assert mips_fcsr.candidate(text,'f','gcc-2.7.2-kmc') is None
+        assert mips_fcsr.candidate(text,'f',True) is None
     for compiler in ('ido-5.3','unknown','mwcc-2.6'):
-        assert mips_fcsr.candidate(ASM,'f',compiler) is None
-    assert mips_fcsr.candidate(ASM,'f()','gcc-2.7.2-kmc') is None
+        assert seeds.intrinsic_leaf(ASM,'f',compiler) is None
+    assert seeds.intrinsic_leaf(ASM,'f()','gcc-2.7.2-kmc') is None
 
 
 def test_automatic_machine_seed_compiles_through_the_normal_pipeline(tmp_path):
