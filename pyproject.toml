@@ -18,7 +18,7 @@ dependencies = [
     "spimdisasm>=1.42.4",
     "rabbitizer>=1.16.2",
     # the repair families, RetroReversing/decomp-repair: a tagged archive, so installing needs no git
-    "decomprepair @ https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.2.0.tar.gz",
+    "decomprepair @ https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.2.1.tar.gz",
     "httpx>=0.28",
     "uvicorn>=0.30",
     "ninja>=1.11",  # builds GameCube/Wii (dtk) and other ninja-based decomp projects
