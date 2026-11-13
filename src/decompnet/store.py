@@ -44,6 +44,24 @@ def in_transaction() -> bool:
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS variant_games(id TEXT PRIMARY KEY, primary_project TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS game_variants(
+ game TEXT NOT NULL, variant TEXT NOT NULL, project TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
+ PRIMARY KEY(game,variant));
+CREATE TABLE IF NOT EXISTS logical_functions(id TEXT PRIMARY KEY, game TEXT NOT NULL, name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS variant_bindings(
+ game TEXT NOT NULL, logical TEXT NOT NULL, variant TEXT NOT NULL, function_id INTEGER NOT NULL,
+ relation TEXT NOT NULL, defines TEXT NOT NULL, override_source TEXT NOT NULL, target_hash TEXT NOT NULL,
+ PRIMARY KEY(logical,variant,function_id));
+CREATE TABLE IF NOT EXISTS variant_sources(
+ logical TEXT NOT NULL, revision TEXT PRIMARY KEY, source TEXT NOT NULL, header TEXT NOT NULL,
+ proofs TEXT NOT NULL, owner TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS variant_source_latest ON variant_sources(logical,created_at);
+CREATE TABLE IF NOT EXISTS variant_edit_locks(game TEXT PRIMARY KEY, token TEXT NOT NULL, owner TEXT NOT NULL, process_id INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS variant_jobs(
+ id TEXT PRIMARY KEY, game TEXT NOT NULL, project TEXT NOT NULL, state TEXT NOT NULL,
+ progress TEXT NOT NULL, result TEXT, error TEXT, created_at REAL NOT NULL, runtime_id TEXT);
+
 CREATE TABLE IF NOT EXISTS agents(
   id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, owner TEXT, token_hash TEXT UNIQUE NOT NULL,
   created_at REAL, last_seen REAL);

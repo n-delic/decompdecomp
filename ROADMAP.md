@@ -776,6 +776,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | ✓ symbol table, DWARF 1 | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
+| Grouped ROM variants: selector, identities, checked shared C and single-repository export | ✓ demo verified | — adapter validation pending | — adapter validation pending | — adapter validation pending | — object adapter planned | — object adapter planned | — object adapter planned | — object adapter planned |
 | Other releases of a game: found, paired, names, header types and code brought over | ✓ | — not yet run | — not yet run | — not yet run | — object pairing planned | — object pairing planned | — object pairing planned | — object pairing planned |
 | Automatic attempts from similar verified C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | — | — |
 | Bounded automatic reuse, tiny templates and local SDK C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | — | — |
@@ -3854,3 +3855,16 @@ and wireframe modes share static glTF export, including embedded PNGs and named 
 Animation, runtime lighting and special strip commands remain planned. Missing/ambiguous
 texture links are explicit. Model-focused agents can propose bounded raw-model parser
 recipes; structural checks, independent critique and human acceptance guard local use.
+
+
+### Grouped releases and revisions
+
+Initial local ROM grouping, independent target state, many-to-many logical function
+identities, checked shared C/header revisions, conditional defines and separate
+implementations, durable job results/Stop/reattachment, and multi-variant repository
+builds are implemented. See [ROM variants](docs/ROM_VARIANTS.md).
+
+Planned adapters: PROJECT-mode object identity and objdiff/build/export; team rooms;
+overlapping overlay-bank export; grouped portable Save/Open manifests; automatic
+identity recovery after a reimport replaces concrete function IDs. Validate the
+remaining ROM export adapters with their demo games before marking their columns.

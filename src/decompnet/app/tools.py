@@ -292,6 +292,14 @@ def _fork(net: RomNetwork, slug: str, what: str) -> str:
 
 
 def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
+    from .variants import member
+    variant = member(net, slug) if getattr(net, "store", None) is not None else None
+    scope = (f"Variant scope: {variant['variant']} (target {slug}). Match results and claims apply only to this target. "
+             "Shared source revisions require independent verification of every bound variant.\n" if variant else '')
+    return scope + _variant_project_info(net, slug, detail)
+
+
+def _variant_project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
     if not detail:
         return _compact_project_info(net, slug) + compact_info_steering(net.instructions(slug), net.claim_order(slug))
     wish = net.instructions(slug)

@@ -7,7 +7,7 @@ function markNav() {
   const h = location.hash || "#/";
   const route = h.startsWith("#/p/") ? "project" : (h.replace("#/", "") || "home");
   document.querySelectorAll(".nav [data-route]").forEach((a) => a.classList.toggle("on", a.dataset.route === route));
-  document.querySelectorAll(".nav-proj").forEach((a) => a.classList.toggle("on", a.dataset.slug === S.slug && route === "project"));
+  document.querySelectorAll(".nav-proj").forEach((a) => a.classList.toggle("on", (a.dataset.slug === S.slug || (S.projects.find(p => p.slug === a.dataset.slug)?.variants || []).some(v => v.project === S.slug)) && route === "project"));
 }
 /* One ask at a time: when the list took longer than 5 s (11 s with two projects whose game file was gone), the
    timer's asks piled up and kept the app's workers busy. One asked for meanwhile (a project renamed) goes after it. */
@@ -37,7 +37,9 @@ function colourOf(slug) {
 function renderNav() {
   const box = $("navProjects");
   if (!S.projects.length) { box.innerHTML = `<p class="nav-empty">None yet: drop in a game.</p>`; return; }
-  box.innerHTML = S.projects.map((p) => {
+  box.innerHTML = S.projects.map((project) => {
+    const selected = project.variants?.find(v => v.project === S.slug);
+    const p = selected ? {...project, ...selected.summary, slug:project.slug, title:project.title, working:project.working} : project;
     const pct = codePct(p);
     const short = p.platform_short || p.platform_name || "?";
     const state = p.working ? `<span class="dot on" title="${p.working} agent${p.working === 1 ? "" : "s"} working"></span>`

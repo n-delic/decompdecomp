@@ -77,6 +77,16 @@ def sha1(path: Path) -> str:
 
 
 def setup() -> None:
+    # Stage shared inputs inside this variant so remote/Windows compiler sandboxes see
+    # the same files as native compilers, without sharing any generated build outputs.
+    for name, source in B.get('shared_files', {}).items():
+        destination = (ROOT / 'include' / name).resolve()
+        shared = (ROOT / source).resolve()
+        repository = ROOT.parent.parent
+        if not destination.is_relative_to(ROOT / 'include') or not shared.is_relative_to(repository / 'shared'):
+            fail('Shared source paths must stay inside the exported repository.')
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(shared.read_bytes())
     base = ROOT / B["image"]
     if not base.exists():
         fail(f"put your own copy of the game here as {B['image']} (see README.md)")
@@ -475,6 +485,7 @@ def check(name: str) -> bool:
         return None
 
     cfg = compiler_config(ROOT, {"compiler": compiler_for(B, fn["vram"], fn)})
+    cfg.include_dirs = (str(ROOT / "include"),)
     text = (ROOT / src).read_text(encoding="utf-8")
     m = re.match(r'\s*#include "([^"]+)"\s*\n', text)
     header = (ROOT / "include" / m.group(1)).read_text(encoding="utf-8") if m else ""

@@ -41,16 +41,23 @@ class GuiMixin:
             return {"path": self._project(slug)["root"], "identical": None}
 
         proj = self._project(slug)
-        out = Path(proj["root"]) / "source"
+        from .. import variants
+        group = variants.game(self, slug)
+        export_root = Path(self._project(group['primary_project'])['root'] if group else proj['root'])
+        out = export_root / "source"
         def protected(folder):
             return (folder/".git").exists() or (folder/"progress"/"decompdecomp.json").is_file()
         if protected(out):
             # Export regenerates its destination. Never erase a linked repository's
             # progress or curated source; export a separate disposable build tree.
-            out = Path(proj["root"]) / "source-export"
+            out = export_root / "source-export"
             if protected(out):
                 raise NetworkError("The export destination is a saved repository. Use Update build files to update it safely.")
-        res = self.console(proj).export_project(self, slug, out, log=log)
+        if group:
+            from ...rom.export_variants import export_game
+            res = export_game(self, slug, out, log=log)
+        else:
+            res = self.console(proj).export_project(self, slug, out, log=log)
         with self.project_store(proj['id']).tx() as db:  # shown on the project page: what's in the tree and whether it rebuilds
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             cfg["export"] = {"t": time.time(), "path": str(res["path"]), "identical": res.get("identical"),
