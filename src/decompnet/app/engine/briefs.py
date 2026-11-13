@@ -249,6 +249,19 @@ class BriefMixin:
                 fn = dict(fn) | {"seed": self._draft_shown(fn, proj)}
         return super()._brief(fn, agent, header)
 
+    def _shown_draft(self, fn, proj):
+        """read_asm pages exactly the draft the brief shows (so page 2 continues page 1): the best attempt, else
+        the machine draft made current and rendered as the brief renders it — a C++ method as Class::method, not
+        the raw m2c `func(void *arg0, ...)`."""
+        if fn["best_source"]:
+            return fn["best_source"]
+        if self.is_rom(proj) and fn["status"] == "open":
+            self._seed_for(fn, proj)  # made again first when what it's made from changed
+            fn = self._function(fn["name"], proj["slug"])
+            if fn["seed"]:
+                return self._draft_shown(fn, proj)
+        return fn["seed"]
+
     def xrefs(self, proj) -> dict:
         """calls / called_by / uses / used_by, all keyed by address."""
         if proj["id"] in self._xrefs:
@@ -293,7 +306,9 @@ class BriefMixin:
             scan = hit[1] if (hit is not None and hit[0] == token) else classes.scan(code, relocs, big_endian)
             out[vram] = scan
             kept[vram] = (token, scan)
-        self._scan_cache[pid] = kept
+        with self._layout_lock:  # store only if no edit dropped/replaced the cache while we computed (above, unlocked)
+            if self._scan_cache.get(pid) is cache:
+                self._scan_cache[pid] = kept
         return out
 
     def get_class(self, project: str | None, what: str = "") -> str:

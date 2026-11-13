@@ -377,11 +377,11 @@ def _ago(ts: float | None) -> str:
     return f"{s}s ago" if s < 120 else f"{s // 60}m ago" if s < 7200 else f"{s // 3600}h ago"
 
 
-# Settings parsed, by their text: GTA San Andreas's are 193 KB, read 4 to 12 times in one request (462 for a range
-# check after a match), and a large PS2 project's are 2 MB, read on every compile and brief. A few versions are kept; each
-# change of a project's settings is a new text, so the cache turns over on its own with nothing to invalidate.
+# Settings parsed, by their text: a large open-world game's are 193 KB, read 4 to 12 times in one request (462 for a
+# range check after a match), and a large PS2 game's are 2 MB, read on every compile and brief. A few versions are kept;
+# each change of a project's settings is a new text, so the cache turns over on its own with nothing to invalidate.
 SETTINGS_KEPT = 8
-ASM_BRIEF_LINES = 1500  # claim_function/get_function show at most this many asm (or draft) lines; read_asm pages the rest
+ASM_BRIEF_LINES = scoring.ASM_PAGE_MAX  # claim_function/get_function show at most this many asm (or draft) lines; read_asm pages the rest
 _settings: dict[str, dict] = {}
 _settings_lock = threading.Lock()
 
@@ -949,7 +949,7 @@ class Network:
         if getattr(self, "fork_slug", lambda s: None)(proj["slug"]):
             raise NetworkError("read_asm is for ROM projects; read a source file with read_file instead.")
         if part == "draft":
-            text = (fn["best_source"] or fn["seed"] or "").strip()
+            text = (self._shown_draft(fn, proj) or "").strip()
             if not text:
                 return (f'{fn["name"]}: no draft yet. Claim it (claim_function) for the machine draft, or '
                         f'read_asm("{fn["name"]}") for the target assembly.')
@@ -958,11 +958,17 @@ class Network:
             text = scoring.compact_asm(self._asm_text(fn, proj))
             label, fence, part_arg = "assembly", "asm", ""
         page, total, nxt = scoring.asm_page(text, int(start), int(count))
-        lo = max(0, int(start))
-        hi = lo + (len(page.splitlines()) if page else 0)
+        lo = min(max(0, int(start)), total)  # don't print a start past the end (e.g. "lines 99-99 of 3")
+        hi = lo + len(page.splitlines()) if page else lo
         tail = (f'Next page: read_asm("{fn["name"]}"{part_arg}, start={nxt})' if nxt is not None
                 else f"(end of {label})")
         return f"## {proj['slug']}/{fn['name']} {label} \u2014 lines {lo}\u2013{hi} of {total}\n```{fence}\n{page}\n```\n{tail}"
+
+    def _shown_draft(self, fn, proj) -> str | None:
+        """The draft read_asm pages: the best attempt, else the machine draft \u2014 the same text the brief shows.
+        The engine overrides this so a C++ method's draft is paged as the brief renders it (Class::method), not as
+        raw m2c, so page 2 continues page 1."""
+        return fn["best_source"] or fn["seed"]
 
     def _brief(self, fn, agent: Agent | None, header: str) -> str:
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])

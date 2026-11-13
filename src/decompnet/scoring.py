@@ -257,14 +257,18 @@ def compact_asm(text: str) -> str:
     return "\n".join(out)
 
 
+ASM_PAGE_MAX = 1500  # the most lines one asm_page (hence one read_asm / brief) returns: the context-flood cap
+
+
 def asm_page(text: str, start: int, count: int) -> tuple[str, int, "int | None"]:
-    """A slice of (already compacted) assembly or draft by line: lines[start : start+count]. Returns
-    (page_text, total_lines, next_start) where next_start is the line to resume from, or None at the end.
-    Lets a large function's assembly or draft be paged instead of dumped whole into an agent's context."""
+    """A slice of (already compacted) assembly or draft by line: lines[start : start+count], at most ASM_PAGE_MAX
+    lines. Returns (page_text, total_lines, next_start) where next_start is the line to resume from, or None at the
+    end. Lets a large function's assembly or draft be paged instead of dumped whole into an agent's context."""
     lines = text.splitlines()
     total = len(lines)
     start = max(0, start)
-    end = total if not count or count <= 0 else min(total, start + count)
+    count = ASM_PAGE_MAX if not count or count <= 0 else min(int(count), ASM_PAGE_MAX)  # count<=0 is one capped page, not everything
+    end = min(total, start + count)
     nxt = end if end < total else None
     return "\n".join(lines[start:end]), total, nxt
 

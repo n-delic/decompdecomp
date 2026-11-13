@@ -28,6 +28,8 @@ class Core(Network):
         self._xrefs: dict[int, dict] = {}
         self._scan_cache: dict[int, dict] = {}  # project id -> {vram: (content token, classes scan)}; survives edits
         self._facts_cache: dict[int, dict] = {}  # project id -> {vram: (content token, structs Facts)}; survives edits
+        self._layout_lock = threading.Lock()  # guards the check-and-swap of the two caches above against an edit
+        #                                       that drops them mid-compute, so a stale compute can't repopulate them
         self._draft_locks: dict[int, threading.Lock] = {}  # function id -> held while its machine draft is made
         self._headers: dict[tuple, object] = {}  # (project id, header version, for m2c) -> its declarations
         self._asm_names: dict[int, dict] = {}  # project id -> {function id: (size, the names its assembly mentions)}

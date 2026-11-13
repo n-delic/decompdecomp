@@ -344,11 +344,11 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-READ_ONLY = frozenset({"project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
+READ_ONLY = frozenset({"project_info", "get_function", "read_asm", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
 
-ROM_ONLY = {"get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"get_context", "edit_context", "split_function", "redraft", "search_flags", "read_asm"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files

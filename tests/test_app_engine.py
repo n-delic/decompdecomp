@@ -92,6 +92,25 @@ def test_struct_access_through_an_automatic_name(net):
     assert "g_player.hp" in net._function("func_80000808", "demo-quest-64")["matched_source"]
 
 
+def test_a_rename_refreshes_the_structs_cache(built, tmp_path_factory):  # noqa: F811
+    # The per-function structs facts are cached on a function's code bytes only, but a rename can move the
+    # name_at() boundaries the facts' datum (offset-within-symbol) depends on. So a rename must drop the structs
+    # and facts caches, or net.structs() keeps serving facts recovered for the old boundaries. (Own engine so the
+    # shared `net` fixture's earlier renames don't change the symbol this test renames.)
+    ws = tmp_path_factory.mktemp("ws_facts")
+    net = RomNetwork(ws / "decomp.db", ws)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    proj = net._project(slug)
+    pid = proj["id"]
+    assert net.structs(proj) is not None  # populate _facts_cache[pid] and _xrefs[pid]["structs"]
+    assert pid in net._facts_cache and "structs" in net._xrefs.get(pid, {})
+    agent, _ = net.local_agent("factscache")
+    assert net.rename_symbol(agent, slug, "D_8004AE34", "g_player").startswith("✅")
+    assert pid not in net._facts_cache  # dropped on the rename (the old code kept it, serving stale facts)
+    assert "structs" not in net._xrefs.get(pid, {})  # so structs() recomputes from fresh facts
+    assert net.structs(net._project(slug)) is not None  # and still recovers cleanly afterwards
+
+
 def test_wrong_code_gets_a_diff_and_link_notes(net):
     agent, _ = net.local_agent("tester3")
     out = net.compile_and_diff(agent, "func_80000A0C", "void func_80000A0C(s32 p) { mystery(p); }", "demo-quest-64")

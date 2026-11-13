@@ -707,7 +707,9 @@ numbers, and the agent wrote one-letter macros for them (`#define A(x) func_0206
 functions are in that file, macros defined, and their briefs don't show the match: a matched look-alike's C is shown
 only under 3,000 characters.
 
-1. **Briefs for big functions** (no new tool). Over 400 instructions, the brief says how such functions matched
+1. **Briefs for big functions** (`read_asm`, shipped). A big function's assembly and draft no longer fill the brief
+   and overflow a small output limit: it shows a first page and the `read_asm` tool pages the rest (by line, for
+   both the target assembly and the draft). Over 400 instructions, the brief says how such functions matched
    (macros for the runs of calls that repeat, the file's own macros listed), and shows a matched look-alike's C
    whatever its length, with its macros.
 2. **One case at a time.** A `compile_part(function, part, code)` tool: the function's current C stays in its file,

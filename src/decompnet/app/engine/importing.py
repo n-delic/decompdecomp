@@ -333,9 +333,10 @@ class ImportMixin:
                 shutil.rmtree(failed_root, ignore_errors=True)
             raise
         if reimport is not None:
-            for cache in (self._roms, self._syms, self._sym_override, self._xrefs, self._asm_names,
-                          self._ops, self._warmed, self._cmaps, self._scan_cache, self._facts_cache):
-                cache.pop(pid, None)
+            with self._layout_lock:  # _scan_cache/_facts_cache check their identity under this lock before a write-back
+                for cache in (self._roms, self._syms, self._sym_override, self._xrefs, self._asm_names,
+                              self._ops, self._warmed, self._cmaps, self._scan_cache, self._facts_cache):
+                    cache.pop(pid, None)
             self._headers = {key: value for key, value in self._headers.items() if key[0] != pid}
             self._diffs.clear()
             self.surveys.pop(slug, None)

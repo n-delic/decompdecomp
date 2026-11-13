@@ -125,7 +125,9 @@ class LayoutMixin:
             facts = fresh[vram] if vram in fresh else cache[vram][1]
             out[vram] = facts
             kept[vram] = (token, facts)
-        self._facts_cache[pid] = kept
+        with self._layout_lock:  # store only if no edit dropped/replaced the cache while we computed (above, unlocked)
+            if self._facts_cache.get(pid) is cache:
+                self._facts_cache[pid] = kept
         return out
 
     def _struct_key(self, fn, argument: str, syms) -> tuple[tuple, list[int], str]:

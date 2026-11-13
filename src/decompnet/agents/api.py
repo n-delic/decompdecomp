@@ -385,6 +385,11 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                            s(function=st("optional name or address"), strategy=st("finish | easiest | closest | hardest | random"),
                              count=it("up to 6 small functions at once"))),
         "get_function": ("Show any function by name or address.", s(function=st("name or address", True))),
+        "read_asm": ("A page of a large function's target assembly (part=\"asm\") or its current draft / best C "
+                     "(part=\"draft\"), for functions too big to show whole in claim_function / get_function. The "
+                     "brief says when to page and the start to resume from.",
+                     s(function=st("function name or address", True), start=it("first line to show (0-based)"),
+                       count=it("lines on the page"), part=st('"asm" (default) or "draft"'))),
         "compile_and_diff": ("Compile C for the function, link it at its address and diff against the ROM. "
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
                              s(function=st("function name, or several: a, b, c", True), source=st("C source", True))),
@@ -435,6 +440,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "claim_readable": ("Take the next matched function that isn't readable yet.", s()),
         "make_readable": ("A readable rewrite of a matched function (names, types, a comment); kept only if it still "
                           "matches byte for byte.", s(function=st("function", True), source=st("readable C", True))),
+        "tidy_done": ("The source file claim_readable gave you to tidy is done (its types, names and declarations): "
+                      "say what you changed in a sentence or two.",
+                      s(unit=st("the unit / source file", True), summary=st("what you changed", True))),
         "share_knowledge": ("Propose something every agent on this game should know, or back proposal #N "
                             "(supports=N). It counts once two different models agree. Not for compiler questions.",
                             s(text=st("what every agent should know"), supports=it("a proposal's number to back"))),

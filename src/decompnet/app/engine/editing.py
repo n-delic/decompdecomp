@@ -70,7 +70,8 @@ class EditMixin:
             self._event(db, proj["id"], agent_id, "split", f"{prev['name']} / {new_name}")
         self._xrefs.pop(proj["id"], None)
         self._ops.pop(proj["id"], None)
-        self._facts_cache.pop(proj["id"], None)  # new code over bytes that were data moves the code/data line
+        with self._layout_lock:  # under the lock so an in-flight structs compute can't repopulate it stale
+            self._facts_cache.pop(proj["id"], None)  # new code over bytes that were data moves the code/data line
         return f"✅ new function {new_name} at 0x{new.vram:08X}, {new.size} bytes."
 
     def _cut(self, proj, fn, addr: int, new_name: str, syms: SymbolTable, agent_id: int | None, kind: str, detail: str,
@@ -249,6 +250,11 @@ class EditMixin:
                 db.execute("UPDATE functions SET best_source=? WHERE id=?", (swap(r["best_source"]), r["id"]))
             self._event(db, proj["id"], agent.id, "rename", msg if len(pairs) > 1 else f"{pairs[0][0]} → {pairs[0][1]}")
         self._syms.pop(proj["id"], None)
+        # A rename can move name_at() boundaries, so the structs built on them (and the per-function facts, whose
+        # datum is offset-within-symbol) go stale even though no function's bytes changed: drop both.
+        self._xrefs.pop(proj["id"], None)
+        with self._layout_lock:
+            self._facts_cache.pop(proj["id"], None)
         if len(pairs) == 1:
             (old, new), = pairs
             return (f"✅ 0x{addresses[old]:08X} is now `{new}` (was `{old}`); {len(rewritten)} matched sources updated, "
