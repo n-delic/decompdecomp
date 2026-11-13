@@ -29,6 +29,12 @@ from . import App
 DEBUG_SUFFIXES = (".pdb", ".map")  # files sent with a game: debug information its import reads (consoles/pc/debuginfo.py)
 
 
+def list_signature(projects) -> str:
+    """A short fingerprint of the project list as the page would draw it: equal lists give equal signatures."""
+    import hashlib
+    return hashlib.sha1(json.dumps(projects, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
 def system_name() -> str:
     """The Linux distribution, as it names itself ("Ubuntu 24.04.1 LTS"), for bug reports: problems often depend on it
     (the window's WebKitGTK, the compilers' libraries)."""
@@ -189,7 +195,15 @@ def register(app: App) -> None:
         if request.query_params.get('brief') == '1':
             projects, = await app.imports('decompnet.app.project_labels', ('projects',))
             return JSONResponse(await (app.ui_call or call)(projects,net))
-        return JSONResponse(await (app.fast_call or app.ui_call or call)(project_list))
+        projects = await (app.fast_call or app.ui_call or call)(project_list)
+        if 'since' not in request.query_params:  # (older pages, and every other caller: the plain list)
+            return JSONResponse(projects)
+        # The sidebar asks every 5 s: with hundreds of projects the list is ~80 KB and its redraw rebuilds every row,
+        # though between two asks it rarely changes. It sends the signature it has; an unchanged list answers that.
+        sig = list_signature(projects)
+        if request.query_params['since'] == sig:
+            return JSONResponse({'sig': sig, 'same': True})
+        return JSONResponse({'sig': sig, 'projects': projects})
 
     @mcp.custom_route("/api/state", methods=["GET"])
     async def api_state(request: Request) -> Response:

@@ -3408,3 +3408,20 @@ def test_variant_agent_facts_name_only_the_explicit_target(app):
     facts = tools.project_info(net, second)
     assert f'Variant scope: us (target {second})' in facts
     assert 'Match results and claims apply only to this target' in facts
+
+
+def test_the_project_list_answers_same_for_an_unchanged_signature(app, monkeypatch):
+    """Hundreds of projects: the sidebar asks every 5 s and the list rarely changes between two asks."""
+    client, net, _ = app
+    with net.store.tx() as db:
+        db.execute("INSERT OR IGNORE INTO projects(slug,name,root,config) VALUES('sig-game','Sig','/tmp','{}')")
+    monkeypatch.setattr(net, 'summary', lambda slug: {'slug': slug, 'title': slug, 'matched': matched[0]})
+    matched = [1]
+    plain = client.get('/api/projects').json()
+    assert isinstance(plain, list)  # (no signature asked for: the plain list, as before)
+    first = client.get('/api/projects?since=').json()
+    assert first['projects'] == plain and first['sig']
+    assert client.get(f"/api/projects?since={first['sig']}").json() == {'sig': first['sig'], 'same': True}
+    matched[0] = 2
+    changed = client.get(f"/api/projects?since={first['sig']}").json()
+    assert changed['sig'] != first['sig'] and changed['projects'][0]['matched'] == 2
