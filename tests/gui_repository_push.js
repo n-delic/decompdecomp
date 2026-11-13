@@ -29,6 +29,11 @@ async function run({failure=false,switchProject=false}={}) {
   if(switchProject){assert.doesNotMatch($('repositoryPushLog').textContent,/old project/);assert.match($('repositoryPushState').textContent,/origin\/other/);}
   if(!failure&&!switchProject){assert.equal($('repositoryUnpushedDetails').hidden,true);}
   ctx.S.tab='overview';const count=requests.length;await timer();assert.equal(requests.length,count);
+  // A hidden window doesn't poll at all, even on the Settings tab.
+  ctx.S.tab='settings';let polled=0;const refresh=ctx.refreshRepositoryPush;ctx.refreshRepositoryPush=()=>{polled++;};
+  ctx.document={hidden:true};await timer();assert.equal(polled,0,'hidden window skips the poll');
+  ctx.document={hidden:false};await timer();assert.equal(polled,1,'shown window polls again');
+  ctx.refreshRepositoryPush=refresh;delete ctx.document;
 }
 async function reconnect({failure=false}={}) {
   const els={},$=id=>els[id]??={value:id==='repositoryFolder'?'/repo':'',textContent:'',hidden:true,disabled:false};
