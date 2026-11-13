@@ -48,3 +48,31 @@ def test_source_aliases_keep_existing_compiler_and_entry_selection(tmp_path, mon
     monkeypatch.setattr(module, 'normalize_entry', lambda fn,_:entries.append(fn['name']))
     module.build_objects([('c','src/shared.c','build/shared.o')])
     assert compilers == ['last'] and entries == ['first']
+
+
+def test_check_accepts_the_c_symbol_and_old_splitter_name(tmp_path, monkeypatch):
+    from decompnet import compiler
+    from decompnet.rom import export_entry, match, split
+
+    from .test_export_entry import object_file
+
+    fn = {'name':'old_entry','symbol':'renamed_entry','vram':0x80001000,
+          'c':'src/entry.c','asm':'target.s','seg':'game'}
+    module = builder(tmp_path, [fn], monkeypatch)
+    module.B.update(symbols={}, labels={}, big_endian=True, segments=[], image='baserom')
+    (tmp_path/'baserom').write_bytes(b'original')
+    (tmp_path/'src').mkdir()
+    (tmp_path/fn['c']).write_text('int renamed_entry(void) { return 3; }')
+    monkeypatch.setattr(module, 'setup', lambda:None)
+    obj = export_entry.object_for(object_file(), 'renamed_entry', bytes.fromhex('03e0000824020003'))
+    monkeypatch.setattr(compiler, 'compile_source', lambda *args, **kwargs:SimpleNamespace(ok=True, obj=obj))
+    monkeypatch.setattr(split, 'parse_function', lambda *args:None)
+    monkeypatch.setattr(match, 'target_from_split', lambda *args:None)
+    def link(obj, symbol, target, table, read):
+        assert symbol == 'renamed_entry'
+        assert table.resolve('old_entry') == table.resolve('renamed_entry') == fn['vram']
+        return SimpleNamespace(exact=True, placements={})
+    monkeypatch.setattr(match, 'link', link)
+    assert module.check('old_entry')
+    assert module.check('renamed_entry')
+    assert not module.B['functions'][0].get('entry_only')

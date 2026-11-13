@@ -15,7 +15,7 @@ from .test_export import GAME, _decompile, _ready
 from .test_twins_across_games import copy_project
 
 
-def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tmp_path):
+def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tmp_path, monkeypatch):
     if not _ready('n64'):
         pytest.skip('needs the pinned N64 compiler, binutils and ld.lld')
     net, slug = _decompile(tmp_path, 'n64')
@@ -32,6 +32,12 @@ def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tm
     logical = variants.bind(net, slug, 'clamp', instances)
     source = csource.get((GAME / 'game.c').read_text(), 'clamp_s32')
     variants.publish(net, slug, logical, '#if REGION == 1\n' + source + '\n#else\n' + source + '\n#endif')
+    # Legacy splitter files can use automatic names while the verified C keeps
+    # its current project symbol. Keep that mismatch through clean regeneration.
+    from decompnet.rom import export as rom_export
+    symbol_lines = rom_export._symbol_lines
+    monkeypatch.setattr(rom_export, '_symbol_lines',
+                        lambda *args:[line for line in symbol_lines(*args) if not line.startswith('clamp_s32 =')])
     class Log:
         def __init__(self):self.progress_events = []
         def __call__(self, _):pass
@@ -53,7 +59,8 @@ def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tm
     wrappers = []
     for variant in ('pal','us'):
         build = json.loads((root/'variants'/variant/'build.json').read_text())
-        fn = next(f for f in build['functions'] if f['name'] == 'clamp_s32')
+        fn = next(f for f in build['functions'] if f.get('symbol') == 'clamp_s32')
+        assert fn['name'] != 'clamp_s32'
         wrappers.append((root/'variants'/variant/fn['c']).read_text())
     import re
     assert re.findall(r'#include "shared/[^\"]+"', wrappers[0]) == re.findall(r'#include "shared/[^\"]+"', wrappers[1])
@@ -66,6 +73,8 @@ def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tm
     proc = subprocess.run([sys.executable,'build.py','--all-variants'], cwd=root, capture_output=True, text=True, timeout=300)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     proc = subprocess.run([sys.executable,'build.py','--variant','us','check','clamp_s32'], cwd=root, capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = subprocess.run([sys.executable,'build.py','--variant','us','check',fn['name']], cwd=root, capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     subprocess.run(['git','init','-q'], cwd=root, check=True)
     subprocess.run(['git','add','-A'], cwd=root, check=True)

@@ -490,14 +490,13 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         entry = {"name": f["name"], "seg": f["seg"], "vram": f["vram"], "rom": f["rom"], "asm": f["asm"]}
         if f["kind"] == "c":
             entry["c"] = f["src"]
+            # Splitter filenames can retain an old name after the C entry was renamed.
+            if rows[f["vram"]]["name"] != f["name"]:
+                entry['symbol'] = rows[f["vram"]]["name"]
             if rows[f['vram']]['id'] in sources:
                 entry['shared_instance'] = rows[f['vram']]['id']
             if f.get('entry_only'):
                 entry['entry_only']=True
-                # the C defines the function by its name in the project, which splat's file name may not be (it kept
-                # func_8005D0B0 for a renamed function, and its extraction found no function by that name)
-                if rows[f["vram"]]["name"] != f["name"]:
-                    entry['symbol'] = rows[f["vram"]]["name"]
             entry["own"] = {sec: base for (obj, sec, base) in private if obj == f["obj"]}
         fn_json.append(entry)
 

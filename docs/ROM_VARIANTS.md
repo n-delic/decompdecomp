@@ -53,7 +53,8 @@ python3 build.py --variant pal targets
 `variants.json` selects independent `variants/<id>/` trees. Each owns its source
 wrappers, headers, compiler ranges/function settings, symbols, layout, private
 assets, expected image hashes, and build output. Identical implementation text is
-stored once under `shared/`. Each build stages its shared includes inside that
+stored once under `shared/`. Function metadata retains the C symbol separately
+from old splitter filenames; `check` accepts either name. Each build stages its shared includes inside that
 variant's ignored include cache so sandboxed and Windows compilers can read them.
 Original assembly remains the fallback for unmatched or no-longer-exact C.
 If a saved function's compiler or optional runner is unavailable, its assembly is
@@ -94,7 +95,9 @@ first version requires explicit logical identity bindings.
 Validation: the homemade N64 demo has been independently judged, grouped, exported,
 rebuilt for both targets, rebuilt after deleting generated files, and checked through
 `--variant`. Scratch copies of two existing N64 regional releases (12 MiB and
-8 MiB, with different expected hashes) also rebuild independently byte for byte.
+8 MiB, with different expected hashes) also rebuild independently and through the
+final shared repository’s `--all-variants` command, byte for byte. Six selected
+instance checks also pass through `--variant`, including renamed C symbols.
 Attaching preserves their function/source fingerprints and attempt, note, event and
 header histories. Six independently judged instances exercise shared C at different
 addresses, conditional differences and separate implementations; invalid shared

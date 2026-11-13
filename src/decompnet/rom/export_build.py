@@ -505,7 +505,7 @@ def check(name: str) -> bool:
     from decompnet.rom.symbols import Symbol, SymbolTable
 
     setup()
-    fn = next((f for f in B["functions"] if f["name"] == name), None)
+    fn = next((f for f in B["functions"] if name in (f["name"], f.get('symbol'))), None)
     if fn is None:
         fail(f"no function {name}")
     src = c_source(fn)
@@ -513,6 +513,7 @@ def check(name: str) -> bool:
         fail(f"write it first as src/{fn['seg']}/{name}.c")
     found = [Symbol(s, a, 0, "data") for s, a in B["symbols"].items()]
     found += [Symbol(f["name"], f["vram"], 0, "func") for f in B["functions"]]
+    found += [Symbol(f['symbol'], f['vram'], 0, 'func') for f in B['functions'] if f.get('symbol')]
     found += [Symbol(d["name"], d["vram"], d.get("size", 0), "data") for d in B.get("data", [])]  # data built from C
     found += [Symbol(n, a, 0, "data") for n, a in B.get("labels", {}).items() if n not in B["symbols"]]
     for path in (ROOT / "asm" / "data").glob("**/*.s"):
@@ -543,7 +544,8 @@ def check(name: str) -> bool:
     if not res.ok:
         print(res.log)
         return False
-    linked = match.link(res.obj, name, target, table, read)
+    symbol = fn.get('symbol') or fn['name']
+    linked = match.link(res.obj, symbol, target, table, read)
     if not linked.exact:
         print(f"{name}: not identical yet")
         for p in linked.problems:
@@ -552,7 +554,7 @@ def check(name: str) -> bool:
     fn["c"] = src
     from decompnet.rom.export import _section_bases, _single_definition
     _,problem=_section_bases(linked.placements)
-    if problem or not _single_definition(res.obj,name):
+    if problem or not _single_definition(res.obj,symbol):
         # A full-image rebuild still has to pass before this becomes accepted C.
         fn['entry_only']=True
         fn['own']={}
