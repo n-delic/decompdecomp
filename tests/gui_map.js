@@ -34,7 +34,9 @@ function canvas(name) {
     },
     set() { return true; },
   });
-  return { width: 0, height: 0, style: {}, getContext: () => ctx, getBoundingClientRect: () => ({ left: 0, top: 0 }), addEventListener() {} };
+  const heard = {};  // the page's own listeners, so a test can move the mouse over the map
+  return { width: 0, height: 0, style: {}, getContext: () => ctx, getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    heard, addEventListener(type, fn) { heard[type] = fn; } };
 }
 const page = canvas("map");
 const document = stub();
@@ -44,6 +46,11 @@ document.getElementById = (id) => { if (!elements.has(id)) elements.set(id, stub
 
 const keys = ["name", "vram", "size", "insns", "unit", "status", "best", "attempts", "agent", "matched_at", "matched_by", "not_c", "polished"];
 const rows = Array.from({ length: FUNCTIONS }, (_, i) => [`f${i}`, 0x1000 + 16 * i, 16, 4, "", "open", null, 0, null, null, null, false, false]);
+// four the hover tip tells apart: compiled 12 times with no best, set aside, not C, and set aside after compiles
+rows[1][7] = 12;
+rows[2][5] = "asm";
+rows[3][5] = "asm"; rows[3][11] = true;
+rows[4][5] = "asm"; rows[4][7] = 5;
 const ov = { slug: "a", title: "a", kind: "rom", platform: "ps2", platform_name: "PlayStation 2", ready: true, rom: { game_code: "X" },
   compiler: { name: "gcc", flags: [], installed: true, supported: true, missing: [] }, functions: FUNCTIONS, matched: 0, bytes: 1,
   matched_bytes: 0, attempts: 0, priority: [], suggestions: [], boundaries: [], compiler_ranges: [], compilers: [] };
@@ -86,6 +93,19 @@ const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
   await settle();
   // the first drawing: every cell once
   assert.equal(fills("base"), FUNCTIONS);
+
+  // the hover tip: a function compiled with no best says so (it said "not started"), one nobody compiled is not
+  // started, and one set aside says that, as its badge does, whatever its compiles
+  const hover = (i) => {
+    const { size, gap, cols } = vm.runInContext("geo", ctx);
+    page.heard.mousemove({ clientX: (i % cols) * (size + gap) + 1, clientY: Math.floor(i / cols) * (size + gap) + 1 });
+    return document.getElementById("tip").innerHTML;
+  };
+  assert.ok(hover(0).endsWith("<br>not started"), hover(0));
+  assert.ok(hover(1).startsWith("<b>f1</b>") && hover(1).endsWith("<br>12 compiles, no best yet"), hover(1));
+  assert.ok(hover(2).endsWith("<br>set aside"), hover(2));
+  assert.ok(hover(3).endsWith("<br>not C"), hover(3));
+  assert.ok(hover(4).endsWith("<br>set aside"), hover(4));
 
   // a poll that brings a better score for one function and a claim on another: those two cells, not all 2,000
   reset();
