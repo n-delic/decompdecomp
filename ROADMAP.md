@@ -977,6 +977,9 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ### A finished game runs as a WebAssembly build
 
+The Port readiness panel's **Play in browser** builds the game from its last save (only what changed) and opens it
+in the browser (`port/wasm/play.py`).
+
 `python -m decompnet.port.wasm SAVE` (`src/decompnet/port/wasm/`) builds a finished N64 game from its save
 repository: the matched C goes to WebAssembly by the pinned Zig, then back to C by the pinned wasm2c (WABT 1.0.42),
 and is built with a host (`consoles/n64/port_wasm/host.c`, `PortKit.wasm`). The game runs in a memory laid out as
@@ -1002,7 +1005,6 @@ Left:
 - the judge to compare a switch's jump table too: it compares code, and the table is data, so a matched function
   can keep wrong case labels (19 of a racing game's 29 did; the port has overrides for them);
 - the overrides moved into the matched C behind `#ifdef PORT` through Fix C for the PC;
-- Play in the GUI;
 - the console's other connector parts for PS1 and the rest: "—" until a host exists.
 
 ### The repair library stands on its own
