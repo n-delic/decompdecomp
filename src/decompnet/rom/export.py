@@ -360,7 +360,14 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         row = dict(row) | {"matched_source": canonical_source(row, row["matched_source"])}
         unit = net._effective_unit(row, units)
         hdr = net._context(proj["id"], unit)["header"]
-        compiled = net._compile(proj, hdr, row["matched_source"], row)
+        try:
+            compiled = net._compile(proj, hdr, row["matched_source"], row)
+        except toolchains.ToolchainError as error:
+            # A saved per-function profile may need an optional runner absent on this
+            # machine. Keep its original assembly; never substitute another compiler.
+            as_fallback.append((f["name"], f"compiler unavailable: {error}"))
+            f["kind"] = "asm"
+            continue
         if not compiled.ok:
             as_fallback.append((f["name"], "doesn't compile any more"))
             f["kind"] = "asm"

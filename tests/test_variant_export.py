@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from decompnet import toolchains
 from decompnet.app import variants
 from decompnet.forks import csource
 
@@ -71,3 +72,22 @@ def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tm
     tracked = subprocess.run(['git','ls-files','--cached'], cwd=root, capture_output=True, text=True, check=True).stdout.splitlines()
     assert 'variants/pal/build.json' in tracked and any(p.startswith('shared/') for p in tracked)
     assert not any('/baserom' in p or any(f'/{part}/' in p for part in ('asm','assets','build')) or '/include/shared/' in p for p in tracked)
+
+
+def test_an_unavailable_function_compiler_keeps_assembly_without_losing_the_saved_match(tmp_path, monkeypatch):
+    if not _ready('n64'):
+        pytest.skip('needs the pinned N64 compiler, binutils and ld.lld')
+    net, slug = _decompile(tmp_path, 'n64')
+    before = dict(net._function('clamp_s32', slug))
+    compile_function = net._compile
+    def compile_available(proj, header, source, fn=None):
+        if fn is not None and fn['name'] == 'clamp_s32':
+            raise toolchains.ToolchainError('The optional compiler runner is unavailable. Prepare it in Compilers & tools.')
+        return compile_function(proj, header, source, fn)
+    monkeypatch.setattr(net, '_compile', compile_available)
+    result = net.export_rom(slug, log=lambda *_: None)
+    assert result['identical'], result['log']
+    assert any(name == 'clamp_s32' and 'compiler unavailable' in why for name, why in result['fallback'])
+    assert dict(net._function('clamp_s32', slug)) == before
+    manifest = json.loads((Path(result['path'])/'build.json').read_text())
+    assert 'c' not in next(fn for fn in manifest['functions'] if fn['name'] == 'clamp_s32')
