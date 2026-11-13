@@ -52,6 +52,13 @@ def _bin(base: Path, folders: tuple[str, ...] = BIN) -> Path | None:
     return None
 
 
+def _host_is_64bit(bin_: Path) -> bool:
+    """True when the cl.exe in this bin folder is a 64-bit (amd64-hosted) binary — it needs wine, not wibo.
+    The 2005-2013 x64 cross compiler is bin/x86_amd64 (a 32-bit host), and 2017+'s bin/Hostx86/* are 32-bit too;
+    only bin/amd64 and bin/Hostx64/* host a 64-bit cl.exe."""
+    return bin_.name.lower() == "amd64" or any(p.lower() == "hostx64" for p in bin_.parts)
+
+
 class VisualCpp(Kit):
     id = "visualcpp"
     name = "Microsoft Visual C++ (your own copy)"
@@ -105,8 +112,10 @@ class VisualCpp(Kit):
                 continue
             include = find(folder, "include", dirs=True)
             old_sdk = find(folder, "PlatformSDK/include", dirs=True)
-            # wibo runs 32-bit Windows tools; an x64-hosted code generator needs wine even before VS2015.
-            runner = "wine" if target == "x64" or int(build.split(".")[0]) >= WINE_FROM else "wibo"
+            # The runner follows the compiler's HOST width, not its target: a 2005-2013 x64 cross
+            # (bin/x86_amd64) is a 32-bit cl.exe wibo runs, while a 64-bit-hosted cl.exe (bin/amd64,
+            # bin/Hostx64/...) and anything 2015+ (c2.dll's major >= WINE_FROM) need wine.
+            runner = "wibo" if not _host_is_64bit(bin_) and int(build.split(".")[0]) < WINE_FROM else "wine"
             short = ".".join(build.split(".")[:3])
             suffix = "-x64" if target == "x64" else ""
             name = f"your Visual C++ {build}" + (" (64-bit)" if suffix else "")

@@ -56,6 +56,27 @@ def wine_setup() -> tuple[str, dict]:
     return wine, {**os.environ, **WINE_QUIET, "WINEPREFIX": prefix}
 
 
+def _dll_dirs(compiler: str) -> list[str]:
+    """DLL directories a cross-hosted cl.exe needs on PATH. The 2005-2013 x86_amd64 compiler's mspdb*.dll sits in its
+    parent `bin`, not beside it (and some of its tools are in Common7/IDE), so without these it fails to load
+    mspdb80.dll. Empty when the DLLs are already beside cl.exe (2015+ and the native x64 compilers), so an ordinary
+    compile is unchanged."""
+    cl = Path(compiler)
+    if (cl.parent / "mspdb80.dll").exists() or (cl.parent / "mspdbcore.dll").exists():
+        return []
+    dirs: list[str] = []
+    for up in cl.parents:
+        if (up / "mspdb80.dll").exists() or (up / "mspdbcore.dll").exists():
+            dirs.append(str(up))
+            break
+    for up in cl.parents:
+        ide = up / "Common7" / "IDE"
+        if ide.is_dir():
+            dirs.append(str(ide))
+            break
+    return dirs
+
+
 def main() -> int:
     """Keep the compiler's arguments intact, and never rename symbols after a failed compile."""
     parser = argparse.ArgumentParser()
@@ -78,6 +99,11 @@ def main() -> int:
     command = ([wine] if wine else [args.wrapper] if args.wrapper else []) + [
         args.compiler, *flags, f"/I{path('include')}", *(f"/I{path(d)}" for d in args.include),
         f"/Fo{path(args.output)}", path(args.source)]
+    extra = _dll_dirs(args.compiler)
+    if extra:
+        current = env if env is not None else dict(os.environ)
+        current["PATH"] = os.pathsep.join([*extra, current.get("PATH", "")])
+        env = current
     if args.wine:
         # wine's output to a file, then ours: the services the first wine program after a new server starts
         # (services.exe, winedevice.exe, rpcss.exe...) keep what it was given for as long as the server runs, and
@@ -94,7 +120,7 @@ def main() -> int:
                 sys.stdout.write(text)
                 sys.stdout.flush()
     else:
-        result = subprocess.run(command, timeout=COMPILE_SECONDS, creationflags=NO_WINDOW)
+        result = subprocess.run(command, env=env, timeout=COMPILE_SECONDS, creationflags=NO_WINDOW)
     if result.returncode:
         return result.returncode
     return subprocess.run([sys.executable, str(Path(__file__).with_name("names.py")), args.config, args.output],

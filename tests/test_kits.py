@@ -165,6 +165,49 @@ def test_visual_cpp_is_recognised_in_its_layouts_and_run_by_the_right_runner(tmp
     assert kit.locate(tmp_path / "nothing") is None
 
 
+@pytest.mark.parametrize("layout,c2,runner", [
+    ("VC/bin/x86_amd64", "9.0.30729.1", "wibo"),  # 2008 x64 cross: a 32-bit-hosted cl.exe wibo runs
+    ("VC/bin/amd64", "9.0.30729.1", "wine"),  # 2008 x64 native: a 64-bit-hosted cl.exe needs wine
+    ("VC/Tools/MSVC/14.16.27023/bin/Hostx64/x64", "19.16.27023.0", "wine"),  # 2017 native x64
+    ("VC/Tools/MSVC/14.16.27023/bin/Hostx86/x64", "19.16.27023.0", "wine")])  # 2017 cross (32-bit host) but 2015+
+def test_visual_cpp_x64_runner_follows_the_host_not_the_target(tmp_path, layout, c2, runner):
+    copy = make_vc(tmp_path / "vs", c2, layout)
+    [own] = kits.get("visualcpp").compilers(copy.resolve())
+    assert own.version.endswith("-x64") and own.runner == runner and own.build == c2
+
+
+def _pc_compile_module():
+    import importlib.util
+
+    from decompnet import consoles
+    path = Path(consoles.__file__).parent / "pc" / "project_template" / "tools" / "compile.py"
+    spec = importlib.util.spec_from_file_location("pc_compile_for_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_a_cross_hosted_cl_puts_its_mspdb_folder_and_common7_on_the_path(tmp_path):
+    mod = _pc_compile_module()
+    bin_ = tmp_path / "VC" / "bin"
+    (bin_ / "x86_amd64").mkdir(parents=True)
+    (bin_ / "x86_amd64" / "cl.exe").write_bytes(b"")
+    (bin_ / "mspdb80.dll").write_bytes(b"")  # mspdb is in the parent bin, not beside the cross cl.exe
+    (tmp_path / "Common7" / "IDE").mkdir(parents=True)
+    dirs = mod._dll_dirs(str(bin_ / "x86_amd64" / "cl.exe"))
+    assert str(bin_) in dirs and str(tmp_path / "Common7" / "IDE") in dirs
+    (bin_ / "x86_amd64" / "mspdb80.dll").write_bytes(b"")  # now beside cl.exe: nothing to add
+    assert mod._dll_dirs(str(bin_ / "x86_amd64" / "cl.exe")) == []
+
+
+def test_the_installed_vc9_cross_cl_finds_its_mspdb_in_the_parent_bin():
+    cross = Path.home() / ".local/share/decompnet/toolchains/msvc2005/9.0/Bin/x86_amd64/cl.exe"
+    if not cross.exists():
+        pytest.skip("the Visual C++ 2008 (VC9) x86_amd64 cross copy isn't installed")
+    dirs = _pc_compile_module()._dll_dirs(str(cross))
+    assert str(cross.parent.parent) in dirs  # .../9.0/Bin holds mspdb80.dll
+
+
 def test_a_2017_copy_finds_the_windows_sdk_beside_it_and_says_when_it_cant(tmp_path):
     kit = kits.get("visualcpp")
     copy = make_vc(tmp_path / "vs" / "VC" / "Tools" / "MSVC" / "14.16.27023", "19.16.27023.0", "bin/Hostx86/x86")
