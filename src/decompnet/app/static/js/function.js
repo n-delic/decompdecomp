@@ -151,7 +151,8 @@ function nameHintsHTML(hints, current) {
   }).join("");
 }
 let nameChangeBusy = false;
-async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "fnProjectPeersContent") {
+async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "fnProjectPeersContent", endpoint = "/api/cross-game/name") {
+  if (nameChangeBusy) return;
   const slug = S.slug, old = detail.name, name = button.dataset.name;
   const log = $(logId);
   nameChangeBusy = true;
@@ -163,7 +164,7 @@ async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "f
   progressBar.style.width = "100%";
   log.after(progressBar);
   try {
-    const started = await api("/api/cross-game/name", { method: "POST", body: { slug, function: old, name, background: true, ...(button.dataset.peerId ? {peer_id: button.dataset.peerId} : {}) } });
+    const started = await api(endpoint, { method: "POST", body: { slug, function: old, name, background: true, ...(button.dataset.peerId ? {peer_id: button.dataset.peerId} : {}) } });
     const result = started.job ? await followJob(started.job, log, (_lines, job) => {
       const p = job.progress;
       if (p?.total) { progressBar.max = p.total; progressBar.value = p.done; }
@@ -180,6 +181,28 @@ async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "f
     }
   } catch (e) { showJobError(log, e.message); }
   finally { nameChangeBusy = false; progressBar.remove(); done(); }
+}
+
+// A name of the user's own, through the same checked rename and progress as a suggested name.
+function renameFunctionDialog(detail) {
+  if (nameChangeBusy) { toast("A rename of this function is already running."); return; }
+  const panel = dialog("Rename function", `<label class="field"><span>New name</span><input data-fn-new-name class="mono" maxlength="200" spellcheck="false" autocomplete="off" value="${esc(detail.name)}"></label>
+    <p class="small muted">Renames ${esc(detail.name)} in its C, the shared header and the code that calls it. The new name is kept only if those matches still match byte for byte. A name that differs from another function's only in capitals is refused: their saved files would be one file on macOS and Windows.</p>
+    <div class="row" id="fnRenameActions"><button class="primary" type="button" data-rename-go>Rename</button><button class="ghost" type="button" data-rename-close>Close</button></div>
+    <pre id="fnRenameLog" class="log" hidden></pre>`);
+  const input = panel.querySelector("[data-fn-new-name]"), go = panel.querySelector("[data-rename-go]"), log = panel.querySelector("#fnRenameLog");
+  panel.querySelector("[data-rename-close]").onclick = closeDialog;
+  input.focus(); input.select();
+  const submit = () => {
+    const name = input.value.trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) { showJobError(log, "Enter a C identifier: letters, digits and _, not starting with a digit."); return; }
+    if (name === detail.name) { showJobError(log, `${detail.name} already has that name.`); return; }
+    go.dataset.name = name;
+    useSuggestedName(go, detail, "fnRenameLog", "fnRenameActions", "/api/rename-function")
+      .then(() => { if (S.fn === name) input.value = name; });
+  };
+  go.onclick = submit;
+  input.onkeydown = (event) => { if (event.key === "Enter") { event.preventDefault(); submit(); } };
 }
 
 function projectPeersHTML(data, current) {
@@ -394,6 +417,7 @@ async function refreshFn(first) {
     sdkRename.hidden = !d.sdk || !d.display_name || d.display_name === d.name;
     sdkRename.dataset.name = d.display_name || d.name;
     sdkRename.onclick = () => useSuggestedName(sdkRename, d, "fnSdkNameLog", "fnSdkEvidence");
+    $("fnRename").onclick = () => renameFunctionDialog(d);
     fnBadge(d);
     const handover = $('fnClaimHandover');
     handover.hidden = !d.can_handover;

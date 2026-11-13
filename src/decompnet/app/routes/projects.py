@@ -1027,6 +1027,26 @@ def register(app: App) -> None:
             return {"job": jobs.start("Apply suggested name", rename)}
         return rename()
 
+    def p_rename_function(slug, request, data):
+        """A name the user typed, through the same checked rename helpers use (rename_symbol): until now only helpers
+        could rename, so a user told to rename one of two clashing functions had no way to do it."""
+        old, new = str(data.get("function") or "").strip(), str(data.get("name") or "").strip()
+        if not old or not new:
+            raise ValueError("Enter the function's new name.")
+        if old == new:
+            raise ValueError(f"{old} already has that name.")
+        agent, _ = net.local_agent("you")
+        def rename(log=None):
+            publish = getattr(log, "progress", None)
+            message = net.rename_symbol(agent, slug, old, new, "renamed by you",
+                                        **({"progress": publish} if publish else {}))
+            if message.startswith("❌"):
+                raise NetworkError(message)
+            return {"message": message}
+        if data.get("background"):
+            return {"job": jobs.start("Rename function", rename, project=slug)}
+        return rename()
+
     def p_project_functions(slug, request, data):
         from ..project_functions import listing, name_hints
         function = str(request.query_params.get('function') or '')
@@ -1117,6 +1137,7 @@ def register(app: App) -> None:
         "/api/regional/names": (p_regional_names, ["POST"]),
         "/api/regional/code": (p_regional_code, ["POST"]),
         "/api/cross-game/name": (p_cross_name, ["POST"]),
+        "/api/rename-function": (p_rename_function, ["POST"]),
         "/api/cross-game/functions": (p_project_functions, ["GET"]),
         "/api/claim-order": (p_claim_order, ["POST"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]), "/api/scope": (p_scope, ["POST"]),

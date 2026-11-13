@@ -60,8 +60,8 @@ def test_saving_waits_and_says_which_functions_clash(named, monkeypatch):
         db.execute("UPDATE symbols SET name='F' WHERE name='g'")
     assert net.progress.sync('game', force=True) is False
     message = net.progress.errors['game']
-    assert 'Functions `F` and `f` differ only in capitals' in message and 'rename one of each pair with rename_symbol' in message
-    assert 'function page' not in message  # (the function page has no rename control)
+    assert 'Functions `F` and `f` differ only in capitals' in message and 'Rename one of each pair' in message
+    assert 'Rename… on its function page' in message  # (the drawer's Rename… button, tests/gui_rename_function.js)
     assert net.project_row('game')['id'] == pid  # (the project still opens, so the rename below can run)
     net.rename_symbol(agent, 'game', 'F', 'reset_state')
     net.progress.sync('game', force=True)
