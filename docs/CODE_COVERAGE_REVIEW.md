@@ -154,6 +154,16 @@ from detected-code totals and reported separately; classification is never a mat
 or a whole-image completion claim. **Keep as separate entry** explicitly permits
 agent work while retaining the warning and decision evidence.
 
+**Apply safe fixes** applies, in one run, the repairs the original bytes settle on their own: a jump or branch
+missing its delay slot, and a piece whose code runs on into its neighbour without returning (joined to that
+neighbour). A fix is applied only when the repaired extent ends on a complete path, and never when it would
+absorb a matched or claimed entry, an entry kept as separate, a direct `jal` target, a piece that makes its own
+stack frame, zero padding, or what follows a call that never returns. Existing matches are verified once before
+the run; each fix is its own undoable decision with an "Automatic safe fix" note, and Stop keeps the fixes already
+applied. Everything else stays in the list for review. On an N64 game with 90 flagged entries this settled 56
+(5 delay slots, 51 joins); the 28 left were stray words in front of matched functions, calls that never return
+and overlapping pieces.
+
 **Repair history → Verify & undo** restores the prior rows and symbol size. Undo
 refuses active claims, new candidate attempts, changed inputs or newly matched
 entries, so it cannot silently replace later work. No original ROM bytes are edited.

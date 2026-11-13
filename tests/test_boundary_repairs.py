@@ -224,3 +224,76 @@ def test_unrelated_worker_can_improve_during_match_verification(game,monkeypatch
     decide(net,'head','delay_slot')
     assert net._function('head','game')['size']==8
     assert net._function('normal','game')['best_score']==95
+
+
+JR_RA,NOP,STEP,FRAME,UNFRAME=0x03e00008,0,0x25080001,0x27bdffe8,0x27bd0018
+BASE=0x80001000
+
+
+def jal(address):return 0x0c000000|((address&0x0fffffff)>>2)
+
+
+def layout(tmp_path,monkeypatch,pieces):
+    """A tiny mapped MIPS game of (name, words, status) pieces laid end to end."""
+    net=RomNetwork(tmp_path/'db',tmp_path);image=b''.join(raw(*words) for _,words,_ in pieces)
+    (tmp_path/'rom.z64').write_bytes(image)
+    cfg={'kind':'rom','platform':'n64','big_endian':True,'gp':0,'rom':{'file':'rom.z64'},
+         'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']},'segments':[{'name':'code','rom_start':0,'rom_end':len(image),'vram':BASE}]}
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(id,slug,name,root,arch,big_endian,config) VALUES(1,'game','Game',?,'mips',1,?)",(str(tmp_path),json.dumps(cfg)))
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at) VALUES(1,1,'',0)")
+        offset=0
+        for name,words,status in pieces:
+            size=4*len(words)
+            db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,asm,unit,status,matched_source) VALUES(1,?,?,?,?,?,?,'[]','','code',?,?)",
+                       (name,BASE+offset,offset,size,len(words),image[offset:offset+size],status,'matched C' if status=='matched' else None))
+            db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(1,?,?,?,'func')",(name,BASE+offset,size))
+            offset+=size
+    checked=[]
+    monkeypatch.setattr(net,'regression_test',lambda *args,**kwargs:checked.append(True) or [])
+    return net,checked
+
+
+def test_safe_fixes_apply_settled_repairs_once_and_leave_the_rest(game):
+    net,checked=game
+    result=repair.apply_safe(net,'game')
+    assert [f['action'] for f in result['fixed']]==['delay_slot'] and result['remaining']==1
+    assert net._function('head','game')['size']==8 and net._function('tail','game')['gone_mark'] is not None
+    assert {f['function'] for f in repair.audit(net,'game')['findings']}=={'padding'}  # a lone nop needs a person
+    assert len(checked)==1  # matches are reverified once per run, not once per fix
+    history=repair.audit(net,'game')['history']
+    assert len(history)==1 and history[0]['evidence'].startswith('Automatic safe fix')
+    repair.undo(net,'game',history[0]['key'])
+    assert net._function('head','game')['size']==4 and net._function('tail','game')['gone_mark'] is None
+    assert repair.apply_safe(net,'game')['fixed']  # undone fixes are offered again
+
+
+def test_safe_fixes_join_code_that_runs_on_into_the_next_piece(tmp_path,monkeypatch):
+    net,_=layout(tmp_path,monkeypatch,[('start',[STEP,STEP],'open'),('rest',[JR_RA,NOP],'open'),('after',[JR_RA,NOP],'open')])
+    result=repair.apply_safe(net,'game')
+    assert [(f['flagged'],f['action'],f['function']) for f in result['fixed']]==[('start','join_previous','start')]
+    assert net._function('start','game')['size']==16 and net._function('rest','game')['gone_mark'] is not None
+    assert net._function('after','game')['gone_mark'] is None and result['remaining']==0
+
+
+@pytest.mark.parametrize('case',['call that never returns','own stack frame','called directly','matched','claimed','set aside by you'])
+def test_safe_fixes_never_absorb_a_separate_function(tmp_path,monkeypatch,case):
+    first=[jal(BASE+0x100),NOP] if case=='call that never returns' else [STEP]
+    second=[FRAME,JR_RA,UNFRAME] if case=='own stack frame' else [JR_RA,NOP]
+    caller=[jal(BASE+4*len(first)),NOP,JR_RA,NOP] if case=='called directly' else [JR_RA,NOP]
+    net,_=layout(tmp_path,monkeypatch,[('first',first,'open'),('second',second,'matched' if case=='matched' else 'open'),('caller',caller,'open')])
+    if case=='claimed':
+        worker,_=net.local_agent('worker')
+        with net.store.tx() as db:db.execute('INSERT INTO claims VALUES(?,?,?,?)',(net._function('second','game')['id'],worker.id,time.time(),time.time()+3600))
+    if case=='set aside by you':net.set_aside_by_you('second','game','hand-written')
+    result=repair.apply_safe(net,'game')
+    assert result['fixed']==[] and result['remaining']==1
+    assert net._function('first','game')['size']==4*len(first) and not repair.audit(net,'game')['history']
+
+
+def test_safe_fixes_respect_rooms_and_reviewed_entries(game):
+    net,checked=game
+    decide(net,'head','keep')
+    assert repair.apply_safe(net,'game')['fixed']==[]  # a kept entry was a person's decision
+    net.rooms['game']=object()
+    with pytest.raises(NetworkError,match='room'):repair.apply_safe(net,'game')

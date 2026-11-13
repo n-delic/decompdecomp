@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import struct
 import time
 from pathlib import Path
 
@@ -187,6 +188,13 @@ def apply(net, slug, name, action, revision, image_hash, end=None, note='', log=
     broken=_verify_matches(net,proj,log)
     if broken:raise NetworkError('Existing matches could not be reverified: '+', '.join(n for n,_ in broken[:5]))
     getattr(log,'check_cancel',lambda:None)()
+    result=_commit(net,proj,plan,name,action,plan['revision'],image_hash,note)
+    log('Boundary decision saved. Original records and attempt history retained.')
+    return result
+
+
+def _commit(net, proj, plan, name, action, revision, image_hash, note):
+    """Save one previewed decision with its undo record; matches were reverified by the caller."""
     rows=plan['pieces'];head=rows[0];old={str(p['id']):_pack(p) for p in rows}
     symbols=[dict(r) for r in net.project_store(proj['id']).all('SELECT name,size FROM symbols WHERE project_id=? AND name=?',proj['id'],head['name'])]
     key=PREFIX+str(proj['id'])+':'+str(time.time_ns());created=[]
@@ -241,8 +249,115 @@ def apply(net, slug, name, action, revision, image_hash, end=None, note='', log=
         db.execute('INSERT INTO settings VALUES(?,?)',(key,json.dumps(history)))
         net._event(db,proj['id'],None,'boundary',f"{action}: {name}. {note[:600]}")
     _invalidate(net,proj)
-    log('Boundary decision saved. Original records and attempt history retained.')
     return {'key':key,'function':plan['owner'],'action':action}
+
+
+# Repairs the bytes alone decide. A missing delay slot is required by the instruction set; a piece whose code runs
+# on into the next one is the same flow. Each is applied only when the repaired extent ends on a complete path, and
+# nothing absorbed is a direct call target or makes its own stack frame (a separate function after a call that
+# never returns). Everything else stays for review. An N64 game had 90 flagged entries, 56 of these shapes, which
+# took a preview and a full match re-verification each by hand.
+SAFE_ROUNDS = 8
+SAFE_NOTE = {'delay_slot':'Automatic safe fix: the final instruction required its delay slot; the extended extent ends on a complete path.',
+             'join_previous':'Automatic safe fix: the preceding code runs on into this piece without a return; the joined extent ends on a complete path.'}
+
+
+def safe_job_kind(slug):
+    return 'Apply safe boundary fixes: '+slug
+
+
+def _call_targets(image, segments, big_endian):
+    """Direct `jal` destinations anywhere in the mapped image: an entry something calls is never absorbed."""
+    out=set();fmt='>I' if big_endian else '<I'
+    for s in segments:
+        end=min(s.rom_end,len(image));start=s.rom_start+(-s.rom_start%4)
+        for (word,),at in zip(struct.iter_unpack(fmt,image[start:end-(end-start)%4]),range(start,end,4)):
+            if word>>26==3:out.add(((s.vram+at-s.rom_start+4)&0xF0000000)|((word&0x3FFFFFF)<<2))
+    return out
+
+
+def _decided(meta):
+    return bool(meta.get('boundary_override') or 'you' in meta.get('not_c',{}) or
+                any(meta.get(k) for k in ('set_aside','asm_twin','verified_assembly')))
+
+
+def _safe(net, proj, console, plan, calls):
+    """Why `plan` (a preview) can be applied without review, or None."""
+    if reason(console,{'status':'open','target':plan['raw'],'meta':'{}'}):return None
+    head=plan['pieces'][0];order='big' if proj['big_endian'] else 'little'
+    # A person's decision (kept as separate, set aside by you) or verified assembly is never reopened by a rule.
+    if any(_decided(json.loads(p['meta'] or '{}')) for p in plan['pieces']):return None
+    for piece in sorted(plan['pieces'][1:],key=lambda p:p['vram']):
+        if piece['vram'] in calls:return None
+        # Zeros after a complete function are alignment padding, a person's call; a missing delay slot may be a nop.
+        if plan['action']!='delay_slot' and not any(piece['target'] or b''):return None
+        first=int.from_bytes((piece['target'] or b'')[:4],order)
+        if len(piece['target'] or b'')>4 and first&0xFFFF8000==0x27BD8000:return None  # addiu $sp,$sp,-N
+        # The code before the joint ends with a call and its delay slot: a call that never returns, so what
+        # follows is likely its own function.
+        before=plan['raw'][piece['vram']-head['vram']-8:piece['vram']-head['vram']-4]
+        if plan['action']!='delay_slot' and len(before)==4:
+            w=int.from_bytes(before,order)
+            if w>>26==3 or (w>>26==0 and w&63==9):return None
+    return plan
+
+
+def _safe_plans(net, slug, proj, console, calls, skip, tick=lambda done,total:None):
+    from .code_coverage import boundaries
+    found=[]
+    rows={r['vram']:r for r in _rows(net,proj) if r['gone_mark'] is None and r['vram'] is not None}
+    findings=sorted(boundaries(net,proj),key=lambda f:f['vram'] or 0)
+    for index,finding in enumerate(findings):
+        tick(index,len(findings))
+        if finding['override'] or finding['function'] in skip:continue
+        fn=net._function(finding['function'],slug)
+        following=rows.get(fn['vram']+fn['size']) if fn['vram'] is not None else None
+        tries=[(finding['function'],'delay_slot'),(finding['function'],'join_previous')]
+        if following and following['unit']==fn['unit']:tries.append((following['name'],'join_previous'))
+        for name,action in tries:
+            try:plan=preview(net,slug,name,action)
+            except NetworkError:continue
+            if _safe(net,proj,console,plan,calls):
+                found.append((finding['function'],name,action));break
+    return found
+
+
+def apply_safe(net, slug, log=print):
+    """Apply every repair the original bytes settle, one undoable decision each; leave the rest for review."""
+    proj=_supported(net,slug)
+    if slug in net.rooms or net._link(slug) is not None:raise NetworkError('Leave the room before editing shared function boundaries.')
+    progress=getattr(log,'progress',lambda value:None);cancel=getattr(log,'check_cancel',lambda:None)
+    from .code_coverage import boundaries
+    total=len([f for f in boundaries(net,proj) if not f['override']])
+    if not total:
+        log('No incomplete entries need review.');return {'fixed':[],'remaining':0}
+    image,segments=_image(net,proj)
+    calls=_call_targets(image,segments,proj['big_endian'])
+    log(f'Checking {total} flagged entries for repairs the original bytes settle…')
+    log('Reverifying existing matches before any boundary decision…')
+    broken=_verify_matches(net,proj,log)
+    if broken:raise NetworkError('Existing matches could not be reverified: '+', '.join(n for n,_ in broken[:5]))
+    console=net.console(proj);fixed=[];failed=set()
+    for _ in range(SAFE_ROUNDS):
+        cancel()
+        found=_safe_plans(net,slug,proj,console,calls,failed,lambda done,count:progress({'phase':'Checking flagged entries','done':done,'total':count}))
+        if not found:break
+        for flagged,name,action in found:
+            cancel()
+            if any(net._function(n,slug)['gone_mark'] is not None for n in {flagged,name}):continue  # absorbed this round
+            try:
+                plan=preview(net,slug,name,action)
+                if not _safe(net,proj,console,plan,calls):continue
+                result=_commit(net,proj,plan,name,action,plan['revision'],plan['image'],SAFE_NOTE[action])
+            except NetworkError as error:
+                # A worker claimed a piece or the layout moved under it: leave it for review rather than retry.
+                failed.add(flagged);log(f'{flagged}: left for review ({error})');continue
+            fixed.append({**result,'flagged':flagged})
+            log(f"{flagged}: {action.replace('_',' ')} → {result['function']}")
+            progress({'phase':'Applying safe fixes','done':len(fixed),'total':total})
+    remaining=len([f for f in boundaries(net,proj) if not f['override']])
+    log(f'Applied {len(fixed)} safe fixes; {remaining} entries still need review. Each fix can be undone from Repair history.')
+    return {'fixed':fixed,'remaining':remaining}
 
 
 def _invalidate(net, proj):
