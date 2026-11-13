@@ -11,7 +11,7 @@ import pytest
 
 from decompnet.app import saves
 from decompnet.app.engine import RomNetwork
-from decompnet.app.progress import Progress, _manifest, _read, _repair
+from decompnet.app.progress import Progress, _initial_merge, _manifest, _merge_manifest, _read, _repair
 from decompnet.network import NetworkError
 from decompnet.rom import split
 
@@ -1205,3 +1205,331 @@ def test_a_piece_named_by_its_label_saves_and_opens_again(project):
     net.progress.sync("game", force=True)
     names = [row["name"] for row in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
     assert ".L00001004" in names
+
+
+def test_a_first_sync_keeps_a_new_function_at_an_address_another_overlay_has():
+    """Overlays load different functions at one address. A function the database gained at an address another
+    overlay's function already has in the folder's layout joins the layout (and its source is published): the
+    folder no longer refuses it with "Add ... to the function layout". A saved function under a name the database
+    doesn't have is a rename, and the database's old name is still not added back."""
+    def files(layout, sources=()):
+        manifest = {"format": saves.FORMAT, "layout": layout, "headers": {"": "common.h"}}
+        return {saves.MANIFEST: json.dumps(manifest)} | {f"src/{name}.c": "int x;" for name in sources}
+
+    disp = {"name": "ovl_a_disp_004BF720", "vram": 0x4BF720, "size": 36}
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 40}
+    disk = files([disp], ["ovl_a_disp_004BF720"])
+    projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    assert [f["name"] for f in manifest["layout"]] == ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"]
+    assert "src/ovl_b_crit_004BF720.c" in pending
+
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36}
+    disk = files([renamed])
+    manifest, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), files([disp]), disk)
+    assert [f["name"] for f in manifest["layout"]] == ["draw_sprite"]
+
+
+def test_a_first_sync_adds_a_new_function_where_another_at_its_address_was_renamed():
+    """Rename and new-function at one address at once: a saved layout entry renamed in the database (same address
+    and size) keeps its saved name, while a different function the database gained at that same address still joins
+    the layout and its source is published. The renamed entry's own source must not be queued (that would make the
+    folder refuse the save), and the merged manifest must pass _manifest."""
+    sha = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+
+    def files(layout, sources=()):
+        manifest = {"format": saves.FORMAT, "game": {"sha1": sha}, "layout": layout, "headers": {"": "common.h"}}
+        return ({saves.MANIFEST: json.dumps(manifest), "include/common.h": "/* */"}
+                | {f"src/{name}.c": "int x;" for name in sources})
+
+    disp = {"name": "ovl_a_disp_004BF720", "vram": 0x4BF720, "size": 36}
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 40}
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36}  # the saved (old) name of disp
+    disk = files([renamed])
+    projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
+    assert "src/ovl_b_crit_004BF720.c" in pending
+    assert "src/ovl_a_disp_004BF720.c" not in pending   # the renamed entry's source is the saved file, not a new one
+    merged = (disk | pending)
+    merged[saves.MANIFEST] = json.dumps(manifest)
+    _manifest(merged, {"rom": {"sha1": sha}})            # the folder saves: no "Add ... to the function layout"
+
+
+def test_a_first_sync_keeps_set_aside_functions_sharing_an_address():
+    """set_aside, like the layout, is keyed by name and address, not address alone: a second set-aside function the
+    database gained at an address another already uses is not dropped on a first sync."""
+    def files(set_aside):
+        manifest = {"format": saves.FORMAT, "layout": [], "set_aside": set_aside, "headers": {"": "common.h"}}
+        return {saves.MANIFEST: json.dumps(manifest)}
+
+    a = {"name": "ovl_a_004BF720", "vram": 0x4BF720, "size": 36}
+    b = {"name": "ovl_b_004BF720", "vram": 0x4BF720, "size": 40}
+    disk = files([a])
+    manifest, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), files([a, b]), disk)
+    assert [f["name"] for f in manifest["set_aside"]] == ["ovl_a_004BF720", "ovl_b_004BF720"]
+
+
+def test_a_later_merge_keeps_both_set_aside_functions_at_one_address():
+    """The three-way merge keys set_aside by name and address too: a set-aside function the database gained at an
+    address another already uses survives the merge onto the saved manifest."""
+    a = {"name": "ovl_a_004BF720", "vram": 0x4BF720}
+    b = {"name": "ovl_b_004BF720", "vram": 0x4BF720}
+    merged = _merge_manifest({"set_aside": [a]}, {"set_aside": [a, b]}, {"set_aside": [a]})
+    assert [f["name"] for f in merged["set_aside"]] == ["ovl_a_004BF720", "ovl_b_004BF720"]
+
+
+def test_a_first_sync_keeps_a_same_size_overlay_sibling_by_unit():
+    """Two overlay functions of the same size at one address: the saved name matches the database entry of its own
+    unit, so the sibling in the other overlay still joins instead of being taken as the same rename and dropped.
+    This needs the rendered layout to carry unit, and the rename to fire only on exactly one matching candidate."""
+    sha = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+
+    def files(layout, sources=()):
+        manifest = {"format": saves.FORMAT, "game": {"sha1": sha}, "layout": layout, "headers": {"": "common.h"}}
+        return ({saves.MANIFEST: json.dumps(manifest), "include/common.h": "/* */"}
+                | {f"src/{name}.c": "int x;" for name in sources})
+
+    disp = {"name": "ovl_a_disp_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_b"}   # same size, other overlay
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}         # disp's saved (old) name
+    disk = files([renamed])
+    projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
+    assert "src/ovl_b_crit_004BF720.c" in pending and "src/ovl_a_disp_004BF720.c" not in pending
+    merged = (disk | pending)
+    merged[saves.MANIFEST] = json.dumps(manifest)
+    _manifest(merged, {"rom": {"sha1": sha}})
+
+
+def test_adopt_saved_names_renames_a_matched_row_to_its_saved_name(tmp_path):
+    """#174 review 2+3: on a first sync the database may hold the new name while the folder keeps the saved (old)
+    one. Renaming the one matching database row to the saved name before anything renders keeps the saved name --
+    so it is not republished under the new name and survives the next database change -- while a same-size sibling
+    in another overlay is left alone."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,1,'',0,'')", (pid,))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,matched_source) VALUES"
+                   "(?,'ovl_a_disp_004BF720',?,36,9,'matched','ovl_a','void ovl_a_disp_004BF720(void){}')", (pid, 0x4BF720))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'ovl_b_crit_004BF720',?,36,9,'open','ovl_b')", (pid, 0x4BF720))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,'ovl_a_disp_004BF720',?,36,'func')", (pid, 0x4BF720))
+    saved = {"layout": [{"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"},
+                        {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_b"}]}
+    _adopt_saved_names(net, pid, saved)
+    names = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+    assert "draw_sprite" in names and "ovl_a_disp_004BF720" not in names    # the matched row took the saved name
+    assert "ovl_b_crit_004BF720" in names                                   # the sibling is untouched
+    row = net.store.one("SELECT matched_source FROM functions WHERE project_id=? AND name='draw_sprite'", pid)
+    assert "draw_sprite" in row["matched_source"] and "ovl_a_disp" not in row["matched_source"]   # source rewritten
+    assert net.store.one("SELECT 1 FROM symbols WHERE project_id=? AND name='draw_sprite' AND address=?", pid, 0x4BF720)
+
+
+def test_a_first_sync_from_an_old_folder_keeps_both_same_size_siblings():
+    """#174 review 1: an older folder's saved entry has no unit, so two same-size overlay siblings both match it by
+    size. Neither may be taken as its rename and dropped: a saved entry is a rename source for only one database
+    function, so with no way to tell the siblings apart both join as new functions."""
+    sha = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+
+    def files(layout, sources=()):
+        manifest = {"format": saves.FORMAT, "game": {"sha1": sha}, "layout": layout, "headers": {"": "common.h"}}
+        return ({saves.MANIFEST: json.dumps(manifest), "include/common.h": "/* */"}
+                | {f"src/{name}.c": "int x;" for name in sources})
+
+    disp = {"name": "ovl_a_disp_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_b"}   # same size, other overlay
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36}                          # old folder: no unit
+    disk = files([renamed])
+    projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    names = [f["name"] for f in manifest["layout"]]
+    assert "ovl_a_disp_004BF720" in names and "ovl_b_crit_004BF720" in names, names        # neither sibling dropped
+    assert "src/ovl_a_disp_004BF720.c" in pending and "src/ovl_b_crit_004BF720.c" in pending
+    merged = disk | pending
+    merged[saves.MANIFEST] = json.dumps(manifest)
+    _manifest(merged, {"rom": {"sha1": sha}})                                               # still saves
+
+
+def test_the_rendered_layout_carries_each_functions_unit(project):
+    """#174: each rendered layout entry carries its unit, so a first sync can tell same-size overlay siblings apart."""
+    net, folder, _ = project
+    man = json.loads((folder / saves.MANIFEST).read_text())
+    assert man["layout"] and all("unit" in entry for entry in man["layout"])
+
+
+def test_a_saved_name_survives_a_later_reset_to_a_default_name(project):
+    """#174 review 1: a deliberate saved name must survive a later database change that resets the function to its
+    auto name (a re-analysis), not only on the first sync. The folder keeps the saved name and the row is re-adopted.
+    A database rename to another deliberate name is left alone (the collab rename suite covers that)."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:          # re-analysis reset the function at 0x1000 back to its auto name
+        db.execute("UPDATE functions SET name='func_00001000' WHERE project_id=? AND name='f'", (pid,))
+    net._syms.pop(pid, None)
+    net.progress.sync("game", force=True)
+    names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert "f" in names and "func_00001000" not in names, names                 # the saved name survived the reset
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='f'", pid)   # adopted back in the db
+
+
+def test_a_later_sync_does_not_override_a_deliberate_rename(project):
+    """#174 review 1: the later-sync adopt must only reclaim an auto name, never undo a real rename. A database
+    rename of a function to another deliberate name wins over the folder's older saved name."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='draw_sprite' WHERE project_id=? AND name='f'", (pid,))
+    net._syms.pop(pid, None)
+    net.progress.sync("game", force=True)
+    names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert "draw_sprite" in names and "f" not in names, names                   # the deliberate rename was kept
+
+
+def test_adopt_updates_callers_and_the_header_to_the_saved_name(tmp_path):
+    """#174 review 2: adopting a saved name must rewrite its callers and the shared header too, or the saved folder
+    no longer builds. A caller that calls the old name and a header that declares it follow the rename."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                   "VALUES(?,1,'extern void ovl_a_disp_004BF720(void);',0,'')", (pid,))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,matched_source) VALUES"
+                   "(?,'ovl_a_disp_004BF720',?,36,9,'matched','ovl_a','void ovl_a_disp_004BF720(void){}')", (pid, 0x4BF720))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,matched_source) VALUES"
+                   "(?,'caller',?,40,9,'matched','','int caller(void){ ovl_a_disp_004BF720(); return 0; }')", (pid, 0x4C0000))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,'ovl_a_disp_004BF720',?,36,'func')", (pid, 0x4BF720))
+    saved = {"layout": [{"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}]}
+    _adopt_saved_names(net, pid, saved)
+    caller = net.store.one("SELECT matched_source FROM functions WHERE project_id=? AND name='caller'", pid)
+    assert "draw_sprite()" in caller["matched_source"] and "ovl_a_disp_004BF720" not in caller["matched_source"]
+    header = net._context(pid, "")["header"]
+    assert "draw_sprite" in header and "ovl_a_disp_004BF720" not in header
+
+
+def test_adopt_refuses_a_foreign_or_malformed_folder_and_changes_nothing(tmp_path):
+    """#174 review 1: the folder is validated before adopting. A manifest for another game, or a bare [] where an
+    object is expected, raises the folder's NetworkError (not an AttributeError) and renames nothing in the database."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'func_00001000',?,36,9,'open','ovl_a')", (pid, 0x1000))
+    cfg = {"rom": {"sha1": "x"}}
+    before = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+    foreign = {"format": saves.FORMAT, "game": {"sha1": "other"},                     # right format, wrong game
+               "layout": [{"name": "draw_sprite", "vram": 0x1000, "size": 36, "unit": "ovl_a"}]}
+    with pytest.raises(NetworkError):
+        _adopt_saved_names(net, pid, foreign, cfg=cfg)
+    with pytest.raises(NetworkError):
+        _adopt_saved_names(net, pid, [], cfg=cfg)                                      # a bare list, not an object
+    after = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+    assert after == before == {"func_00001000"}                                       # nothing was renamed
+
+
+def test_adopt_invalidates_the_symbol_cache_so_callers_resolve(tmp_path):
+    """#174 review 2: a brief or judge may have built the symbol table before a first sync adopts. Adoption must
+    drop that cache, or symbols.resolve(saved_name) stays None and a caller rewritten to the saved name is lost."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'func_00001000',?,36,9,'matched','ovl_a')", (pid, 0x1000))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,'func_00001000',?,36,'func')", (pid, 0x1000))
+    net.symbols(pid)                                                                  # warm the cache with the auto name
+    assert net.symbols(pid).resolve("draw_sprite") is None
+    saved = {"layout": [{"name": "draw_sprite", "vram": 0x1000, "size": 36, "unit": "ovl_a"}]}
+    _adopt_saved_names(net, pid, saved, auto_only=True)
+    assert net.symbols(pid).resolve("draw_sprite") == 0x1000                          # the cache was rebuilt from the rows
+
+
+def test_adopt_adds_the_saved_name_when_the_symbol_row_is_a_siblings(tmp_path):
+    """#174 review 3: at an overlay address the single symbol row can carry the other twin's name, so renaming the
+    adopted row's symbol hits nothing. The saved name must still be added, or symbols.resolve(saved_name) is None
+    after a cache rebuild and rewritten callers fail."""
+    from decompnet.app.progress import _adopt_saved_names
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps({"kind": "rom", "platform": "ps2", "rom": {"sha1": "x"}}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'ovl_a_disp_004BF720',?,36,9,'matched','ovl_a')", (pid, 0x4BF720))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) VALUES"
+                   "(?,'ovl_b_crit_004BF720',?,36,9,'open','ovl_b')", (pid, 0x4BF720))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,'ovl_b_crit_004BF720',?,36,'func')", (pid, 0x4BF720))
+    saved = {"layout": [{"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"},
+                        {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_b"}]}
+    _adopt_saved_names(net, pid, saved)
+    assert net.symbols(pid).resolve("draw_sprite") == 0x4BF720    # added, though the only symbol row named the sibling
+
+
+def test_a_first_sync_keeps_a_deliberate_rename_over_the_folders_old_name(project):
+    """#174 review 2: a first sync (no baseline: an old project or a restored database) must keep a deliberate
+    database rename, not hand back the folder's older name. The gate on the row rename alone is not enough -- the
+    folder's layout still keeps the old name -- so the stale saved entry must give way to the deliberate database
+    name in both the database and the folder."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:          # the user deliberately renamed f -> draw_sprite in the database
+        db.execute("UPDATE functions SET name='draw_sprite' WHERE project_id=? AND name='f'", (pid,))
+        db.execute("DELETE FROM progress_state WHERE project_id=?", (pid,))   # no baseline: the next sync is a first sync
+    net._syms.pop(pid, None)
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert "draw_sprite" in names and "f" not in names, names                 # the folder took the deliberate name
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='draw_sprite'", pid)  # the database kept it
+    assert not net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='f'", pid)
+
+
+def test_a_later_adopt_does_not_rename_before_the_folder_is_fully_validated(project):
+    """#174 review 3: the later-sync adopt runs before _read and _manifest, which also refuse git conflicts and
+    malformed metadata. A folder with a git conflict must be refused with nothing renamed -- not after the matched
+    row has already been renamed and its source rewritten. Adoption fires only once the whole folder validates."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:          # a re-analysis reset the deliberate name back to its auto name
+        db.execute("UPDATE functions SET name='func_00001000' WHERE project_id=? AND name='f'", (pid,))
+    net._syms.pop(pid, None)
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/f.c").write_text(                                          # a git conflict _read refuses
+        "int f(void){\n<<<<<<< HEAD\n return 0;\n=======\n return 1;\n>>>>>>> other\n}\n", encoding="utf-8")
+    with pytest.raises(NetworkError):
+        net.progress.sync("game", force=True)
+    names = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+    assert "func_00001000" in names and "f" not in names, names              # the conflicted folder renamed nothing
+
+
+def test_a_first_sync_matches_a_long_renamed_names_source_file(project):
+    """#174 nit: on a first sync a renamed database function keeps its saved (old) name, so its rendered source is
+    the saved file, not a new one. _source_file must shorten the long database name to the same digested filename
+    the render used, or that long file is wrongly queued as new while a renamed overlay sibling joins beside it."""
+    sha = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    long = "render_sprite_batch_" + "a" * 250                                 # over SOURCE_COMPONENT_BYTES: a digest file
+    digest = saves._source_file(long)
+    assert digest != long + ".c"                                             # the name is long enough to be digested
+
+    disp = {"name": long, "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}      # the database's (auto-default) rename of
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 40, "unit": "ovl_b"}    # draw_sprite, plus a sibling
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}         # disp's saved (old) name
+    base = {"format": saves.FORMAT, "game": {"sha1": sha}, "headers": {"": "common.h"}}
+    disk = {saves.MANIFEST: json.dumps(base | {"layout": [renamed]}), "include/common.h": "/* */"}
+    projected = {saves.MANIFEST: json.dumps(base | {"layout": [disp, crit]}), "include/common.h": "/* */",
+                 f"src/{digest}": "int x;", "src/ovl_b_crit_004BF720.c": "int y;"}
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
+    assert f"src/{digest}" not in pending                                    # the long renamed source is the saved file
+    assert "src/ovl_b_crit_004BF720.c" in pending                            # the sibling still joins
+    merged = disk | pending
+    merged[saves.MANIFEST] = json.dumps(manifest)
+    _manifest(merged, {"rom": {"sha1": sha}})                                # the merged folder still saves
