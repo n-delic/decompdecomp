@@ -150,36 +150,94 @@ def enqueue(net, proj, function_id, *, restored=False, polished=False):
         log.exception('Could not queue an automatic match commit')
 
 
-def scoped_snapshot(net, proj, root, job, output):
+def _manifest_path(net, slug, root):
+    folder = saves.default_folder(net, slug).resolve()
+    prefix = folder.relative_to(root).as_posix()
+    prefix = '' if prefix == '.' else prefix + '/'
+    return folder, prefix, prefix + saves.MANIFEST
+
+
+def committed_manifest(root, manifest_path, cache):
+    """HEAD and its progress manifest, read once per commit: a game's manifest is megabytes of JSON."""
+    head = repository_git.git(root, 'rev-parse', 'HEAD')
+    if cache.get('head') != head:
+        cache['head'], cache['manifest'] = head, json.loads(repository_git.git(root, 'show', 'HEAD:' + manifest_path))
+    return head, cache['manifest']
+
+
+def already_committed(net, proj, job, base):
+    """Whether the checkpoint already holds this job's verified source, or the function's current one.
+
+    A reimport queued every restored match (#1108's game had 237), and Commit saved progress then saved them
+    all; each queued job still re-read the whole save to commit nothing, minutes apiece. Committing an older
+    queued source over a newer checkpointed one would also undo a rename or polish."""
+    fn = net.project_store(proj['id']).one(
+        "SELECT f.name,f.vram,f.target,v.details FROM functions f JOIN verified_matches v ON v.function_id=f.id "
+        "WHERE f.id=? AND f.status='matched'", job['function_id'])
+    if fn is None:
+        return False
+    proof = base.get('verification', {}).get('matches', {}).get(fn['name'])
+    if (not isinstance(proof, dict) or 'matched_by' not in base.get('functions', {}).get(fn['name'], {})
+            or proof.get('vram') != fn['vram']
+            or proof.get('target_sha256') != hashlib.sha256(fn['target'] or b'').hexdigest()):
+        return False
+    queued = json.loads(job['snapshot'])['details'].get('source_sha256')
+    current = json.loads(fn['details']).get('source_sha256')
+    return proof.get('source_sha256') in {queued, current} - {None}
+
+
+def _progress_capture(net, slug, root, folder, output, cache):
+    """One judged capture of the saved progress serves a batch of per-function commits.
+
+    Each capture synchronizes and reads the whole save (thousands of files). A new one is taken only when the
+    save's manifest changed on disk; the commits themselves never write the working tree."""
+    try:
+        stat = (folder / saves.MANIFEST).stat()
+        key = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        key = None
+    if key is None or cache.get('capture_key') != key:
+        files, _, current = repository_progress.snapshot(net, slug, root, output, allow_unrelated_edits=True)
+        try:
+            stat = (folder / saves.MANIFEST).stat()
+            cache['capture_key'] = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            cache['capture_key'] = None
+        cache['capture'] = files, current
+    return cache['capture']
+
+
+def scoped_snapshot(net, proj, root, job, output, cache=None):
     """Advance only one function in the committed manifest, retaining its exact context and evidence."""
+    cache = {} if cache is None else cache
     store = net.project_store(proj['id'])
     # A reopened/deleted function cannot be committed. Avoid repeating a full
     # saved-progress synchronization on every retry of an already stale job.
-    queued = store.one('SELECT status FROM functions WHERE id=?', job['function_id'])
-    if queued is None or queued['status'] != 'matched':
-        raise NetworkError('The queued function no longer matches. Review it before retrying automatic commits.')
-    head = repository_git.git(root, 'rev-parse', 'HEAD')
-    files, _, current = repository_progress.snapshot(net, proj['slug'], root, output, allow_unrelated_edits=True)
-    folder = saves.default_folder(net, proj['slug']).resolve()
-    prefix = folder.relative_to(root).as_posix()
-    prefix = '' if prefix == '.' else prefix + '/'
-    manifest_path = prefix + saves.MANIFEST
-    base = json.loads(repository_git.git(root, 'show', 'HEAD:' + manifest_path))
     fn = store.one('SELECT * FROM functions WHERE id=?', job['function_id'])
     if fn is None or fn['status'] != 'matched':
         raise NetworkError('The queued function no longer matches. Review it before retrying automatic commits.')
     name = fn['name']
-    if base.get('game', {}).get('sha1') != current.get('game', {}).get('sha1'):
-        raise NetworkError('The last progress checkpoint is of another game. Commit saved progress once, and queued commits continue.')
-    if layout_shape(base) != layout_shape(current):
-        raise layout_change(base, current, 'and queued commits continue')
     captured = json.loads(job['snapshot'])
     bundle = captured['details']
     info = captured['info']
+    # Checked before capturing the save, which takes minutes on a large game.
     if captured['name'] != name or bundle['vram'] != fn['vram'] or hashlib.sha256(fn['target'] or b'').hexdigest() != bundle['target_sha256']:
         raise NetworkError('The queued match target changed. Review the function before committing it.')
     if not bundle.get('header_sha256') or hashlib.sha256(captured['source'].encode()).hexdigest() != bundle['source_sha256'] or hashlib.sha256(captured['header'].encode()).hexdigest() != bundle['header_sha256']:
         raise NetworkError('The queued match needs complete saved verification evidence before it can be committed.')
+    head = repository_git.git(root, 'rev-parse', 'HEAD')
+    folder, prefix, manifest_path = _manifest_path(net, proj['slug'], root)
+    files, current = _progress_capture(net, proj['slug'], root, folder, output, cache)
+    fn = store.one('SELECT * FROM functions WHERE id=?', job['function_id'])
+    if fn is None or fn['status'] != 'matched':
+        raise NetworkError('The queued function no longer matches. Review it before retrying automatic commits.')
+    if fn['name'] != name:
+        raise NetworkError('The queued function was renamed while its saved progress was read. Automatic commits retry it.')
+    base = json.loads(repository_git.git(root, 'show', 'HEAD:' + manifest_path))
+    if base.get('game', {}).get('sha1') != current.get('game', {}).get('sha1'):
+        raise NetworkError('The last progress checkpoint is of another game. Commit saved progress once, and queued commits continue.')
+    if layout_shape(base) != layout_shape(current):
+        raise layout_change(base, current, 'and queued commits continue')
     source = prefix + f'src/{name}.c'
     evidence = {'sources': {bundle['source_sha256']: captured['source']},
                 'headers': {bundle['header_sha256']: captured['header']}}
@@ -224,7 +282,10 @@ def process(net, slug, output=log.info):
     proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
     if proj is None or not any(net.cfg(proj).get(k) for k in ('auto_commit_matches', 'auto_commit_polished')):
         return
-    for job in store.all("SELECT * FROM auto_match_commits WHERE project_id=? AND state='pending' AND retry_at<=? ORDER BY created_at LIMIT 20", proj['id'], time.time()):
+    cache = {}
+    # Never-tried jobs first, then the longest waiting: one job that keeps failing must not hold up the rest
+    # (a renamed function's job retried for hours while 236 others waited behind it).
+    for job in store.all("SELECT * FROM auto_match_commits WHERE project_id=? AND state='pending' AND retry_at<=? ORDER BY retry_at,created_at LIMIT 20", proj['id'], time.time()):
         check = getattr(output, 'check_cancel', None)
         if check:check()
         proj = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
@@ -264,9 +325,16 @@ def process(net, slug, output=log.info):
                             db.execute("UPDATE auto_match_commits SET state='cancelled',error=NULL WHERE id=? AND state='pending'", (job['id'],))
                         log('Discarded an obsolete automatic match commit after its verdict changed.')
                         continue
+                    _, _, manifest_path = _manifest_path(net, slug, root)
+                    head, base = committed_manifest(root, manifest_path, cache)
+                    if already_committed(net, proj, job, base):
+                        with store.tx() as db:
+                            db.execute("UPDATE auto_match_commits SET state='done',commit_sha=?,error=NULL WHERE id=? AND state='pending'", (head, job['id']))
+                        log(json.loads(job['snapshot'])['name']+' is already in the last progress commit.')
+                        continue
                     log('Preparing saved files for '+json.loads(job['snapshot'])['name']+'…')
                     try:
-                        files, paths, head = scoped_snapshot(net, proj, root, job, log)
+                        files, paths, head = scoped_snapshot(net, proj, root, job, log, cache)
                     except LayoutChanged as changed:
                         if not changed.renamed:
                             raise
@@ -276,7 +344,7 @@ def process(net, slug, output=log.info):
                         log(f'Saving a progress checkpoint with {count:,} renamed functions…')
                         repository_setup.checkpoint(net, slug, root, saves.default_folder(net, slug).resolve(), log,
                                                     message=f'Save {count:,} renamed function{"s" * (count != 1)}')
-                        files, paths, head = scoped_snapshot(net, proj, root, job, log)
+                        files, paths, head = scoped_snapshot(net, proj, root, job, log, cache)
                     # Disabling or moving the checkout cancels publication too.
                     fresh = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
                     fresh_cfg = net.cfg(fresh) if fresh else {}
@@ -289,6 +357,8 @@ def process(net, slug, output=log.info):
                     db.execute("UPDATE auto_match_commits SET state='done',commit_sha=?,error=NULL WHERE id=?", (commit, job['id']))
         except (NetworkError, OSError, ValueError, KeyError) as error:
             with store.tx() as db:
-                db.execute('UPDATE auto_match_commits SET error=?,retry_at=? WHERE id=?', (str(error) if isinstance(error, NetworkError) else 'Could not read the progress checkpoint. Check its files and Git setup, then retry.', time.time()+15, job['id']))
+                # A repeated failure waits longer, so the queue keeps moving instead of re-reading the save for it.
+                delay = 300 if job['error'] else 15
+                db.execute('UPDATE auto_match_commits SET error=?,retry_at=? WHERE id=?', (str(error) if isinstance(error, NetworkError) else 'Could not read the progress checkpoint. Check its files and Git setup, then retry.', time.time()+delay, job['id']))
         finally:
             project_lock.release()

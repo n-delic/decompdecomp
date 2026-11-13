@@ -506,3 +506,79 @@ def test_polish_queue_is_opt_in_and_disabling_only_cancels_polish(automatic):
     assert net.store.one('SELECT COUNT(*) n FROM auto_match_commits')['n'] == 1
     match_commits.configure(net, 'game', False, kind='polished')
     assert match_commits.status(net, net.project_row('game'))['pending'] == 1
+
+
+def checkpoint(automatic, message='Commit saved progress'):
+    net, root, _, _ = automatic
+    net.progress.sync('game', force=True)
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', message)
+    return git(root, 'rev-parse', 'HEAD')
+
+
+def test_matches_already_in_the_checkpoint_finish_without_reading_the_save(automatic, monkeypatch):
+    """A reimport queued 237 restored matches that Commit saved progress had already saved; each re-read the save."""
+    net, root, _, _ = automatic
+    enable(automatic)
+    match(automatic, note='Already saved')
+    head = checkpoint(automatic)
+    def unexpected(*args, **kwargs):
+        pytest.fail('A match already in the checkpoint must not capture saved progress again')
+    monkeypatch.setattr(repository_progress, 'snapshot', unexpected)
+    match_commits.process(net, 'game')
+    assert git(root, 'rev-parse', 'HEAD') == head
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+    assert net.store.one("SELECT commit_sha FROM auto_match_commits WHERE state='done'")['commit_sha'] == head
+
+
+def test_an_older_queued_source_never_replaces_a_newer_checkpointed_one(automatic):
+    net, root, _, agent = automatic
+    enable(automatic)
+    match(automatic)
+    newer = 'void f(void) { /* polished */ return; }'
+    net._record(net._function('f', 'game'), agent, 0, newer, 1, matched=True)
+    head = checkpoint(automatic)
+    match_commits.process(net, 'game')
+    assert git(root, 'rev-parse', 'HEAD') == head
+    assert git(root, 'show', 'HEAD:src/f.c') == newer
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+
+
+def test_one_capture_serves_a_batch_of_commits(automatic, monkeypatch):
+    net, root, _, _ = automatic
+    enable(automatic)
+    match(automatic, 'f', 'first match')
+    match(automatic, 'g', 'second match')
+    original, captures = repository_progress.snapshot, []
+    def counted(*args, **kwargs):
+        captures.append(True)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(repository_progress, 'snapshot', counted)
+    match_commits.process(net, 'game')
+    assert len(captures) == 1
+    assert git(root, 'log', '-2', '--format=%s').splitlines() == ['second match', 'first match']
+    assert match_commits.status(net, net.project_row('game'))['pending'] == 0
+
+
+def test_a_failing_job_does_not_hold_up_the_queue(automatic, monkeypatch):
+    import time
+    net, root, _, _ = automatic
+    enable(automatic)
+    match(automatic, 'f', 'first match')
+    match(automatic, 'g', 'second match')
+    with net.store.tx() as db:
+        db.execute("UPDATE auto_match_commits SET error='Earlier failure',retry_at=? WHERE function_id=(SELECT id FROM functions WHERE name='f')", (time.time()-1,))
+    original, order = match_commits.scoped_snapshot, []
+    def failing(net_, proj, root_, job, output, cache=None):
+        name = json.loads(job['snapshot'])['name']
+        order.append(name)
+        if name == 'f':
+            raise NetworkError('Still failing')
+        return original(net_, proj, root_, job, output, cache)
+    monkeypatch.setattr(match_commits, 'scoped_snapshot', failing)
+    started = time.time()
+    match_commits.process(net, 'game')
+    assert order == ['g', 'f']
+    assert git(root, 'log', '-1', '--format=%s') == 'second match'
+    job = net.store.one("SELECT error,retry_at FROM auto_match_commits WHERE state='pending'")
+    assert job['error'] == 'Still failing' and job['retry_at'] >= started + 300
