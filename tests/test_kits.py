@@ -4,8 +4,11 @@ and the consoles that take a kit names one. The XDK kit on a homemade folder (no
 the version record a library carries)."""
 
 import json
+import os
 import re
+import shutil
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -163,6 +166,107 @@ def test_visual_cpp_is_recognised_in_its_layouts_and_run_by_the_right_runner(tmp
     assert own.runner == runner and own.build == c2 and kit.build(copy) == c2
     assert own.version == "own-" + ".".join(c2.split(".")[:3]) and own.includes[0] == copy.resolve() / "include"
     assert kit.locate(tmp_path / "nothing") is None
+
+
+@pytest.mark.parametrize("layout,c2,runner", [
+    ("VC/bin/x86_amd64", "9.0.30729.1", "wibo"),  # 2008 x64 cross: a 32-bit-hosted cl.exe wibo runs
+    ("VC/bin/amd64", "9.0.30729.1", "wine"),  # 2008 x64 native: a 64-bit-hosted cl.exe needs wine
+    ("VC/Tools/MSVC/14.16.27023/bin/Hostx64/x64", "19.16.27023.0", "wine"),  # 2017 native x64
+    ("VC/Tools/MSVC/14.16.27023/bin/Hostx86/x64", "19.16.27023.0", "wine")])  # 2017 cross (32-bit host) but 2015+
+def test_visual_cpp_x64_runner_follows_the_host_not_the_target(tmp_path, layout, c2, runner):
+    copy = make_vc(tmp_path / "vs", c2, layout)
+    [own] = kits.get("visualcpp").compilers(copy.resolve())
+    assert own.version.endswith("-x64") and own.runner == runner and own.build == c2
+
+
+@pytest.mark.parametrize("here", ["linux", "win32"])
+def test_an_x64_only_copy_is_offered_and_verified_on_any_platform(tmp_path, monkeypatch, here):
+    """n-delic's #281 point: a 2005-2013 copy whose only 64-bit compiler is the native one (bin/amd64) must still
+    yield an own-...-x64 compiler, and verify() must never give a runner/platform ("wibo can't run") reason.
+    compilers() and verify() don't branch on the platform, so a Windows user is not refused either."""
+    monkeypatch.setattr("sys.platform", here)
+    copy = make_vc(tmp_path / "vs", "9.0.30729.1", "VC/bin/amd64")
+    kit = kits.get("visualcpp")
+    x64 = [c for c in kit.compilers(copy.resolve()) if c.version.endswith("-x64")]
+    assert len(x64) == 1 and x64[0].build == "9.0.30729.1"  # offered, not refused
+    assert kit.verify(copy.resolve()) == "Visual C++ 9.0.30729.1"  # the build name, no platform/runner reason
+
+
+def _pc_compile_module():
+    import importlib.util
+
+    from decompnet import consoles
+    path = Path(consoles.__file__).parent / "pc" / "project_template" / "tools" / "compile.py"
+    spec = importlib.util.spec_from_file_location("pc_compile_for_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_a_cross_hosted_cl_puts_its_mspdb_folder_and_common7_on_the_path(tmp_path):
+    mod = _pc_compile_module()
+    bin_ = tmp_path / "VC" / "bin"
+    (bin_ / "x86_amd64").mkdir(parents=True)
+    (bin_ / "x86_amd64" / "cl.exe").write_bytes(b"")
+    (bin_ / "mspdb80.dll").write_bytes(b"")  # mspdb is in the parent bin, not beside the cross cl.exe
+    (tmp_path / "Common7" / "IDE").mkdir(parents=True)
+    dirs = mod._dll_dirs(str(bin_ / "x86_amd64" / "cl.exe"))
+    assert str(bin_) in dirs and str(tmp_path / "Common7" / "IDE") in dirs
+    (bin_ / "x86_amd64" / "mspdb80.dll").write_bytes(b"")  # now beside cl.exe: nothing to add
+    assert mod._dll_dirs(str(bin_ / "x86_amd64" / "cl.exe")) == []
+
+
+def test_the_installed_vc9_cross_cl_finds_its_mspdb_in_the_parent_bin():
+    cross = Path.home() / ".local/share/decompnet/toolchains/msvc2005/9.0/Bin/x86_amd64/cl.exe"
+    if not cross.exists():
+        pytest.skip("the Visual C++ 2008 (VC9) x86_amd64 cross copy isn't installed")
+    dirs = _pc_compile_module()._dll_dirs(str(cross))
+    assert str(cross.parent.parent) in dirs  # .../9.0/Bin holds mspdb80.dll
+
+
+def test_a_pre_2015_x64_cross_compiles(tmp_path):
+    """End-to-end: a 2005-2013 x86_amd64 cross cl.exe is 32-bit-hosted; with its mspdb*.dll dir on WINEPATH (not the
+    unix PATH) it compiles under both wibo and wine. The fix is the WINEPATH wiring -- with the same dirs on the unix
+    PATH the compile fails. Point DECOMPNET_MSVC2005_X64_TEST at a VC 2005/2008 copy's version root to run this on a
+    copy installed elsewhere."""
+    root = Path(os.environ.get("DECOMPNET_MSVC2005_X64_TEST")
+                or Path.home() / ".local/share/decompnet/toolchains/msvc2005/9.0")
+    cross = root / "Bin" / "x86_amd64" / "cl.exe"
+    wibo = Path.home() / ".local/share/decompnet/toolchains/wibo/wibo"
+    if not cross.exists():
+        pytest.skip("no Visual C++ 2005-2013 x86_amd64 cross cl.exe (set DECOMPNET_MSVC2005_X64_TEST)")
+
+    mod = _pc_compile_module()
+    dirs = mod._dll_dirs(str(cross))
+    assert dirs, "the cross cl.exe's mspdb*.dll is in its parent bin, so _dll_dirs should add a directory"
+    winepath = mod._winepath_from_dirs(dirs)
+    (tmp_path / "f.c").write_text("int f(void){ return 0; }\n")
+
+    def made_object(runner, extra_env):
+        for stale in tmp_path.glob("*.obj"):
+            stale.unlink()
+        env = {**os.environ, "WINEDEBUG": "-all", "WINEPATH": "", **extra_env}
+        # cl.exe reads a leading-slash absolute path as a switch, so run in tmp_path with plain filenames
+        subprocess.run([str(runner), str(cross), "/c", "/Fof.obj", "f.c"],
+                       cwd=tmp_path, env=env, capture_output=True, text=True, timeout=180)
+        obj = tmp_path / "f.obj"
+        return obj.exists() and obj.stat().st_size > 0
+
+    ran = False
+    if wibo.exists():
+        ran = True
+        assert made_object(wibo, {"WINEPATH": winepath}), "the x86_amd64 cross should compile under wibo with WINEPATH"
+        # necessary: the same dirs on the unix PATH (not WINEPATH) must not be found
+        assert not made_object(wibo, {"PATH": os.pathsep.join([*dirs, os.environ.get("PATH", "")])}), \
+            "mspdb*.dll on the unix PATH should not be found -- it must be on WINEPATH"
+    wine = os.environ.get("DECOMPNET_WINE") or shutil.which("wine")
+    prefix = os.environ.get("DECOMPNET_WINE_PREFIX") or str(Path.home() / ".local/share/decompnet/toolchains/.wine")
+    if wine and Path(prefix).is_dir():
+        ran = True
+        assert made_object(wine, {"WINEPATH": winepath, "WINEPREFIX": prefix}), \
+            "the x86_amd64 cross should compile under wine with WINEPATH"
+    if not ran:
+        pytest.skip("neither wibo nor a wine prefix is available to run the cross")
 
 
 def test_a_2017_copy_finds_the_windows_sdk_beside_it_and_says_when_it_cant(tmp_path):
@@ -403,3 +507,38 @@ def test_each_installed_pack_is_known_as_itself():
             checked += 1
     if not checked:
         pytest.skip("needs a ROM console's compiler pack")
+
+
+@pytest.mark.parametrize("layout", [
+    "VC/bin/amd64", "VC/bin/x86_amd64",
+    "VC/Tools/MSVC/14.44/bin/Hostx64/x64", "VC/Tools/MSVC/14.44/bin/Hostx86/x64",
+])
+def test_an_x64_only_copy_is_discovered_without_an_x86_compiler(tmp_path, layout):
+    copy = make_vc(tmp_path / "vs", "19.44.35229.0", layout)
+    kit = kits.get("visualcpp")
+    assert kit.locate(copy) == copy.resolve()
+    assert kit.locate(tmp_path / "vs") == copy.resolve()
+    [own] = kit.compilers(copy)
+    assert own.version == "own-19.44.35229-x64" and own.runner == "wine"
+    assert own.exe == tmp_path / "vs" / layout / "cl.exe"
+    assert own.build == kit.build(copy) == "19.44.35229.0"
+
+
+def test_one_registered_copy_keeps_both_targets_and_reads_their_own_builds(tmp_path, monkeypatch):
+    _setup(monkeypatch, tmp_path)
+    copy = make_vc(tmp_path / "vs", "19.16.27054.0", "VC/bin/Hostx64/x86")
+    make_vc(tmp_path / "vs", "19.16.27055.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    own = kits.compilers(("visualcpp",))
+    assert {c.version for c in own} == {"own-19.16.27054", "own-19.16.27055-x64"}
+    choices = {c.id: c.target for c in consoles.get("pc").compilers}
+    assert choices["MSVC/own-19.16.27054"] == "x86"
+    assert choices["MSVC/own-19.16.27055-x64"] == "x64"
+    assert all(c.runner == "wine" for c in own)
+
+
+def test_duplicate_x64_hosts_provide_one_target_and_old_x64_tools_use_wine(tmp_path):
+    copy = make_vc(tmp_path, "15.0.30729.1", "VC/bin/amd64")
+    make_vc(tmp_path, "15.0.30729.1", "VC/bin/x86_amd64")
+    [own] = kits.get("visualcpp").compilers(copy)
+    assert own.version == "own-15.0.30729-x64" and own.runner == "wine"

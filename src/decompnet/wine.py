@@ -1,5 +1,5 @@
-"""wine: how Linux and macOS run the Windows compilers wibo can't, those of the packs toolchains.toml marks
-`wine = true` (Visual C++ 2017).
+"""wine: how Linux and macOS run the Windows compilers wibo can't -- the packs toolchains.toml marks
+`wine = true` (Visual C++ 2017), and the user's own 2015-and-newer or x64 copies (kits/visualcpp.py, runner="wine").
 
 wibo runs Visual C++ 6.0 to 2010 by itself. 2017's cl.exe calls much more of Windows: under a patched wibo a hello
 world compiled but exited 99, and `#include <windows.h>` failed without a word, where an unmodified wine 9.0 built
@@ -117,7 +117,7 @@ def build_env(always: bool = False) -> dict[str, str]:
     """What a project's build needs to run its Visual C++ 2015+ files through wine, read by its tools/compile.py when
     such a file builds: wine ($DECOMPNET_WINE) and the app's prefix ($DECOMPNET_WINE_PREFIX); and, for its
     tools/configure.py, which installed packs wine runs, not wibo ($DECOMPNET_WINE_PACKS: their folders, joined by
-    os.pathsep), as toolchains.toml's `wine` says. Only where a pack that needs wine is installed and wine is here
+    os.pathsep), as toolchains.toml's `wine` says. Only where a pack or user-supplied compiler needs wine and wine is here
     (never on Windows, which runs the compilers itself), or `always`: wherever wine is, for a console whose builds
     run Visual C++'s linker through it (an Xbox game built with link-time code generation); it starts nothing (the
     first such compile or link after a while starts the server). In the environment, not configure.py's arguments:
@@ -125,11 +125,12 @@ def build_env(always: bool = False) -> dict[str, str]:
     refuse an argument it doesn't know."""
     if not needed():
         return {}
-    from . import toolchains
+    from . import kits, toolchains
 
     packs = [toolchains.path(tid) for tid, tc in toolchains.registry().items()
              if tc.wine and toolchains.installed(tid) is not None]
-    wine = find() if packs or always else None
+    own = not (packs or always) and any(c.runner == "wine" for c in kits.compilers(k.id for k in kits.KITS))
+    wine = find() if packs or always or own else None
     if not wine:
         return {}
     env = {"DECOMPNET_WINE": wine, "DECOMPNET_WINE_PREFIX": str(prefix())}

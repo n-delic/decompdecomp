@@ -107,7 +107,10 @@ def find(folder: Path, rel: str, dirs: bool = False) -> Path | None:
     for part in Path(rel).parts:
         if not at.is_dir():
             return None
-        at = next((c for c in at.iterdir() if c.name.lower() == part.lower()), None)
+        try:
+            at = next((c for c in at.iterdir() if c.name.lower() == part.lower()), None)
+        except OSError:
+            return None  # a folder that can't be read (bad permissions, a dropped mount) holds nothing we can use
         if at is None:
             return None
     return at if at.is_file() or (dirs and at.is_dir()) else None

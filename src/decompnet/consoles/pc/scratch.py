@@ -494,14 +494,18 @@ def rich_version(build: str) -> tuple[str, int]:
     return ("5.0" if major == 11 else f"{major - 6}.0"), number
 
 
-def own_copy(version: str | None, number: int | None) -> kits.OwnCompiler | None:
+def own_copy(version: str | None, number: int | None, target: str) -> kits.OwnCompiler | None:
     """The user's own Visual C++ that should build a game the packs have no exact build for: the copy of its build,
     else the nearest build of the same version (Visual Studio's, "9.0"); none: they have no copy of that version.
-    A game that names only its linker's version (number None) takes the newest copy of it."""
-    if version is None or (version, number) in RICH_BUILDS:
+    Only copies for the requested `target` ("x86" or "x64") participate, so the caller passes the program's
+    architecture. A game that names only its linker's version (number None) takes the newest copy of it."""
+    if target not in ("x86", "x64"):
+        return None
+    builds = RICH_BUILDS if target == "x86" else RICH_BUILDS_X64  # the exact downloadable builds for this target
+    if version is None or (version, number) in builds:
         return None
     same = [(rich_version(c.build)[1], c) for c in kits.compilers((KIT,)) if c.build
-            and rich_version(c.build)[0] == version]
+            and c.version.endswith("-x64") == (target == "x64") and rich_version(c.build)[0] == version]
     if not same:
         return None
     return (min(same, key=lambda nc: (abs(nc[0] - number), -nc[0])) if number else max(same, key=lambda nc: nc[0]))[1]
@@ -554,10 +558,10 @@ def describe(data: bytes) -> Build:
     if wrapper is None and len(names) >= DENUVO_MIN_SECTIONS and \
             len({n for n in names if DENUVO_SECTION.fullmatch(n)}) >= DENUVO_MIN_NAMES:
         wrapper = "Denuvo"
-    # (a copy of the user's own is read for its 32-bit compiler only, kits/visualcpp.py: a 64-bit game takes the packs')
+    # (a copy of the user's own is read for the program's target, x86 or x64: kits/visualcpp.py reads both)
     machine = MACHINES.get(machine_id, f"machine type {machine_id:#x}")
     return Build(machine, version, number, whole, sum(files.values()), wrapper,
-                 None if machine == X64 else own_copy(version, number))
+                 own_copy(version, number, "x64" if machine == X64 else "x86"))
 
 
 def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
@@ -574,7 +578,7 @@ def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
     out = []
     machine = describe(data).machine  # (a 64-bit program's files build with a 64-bit compiler)
     for (version, number), n in sorted(files.items(), key=lambda item: -item[1]):
-        built = Build(machine, version, number, own=None if machine == X64 else own_copy(version, number))
+        built = Build(machine, version, number, own=own_copy(version, number, "x64" if machine == X64 else "x86"))
         try:
             installed = built.own is not None or toolchains.installed(compiler_pack(built.pack_version)) is not None
         except ForkError:
@@ -2500,7 +2504,7 @@ def builds_md(pe: PE, compiler: str) -> bool:
     """Whether a program's files build with /MD: it imports its C runtime from DLLs (dll_runtime), and it builds
     with Visual C++ 2015 or newer, a pack's or the user's own (DLL_RUNTIME_FROM: older ones' runtimes, msvcrt and
     msvcr71, aren't yet)."""
-    if own := re.fullmatch(r"own-(\d+\.\d+\.\d+)", compiler or ""):  # (a copy's: its cl.exe's, "own-19.29.30137")
+    if own := re.fullmatch(r"own-(\d+\.\d+\.\d+)(?:-x64)?", compiler or ""):  # (a copy's: its cl.exe's, "own-19.29.30137")
         version = rich_version(own.group(1))[0]
     else:
         version = m.group() if (m := re.match(r"\d+\.\d+", compiler or "")) else None
