@@ -39,7 +39,13 @@ const flush=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
   assert.equal(errors.at(-1),'cancel failed');
   const oldLog=$('variantsLog');context.resetVariantView();assert.notEqual(oldLog,$('variantsLog'));
   oldLog.textContent='late old job output';assert.equal($('variantsLog').textContent,'');
-  state.slug='pal';released();await follow;
+  // Return to the same target before the old follower exits: its cleanup cannot hide the new Stop.
+  const releaseOld = released;
+  context.resetVariantView('us');
+  const secondFollow = context.followVariantJob('us','existing'), releaseNew = released;
+  releaseOld(); await follow;
+  assert.equal($('variantsStop').hidden,false);
+  releaseNew(); await secondFollow;
   assert.equal($('variantsStop').hidden,true);
   console.log('variant lifecycle passed');
 })().catch(error=>{console.error(error);process.exit(1);});
