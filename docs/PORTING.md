@@ -240,10 +240,15 @@ The other MIPS builtins (the coprocessor 0 registers, the FPU's control register
 The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`). It implements libultra:
 - the game's threads, one at a time by priority, preempted at calls when a woken thread outranks the one running;
 - message queues, cartridge DMA, the VI retrace, the controllers (`PORT_INPUT="300:START,306:-,540:A"`: the
-  first controller's buttons and stick from a given frame on, until a window takes the keyboard);
+  first controller's buttons and stick from a given frame on) and the serial bus the game may drive itself (the
+  first controller, no Controller Pak, no EEPROM);
+- `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
+  machine only, which shows each frame and sends the keyboard to the first controller (arrows steer, X is A, Z is
+  B, Enter is Start). A key held wins over `PORT_INPUT`, so a script can bring the game to a race and leave it to
+  the player. With `PORT_LIVE` the game runs until it's stopped. Not on Windows yet;
 - the RSP and RDP in software (`render.c`): each graphics task's display list is drawn into the game's own frame
   buffer, F3DEX2 or S2DEX by the microcode the task loads, and `PORT_FRAMES=folder` saves the frames shown as PNG.
-  2D screens draw correctly; the 3D path is a first one.
+  2D screens draw correctly; the 3D path draws a racing game's races, with textures still to check.
 
 On macOS the host is built by the system's clang, because Zig 0.14.1 can't link against macOS 27's system library.
 

@@ -7,6 +7,7 @@
  * Addresses in a display list are segmented (segment << 24 | offset) or physical; the segment table is the list's
  * own (G_MOVEWORD). The game's memory is big-endian at the console's addresses: physical p is 0x80000000 | p here.
  *
+ * PORT_LIVE=port: played in a browser (live.c).
  * PORT_FRAMES=folder: every frame shown saved there as frame_NNNNN.png (PORT_FRAME_EVERY=n: every nth).
  * PORT_DLTRACE=n: the display lists of tasks n to n+5 printed.
  */
@@ -670,7 +671,9 @@ static void save_png(const char *path, const uint8_t *rgb, int w, int h) { /* un
     fclose(f); free(z); free(line);
 }
 
-/* The frame the VI shows next (osViSwapBuffer): saved when PORT_FRAMES names a folder. */
+int port_live_active(void); /* live.c */
+void port_live_frame(const uint8_t *rgb, int w, int h);
+/* The frame the VI shows next (osViSwapBuffer): saved when PORT_FRAMES names a folder, and shown live (PORT_LIVE). */
 void port_frame_shown(uint32_t fb, unsigned long n) {
     static const char *dir;
     static long every = -1;
@@ -679,7 +682,8 @@ void port_frame_shown(uint32_t fb, unsigned long n) {
         every = getenv("PORT_FRAME_EVERY") ? atol(getenv("PORT_FRAME_EVERY")) : 1;
         if (every < 1) every = 1;
     }
-    if (!dir || n % (unsigned long)every) return;
+    int save = dir && n % (unsigned long)every == 0;
+    if (!save && !port_live_active()) return;
     R = port_memory();
     uint32_t addr = fb & 0x1FFFFFFF;
     int w = 320;
@@ -691,8 +695,11 @@ void port_frame_shown(uint32_t fb, unsigned long n) {
         Color c = unpack5551(rd16(base + (uint32_t)i * 2));
         rgb[i * 3] = (uint8_t)(c.r * 255); rgb[i * 3 + 1] = (uint8_t)(c.g * 255); rgb[i * 3 + 2] = (uint8_t)(c.b * 255);
     }
-    char path[1024];
-    snprintf(path, sizeof path, "%s/frame_%05lu.png", dir, n);
-    save_png(path, rgb, w, h);
+    port_live_frame(rgb, w, h);
+    if (save) {
+        char path[1024];
+        snprintf(path, sizeof path, "%s/frame_%05lu.png", dir, n);
+        save_png(path, rgb, w, h);
+    }
     free(rgb);
 }

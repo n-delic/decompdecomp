@@ -450,10 +450,19 @@ u32 w2c_env_osContStartReadData(struct w2c_env *e, u32 mq) { (void)e; si_done(mq
 /* PORT_INPUT: the first controller, scripted by frame shown: "300:START,306:-,400:A+UP,500:SX=60+SY=-20".
    Each entry sets the state from that frame on: buttons joined by +, "-" for none, SX/SY for the stick. */
 static int8_t stick_x, stick_y;
+int port_live_input(uint16_t *buttons, int8_t *x, int8_t *y); /* live.c: the keyboard, with PORT_LIVE */
+void port_live_start(void);
+static void script_input(void);
 static void scripted_input(void) {
+    uint16_t b; int8_t x, y;
+    script_input();
+    if (port_live_input(&b, &x, &y) && (b || x || y)) { buttons = b; stick_x = x; stick_y = y; } /* a key held wins */
+}
+static void script_input(void) {
     static const char *script;
     static int loaded;
     if (!loaded) { loaded = 1; script = getenv("PORT_INPUT"); }
+    buttons = 0; stick_x = stick_y = 0;
     if (!script) return;
     static const struct { const char *name; uint16_t bit; } names[] = {
         {"A", 0x8000}, {"B", 0x4000}, {"Z", 0x2000}, {"START", 0x1000}, {"UP", 0x0800}, {"DOWN", 0x0400},
@@ -617,10 +626,11 @@ static void sample(void) {
 
 int main(int argc, char **argv) {
     signal(SIGUSR1, sample_handler);
-    if (argc < 2) { fprintf(stderr, "usage: %s rom.z64 [seconds]\n", argv[0]); return 2; }
+    if (argc < 2) { fprintf(stderr, "usage: %s rom.z64 [seconds, 0: until stopped]\n", argv[0]); return 2; }
     rom = read_file(argv[1], &rom_size);
     if (!rom) { fprintf(stderr, "can't read %s\n", argv[1]); return 2; }
-    double seconds = argc > 2 ? atof(argv[2]) : 5;
+    double seconds = argc > 2 ? atof(argv[2]) : getenv("PORT_LIVE") ? 0 : 5; /* 0: until it's stopped */
+    port_live_start();
     if (getenv("PORT_VERBOSE")) verbose = atoi(getenv("PORT_VERBOSE"));
     clock_gettime(CLOCK_MONOTONIC, &start);
     wasm_rt_init();
@@ -645,7 +655,7 @@ int main(int argc, char **argv) {
     schedule();
     pthread_mutex_unlock(&lock);
     /* the VI retrace, PAL (50 Hz) */
-    for (int frame = 0; frame < seconds * 50; frame++) {
+    for (int frame = 0; seconds <= 0 || frame < seconds * 50; frame++) {
         usleep(20000);
         retrace();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();
