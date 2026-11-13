@@ -84,7 +84,7 @@ class EditMixin:
 
     def _cut(self, proj, fn, addr: int, new_name: str, syms: SymbolTable, agent_id: int | None, kind: str, detail: str,
              tail_meta: dict | None = None):
-        """Cut a MIPS function in two at `addr`: the head keeps its row, the tail becomes `new_name` (status 'asm'
+        """Cut a function in two at `addr`: the head keeps its row, the tail becomes `new_name` (status 'asm'
         with `tail_meta` when it isn't code agents should work on). Returns (head, tail, head_padding, tail_padding),
         where each `*_padding` flag says whether that side trimmed down to pure alignment padding and was retired
         ('asm') rather than left open."""

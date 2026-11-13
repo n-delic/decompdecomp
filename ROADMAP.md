@@ -75,7 +75,7 @@ Where to start on a gap:
   method only through a declaration in the class), and optimised code's register locals (2005's S_LOCAL ranges)
   aren't listed. A game's PDB has to be beside its program, or dropped with it, at import: a project made before
   can't take one in yet.
-- **Function-end reports** cut MIPS functions (`engine._cut`) and, in project mode, a console's own
+- **Function-end reports** cut MIPS, ARM/Thumb and PPC functions (`engine._cut`) and, in project mode, a console's own
   (`Console.cut_function`: PC's functions.json). DS and GameCube projects need theirs.
 - **Tidying a ROM project**: its C is the database's, one function at a time, with one shared header per segment
   (`edit_context`), so there's no file to tidy (`app/readable.py`, `_untidy`). The header is the place to start: its
@@ -743,6 +743,10 @@ The answer goes here: build it, build part of it, or not, and why.
 
 ## Later
 
+- **Padding by processor (x86).** Retiring a pure-padding split head (editing.py `_cut`) asks the processor
+  (`arch/`) for its own filler: MIPS zero, ARM/Thumb and PPC nops are now recognised and those padding heads
+  retired. x86's reader exists (`arch/x86.py` — `0xCC`/`0x90`) but isn't wired into a split path yet: `_cut` is
+  ROM-only and PC/Xbox are project mode, so x86 padding heads aren't retired.
 - **Better look-alikes.** A second measure (edit distance over opcodes) next to today's, and shared runs of
   instructions, which find inlined helpers and macros. Needs PowerPC and x86 opcode readers.
 - **Decoders for data formats.** Tools that decode N64 display lists, PS2 GS/VIF packets and GameCube GX command
