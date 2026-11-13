@@ -215,3 +215,8 @@ def test_snapshot_reader_is_architecture_owned_and_stops_at_control_boundaries()
 def test_byte_field_width_comes_from_typedef_evidence_not_its_name():
     header=HEADER.replace('unsigned char u8','unsigned short u8')
     assert not snapshots.variants(POINTER_SOURCE,'f',header,'mips',ASM)
+
+
+def test_legacy_leading_zero_byte_literals_do_not_crash_snapshot_discovery():
+    source=POINTER_SOURCE.replace('col[0]=1','col[0]=01').replace('col[1]=2','col[1]=02')
+    assert snapshots.variants(source,'f',HEADER,'mips',ASM)
