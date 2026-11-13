@@ -4,8 +4,10 @@ and the consoles that take a kit names one. The XDK kit on a homemade folder (no
 the version record a library carries)."""
 
 import json
+import os
 import re
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -206,6 +208,29 @@ def test_the_installed_vc9_cross_cl_finds_its_mspdb_in_the_parent_bin():
         pytest.skip("the Visual C++ 2008 (VC9) x86_amd64 cross copy isn't installed")
     dirs = _pc_compile_module()._dll_dirs(str(cross))
     assert str(cross.parent.parent) in dirs  # .../9.0/Bin holds mspdb80.dll
+
+
+def test_a_pre_2015_x64_cross_compiles_under_wibo(tmp_path):
+    """End-to-end: a 2005-2013 x86_amd64 cross cl.exe is 32-bit-hosted, so it runs under wibo, and the
+    _dll_dirs PATH lets it load mspdb80.dll from its parent bin. A complete copy is needed: a community
+    bundle without Common7/IDE has no mspdb80.dll that exports SigForPbCb, so the compile aborts there (as
+    it does under wine too) -- this skips rather than fails on such an incomplete toolchain."""
+    cross = Path.home() / ".local/share/decompnet/toolchains/msvc2005/9.0/Bin/x86_amd64/cl.exe"
+    wibo = Path.home() / ".local/share/decompnet/toolchains/wibo/wibo"
+    if not cross.exists() or not wibo.exists():
+        pytest.skip("the Visual C++ 2008 (VC9) x86_amd64 cross copy or wibo isn't installed")
+    (tmp_path / "f.c").write_text("int f(void){ return 0; }\n")
+    obj = tmp_path / "f.obj"
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([*_pc_compile_module()._dll_dirs(str(cross)), env.get("PATH", "")])
+    # cl.exe reads a leading-slash absolute path as an option, so run in tmp_path with plain filenames
+    done = subprocess.run([str(wibo), str(cross), "/c", "/Fof.obj", "f.c"],
+                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
+    blob = done.stdout + done.stderr
+    if "SigForPbCb" in blob:  # the loaded mspdb80.dll is older than this cross cl.exe (no Common7/IDE copy)
+        pytest.skip("this Visual C++ 2008 copy has no Common7/IDE mspdb80.dll exporting SigForPbCb; a live "
+                    "x64 cross compile needs a complete install")
+    assert obj.exists() and obj.stat().st_size > 0, blob[-800:]
 
 
 def test_a_2017_copy_finds_the_windows_sdk_beside_it_and_says_when_it_cant(tmp_path):
