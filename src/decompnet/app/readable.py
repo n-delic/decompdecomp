@@ -502,7 +502,11 @@ class Readability:
         """A rewrite that still matches: it's the function's C now, and the function counts as readable."""
         from .polish_history import detail as polish_detail
         store = self.net.project_store(proj['id'])
-        baseline = polish_detail(store,fn)['unpolished_source'] if fn['readable'] else original or fn['matched_source']
+        if original is None:
+            # The matching C the caller read with `fn`. Compared as None, every caller without `original` was told the
+            # source changed while polishing, whatever happened (#961's check).
+            original = fn['matched_source']
+        baseline = polish_detail(store,fn)['unpolished_source'] if fn['readable'] else original
         with self.net.progress._project_lock(proj["slug"]), store.tx() as db:
             self.net.progress.check_result()
             if self.net.is_rom(proj):
