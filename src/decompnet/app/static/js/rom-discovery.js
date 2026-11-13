@@ -56,7 +56,7 @@ function renderRomModel(host,model,active) {
     if(!active())return;const width=canvas.clientWidth || 480,height=320,ratio=window.devicePixelRatio || 1;
     canvas.width=width*ratio;canvas.height=height*ratio;if(surface){surface.draw(yaw,pitch,zoom,width,height,mode);return;}const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);
     const style=getComputedStyle(document.documentElement);ctx.fillStyle=style.getPropertyValue('--bg').trim();ctx.fillRect(0,0,width,height);ctx.strokeStyle=style.getPropertyValue('--color-status-info-fill').trim();ctx.fillStyle=style.getPropertyValue('--ink').trim();ctx.lineWidth=1;
-    const points=projectRomVertices(model.vertices,yaw,pitch,zoom,width,height);
+    const points=projectRomVertices(model.up_axis==='-Y'?model.vertices.map(v=>[v[0],-v[1],v[2]]):model.vertices,yaw,pitch,zoom,width,height);
     ctx.beginPath();for(const [a,b] of model.edges){ctx.moveTo(...points[a]);ctx.lineTo(...points[b]);}ctx.stroke();
     for(const index of model.points){const [x,y]=points[index];ctx.fillRect(x-1.5,y-1.5,3,3);}
   };

@@ -136,7 +136,7 @@ def preview(image,asset,selection):
                 material['image']=texture_packs.preview(image,dict(archive=entry['archive'],offset=entry['archive']['offset'],reason='Explicit loader-script material link'),{})['data_url']
             except AssetError as exc:material.update(state='unsupported',error=str(exc))
         materials.append(material)
-    return dict(media='model',vertices=vertices,edges=sorted(edges),points=list(range(len(vertices))),triangles=len(surfaces),surfaces=surfaces,materials=materials,parts=parts,
+    return dict(media='model',up_axis='-Y',vertices=vertices,edges=sorted(edges),points=list(range(len(vertices))),triangles=len(surfaces),surfaces=surfaces,materials=materials,parts=parts,
                 details=dict(mesh='Assembled' if mode=='assembled' else selected[0]['name'],vertices=len(vertices),polygons=sum(len(m['records']) for m in selected)),
                 relationships=asset.get('relationships',[]),omitted_commands=found.get('omitted_commands',0),
                 note=('Stored assembly.' if mode=='assembled' else 'Local mesh.')+ ' Textures follow explicit loader-script links; first frame/palette is shown. Runtime lighting, animation and special strip commands are not reproduced.',

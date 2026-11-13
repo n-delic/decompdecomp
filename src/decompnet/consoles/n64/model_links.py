@@ -15,7 +15,7 @@ def path(value):
 
 def index(image,members,check=lambda:None):
     """Retain only unique archive paths and explicit loader commands in bounded text."""
-    names={};duplicates=set();links={};budget=0
+    names={};duplicates=set();links={};budget=0;commands=0
     for m in members:
         key=path(m['name'])
         if key in names:duplicates.add(key)
@@ -33,7 +33,12 @@ def index(image,members,check=lambda:None):
             words=re.findall(r'"[^"\r\n]*"|[^\s,]+',line.split('#',1)[0])
             if not words:continue
             command=words[0].upper()
-            if command=='SETDIR' and len(words)==2:directory=path(words[1]);continue
+            if command=='SETDIR' and len(words)==2:
+                directory=None if any(p in ('.','..') for p in words[1].replace('\\','/').split('/')) else path(words[1]);continue
+            if directory is None:continue
+            if command not in ('LOADN3D','LOADV3D'):continue
+            commands+=1
+            if commands>4096:return names,links
             targets=[];companions=[];folder=''
             if command=='LOADN3D' and len(words)==3:
                 prefix=path(directory+'/'+words[1]);folder=path(words[2])
@@ -46,7 +51,7 @@ def index(image,members,check=lambda:None):
             for target in targets:
                 record=dict(script=script,line=number,command=command,texture_folder=folder,companions=companions)
                 entries=links.setdefault(target['offset'],[])
-                if not any((e['texture_folder'],[c['offset'] for c in e['companions']])==(folder,[c['offset'] for c in companions]) for e in entries):entries.append(record)
+                if len(entries)<32 and not any((e['texture_folder'],[c['offset'] for c in e['companions']])==(folder,[c['offset'] for c in companions]) for e in entries):entries.append(record)
     return names,links
 
 

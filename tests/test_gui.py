@@ -726,3 +726,10 @@ def test_other_releases_panel_links_and_brings_names_with_its_progress_bar():
         pytest.skip('node is not installed')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_releases.js'))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_rom_model_gltf_preserves_geometry_materials_and_source_limits():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_model_export.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)

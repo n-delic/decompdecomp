@@ -19,7 +19,7 @@ def layout(data,xz,y):
     if [r[2] for r in roots]!=[0,14,10,11,9,12,13,4,5,6]:return None
     material_at,nmaterials,_=roots[0]
     if material_at!=116 or not 0<nmaterials<=256 or material_at+nmaterials*20>len(data):return None
-    models={};meshes=[];omitted=0;seen=set();vertices_total=0;triangles_total=0
+    models={};meshes=[];seen=set();vertices_total=0;triangles_total=0;command_total=0
     for root,instance in ((roots[2],False),(roots[3],True)):
         start,count,_=root
         if not 0<count<=2048 or start+count*8>len(xz):return None
@@ -29,6 +29,8 @@ def layout(data,xz,y):
             for j in range(n):
                 row=at+j*width
                 if not instance:
+                    if row in models:continue
+                    if len(models)>=4096:return None
                     position=struct.unpack_from('>I',xz,row+12)[0];groups=struct.unpack_from('>H',xz,row+16)[0];table=struct.unpack_from('>I',xz,row+20)[0]
                     if groups>32:return None
                     if not groups or table==0xffffffff:models[row]=None;continue
@@ -36,7 +38,8 @@ def layout(data,xz,y):
                     records=[];max_index=-1;first=len(xz);skipped=0
                     for g in range(groups):
                         p,total,typ=struct.unpack_from('>IHH',xz,table+g*8)
-                        if typ not in (26,30,35) or total>8192:return None
+                        command_total+=total
+                        if typ not in (26,30,35) or total>8192 or command_total>262144:return None
                         stride=14 if typ==26 else 18 if typ==30 else 8
                         if p+total*stride>len(xz):return None
                         first=min(first,p)
@@ -62,17 +65,19 @@ def layout(data,xz,y):
                     if key in seen:continue
                     seen.add(key);nv=info['vertices']
                     if height+nv*2>len(y) or shade+nv>len(xz):return None
+                    triangles=sum(len(r['indices'])-2 for r in info['records'])
+                    if len(meshes)>=4096 or vertices_total+nv>262144 or triangles_total+triangles>262144:return None
                     positions=[]
                     for v in range(nv):
                         vx,vz=struct.unpack_from('>hh',xz,info['vertex_offset']+v*4);vy=struct.unpack_from('>h',y,height+v*2)[0]
                         positions.append([vx,vy,vz])
                     records=[{**r,'colors':[[xz[shade+idx]]*3+[255] for idx in r['indices']]} for r in info['records']]
-                    triangles=sum(len(r['indices'])-2 for r in records);vertices_total+=nv;triangles_total+=triangles;omitted+=info['skipped']
+                    triangles=sum(len(r['indices'])-2 for r in records);vertices_total+=nv;triangles_total+=triangles
                     if len(meshes)>=4096 or vertices_total>262144 or triangles_total>262144:return None
                     meshes.append(dict(name=xz[row:row+8].split(b'\0')[0].decode('ascii','replace')+f' · section {i+1}',node=i,part=j,section=0,
                                        positions=positions,vertices=nv,triangles=triangles,records=records,transform=IDENTITY))
     if not meshes:return None
-    return dict(scenery=True,omitted_commands=omitted,nodes=len(meshes),meshes=meshes,vertices=vertices_total,triangles=triangles_total,
+    return dict(scenery=True,omitted_commands=sum(m['skipped'] for m in models.values() if m),nodes=len(meshes),meshes=meshes,vertices=vertices_total,triangles=triangles_total,
                 materials=[data[material_at+i*20:material_at+i*20+12].split(b'\0')[0].decode('ascii','replace') for i in range(nmaterials)])
 
 

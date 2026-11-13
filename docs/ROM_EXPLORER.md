@@ -429,3 +429,32 @@ as tentative sequence candidates. Track commands and musical interpretation are 
 validated, and sequence synthesis is not implemented. They are never offered as WAV
 waveforms. Unsupported formats and remapped banks remain unclassified. This native
 adapter is N64-only; other consoles keep generic audio browsing and raw previews.
+
+## Textured models, assemblies and export
+
+Model browser supports static PD3V meshes, including validated split scenery.
+Explicit SETDIR/LOADN3D/LOADV3D records in CRC-checked archived scripts link model
+files, texture folders and coordinate streams. Scripts are read as bounded text;
+no commands execute. Duplicate archive paths, conflicting folders and missing
+textures stay unresolved. A name match without a loader link does not bind a texture.
+
+Choose an assembled model or one mesh. Cars apply their stored fixed-scale basis
+and translation; supported scenery uses its XZ/Y streams. Source +Y points downward
+for these models; preview and glTF export convert that axis for an upright view.
+Textures use their first frame/palette. Animation, live lighting, special strip
+commands and unsupported scenery variants remain planned; omitted command counts
+appear in the relationship details. Other native indexed models retain local meshes.
+
+The renderer offers depth-tested textured surfaces, vertex colours and wireframes,
+with the existing drag, keyboard, zoom and reset controls. Without WebGL, the
+wireframe remains available. Export glTF downloads the selected static geometry,
+per-corner UVs/colours, named parts and supported embedded PNGs in one file. Export
+keeps source coordinate units; it does not infer a metre scale, skeleton or animation.
+The exporter follows the [Khronos glTF 2.0 specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html).
+
+Model-format investigations reuse the durable discovery queue and user review.
+Agents can test a bounded raw-model recipe in a validated archive member, ROM bytes
+or supported decoded block. Recipes run structural checks before being stored, are
+independently critiqued and become local saved interpretations only on acceptance.
+No generated executable decoder code is installed. New proprietary formats beyond
+the layout controls remain research findings requiring a code-reviewed adapter.
