@@ -294,6 +294,7 @@ class EditMixin:
         syms = self.symbols(proj["id"])
         trial = syms.copy()  # with every overlay twin's name (#117 review)
         addresses = {}
+        folded = {}  # (new name in lower case) -> its address, for names in this batch
         for old, new in pairs:
             if not (IDENT.match(old) and IDENT.match(new)):
                 raise NetworkError("old and new must be C identifiers")
@@ -304,6 +305,18 @@ class EditMixin:
             taken = trial.resolve(new)
             if taken is not None and taken != addr:
                 raise NetworkError(f"`{new}` already names 0x{taken:08X}")
+            # A function's saved C is src/<name>.c. macOS and Windows disks ignore capitals in file names, so two
+            # functions named selectStateReset and SelectStateReset shared one file and an N64 game's saves stopped
+            # (every sync found the other function's file where it meant to write).
+            clash = self.project_store(proj["id"]).one(
+                "SELECT name FROM functions WHERE project_id=? AND lower(name)=lower(?) AND vram<>? AND name<>? LIMIT 1",
+                proj["id"], new, addr, old)
+            if clash is None and folded.get(new.lower(), addr) != addr:
+                clash = {"name": next(n for o, n in pairs if n.lower() == new.lower() and addresses.get(o) != addr)}
+            if clash is not None:
+                raise NetworkError(f"`{new}` differs from `{clash['name']}` only in capitals: their saved files would "
+                                   "be one file on macOS and Windows. Choose a name that differs in more than capitals.")
+            folded[new.lower()] = addr
             at = self.project_store(proj["id"]).all("SELECT id, name, size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
             # An address name (func_8008949C) still resolves once its address has a real name. Two helpers renaming
             # one function at once both got through: the second added a second name at the address and renamed the

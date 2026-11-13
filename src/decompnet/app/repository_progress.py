@@ -10,6 +10,8 @@ from pathlib import Path
 from ..network import NetworkError
 from . import repository_git, repository_sync, saves
 
+CAPTURE_ATTEMPTS = 3
+
 
 def linked_checkout(net, slug, root):
     """A build repository can also version its bound progress/ subfolder.
@@ -85,23 +87,36 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
     """
     store = net.project_store(slug)
     folder = saves.default_folder(net, slug).resolve()
+    progress = getattr(log, 'progress', None) or (lambda _: None)
     with net.progress._project_lock(slug):
-        net.progress.sync(slug, force=True, logger=log)
-        if net.progress.errors.get(slug):
-            raise NetworkError(net.progress.errors[slug])
-        removed = net.progress.prune_matched_drafts(slug)
-        if removed:
-            log(f'Removed {removed} redundant best drafts with verified matched sources.')
-        saves._check_save_paths(folder, chosen=True)
-        files = saves._read_owned(folder)
         from .progress import _Snapshot
-        # project_row synchronizes saved files. A second sync here can rejudge recovered
-        # sources and replace the baseline after files were read, producing a false race.
-        proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
-        baseline = net.progress._baseline(proj['id'])
-        if baseline is None or any(baseline.disk.files.get(name) != value
-                                   for name, value in _Snapshot.of(files).files.items()):
-            raise NetworkError('Progress changed while capturing it. Retry after its edits finish.')
+        # Edits that land between the sync and the read (a helper's contribution, an editor) are not an error:
+        # sync again and capture the newer state. Only a folder that keeps changing gives up.
+        for attempt in range(CAPTURE_ATTEMPTS):
+            progress({'phase': 'Checking saved progress', 'finished': 0, 'total': 3})
+            net.progress.sync(slug, force=True, logger=log)
+            if net.progress.errors.get(slug):
+                raise NetworkError(net.progress.errors[slug])
+            removed = net.progress.prune_matched_drafts(slug)
+            if removed:
+                log(f'Removed {removed} redundant best drafts with verified matched sources.')
+            progress({'phase': 'Reading saved progress', 'finished': 1, 'total': 3})
+            saves._check_save_paths(folder, chosen=True)
+            files = saves._read_owned(folder)
+            # project_row synchronizes saved files. A second sync here can rejudge recovered
+            # sources and replace the baseline after files were read, producing a false race.
+            proj = store.one('SELECT * FROM projects WHERE slug=?', slug)
+            baseline = net.progress._baseline(proj['id'])
+            changed = sorted(name for name, value in _Snapshot.of(files).files.items()
+                             if baseline is None or baseline.disk.files.get(name) != value)
+            if not changed:
+                break
+            log(f'{changed[0]}' + (f' and {len(changed)-1} more file(s)' if len(changed) > 1 else '')
+                + ' changed while capturing progress; checking again…')
+        else:
+            raise NetworkError(f'Progress kept changing while capturing it ({", ".join(changed[:3])}). '
+                               'Retry after its edits finish.')
+        progress({'phase': 'Comparing with Git', 'finished': 2, 'total': 3})
         manifest = json.loads(files[saves.MANIFEST])
         if manifest.get('game', {}).get('sha1') != net.cfg(proj).get('rom', {}).get('sha1'):
             raise NetworkError('The saved progress belongs to another game. Choose this project’s progress checkout.')
@@ -146,15 +161,17 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
         captured = {}
         for name, text in files.items():
             data = (folder/name).read_bytes()
-            normalized = data.decode('utf-8').replace('\r\n', '\n').replace('\r', '\n')
+            normalized = data.decode('utf-8', errors='replace').replace('\r\n', '\n').replace('\r', '\n')
             if name not in {'README.md', 'decompdecomp-progress.svg'} and normalized != text:
-                raise NetworkError('Progress changed while capturing it. Retry after its edits finish.')
+                # Edited after the judged read: commit what was judged; the newer edit stays for the next commit.
+                data = text.encode('utf-8')
             captured[prefix + name] = data
         captured.update(scaffold)
         return captured, paths, manifest
 
 
 _ANY_HEAD = object()
+
 
 
 def commit_snapshot(root, files, paths, log, *, expected_head=_ANY_HEAD, expected_branch=None, message='Save matches and all decompilation progress', allow_empty=False):

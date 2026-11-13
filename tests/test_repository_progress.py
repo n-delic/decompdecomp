@@ -96,16 +96,45 @@ def test_helper_writes_after_capture_remain_uncommitted(progress, monkeypatch):
     assert git(root, 'status', '--porcelain') == 'M src/f.c'
 
 
-def test_an_editor_change_during_capture_is_not_committed(progress, monkeypatch):
+def test_a_folder_that_keeps_changing_during_capture_is_not_committed(progress, monkeypatch):
     net, root, _ = progress
     original = saves._read_owned
     def edited(folder):
-        (root/'src/f.c').write_text('unjudged editor change\n')
-        return original(folder)
+        files = original(folder)
+        files['src/f.c'] = 'unjudged editor change\n'  # (a different read every time)
+        return files
     monkeypatch.setattr(saves, '_read_owned', edited)
-    with pytest.raises(NetworkError, match='changed while capturing'):
+    with pytest.raises(NetworkError, match=r'kept changing while capturing it \(src/f\.c\)'):
         repository_sync.run(net, 'game', root, commit_push=True)
     assert git(root, 'log', '-1', '--format=%s') == 'initial progress'
+
+
+def test_a_change_during_capture_is_checked_again_not_an_error(progress, monkeypatch):
+    """Commit saved progress failed with 'Progress changed while capturing it' whenever a helper saved meanwhile."""
+    net, root, _ = progress
+    original, reads, lines = saves._read_owned, [], []
+    def edited(folder):
+        files = original(folder)
+        reads.append(True)
+        if len(reads) == 1:
+            files['src/f.c'] = 'a helper saved meanwhile\n'
+        return files
+    monkeypatch.setattr(saves, '_read_owned', edited)
+    files, _, _ = repository_progress.snapshot(net, 'game', root, lines.append)
+    assert len(reads) == 2
+    assert files['src/f.c'] == b'void f(void) { return; }\n'
+    assert any('src/f.c changed while capturing progress; checking again' in line for line in lines)
+
+
+def test_capture_reports_its_steps(progress):
+    net, root, _ = progress
+    steps = []
+    def log(_line):
+        pass
+    log.progress = steps.append
+    repository_progress.snapshot(net, 'game', root, log)
+    assert [step['phase'] for step in steps if step.get('total') == 3] == [
+        'Checking saved progress', 'Reading saved progress', 'Comparing with Git']
 
 
 def test_index_lock_and_branch_change_preserve_checkpoint(progress, monkeypatch):

@@ -235,6 +235,14 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     if left:
         known = {row["name"] for row in metadata_rows(store, ("name",), "SELECT name FROM functions WHERE project_id=?", pid)}
         left = [name for name in left if Path(name).name not in {saves._source_file(function) for function in known}]
+    if _ignores_case(folder):
+        # A file spelled like a former name that differs only in capitals from a current function's (a rename after
+        # two names clashed) is that function's file on this disk: it would hide the function's real C forever.
+        known = {saves._source_file(row["name"]) for row in metadata_rows(store, ("name",),
+                 "SELECT name FROM functions WHERE project_id=?", pid)}
+        folded = {name.lower() for name in known}
+        left = sorted(set(left) | {name for name in disk if name.startswith(("src/", "best/"))
+                                   and Path(name).name not in known and Path(name).name.lower() in folded})
     for name in left:
         (folder / "unlisted" / name).parent.mkdir(parents=True, exist_ok=True)
         os.replace(folder / name, folder / "unlisted" / name)
@@ -243,6 +251,39 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
         report(f"{len(left)} file(s) in src/ and best/ are of no function of the project (a function's file under a "
                "name it no longer has): moved to unlisted/, kept and not judged")
     return disk
+
+
+def _ignores_case(folder: Path) -> bool:
+    """Whether the disk holding `folder` treats File.c and file.c as one file (macOS and Windows by default)."""
+    for path in (folder / "src", folder):
+        if path.is_dir() and path.name.swapcase() != path.name:
+            other = path.with_name(path.name.swapcase())
+            try:
+                return other.exists() and os.path.samefile(path, other)
+            except OSError:
+                return False
+    return False
+
+
+def case_clash(store, pid: int, folder: Path) -> str | None:
+    """Why saving must wait, when two functions' names differ only in capitals on a disk that ignores them.
+
+    Their src/ files are one file there: each sync found the other function's file where it meant to write,
+    took it for an editor's change, rolled back and tried again, so an N64 game's saves and commits never
+    finished and every checkpoint said its progress changed while capturing it."""
+    rows = store.all("SELECT name FROM functions WHERE project_id=? AND lower(name) IN (SELECT lower(name) FROM "
+                     "functions WHERE project_id=? GROUP BY lower(name) HAVING COUNT(*)>1) ORDER BY lower(name),name",
+                     pid, pid)
+    if not rows or not _ignores_case(folder):
+        return None
+    groups: dict[str, list[str]] = {}
+    for row in rows:
+        groups.setdefault(row["name"].lower(), []).append(row["name"])
+    shown = "; ".join(" and ".join(f"`{name}`" for name in names) for names in list(groups.values())[:3])
+    more = f" (and {len(groups)-3} more)" if len(groups) > 3 else ""
+    return (f"Functions {shown}{more} differ only in capitals, and this disk ignores capitals in file names, so their "
+            "saved C would be one file. Rename one of each pair (its function page, or rename_symbol), then saving "
+            "continues.")
 
 
 # #158: preserve assembly-local names in progress manifests.
@@ -527,6 +568,7 @@ class Progress:
         self.sync_changes: dict[str, int] = {}  # kept for restore, which drops every in-memory trace of a project
         self.adopting: set[str] = set()
         self.blocked: dict[str, tuple] = {}  # slug -> (folder, dirty token, settings) while a compiler waits
+        self.case_checked: dict[str, tuple] = {}  # slug -> (dirty token, why saving waits for a rename, or None)
         self.failed: dict[str, tuple] = {}  # slug -> ((dirty token, settings, folder), when) of the last failed sync
 
     @staticmethod
@@ -863,7 +905,7 @@ class Progress:
             self.states.pop(project_id, None)
             for cache in (self.disk, self.projected, self.checked, self.results, self.revisions,
                           self.signatures, self.stamps, self.published, self.sync_changes, self.errors, self.blocked,
-                          self.failed):
+                          self.failed, self.case_checked):
                 cache.pop(slug, None)
 
     @contextmanager
@@ -1366,6 +1408,15 @@ class Progress:
                     state = self._state(pid)
                     dirty = self._dirty(pid)
                     config_key = _config_key(proj, self.net.cfg(proj))
+                    # Saving waits, visibly, rather than failing every write; the project and renames stay usable.
+                    # Checked again only when a function changes (a rename changes the dirty token).
+                    checked = self.case_checked.get(slug)
+                    if checked is None or checked[0] != dirty.token:
+                        checked = self.case_checked[slug] = (dirty.token, case_clash(store, pid, folder))
+                    if checked[1]:
+                        self.blocked[slug] = (self._signature(folder), dirty.token, config_key)
+                        self.errors[slug] = checked[1]
+                        return False
                     failed = None if (force if retry is None else retry) else self.failed.get(slug)
                     if (failed and slug in self.errors and time.monotonic() - failed[1] < RETRY_FAILED_SECONDS
                             and failed[0] == (dirty.token, config_key, self._signature(folder))):
