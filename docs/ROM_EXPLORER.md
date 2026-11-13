@@ -379,6 +379,39 @@ headers validate track offsets and time division, not the complete event program
 headers validate frame counts and ordered bitstream offsets, not playback. No skeleton pose,
 scene reconstruction, animation playback, demo playback or music synthesis is implied.
 
+Resource inspectors now show up to 64 records per page, with numeric column sorting on the
+current page. Directory entries link to their mapped regions; empty entries have no link.
+Object indices link placements to their object directory, geometry and animation collection.
+Repeated object-type flags are shown separately and are never substituted for object indices.
+Links stay within the same validated directory root and analysis image.
+
+Model previews include a skeleton table (parent, children and alternative part mappings),
+with cycle and multiple-parent checks, plus material colors, UV multipliers, shading flags
+and a texture-bank link when that index is present. The wireframe still displays one mesh
+in local coordinates; alternative parts are not assembled into a guessed character.
+Animation tables expose node track indices, initial positions/quaternions and track encoding.
+The frame input reads supported uncompressed XYZ tracks. ADPCM translation/rotation tracks
+are identified but not decoded or played. Missing initial orientations stay missing.
+
+Collision inspection deinterleaves attribute/corner/region byte planes, checks the selected
+page's corner, attribute and neighbour indices, and renders those surfaces as a rotatable
+wireframe. Tables show surface flags, ground/wall material IDs and warp IDs. Material IDs and
+flags are numeric storage values, not inferred labels such as floor, hazard or walkable.
+Object metadata exposes finite ordered bounds and animation-type IDs. Placement and grid
+inspectors show dynamic, static, simple and extended-static records. Extended-static X/Y/Z
+components remain quantized values until grid origins and flags are resolved; they are not
+presented as world positions. Unsupported record layouts show a warning while retaining
+validated header counts.
+
+All ROM adapters share paged strict UTF-8, NUL-terminated text-candidate and aligned-pointer
+inspectors. Pointer words are mapped through imported segments, retaining overlay alternatives;
+integer coincidences and runtime use remain unresolved. These inspectors do not strengthen
+tentative classifications and read at most 4 MiB. Automatic font detection currently supports
+PSF2 bitmap fonts with a version-zero 32-byte header, exact glyph extents, and no Unicode table.
+The glyph atlas uses stored order, without guessing a character mapping. The weak two-byte
+PSF1 signature and headerless console fonts are not automatically classified. Game-specific
+fonts, non-UTF-8 encodings, animation playback and reconstructed scenes remain planned.
+
 Compression is retained as a separate property alongside the semantic type. Standalone RNC
 streams also receive validated extents and output sizes without a recognized directory.
 Code-like MIPS output is labelled as a packed program image only when its decoded bytes

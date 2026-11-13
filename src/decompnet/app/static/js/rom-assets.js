@@ -25,6 +25,9 @@ function romAssetOptions(body) {
   const audioRate=body.querySelector('[data-audio-rate]');if(audioRate)options.rate=audioRate.value;
   const sample=body.querySelector('[data-audio-sample]');if(sample)options.sample=sample.value;
   const mesh=body.querySelector('[data-native-model-mesh]');if(mesh)options.mesh=mesh.value;
+  const resourceFrame=body.querySelector('[data-resource-frame]');if(resourceFrame)options.frame=resourceFrame.value;
+  const component=body.querySelector('[data-resource-component]');if(component)options.record_component=component.value;
+  options.record_page=body._romRecordPage || 0;
   return options;
 }
 function setupRomAsset(body,region,slug,imageHash,active) {
@@ -50,8 +53,9 @@ function setupRomAsset(body,region,slug,imageHash,active) {
     try {
       const preview=await api('/api/rom-explorer/preview',{method:'POST',signal:controller?.signal,body:{slug,region:region.id,image_hash:imageHash,options:romAssetOptions(body)}});
       if(!current())return false;
-      if(preview.media==='metadata'){renderRomResource(result,preview);return true;}
-      if(preview.media==='model'){renderRomModel(result,preview,current);return true;}
+      const inspect=()=>renderRomResource(result,preview,page=>{body._romRecordPage=page;return renderPreview(false);},current,body);
+      if(preview.media==='metadata'){inspect();return true;}
+      if(preview.media==='model'){renderRomModel(result,preview,current);inspect();return true;}
       if(!/^data:(image\/(png|jpeg)|audio\/wav);base64,/.test(preview.data_url))throw new Error('The preview returned an unsupported media type. Refresh the map and try again.');
       const media=document.createElement(preview.media==='audio' ? 'audio' : 'img');
       media.className='rom-preview-media';
@@ -63,6 +67,7 @@ function setupRomAsset(body,region,slug,imageHash,active) {
     }catch(error){if(current())showJobError(work,error.message);return false;}finally{busy=false;if(active())body._romAssetBusy=false;finish();}
   };
   const mesh=body.querySelector('[data-native-model-mesh]');if(mesh)mesh.onchange=()=>{if(busy || body._romAssetBusy || !active())return;get('source').value='rom';get('format').value='auto';get('offset').value='0x'+region.start.toString(16);layout();renderPreview(false);};
+  const component=body.querySelector('[data-resource-component]');if(component)component.onchange=()=>{body._romRecordPage=0;};
   button.onclick=()=>renderPreview(false);body._romPreviewFrame=()=>renderPreview(true);
   if(typeof setupRomTextureControls==='function')setupRomTextureControls(body,region,active);
   if(typeof setupRomAudio==='function')setupRomAudio(body,region,active);
@@ -97,14 +102,41 @@ function romNativeModelHTML(region) {
 
 function romResourceHTML(region) {
   const asset=region.detected_asset;if(!asset?.resource_type)return '';
-  return `<p class="small muted"><b>${esc(asset.resource_type)}</b>${asset.resource_path ? '<br>'+esc(asset.resource_path) : ''}${asset.compression ? '<br>'+esc(asset.compression.codec)+' · '+asset.compression.packed_bytes.toLocaleString()+' packed bytes → '+asset.compression.expanded_bytes.toLocaleString()+' decoded bytes' : ''}</p>`;
+  return `${asset.resource_type==='grid section' ? '<label class="field"><span>Placement records</span><select data-resource-component><option value="0">Extended static</option><option value="1">Static</option><option value="2">Simple</option></select></label>' : ''}${asset.resource_type==='animation' ? `<label class="field"><span>Animation frame (raw translation tracks)</span><input data-resource-frame type="number" min="0" max="${Math.max(0,(asset.resource_fields?.frames || 1)-1)}" value="0"></label>` : ''}<p class="small muted"><b>${esc(asset.resource_type)}</b>${asset.resource_path ? '<br>'+esc(asset.resource_path) : ''}${asset.compression ? '<br>'+esc(asset.compression.codec)+' · '+asset.compression.packed_bytes.toLocaleString()+' packed bytes → '+asset.compression.expanded_bytes.toLocaleString()+' decoded bytes' : ''}</p>`;
 }
-function renderRomResource(host,preview) {
-  const heading=document.createElement('h4');heading.textContent=preview.title;host.append(heading);
+function renderRomResource(host,preview,onPage=()=>{},active=()=>true,state=host) {
+  const heading=document.createElement('h4');heading.textContent=preview.title || 'Structure and materials';host.append(heading);
   if(preview.resource_path){const path=document.createElement('p');path.className='small muted';path.textContent=preview.resource_path;host.append(path);}
   for(const [label,value] of Object.entries(preview.fields || {})) {
     if(label==='initial_orientation_gap'){if(value){const warning=document.createElement('p');warning.className='small muted';warning.textContent='Some nodes have no initial orientation record; no pose is inferred.';host.append(warning);}continue;}
     const line=document.createElement('p');line.className='small';line.textContent=label.replaceAll('_',' ')+': '+(Array.isArray(value) ? value.join(', ') : String(value));host.append(line);
   }
-  const note=document.createElement('p');note.className='small muted';note.textContent=preview.note;host.append(note);
+  if(preview.inspection_warning){const warning=document.createElement('p');warning.className='small muted';warning.textContent=preview.inspection_warning;host.append(warning);}
+  if(preview.object_bounds){const bounds=document.createElement('p');bounds.className='small';bounds.textContent='Object bounds: '+preview.object_bounds.minimum.join(', ')+' → '+preview.object_bounds.maximum.join(', ');host.append(bounds);}
+  if(preview.material){const material=document.createElement('p');material.className='small';material.textContent='Material: '+Object.entries(preview.material).map(([key,value])=>key.replaceAll('_',' ')+': '+(Array.isArray(value) ? value.join(', ') : String(value))).join(' · ');host.append(material);}
+  const links=(parent,items)=>{for(const item of items || []){const button=document.createElement('button');button.type='button';button.className='link-btn';button.textContent=item.label;button.onclick=()=>{if(active())openRomRegion(item.region);};parent.append(button);}};
+  links(host,preview.links);
+  if(preview.geometry)renderRomModel(host,preview.geometry,active);
+  if(preview.font_atlas){
+    const atlas=preview.font_atlas,canvas=document.createElement('canvas'),scale=3,cols=8;
+    canvas.width=cols*atlas.width*scale;canvas.height=Math.ceil(atlas.glyphs.length/cols)*atlas.height*scale;canvas.className='rom-preview-media';canvas.setAttribute('role','img');canvas.setAttribute('aria-label','Glyph bitmap atlas in stored order');
+    const ctx=canvas.getContext('2d');ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim();
+    atlas.glyphs.forEach((glyph,i)=>glyph.pixels.forEach((line,y)=>[...line].forEach((pixel,x)=>{if(pixel==='1')ctx.fillRect((i%cols*atlas.width+x)*scale,(Math.floor(i/cols)*atlas.height+y)*scale,scale,scale);})));host.append(canvas);
+  }
+  if(preview.table){
+    const info=preview.table,heading=document.createElement('h4'),status=document.createElement('p');heading.textContent=info.title;status.className='small muted';status.textContent=`${info.total.toLocaleString()} records · page ${info.page+1} of ${Math.max(1,Math.ceil(info.total/info.page_size))}. Sorting applies to this page.`;host.append(heading,status);
+    const pager=document.createElement('div');pager.className='row';
+    for(const [label,page,disabled] of [['Previous',info.page-1,info.page===0],['Next',info.page+1,(info.page+1)*info.page_size>=info.total]]){const button=document.createElement('button');button.type='button';button.className='ghost small-btn';button.textContent=label;button.disabled=disabled;button.onclick=()=>{if(!active() || button.disabled)return;button.disabled=true;status.textContent='Loading record page…';onPage(page);};pager.append(button);}host.append(pager);
+    const wrapper=document.createElement('div');wrapper.className='table-scroll';wrapper.style.overflowX='auto';const table=document.createElement('table');table.className='compiler-table';wrapper.append(table);host.append(wrapper);
+    const draw=()=>{
+      table.replaceChildren();const head=document.createElement('thead'),tr=document.createElement('tr'),tbody=document.createElement('tbody');head.append(tr);table.append(head,tbody);
+      const sort=info.columns.includes(state._romResourceSort?.key) ? state._romResourceSort : {key:'index',direction:1};
+      for(const key of info.columns){const th=document.createElement('th'),button=document.createElement('button');th.scope='col';th.setAttribute('aria-sort',sort.key===key ? sort.direction===1 ? 'ascending' : 'descending' : 'none');button.type='button';button.className='link-btn';button.textContent=key.replaceAll('_',' ')+(sort.key===key ? sort.direction===1 ? ' ↑' : ' ↓' : '');button.onclick=()=>{state._romResourceSort={key,direction:sort.key===key ? -sort.direction : 1};draw();};th.append(button);tr.append(th);}
+      const action=document.createElement('th');action.scope='col';action.textContent='Links';tr.append(action);
+      const display=value=>value==null ? '—' : Array.isArray(value) ? value.map(v=>v==null ? '—' : v).join(', ') : String(value);
+      const rows=[...info.rows].sort((a,b)=>{const x=a[sort.key],y=b[sort.key];if(x==null || y==null)return x==null && y==null ? a.index-b.index : x==null ? 1 : -1;return (typeof x==='number' && typeof y==='number' ? x-y : display(x).localeCompare(display(y),undefined,{numeric:true}))*sort.direction || a.index-b.index;});
+      for(const row of rows){const tr=document.createElement('tr');for(const key of info.columns){const td=document.createElement('td');td.textContent=display(row[key]);tr.append(td);}const td=document.createElement('td');links(td,row.links);tr.append(td);tbody.append(tr);}
+    };draw();
+  }
+  if(preview.note && preview.media!=='model'){const note=document.createElement('p');note.className='small muted';note.textContent=preview.note;host.append(note);}
 }
