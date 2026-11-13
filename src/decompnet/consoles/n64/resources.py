@@ -252,5 +252,5 @@ def preview(data,asset,selection):
     except SchemaError as exc:
         extra['inspection_warning']=str(exc)+' Header counts remain available; unsupported records are not rendered.'
     return dict(media='metadata',title=asset['label'],fields=info,resource_path=asset['resource_path'],**extra,
-                compression=asset.get('compression'),note='Source-layout records and directory links. ADPCM animation tracks are identified but not played; object behaviour, music synthesis and scene reconstruction remain unresolved.',
+                compression=asset.get('compression'),note='Source-layout records and directory links. Use the linked model’s Animated assembly to play supported tracks. Object behaviour, music synthesis and scene reconstruction remain unresolved.',
                 settings=dict(format='auto',source='rom',offset=asset['offset']))

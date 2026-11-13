@@ -176,6 +176,9 @@ class Console:
     def asset_preview(self, data, asset, selection):
         return None  # native assets can resolve validated image, audio, model or metadata selections
 
+    def asset_scene(self, image, asset, selection, assets):
+        return None  # optional linked preview, inside the original-image hash guard
+
     def asset_decode(self, data):
         return None  # None delegates to the common preview codecs
 

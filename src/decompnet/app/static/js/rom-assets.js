@@ -25,6 +25,8 @@ function romAssetOptions(body) {
   const audioRate=body.querySelector('[data-audio-rate]');if(audioRate)options.rate=audioRate.value;
   const sample=body.querySelector('[data-audio-sample]');if(sample)options.sample=sample.value;
   const mesh=body.querySelector('[data-native-model-mesh]');if(mesh)options.mesh=mesh.value;
+  const animation=body.querySelector('[data-native-animation]');if(animation)options.animation=animation.value;
+  const assembly=body.querySelector('[data-native-assembly]');if(assembly)options.assembly=assembly.value;
   const resourceFrame=body.querySelector('[data-resource-frame]');if(resourceFrame)options.frame=resourceFrame.value;
   const component=body.querySelector('[data-resource-component]');if(component)options.record_component=component.value;
   options.record_page=body._romRecordPage || 0;
@@ -97,7 +99,7 @@ async function loadRomLoaderRoles() {
 function romNativeModelHTML(region) {
   const asset=region.detected_asset;if(asset?.media!=='model')return '';
   const selected=Number(region.annotation?.preview_settings?.mesh || 0);
-  return `<p class="small muted">Detected model geometry · ${asset.nodes} nodes · ${asset.meshes.length} meshes · ${asset.vertices} vertices · ${asset.triangles} polygon commands. Preview one local mesh here, or use Model browser for assemblies, textured surfaces, related files and glTF export. Animation is not applied.</p><label class="field"><span>Model mesh</span><select data-native-model-mesh>${asset.meshes.map((mesh,i)=>`<option value="${i}"${i===selected ? ' selected' : ''}>${esc(mesh.name || `Node ${mesh.node} / part ${mesh.part} / section ${mesh.section}`)} · ${mesh.vertices} vertices · ${mesh.triangles} polygons</option>`).join('')}</select></label>`;
+  return `<p class="small muted">Detected model geometry · ${asset.nodes} nodes · ${asset.meshes.length} meshes · ${asset.vertices} vertices · ${asset.triangles} polygon commands. Preview one local mesh here, or use Model browser for assemblies, textured surfaces, related files and glTF export. Native assemblies can play linked animations at an adjustable preview rate.</p>${asset.native_animations?.length ? `<label class="field"><span>Native view</span><select data-native-assembly><option value="mesh">Local mesh</option><option value="animated"${region.annotation?.preview_settings?.assembly==='animated' ? ' selected' : ''}>Animated assembly · first part variant</option></select></label><label class="field"><span>Animation</span><select data-native-animation>${asset.native_animations.map((a,i)=>`<option value="${i}"${Number(region.annotation?.preview_settings?.animation || 0)===i ? ' selected' : ''}>${esc(a.label)} · ${a.frames} frames</option>`).join('')}</select></label>` : ''}<label class="field"><span>Model mesh</span><select data-native-model-mesh>${asset.meshes.map((mesh,i)=>`<option value="${i}"${i===selected ? ' selected' : ''}>${esc(mesh.name || `Node ${mesh.node} / part ${mesh.part} / section ${mesh.section}`)} · ${mesh.vertices} vertices · ${mesh.triangles} polygons</option>`).join('')}</select></label>`;
 }
 
 function romResourceHTML(region) {
@@ -122,7 +124,7 @@ function renderRomResource(host,preview,onPage=()=>{},active=()=>true,state=host
     const atlas=preview.font_atlas,canvas=document.createElement('canvas'),scale=3,cols=8;
     canvas.width=cols*atlas.width*scale;canvas.height=Math.ceil(atlas.glyphs.length/cols)*atlas.height*scale;canvas.className='rom-preview-media';canvas.setAttribute('role','img');canvas.setAttribute('aria-label','Glyph bitmap atlas in stored order');
     const ctx=canvas.getContext('2d');ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim();
-    atlas.glyphs.forEach((glyph,i)=>glyph.pixels.forEach((line,y)=>[...line].forEach((pixel,x)=>{if(pixel==='1')ctx.fillRect((i%cols*atlas.width+x)*scale,(Math.floor(i/cols)*atlas.height+y)*scale,scale,scale);})));host.append(canvas);
+    atlas.glyphs.forEach((glyph,i)=>glyph.pixels.forEach((line,y)=>[...line].forEach((pixel,x)=>{if(pixel!=='0'){ctx.globalAlpha=parseInt(pixel,16)/(atlas.levels || 1);ctx.fillRect((i%cols*atlas.width+x)*scale,(Math.floor(i/cols)*atlas.height+y)*scale,scale,scale);}})));ctx.globalAlpha=1;host.append(canvas);
   }
   if(preview.table){
     const info=preview.table,heading=document.createElement('h4'),status=document.createElement('p');heading.textContent=info.title;status.className='small muted';status.textContent=`${info.total.toLocaleString()} records · page ${info.page+1} of ${Math.max(1,Math.ceil(info.total/info.page_size))}. Sorting applies to this page.`;host.append(heading,status);

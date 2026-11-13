@@ -706,6 +706,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Audio browser, filters, sortable samples and explicit WAV preparation | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / linked records | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| Native ADPCM animation, linked textures and source-family I4 fonts | ✓ bounded native previews | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Text/pointer record inspectors and PSF2 glyph atlas | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Model browser and automatic indexed geometry / local mesh wireframes (raw, RNC 1/2, embedded ZIP) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | PD3V textures, static assemblies, linked scenery and glTF export | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -1256,14 +1257,15 @@ Texture and geometry settings persist as local annotations. Embedded ZIP texture
 validate member CRCs and complete trailer-count layouts, with per-texture, palette and frame
 selection; old maps refresh automatically. Other archived asset formats need format adapters. N64 indexed geometry detection validates
 node/part/section tables, byte-plane vertices and cache-relative polygon runs; raw and RNC 1/2
-models offer mesh selection and local wireframes. Other native formats, assembled skeleton poses,
-animation playback and textured model rendering remain planned. A validated indexed cartridge
+models offer mesh selection and local wireframes. Other native model and skeleton formats remain planned; supported indexed models now
+have linked textures and explicit-play rigid-node ADPCM animation. A validated indexed cartridge
 directory supplies typed animation, collision, grid/bounds, placement, sequence and demo
 metadata and paged records. Skeleton parent/child and part-variant tables, material/texture links,
 collision wireframes with neighbours/surface IDs, object bounds/animation types and placement
 records now share sortable inspectors. Portable text/pointer inspection and PSF2 glyph atlases
-reach all ROM adapters. ADPCM track playback, assembled poses, semantic surface labels and
-headerless game-font recognition remain planned. Empty records stay explicit, and failed zlib/gzip probes no longer classify bytes
+reach all ROM adapters. Supported ADPCM track playback, rigid node assemblies, linked texture surfaces and
+named-writer I4 fonts now have bounded previews. Other skeleton formats, semantic surface
+labels and uncorroborated headerless fonts remain planned. Empty records stay explicit, and failed zlib/gzip probes no longer classify bytes
 as compressed. Scene reconstruction, sequence synthesis and other native schemas remain planned.
 
 A project tab maps every byte of an imported ROM analysis image, including unknown and
@@ -1812,7 +1814,7 @@ Extend the current block-local loader/buffer evidence through indexed file-ID ta
 mutable memory, cross-branch paths and arbitrary interprocedural consumers. Establish
 asynchronous DMA completion before presenting runtime guarantees. Extend native texture-bank
 recognition to other consoles and additional direct-color/mipmapped layouts. Add console texture tilings, stronger raw-image dimension/palette inference beyond the current comparison
-gallery, other display-list/model-container formats, skeleton poses and textured model rendering, other audio banks/compression formats, compressed B1 control graphs, alternate ADPCM book orders and music-sequence synthesis. Current source groups and named contracts are static evidence, not runtime
+gallery, other display-list/model-container and skeleton formats, runtime-accurate material rendering, other audio banks/compression formats, compressed B1 control graphs, alternate ADPCM book orders and music-sequence synthesis. Current source groups and named contracts are static evidence, not runtime
 proof; raw preview choices remain manual interpretations.
 
 

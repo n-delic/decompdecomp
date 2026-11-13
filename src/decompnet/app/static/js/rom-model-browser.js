@@ -35,20 +35,23 @@ function renderRomModelBrowser(view=romView()) {
   for(const [id,delta] of [['romModelPrevious',-1],['romModelNext',1]])$(id).onclick=()=>{state.page+=delta;draw();};
   panel.ontoggle=()=>{if(panel.open)draw();else stopRomModelBrowser();};draw();
 }
-async function prepareRomModel(row,view=romView(),mesh=row.asset.assembled?'assembled':0) {
+async function prepareRomModel(row,view=romView(),mesh=row.asset.assembled?'assembled':0,animationIndex=0) {
   const host=$('romModelResult');if(host._modelBusy)return;stopRomModelBrowser();host._modelBusy=true;
   const slug=S.slug,run=host._modelRun,active=()=>S.slug===slug&&S.tab==='rom'&&$('romModelPanel').open&&host._modelRun===run;
   const log=$('romModelWork'),controller=new AbortController();host._modelAbort=controller;
   const controls=[...$('romModelPanel').querySelectorAll('button,input,select')].filter(b=>b.id!=='romModelStop');
   const finish=beginWork(log,'Preparing '+row.name,controls,'Model ready. Drag to rotate.');host._modelFinish=finish;showJobError(log,'');$('romModelStop').hidden=false;$('romModelStop').onclick=()=>stopRomModelBrowser('Model preparation stopped.');
   try{
-    const result=await api('/api/rom-explorer/preview',{method:'POST',signal:controller.signal,body:{slug,region:row.region,image_hash:view.report.image_hash,options:{format:'auto',mesh:mesh==='assembled'?0:mesh,assembly:mesh==='assembled'?'assembled':'mesh',offset:row.asset.offset}}});
+    const result=await api('/api/rom-explorer/preview',{method:'POST',signal:controller.signal,body:{slug,region:row.region,image_hash:view.report.image_hash,options:{format:'auto',mesh:['assembled','animated'].includes(mesh)?0:mesh,assembly:mesh==='animated'?'animated':mesh==='assembled'?'assembled':'mesh',animation:animationIndex,offset:row.asset.offset}}});
     if(!active())return;if(result.media!=='model')throw Error('This entry did not produce model geometry. Open its region to inspect the evidence.');
     const label=document.createElement('label');label.className='field';const title=document.createElement('span');title.textContent=row.name+' · Mesh';const select=document.createElement('select');
     if(row.asset.assembled){const option=document.createElement('option');option.value='assembled';option.textContent=row.asset.scenery?'Whole scenery (supported surfaces)':'Assembled model';option.selected=mesh==='assembled';select.append(option);}
+    if(row.asset.native_animations?.length){const option=document.createElement('option');option.value='animated';option.textContent='Animated native assembly';option.selected=mesh==='animated';select.append(option);}
     row.asset.meshes.forEach((m,i)=>{const option=document.createElement('option');option.value=i;option.textContent=`${m.name||'Node '+m.node+' / part '+m.part+' / section '+m.section} · ${m.vertices} vertices`;option.selected=i===mesh;select.append(option);});
-    select.onchange=()=>prepareRomModel(row,view,select.value==='assembled'?'assembled':Number(select.value));label.append(title,select);host.append(label);renderRomModel(host,result,active);
-    if(result.surfaces?.length){const exportButton=document.createElement('button');exportButton.type='button';exportButton.className='primary small-btn';exportButton.textContent='Export glTF';exportButton.onclick=()=>exportRomModel(result,row.name,exportButton,log,active);host.append(exportButton);}
+    select.onchange=()=>prepareRomModel(row,view,['assembled','animated'].includes(select.value)?select.value:Number(select.value),animationIndex);label.append(title,select);host.append(label);
+    if(row.asset.native_animations?.length){const label=document.createElement('label');label.className='field';const title=document.createElement('span');title.textContent='Animation';const select=document.createElement('select');row.asset.native_animations.forEach((a,i)=>{const option=document.createElement('option');option.value=i;option.textContent=a.label+' · '+a.frames+' frames';option.selected=i===animationIndex;select.append(option);});select.onchange=()=>prepareRomModel(row,view,'animated',Number(select.value));label.append(title,select);host.append(label);}
+    renderRomModel(host,result,active);
+    if(result.surfaces?.length){const exportButton=document.createElement('button');exportButton.type='button';exportButton.className='primary small-btn';exportButton.textContent=result.animation?'Export frame 0 glTF':'Export glTF';exportButton.onclick=()=>exportRomModel(result.animation?{...result,vertices:nativeModelPose(result,0),animation:undefined}:result,row.name,exportButton,log,active);host.append(exportButton);}
     renderRomModelRelationships(host,row,result,view,active);
   }catch(error){if(active())showJobError(log,error.message);}finally{if(host._modelRun===run){host._modelBusy=false;host._modelAbort=null;host._modelFinish=null;$('romModelStop').hidden=true;finish();}}
 }

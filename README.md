@@ -68,8 +68,9 @@ and linked record inspection. Inspect skeleton parents/children and alternative 
 and texture links, collision surfaces and neighbours, object bounds/animation types, and paged
 placement records. Directory and object links open related resources. Text/pointer candidates
 have paged inspectors on all ROM adapters, and supported PSF2 bitmap fonts get a glyph atlas.
-No game names or fixed ROM offsets are used. Compressed animation playback, assembled poses,
-textured rendering and game-specific font identification remain planned.
+No game names or fixed ROM offsets are used. Supported native I4 font tables are detected through
+named source-family text writers and validated glyph mappings; their character order remains
+labelled as source-family evidence. Unmapped or ambiguous font data stays unclassified.
 Use **Discover assets with agents** to investigate unknown data, a ROM range or a function’s
 referenced regions, or choose the model-format scope. Agents claim regions, retain failed approaches and propose names, formats
 and bounded parser recipes for your review. Layouts are validated before review; accepting updates local annotations; symbols and matching stay untouched.

@@ -46,6 +46,7 @@ function projectRomVertices(vertices,yaw,pitch,zoom,width,height) {
   });
 }
 function renderRomModel(host,model,active) {
+  const animationSource=model;if(model.animation && typeof nativeModelPose==='function')model={...model,vertices:nativeModelPose(animationSource,0)};
   let canvas=document.createElement('canvas');canvas.className='rom-model-canvas';canvas.tabIndex=0;canvas.setAttribute('role','img');canvas.setAttribute('aria-label',`${model.vertices.length} vertices, ${model.triangles} triangles. Drag or use arrow keys to rotate; plus and minus zoom; Home resets.`);
   const note=document.createElement('p');note.className='small muted';note.textContent=`${model.vertices.length} vertices · ${model.edges.length} edges · ${model.triangles} triangles. Drag or arrow keys: rotate. Wheel or +/−: zoom. Home: reset. ${model.note}`;
   const reset=document.createElement('button');reset.type='button';reset.className='ghost small-btn';reset.textContent='Reset view';host.append(canvas,reset,note);
@@ -69,7 +70,10 @@ function renderRomModel(host,model,active) {
   // Match theme and dialog width without retaining observers after the dialog closes.
   const resize=new ResizeObserver(()=>{if(active() && canvas.isConnected)paint();else resize.disconnect();});resize.observe(canvas);
   const theme=new MutationObserver(()=>{if(active() && canvas.isConnected)paint();else theme.disconnect();});theme.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
-  bodyModelCleanup(canvas,resize,theme,()=>surface?.dispose());paint();
+  let disposePlayback=()=>{};
+  bodyModelCleanup(canvas,resize,theme,()=>{disposePlayback();surface?.dispose();});
+  if(model.animation && typeof setupNativeModelPlayback==='function')disposePlayback=setupNativeModelPlayback(host,animationSource,active,vertices=>{model.vertices=vertices;surface?.update(vertices);paint();});
+  paint();
 }
 function bodyModelCleanup(canvas,resize,theme,dispose=()=>{}) {
   // The host is replaced by subsequent previews and dialogs; disconnect on removal.
