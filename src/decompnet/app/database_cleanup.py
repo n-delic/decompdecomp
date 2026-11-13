@@ -37,16 +37,27 @@ def saved(net):
     return json.loads(row['value']) if row else {'removed':True,'before':'','automatic':False}
 
 
-def eligible(net,value):
+def active_projects(net):
+    """The projects routine maintenance may touch (project_activity): viewed lately, agents or jobs working."""
+    from .project_activity import active
+    return {row['id'] for row in net.store.all('SELECT id,slug FROM projects') if active(net,row['slug'])}
+
+
+def eligible(net,value,*,projects=None,unchanged=None):
+    """Sessions whose transcripts the options clear. `projects` (ids) limits the scan to those projects' databases;
+    `unchanged(sessions, messages)` returns True for a pair of stores that needn't be read again (Retention)."""
     value,cutoff=options(value)
     current = {(r['id'],r['project'],r['name']) for r in net.store.all('SELECT id,project,name FROM helpers')}
     rows = []
     from .transcripts import service
     for store, pids in net.project_stores():
+        # (the shared database holds every project's sessions in a library without project databases)
+        if projects is not None and store is not net.store and not projects.intersection(pids):continue
         if not store.one("SELECT 1 FROM sqlite_master WHERE name='helper_sessions'"):continue
         if store is net.store:
             if not store.one("SELECT 1 FROM sqlite_master WHERE name='helper_messages'"):continue
             messages = store
+            if unchanged is not None and unchanged(store,messages):continue
             found = store.all('SELECT s.id,s.helper_id,s.project FROM helper_sessions s WHERE '
                 '((? AND NOT EXISTS(SELECT 1 FROM helpers h WHERE h.id=s.helper_id AND h.project=s.project AND h.name=s.agent)) '
                 'OR (? IS NOT NULL AND s.ended_at IS NOT NULL AND s.ended_at<?)) '
@@ -54,6 +65,7 @@ def eligible(net,value):
                 value['removed'],cutoff,cutoff)
         else:
             messages = service(net).for_project(pids[0]).store
+            if unchanged is not None and unchanged(store,messages):continue
             # Cleared sessions keep their lifetime summaries. Start with the
             # transcript index so retention does not repeatedly hydrate all of
             # that growing history when most sessions have no messages left.
@@ -90,10 +102,10 @@ def summary(net,value=None):
     return {'options':value,'sessions':len(rows),'messages':count,'disk_bytes':disk}
 
 
-def run(net,value,log):
+def run(net,value,log,*,projects=None):
     from . import maintenance, tool_policy
     value,_=options(value)
-    rows=eligible(net,value)
+    rows=eligible(net,value,projects=projects)
     tool_policy.ensure(net)  # Preserve lifetime counters before their legacy backfill evidence disappears.
     deleted=0;done=0;total=len(rows)
     def report(phase):
@@ -143,29 +155,76 @@ def save(net,value):
     return value
 
 
-def start(net,jobs,value, *, foreground=True):
+_scopes={}  # job id -> {'projects': the project ids it clears, or None for every project}, under jobs._lock
+
+
+def start(net,jobs,value, *, foreground=True, projects=None):
+    """One cleanup job at a time. `projects` limits it (the automatic check: active projects only); a start without a
+    limit (the Clean button) that finds the automatic job queued or running widens it to every project instead."""
     value,_=options(value)
     with jobs._lock:
         active=next((j for j in jobs.jobs.values() if j['kind']=='Database transcript cleanup' and j['state']=='running'),None)
         if active:
+            if projects is None and active['id'] in _scopes:
+                _scopes[active['id']]['projects']=None
             if foreground:jobs.promote(active['id'])
             return active['id']
+        scope={'projects':projects}
         def work(log):
             from .maintenance import is_foreground, slot
             if not is_foreground():log('Waiting for the background maintenance lane')
-            with slot(getattr(log,'cancel_event',None)) as acquired:
-                if not acquired:log.check_cancel()
-                return run(net,value,log)
-        return jobs.start('Database transcript cleanup',work,foreground=foreground,
-                          cancel_message='Cleanup stopped. Records already removed stay deleted; you can run cleanup again.')
+            try:
+                with slot(getattr(log,'cancel_event',None)) as acquired:
+                    if not acquired:log.check_cancel()
+                    while True:
+                        with jobs._lock:wanted=scope['projects']
+                        result=run(net,value,log,projects=wanted)
+                        with jobs._lock:
+                            if wanted is None or scope['projects'] is not None:
+                                return result
+                        # (widened while it ran: clear the projects it didn't cover too)
+            finally:
+                with jobs._lock:_scopes.pop(jid,None)
+        jid=jobs.start('Database transcript cleanup',work,foreground=foreground,
+                       cancel_message='Cleanup stopped. Records already removed stay deleted; you can run cleanup again.')
+        _scopes[jid]=scope
+        return jid
 
 
 class Retention:
-    """Checked by the existing autosave coordinator; no additional polling thread."""
+    """Checked by the existing autosave coordinator; no additional polling thread.
+
+    The automatic check reads only active projects' databases (project_activity), and only those whose sessions,
+    messages, workers, options or age cutoff (to the hour) changed since it last read them. It used to read every
+    project's transcript index every five minutes: on a library of 70 projects (5 GB) that was the app's largest
+    slow-read total, about 700 s a day, up to 48 s per scan, all on the autosave coordinator's thread under the
+    interpreter lock the window and the agents' tool calls share. An idle project's old transcripts wait until it is
+    opened or worked on; the cleanup panel and its Clean button still cover every project."""
     def __init__(self,net,jobs):
         self.net,self.jobs=net,jobs
         self.next_check=0
         self.next_payload_check=0
+        self.scanned={}  # (sessions db, messages db) -> what they held when last read
+
+    def _unchanged(self,value):
+        import sqlite3
+        helpers=self.net.store.one('SELECT COUNT(*) n,MAX(id) m FROM helpers')
+        _,cutoff=options(value)
+        # A rolling age limit moves every hour; a fixed date or "removed agents only" doesn't move at all
+        options_key=(json.dumps(value,sort_keys=True),None if cutoff is None else int(cutoff//3600))
+        def check(sessions,messages):
+            key=(str(sessions.path),str(messages.path))
+            try:
+                held=sessions.one('SELECT MAX(id) m,MAX(ended_at) e FROM helper_sessions')
+                last=messages.one('SELECT MAX(id) m FROM helper_messages')
+            except sqlite3.OperationalError:
+                return False
+            signature=(options_key,helpers['n'],helpers['m'],held['m'],held['e'],last['m'])
+            if self.scanned.get(key)==signature:
+                return True
+            self.scanned[key]=signature
+            return False
+        return check
 
     def tick(self,now=None):
         import time
@@ -189,5 +248,12 @@ class Retention:
             with self.jobs._lock:
                 active=any(j['kind']=='Database transcript cleanup' and j['state']=='running'
                            for j in self.jobs.jobs.values())
-        if value.get('automatic') and not active and eligible(self.net,value):
-            start(self.net,self.jobs,value,foreground=False)
+        if not value.get('automatic') or active:
+            return
+        projects=active_projects(self.net)
+        rows=eligible(self.net,value,projects=projects,unchanged=self._unchanged(value))
+        if rows:
+            # Read these again next time even if nothing changes: the job may be cancelled before it clears them
+            for row in rows:
+                self.scanned.pop((str(row['_sessions'].path),str(row['_store'].path)),None)
+            start(self.net,self.jobs,value,foreground=False,projects=projects)
