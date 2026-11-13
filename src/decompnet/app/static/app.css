@@ -227,7 +227,14 @@ a.ghost, a.primary { text-decoration: none; }
 .joblog { width: 100%; max-height: 160px; overflow: auto; text-align: left; font-size: 12px; color: var(--muted); background: var(--code-bg); border: 1px solid var(--line-soft); border-radius: var(--r); padding: 10px 12px; margin: 0; white-space: pre-wrap; }
 .joblog:empty { display:none; }
 .joblog.tall { max-height: 360px; }
-.joblog-toolbar { justify-content: space-between; margin: 8px 0; font-size: 12px; }
+/* The log box component (base.js, frameJoblog): the box and its Copy button, top right. The frame disappears with
+   its log, whether the log is hidden or still empty, so no lone button is left behind. */
+.joblog-frame { position: relative; width: 100%; min-width: 0; box-sizing: border-box; }
+.joblog-frame:has(> .joblog[hidden]), .joblog-frame:has(> .joblog:empty) { display: none; }
+.joblog-frame > .joblog { padding-right: 64px; }
+.joblog-copy { position: absolute; top: 6px; right: 6px; z-index: 1; padding: 2px 8px; font: inherit; font-size: 11px; line-height: 18px; color: var(--ink-2); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; opacity: .85; }
+.joblog-copy:hover, .joblog-copy:focus-visible { opacity: 1; color: var(--ink); background: var(--bg-alt); }
+.joblog-copy[data-state="done"] { color: var(--match-ink); }
 .privacy { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--muted); }
 .privacy svg { width: 16px; height: 16px; fill: var(--match); flex: none; }
 .starts { margin-top: 26px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -1380,7 +1387,7 @@ details.more[open] > summary::before { content: "− "; }
 .maintenance-limits .field { margin: 0; min-width: 0; }
 .maintenance-limits input { width: 100%; box-sizing: border-box; }
 .maintenance-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-.maintenance-body > .joblog { margin: 0; max-height: 220px; }
+.maintenance-body > .joblog, .maintenance-body > .joblog-frame > .joblog { margin: 0; max-height: 220px; }
 .maintenance-body > [role="status"]:empty { display: none; }
 @media (max-width: 480px) {
   .maintenance-limits { grid-template-columns: minmax(0, 1fr); }
@@ -1696,7 +1703,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .repository-sync-help summary { cursor:pointer; font-weight:500; color:var(--ink); }
 .repository-sync-help ul { margin:10px 0 0; padding-left:18px; line-height:1.6; }
 .repository-sync-help li + li { margin-top:6px; }
-.repository-sync > .joblog { max-height:170px; margin:12px 0 0; font-size:11px; }
+.repository-sync > .joblog, .repository-sync > .joblog-frame > .joblog { max-height:170px; margin:12px 0 0; font-size:11px; }
 .repository-sync > .workbar { margin:10px 0; }
 
 /* Deep permuter: primary decisions first, technical controls on demand. */
@@ -2069,7 +2076,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .background-feedback { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
 .background-feedback > p { margin:0; }
 .background-feedback .workbar { width:140px; flex:0 0 140px; margin:0; height:3px; }
-.background-feedback > .err-msg, .background-feedback > .joblog { flex-basis:100%; }
+.background-feedback > .err-msg, .background-feedback > .joblog, .background-feedback > .joblog-frame { flex-basis:100%; }
 
 /* Git options appear only after the save destination has a repository. */
 .repository-auto-commit[hidden], .repository-publish[hidden] { display:none; }
