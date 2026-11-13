@@ -179,6 +179,19 @@ def test_visual_cpp_x64_runner_follows_the_host_not_the_target(tmp_path, layout,
     assert own.version.endswith("-x64") and own.runner == runner and own.build == c2
 
 
+@pytest.mark.parametrize("here", ["linux", "win32"])
+def test_an_x64_only_copy_is_offered_and_verified_on_any_platform(tmp_path, monkeypatch, here):
+    """n-delic's #281 point: a 2005-2013 copy whose only 64-bit compiler is the native one (bin/amd64) must still
+    yield an own-...-x64 compiler, and verify() must never give a runner/platform ("wibo can't run") reason.
+    compilers() and verify() don't branch on the platform, so a Windows user is not refused either."""
+    monkeypatch.setattr("sys.platform", here)
+    copy = make_vc(tmp_path / "vs", "9.0.30729.1", "VC/bin/amd64")
+    kit = kits.get("visualcpp")
+    x64 = [c for c in kit.compilers(copy.resolve()) if c.version.endswith("-x64")]
+    assert len(x64) == 1 and x64[0].build == "9.0.30729.1"  # offered, not refused
+    assert kit.verify(copy.resolve()) == "Visual C++ 9.0.30729.1"  # the build name, no platform/runner reason
+
+
 def _pc_compile_module():
     import importlib.util
 
