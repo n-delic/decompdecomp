@@ -56,8 +56,12 @@ Banks without a stored rate use a labelled, editable preview rate. Archived sequ
 are listed separately; music sequencing, pitch, mixing and loops are not rendered. Open an audio
 region to choose a sample and prepare a local WAV preview; playback starts only with Play.
 Supported indexed N64 geometry is detected automatically, including RNC-compressed models.
-Open a model region, select a mesh and press **Preview asset** for a rotatable wireframe.
-Meshes use local coordinates; skeleton poses, animation playback and textured rendering remain planned.
+Open **Model browser** to rotate a local mesh or a supported assembled model, switch
+between textured, vertex-colour and wireframe rendering, follow related files and export
+a self-contained glTF. Supported PD3V cars use stored transforms; split scenery uses
+CRC-checked coordinate streams named by loader scripts. Texture matches require explicit
+loader-folder links. Missing or ambiguous links stay unresolved. First texture frames and
+palettes are shown; animation, runtime lighting and special strip commands remain planned.
 A supported indexed cartridge directory is also recognized by structure: animations, collision,
 object placements, grid sections/bounds, music sequences and demo recordings gain typed labels
 and linked record inspection. Inspect skeleton parents/children and alternative parts, material flags
@@ -67,8 +71,8 @@ have paged inspectors on all ROM adapters, and supported PSF2 bitmap fonts get a
 No game names or fixed ROM offsets are used. Compressed animation playback, assembled poses,
 textured rendering and game-specific font identification remain planned.
 Use **Discover assets with agents** to investigate unknown data, a ROM range or a function’s
-referenced regions. Agents claim regions, retain failed approaches and propose names, formats
-and layouts for your review. Accepting updates local annotations; symbols and matching stay untouched.
+referenced regions, or choose the model-format scope. Agents claim regions, retain failed approaches and propose names, formats
+and bounded parser recipes for your review. Layouts are validated before review; accepting updates local annotations; symbols and matching stay untouched.
 See [ROM Explorer](docs/ROM_EXPLORER.md) for formats, evidence and limits. Analysis images may
 contain expanded code; physical-media mapping and object-build adapters remain planned.
 

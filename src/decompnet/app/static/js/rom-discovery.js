@@ -46,15 +46,17 @@ function projectRomVertices(vertices,yaw,pitch,zoom,width,height) {
   });
 }
 function renderRomModel(host,model,active) {
-  const canvas=document.createElement('canvas');canvas.className='rom-model-canvas';canvas.tabIndex=0;canvas.setAttribute('role','img');canvas.setAttribute('aria-label',`${model.vertices.length} vertices, ${model.triangles} triangles. Drag or use arrow keys to rotate; plus and minus zoom; Home resets.`);
+  let canvas=document.createElement('canvas');canvas.className='rom-model-canvas';canvas.tabIndex=0;canvas.setAttribute('role','img');canvas.setAttribute('aria-label',`${model.vertices.length} vertices, ${model.triangles} triangles. Drag or use arrow keys to rotate; plus and minus zoom; Home resets.`);
   const note=document.createElement('p');note.className='small muted';note.textContent=`${model.vertices.length} vertices · ${model.edges.length} edges · ${model.triangles} triangles. Drag or arrow keys: rotate. Wheel or +/−: zoom. Home: reset. ${model.note}`;
   const reset=document.createElement('button');reset.type='button';reset.className='ghost small-btn';reset.textContent='Reset view';host.append(canvas,reset,note);
-  let yaw=.35,pitch=.2,zoom=1,drag=null;
+  let yaw=.35,pitch=.2,zoom=1,drag=null,surface=null,mode=model.materials?.some(m=>m.image)?'textured':'wireframe';
+  if(model.surfaces?.length && typeof createRomModelSurface==='function'){try{surface=createRomModelSurface(canvas,model,active,()=>paint());}catch(error){const fallback=canvas.cloneNode(false);host.replaceChild(fallback,canvas);canvas=fallback;note.textContent+=' Surface rendering is unavailable; showing wireframe. Prepare the preview again to retry.';}if(surface){const label=document.createElement('label');label.className='field';const title=document.createElement('span');title.textContent='Rendering';const select=document.createElement('select');for(const [value,text] of [['textured','Textured'],['solid','Vertex colours'],['wireframe','Wireframe']]){const option=document.createElement('option');option.value=value;option.textContent=text;option.selected=value===mode;select.append(option);}select.onchange=()=>{mode=select.value;paint();};label.append(title,select);host.insertBefore(label,canvas);}}
+  canvas.addEventListener('modeltextureerror',()=>{note.textContent+=' A linked texture could not be decoded; its geometry remains visible.';});
   const paint=()=>{
     if(!active())return;const width=canvas.clientWidth || 480,height=320,ratio=window.devicePixelRatio || 1;
-    canvas.width=width*ratio;canvas.height=height*ratio;const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);
+    canvas.width=width*ratio;canvas.height=height*ratio;if(surface){surface.draw(yaw,pitch,zoom,width,height,mode);return;}const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);
     const style=getComputedStyle(document.documentElement);ctx.fillStyle=style.getPropertyValue('--bg').trim();ctx.fillRect(0,0,width,height);ctx.strokeStyle=style.getPropertyValue('--color-status-info-fill').trim();ctx.fillStyle=style.getPropertyValue('--ink').trim();ctx.lineWidth=1;
-    const points=projectRomVertices(model.vertices,yaw,pitch,zoom,width,height);
+    const points=projectRomVertices(model.up_axis==='-Y'?model.vertices.map(v=>[v[0],-v[1],v[2]]):model.vertices,yaw,pitch,zoom,width,height);
     ctx.beginPath();for(const [a,b] of model.edges){ctx.moveTo(...points[a]);ctx.lineTo(...points[b]);}ctx.stroke();
     for(const index of model.points){const [x,y]=points[index];ctx.fillRect(x-1.5,y-1.5,3,3);}
   };
@@ -67,11 +69,11 @@ function renderRomModel(host,model,active) {
   // Match theme and dialog width without retaining observers after the dialog closes.
   const resize=new ResizeObserver(()=>{if(active() && canvas.isConnected)paint();else resize.disconnect();});resize.observe(canvas);
   const theme=new MutationObserver(()=>{if(active() && canvas.isConnected)paint();else theme.disconnect();});theme.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
-  bodyModelCleanup(canvas,resize,theme);paint();
+  bodyModelCleanup(canvas,resize,theme,()=>surface?.dispose());paint();
 }
-function bodyModelCleanup(canvas,resize,theme) {
+function bodyModelCleanup(canvas,resize,theme,dispose=()=>{}) {
   // The host is replaced by subsequent previews and dialogs; disconnect on removal.
-  const removal=new MutationObserver(()=>{if(!canvas.isConnected){resize.disconnect();theme.disconnect();removal.disconnect();}});
+  const removal=new MutationObserver(()=>{if(!canvas.isConnected){resize.disconnect();theme.disconnect();removal.disconnect();dispose();}});
   removal.observe(canvas.parentElement,{childList:true,subtree:true});
 }
 function romGroupHTML(region) {

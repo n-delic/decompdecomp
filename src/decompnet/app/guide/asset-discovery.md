@@ -75,3 +75,24 @@ Detected audio banks accept a zero-based sample index with format=auto. Libmus
 pointer banks do not store a sample rate: rate is an explicit preview choice, never
 evidence of original pitch. Their unique marked-table pairing remains a static
 inference. Archived sequences are not waveforms and cannot be synthesized yet.
+
+## Model investigations and parser recipes
+
+The **Model formats and relationships** scope investigates model/data/compressed/unknown
+regions. For detected models, inspect loader-script material links, companion files,
+stored transforms and omitted commands. Missing or ambiguous texture links must stay
+unresolved; a basename alone is insufficient. `action="preview"` returns a bounded
+geometry sample and material/link metadata, never embedded texture bytes.
+
+Propose a bounded declarative parser using
+`parser_recipe={"kind":"raw-model","options":{"source":"archive","offset":136},
+"layout":{"vertex_format":"s16be","stride":6,"count":4,"topology":"points"}}`.
+Use actual inspected offsets/counts, not these example values. `source="archive"`
+reads the CRC-checked member attached to this region; offsets and index offsets are
+relative to that decoded member. ROM and supported decoded-block sources also work.
+Test it with `preview_asset_region(action="model",options=...,model_settings=...)`.
+Recipes reuse the supported vertex/index controls, run structural checks before saving,
+and receive independent critique. Human acceptance enables only this region's saved
+local interpretation. No generated Python/JavaScript or executable parser is installed.
+Formats outside these controls remain written research findings for a code-reviewed
+adapter; never imply that an unsupported proprietary decoder has been enabled.

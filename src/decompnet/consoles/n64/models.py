@@ -150,6 +150,7 @@ def preview(data,asset,selection):
         texture,flags=struct.unpack_from('>II',raw,material[0])
         inspection['material']=dict(texture_id=texture if texture!=0xffffffff else None,flags=flags,features=[name for bit,name in enumerate(resource_inspection.MATERIAL_FLAGS) if flags&(1<<bit)],color=list(raw[material[0]+8:material[0]+12]),black_color=list(raw[material[0]+12:material[0]+16]),uv_multiplier=list(struct.unpack_from('>HH',raw,material[0]+16)))
         return dict(media='model',vertices=vertices,**inspection,edges=sorted(edges),points=list(range(count)),triangles=triangles,
+                    surfaces=[dict(indices=face,uv=[[0,0]]*3,colors=[[255,255,255,255]]*3,material=0) for face in faces if len(set(face))==3],materials=[],parts=[dict(name=f'Node {selected["node"]} / part {selected["part"]} / section {selected["section"]}',start=0,vertices=count)],
                     details={key:selected[key] for key in ('node','part','section','texture','material_flags')},
                     note='Validated native mesh in local coordinates. Skeleton poses, animation, textures and material shading are not applied.',
                     settings=dict(format='auto',source='rom',offset=asset['offset'],mesh=mesh))

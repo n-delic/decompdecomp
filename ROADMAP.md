@@ -708,6 +708,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / linked records | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Text/pointer record inspectors and PSF2 glyph atlas | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Model browser and automatic indexed geometry / local mesh wireframes (raw, RNC 1/2, embedded ZIP) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
+| PD3V textures, static assemblies, linked scenery and glTF export | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | B1 / libmus PtrTablesV2 audio banks, table evidence and mono VADPCM/PCM16 previews | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Native frame/palette/mip selection and explicit animation | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Image, texture/palette and audio previews | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -3842,5 +3843,10 @@ private fixtures and a synthetic real-compiler regression.
 The model browser also recognizes self-contained PD3V models inside embedded ZIP
 archives, checking CRCs, complete mesh extents, material indices and triangle/quad
 references. Search, sortable counts, recorded function links and mesh selection
-share the rotatable wireframe viewer. Split scenery coordinate streams, object
-transforms, textured rendering and animation remain planned.
+share the rotatable viewer. Loader-script links now resolve supported texture packs and
+coordinate companions, stored car transforms assemble static meshes, and supported
+scenery triangle/quad commands render from split XZ/Y streams. Textured, vertex-colour
+and wireframe modes share static glTF export, including embedded PNGs and named parts.
+Animation, runtime lighting and special strip commands remain planned. Missing/ambiguous
+texture links are explicit. Model-focused agents can propose bounded raw-model parser
+recipes; structural checks, independent critique and human acceptance guard local use.

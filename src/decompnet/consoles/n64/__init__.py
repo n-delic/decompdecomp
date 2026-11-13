@@ -4,7 +4,9 @@
 - audio.py: source-assisted B1 sound banks, sample tables and mono VADPCM previews.
 - resources.py: validated directory schemas, animation/world metadata and RNC extents.
 - models.py: validated indexed geometry and local mesh wireframes.
-- archived_models.py: CRC-checked self-contained PD3V model meshes in ZIP members.
+- archived_models.py: CRC-checked PD3V meshes, static assembly and material previews.
+- model_links.py: bounded loader-script links to textures and companion streams.
+- model_scenery.py: split XZ/Y scenery with checked triangle/quad commands.
 - textures.py: source-assisted indexed texture banks and bounded RNC asset previews.
 - texture_packs.py: trailer-count image/palette packs inside embedded ZIP members.
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
