@@ -1876,3 +1876,25 @@ sha256 = "772efc8272a992401f9a9a3faef58ef2f4b6028e792afa0015d894de96fe584e"
 file = "pm-gcc-mac.tar.gz"
 platforms = ["macos-x86_64", "macos-arm64"]
 rosetta = true
+
+[playstation-titles]
+name = "PlayStation game titles (libretro-database)"
+kind = "data"
+license = "CC-BY-SA-4.0"
+source = "libretro/libretro-database @ c4e17d4, Redump lists"
+description = "Names PS1 and PS2 games by their serial (consoles/playstation_titles). Downloaded on the first PS1 or PS2 import."
+[[playstation-titles.parts]]
+url = "https://raw.githubusercontent.com/libretro/libretro-database/c4e17d41ec1bb744fb064f7cefeb61b878fc5d64/metadat/redump/Sony%20-%20PlayStation.dat"
+file = "libretro-c4e17d4-ps.dat"
+sha256 = "52978215854d307bfb5353052c9ce3c34995310a970d586f0100bb67f7de01a8"
+copy = "ps.dat"
+[[playstation-titles.parts]]
+url = "https://raw.githubusercontent.com/libretro/libretro-database/c4e17d41ec1bb744fb064f7cefeb61b878fc5d64/metadat/redump/Sony%20-%20PlayStation%202.dat"
+file = "libretro-c4e17d4-ps2.dat"
+sha256 = "124e3ebeb55c7d24d67e02853faaf17bfc71a5ec656a5569415b8c38a09ef6bc"
+copy = "ps2.dat"
+[[playstation-titles.parts]]
+url = "https://raw.githubusercontent.com/libretro/libretro-database/c4e17d41ec1bb744fb064f7cefeb61b878fc5d64/LICENSE"
+file = "libretro-c4e17d4-LICENSE"
+sha256 = "23ee78c8bae49cf08ea2f0c84945c66b987ebe4520881fb51b3dad4fb43d07c2"
+copy = "LICENSE"

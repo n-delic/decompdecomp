@@ -1,13 +1,12 @@
-# Offline PlayStation titles
+# PlayStation titles
 
-`ps.json` and `ps2.json` contain only serial/title metadata derived from
-[libretro-database](https://github.com/libretro/libretro-database), snapshot
-`c4e17d41ec1bb744fb064f7cefeb61b878fc5d64`, `metadat/redump/Sony - PlayStation.dat`
-and `metadat/redump/Sony - PlayStation 2.dat`. Credit: the libretro database
-contributors and Redump. These derived databases retain the source's
-**CC BY-SA 4.0** license, reproduced in LICENSE. No game files are included.
+Serial → title names for PS1 and PS2 games, read from
+[libretro-database](https://github.com/libretro/libretro-database)'s Redump lists
+(`metadat/redump/Sony - PlayStation.dat`, `Sony - PlayStation 2.dat`). Credit: the libretro database
+contributors and Redump; the lists are **CC BY-SA 4.0**, and their LICENSE is downloaded with them.
 
-Changes: extract serial/title pairs, combine revision names, omit conflicting
-serials, and serialize as JSON. Regenerate with `python tools/update_playstation_titles.py`.
-Imports never access the network. Titles identify a release for display only;
-they do not verify the contents or change the matching judge.
+They aren't in this repository: `playstation-titles` in `toolchains.toml` pins the files (a libretro-database
+commit and each file's SHA-256), and the first PS1/PS2 import installs them with the other tools. To update, change
+the commit in the three URLs and their checksums. Showing a title never uses the network; without the lists a disc
+keeps its volume label or serial. Titles identify a release for display only: they don't verify the contents or
+change the matching judge.

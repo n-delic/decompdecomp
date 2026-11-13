@@ -11,7 +11,7 @@ import struct
 
 from ...arch.mips import JR_RA, OPCODE_SHIFT, RA, REGISTER_BITS, RS_SHIFT, RT_SHIFT, SD, SP, SPECIAL, SQ
 from ...rom import RomError
-from ..playstation_titles import title
+from ..playstation_titles import import_title as title
 from .disc import region_of
 
 # ELF32's header and tables (little-endian on the PS2)

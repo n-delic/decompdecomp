@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ...rom import RomError
-from ..playstation_titles import title
+from ..playstation_titles import import_title as title
 from ..ps2 import chd, cso, disc
 
 MAGIC = b"PS-X EXE"
