@@ -219,6 +219,22 @@ publish_watchers: "weakref.WeakSet" = weakref.WeakSet()
 
 
 @phase('progress_publish')
+def unexpected_files(folder: Path, names, expected: dict[str, str], *, first: bool = False) -> list[str]:
+    """The files of `names` whose disk contents aren't `expected` (None: absent), README.md aside; `first`: stop at
+    the first. `_publish` refuses to write over them, and a sync that keeps being refused names them."""
+    found = []
+    for name in sorted(names):
+        if name == "README.md":
+            continue
+        path = folder / name
+        current = path.read_text(encoding="utf-8", errors="replace") if path.exists() else None
+        if current != expected.get(name):
+            found.append(name)
+            if first:
+                break
+    return found
+
+
 def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | None = None,
              expected: dict[str, str] | None = None, *, chosen: bool = False) -> bool:
     """Only change owned files whose contents changed; keep git and contributors' other files intact.
@@ -242,14 +258,8 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
                 raise NetworkError("Progress paths cannot use symbolic links. Replace the link and try again.")
         if target.exists() and not target.is_file():
             raise NetworkError("Progress files must be regular files. Replace the conflicting path and try again.")
-    if expected is not None:
-        for name in names:
-            if name == "README.md":
-                continue
-            path = folder / name
-            current = path.read_text(encoding="utf-8") if path.exists() else None
-            if current != expected.get(name):
-                return False  # git or an editor wrote while the database was being rendered: read it next time
+    if expected is not None and unexpected_files(folder, names, expected, first=True):
+        return False  # git or an editor wrote while the database was being rendered: read it next time
     receipts = []
     written = {}
     removed = set()
