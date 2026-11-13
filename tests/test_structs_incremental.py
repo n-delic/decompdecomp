@@ -7,8 +7,10 @@ recover == recover_from(extract(...)). The correctness claim the cache relies on
 whose bytes didn't change keeps the same Facts when a NEIGHBOUR is split (splits preserve byte coverage).
 """
 import functools
+import threading
 
 from decompnet import structs
+from decompnet.app.engine.layouts import LayoutMixin
 from decompnet.arch import mips_fields
 from tests.test_structs import FUNCTIONS, fields
 
@@ -61,3 +63,29 @@ def test_incremental_facts_after_a_split_equal_a_full_rebuild():
     full = structs.extract(new_corpus, RF, DATUM)
     assert merged == full
     assert fields(structs.recover_from(merged), CALLER_ARG0) == fields(structs.recover(new_corpus, RF, DATUM), CALLER_ARG0)
+
+
+class _CacheEng(LayoutMixin):
+    """Just enough of the engine to exercise LayoutMixin._facts and its cache."""
+    def __init__(self):
+        self._facts_cache: dict = {}
+        self._layout_lock = threading.Lock()
+
+
+def test_a_stale_facts_compute_cannot_repopulate_a_dropped_cache():
+    """The facts cache is read, computed, and written back in request threads without holding a lock across the
+    whole compute. If an edit drops the cache mid-compute, the in-flight compute must NOT write its now-stale
+    result back. We simulate the drop from inside the reader (as if an edit landed during extraction)."""
+    eng = _CacheEng()
+    corpus = [(vram, code, relocs, bytes([i])) for i, (vram, code, relocs) in enumerate(FUNCTIONS)]
+    dropped = {"done": False}
+
+    def read(addr, code, relocs, *, datum):
+        if not dropped["done"]:
+            eng._facts_cache.pop(1, None)  # an edit invalidates the project while this compute is in flight
+            dropped["done"] = True
+        return mips_fields.read_facts(addr, code, relocs, big_endian=False, datum=datum)
+
+    eng._facts(1, corpus, read, DATUM)
+    assert dropped["done"]  # the reader really ran and dropped the cache
+    assert 1 not in eng._facts_cache  # and the stale compute did not resurrect it

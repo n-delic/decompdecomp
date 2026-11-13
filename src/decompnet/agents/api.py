@@ -385,6 +385,11 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                            s(function=st("optional name or address"), strategy=st("finish | easiest | closest | hardest | random"),
                              count=it("up to 6 small functions at once"))),
         "get_function": ("Show any function by name or address.", s(function=st("name or address", True))),
+        "read_asm": ("A page of a large function's target assembly (part=\"asm\") or its current draft / best C "
+                     "(part=\"draft\"), for functions too big to show whole in claim_function / get_function. The "
+                     "brief says when to page and the start to resume from.",
+                     s(function=st("function name or address", True), start=it("first line to show (0-based)"),
+                       count=it("lines on the page"), part=st('"asm" (default) or "draft"'))),
         "compile_and_diff": ("Compile C for the function, link it at its address and diff against the ROM. "
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
                              s(function=st("function name, or several: a, b, c", True), source=st("C source", True))),
