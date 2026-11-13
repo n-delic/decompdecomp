@@ -13,7 +13,8 @@ project=project_fixture
 
 
 @pytest.mark.parametrize('transport',['direct','mcp'])
-@pytest.mark.parametrize('tool,args',[('get_candidate',{}),('get_assembly',{}),
+@pytest.mark.parametrize('tool,args',[('get_candidate',{}),('get_assembly',{}),('get_context',{}),
+    ('get_context',{'function':''}),
     ('get_function',{}),('get_function',{'section':'brief'}),
     ('get_function',{'section':'candidate'}),('get_function',{'section':'history'})])
 def test_current_reads_finish_during_saved_compile_using_real_handlers(project,monkeypatch,transport,tool,args):
@@ -25,6 +26,7 @@ def test_current_reads_finish_during_saved_compile_using_real_handlers(project,m
                    (json.dumps({'toolchain':'','flags':[]}),))
         db.execute("UPDATE functions SET relocs='[]',meta='{}',rom_offset=(id-1)*4")
         db.execute("UPDATE functions SET best_source='int f(void) { return 3; }',best_score=50,asm='nop' WHERE name='f'")
+        db.execute("UPDATE context_versions SET header='typedef int committed_context;' WHERE project_id=1")
     net.progress.sync('game',force=True)
     agent,_=net.local_agent('reader')
     waiting,compilation=threading.Event(),Future()
@@ -62,6 +64,8 @@ def test_current_reads_finish_during_saved_compile_using_real_handlers(project,m
                 if not args:assert 'f: open' in reply and 'saved historical score 50' in reply
                 elif args['section'] in {'candidate','brief'}:assert 'return 3;' in reply
                 else:assert 'No attempt history' in reply
+            elif tool=='get_context':
+                assert 'context.h for game' in reply and 'typedef int committed_context;' in reply
             else:assert 'nop' in reply
         finally:compilation.set_result(None)
         assert background.result(timeout=5)
@@ -69,7 +73,7 @@ def test_current_reads_finish_during_saved_compile_using_real_handlers(project,m
     assert not getattr(net.progress.local,'foreground',False)
 
 
-@pytest.mark.parametrize('tool,args',[('get_candidate',{}),('get_assembly',{}),('get_function',{}),
+@pytest.mark.parametrize('tool,args',[('get_candidate',{}),('get_assembly',{}),('get_function',{}),('get_context',{}),
                                      ('get_function',{'section':'experiment'}),
                                      ('get_candidate',{'base':'saved_best'}),('get_candidate',{'base':'last_compiling'}),
                                      ('get_candidate',{'base':'reported_corrected'})])
@@ -90,7 +94,7 @@ def test_current_reads_wait_for_evidence_and_recovery_choices_wait_for_recheck(p
         assert future.result(timeout=3)=='read ready'
 
 
-@pytest.mark.parametrize('tool',['get_candidate','get_assembly','get_function'])
+@pytest.mark.parametrize('tool',['get_candidate','get_assembly','get_function','get_context'])
 def test_ready_read_rejects_changed_saved_files_before_handler(project,monkeypatch,tool):
     net,folder,_=project;worker=net.progress
     agent,_=net.local_agent('reader')
@@ -104,7 +108,7 @@ def test_ready_read_rejects_changed_saved_files_before_handler(project,monkeypat
     assert not getattr(worker.local,'foreground',False)
 
 
-@pytest.mark.parametrize('tool',['get_candidate','get_assembly','get_function'])
+@pytest.mark.parametrize('tool',['get_candidate','get_assembly','get_function','get_context'])
 def test_read_outside_recheck_still_imports_and_judges_changed_source(project,monkeypatch,tool):
     net,folder,judged=project
     with net.store.tx() as db:db.execute("UPDATE functions SET asm='nop' WHERE name='f'")
