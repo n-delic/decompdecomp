@@ -144,3 +144,21 @@ def test_grid_placement_variants(component):
     assert result['object_id']==7 and result['region']==3 and result['variation']==4
     if component==0:assert result['quantized_y']==-8 and 'position' not in result
     else:assert result['position']==[1,2,3]
+
+
+def test_empty_bounds_placeholder_does_not_invent_coordinates():
+    result=inspect.inspect(indexed_set([bytes(8),stream(4)]),'object metadata',{})
+    assert 'object_bounds' not in result and 'inspection_notice' in result
+    assert result['table']['total']==0
+
+
+@pytest.mark.parametrize('platform',['n64','ps1','ps2','psp'])
+def test_portable_font_inspection_reaches_each_rom_adapter(project,platform):  # noqa: F811
+    net,pid,root=project;image=psf();(root/'game.rom').write_bytes(image)
+    cfg=copy.deepcopy(net.cfg(net.project_row('game')));cfg['platform']=platform;cfg['rom']['sha1']=hashlib.sha1(image).hexdigest();cfg['segments'][0]['rom_end']=len(image)
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid));db.execute('DELETE FROM functions WHERE project_id=?',(pid,))
+    rom_explorer.run(net,'game',Log());report=rom_explorer.listing(net,'game')
+    row=next(r for r in report['regions'] if r['kind']=='font')
+    result=rom_explorer.asset_preview(net,'game',dict(region=row['id'],image_hash=report['image_hash'],options=dict(offset=row['start'])))
+    assert result['font_atlas']['glyphs'][0]['index']==0

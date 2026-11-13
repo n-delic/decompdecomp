@@ -81,11 +81,14 @@ def inspect(data,role,selection):
         result['table']=table('Animation nodes and tracks',['index','translation_set','rotation_set','initial_position','initial_rotation','translation_encoding','rotation_encoding','frame_position'],nn,read,selection)
     elif role=='object metadata':
         bounds,types=blocks(data,(0,len(data)),2)
-        if bounds[1]-bounds[0]!=24:raise SchemaError('Unsupported object bounds extent.')
-        minimum=finite(struct.unpack_from('>3f',data,bounds[0]));maximum=finite(struct.unpack_from('>3f',data,bounds[0]+12))
-        if any(a>b for a,b in zip(minimum,maximum)):raise SchemaError('Object bounds are inverted.')
+        if data[bounds[0]:bounds[1]]==bytes(8):
+            result['inspection_notice']='No bounds are stored in this empty placeholder.'
+        else:
+            if bounds[1]-bounds[0]!=24:raise SchemaError('Unsupported object bounds extent.')
+            minimum=finite(struct.unpack_from('>3f',data,bounds[0]));maximum=finite(struct.unpack_from('>3f',data,bounds[0]+12))
+            if any(a>b for a,b in zip(minimum,maximum)):raise SchemaError('Object bounds are inverted.')
+            result['object_bounds']=dict(minimum=minimum,maximum=maximum)
         total,read=records(data,types,4)
-        result['object_bounds']=dict(minimum=minimum,maximum=maximum)
         result['table']=table('Object animation types',['index','animation_type'],total,lambda i:dict(animation_type=int.from_bytes(read(i),'big')),selection)
     elif role=='grid section':
         parts=blocks(data,(0,len(data)))
@@ -104,7 +107,7 @@ def inspect(data,role,selection):
             return dict(object_id=obj,region=region,variation=variation,flags=flags,position=finite(struct.unpack_from('>3f',raw)),radius=finite(struct.unpack_from('>f',raw,12))[0],instance_id=identity,rotation_y=struct.unpack_from('>b',raw,26)[0])
         columns=['index','object_id','region','variation','flags']+(['quantized_x','quantized_y','quantized_z','position_flags','scale'] if component==0 else ['position','scale'] if component==1 else ['position','radius','instance_id','rotation_y'])
         result['table']=table(('Extended static instances','Static instances','Simple instances')[component],columns,total,instance,selection)
-        if component==0:result['inspection_warning']='Extended positions need the containing grid origin and quantization flags; these are stored components, not world coordinates.'
+        if component==0:result['inspection_notice']='Extended positions need the containing grid origin and quantization flags; these are stored components, not world coordinates.'
     elif role=='grid bounds':
         parts=blocks(data,(0,len(data)))
         result['table']=table('Component streams',['index','record_bytes','records'],len(parts),lambda i:stream(data,parts[i]),selection)

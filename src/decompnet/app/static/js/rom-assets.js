@@ -111,6 +111,7 @@ function renderRomResource(host,preview,onPage=()=>{},active=()=>true,state=host
     if(label==='initial_orientation_gap'){if(value){const warning=document.createElement('p');warning.className='small muted';warning.textContent='Some nodes have no initial orientation record; no pose is inferred.';host.append(warning);}continue;}
     const line=document.createElement('p');line.className='small';line.textContent=label.replaceAll('_',' ')+': '+(Array.isArray(value) ? value.join(', ') : String(value));host.append(line);
   }
+  if(preview.inspection_notice){const notice=document.createElement('p');notice.className='small muted';notice.textContent=preview.inspection_notice;host.append(notice);}
   if(preview.inspection_warning){const warning=document.createElement('p');warning.className='small muted';warning.textContent=preview.inspection_warning;host.append(warning);}
   if(preview.object_bounds){const bounds=document.createElement('p');bounds.className='small';bounds.textContent='Object bounds: '+preview.object_bounds.minimum.join(', ')+' → '+preview.object_bounds.maximum.join(', ');host.append(bounds);}
   if(preview.material){const material=document.createElement('p');material.className='small';material.textContent='Material: '+Object.entries(preview.material).map(([key,value])=>key.replaceAll('_',' ')+': '+(Array.isArray(value) ? value.join(', ') : String(value))).join(' · ');host.append(material);}
