@@ -895,7 +895,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     # tools have their own lane: a burst of compiles can't make guide or get_claims wait (MCP error -32001).
     quick_limiter = anyio.CapacityLimiter(QUICK_LANE)
     work_limiter = anyio.CapacityLimiter(WORK_LANE)
-    async def run(ctx: Context, name: str, **args) -> str:
+    async def run(ctx: Context, name: str, /, **args) -> str:
         if reader is not None:
             return await anyio.to_thread.run_sync(lambda: reader(ctx, name, args), limiter=quick_limiter)
         queued=time.monotonic()
