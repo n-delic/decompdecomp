@@ -126,6 +126,20 @@ def reg(i):
     return f"inttoptr (i32 {REGS + 4 * i} to ptr)"
 
 
+# MIPS's result register $v0 as a word after them: a function the C declares void still leaves its last call's
+# result there, and a caller that takes a value from it (decompiled C that matches can) finds it here.
+V0 = reg(4)
+RESULT = re.compile(r"^\s*(%[\w.$]+) = .*?\bcall\b(?:\s+\w+)*?\s+(ptr|i8|i16|i32)\s+[@%(]")
+
+
+def void_result(body, cret):
+    """What a call that expects a value gets from a void function: the $v0 word."""
+    if cret != "ptr" and not re.fullmatch(r"i(8|16|32)", cret):
+        return zero(cret)
+    body.append(f"  %v0 = load i32, ptr {V0}, align 4")
+    return convert(body, 950, "%v0", "i32", cret)
+
+
 REPORT = None
 CALLER = [""]
 
@@ -192,7 +206,7 @@ def word_thunk(tname, name, ret, params, pbyval, cret, args, abyval):
             w += 1
     if ret == "void":
         body.append(f"  call void @{name}({', '.join(values)})")
-        body.append("  ret void" if cret == "void" else f"  ret {cret} {zero(cret)}")
+        body.append("  ret void" if cret == "void" else f"  ret {cret} {void_result(body, cret)}")
     else:
         body.append(f"  %r = call {ret} @{name}({', '.join(values)})")
         if cret == "void":
@@ -226,9 +240,20 @@ def adapt(text, report=None, types=None, byval=None):
         sigs[m.group(2)] = (ret, params, variadic)
     thunks, out_lines = {}, []
     current = []  # the enclosing function's parameters: [(type, name)]
+    void_function = False
     for line in text.split("\n"):
         stripped = line.lstrip()
+        if void_function and stripped == "ret void":
+            # a void function that ends with a call: on MIPS that call's result is still in $v0 when it returns.
+            # Any other leaves 0 there, what a caller taking a value from a void function got before.
+            w = "0"
+            if out_lines and (rm := RESULT.match(out_lines[-1])):
+                pre = []
+                w = convert(pre, 20_000_000 + len(out_lines), rm.group(1), rm.group(2), "i32")
+                out_lines.extend(pre)
+            out_lines.append(f"  store i32 {w}, ptr {V0}, align 4")
         if line.startswith("define "):
+            void_function = bool(re.match(r"define [^@]*\bvoid @", line))
             dm = re.search(r"@([\w.$]+)\(", line)
             CALLER[0] = dm.group(1)
             close_d = balanced(line, dm.end() - 1)
@@ -331,7 +356,7 @@ def adapt(text, report=None, types=None, byval=None):
             callee = f"{ftype} @{name}" if variadic else f"{ret} @{name}"
             if ret == "void":
                 body.append(f"  call {callee}({', '.join(values + extra)})")
-                body.append("  ret void" if cret == "void" else f"  ret {cret} {zero(cret)}")
+                body.append("  ret void" if cret == "void" else f"  ret {cret} {void_result(body, cret)}")
             else:
                 body.append(f"  %r = call {callee}({', '.join(values + extra)})")
                 if cret == "void":

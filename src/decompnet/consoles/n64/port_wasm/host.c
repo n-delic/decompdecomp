@@ -187,7 +187,22 @@ void w2c_env_osCreateThread(struct w2c_env *e, u32 t, u32 id, u32 entry, u32 arg
     (void)e; (void)sp; /* the game's stack is sized for MIPS frames: the thread gets a shadow stack of its own */
     pthread_mutex_lock(&lock);
     PortThread *p = find(t);
-    if (!p) {
+    if (p && p->started && p->state != DONE) {
+        /* The game re-creates a thread that already ran (a racing game's loader does, for its two stream threads):
+           the N64 starts it afresh at the new entry. Its old host thread stays parked for good, never READY again,
+           and the OSThread gets a new one, else the old one would resume where it waited, on stale data. */
+        PortThread **link = &threads;
+        while (*link != p) link = &(*link)->next;
+        *link = p->next;
+        p->state = DONE;
+        p = NULL;
+    }
+    if (!p || p->state == DONE) {
+        if (p) { /* a thread that ended: unlink it, its host thread is gone */
+            PortThread **link = &threads;
+            while (*link != p) link = &(*link)->next;
+            *link = p->next;
+        }
         p = calloc(1, sizeof *p);
         pthread_cond_init(&p->turn, NULL);
         p->os = t;
@@ -596,6 +611,12 @@ int main(int argc, char **argv) {
         usleep(20000);
         retrace();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();
+    }
+    if (getenv("PORT_DUMPBIN")) { /* addr,len,file: memory as bytes at the end, for comparing with the ROM's */
+        char spec[512]; snprintf(spec, sizeof spec, "%s", getenv("PORT_DUMPBIN"));
+        char *a = strtok(spec, ","), *n = strtok(NULL, ","), *path = strtok(NULL, ",");
+        FILE *f = a && n && path ? fopen(path, "wb") : NULL;
+        if (f) { fwrite(M + strtoul(a, NULL, 16), 1, strtoul(n, NULL, 0), f); fclose(f); }
     }
     if (getenv("PORT_DUMP")) { /* addr,len: memory as text at the end */
         uint32_t a = (uint32_t)strtoul(getenv("PORT_DUMP"), NULL, 16);

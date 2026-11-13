@@ -60,6 +60,71 @@ def _names(path: Path) -> set[str]:
     return {line.split("#", 1)[0].strip() for line in path.read_text(encoding="utf-8").splitlines()} - {""}
 
 
+# A bitfield's declared type: its storage unit's size in bytes.
+_FIELD_TYPES = {"char": 1, "u8": 1, "s8": 1, "short": 2, "u16": 2, "s16": 2, "int": 4, "long": 4, "u32": 4, "s32": 4,
+                "unsigned": 4, "signed": 4, "long long": 8, "u64": 8, "s64": 8}
+_BITFIELD = re.compile(r"^(\s*)((?:(?:unsigned|signed|const|volatile)\s+)*(\w+(?:\s+long)?)?)\s*(\w*)\s*:\s*(\d+)\s*;(.*)$")
+
+
+def _unit_size(type_text: str) -> int | None:
+    words = [w for w in type_text.split() if w not in ("const", "volatile")]
+    if not words:
+        return None
+    if words[-1] in ("unsigned", "signed"):
+        return 4
+    return _FIELD_TYPES.get(" ".join(w for w in words if w not in ("unsigned", "signed")))
+
+
+def big_endian_bitfields(text: str) -> str:
+    """Bitfields laid out as the console's compiler does: a big-endian MIPS compiler gives a unit's first field its
+    top bits, wasm32 its bottom ones. Each unit's fields are declared in reverse (a unit left part-empty gets its
+    unused bits first) and closed with a zero-width field, so every field lands on the console's bits and is read
+    with its unit's width from the big-endian memory. A racing game's track setup looked for the segment whose
+    `b0 : 1` was set, read the top bit instead, ran off the end of its table and corrupted the next one."""
+    lines = text.split("\n")
+    result, i = [], 0
+    while i < len(lines):
+        run = []
+        while i + len(run) < len(lines) and (m := _BITFIELD.match(lines[i + len(run)])) and int(m.group(5)):
+            run.append(m)
+        if not run:
+            result.append(lines[i])
+            i += 1
+            continue
+        units, unit, used, size = [], [], 0, 0
+        for m in run:
+            width, field_size = int(m.group(5)), _unit_size(m.group(2))
+            if field_size is None:
+                units = None
+                break
+            if unit and used + width > size * 8:
+                units.append((unit, used, size))
+                unit, used = [], 0
+            if not unit:
+                size = field_size
+            if width > size * 8:
+                units = None
+                break
+            unit.append(m)
+            used += width
+        if units is None:  # a type it can't size: left as it was
+            result.extend(m.group(0) for m in run)
+        else:
+            units.append((unit, used, size))
+            for unit, used, size in units:
+                if not any(m.group(4) for m in unit):  # only padding: nothing reads it, and it may start mid-unit
+                    result.extend(m.group(0) for m in unit)
+                    continue
+                indent, type_text = unit[0].group(1), unit[0].group(2).strip()
+                if used < size * 8:
+                    result.append(f"{indent}{type_text} : {size * 8 - used};")
+                result.extend(f"{m.group(1)}{m.group(2).strip()} {m.group(4)} : {m.group(5)};{m.group(6)}"
+                              for m in reversed(unit))
+                result.append(f"{indent}{type_text} : 0;")
+        i += len(run)
+    return "\n".join(result)
+
+
 def gather(repo: Path, out: Path) -> dict[str, Path]:
     """The C the build compiles, in out/src (one file per function, the shared header included) and out/include.
     Returns {file name: where it came from}."""
@@ -83,13 +148,13 @@ def gather(repo: Path, out: Path) -> dict[str, Path]:
         header = f"common_{unit}.h" if unit else "common.h"
         if not re.search(r'^#include "common(_\w+)?\.h"', text, re.M):
             text = f'#include "{header}"\n' + text
-        _write(out / "src" / name, text)
+        _write(out / "src" / name, big_endian_bitfields(text))
     for stale in (out / "src").glob("*.c"):
         if stale.name not in chosen:
             stale.unlink()
     for folder in (progress / "include", port / "include"):
         for header in folder.glob("*.h"):
-            _write(out / "include" / header.name, header.read_text(encoding="utf-8"))
+            _write(out / "include" / header.name, big_endian_bitfields(header.read_text(encoding="utf-8")))
     return chosen
 
 
@@ -168,23 +233,36 @@ def renames(lls: list[Path], fixed: list[str]) -> dict[str, str]:
 
 
 def function_table(header: str, fixed: list[str]) -> str:
-    """funcs.c: the game's functions by console address, sorted, for calls through pointers (the host's port_func)."""
+    """funcs.c: the game's functions by console address, sorted, for calls through pointers (the host's port_func).
+    A function the C declares void is listed through a wrapper that returns the $v0 word (adapt.py): called through
+    a pointer for its value, it gives what its last call left there, as on the console (a racing game's heap calls
+    its allocator through a table, and the allocator is a void function that ends with the call that allocates)."""
+    from .adapt import REGS
     where = {}
     for row in fixed:
         n, a, k = row.split()
         if k == "func":
             where[n] = int(a, 16)
-    entries = []
-    for m in re.finditer(r"/\* export: '([^']+)' \*/\n[^\n]*?(w2c_game_\w+)\(w2c_game\*", header):
-        name = m.group(1)
+    entries, wrappers = [], []
+    for m in re.finditer(r"/\* export: '([^']+)' \*/\n(\w+) (w2c_game_\w+)\(w2c_game\*([^)]*)\);", header):
+        name, ret, c, params = m.groups()
         address = where.get(name)
         if address is None and (auto := re.fullmatch(r"func_([0-9A-Fa-f]{8})", name)):
             address = int(auto.group(1), 16)
-        if address is not None:
-            entries.append((address, m.group(2), name))
+        if address is None:
+            continue
+        if ret == "void":
+            types = [t.strip() for t in params.split(",") if t.strip()]
+            args = "".join(f", {t} a{i}" for i, t in enumerate(types))
+            wrappers.append(f"static u32 port_v_{c}(w2c_game* g{args}) {{ {c}(g"
+                            + "".join(f", a{i}" for i in range(len(types))) + "); return port_v0(g); }")
+            c = f"port_v_{c}"
+        entries.append((address, c, name))
     entries.sort()
     lines = ['#include "game.h"', "/* The game's functions by their console address (generated). */",
-             "typedef struct { unsigned address; void *func; } PortFunc;", "const PortFunc port_funcs[] = {"]
+             "typedef struct { unsigned address; void *func; } PortFunc;",
+             "static u32 port_v0(w2c_game* g) { u32 v; __builtin_memcpy(&v, g->w2c_memory.data + "
+             f"0x{REGS + 16:X}u, 4); return __builtin_bswap32(v); }}", *wrappers, "const PortFunc port_funcs[] = {"]
     lines += [f"    {{0x{a:08X}u, (void *){c}}}, /* {n} */" for a, c, n in entries]
     lines += ["};", f"const unsigned port_func_count = {len(entries)};"]
     return "\n".join(lines) + "\n"

@@ -139,12 +139,47 @@ def test_a_variadic_function_the_c_declared_fixed_gets_its_arguments_in_its_buff
 def test_a_call_through_a_pointer_leaves_its_arguments_in_the_register_words():
     """A text-table loader was called through a pointer with the table's record in $a0, declared no parameter, and
     passed $a0 on to the next call: its table came from a stale register word."""
-    from decompnet.port.wasm.adapt import REGS, adapt
+    from decompnet.port.wasm.adapt import REGS, V0, adapt
     from decompnet.port.wasm.beir import Types
     ir = ("define void @run(ptr %h, ptr %rec, i16 %n) {\n"
           "  call void %h(ptr noundef %rec, i16 noundef %n)\n"
           "  ret void\n}\n")
     out = adapt(ir, [], Types(ir), {})
-    stores = [line for line in out.splitlines() if line.strip().startswith("store i32")]
+    stores = [line for line in out.splitlines() if line.strip().startswith("store i32") and V0 not in line]
     assert len(stores) == 2 and f"inttoptr (i32 {REGS} to ptr)" in stores[0]
     assert out.index("store i32") < out.index("call void %h(")
+
+
+def test_a_void_function_leaves_its_last_calls_result_for_a_caller_that_takes_one():
+    """A list helper was declared void and ended with the call that made the new node; its caller took the node from
+    it, as $v0 still held it on the console. The port returned 0 and a racing game's HUD wrote its texture through
+    address 0x0C: the race stopped on the first frame it drew."""
+    from decompnet.port.wasm.adapt import V0, adapt
+    from decompnet.port.wasm.beir import Types
+    ir = ("declare ptr @alloc_node(i32)\n"
+          "define void @append(i32 %h) {\n  %1 = call ptr @alloc_node(i32 noundef %h) #3\n  ret void\n}\n"
+          "define void @caller() {\n  %n = call ptr @append(i32 noundef 1)\n  ret void\n}\n")
+    out = adapt(ir, [], Types(ir), {})
+    append = out.split("define void @append")[1].split("}")[0]
+    assert f"ptr {V0}" in append and append.index("store i32") < append.index("ret void")
+    thunk = out.split("define internal ptr @append.port_thunk")[1]
+    assert f"load i32, ptr {V0}" in thunk and "ret ptr null" not in thunk
+
+
+def test_bitfields_get_the_consoles_bits():
+    """A big-endian MIPS compiler gives a unit's first bitfield its top bits; wasm32 its bottom ones. A racing
+    game's track setup read `b0 : 1` from the wrong bit, ran off the end of its segment table and corrupted the
+    next one."""
+    from decompnet.port.wasm.build import big_endian_bitfields
+    text = ("typedef struct {\n  u32 pad : 27;\n  u32 b4 : 1;\n  u32 b3 : 1;\n  u32 b2 : 1;\n  u32 b1 : 1;\n"
+            "  u32 b0 : 1;\n} Flags;\n")
+    fixed = big_endian_bitfields(text)
+    assert [line.strip() for line in fixed.splitlines()[1:8]] == [
+        "u32 b0 : 1;", "u32 b1 : 1;", "u32 b2 : 1;", "u32 b3 : 1;", "u32 b4 : 1;", "u32 pad : 27;", "u32 : 0;"]
+    two_units = big_endian_bitfields("struct G {\n  u16 flag : 1;\n  u16 letter : 5;\n  u16 track : 4;\n"
+                                     "  u16 values : 12;\n};\n")
+    assert [line.strip() for line in two_units.splitlines()[1:9]] == [  # values doesn't fit the first unit
+        "u16 : 6;", "u16 track : 4;", "u16 letter : 5;", "u16 flag : 1;", "u16 : 0;",
+        "u16 : 4;", "u16 values : 12;", "u16 : 0;"]
+    padding = "struct M {\n  s16 h[9];\n  unsigned int :16;\n  unsigned int :32;\n};\n"
+    assert big_endian_bitfields(padding) == padding  # padding alone may start mid-unit: as it was
