@@ -342,6 +342,16 @@ class Console:
         writes it (coprocessor 2's instructions), or would place elsewhere (8-byte data), becomes the raw words it is."""
         from ..arch.mips import raw_cop2, raw_doubles  # (splat's consoles are MIPS)
 
+        # Inferred code can contain data decoded as a link branch through $ra. GNU as rejects this
+        # unpredictable encoding; keep its bytes rather than changing the register or branch target.
+        def link_word(match: re.Match) -> str:
+            word = int.from_bytes(bytes.fromhex(match[2]), "big" if self.big_endian else "little")
+            if word >> 26 == 1 and (word >> 21) & 31 == 31 and (word >> 16) & 31 in (16, 17, 18, 19):
+                return f"{match[1]}.word 0x{word:08X}"
+            return match[0]
+
+        text = re.sub(r"^(\s*/\*\s*[0-9A-Fa-f]+\s+[0-9A-Fa-f]{8}\s+([0-9A-Fa-f]{8})\s*\*/[ \t]*)[^\n]+",
+                      link_word, text, flags=re.M)
         return raw_doubles(raw_cop2(text, self.big_endian), self.big_endian)
 
     def find_gp(self, image: bytes, program: bytes, segments: list) -> int:

@@ -254,7 +254,7 @@ class PlayStationPortable(Console):
         def one(m: re.Match) -> str:
             word = int.from_bytes(bytes.fromhex(m[2]), "little")
             return f"{m[1]}.word 0x{word:08X}" if allegrex_only(word) else m[0]
-        return mips.raw_doubles(_ASM_LINE.sub(one, text), False)
+        return super().export_asm(_ASM_LINE.sub(one, text))
 
     def asm_reason(self, code: bytes) -> str | None:
         return mips.asm_reason(code, False, eabi=True, cpu=self.cpu_variant)  # EABI: arguments in t0-t3 too
