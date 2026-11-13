@@ -25,6 +25,9 @@ os.environ["DECOMP_DETECT_AGENTS"] = "off"
 os.environ["DECOMP_WINDOW"] = "0"
 # helpers connect to the app itself; tests/test_mcp_gateway.py starts the gateway by hand
 os.environ["DECOMP_MCP_GATEWAY"] = "0"
+# tests count compiler invocations; one test's stored objects must not answer another's (tests/test_compile_cache.py
+# turns the persistent object cache on for itself)
+os.environ["DECOMP_OBJECT_CACHE_MB"] = "0"
 os.environ["DECOMP_RENDER_WORKERS"] = "0"  # progress renders in this process, except tests/test_render_worker.py
 os.environ.setdefault("BROWSER", "true")
 os.environ.setdefault("DECOMP_TRAY", "0")

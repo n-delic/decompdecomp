@@ -1,6 +1,7 @@
 """Measure installed pinned compilers with synthetic C in scratch storage, never a user project."""
 import argparse
 import json
+import os
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -41,6 +42,8 @@ def main():
     parser.add_argument('--workers', default='1,2,4,8')
     parser.add_argument('--flags', default='-O2')
     parser.add_argument('--repeat-every', type=int, default=0, help='Optional duplicate candidate cycle; zero tests unique candidates.')
+    parser.add_argument('--object-cache', action='store_true',
+                        help='Also measure the persistent object cache: a cold and a warm run in a scratch cache.')
     args = parser.parse_args()
     workers = [int(n) for n in args.workers.split(',')]
     if not 0 <= args.repeat_every <= 10000 or not 1 <= args.count <= 10000 or not workers or any(not 1 <= n <= 256 for n in workers):
@@ -48,11 +51,19 @@ def main():
     if not toolchains.installed(args.toolchain):
         parser.error('Install this compiler through Compilers & tools first. This benchmark never downloads tools.')
     with tempfile.TemporaryDirectory(prefix='decomp-compile-benchmark-') as folder:
+        # Never the user's own store, and off for the throughput rows: repeated rows compile the same candidates,
+        # which the persistent cache would answer from disk.
+        os.environ['DECOMP_HOME'] = str(Path(folder) / 'home')
+        os.environ['DECOMP_OBJECT_CACHE_MB'] = '0'
         cfg = compiler_config(Path(folder), {'compiler':{'toolchain':args.toolchain, 'flags':args.flags.split()}})
         cfg.identity = ('synthetic compile benchmark',)
         rows = [benchmark(cfg, args.count, n, prepared, args.repeat_every) for n in workers for prepared in (False, True)]
+        if args.object_cache:
+            os.environ['DECOMP_OBJECT_CACHE_MB'] = '1024'
+            for run in ('cold', 'warm'):
+                rows.append({**benchmark(cfg, args.count, workers[0], True, args.repeat_every), 'object_cache': run})
     print(json.dumps({'compiler_slots':compiler.concurrency_limit(), 'results':rows,
-                      'recommended_workers':max((r for r in rows if r['prepared']), key=lambda r:r['candidates_per_second'])['workers']}, indent=2))
+                      'recommended_workers':max((r for r in rows if r['prepared'] and 'object_cache' not in r), key=lambda r:r['candidates_per_second'])['workers']}, indent=2))
 
 
 if __name__ == '__main__':main()
