@@ -468,7 +468,7 @@ def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str
 ALWAYS_LOAD = agents.TOOL_META
 
 
-HEAVY_TOOLS = frozenset({"compile_and_diff", "search_flags", "try_compiler",
+HEAVY_TOOLS = frozenset({"compile_and_diff", "search_code", "search_flags", "try_compiler",
                          "edit_file", "split_file", "join_functions"})
 
 

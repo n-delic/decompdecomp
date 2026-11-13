@@ -105,10 +105,18 @@ def register(app: App) -> None:
         net.stop_autopilot(slug)
         net.twins.stop(slug)
         net.permuter.stop(slug)
-        if fork:  # (its own analysis again: Console.reimport)
-            return {"job": jobs.start("reimport", lambda log: net.forks.reimport(slug, path, log=log))}
-        return {"job": jobs.start(
-            "reimport", lambda log: net.reimport_rom(slug, path, confirmed=True, name=path.name, log=log))}
+        if app.invalidate_map:
+            app.invalidate_map(slug)
+
+        def work(log):
+            try:
+                if fork:  # (its own analysis again: Console.reimport)
+                    return net.forks.reimport(slug, path, log=log)
+                return net.reimport_rom(slug, path, confirmed=True, name=path.name, log=log)
+            finally:
+                if app.invalidate_map:
+                    app.invalidate_map(slug)
+        return {"job": jobs.start("reimport", work)}
 
     def p_compilermap(slug, request, data):
         """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
@@ -124,6 +132,8 @@ def register(app: App) -> None:
         proj = net.project_row(slug)
         net.knowledge.forget(slug)
         net.remove_project(slug)
+        if app.invalidate_map:
+            app.invalidate_map(slug)
         if data.get("files"):
             shutil.rmtree(proj["root"], ignore_errors=True)
         if settings.data.get("last_project") == slug:

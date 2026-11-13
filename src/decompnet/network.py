@@ -429,7 +429,7 @@ class Network:
 
     # ---------------------------------------------------------------- helpers
 
-    def _project(self, slug: str | None, *args, **kwargs):
+    def _project(self, slug: str | None):
         if slug:
             row = self.store.one("SELECT * FROM projects WHERE slug=?", slug)
             if row is None:

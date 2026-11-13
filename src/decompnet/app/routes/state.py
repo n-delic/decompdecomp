@@ -237,16 +237,27 @@ def register(app: App) -> None:
     _map_cache: dict[str, tuple[str, bytes, bytes | None]] = {}
     _map_lock = anyio.Lock()
 
+    def invalidate_map(slug: str) -> None:
+        _map_cache.pop(slug, None)
+
+    app.invalidate_map = invalidate_map
+
+    def map_response(request: Request, raw: bytes, gz: bytes | None) -> Response:
+        if gz is not None and "gzip" in request.headers.get("accept-encoding", ""):
+            return Response(gz, media_type="application/json",
+                            headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+        return Response(raw, media_type="application/json", headers={"Vary": "Accept-Encoding"})
+
     @mcp.custom_route("/api/map", methods=["GET"])
     async def api_map(request: Request) -> Response:
         """Every function, for the map and the table. `since`: the signature the GUI has; when nothing changed, the
         answer is just that (a big game's map is megabytes, and the GUI asks every few seconds). Rows go as arrays
-        under `keys`, gzipped when the browser takes it."""
+        under `keys`, gzipped when the browser takes it. A request without `since` is a forced refresh: renames,
+        splits and live-feed gaps aren't in the signature, so its full answer must never come from the cache."""
         if (bad := guard(request)):
             return bad
         slug = request.query_params.get("slug", "")
         since = request.query_params.get("since")
-        accepts_gzip = "gzip" in request.headers.get("accept-encoding", "")
 
         try:
             sig = await call(net.map_signature, slug)
@@ -257,21 +268,20 @@ def register(app: App) -> None:
             return Response(b'{"sig":"' + sig.encode() + b'","same":true}', media_type="application/json")
 
         entry = _map_cache.get(slug)
-        if entry is not None and entry[0] == sig:
-            _, raw_bytes, gz_bytes = entry
-            if accepts_gzip and gz_bytes is not None:
-                return Response(gz_bytes, media_type="application/json",
-                                headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
-            return Response(raw_bytes, media_type="application/json")
+        if since is not None and entry is not None and entry[0] == sig:
+            return map_response(request, entry[1], entry[2])
 
         async with _map_lock:
+            # A request may have waited behind another build while helpers changed the project.
+            try:
+                sig = await call(net.map_signature, slug)
+            except (NetworkError, ValueError) as e:
+                return fail(e)
+            if since == sig:
+                return JSONResponse({"sig": sig, "same": True})
             entry = _map_cache.get(slug)
-            if entry is not None and entry[0] == sig:
-                _, raw_bytes, gz_bytes = entry
-                if accepts_gzip and gz_bytes is not None:
-                    return Response(gz_bytes, media_type="application/json",
-                                    headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
-                return Response(raw_bytes, media_type="application/json")
+            if since is not None and entry is not None and entry[0] == sig:
+                return map_response(request, entry[1], entry[2])
 
             def build() -> tuple[bytes, bytes | None]:
                 rows = net.function_map(slug)
@@ -290,10 +300,7 @@ def register(app: App) -> None:
             except (NetworkError, ValueError) as e:
                 return fail(e)
 
-        if accepts_gzip and gz_bytes is not None:
-            return Response(gz_bytes, media_type="application/json",
-                            headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
-        return Response(raw_bytes, media_type="application/json")
+        return map_response(request, raw_bytes, gz_bytes)
 
     @mcp.custom_route("/api/mapcolumns", methods=["GET"])
     async def api_map_columns(request: Request) -> Response:

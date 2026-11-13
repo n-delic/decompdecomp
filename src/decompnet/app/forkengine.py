@@ -3921,26 +3921,17 @@ class ForkEngine:
     def search(self, slug: str, pattern: str, glob: str = "") -> str:
         _, fp, _ = self.get(slug)
         root = fp.root.resolve()
-        if not glob and shutil.which("grep"):
-            try:
-                cmd = ["grep", "-rn", "-E", pattern]
-                for ext in ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp", "*.inc"):
-                    cmd.append(f"--include={ext}")
-                cmd.extend(["--exclude-dir=.git", "--exclude-dir=build", f"--exclude-dir={STATE}"])
-                cmd.append(".")
-                proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, errors="replace", timeout=15)
-                if proc.returncode in (0, 1):
-                    hits = []
-                    for line in proc.stdout.splitlines():
-                        parts = line.split(":", 2)
-                        if len(parts) >= 3:
-                            rel = parts[0].removeprefix("./")
-                            hits.append(f"{rel}:{parts[1]}: {parts[2].strip()[:160]}")
-                            if len(hits) >= 80:
-                                return "\n".join(hits + ["... (more matches; narrow the pattern)"])
-                    return "\n".join(hits) or "no matches"
-            except Exception:
-                pass
+        # Python owns the pattern: grep -E reads e.g. \\d differently, and capturing its output kept every match
+        # in memory before the 80-line cut. Prune build trees before walking and read only as far as that cut.
+        excluded = {".git", "build", STATE}
+
+        def sources():
+            for folder, dirs, names in os.walk(root):
+                dirs[:] = sorted(d for d in dirs if d not in excluded)
+                for name in sorted(names):
+                    if Path(name).suffix in (".c", ".cc", ".cpp", ".h", ".hpp", ".inc"):
+                        yield Path(folder) / name
+
         try:
             rx = re.compile(pattern)
         except re.error:  # e.g. "func(": search for the text itself
@@ -3952,20 +3943,21 @@ class ForkEngine:
             except ValueError as e:
                 raise NetworkError(f"glob {glob!r}: {e} (e.g. src/**/*.cpp, include/*.h)") from None
         else:
-            files = sorted(p for ext in ("c", "cc", "cpp", "h", "hpp", "inc") for p in fp.root.rglob(f"*.{ext}"))
+            files = sources()
         hits = []
         for p in files:
             rp = p.resolve()
             if root not in rp.parents or not rp.is_file():
                 continue
             rel = rp.relative_to(root)
-            if {".git", "build", STATE} & set(rel.parts):
+            if excluded & set(rel.parts):
                 continue
-            for i, line in enumerate(rp.read_text(errors="replace", encoding="utf-8").splitlines(), 1):
-                if rx.search(line):
-                    hits.append(f"{rel.as_posix()}:{i}: {line.strip()[:160]}")
-                    if len(hits) >= 80:
-                        return "\n".join(hits + ["... (more matches; narrow the pattern)"])
+            with rp.open(errors="replace", encoding="utf-8") as source:
+                for i, line in enumerate(source, 1):
+                    if rx.search(line):
+                        hits.append(f"{rel.as_posix()}:{i}: {line.strip()[:160]}")
+                        if len(hits) >= 80:
+                            return "\n".join(hits + ["... (more matches; narrow the pattern)"])
         return "\n".join(hits) or "no matches"
 
     def edit_file(self, agent: Agent, slug: str, path: str, old: str, new: str, message: str = "") -> str:

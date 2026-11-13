@@ -50,4 +50,5 @@ class App:
     quit_app: Callable[[], None] | None = None  # quit: the window, every helper, the server
     # what one part of the app lends another (set by the module that defines it)
     autopilot: Callable[[str], None] | None = None  # state: start autopilot on a project
+    invalidate_map: Callable[[str], None] | None = None  # state: discard a removed or reimported project's map
     with_project: Callable[..., Any] | None = None  # projects: a project route from fn(slug, request, data)
