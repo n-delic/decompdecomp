@@ -162,7 +162,7 @@ async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "f
   const progressBar = document.createElement("progress");
   progressBar.setAttribute("aria-label", "Affected matches checked");
   progressBar.style.width = "100%";
-  log.after(progressBar);
+  (log._frame || log).after(progressBar);
   try {
     const started = await api(endpoint, { method: "POST", body: { slug, function: old, name, background: true, ...(button.dataset.peerId ? {peer_id: button.dataset.peerId} : {}) } });
     const result = started.job ? await followJob(started.job, log, (_lines, job) => {
@@ -1159,7 +1159,7 @@ async function followFunctionDeep(job = null) {
   showJobError(log, "");
   status.textContent = job ? `Reconnecting to deep search for ${name}…` : `Starting deep search for ${name}…`;
   const done = beginWork(log, "Searching this function locally", controls, "Deep search finished.");
-  const bar = log.previousElementSibling;
+  const bar = log._workBar;
   $("fnDeepWork").append(log._workStatus);
   $("fnDeepWork").append(bar);
   try {

@@ -8,6 +8,13 @@ from decompnet.app.engine import RomNetwork
 from decompnet.app.sdk_identity import identify
 
 
+@pytest.fixture(autouse=True)
+def _only_indexed_libraries(monkeypatch):
+    """These tests are about the libraries the user indexes; the N64's built-in table (test_sdk_builtin.py) stays out."""
+    from decompnet import consoles
+    monkeypatch.setattr(consoles.get("n64"), "sdk_table", "")
+
+
 @pytest.mark.parametrize('strategy', ['easiest', 'closest', 'finish'])
 def test_sdk_queue_follows_game_code_but_explicit_requests_work(tmp_path, strategy):
     net = RomNetwork(tmp_path / 'app.db', tmp_path)

@@ -8,6 +8,10 @@ from . import workers
 from .thread_activity import Sampler
 
 
+def _duration(seconds):
+    return f'{seconds//60}m {seconds%60:02d}s' if seconds >= 60 else f'{seconds}s'
+
+
 class Monitor:
     def __init__(self, net, jobs, manager):
         self.net, self.jobs, self.manager = net, jobs, manager
@@ -78,6 +82,18 @@ class Monitor:
             for slug, state in list(surveys.items()):
                 if state.get('state') == 'running':
                     add('service',f'survey:{label}:{slug}',label,'running',slug,'No safe stop available for this automatic check',False)
+        from . import repository_operations
+        # Who holds each Git repository and who waits for it: commits and pushes queue instead of failing.
+        for repo in repository_operations.snapshot():
+            name = repo['repository']
+            if holder := repo['holder']:
+                add('repository', 'holder:'+name, 'Repository: '+holder['operation'], 'running', holder['project'],
+                    f"{name} · {holder['phase']} · {_duration(holder['elapsed_seconds'])}", False)
+            for item in repo['queued']:
+                count = f" · {item['requests']} identical requests" if item['requests'] > 1 else ''
+                add('repository', f"queued:{name}:{item['project']}:{item['operation']}", 'Repository queue: '+item['operation'],
+                    'queued', item['project'], f"{name} · #{item['position']} in line · waiting {_duration(item['wait_seconds'])}{count}"
+                    ' · Stop it from its own panel', False)
         from . import purpose_work
         rows.extend(purpose_work.snapshot())
         thread_details = self.thread_sampler.snapshot()

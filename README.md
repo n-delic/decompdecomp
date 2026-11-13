@@ -470,6 +470,12 @@ Every accepted candidate must compile and link to the destination's exact bytes.
   Choose or disable the built-in corpus under **Libraries for this game**. The first check downloads only
   public fingerprints and their licences; SDK source and compilers are not included. See
   [SDK identification](docs/GAMECUBE_SDK_IDENTIFICATION.md) for coverage and limits.
+- **N64 libultra detection without the SDK:** the app ships the fingerprints (hashes, sizes and names, no code)
+  of libultra 2.0I–2.0L as decompals/ultralib rebuilds it byte for byte from public source: IDO's `libultra`
+  and `libultra_rom`, GCC's `libgultra`, `libgultra_d` and `libgultra_rom`. They are a library like any indexed
+  archive (**Built in / decompals/ultralib**), so a game's libultra is found and named with no SDK of your own.
+  `tools/ultralib_signatures.py` rebuilds the table with the app's pinned compilers. Earlier releases, and
+  libraries ultralib doesn't cover (libnaudio, libleo, NuSystem), still need your SDK folders.
 - **Local libraries:** add SDK archive folders once in global **Settings → Local SDK libraries**. Each game
   detects matching signatures automatically; its Settings can select libraries explicitly, including disabling all.
   For advanced source matching, in the project SDK panel, supply an object archive and optionally its C source file/folder and a

@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .. import PortKit
+from .. import PortKit, PortRuntime
 
 # Nintendo's graphics microcode signs itself in the ROM: "RSP Gfx ucode F3DEX       fifo 2.05  Yoshitaka Yasumoto
 # 1998 Nintendo." Super Mario 64's Fast3D signs as "RSP SW Version: 2.0D, 04-01-96". Audio microcode has no
@@ -229,4 +229,15 @@ KIT = PortKit(
     boot_globals=boot_globals,
     coprocessor_boot=RSPBOOT,
     wasm=Path(__file__).parent / "port_wasm",
+    runtimes=(
+        PortRuntime("wasm", "WebAssembly",
+                    "The game's C as the N64's, compiled to WebAssembly and run by decompdecomp's own stand-in for "
+                    "the console: plays before the native port's steps are done.", built=True),
+        PortRuntime("libultraship", "libultraship",
+                    "A native port: libultra's API and a renderer on Metal, OpenGL or DirectX (Fast3D), with the "
+                    "game's assets extracted from your ROM by Torch.", needs=("code", "compiles", "links", "assets")),
+        PortRuntime("n64modernruntime", "N64ModernRuntime",
+                    "A native port: real libultra threads and timers, the RT64 renderer, the ROM read as it runs "
+                    "(on macOS RT64 needs Xcode's Metal compiler).", needs=("code", "compiles", "links")),
+    ),
 )

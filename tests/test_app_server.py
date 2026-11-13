@@ -3440,3 +3440,15 @@ def test_the_project_list_answers_same_for_an_unchanged_signature(app, monkeypat
     matched[0] = 2
     changed = client.get(f"/api/projects?since={first['sig']}").json()
     assert changed['sig'] != first['sig'] and changed['projects'][0]['matched'] == 2
+
+
+def test_play_refuses_a_runtime_it_cant_build_on_yet(app):
+    """The Play step's native runtimes are planned: asked for one, Play says so and starts nothing."""
+    from .test_loading import tiny_game
+
+    client, net, _ = app
+    slug = "play-runtime"
+    tiny_game(net, slug)
+    response = client.post("/api/play", headers={"X-Decomp": "1"}, json={"slug": slug, "runtime": "libultraship"})
+    assert response.status_code == 400 and "WebAssembly build only" in response.json()["error"]
+    net.remove_project(slug)

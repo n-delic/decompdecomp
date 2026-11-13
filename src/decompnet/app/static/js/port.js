@@ -1,6 +1,39 @@
 /* The Porting tab (docs/PORTING.md): what still stands between a game and a PC port, as a checklist of steps, each
    with how far along it is and the button that does it. Read-only; asked for only while the tab is open. */
 let portEpoch = 0;
+let portRuntime = null;  // the runtime chosen in the Play step, kept across refreshes of the same report
+
+/* What a runtime still waits for, in a sentence (port/readiness.py, runtimes). */
+function runtimeStatus(r) {
+  if (r.playable) return "Ready: plays your last save.";
+  const needs = r.missing.length ? `Needs: ${r.missing.join(", ")}.` : "";
+  if (r.built) return needs;
+  return r.missing.length ? `${needs} Then decompdecomp builds and plays it on ${r.name} (planned, ROADMAP.md).`
+    : `The steps it needs are done; building and playing on ${r.name} isn't in decompdecomp yet (planned, ROADMAP.md).`;
+}
+
+/* The Play step's choice of runtime: one radio each, only a playable one can be chosen. */
+function runtimeChoice(runtimes) {
+  if (!runtimes.some((r) => r.id === portRuntime && r.playable)) portRuntime = (runtimes.find((r) => r.playable) || {}).id || null;
+  const set = document.createElement("fieldset"); set.className = "port-runtimes";
+  const legend = document.createElement("legend"); legend.className = "small muted"; legend.textContent = "Run it on";
+  set.append(legend);
+  for (const r of runtimes) {
+    const label = document.createElement("label"); label.className = "port-runtime" + (r.playable ? "" : " unavailable");
+    const radio = document.createElement("input");
+    radio.type = "radio"; radio.name = "portRuntime"; radio.value = r.id;
+    radio.disabled = !r.playable; radio.checked = r.id === portRuntime;
+    radio.addEventListener("change", () => { if (radio.checked) portRuntime = r.id; });
+    const text = document.createElement("span");
+    const name = document.createElement("b"); name.textContent = r.name;
+    const summary = document.createElement("span"); summary.className = "small muted"; summary.textContent = r.summary;
+    const status = document.createElement("span"); status.className = "small port-runtime-status"; status.textContent = runtimeStatus(r);
+    text.append(name, summary, status);
+    label.append(radio, text);
+    set.append(label);
+  }
+  return set;
+}
 
 function portRow(label, value) {
   const row = document.createElement("li");
@@ -95,8 +128,10 @@ function portSteps(report) {
       detail: assets ? `${assets.resources} resources mapped` + (assets.extracted && assets.extracted.current
         ? `, ${assets.extracted.mapped} of ${assets.extracted.total} extracted` : assets.written ? ", not extracted yet" : ", map not written yet")
         : "map not written yet", buttons: ["portAssets", "portExtract"], logs: ["portAssetsLog", "portExtractLog"] },
-    { title: "Play it", pct: null, play: true,
-      detail: "The WebAssembly build of your last save, in the browser: no native port needed",
+    { title: "Play it", pct: null, play: true, runtimes: report.runtimes || [],
+      detail: (report.runtimes || []).length > 1
+        ? "Your last save, played on the runtime you choose: WebAssembly now, the native runtimes once the steps they need are done"
+        : "The WebAssembly build of your last save, in the browser: no native port needed",
       buttons: ["portPlay", "portStop"], logs: ["portPlayLog"] },
   ];
   return steps;
@@ -136,6 +171,7 @@ function renderPortSteps(report) {
       body.append(meter);
     }
     body.append(detail);
+    if (step.runtimes && step.runtimes.length) body.append(runtimeChoice(step.runtimes));
     const actions = document.createElement("div"); actions.className = "row port-actions";
     for (const id of step.buttons || []) if ($(id)) actions.append($(id));
     if (actions.children.length) body.append(actions);
@@ -252,7 +288,8 @@ async function playGame(existing = null) {
   $("portStop").hidden = false; $("portStop").disabled = false; playStopLabel();
   let playing = false;
   try {
-    let result = existing ? { job: existing.id } : await api("/api/play", { method: "POST", body: { slug } });
+    let result = existing ? { job: existing.id }
+      : await api("/api/play", { method: "POST", body: { slug, runtime: portRuntime || "wasm" } });
     if (result.job) { playJob = result.job; result = await followJob(result.job, log, null, () => S.slug === slug); }
     if (result && result.url) {
       const link = document.createElement("a");

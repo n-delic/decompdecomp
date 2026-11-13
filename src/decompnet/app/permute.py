@@ -237,8 +237,14 @@ class Generator:
         self.proc.wait()
         self._reader.join(timeout=0.5)
         if not self._reader.is_alive():
-            self.proc.stdin.close()
-            self.proc.stdout.close()
+            try:
+                self.proc.stdin.close()
+            except BrokenPipeError:
+                # BufferedWriter.close retries a failed request's flush after the child has
+                # exited. Disposal must not replace its failed-job fallback or cancellation.
+                pass
+            finally:
+                self.proc.stdout.close()
 
 
 @dataclass

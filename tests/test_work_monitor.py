@@ -130,3 +130,34 @@ def test_purpose_group_threads_and_stop_are_exposed_in_inventory():
             assert next(r for r in m.snapshot()['items'] if r['key']==pool.key)['state']=='stopping'
         finally:release.set()
         with pytest.raises(NetworkError,match='stopped'):future.result()
+
+
+def test_repository_queue_is_listed_once_per_request(tmp_path):
+    """Background work shows who holds a repository and who waits, with repeated identical requests merged."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import repository_operations as operations
+
+    from .test_repository_push import QueueLog
+    m,_=monitor()
+    logs=[QueueLog() for _ in range(3)]
+    release=threading.Event()
+    def queued(log,label):
+        with operations.push(tmp_path,'game',log,log.check_cancel,label=label):
+            assert release.wait(5)
+    with ThreadPoolExecutor(3) as pool:
+        with operations.operation(tmp_path,'game','Committing a verified match',lambda _: None):
+            futures=[pool.submit(queued,logs[0],'Setting up progress repository')]
+            assert logs[0].queued.wait(5)
+            futures+=[pool.submit(queued,log,'Pushing commits') for log in logs[1:]]
+            assert all(log.queued.wait(5) for log in logs)
+            rows=[row for row in m.snapshot()['items'] if row['kind']=='repository']
+            assert [row['title'] for row in rows]==['Repository: Committing a verified match',
+                'Repository queue: Setting up progress repository','Repository queue: Pushing commits']
+            assert '#1 in line' in rows[1]['detail'] and '#2 in line' in rows[2]['detail']
+            assert '2 identical requests' in rows[2]['detail'] and 'identical' not in rows[1]['detail']
+            assert all(row['project']=='game' and not row['stoppable'] for row in rows)
+        release.set()
+        for future in futures:future.result(timeout=5)
+    assert not operations._STATES
+    assert not [row for row in m.snapshot()['items'] if row['kind']=='repository']

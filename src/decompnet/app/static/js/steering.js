@@ -277,7 +277,7 @@ $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
         const percent = total ? Math.round(100 * done / total) : 100;
         body.querySelector('[data-suggestion-progress]').textContent = `${progress.phase} · ${done.toLocaleString()} / ${total.toLocaleString()} · ${percent}%${progress.affected != null ? ` · ${progress.affected.toLocaleString()} affected functions` : ''}`;
         const meter = body.querySelector('[data-suggestion-meter]'); meter.hidden=false; meter.value=percent;
-        const waitingBar = log.previousElementSibling;
+        const waitingBar = log._workBar;
         if (waitingBar?.classList.contains('workbar')) waitingBar.hidden=true;
       });
       body.querySelector('[data-suggestion-progress]').textContent = 'Compiler settings applied; project progress saved.';

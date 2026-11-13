@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 from collections import deque
+from pathlib import Path
 
 from starlette.routing import Match
 
@@ -45,15 +46,18 @@ class Diagnostics:
 
     async def __call__(self, scope, receive, send):
         if scope['type']=='lifespan':
-            watchdog=pulse=None
+            watchdog=pulse=sampler=None
             if self.stack_path is not None:
-                watchdog=Watchdog(self.stack_path)
+                from . import thread_cpu
+                sampler=await asyncio.to_thread(thread_cpu.start,Path(self.stack_path).parent/'thread-cpu.log')
+                watchdog=Watchdog(self.stack_path,cpu=sampler)
                 pulse=asyncio.create_task(watchdog.pulse())
                 await asyncio.to_thread(watchdog.start)
             task=asyncio.create_task(watch_loop())
             try:await self.app(scope,receive,send)
             finally:
                 if watchdog:await asyncio.to_thread(watchdog.close)
+                if sampler:await asyncio.to_thread(sampler.close)
                 if pulse:
                     pulse.cancel()
                     try:await pulse

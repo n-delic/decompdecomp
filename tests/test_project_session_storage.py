@@ -161,3 +161,41 @@ def test_cleanup_seeks_over_long_transcripts_and_handles_empty_files(scoped):
     assert len(steps)<30  # An index-wide DISTINCT would visit all 20,001 messages.
     transcripts.clear_helper(1,'first','worker')
     assert {r['id'] for r in database_cleanup.eligible(net,{'removed':True})}=={2}
+
+
+def test_automatic_cleanup_reads_only_active_projects_and_skips_unchanged_ones(scoped, monkeypatch):
+    """The five-minute check read every project's transcript index (700 s a day on a 70-project library, up to 48 s a
+    scan). It now reads active projects' databases only, and only when what they hold has changed."""
+    net, stores = scoped
+    transcripts = seed(net)
+    from decompnet.app.agents import SCHEMA
+    with net.store.tx() as db:
+        db.execute(SCHEMA[0])  # (no helpers: both sessions' workers are removed)
+    database_cleanup.save(net, {'removed': True, 'automatic': True, 'days': 30})
+    active = {'second'}
+    monkeypatch.setattr(database_cleanup, 'active_projects',
+                        lambda net: {row['id'] for row in net.store.all('SELECT id,slug FROM projects') if row['slug'] in active})
+    started, reads = [], []
+    monkeypatch.setattr(database_cleanup, 'start', lambda *args, **kwargs: started.append(kwargs['projects']))
+    for slug in ('first', 'second'):
+        store = transcripts.for_project(slug).store
+        monkeypatch.setattr(store, 'all', lambda *args, slug=slug, original=store.all: reads.append(slug) or original(*args))
+    retention = database_cleanup.Retention(net, None)
+    retention.tick(0)
+    assert reads == ['second'], 'an idle project was read'
+    assert started == [{2}]
+    # Found transcripts are read again even if nothing changed: the job may have been cancelled before clearing them
+    reads.clear()
+    retention.tick(301)
+    assert reads == ['second'] and len(started) == 2
+    with transcripts.for_project('second').store.tx() as db:  # (the job cleared them)
+        db.execute('DELETE FROM helper_messages')
+    reads.clear()
+    retention.tick(602)
+    assert reads == ['second'] and len(started) == 2  # changed: read once more, nothing left
+    reads.clear()
+    retention.tick(903)
+    assert reads == [] and len(started) == 2  # unchanged and empty: not read
+    active.add('first')
+    retention.tick(1204)
+    assert reads == ['first'] and started[-1] == {1, 2}

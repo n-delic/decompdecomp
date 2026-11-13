@@ -156,3 +156,55 @@ def test_tool_calls_waiting_on_one_check_share_the_next_one(project):
     checks.clear()
     progress.sync("game", force=True)  # asked after that check finished: it checks again
     assert len(checks) == 1
+
+
+def test_a_tool_calls_ordinary_check_does_not_queue_behind_a_running_one(project):
+    """An agent's claim waited almost five minutes on the project's lock while the progress-commit job's sync held it.
+    A tool call's ordinary check (its first engine lookup) skips the folder when one ran under CHECK_SECONDS ago, so
+    while another thread's check holds the lock it returns at once. Forced checks (the judge's) and ordinary checks
+    outside a tool call still wait for it."""
+    import threading
+    net, _, _, _, _ = project
+    progress = net.progress
+    lock = progress._project_lock("game")
+    held, release = threading.Event(), threading.Event()
+
+    def background_check():
+        with lock:
+            held.set()
+            release.wait(30)
+    holder = threading.Thread(target=background_check)
+    holder.start()
+    assert held.wait(5)
+    finished = {}
+
+    def run(key, call):
+        call()
+        finished[key] = time.monotonic()
+    try:
+        start = time.monotonic()
+        with progress.deferring():
+            assert progress.sync("game") is False
+        assert time.monotonic() - start < 1, "a tool call's ordinary check waited for the running one"
+        with progress.foreground():
+            assert progress.sync("game") is False
+        assert time.monotonic() - start < 1
+        waiters = [threading.Thread(target=run, args=("forced", lambda: _deferred(progress, force=True))),
+                   threading.Thread(target=run, args=("background", lambda: progress.sync("game")))]
+        for waiter in waiters:
+            waiter.start()
+        time.sleep(0.3)
+        assert finished == {}, "a forced or background check skipped the running one"
+    finally:
+        released = time.monotonic()
+        release.set()
+        holder.join(30)
+    for waiter in waiters:
+        waiter.join(30)
+    assert set(finished) == {"forced", "background"}
+    assert all(when >= released for when in finished.values())
+
+
+def _deferred(progress, **kwargs):
+    with progress.deferring():
+        return progress.sync("game", **kwargs)

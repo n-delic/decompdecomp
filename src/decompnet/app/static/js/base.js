@@ -139,6 +139,109 @@ function toast(html, kind = "") {
 }
 
 const JOB_POLL_MS = 500;
+
+/* Every log box (`pre.joblog`) is one component: the box and a Copy button in its top-right corner, so a build error
+   or a job's output can be pasted into a report without selecting it by hand. The pre is wrapped in a
+   `.joblog-frame` (the button's positioning context) when it reaches the page, however it got there: index.html,
+   innerHTML in a dialog, or createElement. Code that puts a status line or bar beside a log uses the frame
+   (`log._frame || log`), so they land beside it, not inside it above the text. A pre that only becomes a
+   log box later (showJobError adds the class) is framed then too. */
+function frameJoblog(log) {
+  if (!log?.parentNode || !log.replaceWith || log._frame || log.parentElement?.classList?.contains("joblog-frame")) return log;
+  const frame = document.createElement("div");
+  frame.className = "joblog-frame";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "joblog-copy";
+  button.textContent = "Copy";
+  button.title = "Copy this log to the clipboard";
+  button.setAttribute("aria-label", "Copy log");
+  button.onclick = () => copyJoblog(log, button);
+  log.replaceWith(frame);
+  frame.append(log, button);
+  log._frame = frame;
+  watchJoblogColour(log);
+  return log;
+}
+
+/* Log boxes are coloured the way a terminal colours the same output, by reading the text: the tools run through
+   pipes, so they send no colour codes of their own, and asking them for codes would put escape bytes into what
+   agents, job records and bug reports read. Errors and exception lines red, warnings yellow, notes blue, a
+   compiler's file:line:col bold, traceback frames dim, success lines green. Only the page's copy is coloured: the
+   text is unchanged (textContent, and so Copy, give exactly what was written). Code keeps writing plain text; the
+   box redraws after each batch of writes. `data-plain` on a log opts out. */
+const JOBLOG_COLOUR_LINES = 3000;
+const JOBLOG_EXTENSIONS = "c|cc|cpp|cxx|h|hh|hpp|hxx|inc|s|asm|py|rs|ld|lcf|x|ini|json|toml|ya?ml|mk|cmake|txt|cs|js";
+const JOBLOG_TOKENS = new RegExp(
+  `(^|[\\s;(,'"\\[])((?:[A-Za-z]:)?[\\w./\\\\~+-]*[\\w~+-]\\.(?:${JOBLOG_EXTENSIONS})(?::\\d+){1,2}(?=:))`
+  + "|\\b(fatal error|error|ERROR)(?=:)|\\b(warning|WARNING)(?=:)|\\b(note)(?=:)", "g");
+const JOBLOG_LINES = [
+  ["jl-err", /^\s*Traceback \(most recent call last\)|^\s*[\w.]*(?:Error|Exception)(?::|$)|^make(?:\[\d+\])?: \*\*\*|^\s*(?:FAILED|FAIL|ERROR|Error)\b|^\s*[✗✘×]/],
+  ["jl-warn", /^\s*(?:WARNING|Warning)\b|^\s*⚠/],
+  ["jl-dim", /^\s+File ".*", line \d+|^\s*[\^~]+\s*$|^\s*\.\.\.\s*$/],
+  ["jl-ok", /^\s*[✓✔]|^\s*(?:Matched|Finished|Done|Success(?:fully)?|All checks passed|OK)\b|\b\d+ passed\b(?!.*\b(?:failed|error))/],
+];
+const joblogEscape = (text) => text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+function joblogLineHtml(line) {
+  let html = "", last = 0;
+  JOBLOG_TOKENS.lastIndex = 0;
+  for (const m of line.matchAll(JOBLOG_TOKENS)) {
+    const start = m.index + (m[1] ? m[1].length : 0), token = m[2] || m[3] || m[4] || m[5];
+    const kind = m[2] ? "jl-loc" : m[3] ? "jl-err jl-key" : m[4] ? "jl-warn jl-key" : "jl-note jl-key";
+    html += joblogEscape(line.slice(last, start)) + `<span class="${kind}">${joblogEscape(token)}</span>`;
+    last = start + token.length;
+  }
+  html += joblogEscape(line.slice(last));
+  const kind = JOBLOG_LINES.find(([, pattern]) => pattern.test(line))?.[0];
+  return kind ? `<span class="${kind}">${html}</span>` : html;
+}
+/* The HTML for a log's text: its textContent is exactly `text` again. A long log colours its last lines only. */
+function joblogHtml(text) {
+  const lines = String(text ?? "").split("\n");
+  const plain = Math.max(0, lines.length - JOBLOG_COLOUR_LINES);
+  const head = plain ? joblogEscape(lines.slice(0, plain).join("\n")) + "\n" : "";
+  return head + lines.slice(plain).map(joblogLineHtml).join("\n");
+}
+function watchJoblogColour(log) {
+  if (typeof MutationObserver === "undefined" || log.dataset?.plain != null) return;
+  // A mutation callback runs once per batch of writes (a poll's lines), also while the window is hidden, where an
+  // animation frame would wait. The redraw's own mutations come back with the text already coloured.
+  const draw = () => {
+    const text = log.textContent;
+    if (text === log._colouredText) return;
+    const top = log.scrollTop, atBottom = top + log.clientHeight >= log.scrollHeight - 4;
+    log.innerHTML = joblogHtml(text);
+    log._colouredText = log.textContent;
+    log.scrollTop = atBottom ? log.scrollHeight : top;
+  };
+  new MutationObserver(draw).observe(log, { childList: true, characterData: true, subtree: true });
+  draw();
+}
+async function copyJoblog(log, button) {
+  const ok = await copyText(log.textContent);
+  if (!ok) { toast("Could not copy the log. Select the log text and copy it manually.", "err"); return false; }
+  if (button) {
+    clearTimeout(button._copiedTimer);
+    button.textContent = "Copied";
+    button.dataset.state = "done";
+    button._copiedTimer = setTimeout(() => { button.textContent = "Copy"; delete button.dataset.state; }, 1500);
+  }
+  return true;
+}
+function frameJoblogsIn(root) {
+  if (root?.nodeType !== 1) return;
+  if (root.matches("pre.joblog")) frameJoblog(root);
+  root.querySelectorAll("pre.joblog").forEach(frameJoblog);
+}
+if (typeof MutationObserver !== "undefined" && typeof document !== "undefined" && document.documentElement) {
+  frameJoblogsIn(document.documentElement);
+  new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.type === "attributes") { if (record.target.matches("pre.joblog")) frameJoblog(record.target); continue; }
+      for (const node of record.addedNodes) if (node.nodeType === 1) frameJoblogsIn(node);
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+}
 /* Keep the indicator and controls tied to this panel's elements: a dialog can be closed or replaced while its
    request is pending. Call the returned cleanup in finally, including when starting the job fails. */
 function beginWork(log, label, controls = [], completed = "Finished.") {
@@ -147,7 +250,7 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
     status = document.createElement("p");
     status.className = "muted small";
     status.setAttribute("role", "status");
-    log.before(status);
+    (log._frame || log).before(status);
     log._workStatus = status;
   }
   status.textContent = `${label}…`;
@@ -157,7 +260,7 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
   bar.setAttribute("role", "progressbar");
   bar.setAttribute("aria-label", label);
   bar.append(document.createElement("i"));
-  log.before(bar);
+  (log._frame || log).before(bar);
   log._workBar = bar;
   const disabled = controls.map((control) => control.disabled);
   controls.forEach((control) => { control.disabled = true; });
@@ -255,7 +358,7 @@ function showJobError(logEl, message) {
     box = document.createElement("p");
     box.className = "err-msg";
     box.setAttribute("role", "alert");
-    logEl.before(box);
+    (logEl._frame || logEl).before(box);
     logEl._errorBox = box;
   }
   box.hidden = !message;
@@ -267,31 +370,12 @@ function showJobError(logEl, message) {
     logEl.textContent = [extra.join("\n"), current].filter(Boolean).join("\n\n");
     logEl.hidden = false;
     if (!/\bjoblog\b/.test(logEl.className || "")) logEl.className = `${logEl.className || ""} joblog tall`.trim();
-    if (!logEl._copyToolbar) {
-      const toolbar = document.createElement("div");
-      toolbar.className = "row joblog-toolbar";
-      const label = document.createElement("b");
-      label.textContent = "Job log";
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "ghost small-btn";
-      button.textContent = "Copy log";
-      button.onclick = async () => {
-        if (await copyText(logEl.textContent)) toast("Log copied.");
-        else toast("Could not copy the log. Select the log text and copy it manually.", "err");
-      };
-      toolbar.append(label); toolbar.append(button);
-      logEl.before(toolbar);
-      logEl._copyToolbar = toolbar;
-    }
-    logEl._copyToolbar.hidden = false;
     const details = logEl.closest?.("details");
     if (details) details.open = true;
     logEl.scrollTop = logEl.scrollHeight;
   } else {
     logEl.textContent = "";
     logEl.hidden = false;
-    if (logEl._copyToolbar) logEl._copyToolbar.hidden = true;
   }
 }
 

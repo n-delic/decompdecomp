@@ -256,6 +256,11 @@ linting). In short:
 - Use the shared dropdown styling for native single-choice `select` controls, shared field,
   button, status and progress styles, and theme variables. Do not introduce native-looking one-off menus,
   hard-coded theme colors or a separate card system. Check both themes and narrow layouts.
+- Never "try once, fail if busy". Work that has to wait for a shared resource (a Git repository, a project lock,
+  a compiler slot) queues for it: a user's click waits its turn in the queue with progress, what it waits for and
+  Stop (`repository_operations.push` for repositories), and never fails with "another operation is using this".
+  Background workers may skip a busy resource only when their work stays durably pending and retries on its own.
+  Queues are visible in Background work (`work_monitor.py`), one row per distinct request.
 - Every user action that can wait (including Stop, disconnect, remove, save and settings changes) must acknowledge intent immediately, before its first network request: show the action in progress, prevent duplicate/conflicting clicks, retain feedback across polling redraws, and show success or an actionable error. Never leave a click silently pending or discard an error; restore controls on failure. Test delayed responses, duplicate clicks, errors and stale refreshes.
 - A click that starts work must show feedback immediately, disable duplicate starts, and offer Stop when
   cancellation is supported. Reuse `beginWork`, `followJob`, `showJobError` and `.workbar`; clean up in

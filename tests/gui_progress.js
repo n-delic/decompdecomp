@@ -11,7 +11,7 @@ function element() {
   return {
     disabled: false, hidden: false, value: "", checked: true, files: [], textContent: "", innerHTML: "", attrs: {}, dataset: {}, children: [],
     setAttribute(key, value) { this.attrs[key] = value; },
-    append(child) { this.children.push(child); },
+    append(...children) { this.children.push(...children); },
     before(child) {
       if (child.className === "workbar") this.bar = child;
       child.previousElementSibling = this.previousElementSibling; this.previousElementSibling = child;
@@ -272,15 +272,34 @@ async function main() {
   assert.match(copyTest.log.className,/joblog/);
   assert.equal(copyTest.log._errorBox.textContent, "setup step failed: make");
   assert.equal(copyTest.log.textContent.split("mips-linux-gnu-cpp: missing").length - 1, 1);
-  const toolbar = copyTest.log._copyToolbar;
-  assert.equal(toolbar.children[0].textContent,"Job log");
   assert.equal(copyTest.log.scrollTop,copyTest.log.scrollHeight);
-  await toolbar.children[1].onclick();
+  // Every log box's own Copy button (the shared component) copies what the box shows and says so.
+  const copyButton = element(); copyButton.textContent = "Copy";
+  assert.equal(await copyTest.ctx.copyJoblog(copyTest.log, copyButton), true);
   assert.equal(copied, copyTest.log.textContent);
   assert.ok(copied.includes("Missing preprocessor."));
+  assert.equal(copyButton.textContent, "Copied");
   copyTest.ctx.showJobError(copyTest.log, "");
-  assert.equal(toolbar.hidden, true);
   assert.equal(copyTest.log.textContent, "");
+  // A log box on the page gets its frame and Copy button once; status lines and bars go beside the frame, not in it.
+  {
+    const pre = element(); let replacement = null;
+    pre.parentNode = {}; pre.replaceWith = (node) => { replacement = node; };
+    const frame = copyTest.ctx.frameJoblog(pre) && replacement;
+    assert.equal(frame.className, "joblog-frame");
+    assert.equal(pre._frame, frame);
+    assert.equal(frame.children[1].className, "joblog-copy");
+    pre.replaceWith = () => assert.fail("a framed log is framed again");
+    copyTest.ctx.frameJoblog(pre);
+  }
+  {
+    const pre = element(), frame = element(); pre._frame = frame;
+    copyTest.ctx.beginWork(pre, "Working")();
+    assert.ok(frame.bar && !pre.bar);
+    const button = element(); button.textContent = "Copy"; pre.textContent = "build output";
+    await copyTest.ctx.copyJoblog(pre, button);
+    assert.equal(copied, "build output");
+  }
   // Deep-search scores remain visible independently of the collapsed technical log.
   {
     const test = setup(...cases[cases.length - 1]);

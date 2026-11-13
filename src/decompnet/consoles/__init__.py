@@ -55,6 +55,17 @@ class Compiler:
 
 
 @dataclass(frozen=True)
+class PortRuntime:
+    """One way to run a finished game on a PC (docs/PORTING.md), offered in the Porting tab's Play step: the
+    WebAssembly build runs the game's C as the console's, the native runtimes need the checklist's steps first."""
+    id: str  # "wasm", what Play is asked for
+    name: str  # "libultraship"
+    summary: str  # one sentence: what it is, what it gives
+    needs: tuple = ()  # the readiness steps it waits for: "code", "compiles", "links", "assets" (port/readiness.py)
+    built: bool = False  # decompdecomp builds and plays the game on it; False: planned (ROADMAP.md, Ports)
+
+
+@dataclass(frozen=True)
 class PortKit:
     """The library a finished game of a console is ported to a PC with (docs/PORTING.md): libultraship and Torch
     for the N64. What the port readiness report asks of it; a console with no kit has `port_kit = None`."""
@@ -75,6 +86,7 @@ class PortKit:
     wasm: object = None  # the WebAssembly build's console part (port/wasm/): a folder with host.c, the host that
     # runs the game's translated C (threads, DMA, the hardware's registers), and the library's prototypes
     # (libultra.sigs: each a name, a return type and parameter types, tab-separated); None: no such build yet
+    runtimes: tuple = ()  # PortRuntime each, the order the Play step offers them; the first playable one is chosen
 
 
 class Console:
@@ -129,6 +141,9 @@ class Console:
     # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
     sets_aside = False
     sdk_corpus = ""  # optional public binary fingerprint corpus; local SDK archives work on every console
+    # a table of library signatures the app ships, from the library rebuilt byte for byte from public source (the
+    # N64's from decompals/ultralib: tools/ultralib_signatures.py), loaded like an indexed SDK (app/sdk_builtin.py)
+    sdk_table = ""
     # PROJECT mode: choices the import asks about besides the compiler and scope, as (id, question, ((value, text), ...))
     # with the first value the default; create_project takes each as a keyword (Xbox: ltcg)
     import_options: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = ()

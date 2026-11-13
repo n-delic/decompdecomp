@@ -225,9 +225,10 @@ def test_explicit_job_bypasses_busy_maintenance_lane_and_pacing(monkeypatch):
 def test_manual_cleanup_promotes_queued_retention_without_duplicate(monkeypatch):
     from decompnet.app import database_cleanup
     from decompnet.app.support import Jobs
-    entered=threading.Event();finished=threading.Event()
+    entered=threading.Event();finished=threading.Event();scopes=[]
     monkeypatch.setattr('decompnet.compiler.background_thread',lambda:None)
-    def clean(net,value,log):
+    def clean(net,value,log,*,projects=None):
+        scopes.append(projects)
         entered.set()
         assert finished.wait(2)
         return {'messages':0}
@@ -235,13 +236,41 @@ def test_manual_cleanup_promotes_queued_retention_without_duplicate(monkeypatch)
     jobs=Jobs();value={'removed':True,'before':'2000-01-01','automatic':True}
     try:
         with maintenance.slot():
-            automatic=database_cleanup.start(None,jobs,value,foreground=False)
+            # The automatic check clears active projects only; the Clean button means every project
+            automatic=database_cleanup.start(None,jobs,value,foreground=False,projects={1})
             assert not entered.wait(.15)
             manual=database_cleanup.start(None,jobs,value)
             assert manual==automatic and len(jobs.jobs)==1
             assert entered.wait(2),'Manual cleanup stayed queued behind the lane'
             assert jobs.jobs[manual]['foreground']
     finally:finished.set()
+    deadline=time.monotonic()+5
+    while jobs.jobs[manual]['state']=='running' and time.monotonic()<deadline:time.sleep(.01)
+    assert scopes==[None],'the Clean button only cleared the automatic check\'s projects'
+
+
+def test_manual_cleanup_during_an_automatic_run_also_clears_idle_projects(monkeypatch):
+    """Clicking Clean while the automatic check's cleanup (active projects only) is already deleting: once that run
+    finishes, the same job runs again over every project rather than reporting a narrower cleanup as the user's."""
+    from decompnet.app import database_cleanup
+    from decompnet.app.support import Jobs
+    entered=threading.Event();finished=threading.Event();scopes=[]
+    monkeypatch.setattr('decompnet.compiler.background_thread',lambda:None)
+    def clean(net,value,log,*,projects=None):
+        scopes.append(projects)
+        entered.set()
+        assert finished.wait(5)
+        return {'messages':0}
+    monkeypatch.setattr(database_cleanup,'run',clean)
+    jobs=Jobs();value={'removed':True,'before':'2000-01-01','automatic':True}
+    automatic=database_cleanup.start(None,jobs,value,foreground=False,projects={1})
+    assert entered.wait(2)
+    assert database_cleanup.start(None,jobs,value)==automatic
+    finished.set()
+    deadline=time.monotonic()+5
+    while jobs.jobs[automatic]['state']=='running' and time.monotonic()<deadline:time.sleep(.01)
+    assert scopes==[{1},None]
+    assert automatic not in database_cleanup._scopes
 
 
 def test_manual_header_cleanup_starts_during_background_maintenance(monkeypatch):
