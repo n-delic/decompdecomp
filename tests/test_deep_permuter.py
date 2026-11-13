@@ -762,7 +762,8 @@ def test_exact_local_match_skips_followup_feedback(monkeypatch, imported):
 
 @pytest.mark.parametrize('imported',[False,True])
 def test_predicate_lane_retunes_improvement_before_any_broad_generation(monkeypatch,imported):
-    from decompnet.app import bit_predicate_repairs, promoted_entry_repairs
+    from decompnet.app import promoted_entry_repairs
+    from decomprepair import bit_predicate_repairs
     from tests.test_bit_predicate_repairs import SOURCE
 
     net=setup(monkeypatch,imported)

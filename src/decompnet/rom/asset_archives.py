@@ -12,11 +12,12 @@ MAX_MEMBER=4*1024*1024
 MAX_ARCHIVES=64
 
 
-def zip_members(image, *, check=lambda:None):
+def zip_members(image, *, check=lambda:None, archives=None):
     """Validate central/local records even when ROM padding follows the end record.
 
 ZIP64, split archives, encryption and methods other than stored/deflate are not
-supported. Member paths are display labels only and are never opened as paths.
+supported. Member paths are display labels only and are never opened as paths. A list passed as `archives` gets each
+valid archive's central directory span and its folder entries, which hold no data and aren't members.
 """
     result=[];seen=set()
     for index,match in enumerate(re.finditer(rb'PK\x05\x06',image)):
@@ -26,7 +27,7 @@ supported. Member paths are display labels only and are never opened as paths.
         disk,central_disk,count_here,count,size,relative,comment=struct.unpack_from('<4H2IH',image,end+4)
         central=end-size;base=central-relative
         if disk or central_disk or count_here!=count or not 0<count<=MAX_MEMBERS or central<0 or base<0 or end+22+comment>len(image):continue
-        cursor=central;members=[];valid=True
+        cursor=central;members=[];folders=[];valid=True
         for _ in range(count):
             check()
             if cursor+46>end or image[cursor:cursor+4]!=b'PK\x01\x02':valid=False;break
@@ -41,6 +42,8 @@ supported. Member paths are display labels only and are never opened as paths.
             payload=local+30+local_name+local_extra
             name=bytes(image[cursor+46:cursor+46+name_size])
             if local_flags!=flags or local_method!=method or local_name!=name_size or image[local+30:local+30+local_name]!=name or payload+packed>central:valid=False;break
+            if name.endswith(b'/') and not packed and not expanded:
+                folders.append(dict(name=name.decode('utf-8' if flags&0x800 else 'cp437','replace'),offset=local,size=payload-local))
             if not flags&0x41 and method in (0,8) and 0<expanded<=MAX_MEMBER and 0<packed<=MAX_MEMBER:
                 if not flags&8 and struct.unpack_from('<III',image,local+14)!=(crc,packed,expanded):valid=False;break
                 try:label=name.decode('utf-8' if flags&0x800 else 'cp437')
@@ -49,6 +52,7 @@ supported. Member paths are display labels only and are never opened as paths.
                     members.append(dict(name=label,offset=local,size=payload+packed-local,payload=payload,packed=packed,expanded=expanded,crc=crc,method=method))
             cursor=after
         if not valid or cursor!=end:continue
+        if archives is not None:archives.append(dict(central=central,end=end+22+comment,count=count,folders=folders))
         for member in members:
             if member['offset'] not in seen:result.append(member);seen.add(member['offset'])
     return result

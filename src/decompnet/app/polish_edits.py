@@ -38,26 +38,57 @@ def type_names(header):
     return names
 
 
+DIRECTIVE = re.compile(r'^[ \t]*#(?:[^\n]*\\\n)*[^\n]*', re.M)  # one preprocessor line, with its continuations
+
+
+def scope(source, function):
+    """The function's span in `source`, or None when a small edit can't be confined to it.
+
+    A machine draft keeps its preamble (M2C_DEFINES, extern declarations) around the function. Refusing
+    every rename there sent agents back to retyping whole files with make_readable. Edits stay inside this
+    span, and locals_in leaves out any name also used outside it (a #define or prototype naming it).
+    #define and #undef lines inside it stay as they are, as outside text (a 529-instruction function of an
+    N64 game defines its field accessors there, and no helper would retype it whole); a conditional or an
+    include inside it still needs make_readable.
+    """
+    clean = _blank(source)
+    span = find(source, function)
+    if span is None or '::' in function:return None
+    if any(not re.match(r'[ \t]*#[ \t]*(?:define|undef)\b', m[0])
+           for m in DIRECTIVE.finditer(clean, span[0], span[1])):return None
+    return span
+
+
+def _code(clean, span):
+    """`clean` with the #define/#undef lines inside the function blanked (edits never touch them), and their names."""
+    names = set()
+    for m in DIRECTIVE.finditer(clean, span[0], span[1]):
+        names.update(IDENT.findall(m[0]))
+        clean = clean[:m.start()] + re.sub(r'[^\n]', ' ', m[0]) + clean[m.end():]
+    return clean, names
+
+
 def locals_in(source, function, header=''):
     """Recognize unambiguous parameters and standalone local declarations, in source order."""
     clean = _blank(source)
-    span = find(source, function)
-    if span is None or '::' in function or re.search(r'^\s*#', clean, re.M):return []
-    # No extra helpers or file-scope declarations: a replacement must only touch this function.
-    if clean[:span[0]].strip() or clean[span[1]:].strip():return []
+    span = scope(source, function)
+    if span is None:return []
     types = TYPE_WORDS | set(re.findall(r'\b(?:s|u)(?:8|16|32|64)\b|\bf(?:32|64)\b', header+' '+clean))
     # Typedef names from a declaration index are supplied in the header. The common final name is enough
     # here: unsupported function-pointer typedefs simply require a full rewrite.
     types.update(type_names(header))
+    types.update(type_names(source[:span[0]]))  # a draft's own typedefs (M2C_UNK) declare its locals too
     type_pat = '(?:'+'|'.join(re.escape(t) for t in sorted(types))+r'|(?:struct|union|enum)\s+[A-Za-z_]\w*)'
     decl = re.compile(r'(?:\b(?:const|volatile|register)\s+)*\b'+type_pat+
                       r'(?:\s+(?:const|volatile|signed|unsigned|long|short|int))*\s*\**\s*([A-Za-z_]\w*)\s*(?=[,)=;\[])')
-    matches = list(decl.finditer(clean))
+    code, in_directives = _code(clean, span)
+    matches = list(decl.finditer(code, span[0], span[1]))
     # Static/extern locals have linkage or storage-sensitive names, so leave them to a full rewrite.
     names = [m[1] for m in matches if m[1] != function and m[1] not in KEYWORDS
              and not re.search(r'\b(?:extern|static)\s*$',clean[max(0,m.start()-16):m.start()])]
     if len(names) != len(set(names)):return []  # shadowed locals need a scope-aware edit
-    return names
+    outside = set(IDENT.findall(clean[:span[0]]+' '+clean[span[1]:])) | in_directives
+    return [name for name in names if name not in outside]
 
 
 def apply(source, function, renames, comment='', types=None, header=''):
@@ -79,8 +110,11 @@ def apply(source, function, renames, comment='', types=None, header=''):
     known_types |= set(re.findall(r'\b(?:[su](?:8|16|32|64)|f(?:32|64))\b', header))
     if set(types)-words or (set(types) | set(types.values()))-known_types:
         raise NetworkError('Type edits need existing type names from the header. Add declarations with edit_context or edit_file first.')
+    span = scope(source, function)
+    if span is None:raise NetworkError('Polish this function with make_readable: it has a preprocessor conditional or include inside.')
+    code, _ = _code(clean, span)
     edits = []
-    for m in IDENT.finditer(clean):
+    for m in IDENT.finditer(code, span[0], span[1]):
         before = clean[:m.start()].rstrip()
         if before.endswith(('.', '->', '::')):continue
         if m[0] in renames or m[0] in types:
@@ -89,21 +123,19 @@ def apply(source, function, renames, comment='', types=None, header=''):
             edits.append((m.start(), m.end(), (renames | types)[m[0]]))
     for start, end, value in reversed(edits):source = source[:start]+value+source[end:]
     if comment.strip():
-        # Prefix on the first existing code line. No newline is introduced, even for debug-line-sensitive compilers.
+        # Prefix on the function's first line. No newline is introduced, even for debug-line-sensitive compilers.
         if '*/' in comment or '\n' in comment or '\r' in comment or '\\' in comment:
             raise NetworkError('Use a one-line comment without a comment terminator or backslash.')
-        source = '/* '+comment.strip()+' */ '+source
+        line = source.rfind('\n', 0, span[0])+1
+        source = source[:line]+'/* '+comment.strip()+' */ '+source[line:]
     if not edits and not comment.strip():raise NetworkError('Give local names, type aliases or a short comment to apply.')
     return source
 
 
 def signature(source, function, header=''):
     """Identical C tokens, retaining types, literals, operators and shared names; only locals and self vary."""
+    if scope(source, function) is None:return None, []
     local = locals_in(source, function, header)
-    clean = _blank(source)
-    span = find(source,function)
-    if span is None or '::' in function or re.search(r'^\s*#',clean,re.M):return None, []
-    if clean[:span[0]].strip() or clean[span[1]:].strip():return None, []
     names = {name:f'@local{i}' for i,name in enumerate(local)} | {function:'@self'}
     # Strings and chars must stay in the signature: getters of two different strings have different meanings.
     from ..forks.csource import _COMMENT_OR_STRING

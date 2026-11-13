@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 
 from ... import arch
@@ -276,8 +277,14 @@ class EditMixin:
     def rename_symbols(self, agent: Agent, project: str | None, pairs: list[tuple[str, str]], message: str = "", *, progress=None) -> str:
         """Rename several symbols at once (old -> new): the shared headers, matched sources and best attempts
         change together, after one check that every matched function still matches. One rename is the agents'
-        rename_symbol; many at once are the PS2 kernel stubs named at import (consoles/ps2/syscalls.py)."""
+        rename_symbol; many at once are the PS2 kernel stubs named at import (consoles/ps2/syscalls.py).
+        Renames in one project take turns (Engine._rename_locks)."""
         proj = self._project(project)
+        lock = self._rename_locks.setdefault(proj["id"], threading.RLock())
+        with lock:
+            return self._rename_symbols(agent, proj, pairs, message, progress=progress)
+
+    def _rename_symbols(self, agent: Agent, proj, pairs: list[tuple[str, str]], message: str = "", *, progress=None) -> str:
         pairs = [(old.strip(), new.strip()) for old, new in pairs]
         if not pairs:
             return "nothing to rename"
@@ -298,6 +305,15 @@ class EditMixin:
             if taken is not None and taken != addr:
                 raise NetworkError(f"`{new}` already names 0x{taken:08X}")
             at = self.project_store(proj["id"]).all("SELECT id, name, size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
+            # An address name (func_8008949C) still resolves once its address has a real name. Two helpers renaming
+            # one function at once both got through: the second added a second name at the address and renamed the
+            # function, leaving its matched C defining the first name, so it no longer matched.
+            # An address inside a larger data block (a 70 KB bss struct) has no name of its own yet: naming it adds
+            # one, as a save restores them; only an address that already has a name is refused.
+            current, offset = syms.name_at(addr)
+            if (old not in syms.by_name and current != old and current in syms.by_name and offset == 0
+                    and not any(r["name"] == old for r in at)):  # (an overlay twin may still go by the address name)
+                raise NetworkError(f"`{old}` is called `{current}` now: rename `{current}` if the name should change")
             renamed = [r for r in at if r["name"] == old] or (at if len(at) == 1 else [])
             if any(r["name"] == new for r in at) and not any(r["name"] == new for r in renamed):
                 # the other overlay function at this address has it: the names would collide (#117 review)
@@ -403,11 +419,11 @@ class EditMixin:
         return f"✅ renamed {len(pairs)} symbols; {len(affected)} affected matches checked; {len(rewritten)} matched sources updated, all still match."+guard_note
 
     def edit_context(self, agent: Agent, project: str | None, old: str, new: str, message: str,
-                     function: str | None = None) -> str:
+                     function: str | None = None, *, progress=None) -> str:
         self._rom_only(project, "edit_context")
         link = self._link(project)
         if link is None:
-            return super().edit_context(agent, project, old, new, message, function)
+            return super().edit_context(agent, project, old, new, message, function, progress=progress)
         text = link.call("/collab/context", agent, old=old, new=new, message=message, function=function)
         if text.startswith("✅"):
             link.sync()
@@ -456,9 +472,14 @@ class EditMixin:
 
     def set_priority(self, slug: str, name: str, on: bool = True) -> list[str]:
         """Functions the user wants done next: automatic claims take these first."""
-        fn = self._function(name, slug)
+        # Claim order is metadata, not a compilation. Let autosave publish it;
+        # a saved-code recheck must not hold the priority button for minutes.
+        with self.progress.view(), self.progress._project_lock(slug):
+            fn = self._function(name, slug)
 
-        def change(cfg):
-            items = [n for n in cfg.get("priority", []) if n != fn["name"]]
-            cfg["priority"] = ([fn["name"]] + items) if on else items
-        return self._update_cfg(slug, change)["priority"]
+            def change(cfg):
+                items = [n for n in cfg.get("priority", []) if n != fn["name"]]
+                cfg["priority"] = ([fn["name"]] + items) if on else items
+            cfg = self._update_cfg(slug, change, synchronize=False)
+            self.progress.foreground_changed(slug)
+            return cfg["priority"]

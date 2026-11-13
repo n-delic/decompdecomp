@@ -28,7 +28,7 @@ _LABEL = re.compile(r"\b(_[0-9A-F]{8})\b")
 try:
     from decompnet import toolchains
     from decompnet.compiler import run_in
-    from decompnet.project import compiler_config
+    from decompnet.project import compiler_config, compiler_for
 except ImportError:
     sys.exit("This build uses decompdecomp's pinned tools: install decompdecomp first (https://github.com/RetroReversing/decompdecomp).")
 
@@ -125,6 +125,13 @@ def trim(path: Path) -> None:
     path.write_bytes(bytes(data))
 
 
+def own_config(fn: dict, configs: dict):
+    """The compiler a function was matched with: its verified profile, its range's, or the game's (B's)."""
+    compiler = compiler_for(B, fn["addr"], {"name": fn["name"], "vram": fn["addr"]})
+    key = json.dumps(compiler, sort_keys=True)
+    return configs.get(key) or configs.setdefault(key, compiler_config(ROOT, {"compiler": compiler}))
+
+
 def build_objects() -> tuple[list[dict], dict[str, str]]:
     """Assemble every piece and compile every C function: (pieces, function name -> its C object)."""
     pieces = json.loads((ROOT / "asm" / "pieces.json").read_text(encoding="utf-8"))
@@ -134,10 +141,11 @@ def build_objects() -> tuple[list[dict], dict[str, str]]:
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists() or target.stat().st_mtime < (ROOT / p["src"]).stat().st_mtime:
             run([arm("as"), *AS_FLAGS, "-o", p["obj"], p["src"]])
-    cfg = compiler_config(ROOT, {"compiler": B["compiler"]})
+    configs = {}
     c_objs = {}
     for fn in B["functions"]:
         src = c_source(fn)
+        cfg = own_config(fn, configs)
         if not src:
             continue
         obj = f"build/{Path(src).with_suffix('.o').as_posix()}"
@@ -266,7 +274,7 @@ def check(name: str) -> bool:
     def read(addr: int, n: int) -> bytes | None:
         return image[addr - base:addr - base + n] if base <= addr and addr + n <= base + len(image) else None
 
-    cfg = compiler_config(ROOT, {"compiler": B["compiler"]})
+    cfg = own_config(fn, {})
     text = (ROOT / src).read_text(encoding="utf-8")
     m = re.match(r'\s*#include "([^"]+)"\s*\n', text)
     header = (ROOT / "include" / m.group(1)).read_text(encoding="utf-8") if m else ""

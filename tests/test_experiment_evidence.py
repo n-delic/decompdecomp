@@ -1,5 +1,7 @@
 import hashlib
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 from decompnet.app import adaptive_repairs
@@ -88,3 +90,62 @@ def test_rom_compiler_identity_still_scopes_evidence(monkeypatch):
     before=evidence.build_scope(net,proj,fn)
     identity[0]='installed-v2'
     assert evidence.build_scope(net,proj,fn) != before
+
+
+def test_parallel_output_cache_eviction_keeps_iterators_valid(monkeypatch):
+    net = SimpleNamespace()
+    entered, release, second_entering, second_inserted = (threading.Event() for _ in range(4))
+    def context(net, proj, fn):
+        if fn['id'] == 2:second_entering.set()
+        return 'build'
+    monkeypatch.setattr(evidence, 'build_scope', context)
+    class PausedEviction(dict):
+        def __iter__(self):
+            iterator = super().__iter__()
+            if threading.current_thread().name == first_thread[0]:
+                entered.set()
+                assert release.wait(5)
+            return iterator
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if key[0] == 2:second_inserted.set()
+    cache = net._repair_compile_outputs = PausedEviction({(0, 'build', str(i)): ('old', 'code') for i in range(256)})
+    first_thread = [None]
+    def measure(fid):
+        if fid == 1:first_thread[0] = threading.current_thread().name
+        source = f'int f{fid}(void) {{ return {fid}; }}'
+        owner = SimpleNamespace(net=net, _compact_trial=True)
+        def compile(*args):owner._trial_output = source;return 10
+        owner._score_work = compile
+        return evidence.measured(owner, AGENT, {}, {'id': fid, 'best_source': 'old'}, source, 40, None)
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(measure, 1)
+        try:
+            assert entered.wait(5)
+            second = pool.submit(measure, 2)
+            assert second_entering.wait(5)
+            # On the old code this inserts and evicts while the first iterator is paused.
+            # With the cache protected it waits until that eviction finishes.
+            second_inserted.wait(.2)
+        finally:release.set()
+        assert first.result(timeout=5) == second.result(timeout=5) == 10
+    assert len(cache) == 256
+    assert {key[0] for key in cache if key[0]} == {1, 2}
+
+
+def test_output_cache_does_not_serialize_compiler_trials(monkeypatch):
+    monkeypatch.setattr(evidence, 'build_scope', lambda *args: 'build')
+    net = SimpleNamespace()
+    compiling = threading.Barrier(2)
+    def measure(fid):
+        owner = SimpleNamespace(net=net, _compact_trial=True)
+        def compile(*args):
+            compiling.wait(timeout=5)
+            owner._trial_output = f'output{fid}'
+            return fid
+        owner._score_work = compile
+        return evidence.measured(owner, AGENT, {}, {'id': fid, 'best_source': 'old'}, f'new{fid}', 40, None)
+    with ThreadPoolExecutor(2) as pool:
+        futures = [pool.submit(measure, fid) for fid in (1, 2)]
+        assert [future.result(timeout=5) for future in futures] == [1, 2]
+    assert len(net._repair_compile_outputs) == 2

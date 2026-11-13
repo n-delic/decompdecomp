@@ -76,9 +76,10 @@ def evaluator(root, name, header):
             else:
                 raw = FunctionObj(name,console.arch,target.big_endian,linked.linked_code,cpu=console.cpu_variant)
                 score = 0 if linked.exact else max(1,scoring.diff(canonical,linked.candidate).score)
+                from decomprepair.repair_localisation import bind
+
                 from ..source_lines import mismatches
                 from .compiler_diagnostics import output_fingerprint
-                from .repair_localisation import bind
                 rows=scoring.diff(linked_target,raw).rows
                 from ..object_emission import inspect as emission_inventory
                 result = dict(score=score,rows=rows,matched=linked.exact,object_emission=emission_inventory(built.obj,name),

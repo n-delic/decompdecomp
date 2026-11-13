@@ -341,6 +341,24 @@
         <ol class="mini-list board" id="board"></ol>
       </section>
     </div>
+
+    <details class="panel settings-disclosure" id="portPanel">
+      <summary class="panel-head"><h2>Port readiness</h2></summary>
+      <div class="pad">
+        <p>What still stands between this game and a native PC port. Refresh only reads: nothing changes and no compiler runs.</p>
+        <p class="small muted" id="portKit"></p>
+        <div class="row"><button class="ghost small-btn" id="portReload" type="button">Refresh</button><button class="ghost small-btn" id="portDrafts" type="button" title="Write the game's data as typed C where its code says every byte's type; each definition is judged by its bytes. Local CPU, no AI tokens.">Write data as C from the code</button><button class="ghost small-btn" id="portCompile" type="button" title="Compile every function the port keeps for a 64-bit PC with a current clang, and list what it refuses. Nothing is linked or run, and the game's own build doesn't change. Local CPU, no AI tokens.">Compile for PC</button><button class="ghost small-btn" id="portAssets" type="button" title="Write the ROM's data outside its code as the kit's extractor config (Torch YAML for the N64), from ROM Explorer's scan, into the project's port/assets folder. Offsets and sizes only, no game bytes. Local CPU, no AI tokens.">Write asset map</button><button class="ghost small-btn" id="portExtract" type="button" title="Write the asset map, then run Torch on it and your own ROM: the archive a port reads, in the project's build/port folder (game data, kept out of git). Every resource is checked against the ROM's bytes. The first run builds Torch from its pinned source (a few minutes). Local CPU, no AI tokens.">Extract with Torch</button><button class="ghost small-btn" id="portRenameCalls" type="button" title="Where a function calls another by a name it had before polishing renamed it, write the name it has now. Each rewritten function must still match the console byte for byte and compile no worse for the PC. Local CPU, no AI tokens.">Fix calls by old names</button></div>
+        <pre id="portCompileLog" class="joblog" hidden></pre>
+        <pre id="portAssetsLog" class="joblog" hidden></pre>
+        <pre id="portExtractLog" class="joblog" hidden></pre>
+        <pre id="portRenameLog" class="joblog" hidden></pre>
+        <pre id="portDraftLog" class="joblog" hidden></pre>
+        <pre id="portWork" class="joblog" hidden></pre>
+        <ul class="small" id="portFacts"></ul>
+        <p id="portReady"></p>
+        <ol class="small" id="portBlockers"></ol>
+      </div>
+    </details>
   </section>
 
   <!-- functions -->
@@ -477,12 +495,13 @@
         <p id="romSummary" role="status"></p><p id="romStale" class="err-msg" hidden>The imported layout changed. Scan again before inspecting regions or saving notes.</p>
         <canvas id="romMap" class="rom-image-map" role="img" aria-label="ROM byte map. Use the region table below for keyboard access."></canvas>
         <div class="row"><span class="small muted" id="romMapRange"></span><button id="romResetZoom" type="button" class="ghost small-btn">Whole image</button></div>
-        <p class="rom-map-legend small"><span>Code</span><span>Data / strings</span><span>Format / table clues</span><span>Repeated bytes</span><span>Unknown</span></p>
-        <div id="romTypeMapPanel" hidden>
-          <h3>Regions by type</h3>
-          <p class="small muted">One box per analysed region or evidence-based group, in ROM order. Hover for details, click to inspect, or use arrow keys and Enter.</p>
+        <div id="romMapKey" hidden>
           <label class="small"><input id="romGroupAssets" type="checkbox" checked> Group regions with shared boundaries (ungroup to see individual types) <span id="romGroupCount"></span></label>
           <div id="romTypeLegend" class="rom-type-legend small"></div>
+        </div>
+        <div id="romTypeMapPanel" hidden>
+          <h3>Regions by type</h3>
+          <p class="small muted">The same regions and colours as the strip above, one box each, in ROM order. Hover for details, click to inspect, or use arrow keys and Enter.</p>
           <canvas id="romTypeMap" class="rom-type-map" tabindex="0" role="img" aria-label="ROM regions by type. Arrow keys select a region; Enter opens details. The region table below is also available." aria-describedby="romTypeStatus"></canvas>
           <p id="romTypeStatus" class="small muted" aria-live="polite"></p>
         </div>
@@ -661,6 +680,16 @@
             </div>
             <div class="transfer-summary" id="crossGameSummary"></div>
           </div>
+        </div>
+      </section>
+
+      <section class="panel" id="releasePanel" hidden>
+        <header class="panel-head"><h2>Other releases of this game <span class="disclosure-context" id="releaseContext"></span></h2><span class="transfer-local-badge">Local CPU · no AI tokens</span></header>
+        <div class="pad">
+          <p class="transfer-intro">Another region's release of this game, matched further, can give this project its function and global names, its header's types and its code: autopilot tries its matched C on each paired function first, and its polished C on functions matched here. A name, type or function's code is kept only if every matched function still matches.</p>
+          <div id="releaseBody"></div>
+          <div class="row"><button type="button" class="ghost small-btn" id="releaseScan">Compare code with my other games</button></div>
+          <pre class="joblog" id="releaseLog" hidden></pre>
         </div>
       </section>
 
@@ -974,6 +1003,7 @@
     </div>
   </details>
   <details class="panel settings-disclosure" id="matchLibraryPanel"><summary class="panel-head"><h2>Local match library <span class="disclosure-context" id="matchLibraryCount">— Loading</span></h2></summary><div class="pad"><p class="small muted">This compact index stores function fingerprints and project locations. C source and headers stay in their original projects, which must be available locally to reuse a match. Removed projects remain listed as references. New games must still pass their own byte or object verification.</p><div class="row"><label class="field grow"><span>Find a function or game</span><input id="matchLibrarySearch" type="search" placeholder="Function name or game"></label><button class="ghost small-btn" id="matchLibraryRefresh">Search</button><button class="ghost small-btn" id="matchLibraryIndex">Index existing matches</button></div><p class="small muted">Database size includes SQLite journal files. Showing up to 100 functions, most widely shared first. This library stays on this computer; no game data is uploaded.</p><div id="matchLibraryLog"></div><div id="matchLibraryItems"></div></div></details>
+  <details class="panel settings-disclosure" id="compilerServicePanel"><summary class="panel-head"><h2>Compiler services <span class="disclosure-context" id="compilerServiceContext">— Hosted projects</span></h2></summary><div class="pad" id="compilerService"><p class="small muted">Loading…</p></div></details>
   <div class="cols">
     <section class="panel"><header class="panel-head"><h2>Pair a browser worker</h2></header><div class="pad">
       <p class="muted small">Authorize one browser origin for one KMC ROM project. The browser can read function tasks and submit source for this app to recheck; it cannot run commands or use private app APIs. Access expires after one hour and is lost when this app restarts.</p>
@@ -1154,25 +1184,25 @@
   <ol class="notif-list" id="notifList"></ol>
 </section>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
-<script src="/assets/js/base.js"></script>
-<script src="/assets/js/sidebar.js"></script>
-<script src="/assets/js/home.js"></script>
-<script src="/assets/js/project.js"></script>
-<script src="/assets/js/map.js"></script>
-<script src="/assets/js/prompt-settings.js"></script>
-<script src="/assets/js/tool-catalog.js"></script>
-<script src="/assets/js/tool-settings.js"></script>
-<script src="/assets/js/agents.js"></script>
-<script src="/assets/js/focused-agents.js"></script>
-<script src="/assets/js/transcripts.js"></script>
-<script src="/assets/js/candidate-recovery.js"></script>
-<script src="/assets/js/repair-replay.js"></script>
-<script src="/assets/js/repair-feedback.js"></script>
-<script src="/assets/js/deep-progress.js"></script>
-<script src="/assets/js/deep-activity.js"></script>
-<script src="/assets/js/rewrite-performance.js"></script>
-<script src="/assets/js/source-mismatches.js"></script>
-<script src="/assets/js/function.js"></script>
+<script defer src="/assets/js/base.js"></script>
+<script defer src="/assets/js/sidebar.js"></script>
+<script defer src="/assets/js/home.js"></script>
+<script defer src="/assets/js/project.js"></script>
+<script defer src="/assets/js/map.js"></script>
+<script defer src="/assets/js/prompt-settings.js"></script>
+<script defer src="/assets/js/tool-catalog.js"></script>
+<script defer src="/assets/js/tool-settings.js"></script>
+<script defer src="/assets/js/agents.js"></script>
+<script defer src="/assets/js/focused-agents.js"></script>
+<script defer src="/assets/js/transcripts.js"></script>
+<script defer src="/assets/js/candidate-recovery.js"></script>
+<script defer src="/assets/js/repair-replay.js"></script>
+<script defer src="/assets/js/repair-feedback.js"></script>
+<script defer src="/assets/js/deep-progress.js"></script>
+<script defer src="/assets/js/deep-activity.js"></script>
+<script defer src="/assets/js/rewrite-performance.js"></script>
+<script defer src="/assets/js/source-mismatches.js"></script>
+<script defer src="/assets/js/function.js"></script>
 <template id="compilerProgressTemplate">
               <div class="compiler-queue-count"><span data-queue>Preparing eligibility checks…</span><progress data-queue-bar max="1" value="0" aria-label="Functions completed in this run"></progress></div>
               <div class="compiler-progress-heading"><span class="small muted compiler-current-label">Current function</span><b class="mono" data-current>Preparing…</b></div>
@@ -1187,26 +1217,28 @@
               <p class="small muted compiler-single-exact"><b data-single-exact>0</b> exact compiler/flag matches found</p>
               <p class="small muted compiler-progress-profile" data-profile>Comparing the saved C. Compiler settings stay unchanged.</p>
 </template>
-<script src="/assets/js/compiler-progress.js"></script>
-<script src="/assets/js/compiler-groups.js"></script>
-<script src="/assets/js/code-audit.js"></script>
-<script src="/assets/js/rom-audio.js"></script>
-<script src="/assets/js/rom-audio-browser.js"></script>
-<script src="/assets/js/rom-model-browser.js"></script>
-<script src="/assets/js/rom-assets.js"></script>
-<script src="/assets/js/rom-discovery.js"></script>
-<script src="/assets/js/rom-textures.js"></script>
-<script src="/assets/js/rom-explorer.js"></script>
-<script src="/assets/js/asset-agents.js"></script>
-<script src="/assets/js/boundary-repairs.js"></script>
-<script src="/assets/js/repository-setup.js"></script>
-<script src="/assets/js/repository-push.js"></script>
-<script src="/assets/js/steering.js"></script>
-<script src="/assets/js/background-work.js"></script>
-<script src="/assets/js/data-directories.js"></script>
-<script src="/assets/js/pages.js"></script>
-<script src="/assets/js/database-cleanup.js"></script>
-<script src="/assets/js/header-storage.js"></script>
-<script src="/assets/js/pwa.js"></script>
+<script defer src="/assets/js/compiler-progress.js"></script>
+<script defer src="/assets/js/compiler-groups.js"></script>
+<script defer src="/assets/js/code-audit.js"></script>
+<script defer src="/assets/js/rom-audio.js"></script>
+<script defer src="/assets/js/rom-audio-browser.js"></script>
+<script defer src="/assets/js/rom-model-browser.js"></script>
+<script defer src="/assets/js/rom-assets.js"></script>
+<script defer src="/assets/js/rom-discovery.js"></script>
+<script defer src="/assets/js/rom-textures.js"></script>
+<script defer src="/assets/js/rom-explorer.js"></script>
+<script defer src="/assets/js/asset-agents.js"></script>
+<script defer src="/assets/js/port.js"></script>
+<script defer src="/assets/js/boundary-repairs.js"></script>
+<script defer src="/assets/js/repository-setup.js"></script>
+<script defer src="/assets/js/repository-push.js"></script>
+<script defer src="/assets/js/steering.js"></script>
+<script defer src="/assets/js/background-work.js"></script>
+<script defer src="/assets/js/data-directories.js"></script>
+<script defer src="/assets/js/compiler-service.js"></script>
+<script defer src="/assets/js/pages.js"></script>
+<script defer src="/assets/js/database-cleanup.js"></script>
+<script defer src="/assets/js/header-storage.js"></script>
+<script defer src="/assets/js/pwa.js"></script>
 </body>
 </html>

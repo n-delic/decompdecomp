@@ -1,6 +1,7 @@
 import pytest
 
-from decompnet.app import draft_repairs, local_experiments, local_width_repairs
+from decompnet.app import draft_repairs, local_experiments
+from decomprepair import local_width_repairs
 
 SOURCE = 'void f(unsigned int bits) { do { unsigned int value; value = bits & 15; store((signed char)value); } while (0); }'
 

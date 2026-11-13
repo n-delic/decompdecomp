@@ -4,7 +4,8 @@ import json
 import pytest
 
 from decompnet import m2cfix
-from decompnet.app import agent_tokens, draft_repairs, expression_locals, loop_repairs, pattern_repairs, tools
+from decompnet.app import agent_tokens, draft_repairs, tools
+from decomprepair import expression_locals, loop_repairs, pattern_repairs
 from tests.test_claims import _game
 
 

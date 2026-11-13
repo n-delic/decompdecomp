@@ -58,7 +58,7 @@ def brief(net, proj, fn):
                      "produced the same measured function fingerprint. Try a different repair shape; "
                      "this does not prove those families exhausted or validate linked data.")
     if current and source and permuter_focus.scheduling_only(current['rows']):
-        from .call_preparation_repairs import explanation
+        from decomprepair.call_preparation_repairs import explanation
         header = (net._context(proj['id'],fn['unit']) or {'header':''})['header']
         if clue := explanation(source,fn['name'],header,proj['arch']):lines.append(clue)
     if current and permuter_focus.scheduling_only(current['rows']):
@@ -72,7 +72,8 @@ def brief(net, proj, fn):
         if clues:lines.append(clues)
         if clue:=frame_plateau.brief(source,fn['name'],(net._context(proj['id'],fn['unit']) or {'header':''})['header'],current['rows'],proj['arch']):lines.append(clue)
         if allocation_evidence.diagnose(current['rows'],proj['arch'])['register_only']:
-            from .copy_lifetime_repairs import hint
+            from decomprepair.copy_lifetime_repairs import hint
+
             from .scratch_role_repairs import brief as scratch_brief
             scratch_hint = scratch_brief(source,fn['name'],(net._context(proj['id'],fn['unit']) or {'header':''})['header'],proj['arch'],current['rows'])
             if scratch_hint:lines.append(scratch_hint)
@@ -86,7 +87,7 @@ def brief(net, proj, fn):
         if region := region_repairs.summary(current['rows'],proj['arch']):lines.append(region)
         if current.get('regional_progress'):lines.append(current['regional_progress'])
         plan=allocation_evidence.plan(current['rows'],proj['arch'])
-        from .copy_lifetime_repairs import FAMILIES, variants
+        from decomprepair.copy_lifetime_repairs import FAMILIES, variants
         applicable = {family for family, _ in variants(source,fn['name'])}
         from . import parameter_carriers
         has_carriers=bool(parameter_carriers.variants(source,fn['name'],(net._context(proj['id'],fn['unit']) or {'header':''})['header'],proj['arch']))

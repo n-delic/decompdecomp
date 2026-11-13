@@ -3,7 +3,8 @@ import json
 import pytest
 
 from decompnet.app import iterative_repairs as search
-from decompnet.app import operand_focus, repair_benchmark, repair_selection
+from decompnet.app import repair_benchmark, repair_selection
+from decomprepair import operand_focus
 
 
 def test_pages_resume_after_json_roundtrip_and_reset_for_a_changed_pool():
@@ -78,7 +79,7 @@ def test_complementary_families_precede_unrelated_trials():
 
 
 def test_focused_operand_clusters_keep_whole_function_alternatives():
-    from decompnet.app import affine_operand_repairs
+    from decomprepair import affine_operand_repairs
     source='''void f(char *p, char *a, char *b) {
  int scratch; int old;
  *((short *)(p+24)) = *((short *)(a+24)) - *((short *)(b+24));

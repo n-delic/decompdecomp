@@ -103,10 +103,10 @@ def test_silent_imported_build_times_out_while_reading_stdout(tmp_path, monkeypa
 
 def test_cancelled_compiler_closes_pipes_even_while_exception_is_retained(tmp_path,monkeypatch):
     from decompnet import compiler
-    popen=subprocess.Popen;processes=[]
+    popen=compiler.spawner.Popen;processes=[]
     def start(*args,**kwargs):
         proc=popen(*args,**kwargs);processes.append(proc);return proc
-    monkeypatch.setattr(compiler.subprocess,'Popen',start)
+    monkeypatch.setattr(compiler.spawner,'Popen',start)
     def cancel():raise RuntimeError('cancelled')
     with compiler.cancellable(cancel), pytest.raises(RuntimeError,match='cancelled'):
         compiler._exec(compiler.CompilerConfig(cmd=[],sandbox='none'),tmp_path,
@@ -126,10 +126,10 @@ def test_denied_group_cleanup_preserves_cancellation_closes_pipes_and_unregister
     from decompnet import compiler, compiler_processes
     from decompnet.app.deep_permuter import SearchLimit
     processes=[]
-    popen=subprocess.Popen
+    popen=compiler.spawner.Popen
     def start(*args,**kwargs):
         proc=popen(*args,**kwargs);processes.append(proc);return proc
-    monkeypatch.setattr(compiler.subprocess,'Popen',start)
+    monkeypatch.setattr(compiler.spawner,'Popen',start)
     def deny_group(pid,sig):raise PermissionError(errno.EPERM,'Synthetic signal permission denied')
     monkeypatch.setattr(compiler.os,'killpg',deny_group)
     removed=[]

@@ -281,3 +281,56 @@ def test_query_reader_still_closes_at_normal_worker_teardown(tmp_path):
             connections[0].execute('SELECT 1')
     finally:
         store.conn.close()
+
+
+def test_threads_that_come_and_go_reuse_a_few_warm_readers(tmp_path):
+    from decompnet import store as store_module
+    store = Store(tmp_path/'pool.db')
+    seen = set()
+    def read():
+        assert store.one('SELECT 1 AS n')['n'] == 1
+        seen.add(id(store._readers[-1].conn))
+    try:
+        for _ in range(20):
+            with ThreadPoolExecutor(1) as pool:pool.submit(read).result(timeout=3)
+        assert len(seen) == 1 and len(store._readers) == 1
+        # Many readers at once: the busy moment's extra connections close again.
+        gate = threading.Barrier(store_module.READERS_KEPT + 4)
+        def together():
+            conn = store._reader()
+            gate.wait(timeout=3)
+            store._release_reader()
+            return conn
+        with ThreadPoolExecutor(store_module.READERS_KEPT + 4) as pool:
+            borrowed = list(pool.map(lambda _:together(), range(store_module.READERS_KEPT + 4)))
+        assert len({id(c) for c in borrowed}) == store_module.READERS_KEPT + 4
+        assert len(store._readers) == store_module.READERS_KEPT
+        with store.tx() as db:assert store._reader() is None and db is store.conn
+    finally:
+        store.close_readers()
+        store.conn.close()
+
+
+def test_queued_writers_wait_in_the_process_without_polling_the_file_lock(tmp_path, monkeypatch):
+    import fcntl
+
+    from decompnet import writer_gate
+    gate, other = writer_gate.WriterGate(tmp_path/'app.db'), writer_gate.WriterGate(tmp_path/'app.db')
+    polls, waits, done = [], [], []
+    real = fcntl.flock
+    monkeypatch.setattr(fcntl, 'flock', lambda fd, op: polls.append(op) or real(fd, op))
+    def write(n):
+        with other.hold(wait=lambda: waits.append(n)) as admitted:
+            done.append((n, admitted))
+    with gate.hold():
+        polls.clear()
+        writers = [threading.Thread(target=write, args=(n,)) for n in range(3)]
+        for writer in writers:writer.start()
+        time.sleep(.3)
+        assert polls == [] and waits and not done
+        result = []
+        threading.Thread(target=lambda: result.append(other.hold(blocking=False).__enter__())).start()
+        time.sleep(.1)
+        assert result == [False]
+    for writer in writers:writer.join(timeout=3)
+    assert sorted(done) == [(0, True), (1, True), (2, True)]

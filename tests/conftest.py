@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -22,6 +23,9 @@ os.environ["DECOMP_HOME"] = tempfile.mkdtemp(prefix="decomp-tests-")
 os.environ["DECOMP_DETECT_AGENTS"] = "off"
 # nothing a test runs opens a window on the user's screen (app/window.py), a browser tab (webbrowser), or a tray icon
 os.environ["DECOMP_WINDOW"] = "0"
+# helpers connect to the app itself; tests/test_mcp_gateway.py starts the gateway by hand
+os.environ["DECOMP_MCP_GATEWAY"] = "0"
+os.environ["DECOMP_RENDER_WORKERS"] = "0"  # progress renders in this process, except tests/test_render_worker.py
 os.environ.setdefault("BROWSER", "true")
 os.environ.setdefault("DECOMP_TRAY", "0")
 # nor the wine prefix the user's app runs Visual C++ 2017 in (toolchains/.wine, a development copy's .wine-dev: #146):
@@ -43,6 +47,40 @@ def pytest_sessionfinish(session, exitstatus):
 
         wine.stop(Path(WINE_PREFIX))
         shutil.rmtree(WINE_PREFIX, ignore_errors=True)
+
+
+def _shared_build_modules():
+    """Test modules that build into the shared, gitignored projects/<demo>/build/ folder.
+
+    Every xdist worker uses the same checkout, and different modules build the same demo
+    with different compilers. Detecting them from the source keeps the list honest as
+    modules are added; a false positive only costs a little parallelism.
+    """
+    hint = re.compile(r"\bbuild\.py\b|test_rom import built")
+    folder = Path(__file__).parent
+    return {p.name for p in folder.glob("test_*.py")
+            if hint.search(p.read_text(encoding="utf-8", errors="replace"))}
+
+
+def pytest_xdist_make_scheduler(config, log):
+    """Keep the demo-building modules on one worker; run everything else in parallel.
+
+    Without this, two workers can build the same demo at the same time and read each
+    other's output. The shared modules become one loadscope work unit, so they stay
+    serial relative to each other while the rest of the suite spreads across workers.
+    """
+    from xdist.scheduler.loadscope import LoadScopeScheduling
+
+    shared = _shared_build_modules()
+
+    class SharedBuildScheduling(LoadScopeScheduling):
+        def _split_scope(self, nodeid):
+            module = nodeid.replace("\\", "/").split("::", 1)[0].rsplit("/", 1)[-1]
+            if module in shared:
+                return "shared-demo-builds"
+            return super()._split_scope(nodeid)
+
+    return SharedBuildScheduling(config, log)
 
 
 import pytest  # noqa: E402

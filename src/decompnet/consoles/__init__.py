@@ -54,6 +54,29 @@ class Compiler:
     automatic: bool = True  # routine comparisons; experimental profiles remain available by explicit selection
 
 
+@dataclass(frozen=True)
+class PortKit:
+    """The library a finished game of a console is ported to a PC with (docs/PORTING.md): libultraship and Torch
+    for the N64. What the port readiness report asks of it; a console with no kit has `port_kit = None`."""
+    name: str  # "libultraship and Torch"
+    summary: str  # one sentence on what it gives a port
+    sdk_group: object  # function name -> "replaced" (the kit or the host has it), "native" (compiles as is), "glue"
+    # (console plumbing the kit lacks: the port's own glue supplies it) or None (the game's own)
+    microcode: object = None  # the image's bytes -> [{"name", "variant", "version", "support"}], or None
+    audio: object = None  # the game's function names -> {"library", "need"}, or None
+    asset_map: object = None  # (game facts, resources from port/asset_map.py) -> {file name: text}, or None
+    boot: int = 0  # bytes at the image's start that the console's boot reads, never the game: in no resource
+    extract: object = None  # (asset map folder, image, output folder, log) -> the archive the extractor wrote
+    resources: object = None  # archive -> {resource name: the bytes it holds}, for checking each against the image
+    boot_globals: object = None  # project config -> {address: (libultra name, C type, size, value)}: what the
+    # console's boot leaves in low memory, which a port defines with those values
+    coprocessor_boot: bytes = b""  # how the coprocessor's boot microcode begins in a ROM (the N64's rspboot): it and
+    # the microcode after it are data the C only points at, which a port's renderer replaces: a placeholder
+    wasm: object = None  # the WebAssembly build's console part (port/wasm/): a folder with host.c, the host that
+    # runs the game's translated C (threads, DMA, the hardware's registers), and the library's prototypes
+    # (libultra.sigs: each a name, a return type and parameter types, tab-separated); None: no such build yet
+
+
 class Console:
     """One console: the facts below, and the parts the app calls. A part a console doesn't need keeps the default
     here, which does nothing or says the console can't do it."""
@@ -101,6 +124,7 @@ class Console:
     demo = ""  # its homemade demo game: a folder in projects/ whose build.py makes it (tests/test_consoles.py)
     demo_tools: tuple[str, ...] = ()  # what building and importing the demo needs: toolchains, or programs on PATH
     own_features: frozenset[str] = frozenset()  # EXPORT, REBUILD_CHECK
+    port_kit: PortKit | None = None  # what a finished game is ported with (docs/PORTING.md); None: no kit yet
     # PROJECT mode: its import recognises code that isn't the game's own (library code, an SDK, the C runtime) and
     # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
     sets_aside = False
@@ -405,6 +429,11 @@ class Console:
         """Which game a file is (a sha1), when that isn't the file's own bytes: rooms check members have the same."""
         return None
 
+    def release_key(self, rom: dict) -> str | None:
+        """What every release (region) of one game shares and other games don't, from its imported `rom` facts,
+        or None where nothing does (app/regional.py then compares the games' code)."""
+        return None
+
     def library_candidate(self, path: Path, size: int) -> bool:
         """Whether a library file is plausible before the search hashes its contents."""
         return True
@@ -556,6 +585,11 @@ class Console:
         """The struct layouts guessed from a project's code (structs.Structs, with the names agents know its
         functions by in `labels` and `symbols`), for guess_struct and briefs; None where it reads none (PC: the
         program's functions by its processor's Arch.field_accesses, consoles/pc/rtti.py)."""
+        return None
+
+    def bss_start(self, image: bytes) -> int | None:
+        """Where the program's .bss starts in RAM, read from its own code (the N64's boot stub clears it), or None.
+        Initialised data runs from the end of a code segment's text up to it (app/data_units.py)."""
         return None
 
     # for agents

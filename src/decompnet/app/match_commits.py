@@ -10,13 +10,47 @@ import uuid
 
 from ..network import NetworkError
 from ..project import function_compiler_key
-from . import match_commit_notes, repository_git, repository_operations, repository_progress, repository_sync, saves
+from . import (
+    match_commit_notes,
+    repository_git,
+    repository_operations,
+    repository_progress,
+    repository_setup,
+    repository_sync,
+    saves,
+)
 
 log = logging.getLogger('decompdecomp')
 
 
 def layout_shape(manifest):
     return {(entry['name'], entry['vram'], entry['size']) for entry in manifest['layout']}
+
+
+class LayoutChanged(NetworkError):
+    """The last checkpoint's functions differ from the project's. `renamed` holds (old, new) pairs when every
+    function kept its address and size, so only names moved: polishing or another release's names."""
+
+    def __init__(self, message, renamed=()):
+        super().__init__(message)
+        self.renamed = list(renamed)
+
+
+def layout_change(base, current, then):
+    """Say what changed since the checkpoint, so the user knows why commits wait and what to do: polishing renamed
+    a thousand functions of a finished game and its three queued matches waited with no reason given."""
+    before = {(entry['vram'], entry['size']): entry['name'] for entry in base['layout']}
+    after = {(entry['vram'], entry['size']): entry['name'] for entry in current['layout']}
+    if before.keys() == after.keys():
+        renamed = sorted((before[key], after[key]) for key in before if before[key] != after[key])
+        shown = ', '.join(f'{old} → {new}' for old, new in renamed[:3]) + (f' and {len(renamed)-3:,} more' if len(renamed) > 3 else '')
+        word = 'function was' if len(renamed) == 1 else 'functions were'
+        return LayoutChanged(f'{len(renamed):,} {word} renamed since the last progress checkpoint ({shown}). '
+                             f'Commit saved progress to save the new names, {then}.', renamed)
+    moved = sorted({after[key] for key in after.keys() - before.keys()} | {before[key] for key in before.keys() - after.keys()})
+    shown = ', '.join(moved[:3]) + (f' and {len(moved)-3:,} more' if len(moved) > 3 else '')
+    return LayoutChanged(f'Functions were split, joined or resized since the last progress checkpoint ({shown}). '
+                         f'Commit saved progress to save the new layout, {then}.')
 
 
 def status(net, proj):
@@ -59,7 +93,7 @@ def checkout_settings(net, slug, folder):
     base = json.loads(repository_git.git(root, 'show', 'HEAD:' + relative.as_posix()))
     current = json.loads((folder/saves.MANIFEST).read_text(encoding='utf-8'))
     if layout_shape(base) != layout_shape(current):
-        raise NetworkError('Commit current progress once to save its function layout, then enable automatic progress commits.')
+        raise layout_change(base, current, 'then enable automatic commits')
     return root, branch
 
 
@@ -135,8 +169,10 @@ def scoped_snapshot(net, proj, root, job, output):
     if fn is None or fn['status'] != 'matched':
         raise NetworkError('The queued function no longer matches. Review it before retrying automatic commits.')
     name = fn['name']
-    if layout_shape(base) != layout_shape(current) or base.get('game', {}).get('sha1') != current.get('game', {}).get('sha1'):
-        raise NetworkError('Save a manual progress checkpoint after layout or game changes, then retry automatic commits.')
+    if base.get('game', {}).get('sha1') != current.get('game', {}).get('sha1'):
+        raise NetworkError('The last progress checkpoint is of another game. Commit saved progress once, and queued commits continue.')
+    if layout_shape(base) != layout_shape(current):
+        raise layout_change(base, current, 'and queued commits continue')
     captured = json.loads(job['snapshot'])
     bundle = captured['details']
     info = captured['info']
@@ -229,7 +265,18 @@ def process(net, slug, output=log.info):
                         log('Discarded an obsolete automatic match commit after its verdict changed.')
                         continue
                     log('Preparing saved files for '+json.loads(job['snapshot'])['name']+'…')
-                    files, paths, head = scoped_snapshot(net, proj, root, job, log)
+                    try:
+                        files, paths, head = scoped_snapshot(net, proj, root, job, log)
+                    except LayoutChanged as changed:
+                        if not changed.renamed:
+                            raise
+                        # Only names moved, through checked renames: every match still verifies, so the commits
+                        # save the checkpoint they need themselves, then commit this function on top of it.
+                        count = len(changed.renamed)
+                        log(f'Saving a progress checkpoint with {count:,} renamed functions…')
+                        repository_setup.checkpoint(net, slug, root, saves.default_folder(net, slug).resolve(), log,
+                                                    message=f'Save {count:,} renamed function{"s" * (count != 1)}')
+                        files, paths, head = scoped_snapshot(net, proj, root, job, log)
                     # Disabling or moving the checkout cancels publication too.
                     fresh = store.one('SELECT * FROM projects WHERE id=?', proj['id'])
                     fresh_cfg = net.cfg(fresh) if fresh else {}

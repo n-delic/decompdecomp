@@ -115,8 +115,9 @@ def chunk(search, agent, proj, fn, sources, fork):
     if (pool is None or fork or not hasattr(search.net, 'compiled_ahead')
             or len(getattr(search, 'compiler_profiles', [])) > 1):
         yield;return
+    from decomprepair.repair_preflight import invalid_call
+
     from . import random_safety
-    from .repair_preflight import invalid_call
     header = search.net._context(proj['id'], fn['unit'])['header']
     tickets = {}
     def check():

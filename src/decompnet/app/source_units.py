@@ -12,7 +12,8 @@ MAX_UNLOCATED_SOURCE = 512
 
 def variants(reader, cfg, mapping, aliases, source, header):
     """Same authorized file/revision, actual call neighbours or up to three predecessors."""
-    from .pattern_repairs import close
+    from decomprepair.pattern_repairs import close
+
     from .source_conditions import select
     from .source_match_context import macro_context
     from .source_preparation import mappings, rename

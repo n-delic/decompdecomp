@@ -10,6 +10,8 @@ NO_PROGRESS_SESSIONS = 3
 
 def account_key(session):
     # CLI helpers share their connector's local sign-in. API helpers share only a credential/endpoint pair.
+    # A connector whose models belong to separate sign-ins (opencode's providers, each with its own
+    # allowance) adds its own scope, so a limit on one account or model never pauses the others.
     # Persist no credential or account identifier in settings keys or messages.
     from .. import agents
     kind = agents.get(session.kind)
@@ -17,6 +19,7 @@ def account_key(session):
     if kind.uses_endpoints:
         scope += [session.options.get('base_url') or session.options.get('url') or session.options.get('endpoint') or '',
                   session.options.get('api_key') or '']
+    scope.extend(kind.limit_scope(session.model))
     return 'agent-account-cooldown:' + hashlib.sha256(json.dumps(scope).encode()).hexdigest()
 
 

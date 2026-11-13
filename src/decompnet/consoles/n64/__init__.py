@@ -13,6 +13,7 @@
 - loader_mapping.py: bank mappings corroborated by constant arguments to independent loader helpers.
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
+- port.py: its port kit, libultraship and Torch: what they replace and which graphics microcode they render.
 - guides/: what agents read about the N64 (n64.md) and its compilers (gcc-kmc.md, ido.md, sn64.md).
 
 Its demo game is projects/demo-rom (the Demo Quest game in projects/demo-n64/original, built with KMC GCC).
@@ -25,6 +26,7 @@ from pathlib import Path
 
 from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
+from .port import KIT as PORT_KIT
 
 
 class Nintendo64(Console):
@@ -70,6 +72,7 @@ class Nintendo64(Console):
     demo = "demo-rom"
     demo_tools = ("gcc-2.7.2-kmc", "binutils-mips", "ld.lld", "llvm-objcopy")
     own_features = frozenset({EXPORT})
+    port_kit = PORT_KIT
     as_flags = ("-EB", "-march=vr4300", "-mabi=32")
     reference_tools = ("binutils-mips", "mips-ps2-decompals-as", "mips-ps2-decompals-ld")
     image_ext = ".z64"
@@ -91,10 +94,20 @@ class Nintendo64(Console):
         from .textures import decode
         return decode(data)
 
+    def bss_start(self, image: bytes) -> int | None:
+        from .rom import bss_start
+
+        return bss_start(image)
+
     def sniff(self, head: bytes, file) -> bool:
         from .rom import MAGIC
 
         return head[:4] in MAGIC
+
+    def release_key(self, rom: dict) -> str | None:
+        # A game code is a media letter, the game's two letters and its region's (NVLP and NVLE: one game).
+        code = rom.get("game_code") or ""
+        return code[:3] if len(code) == 4 and code[:3].isalnum() and code[1:3] != "00" else None
 
     def identity(self, path: Path) -> str | None:
         from .rom import z64_file_sha1

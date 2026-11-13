@@ -106,7 +106,7 @@ def merge_records(source, header, verified):
     result = header
     # Locate whole typedefs using their token-normalized spelling, without reformatting others.
     for name in sorted(names):
-        from .pattern_repairs import close
+        from decomprepair.pattern_repairs import close
         clean=_blank(result);hits=[]
         for match in re.finditer(r'\btypedef\s+(?:struct|union)(?:\s+'+ID+r')?\s*\{',clean):
             end=close(clean,match.end()-1,'{','}')

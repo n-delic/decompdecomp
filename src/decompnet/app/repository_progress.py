@@ -24,8 +24,9 @@ def linked_checkout(net, slug, root):
     return folder.is_relative_to(root) and (folder / saves.MANIFEST).is_file()
 
 
-def owned(manifest):
-    """Only manifest-listed C, headers and portable metadata belong to a progress checkpoint."""
+def owned(manifest, folder=None):
+    """Only manifest-listed C, headers and portable metadata belong to a progress checkpoint, and the data's C its
+    index lists (app/data_saves.py) when `folder` is given."""
     if (not isinstance(manifest, dict) or not isinstance(manifest.get('functions'), dict)
             or not isinstance(manifest.get('headers'), dict)
             or any(not isinstance(name, str) or not isinstance(value, dict)
@@ -36,7 +37,15 @@ def owned(manifest):
     paths.update(('src/' if 'matched_by' in value else 'best/') + name + '.c'
                  for name, value in manifest['functions'].items())
     paths.update('include/' + name for name in manifest['headers'].values())
+    if folder is not None:
+        from . import data_saves
+        paths |= data_saves.owned(Path(folder))
     return paths
+
+
+def data_saves_owned(folder):
+    from . import data_saves
+    return data_saves.owned(Path(folder))
 
 
 def recover_missing_sources(net, slug, folder, manifest, missing, log):
@@ -100,6 +109,9 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
             if (folder/name).is_file():
                 files[name] = (folder/name).read_bytes().decode('utf-8')
         missing = owned(manifest) - files.keys()
+        for name in data_saves_owned(folder):
+            if (folder / name).is_file():
+                files[name] = (folder / name).read_text(encoding='utf-8')
         if missing:
             if recover and recover_missing_sources(net, slug, folder, manifest, missing, log):
                 return snapshot(net, slug, root, log, recover=False, allow_unrelated_edits=allow_unrelated_edits)
@@ -109,7 +121,7 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
                                'Restore these files from Git or save a recovered copy of the project, then retry.')
         prefix = folder.relative_to(root).as_posix()
         prefix = '' if prefix == '.' else prefix + '/'
-        paths = {prefix + name for name in owned(manifest)}
+        paths = {prefix + name for name in owned(manifest, folder)}
         tracked = repository_sync.git(root, 'ls-files', '-z').decode().split('\0')
         if prefix + saves.MANIFEST in tracked:
             previous = json.loads(repository_sync.git(root, 'show', 'HEAD:' + prefix + saves.MANIFEST))

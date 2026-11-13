@@ -96,6 +96,9 @@ class RepairFeedback:
         if root is None:
             self._lock = threading.RLock()
             self._services = {net.store:self}
+        from . import store as storage
+        if storage.ATTACH_ONLY:
+            return  # a reader process (app/tool_reader.py): the app makes and upgrades these tables
         with self.store.tx() as db:
             for statement in SCHEMA:
                 db.execute(statement)

@@ -2,11 +2,12 @@
 import json
 import re
 
+from decomprepair import integer_abi
+from decomprepair.pattern_repairs import close
+
 from .. import arch as architectures
 from ..forks.csource import _blank
 from ..network import NetworkError
-from . import integer_abi
-from .pattern_repairs import close
 from .source_next_steps import signatures
 
 

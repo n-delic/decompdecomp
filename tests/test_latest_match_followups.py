@@ -1,9 +1,9 @@
 """Small source hypotheses and reference diagnostics never change the accepted-match rules."""
 import pytest
 
-from decompnet.app.match_followup_repairs import variants
 from decompnet.app.source_match_context import aggregate_hints, dependencies, macro_context
 from decompnet.network import NetworkError
+from decomprepair.match_followup_repairs import variants
 
 
 def test_zero_test_can_use_an_unused_same_width_signed_local():

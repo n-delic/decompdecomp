@@ -96,6 +96,13 @@
   use existing background source-restoration locks. Hosts accept legacy permutation
   claim/release requests without leases, and startup clears only legacy permutation claims.
 
+- Done: N64 imports recover a whole gap between two code segments that share a mapping
+  when the game's data stores the gap's start as a pointer and the gap is one balanced
+  frame (a racing game's command handlers, 3.5 and 8 KB, called only through a table).
+  A switch's cases are followed through its table in the data splat's config maps.
+  Planned: the same pointer evidence for raw text inside a segment
+  (`rom/mixed_code.py`, every MIPS console), which still needs a call.
+
 - Done: N64 imports scan all unowned intervals in corroborated loader banks,
   following newly recovered calls and materialized callback addresses to completion.
   Quiet balanced frames need adjacency or independently corroborated callees and
@@ -767,6 +774,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | ✓ symbol table, DWARF 1 | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
+| Other releases of a game: found, paired, names, header types and code brought over | ✓ | — not yet run | — not yet run | — not yet run | — object pairing planned | — object pairing planned | — object pairing planned | — object pairing planned |
 | Automatic attempts from similar verified C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | — | — |
 | Bounded automatic reuse, tiny templates and local SDK C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -778,6 +786,14 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
+| Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
+| The game's C compiled for a PC (Port readiness → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| The ROM's data as the kit's extractor config (Port readiness → Write asset map, docs/PORTING.md phase 2) | ✓ (Torch YAML, one BLOB per resource; typed textures and display lists not yet) |
+| The ROM's data extracted and checked (Port readiness → Extract with Torch) | ✓ macOS and Linux (Torch built from pinned source with pinned CMake); — Windows: Torch's MSVC build isn't driven yet | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| What stops the C linking for a PC (Port readiness, from Compile for PC's objects, docs/PORTING.md phase 3) | ✓ (undefined and twice-defined symbols, sorted by what fixes each; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| Port fixes judged twice (Start agents → Fix C for the PC, `fix_for_pc`, docs/PORTING.md phase 4) | ✓ (console match by the function judge, PC build by the pinned Zig's clang) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | ✓ | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned | — own checkout UI planned |
 | Create full verified rebuildable repository with nested app progress | ✓ | ✓ | ✓ | ✓ | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned | — source checkout setup planned |
@@ -957,6 +973,257 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### A finished game runs as a WebAssembly build
+
+`python -m decompnet.port.wasm SAVE` (`src/decompnet/port/wasm/`) builds a finished N64 game from its save
+repository: the matched C goes to WebAssembly by the pinned Zig, then back to C by the pinned wasm2c (WABT 1.0.42),
+and is built with a host (`consoles/n64/port_wasm/host.c`, `PortKit.wasm`). The game runs in a memory laid out as
+the console's: data at the N64's addresses, big-endian, copied from the user's own ROM at start. So the C needs no
+64-bit fixes, and data the ROM holds doesn't have to be in C first.
+
+The host does libultra's work: the game's threads one at a time by priority, with preemption when a woken thread
+outranks the one running; message queues; cartridge DMA; the VI retrace; and the RSP's status register. A racing
+game of 2,125 functions runs its main loop: 740 graphics and 297 audio tasks and 149 frame swaps in 6 seconds.
+
+The game's save repository holds what only the port needs (`port/wasm/`): matched C it leaves out, C only the port
+has, and the port's version of a matched file. The build goes to `port/wasm/build/`, which git ignores.
+
+Left:
+- the renderer (`consoles/n64/port_wasm/render.c`, a software RSP and RDP into the game's own frame buffer) draws
+  the racing game's opening and title screens, its language menu (3D flags, menu text) and the Rumble Pak prompt,
+  reached with scripted input (`PORT_INPUT`). Why its 4-bit text needs its texture coordinates halved is still to
+  be confirmed. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
+  credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
+  with the keyboard and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
+  saves other games use, a native window and pads, the
+  sound's effects filter, and the live view on Windows;
+- the judge to compare a switch's jump table too: it compares code, and the table is data, so a matched function
+  can keep wrong case labels (19 of a racing game's 29 did; the port has overrides for them);
+- the overrides moved into the matched C behind `#ifdef PORT` through Fix C for the PC;
+- Play in the GUI;
+- the console's other connector parts for PS1 and the rest: "—" until a host exists.
+
+### The repair library stands on its own
+
+It now lives in its own public repository, RetroReversing/decomp-repair (v0.1.0, history kept), which decompdecomp
+pins by tag.
+
+The repair families that only read a function's C and code (127 of them, with their readers: 161 modules) moved
+from `app/` into `src/decomprepair/`, a library that imports nothing from decompdecomp
+(`tests/test_decomprepair.py` checks it). It only proposes C; compiling and judging stay in the app. The 36
+families that drive work through the network, a project or the ranking stay in `app/` and call it.
+`decomprepair.propose.propose(source, name, ...)` runs every family with the inputs it asks for and times each one;
+`python -m decomprepair FILE.c --function NAME` writes the proposals for any compiler, objdiff or the permuter.
+Measured on three test functions: proposing takes 10-130 ms, about 1% of a run with KMC GCC (300-450 ms a compile)
+and 5-10% with IDO 7.1 (about 40 ms), spread over 119 families with none above 9 ms: no case for rewriting it in
+another language.
+
+### Microcode and wrong base symbols put right for a port
+
+Of the last data a finished N64 game's link check listed, two were the RSP's microcode (rspboot, 208 bytes, and the
+text after it), which the game only points at when it builds a task: Compile for PC now gives each zeroed room of
+its size in its order (`rsp_placeholders.S`), so `ucode_boot_size = D_80001DE0 - D_80001D10` still holds; a symbol
+counts only when its ROM bytes begin with libultra's rspboot (`PortKit.coprocessor_boot`), or it starts where such
+one ends. Two more were base symbols the decompiler chose wrongly, labels inside code used as `(u8 *)&D_x + 0x58F4`
+to reach a variable: **Fix calls by old names** now also rewrites each such use to the variable at that address (a
+place inside one keeps its offset), judged on the console and the PC like the renamed calls. The same pass takes `static` off a function its own C keeps file-local
+while another function calls it (libultra's `_decodeChunk`), and every rewrite now changes code only: an earlier one
+rewrote a comment that described the old expression. Left: the last two,
+functions in stretches of the ROM the split took for data (new-function adoption, above).
+
+### ROM offsets and the boot's values defined for an N64 port
+
+Two kinds of symbol a finished game's C reaches are neither code nor data: names the original linker gave
+positions in the cartridge (a finished N64 game passes `D_15DB10`, where its ZIP archive starts, to its DMA reads),
+and what the N64's boot leaves at 0x80000300 for libultra (TV type, ROM base, memory size, the buffer kept over a
+reset). Compile for PC now defines both (`port/fixed_symbols.py`, the N64 kit's `boot_globals`): ROM offsets as
+symbols at those addresses in an assembly file (`.set`, which links on macOS and Linux alike, checked by linking and
+running one), and the boot's values with libultra's types and the values the boot would leave (PAL, NTSC or MPAL
+from the game code's country, a cartridge, a cold boot, 4 MB). Both go in the project's `port/src`, and the link
+check counts them as defined. Left: the port's DMA glue reading those offsets from the user's ROM; symbols at a
+segment's end (memory the game fills itself).
+
+### An N64 port keeps the game's threads
+
+libultraship's message queues never wait, because the ports built on it rewrite the game's threads into one main
+loop. decompdecomp's glue for it (`consoles/n64/port_glue/threads.c`, plain C and POSIX threads) keeps them instead:
+each game thread is a host thread and, as on the N64's one CPU, only the highest-priority one that can runs; it gives
+the CPU up when it waits on a message queue, yields, finishes or wakes a higher-priority thread. Its message queues
+wait, and replace libultraship's whole `os_mesg` at link time (every symbol of it, the event table a real
+definition), so libultraship's VI timer posts through them from its own thread. Tested by a C program (priority
+on send, a one-slot queue, jams, yields among equals, events from a host thread) and under ThreadSanitizer; linked
+against libultraship built on a Mac with only the Command Line Tools. The kit counts the thread functions as
+provided. Left: preempting a thread that never waits (counted, `port_thread_stalls`), RSP tasks handed to
+libultraship's renderer and mixer, the rest of the glue.
+
+### Library functions a person confirms, for the port
+
+The app names library functions only from full-size signature matches. A game built with a libultra version it
+has no signatures for keeps those functions as its own C, and a port would build them with everything they reach:
+on a finished N64 game, an unrecognised `osCreatePiManager` pulled in the device manager, its queues and the 64DD's
+interrupt code. `POST /api/port-identity` records a person's confirmation (`port/identities.py`): the function is
+renamed to the library's name through the judged rename, and `meta.port_sdk` says who confirmed it. Only the port
+reads it (Compile for PC, the link check, readiness): it is never taken for a signature match. Left: a place in
+the GUI to confirm one, and the link check suggesting candidates.
+
+### Where each libultra function comes from in a port
+
+The N64 kit said every `os*` and `gu*` function was replaced by libultraship. Read against libultraship's source
+(its libultra layer at a3f1e102, the commit Torch pins), it defines 46 of libultra's functions and variables, and
+declares but leaves to the game the math (`gu*`, `sins`, `__cosf`). The kit now says so (`consoles/n64/port.py`:
+`LIBULTRASHIP`, `sdk_group`): what libultraship or the host's C library defines is replaced; libultra's math and
+the synthesizer are the game's own C, compiled for the PC; the rest of libultra's console plumbing (threads, RSP
+tasks, the cartridge manager's queues, Controller Pak and 64DD internals, `osRomBase`) is **glue**, which the port
+supplies. Compile for PC builds the native ones; the link check lists glue as its own group, and counts what the
+kit provides apart from what nothing defines. Left: the glue itself (a main loop in place of threads, RSP tasks
+handed to libultraship's renderer and a mixer, stubs), and reading libultraship's list from its pinned source
+once it's a pinned tool.
+
+### Calls by a function's old name put right
+
+The link check finds callers that use a function's old name (an automatic `func_` name, or an earlier chosen one
+the symbol table keeps) and knows the name it has now. Port readiness → **Fix calls by old names** rewrites them,
+whole words, in the calling functions only, and judges each of those twice: its console build must still be the
+game's exact bytes (the regression test, on those functions alone) and the PC compiler must find no more errors;
+one that fails keeps its C and is listed (`port/renamed_calls.py`). The rewritten functions' recorded symbols are
+refreshed, so the link check drops what was fixed at once. No agents, no tokens.
+
+### The game's zeroed memory defined for the PC
+
+Almost all the data a finished game's C reaches by address and that has no C is memory the game zeroes at boot
+(`.bss`): on a finished N64 game, 1,332 of 1,355 such symbols. It has no bytes to extract or judge; a PC program
+only needs each defined at the size the PC needs. Compile for PC now writes those definitions after compiling the
+functions (`port/zeroed.py`): each name is defined with the type the game's own C declares it with
+(`__typeof__(x) x;`, the declaration copied from the function that makes it), so a pointer gets 8 bytes; an array
+declared without a size gets twice its console room in PC-sized elements; a name whose type only its function
+knows is zeroed bytes, twice its room, in a second file. The PC compiler checks them, the link check counts them
+as defined, and they go in the project's `port/src` (names and types, no game bytes). Left: code that runs off one
+variable into the next, and pointers declared as 32-bit integers, which show only when the port runs.
+
+### What stops the game's C linking for a PC
+
+Compile for PC now keeps what each function's object defines and needs (`pc_compile.symbols`, pyelftools), and
+Port readiness works out what a link of all of them would refuse (`port/pc_link.py`): symbols needed and defined
+nowhere, sorted by what fixes each (functions renamed since their callers were written, the game's assembly,
+unmatched functions, data that is only an address in the split's assembly, what the kit provides), and symbols
+defined twice. A kept port fix refreshes its function's symbols. On a finished N64 game, after its PC fixes:
+1,444 undefined: 1,338 data symbols (phase 1's work), 72 libultra and C library functions for libultraship, 20
+calls to functions by a name they lost when polishing renamed them (an automatic `func_` name, or an earlier
+chosen one the symbol table keeps: the console build links by address and never noticed), 13 functions in
+assembly, and one libultra helper its C defines `static` that another function calls; nothing defined twice.
+Left: an agent
+task for the renamed calls and the duplicates, then the real link against a pinned libultraship.
+
+### Torch pinned, and the asset map extracted and checked
+
+Torch (HarbourMasters, MIT) is a pinned tool: its source and the six libraries its CMake would fetch, each a
+commit tarball with a SHA-256 in `toolchains.toml`, built on first use with a pinned CMake 4.4.4 and the system's
+C++ compiler, downloading nothing else (`_build_torch`; 81 s on an M-series Mac). Port readiness → **Extract with
+Torch** writes the asset map, runs Torch on it and the user's ROM, and checks every resource against the ROM bytes
+it names (`asset_map.extract`, the N64 kit's `torch_extract` and `torch_resources`); the archive (`.o2r`, the
+game's own bytes) goes in the project's `build/port`, out of git, and the readiness report says whether the map
+was extracted since it last changed. A finished N64 game: all 11 resources came out of Torch as the ROM's bytes,
+11.2 MB, in under a second. Left: Windows (Torch builds with MSVC there), Torch's typed resources (textures,
+display lists), libultraship pinned the same way for the port export.
+
+### The ROM's data written as Torch's asset map
+
+Port readiness → **Write asset map** (ROM projects with a port kit, once ROM Explorer has scanned): every byte of
+the ROM outside its code segments is put in one resource, grouped as ROM Explorer read it: an archive the game
+unpacks itself (kept whole: a ZIP's members are inflated by the game's own code, which Torch can't do), audio, or
+other data; padding and a few unnamed bytes between files join their neighbours, the cartridge's trailing fill and
+the N64's boot bytes are left out, and the map is checked to cover the ROM exactly once (`port/asset_map.py`). The
+N64 kit writes it as Torch's config, keyed by the ROM's SHA-1, and one BLOB per resource
+(`consoles/n64/port.py`, `torch_files`), into the project's `port/assets` folder: offsets and sizes, no game
+bytes. The readiness report says when it's missing or older than the scan. A finished N64 game whose data is one
+10.8 MB ZIP: 11 resources (the archive, two audio banks, eight small data blocks), 64 KB of them bytes ROM Explorer
+can't name yet. Left: textures, palettes, vertices and display lists in Torch's own types where they lie in the
+ROM unpacked; a run of Torch itself on the map (it isn't pinned yet); the port's glue turning the game's cartridge
+reads into reads of these resources.
+
+### Agents fix the game's C for the PC, judged twice
+
+**Start agents → Fix C for the PC** (ROM projects, once Compile for PC has run): agents claim one function at a
+time from what the PC check listed (those that don't compile first, then pointer casts; fewest tries first), see
+its C and the PC compiler's errors, try fixes (`check_for_pc`) and submit one (`fix_for_pc`). A fix is kept only
+when the console's compiler still makes the game's exact bytes and a 64-bit PC build has no errors and fewer
+pointer-size warnings (`port/port_fix.py`); what only the PC needs goes behind `#ifdef PORT`, which the PC check
+defines and the console build doesn't. A kept fix is the function's C, saved and committed like polishing.
+Driven through those calls on a copy of a finished N64 game: two functions with 19 and 2 PC errors fixed by
+pointer types, both still matching byte for byte, and a manual save wrote both. A first LLM run (Claude Haiku, one helper) on that game kept 11 fixes and
+released 10 functions too big for one pass with notes saying why (gcc's `__builtin_next_arg`
+varargs, functions with 20+ pointer errors). Its notes changed the judge and the guide: a fix is kept when it's no
+worse on errors and pointer warnings and better on one, so a big function is fixed in steps; a fix the header
+alone made is kept by submitting the C unchanged (it was refused as "the C it has already"); and the guide says
+how to keep the console's operand order behind `#ifdef PORT`, type display-list words as `uintptr_t` on the PC and
+replace gcc's varargs. Then it paused on a function whose C, copied from a twin, is a whole preprocessed file
+(7,942 lines): a long function's brief now shows only the lines the PC flags, numbered, and `check_for_pc`/
+`fix_for_pc` take `edits` (old/new pairs) in place of the whole C. Two bugs found on the way: the PC check dropped
+a function's leading blank lines, so its line numbers were short by that many; and Zig answered a second compile
+of the same C from its cache with no warnings, so a repeated check (or check_for_pc then fix_for_pc) lost pointer
+warnings; each compile now gets an empty cache (0.1 s). It needed a fix first: the app claimed a function to match for it
+before each session and, finding none on a finished game, never started the model. Left:
+display lists built by hand as two words (a `Gfx` is bigger in libultraship), which compile and need the port
+build to find; a per-function view of the PC errors in Functions.
+
+### The game's C compiled for a PC
+
+Port readiness → **Compile for PC**: every matched function the port keeps (the game's own and the library code it
+compiles as it is, not what the kit replaces) is compiled on its own with the project's shared header by a current
+clang for a 64-bit PC: the pinned Zig (`toolchains.toml`), whose clang brings its own headers, so every computer
+gets the same result. What fails and what keeps pointers in 32-bit integers is kept per function
+(`port/pc_compile.py`) and counted, by kind, in the readiness report and the `port_readiness` tool. On a finished
+2,121-function N64 game, 1,904 of 2,005 functions compile; 101 don't (calls with no declaration, integers passed as
+pointers, its own size checks), and 397 cast pointers to 32-bit integers. Left: a per-function tool for phase 4's
+fix agents, libultraship's headers in place of the game's own declarations of libultra, other consoles' kits.
+
+### The game's data in C, saved and exported
+
+Matched data units are saved with the project's progress (`data.json` and `data/<name>.c`), committed with it,
+tracked by rebuildable repositories and judged again on restore. The export builds each matched datum from its C at
+its address, so the byte-for-byte rebuild proves it: a finished 2,121-function N64 game's export rebuilt byte for
+byte with 218 data units built from C. Fixed on the way, each of which stopped that export: splat gets one name per
+address (two names an agent gave one address: "Duplicate symbol detected"); a renamed function the export extracts
+is linked by its C's name, not splat's automatic one; the judge steps know the addresses of data the assembly
+defines (`labels` in build.json); data is placed at its exact address (a 2-byte datum at ...42 was aligned to ...44).
+Left: data the split wrote as assembly, and data whose C brings strings of its own.
+
+### The game's data drafted as typed C, from its code
+
+Port readiness → **Write data as C from the code**: no agents, no tokens. The game's own loads and stores say each
+datum's fields (width, sign, float, pointer); a draft is written only when they explain every byte, and kept only
+when it holds the game's bytes. What's left goes to the data agents, whose brief lists what the code does with it.
+The last datum before `.bss` now ends there (it had no end). Left: data reached only through pointers the reader
+doesn't follow, overlays, other consoles' `bss_start`.
+
+### Agents write the game's data as C
+
+**Start agents → Write data as C** (ROM projects, offered with polishing): agents claim the game's data one unit at
+a time (`claim_data`), write it and have it judged by its bytes (`compile_data`), and give back what they can't
+with a note (`release_data`). The queue comes from the game's own references, fewest tries first; claims are leases;
+data agents see only their tools. Driven through those tool calls on a finished N64 game: 79 of 80 units matched,
+none handed out twice. Left: an LLM run on a real game, the export building data from C, typed drafts.
+
+### The game's data as C
+
+Phase 1 of docs/PORTING.md, its judge and tools: `get_data_unit` and `compile_data` turn one of a ROM project's data
+symbols into C, kept only when it holds the game's bytes at its address, all of it, pointers resolved by name.
+Where a datum ends comes from the game's own references; where the data is, from the program (the N64's boot stub
+says where `.bss` starts, and the data runs from the last code segment's text to it). On a finished 2,121-function
+N64 game, drafts of its 129 zero-filled data and 19 function-pointer tables all matched. Left: an agent task with
+claims and a launch option, the export building data from its C, typed drafts, overlays, other consoles.
+
+### Port readiness report
+
+Phase 0 of docs/PORTING.md: Overview's **Port readiness**, the `port_readiness` tool and `GET /api/port-readiness`
+say what stands between a ROM project and a native port, without changing it or running a compiler. A console's
+`port_kit` (consoles/: the N64's is libultraship and Torch, consoles/n64/port.py) says which proven library code it
+replaces and which graphics microcode it renders. On a finished 2,121-function N64 game: 94 library functions the
+kit replaces, 55 compiled as they are, 22 of the game's own still assembly, 1,551 data symbols reached by address,
+38 addresses written as numbers, F3DEX rendered and S2DEX to check, in under a second. Left: running it on the PS1, PS2
+and PSP demos (no kit: the counts that don't need one) and a PS1 kit (PsyCross); project mode; pointers in 32-bit
+integers.
 
 ### Agent asset discovery
 
@@ -1520,6 +1787,16 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 
 ## Next
 
+### decomprepair: its own repository, a C parser, and other processors
+
+- Move the 36 repair families still in `app/` that need a project or the network behind an interface the app
+  passes in, so they can move too.
+- Read C with tree-sitter instead of regular expressions (comments, strings and nesting handled once), keeping
+  the regular expressions for code tree-sitter can't parse (macros, old dialects).
+- Readers for PowerPC, x86 and ARM (today the evidence is MIPS).
+- Publish it on PyPI, so other projects can depend on it by version.
+- Move the tests here that only need a compiler to decomp-repair, with the compilers as an optional part.
+
 ### ROM Explorer: image adapters and deeper asset analysis
 
 Object-build projects need adapters from their original images and sections to units,
@@ -1675,6 +1952,10 @@ still planned. A window that shows, for each agent you use, what's left of its l
 and Codex, and a monthly limit or the credit left on an API key where the provider says it. Helpers already wait for a
 usage limit to reset; this shows it before they hit it, so you can pick which agents to start.
 
+- Done: a usage limit is scoped to its own signed-in account and model. opencode signs in to each provider
+  separately (the Zen console and the Go API), and some models have their own allowance, so a refusal there
+  no longer pauses helpers on another account or model. The launcher and helper cards name the account.
+
 ### Big functions for every model
 
 In a DS game at 58%, functions under 400 instructions were mostly matched, and 25 of the 29 over 400 were open:
@@ -1722,6 +2003,41 @@ class and the parameter types, so carrying them over gives agents real signature
 constants they use, spread the pairs through the call graph, and let the user approve the names in bulk (as boundary
 reports are approved now). Names only: matching is unaffected. It also names the classes `get_class` finds.
 
+### Other releases of a game
+
+A game's releases (Europe, North America, Japan) are mostly the same code at shifted addresses. A Europe N64 rally
+game matched and polished and its North America release at 62% shared 1,675 identical functions, yet twins matched
+11 there: the donor's C names its own release's addresses. Done (app/regional.py, the overview's "Other releases of
+this game"): a release found by its game code (N64, GBA: `Console.release_key`) or, on request, by identical code;
+the user links it; functions paired (identical code in the game's order, then the rest by place); how addresses
+move learned from the identical pairs' relocations; the other release's function and global names and its header's
+missing types brought over through the checked bulk rename and header edit; and, first in autopilot's free pass,
+its matched C with this project's names tried on each paired function (with the other release's compiler settings
+for that function when only those match), its polished C on functions matched here. Pairs with the same
+instructions and other numbers (app/regional_adapt.py) get the C fitted: the structs it defines laid out at the
+offsets this release reads (checked by a compiler probe), offsets and constants that changed, a big global's fields
+reached by byte offset moved as the address map says; and a variable inside one of this project's big blocks named
+by its address (on a Europe/North America N64 pair: 177 of 719 open functions matched, 81 of them fitted). The
+numbers are read from the instructions both releases have, lined up around added or removed ones; floats built from
+immediates too (MIPS: `Arch.built_floats`); and each pair's names placed by its own relocations before the
+game-wide address map (data inside a big block moves unevenly): 22 more of the 536 left. A big variable the C
+reaches only by its fields starts where most of the pair's field addresses say, and fields that moved lay its struct
+out again; the other release's header declarations come with C that needs them; a function a helper holds is tried
+again at the end of the pass, and those still held are reported: 89 more of 524. Next:
+- Structs from a shared header whose fields moved between releases: this release's own copy of the type, through
+  the checked header edit (that game's header had none: its functions define their structs).
+- Done: near pairs that still miss are real code change (an added call, a branch), not a single edit: a helper's
+  brief shows the other release's C with this release's names, offsets and declarations, and the instructions
+  only one release has or that differ (regional.brief).
+- Done: before a helper gets it, the closest fitted C is edited where the code still differs (regional_edits): each
+  differing instruction traced to its C line (the compiler's line table) and the edit it asks for tried there
+  (`Arch.edit_hint`, MIPS: a constant, an operator, a comparison turned around, a load's width or sign, a call
+  dropped or added), the best kept for a few rounds; then moved struct fields, array indexes and global offsets
+  from the whole diff. On a Europe/North America N64 pair: 9 more of 441, 104 closer.
+- Run it on PS1, PS2 and PSP games (their serials differ by region, so by identical code) and mark the table.
+- Project mode: pair object files' functions (GameCube/Wii by game ID, DS by game code, PC by its executable).
+Related: "Names from another build you own", for a build with symbols (a demo, a port).
+
 ### C++ classes for PowerPC
 
 The class recovery reads MIPS and x86 (Windows PC: RTTI's names, the classes of code built without it, and their
@@ -1734,6 +2050,28 @@ The export rebuilds the game byte for byte; mods need code that can move. Build 
 and report every address that is still hard-coded ("93% movable, 41 addresses left"). The matching build stays as
 it is. A Windows PC project's rebuild puts each function back at the game's address in the user's copy
 (tools/rebuild.py): moving code there needs its data delinked too, and a linker that lays the program out.
+
+### A choice of runtime for a port
+
+The user picks which runtime a game's port is built on, per game, where the console has more than one: for the N64,
+libultraship (MIT; Fast3D renderer on Metal, OpenGL, DirectX; Torch's archive; builds on macOS with only the Command
+Line Tools; queues that never wait, so decompdecomp's thread glue) or N64ModernRuntime (GPL-3.0; real libultra threads,
+queues and timers; the RT64 renderer, complete S2DEX; reads the ROM at run time, so no extraction; RT64 needs full
+Xcode on macOS for its Metal shaders). The kit becomes a list per console (`Console.port_kits`), the readiness report
+and link check read the chosen one, and Port readiness shows the choice with what each needs on this computer.
+Tried on a Mac: libultraship and its libraries built from source; N64ModernRuntime built; RT64 stopped for want of
+Xcode's `metal`.
+
+### Ports: a native build of a finished game
+
+A matched, polished game rebuilds for its console; the next step people want is a port. Plan in docs/PORTING.md:
+a readiness report (extending the modding-ready check above), data migrated to C and kept only while the ROM stays
+byte-identical, ROM Explorer's asset map written as a Torch config (offsets and types, no game bytes), a Port export
+(CMake, libultraship and Torch pinned in `toolchains.toml`, glue for the main loop, input, saves, DMA and audio),
+and a port-fix task for agents judged twice: the console build still matches and the port still compiles. N64
+first (`Console.port_kit`), PS1 next on PsyCross; the rest "—" until a kit exists. First check: libultraship's
+S2DEX coverage, then a hand port of one N64 game's boot, title screen and one track. Phase 0 is built (Recently
+done: Port readiness report).
 
 ### Browser room contributions
 

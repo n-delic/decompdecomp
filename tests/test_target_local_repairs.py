@@ -1,6 +1,6 @@
 """Synthetic source/assembly only; no game data or library source."""
 from decompnet.app import draft_repairs
-from decompnet.app import target_local_repairs as repairs
+from decomprepair import target_local_repairs as repairs
 
 
 def test_target_delay_slot_argument_requires_local_prototype_and_capture():
@@ -104,7 +104,7 @@ def test_missing_assembly_is_not_a_call_hint():
 
 
 def test_target_field_load_order_requires_matching_offset_pair():
-    from decompnet.app import field_load_repairs
+    from decomprepair import field_load_repairs
     source='void f(void) { u32 a; a=*((u32 *) (((char *) p) + 8)); if(a < *((u32 *) (((char *) p) + 4))) use(); }'
     asm='/* 0 */ lw $v0, 4($a3)\n/* 4 */ lw $v1, 8($a3)'
     candidates=field_load_repairs.variants(source,'f','mips',asm)

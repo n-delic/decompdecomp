@@ -135,6 +135,8 @@ def objects() -> tuple[list[tuple[str, str, str]], dict[str, str], list[tuple[in
     out, provides, placed = [], {}, []
     for a in B["assembly"]:
         out.append(("asm", a["src"], a["obj"]))
+    for d in B.get("data", []):  # the game's data from its C (placed as pieces of its segment)
+        out.append(("c", d["src"], d["obj"]))
     runs: dict[str, tuple[list[dict], int | None]] = {}  # splat file -> (its current run of assembly, where it ends)
     every = []
     for fn in B["functions"]:  # (in address order; a splat file's functions are at addresses of their own)
@@ -202,8 +204,33 @@ def trim(path: Path) -> None:
     path.write_bytes(bytes(data))
 
 
+def trim_data(path: Path, name: str, size: int) -> None:
+    """Shrink a datum's section to the datum: period compilers pad .data to 16 bytes, which would run into the next
+    datum placed after it."""
+    import struct
+    from io import BytesIO
+
+    from elftools.elf.elffile import ELFFile
+
+    data = bytearray(path.read_bytes())
+    elf = ELFFile(BytesIO(bytes(data)))
+    symtab = elf.get_section_by_name(".symtab")
+    sym = next((s for s in (symtab.iter_symbols() if symtab else ()) if s.name == name
+                and isinstance(s["st_shndx"], int)), None)
+    if sym is None:
+        fail(f"{path.name} defines no {name}")
+    order = ">" if data[5] == 2 else "<"
+    shoff = struct.unpack_from(order + "I", data, 0x20)[0]
+    shentsize = struct.unpack_from(order + "H", data, 0x2E)[0]
+    shndx = sym["st_shndx"]
+    if elf.get_section(shndx)["sh_size"] > size and not elf.get_section(shndx).data()[size:].strip(b"\0"):
+        struct.pack_into(order + "I", data, shoff + shndx * shentsize + 20, size)
+    path.write_bytes(bytes(data))
+
+
 def build_objects(todo: list[tuple[str, str, str]]) -> None:
     function_of = {c_source(fn): fn for fn in B["functions"] if c_source(fn)}
+    datum_of = {d["src"]: d for d in B.get("data", [])}
     configs = {}
     as_ = binutils("as")
     for kind, src, obj in todo:
@@ -215,7 +242,8 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
             run([as_, *B["as_flags"], "-o", obj, src])
         else:
             fn = function_of.get(src)
-            compiler = compiler_for(B, fn['vram'] if fn else None, fn)
+            datum = datum_of.get(src)
+            compiler = compiler_for(B, fn['vram'] if fn else datum['vram'] if datum else None, fn)
             key = json.dumps(compiler, sort_keys=True)
             cfg = configs.get(key) or configs.setdefault(key, compiler_config(ROOT, {"compiler": compiler}))
             argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "include") for a in cfg.cmd]
@@ -226,7 +254,9 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
                 names = {*B["symbols"], *(f["name"] for f in B["functions"])}
                 target.write_bytes(unmangle(target.read_bytes(), lambda n: n in names or bool(AUTO_NAME.match(n))))  # noqa: B023  called within this pass of the loop
             entry=next((f for f in B['functions'] if c_source(f)==src),None)
-            if entry and entry.get('entry_only'):
+            if datum:
+                trim_data(target, datum["name"], datum["size"])
+            elif entry and entry.get('entry_only'):
                 normalize_entry(entry,target)
             else:
                 trim(target)
@@ -305,7 +335,7 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
         items = [(p["vram"], f"{p['obj']}(.text .data .rodata .sdata .rdata)") for p in seg["pieces"]]
         items += [(v, f"{obj}(.data)") for v, obj in gaps if vram <= v < vram + end - start]
         items += [(v, f"{obj}(.text)") for v, rom, obj in placed if rom is not None and start <= rom < end]
-        lines += [f"    .{seg['name']} 0x{vram:08X} : AT(0x{start:X}) SUBALIGN(4)", "    {"]
+        lines += [f"    .{seg['name']} 0x{vram:08X} : AT(0x{start:X}) SUBALIGN({seg.get('subalign', 4)})", "    {"]
         lines += [f"        . = 0x{v - vram:X}; {what}" for v, what in sorted(items)]
         lines.append("    }")
         if seg["bss"]:
@@ -399,7 +429,7 @@ def build() -> bool:
                 return False
             print(f"cartridge verified: {cartridge['sha1']}")
         print(f"identical: {B['output']} matches {B.get('cartridge', {}).get('image', B['image'])} byte for byte "
-              f"({c_count} of {len(B['functions'])} functions in C)")
+              f"({c_count} of {len(B['functions'])} functions in C, {len(B.get('data', []))} data units in C)")
         return True
     at = next((i for i in range(min(len(out), len(base))) if out[i] != base[i]), min(len(out), len(base)))
     where = next((fn["name"] for fn in sorted(B["functions"], key=lambda f: f["rom"] or 0, reverse=True)
@@ -423,6 +453,8 @@ def check(name: str) -> bool:
         fail(f"write it first as src/{fn['seg']}/{name}.c")
     found = [Symbol(s, a, 0, "data") for s, a in B["symbols"].items()]
     found += [Symbol(f["name"], f["vram"], 0, "func") for f in B["functions"]]
+    found += [Symbol(d["name"], d["vram"], d.get("size", 0), "data") for d in B.get("data", [])]  # data built from C
+    found += [Symbol(n, a, 0, "data") for n, a in B.get("labels", {}).items() if n not in B["symbols"]]
     for path in (ROOT / "asm" / "data").glob("**/*.s"):
         text = path.read_text(errors="replace", encoding="utf-8")
         for m in re.finditer(r"dlabel (\w+)\s*\n\s*/\*\s*(?:[0-9A-F]+\s+)?([0-9A-F]{8})", text):

@@ -1,11 +1,12 @@
 """Keep a signed-int interface while representing an entry narrowing as a typed local."""
 import re
 
+from decomprepair import local_flow, matched_prototype_repairs, zero_argument_repairs
+from decomprepair.allocator_call_guards import dominators
+from decomprepair.call_lifetime_repairs import block_path
+from decomprepair.integer_repair_support import IDENT, edit, locals_for, split_args, view
+
 from ..forks.csource import _blank
-from . import local_flow, matched_prototype_repairs, zero_argument_repairs
-from .allocator_call_guards import dominators
-from .call_lifetime_repairs import block_path
-from .integer_repair_support import IDENT, edit, locals_for, split_args, view
 
 FAMILY = 'promoted_entry_local'
 LIMIT = 4

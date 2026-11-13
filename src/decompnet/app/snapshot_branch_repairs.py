@@ -7,10 +7,11 @@ score improvement. No effects, reads, predicates or compiler settings are added.
 """
 import re
 
+from decomprepair import integer_abi
+from decomprepair.integer_repair_support import IDENT, NUMBER, edit, integer, locals_for, refs, view
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank
-from . import integer_abi
-from .integer_repair_support import IDENT, NUMBER, edit, integer, locals_for, refs, view
-from .pattern_repairs import close
 
 FAMILY = 'narrow_snapshot_branches'
 FAMILIES = (FAMILY,)

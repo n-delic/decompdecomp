@@ -51,7 +51,7 @@ def test_history_and_match_ownership_cross_sqlite_in_batches(card, monkeypatch):
     finally:
         reader.set_authorizer(None)
     assert result == {'agent':'worker', 'compiles':304, 'worked':1, 'improved':1,
-                      'matched':1, 'last_improvement':305, 'polished':0}
+                      'matched':1, 'last_improvement':305, 'polished':0, 'last_polish':None}
     # The large ordered history and current ownership each return one aggregate,
     # never one native row per attempt/function. Other small label/event reads remain.
     assert not any('FROM main.functions' in sql for sql, _ in reads)

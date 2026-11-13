@@ -445,6 +445,118 @@ function renderSavedMatchRecovery(ov) {
   recover.onclick = () => start("/api/reconcile-matches", "Recovering saved matches");
 }
 
+/* Other releases of this game (app/regional.py): found by game code, or by comparing code on request; once linked,
+   the other release's names, header types and code come over through the checked bulk rename, header edit and judge.
+   The overview polls every second or so: the panel is drawn again only when what it shows changed, and never while
+   one of its actions runs, or a click would land on a button that's just been replaced (and its bar would go). */
+const releaseViews = new Map();
+function renderReleases(ov) {
+  const panel = $("releasePanel");
+  if (!panel) return;
+  if (ov.kind === "fork") { panel.hidden = true; return; }
+  const view = releaseViews.get(ov.slug);
+  if (!view || panel._slug !== ov.slug) {  // each time a project is opened: its status, and any job it runs
+    panel._slug = ov.slug;
+    releaseViews.set(ov.slug, {...(view || {}), loading: true});
+    loadReleases(ov.slug).catch(() => { releaseViews.set(ov.slug, {data: {supported: false}}); if (S.slug === ov.slug) panel.hidden = true; });
+    if (!view?.data) return;
+  }
+  if (view?.data && !view.busy) drawReleases(ov.slug, view.data);
+}
+async function loadReleases(slug, shared = false) {
+  const data = await api(`/api/regional?slug=${encodeURIComponent(slug)}${shared ? "&shared=1" : ""}`);
+  showReleases(slug, data);
+  return data;
+}
+function showReleases(slug, data) {
+  const view = releaseViews.get(slug) || {};
+  releaseViews.set(slug, {...view, data, loading: false});
+  if (S.slug === slug && !view.busy) drawReleases(slug, data);
+  if (S.slug === slug && !view.busy && data.linked) {  // a job started elsewhere (before a reload, say): follow it
+    if (data.running?.names) bringReleaseNames(slug, data.linked, data.running.names);
+    else if (data.running?.code) tryReleaseCode(slug, data.linked, data.running.code);
+  }
+}
+/* "Bring names over" and "Try its code": start the job, or follow the one already running (`job`). A start refused
+   because one runs (another window, a click before a reload) follows that one instead. */
+function startOrFollow(slug, kind, job) {
+  return job ? Promise.resolve({job}) : api(`/api/regional/${kind}`, {method: "POST", body: {slug}}).catch(async error => {
+    const running = (await api(`/api/regional?slug=${encodeURIComponent(slug)}`).catch(() => null))?.running?.[kind];
+    if (running) return {job: running};
+    throw error;
+  });
+}
+function bringReleaseNames(slug, linked, job = null) {
+  return releaseAction(slug, "Bringing names over", "Names brought over.", async log => {
+    const result = await followJob((await startOrFollow(slug, "names", job)).job, log);
+    toast(`${result.renamed.toLocaleString()} names from ${esc(linked.name)}.`, "match");
+    showReleases(slug, await api(`/api/regional?slug=${encodeURIComponent(slug)}`));
+  });
+}
+function tryReleaseCode(slug, linked, job = null) {
+  return releaseAction(slug, "Trying the other release's code", "Finished trying the other release's code.", async log => {
+    const result = await followJob((await startOrFollow(slug, "code", job)).job, log);
+    toast(`${result.matched.toLocaleString()} matched and ${result.polished.toLocaleString()} polished from ${esc(linked.name)}.`, "match");
+    showReleases(slug, await api(`/api/regional?slug=${encodeURIComponent(slug)}`));
+  });
+}
+function releaseLabel(r) {
+  return `${esc(r.name)} · ${esc(r.region || r.game_code || "another release")} · ${r.matched.toLocaleString()} of ${r.functions.toLocaleString()} matched`;
+}
+/* One of the panel's actions: its bar and log while it runs, its controls disabled, no redraw until it ends. */
+async function releaseAction(slug, label, done, work) {
+  const body = $("releaseBody"), log = $("releaseLog"), view = releaseViews.get(slug) || {};
+  releaseViews.set(slug, {...view, busy: true});
+  log.hidden = false; log.textContent = ""; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, label, [...body.querySelectorAll("button"), $("releaseScan")], done);
+  try { return await work(log); }
+  catch (error) { showJobError(log, error.message); return null; }
+  finally {
+    finish();
+    const current = releaseViews.get(slug) || {};
+    releaseViews.set(slug, {...current, busy: false});
+    if (S.slug === slug && current.data) drawReleases(slug, current.data, true);
+  }
+}
+function drawReleases(slug, data, force = false) {
+  const panel = $("releasePanel"), body = $("releaseBody");
+  const key = slug + "\n" + JSON.stringify(data);
+  if (!force && panel._drawn === key) return;
+  panel._drawn = key;
+  panel.hidden = !data.supported;
+  if (!data.supported) return;
+  const linked = data.linked, last = linked?.last;
+  $("releaseContext").textContent = linked ? `— ${linked.name}` : data.candidates.length ? `— ${data.candidates.length} found` : "— none linked";
+  body.innerHTML = (linked ? `<p><b>Linked:</b> ${releaseLabel(linked)}</p>`
+      + (last ? `<p class="muted small">Last run: ${last.renamed.toLocaleString()} names brought over · ${last.paired.toLocaleString()} functions paired (${last.identical.toLocaleString()} identical) · ${(last.header?.added || 0).toLocaleString()} header items${last.rejected ? ` · ${last.rejected} names left out (the run's log says why)` : ""}.</p>` : "")
+      + `<div class="row"><button type="button" class="primary small-btn" data-release-names>Bring names over</button><button type="button" class="ghost small-btn" data-release-code>Try its code</button><button type="button" class="ghost small-btn" data-release-unlink>Unlink</button></div>` : "")
+    + data.candidates.map(c => `<p>${releaseLabel(c)} <span class="muted small">(${c.evidence === "game code" ? "same game code" : `${Math.round(c.shared * 100)}% identical code`})</span> <button type="button" class="ghost small-btn" data-release-link="${esc(c.slug)}">Link as another release</button></p>`).join("")
+    + (!linked && !data.candidates.length ? `<p class="muted small">No other release of this game found by its game code.</p>` : "");
+  body.querySelectorAll("[data-release-link]").forEach(button => button.onclick = () => {
+    const other = button.dataset.releaseLink;
+    releaseAction(slug, "Linking the other release", "Linked.", async log => {
+      showReleases(slug, await api("/api/regional", {method: "POST", body: {slug, other}}));
+      log.textContent = "Linked. Bring its names over next; autopilot tries its code from now on.";
+    });
+  });
+  const unlink = body.querySelector("[data-release-unlink]");
+  if (unlink) unlink.onclick = () => releaseAction(slug, "Unlinking", "Unlinked.", async log => {
+    showReleases(slug, await api("/api/regional", {method: "POST", body: {slug, other: ""}}));
+    log.textContent = "Unlinked.";
+  });
+  const names = body.querySelector("[data-release-names]");
+  if (names) names.onclick = () => bringReleaseNames(slug, linked);
+  const code = body.querySelector("[data-release-code]");
+  if (code) code.onclick = () => tryReleaseCode(slug, linked);
+  $("releaseScan").onclick = () => releaseAction(slug, "Comparing code", "Comparison finished.", async log => {
+    log.textContent = "Comparing this game's code with your other games of the same console.";
+    const found = await api(`/api/regional?slug=${encodeURIComponent(slug)}&shared=1`);
+    showReleases(slug, found);
+    log.textContent = found.candidates.length ? "Another release was found." : "No other game shares enough identical code.";
+  });
+}
+
 function renderAutopilot(ov) {
   const draftButton = $('regenerateMachineDrafts'), draftScope = $('machineDraftIncludeAll');
   if (draftScope && renderAutopilot.draftProject !== S.slug) {
@@ -483,6 +595,7 @@ function renderAutopilot(ov) {
   };
 
   renderSavedMatchRecovery(ov);
+  renderReleases(ov);
   const collapsed = renderAutopilot.collapsed ||= new Set();
   const toggle = $("crossGameToggle"), body = $("crossGameBody");
   body.hidden = collapsed.has(ov.slug);

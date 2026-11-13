@@ -4,8 +4,8 @@ import subprocess
 
 import pytest
 
-from decompnet.app import countdown_guard_repairs as repair
 from decompnet.app import draft_repairs
+from decomprepair import countdown_guard_repairs as repair
 
 SOURCE = '''typedef unsigned int u32;
 u32 sample(u32 count) {

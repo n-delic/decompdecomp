@@ -142,7 +142,7 @@ def test_serve_startup_never_calls_native_window_or_tray(tmp_path,monkeypatch,ca
     monkeypatch.setattr(engine,'RomNetwork',network)
     mcp=SimpleNamespace(streamable_http_app=lambda **kwargs:object())
     def build_server(*args,**kwargs):
-        assert kwargs=={'headless':True}
+        assert kwargs=={'headless':True,'mcp_url':None}
         return mcp,object(),object(),lambda:calls.append('quit')
     monkeypatch.setattr(server,'build',build_server)
     from decompnet.app import runtime_server

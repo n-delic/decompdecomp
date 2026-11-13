@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from decompnet.app import component_index_repairs as repair
+from decomprepair import component_index_repairs as repair
 
 BASE = '#define GET(p,i) ((p)[i])\nint sample(int *p){int value;int d[3];value=0;d[1]=GET(p,1);d[2]=GET(p,2);value=d[1]+d[2];return value;}'
 

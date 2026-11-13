@@ -13,15 +13,22 @@ import time
 from contextlib import nullcontext
 from pathlib import Path
 
+import anyio
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from ... import consoles, hostenv, toolchains
 from ...forks.project import SCOPES
 from ...network import NetworkError
 from .. import compiler_cleanup, saves, window
 from ..engine import parse_ranges
+from ..live_sections import changed, message
 from . import App
+
+STREAM_CHECK_SECONDS = 0.5  # how often /api/stream compares the live feed's change counters
+STREAM_PING_SECONDS = 15
+STREAM_SECONDS = 300  # a stream's longest life; EventSource reconnects on its own
+STREAM_LIMIT = 16  # open streams at once, for every window and browser together
 
 
 def register(app: App) -> None:
@@ -46,6 +53,8 @@ def register(app: App) -> None:
             started = time.monotonic()
             try:
                 def perform():
+                    if request.url.path == '/api/priority':
+                        return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
                     if request.url.path == '/api/try' or (request.method=='POST' and request.url.path=='/api/reimport'):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
@@ -72,7 +81,9 @@ def register(app: App) -> None:
                     if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/rom-explorer/preview", "/api/rom-explorer/loaders", "/api/rom-explorer/inspect", "/api/rom-explorer/discovery", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
-                reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
+                reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
+                if request.url.path == '/api/live':
+                    reader = app.live_call or app.fast_call
                 response, = await app.imports('decompnet.request_timing', ('response',))
                 def respond():
                     from ..project_activity import current_project
@@ -148,16 +159,21 @@ def register(app: App) -> None:
         return overview
 
     def p_live(slug, request, data):
+        from ..live_sections import compact, parse_sections
         q = request.query_params
-        out = net.live(slug, int(q.get("e", 0) or 0), int(q.get("a", 0) or 0))
-        try:
-            since = json.loads(q.get("s") or "{}")
-        except ValueError:
-            since = {}
-        out["sessions"] = manager.snapshot(since, project=slug)
+        # `only`: the sections /api/stream said moved (feed, claims, overview, sessions); the rest isn't read
+        sections = parse_sections(q.get('only'))
+        out = net.live(slug, int(q.get("e", 0) or 0), int(q.get("a", 0) or 0), sections=sections)
+        if sections is None or 'sessions' in sections:
+            try:
+                since = json.loads(q.get("s") or "{}")
+            except ValueError:
+                since = {}
+            out["sessions"] = manager.snapshot(since if isinstance(since, dict) else {}, project=slug)
         if q.get('compact') == '1':
-            from ..live_sections import compact
             out = compact(out, q.get('v'))
+        else:
+            out.pop('versions', None)
         return out
 
     def p_transcript(slug, request, data):
@@ -219,6 +235,57 @@ def register(app: App) -> None:
             res = net.export_rom(slug, log=log)
             return {k: v for k, v in res.items() if k != "log"} | {"log": res.get("log", "")[-1500:]}
         return {"job": jobs.start("export", work)}
+
+    def p_data_unit(slug, request, data):
+        from .. import data_units
+        if request.method == "GET":
+            return data_units.unit(net, slug, request.query_params.get("name", ""))
+        result = data_units.compile_data(net, slug, str(data.get("name", "")), str(data.get("source", "")))
+        return {"exact": result.exact, "problems": result.problems, "size": result.size, "span": result.span}
+
+    def p_data_drafts(slug, request, data):
+        """Draft the game's data as typed C from its code (app/data_drafts.py), in the background."""
+        from .. import data_drafts
+
+        def work(log):
+            counts = data_drafts.run(net, slug, log)
+            return {k: v for k, v in counts.items() if k != "reasons"} | {"reasons": dict(sorted(
+                counts["reasons"].items(), key=lambda kv: -kv[1])[:6])}
+        return {"job": jobs.start("data-drafts", work, project=slug)}
+
+    def p_pc_compile(slug, request, data):
+        """Compile the game's C for a PC and keep what breaks (port/pc_compile.py), in the background."""
+        from ...port import pc_compile
+        return {"job": jobs.start("pc-compile", lambda log: pc_compile.check(net, slug, log), project=slug)}
+
+    def p_port_identity(slug, request, data):
+        """The user confirms which library function a function is, for the port (port/identities.py)."""
+        from ...port import identities
+        agent, _ = net.local_agent("you")
+        return {"message": identities.confirm(net, agent, slug, str(data.get("function", "")),
+                                              str(data.get("name", "")), str(data.get("note", "")))}
+
+    def p_rename_calls(slug, request, data):
+        """Rewrite calls by a function's old name to its name now, each function judged twice
+        (port/renamed_calls.py), in the background."""
+        from ...port import renamed_calls
+        return {"job": jobs.start("rename-calls", lambda log: renamed_calls.fix(net, slug, log), project=slug)}
+
+    def p_asset_map(slug, request, data):
+        """Write the ROM's data as the kit's extractor config into the project's folder (port/asset_map.py)."""
+        from ...port import asset_map
+        with net.progress.view():
+            return asset_map.write(net, slug)
+
+    def p_asset_extract(slug, request, data):
+        """Extract the asset map from the user's ROM with the kit's extractor, and check it (in the background: the
+        first run builds Torch)."""
+        from ...port import asset_map
+        return {"job": jobs.start("asset-extract", lambda log: asset_map.extract(net, slug, log), project=slug)}
+
+    def g_port_readiness(slug, request, data):
+        from ...port.readiness import readiness
+        return readiness(net, slug)
 
     def p_rom_explorer(slug, request, data):
         with net.progress.view():
@@ -840,6 +907,48 @@ def register(app: App) -> None:
             check.state = 'done'
             raise
 
+    REGIONAL_JOBS = {'names': 'Names from another release', 'code': 'Code from another release'}
+
+    def p_regional(slug, request, data):
+        from .. import regional
+        if request.method == 'POST':
+            out = regional.link(net, slug, str(data.get('other') or '') or None)
+        else:
+            out = regional.status(net, slug, shared=request.query_params.get('shared') == '1')
+        # The panel follows a job it didn't start too (a reload, another window, a restart of the page).
+        return out | {'running': {key: regional_running(slug, kind) for key, kind in REGIONAL_JOBS.items()}}
+
+    def regional_running(slug, kind):
+        """The id of this project's running job of this kind, or None."""
+        with jobs._lock:
+            return next((j['id'] for j in jobs.jobs.values() if j['kind'] == kind and j['state'] == 'running'
+                         and j.get('activity_project') == slug), None)
+
+    def p_regional_names(slug, request, data):
+        from .. import regional  # (the job checks the link: reading the project waits while it syncs)
+        if regional_running(slug, REGIONAL_JOBS['names']):
+            raise ValueError('Names are already coming over from the other release: its progress is in the panel.')
+        return {'job': jobs.start(REGIONAL_JOBS['names'], lambda log: regional.bring_names(net, slug, log),
+                                  cancel_message='Stopped. The names already checked and saved stay.')}
+
+    def p_regional_code(slug, request, data):
+        from .. import regional
+        if regional_running(slug, REGIONAL_JOBS['code']):
+            raise ValueError('The other release\'s code is already being tried: its progress is in the panel.')
+        if (net.autopilot_status(slug) or {}).get('state') == 'running':
+            raise ValueError('Autopilot is running and tries the other release\'s code itself. Wait for it to finish.')
+
+        def work(log):
+            from ..twins import Job
+            log.progress(dict(phase='Reading this project and the linked release'))
+            if not regional.linked(net, net.project_row(slug)):
+                raise ValueError('Link this project with another release of the game first.')
+            job = Job()
+            job.stop = log.cancel_event
+            return regional.transfer(net, slug, job, log)
+        return {'job': jobs.start(REGIONAL_JOBS['code'], work,
+                                  cancel_message='Stopped. Matches and polished functions found so far are saved.')}
+
     def p_sdk(slug, request, data):
         path = hostenv.local_path(str(data.get("path") or ""))
         corpus = str(data.get("corpus") or path.stem).strip()[:80]
@@ -968,6 +1077,9 @@ def register(app: App) -> None:
                             if r.query_params.get("function") else []}, ["GET"]),
         "/api/sdk-signatures": (p_sdk, ["POST"]),
         "/api/cross-game/run": (p_cross_run, ["POST"]),
+        "/api/regional": (p_regional, ["GET", "POST"]),
+        "/api/regional/names": (p_regional_names, ["POST"]),
+        "/api/regional/code": (p_regional_code, ["POST"]),
         "/api/cross-game/name": (p_cross_name, ["POST"]),
         "/api/cross-game/functions": (p_project_functions, ["GET"]),
         "/api/claim-order": (p_claim_order, ["POST"]),
@@ -976,10 +1088,73 @@ def register(app: App) -> None:
         "/api/suggestion": (p_suggestion, ["POST"]), "/api/boundary": (p_boundary, ["POST"]),
         "/api/agent-results": (lambda s,r,d: net.agent_results(s,r.query_params.get('agent',''),r.query_params.get('kind','matched'),int(r.query_params.get('before',0)),int(r.query_params.get('after',0))), ["GET"]),
         "/api/stats": (lambda s, r, d: net.stats(s), ["GET"]),
+        "/api/port-readiness": (g_port_readiness, ["GET"]),
+        "/api/data-unit": (p_data_unit, ["GET", "POST"]),
+        "/api/data-drafts": (p_data_drafts, ["POST"]),
+        "/api/pc-compile": (p_pc_compile, ["POST"]),
+        "/api/asset-map": (p_asset_map, ["POST"]),
+        "/api/rename-calls": (p_rename_calls, ["POST"]),
+        "/api/port-identity": (p_port_identity, ["POST"]),
+        "/api/asset-extract": (p_asset_extract, ["POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
     }
     for path, (fn, methods) in routes.items():
         mcp.custom_route(path, methods=methods)(with_project(fn))
+
+    from ..live_sections import Watcher
+    watcher = Watcher(net, manager)
+    streams = {'open': 0}
+
+    @mcp.custom_route('/api/stream', methods=['GET'])
+    async def api_stream(request: Request) -> Response:
+        """Server-sent events for the open project's page: "changed" names the live feed's sections that moved
+        (feed, claims, overview, sessions, map) with the newest event's id, and the page asks /api/live for only
+        those. Checked by the same rules as every GUI read (guard: the window's secret in its user agent, or a
+        signed-in browser session; EventSource sends both). Between checks the stream holds no worker thread, only
+        an asyncio sleep; it ends when the page goes, the app shuts down, or after STREAM_SECONDS (the browser
+        reconnects by itself)."""
+        if (bad := guard(request)):
+            return bad
+        slug = request.query_params.get('slug', '')
+        if streams['open'] >= STREAM_LIMIT:
+            return JSONResponse({'error': 'Too many live streams are open; the page polls instead.'}, status_code=429)
+        check = app.stream_call or call
+        try:
+            first = await check(watcher.signature, slug)
+        except (NetworkError, ValueError) as e:
+            return fail(e)
+
+        async def events():
+            streams['open'] += 1
+            began = last_sent = time.monotonic()
+            seen = first
+            try:
+                yield 'retry: 3000\n\n' + message('hello', {'sections': sorted(k for k in first if k != 'event'),
+                                                            'event': first.get('event', 0)})
+                while time.monotonic() - began < STREAM_SECONDS and not getattr(net, 'shutting_down', False):
+                    await anyio.sleep(STREAM_CHECK_SECONDS)
+                    if await request.is_disconnected():
+                        return
+                    try:
+                        now = await check(watcher.signature, slug)
+                    except (NetworkError, ValueError) as e:  # (the project was removed or renamed)
+                        yield message('gone', {'error': str(e)})
+                        return
+                    except Exception:  # a busy database: the next check tries again
+                        continue
+                    moved = changed(seen, now)
+                    if moved:
+                        seen = now
+                        last_sent = time.monotonic()
+                        yield message('changed', {'sections': moved, 'event': now.get('event', 0)})
+                    elif time.monotonic() - last_sent >= STREAM_PING_SECONDS:
+                        last_sent = time.monotonic()
+                        yield ': ping\n\n'  # (a comment: keeps proxies and the webview from closing an idle stream)
+            finally:
+                streams['open'] -= 1
+
+        return StreamingResponse(events(), media_type='text/event-stream',
+                                 headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})
 
     app.with_project = with_project

@@ -3,9 +3,9 @@ import subprocess
 
 import pytest
 
-from decompnet.app import count_lifetime_repairs as repair
 from decompnet.app import draft_repairs, repair_ranking
 from decompnet.diff_summary import summarize
+from decomprepair import count_lifetime_repairs as repair
 
 HEADER = 'typedef unsigned short u16; typedef unsigned int u32; typedef int s32;'
 SOURCE = '''

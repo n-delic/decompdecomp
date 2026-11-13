@@ -79,6 +79,7 @@ GUIDES = {
     "arm": "ARM and Thumb (GBA, DS, 3DS): registers, conditional code, literal pools",
     "aarch64": "AArch64 and Clang (Switch): registers, matching Clang output",
     "similarity": "finding similar functions and reusing matched code",
+    "port": "fixing matched C so it also builds for a PC, without losing the console match",
 }
 
 
@@ -291,11 +292,9 @@ def _fork(net: RomNetwork, slug: str, what: str) -> str:
 
 
 def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
-    wish = net.instructions(slug)
     if not detail:
-        order = net.claim_order(slug)
-        steering = f"\nThe project's owner chose the order helpers take functions in: {CLAIM_ORDERS[order]}." if order else ''
-        return _compact_project_info(net,slug) + steering + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
+        return _compact_project_info(net, slug) + compact_info_steering(net.instructions(slug), net.claim_order(slug))
+    wish = net.instructions(slug)
     text = _project_info(net, slug, detail)
     open_ = net.overview(slug).get("suggestions") or []
     if open_ and not detail:
@@ -315,20 +314,75 @@ def project_info(net: RomNetwork, slug: str, detail: bool = False) -> str:
     return text + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
 
 
-def _compact_project_info(net, slug):
-    """Indexed totals and saved metadata only: no overview, SDK, room or build scans."""
-    proj=net._project(slug)
+COMPACT_NEXT = ('Compact saved metadata; each claim uses its own effective compiler profile. '
+                'project_info(detail=true) loads full facts, knowledge and suggestions. Next: get_claims() to recover held work, or claim_function().')
+
+
+def compact_info_head(net, proj):
+    """project_info(detail=false) before its progress line: saved settings only. The MCP gateway answers that call
+    itself from these parts and the database's totals (gateway/src/native.rs)."""
     cfg=net.cfg(proj)
-    totals=net.project_store(slug).one('SELECT total,matched,attempts FROM project_totals WHERE project_id=?',proj['id'])
     profile=cfg.get('compiler') or {}
     platform=consoles.get(cfg.get('platform'))
     compiler=profile.get('toolchain') or 'set by the project build'
     known=', '.join(c.id for c in platform.compilers)
-    return (f"{proj['name']} ({slug})\ncompiler: {compiler} {' '.join(profile.get('flags',[]))}\n"
-            + (f"this platform's compilers (for try_compiler): {known}\n" if known else '')
+    return (f"{proj['name']} ({proj['slug']})\ncompiler: {compiler} {' '.join(profile.get('flags',[]))}\n"
+            + (f"this platform's compilers (for try_compiler): {known}\n" if known else ''))
+
+
+def compact_info_steering(wish, order):
+    """What project_info(detail=false) adds after the compact facts: the owner's claim order and instructions."""
+    steering = f"\nThe project's owner chose the order helpers take functions in: {CLAIM_ORDERS[order]}." if order else ''
+    return steering + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
+
+
+def _compact_project_info(net, slug):
+    """Indexed totals and saved metadata only: no overview, SDK, room or build scans."""
+    proj=net._project(slug)
+    totals=net.project_store(slug).one('SELECT total,matched,attempts FROM project_totals WHERE project_id=?',proj['id'])
+    return (compact_info_head(net, proj)
             + (f"progress: {totals['matched']}/{totals['total']} functions matched; {totals['attempts']} compiles\n" if totals else 'Progress totals unavailable; no project scan performed.\n')
-            + 'Compact saved metadata; each claim uses its own effective compiler profile. '
-              'project_info(detail=true) loads full facts, knowledge and suggestions. Next: get_claims() to recover held work, or claim_function().')
+            + COMPACT_NEXT)
+
+
+def _data_unit(net: RomNetwork, slug: str, name: str) -> str:
+    from .data_units import unit, unit_text
+    return unit_text(unit(net, slug, name))
+
+
+def _compile_data(net: RomNetwork, slug: str, name: str, source: str, agent=None) -> str:
+    from .data_units import compile_data, describe
+    result = compile_data(net, slug, name, source)
+    _data_agents().compiled(net, agent, slug, name, result)
+    text = describe(result, name)
+    return text + ("\nclaim_data() for the next unit." if result.exact and _data_agents().scope(net, agent) else "")
+
+
+def _data_agents():
+    from . import data_agents
+    return data_agents
+
+
+def _port_agents():
+    from . import port_agents
+    return port_agents
+
+
+def _fix_for_pc(net: RomNetwork, agent, slug: str, function: str, source: str = "", edits=None) -> str:
+    from ..port import port_fix
+    return _port_agents().fixed(net, agent, slug, function,
+                                port_fix.fix(net, agent, slug, function, source, edits=edits))
+
+
+def _check_for_pc(net: RomNetwork, slug: str, function: str, source: str = "", edits=None) -> str:
+    from ..port import port_fix
+    return port_fix.check(net, slug, function, source, edits=edits)
+
+
+def _port_readiness(net: RomNetwork, slug: str) -> str:
+    """The port readiness report as text (port/readiness.py)."""
+    from ..port.readiness import describe, readiness
+    return describe(readiness(net, slug))
 
 
 def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
@@ -546,11 +600,23 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "read_data": lambda net, agent, slug, what, length=64: (net.forks.read_data(agent, slug, what, length)
                                                             if net.fork_slug(slug) else net.read_data(slug, what, length)),
     "get_class": lambda net, agent, slug, what="": net.get_class(slug, what),
+    "get_data_unit": lambda net, agent, slug, name: _data_unit(net, slug, name),
+    "compile_data": lambda net, agent, slug, name, source: _compile_data(net, slug, name, source, agent),
+    "claim_port_fix": lambda net, agent, slug, function="": _port_agents().claim(net, agent, slug, function),
+    "release_port_fix": lambda net, agent, slug, function, note="":
+        _port_agents().release(net, agent, slug, function, note),
+    "check_for_pc": lambda net, agent, slug, function, source="", edits=None: _check_for_pc(
+        net, slug, function, source, edits),
+    "fix_for_pc": lambda net, agent, slug, function, source="", edits=None: _fix_for_pc(
+        net, agent, slug, function, source, edits),
+    "claim_data": lambda net, agent, slug, name="": _data_agents().claim(net, agent, slug, name),
+    "release_data": lambda net, agent, slug, name, note="": _data_agents().release(net, agent, slug, name, note),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
     "redraft": lambda net, agent, slug, function, context: _redraft(net, slug, function, context, agent),
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
+    "port_readiness": lambda net, agent, slug: _port_readiness(net, slug),
     "add_note": lambda net, agent, slug, text, function="": _add_note(net, agent, slug, text, function),
     "share_knowledge": lambda net, agent, slug, text="", supports=0, evidence="": net.knowledge.share(agent, slug, text, supports, evidence),
     "search_flags": lambda net, agent, slug, function, compiler="", source="":
@@ -582,9 +648,10 @@ HANDLERS: dict[str, Callable[..., str]] = {
 
 READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
-                       "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
+                       "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
+                       "port_readiness", "get_data_unit", "check_for_pc"})
 
-ROM_ONLY = {"claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"port_readiness","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -711,7 +778,10 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
 
 def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Work tools see pulled changes; the pending compact connection handshake reads saved metadata."""
-    if asset_agents.scope(net,agent):
+    if (asset_agents.scope(net,agent) or _data_agents().scope(net,agent)
+            or (_port_agents().scope(net,agent) and name != "fix_for_pc")):
+        # their work isn't in the saved progress files: no sync before each call (app/data_agents.py). A kept port
+        # fix is a function's C, which is: fix_for_pc syncs before and after, as any work tool
         with net.progress.view():return _dispatch(net,agent,slug,name,args)
     if boundary_investigations.scope(net,agent):
         return _dispatch(net,agent,slug,name,args)
@@ -730,6 +800,8 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
 
 def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     asset_agents.guard(net,agent,slug,name,args)
+    _data_agents().guard(net,agent,slug,name,args)
+    _port_agents().guard(net,agent,slug,name,args)
     boundary_investigations.guard(net,agent,slug,name,args)
     pending = getattr(net, '_pending_tool_handshakes', set())
     handshake = (agent.id, slug) in pending
@@ -796,14 +868,36 @@ def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str
 ALWAYS_LOAD = agents.TOOL_META
 
 
-def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]], observe=None) -> MCPServer:
-    """MCP server for CLI agents. `agent_of` maps a request to (agent, project slug)."""
-    from .tool_policy import ensure
-    ensure(net)
+# Tools that read, claim or note without compiling: they share a lane no compile can fill.
+QUICK_TOOLS = frozenset({
+    'guide', 'project_info', 'get_claims', 'list_functions', 'get_function', 'get_assembly', 'get_context',
+    'last_diff', 'search_notes', 'read_file', 'search_code', 'file_status', 'get_class', 'compiler_map',
+    'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
+    'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function',
+    'add_note', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
+    'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness', 'get_data_unit', 'claim_data', 'release_data',
+    'claim_port_fix', 'release_port_fix',
+})
+QUICK_LANE = 16
+WORK_LANE = 32
+
+
+def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]], observe=None, reader=None) -> MCPServer:
+    """MCP server for CLI agents. `agent_of` maps a request to (agent, project slug). `reader` (ctx, name, args) ->
+    text answers every call instead, in the read-only tool process (app/tool_reader.py)."""
+    if reader is None:
+        from .tool_policy import ensure
+        ensure(net)
     mcp = MCPServer(name="decomp", title="decompdecomp", instructions=INSTRUCTIONS, version=__version__)
 
     health_limiter = anyio.CapacityLimiter(2)
-    async def run(ctx: Context, name: str, **args) -> str:
+    # Tool calls have threads of their own, apart from the window's (anyio's shared default of 40), and quick
+    # tools have their own lane: a burst of compiles can't make guide or get_claims wait (MCP error -32001).
+    quick_limiter = anyio.CapacityLimiter(QUICK_LANE)
+    work_limiter = anyio.CapacityLimiter(WORK_LANE)
+    async def run(ctx: Context, name: str, /, **args) -> str:
+        if reader is not None:
+            return await anyio.to_thread.run_sync(lambda: reader(ctx, name, args), limiter=quick_limiter)
         queued=time.monotonic()
         try:
             checking = name == 'project_info' and (ctx.headers or {}).get('x-decomp-connection-check') == '1'
@@ -862,7 +956,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
             if error:
                 raise error
             return result
-        return await anyio.to_thread.run_sync(execute,limiter=health_limiter if checking else None)
+        lane = health_limiter if checking else quick_limiter if name in QUICK_TOOLS else work_limiter
+        return await anyio.to_thread.run_sync(execute,limiter=lane)
 
     def tool(fn):
         full = " ".join((fn.__doc__ or "").split())
@@ -1120,6 +1215,53 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "read_data", what=what, length=length)
 
     @tool
+    async def get_data_unit(ctx: Context, name: str) -> str:
+        """One of the game's data symbols, for writing it as C (docs/PORTING.md): its address, how far it runs (to the
+        next place the game names or refers to), its bytes, who uses it, and any C it has."""
+        return await run(ctx, "get_data_unit", name=name)
+
+    @tool
+    async def claim_data(ctx: Context, name: str = "") -> str:
+        """Data agents: take the next data unit to write as C (or the one named): its address, extent, bytes, users."""
+        return await run(ctx, "claim_data", name=name)
+
+    @tool
+    async def release_data(ctx: Context, name: str, note: str = "") -> str:
+        """Data agents: give a unit back with what you learned, for the next try."""
+        return await run(ctx, "release_data", name=name, note=note)
+
+    @tool
+    async def claim_port_fix(ctx: Context, function: str = "") -> str:
+        """Port-fix agents: take the next matched function to fix for the PC (or the one named): its C and what a
+        64-bit PC compiler says of it."""
+        return await run(ctx, "claim_port_fix", function=function)
+
+    @tool
+    async def release_port_fix(ctx: Context, function: str, note: str = "") -> str:
+        """Port-fix agents: give a function back with what you learned, for the next try."""
+        return await run(ctx, "release_port_fix", function=function, note=note)
+
+    @tool
+    async def check_for_pc(ctx: Context, function: str, source: str = "", edits: list[dict] | None = None) -> str:
+        """What a 64-bit PC compiler (PORT defined) says of C for a matched function, with the header it compiles
+        with. Nothing is judged or saved. Give the whole C as `source`, or `edits` ([{"old", "new"}], each `old`
+        once in its C) for a long function."""
+        return await run(ctx, "check_for_pc", function=function, source=source, edits=edits)
+
+    @tool
+    async def fix_for_pc(ctx: Context, function: str, source: str = "", edits: list[dict] | None = None) -> str:
+        """Judge a matched function's C fixed for the PC: kept only when the console build still matches byte for
+        byte and the PC build is no worse on errors and pointer-size warnings and better on one. Give the whole C as
+        `source`, or `edits` ([{"old", "new"}], each `old` once in its C) for a long function."""
+        return await run(ctx, "fix_for_pc", function=function, source=source, edits=edits)
+
+    @tool
+    async def compile_data(ctx: Context, name: str, source: str) -> str:
+        """Judge C that defines one of the game's data symbols: kept only when it holds the game's bytes at its
+        address, all of the datum, pointers by name (`void *D_x[2] = {func, &D_y};`)."""
+        return await run(ctx, "compile_data", name=name, source=source)
+
+    @tool
     async def redraft(ctx: Context, function: str, context: str) -> str:
         """Requires nonempty actual C declarations in context; to inspect existing C use get_function(section="candidate").
         m2c's machine draft of a function made again with your declarations (a struct, a prototype, an extern
@@ -1162,6 +1304,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     async def list_functions(ctx: Context, status: str = "open", limit: int = 40) -> str:
         """List functions by status: open, matched or all."""
         return await run(ctx, "list_functions", status=status, limit=limit)
+
+    @tool
+    async def port_readiness(ctx: Context) -> str:
+        """What still stands between this game and a native PC port (docs/PORTING.md): code without C, library
+        code, graphics microcode, data reached by address, addresses written as numbers, raw blobs. Read-only."""
+        return await run(ctx, "port_readiness")
 
     @tool
     async def add_note(ctx: Context, text: str, function: str) -> str:

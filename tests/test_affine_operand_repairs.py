@@ -1,4 +1,4 @@
-from decompnet.app import affine_operand_repairs as repairs
+from decomprepair import affine_operand_repairs as repairs
 
 OPERANDS = '''void f(short *a, short *b, short *out, int *wide) {
  int unused; int old;

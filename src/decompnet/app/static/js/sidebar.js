@@ -18,7 +18,7 @@ async function loadNav(timer = false) {
   navLoading = true;
   try { S.projects = await api("/api/projects"); } catch (e) {
     if (!S.projects?.length) $("navProjects").innerHTML = `<p class="nav-empty">Couldn't load your projects: ${esc(e.message)}</p>`;
-    return;
+    return false;
   } finally {
     navLoading = false;
     if (navAgain) { navAgain = false; loadNav(); }
@@ -53,7 +53,18 @@ function renderNav() {
   setWidths(box);
   markNav();
 }
-setInterval(() => loadNav(true), 5000);
+/* The list every NAV_MS (not while the window is hidden), less often after errors or slow answers. */
+const NAV_MS = 5000, NAV_MAX_MS = 30000;
+let navDelay = NAV_MS;
+async function navTick() {
+  const started = Date.now();
+  let ok = true;
+  if (!document.hidden) { try { ok = await loadNav(true) !== false; } catch { ok = false; } }
+  const took = Date.now() - started;
+  navDelay = !ok ? Math.min(NAV_MAX_MS, navDelay * 2) : Math.max(NAV_MS, Math.min(NAV_MAX_MS, took * 3));
+  setTimeout(navTick, navDelay);
+}
+setTimeout(navTick, NAV_MS);
 function openNav() { document.body.classList.add("nav-open"); $("navShade").hidden = false; }
 function closeNav() { document.body.classList.remove("nav-open"); $("navShade").hidden = true; }
 $("navOpen").onclick = openNav;
@@ -203,6 +214,8 @@ function markUnread() {
 async function pollEvents() {
   if (N.polling) return;
   N.polling = true;
+  const started = Date.now();
+  let failed = false;
   try {
     const r = await api(`/api/events${N.last == null ? "" : `?after=${N.last}`}`);
     const first = N.last == null;
@@ -212,8 +225,22 @@ async function pollEvents() {
     trimHistory();
     showNews(r.events);
     if (!$("notifPanel").hidden) renderNotes();
-  } catch { /* the app is restarting: the next poll carries on where this one stopped */ } finally { N.polling = false; }
+  } catch {  /* the app is restarting: the next poll carries on where this one stopped, a little later each time */
+    failed = true;
+  } finally {
+    N.polling = false;
+    N.delay = failed ? Math.min(NOTIFY_MAX_MS, Math.max(2 * (N.delay || NOTIFY_POLL_MS), 4000))
+      : Math.max(NOTIFY_POLL_MS, Math.min(NOTIFY_MAX_MS, Date.now() - started));  // (a slow answer: ask less often)
+  }
 }
+/* The feed's own timer: nothing is asked while the window is hidden (what happened meanwhile comes all at once when it
+   shows again, from where the feed stopped), and errors or slow answers space the asks out. */
+const NOTIFY_MAX_MS = 30000;
+async function eventsTick() {
+  if (!document.hidden) await pollEvents();
+  setTimeout(eventsTick, document.hidden ? NOTIFY_MAX_MS : (N.delay || NOTIFY_POLL_MS));
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { pollEvents(); loadNav(true); } });
 function trimHistory() {
   const ids = [...N.history.keys()].sort((a, b) => a - b);
   for (const id of ids.slice(0, Math.max(0, ids.length - HISTORY_KEEP))) N.history.delete(id);
@@ -293,5 +320,5 @@ for (const box of [$("notifList"), $("toasts")]) {
     if (e.target.closest("a[href^='#/p/']")) closeNotes(false);
   });
 }
-setInterval(pollEvents, NOTIFY_POLL_MS);
+setTimeout(eventsTick, NOTIFY_POLL_MS);
 

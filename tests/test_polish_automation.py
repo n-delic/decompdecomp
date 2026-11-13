@@ -459,3 +459,293 @@ def test_push_poll_exclusion_keeps_other_configuration_guards(game, monkeypatch,
     with pytest.raises(NetworkError, match='Changed inputs: configuration'):
         auto.structured(net.readability, agent, 'game', 'f', '{}', 'Triple it.')
     assert not net._function('f', 'game')['readable']
+
+
+# What a machine draft looks like when it matches: a banner, m2c's defines and the callees' declarations
+# around the function. Small polish plans were refused for every one of these.
+DRAFT = ('/* machine draft (m2c) for gcc-2.7.2-kmc -O2 */\n#ifndef M2C_DEFINES\n#define M2C_DEFINES\n'
+         'typedef s32 M2C_UNK;\n#define M2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))\n'
+         '#endif\n\nM2C_UNK helper(s32);                         /* extern */\nextern s32 D_800C6F0C;\n\n'
+         + SOURCE.replace('var_v0 = arg0 * 3;', 'var_v0 = helper(arg0) + D_800C6F0C;') + '\n')
+
+
+def test_machine_drafts_take_small_plans_inside_the_function_only():
+    result = edits.apply(DRAFT,'f',{'arg0':'value','var_v0':'total'},'Adds the bias.',header=HEADER)
+    preamble = DRAFT[:DRAFT.index('s32 f(')]
+    assert result.startswith(preamble) and result.count('\n') == DRAFT.count('\n')
+    assert '/* Adds the bias. */ s32 f(s32 value) {' in result
+    assert 'total = helper(value) + D_800C6F0C;' in result
+    assert edits.locals_in(DRAFT,'f',HEADER) == ['arg0','var_v0']
+    # A local declared with the draft's own typedef is a local too.
+    unknown = DRAFT.replace('    s32 var_v0;', '    M2C_UNK var_v0;')
+    assert 'M2C_UNK total;' in edits.apply(unknown,'f',{'var_v0':'total'},header=HEADER)
+    # Type aliases change the function, never the draft's own typedefs or declarations.
+    retyped = edits.apply(DRAFT,'f',{},types={'s32':'Count'},header=HEADER)
+    assert retyped.startswith(preamble) and 'Count f(Count arg0)' in retyped
+
+
+def test_a_local_named_outside_the_function_stays_with_make_readable():
+    # Renaming arg0 inside the function would break the macro that also names it.
+    source = '#define FIRST arg0\n' + SOURCE.replace('arg0 * 3', 'FIRST * 3')
+    assert edits.locals_in(source,'f',HEADER) == ['var_v0']
+    with pytest.raises(NetworkError,match='simple parameters'):
+        edits.apply(source,'f',{'arg0':'value'},header=HEADER)
+    assert edits.apply(source,'f',{'var_v0':'total'},header=HEADER).startswith('#define FIRST arg0\n')
+    # A directive inside the definition is still a full rewrite.
+    inside = SOURCE.replace('    return var_v0;', '#ifdef DEBUG\n    var_v0++;\n#endif\n    return var_v0;')
+    with pytest.raises(NetworkError):edits.apply(inside,'f',{'var_v0':'total'},header=HEADER)
+    assert edits.signature(inside,'f',HEADER) == (None,[])
+
+
+def test_machine_draft_patterns_match_the_same_draft_shape():
+    shape,local = edits.signature(DRAFT,'f',HEADER)
+    assert shape and local == ['arg0','var_v0']
+    assert shape == edits.signature(DRAFT.replace(' f(',' g('),'g',HEADER)[0]
+    assert shape != edits.signature(DRAFT.replace('D_800C6F0C;\n\n','D_800C6F10;\n\n').replace('+ D_800C6F0C','+ D_800C6F10'),'f',HEADER)[0]
+
+
+def test_a_polished_machine_draft_is_learned_without_its_banner(game):
+    net,agent,calls = game
+    with net.store.tx() as db:
+        for name in ('f','g'):
+            db.execute('UPDATE functions SET matched_source=? WHERE name=?',(DRAFT.replace(' f(',f' {name}('),name))
+    assert auto.structured(net.readability,agent,'game','f','{"arg0":"value"}','Adds the bias.').startswith('✅')
+    answer = net.readability.claim(agent,'game')
+    assert 'Automatically polished 1' in answer
+    polished = net._function('g','game')['matched_source']
+    assert '/* Adds the bias. */ s32 g(s32 value)' in polished and polished.count('Adds the bias') == 1
+    assert polished.startswith('/* machine draft (m2c)')
+
+
+@pytest.mark.parametrize('phase', ['compile', 'judge'])
+@pytest.mark.parametrize('setting,value', [('spend', {'usd': 1.5, 'tokens': 1000}),
+                                           ('range_checks', {'0x80001000': 'checked'}),
+                                           ('priority', ['g'])])
+def test_spending_and_advice_do_not_invalidate_polishing(game, monkeypatch, phase, setting, value):
+    # Every agent's usage report updates "spend": it refused about a fifth of an N64 game's polishes.
+    net, agent, calls = game
+    original = net._compile if phase == 'compile' else net._evaluate
+    def operation(*args):
+        result = original(*args)
+        with net.store.tx() as db:
+            db.execute('UPDATE projects SET config=json_set(config, ?, json(?))', ('$.'+setting, json.dumps(value)))
+        return result
+    monkeypatch.setattr(net, '_compile' if phase == 'compile' else '_evaluate', operation)
+    assert auto.structured(net.readability, agent, 'game', 'f', '{"arg0":"value"}', 'Triple it.').startswith('✅')
+    assert net._function('f', 'game')['readable'] and len(calls) == 1
+
+
+def _rename_during(net, monkeypatch, phase, *, used):
+    """A rename recorded while the polish compiles or is judged; `used` also moves a name the function uses."""
+    from decompnet.rom.symbols import Symbol
+
+    original = net._compile if phase == 'compile' else net._evaluate
+    def operation(*args):
+        result = original(*args)
+        with net.store.tx() as db:
+            net._event(db, 1, None, 'rename', 'func_80001234 → unrelated_helper')
+        if used:
+            net.symbols(1).alias(Symbol('s32', 12345))
+        return result
+    monkeypatch.setattr(net, '_compile' if phase == 'compile' else '_evaluate', operation)
+
+
+@pytest.mark.parametrize('phase', ['compile', 'judge'])
+def test_another_functions_rename_does_not_refuse_a_polish(game, monkeypatch, phase):
+    # Agents rename constantly while polishing: each rename refused every polish in flight on an N64 game.
+    net, agent, calls = game
+    before = net._generation.get(1, 0)
+    _rename_during(net, monkeypatch, phase, used=False)
+    assert auto.structured(net.readability, agent, 'game', 'f', '{"arg0":"value"}', 'Triple it.').startswith('✅')
+    assert net._function('f', 'game')['readable'] and len(calls) == 1
+    # Repeat compiles still treat the rename as a change: only polishing's guard leaves it out.
+    assert net._generation[1] == before + 1
+
+
+@pytest.mark.parametrize('phase', ['compile', 'judge'])
+def test_a_rename_that_reaches_the_function_still_refuses_the_polish(game, monkeypatch, phase):
+    net, agent, _ = game
+    _rename_during(net, monkeypatch, phase, used=True)
+    with pytest.raises(NetworkError, match='Changed inputs: symbols'):
+        auto.structured(net.readability, agent, 'game', 'f', '{"arg0":"value"}', 'Triple it.')
+    assert not net._function('f', 'game')['readable']
+
+
+def test_fork_projects_still_count_every_rename(game, monkeypatch):
+    # A fork project's guard has no header or symbol components to notice a rename that reaches the function.
+    net, _, _ = game
+    proj, fn = net._project('game'), net._function('f', 'game')
+    monkeypatch.setattr(net, 'is_rom', lambda *a: False)
+    key = auto.input_key(net, proj, fn, SOURCE, 'candidate')
+    with net.store.tx() as db:
+        net._event(db, 1, None, 'rename', 'g → h')
+    assert auto.input_key(net, proj, fn, SOURCE, 'candidate') != key
+    monkeypatch.setattr(net, 'is_rom', lambda *a: True)
+    key = auto.input_key(net, proj, fn, SOURCE, 'candidate')
+    with net.store.tx() as db:
+        net._event(db, 1, None, 'rename', 'h → i')
+    assert auto.input_key(net, proj, fn, SOURCE, 'candidate') == key
+    net.bump_generation(1)  # any other change compiles depend on still counts
+    assert auto.input_key(net, proj, fn, SOURCE, 'candidate') != key
+
+
+def _given_up(net):
+    from decompnet.app import readable
+    return {r['detail'] for r in net.store.all(readable.GIVEN_UP, 1)}
+
+
+def test_a_function_whose_rewrites_keep_failing_is_let_go_after_its_tries(game):
+    # A helper handed the same function every session, every rewrite failing to compile, still lets it go: each
+    # hand-out with a failed rewrite is one try, however many rewrites failed in it.
+    from decompnet.app import readable
+
+    net, agent, calls = game
+    for attempt in range(readable.POLISH_TRIES):
+        said = net.readability.claim(agent, 'game')
+        name = said.split('MAKE READABLE: ')[1].split()[0]
+        assert name not in _given_up(net)
+        for n in range(2):
+            broken = SOURCE.replace(' f(', f' {name}(').replace('s32 var_v0', f'BROKEN{attempt}{n} var_v0')
+            assert 'COMPILE ERROR' in net.readability.submit(agent, 'game', name, broken)
+    assert _given_up(net) == {name}
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE kind='polish_failed'")['n'] == readable.POLISH_TRIES
+    said = net.readability.claim(agent, 'game')
+    assert said.startswith(f'You held {name}; it has had its tries') and name not in said.split('\n\n', 1)[1][:40]
+
+
+def test_hand_outs_without_a_judged_rewrite_take_many_more_to_let_a_function_go(game):
+    # A helper's session ending, a refusal for changed inputs or a function renamed by mistake says nothing about
+    # the function: 199 of an N64 game's last 207 functions were given up that way, only 8 for failed rewrites.
+    from decompnet.app import readable
+
+    net, agent, _ = game
+    with net.store.tx() as db:
+        for _ in range(readable.POLISH_CLAIMS - 1):
+            net._event(db, 1, agent.id, 'polish', 'f')
+    assert 'f' not in _given_up(net)
+    net._evaluate = lambda *a: (None, None, [])  # the helper renamed it in its rewrite
+    assert 'No function named' in net.readability.submit(agent, 'game', 'f', SOURCE.replace('var_v0', 'total'))
+    assert not net.store.one("SELECT 1 FROM events WHERE kind='polish_failed'")
+    with net.store.tx() as db:
+        net._event(db, 1, agent.id, 'polish', 'f')
+    assert _given_up(net) == {'f'}
+    with net.store.tx() as db:  # made readable since: it has its tries again
+        net._event(db, 1, agent.id, 'readable', 'f')
+    assert _given_up(net) == set()
+
+
+# A twin's C: the declarations of the file it came from and blank lines that keep the function at its line.
+PREAMBLE = ('/* identical to f in ANOTHER GAME (matched), with its names changed by decompdecomp */\n'
+            + ''.join(f'extern s32 D_8009{i:04X}; /* audio state */\n' for i in range(300)) + ' ' * 40 + '\n' * 400)
+BIG = PREAMBLE + SOURCE + '\n'
+
+
+def _big(net):
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=? WHERE name='f'", (BIG,))
+        db.execute("UPDATE functions SET readable=1 WHERE name='g'")
+
+
+def test_a_brief_shows_only_the_function_under_a_big_preamble(game):
+    net, agent, _ = game
+    _big(net)
+    brief = net.readability.claim(agent, 'game')
+    assert brief.startswith('MAKE READABLE: f') and SOURCE in brief
+    assert 'D_80090000' not in brief and len(brief) < len(BIG) // 4
+    line = PREAMBLE.count('\n') + 1
+    assert f'the {line - 1:,} lines above it' in brief and f'line {line:,}' in brief
+
+
+def test_make_readable_takes_the_function_alone_and_keeps_its_line(game):
+    net, agent, calls = game
+    _big(net)
+    polished = '// Triples the value.\ns32 f(s32 value) {\n    s32 total;\n    total = value * 3;\n    return total;\n}'
+    assert net.readability.submit(agent, 'game', 'f', polished).startswith('✅')
+    kept = net._function('f', 'game')['matched_source']
+    assert calls[-1] == kept and kept.startswith(PREAMBLE)
+    assert kept.split('\n')[PREAMBLE.count('\n')] == '/* Triples the value. */ s32 f(s32 value) {'
+    assert kept.count('\n') == BIG.count('\n')
+
+
+def test_the_whole_c_or_a_small_preamble_is_taken_as_sent(game):
+    net, agent, calls = game
+    _big(net)
+    whole = BIG.replace('arg0', 'value')
+    assert net.readability.submit(agent, 'game', 'f', whole).startswith('✅') and calls[-1] == whole
+    # a machine draft's few declarations: the function alone is the whole C, as before
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=?, readable=0 WHERE name='g'", (DRAFT.replace(' f(', ' g('),))
+    alone = SOURCE.replace(' f(', ' g(').replace('arg0', 'value')
+    assert net.readability.submit(agent, 'game', 'g', alone).startswith('✅') and calls[-1] == alone
+
+
+def test_a_function_given_up_while_its_brief_was_unreadable_gets_one_fresh_start(game):
+    from decompnet.app import readable
+
+    net, agent, _ = game
+    _big(net)
+    def handed_out(times):
+        with net.store.tx() as db:
+            for _ in range(times):
+                net._event(db, 1, agent.id, 'polish', 'f')
+    handed_out(readable.POLISH_CLAIMS)
+    assert _given_up(net) == {'f'}
+    proj = net._project('game')
+    assert net.readability.left(proj) == 1 and _given_up(net) == set()
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE kind='polish_retry' AND detail='f'")['n'] == 1
+    handed_out(readable.POLISH_CLAIMS)  # tried again with a brief it could read: given up for good
+    assert net.readability.left(proj) == 0
+    net.readability = readable.Readability(net)  # (a new process looks again, and leaves it)
+    assert net.readability.left(proj) == 0
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE kind='polish_retry'")['n'] == 1
+
+
+def test_define_lines_inside_a_function_stay_and_its_other_locals_can_be_renamed():
+    # A 529-instruction function of an N64 game defines its field accessors inside: no helper would retype it whole.
+    source = ('s32 f(s32 arg0) {\n    s32 var_v0;\n    struct { s32 data[4]; } work;\n#define data work.data\n'
+              '#define FIRST(p) \\\n    ((p)[0])\n    var_v0 = FIRST(data) + arg0;\n#undef data\n    return var_v0;\n}')
+    assert edits.locals_in(source, 'f', HEADER) == ['arg0', 'var_v0']
+    result = edits.apply(source, 'f', {'arg0': 'bias', 'var_v0': 'total'}, 'Adds the first entry.', header=HEADER)
+    assert '#define data work.data\n#define FIRST(p) \\\n    ((p)[0])\n' in result and '#undef data\n' in result
+    assert 'total = FIRST(data) + bias;' in result and result.count('\n') == source.count('\n')
+    named = source.replace('#define data work.data', '#define data (work.data + arg0)')
+    with pytest.raises(NetworkError, match='simple parameters'):  # a name its macro uses stays with make_readable
+        edits.apply(named, 'f', {'arg0': 'bias'}, header=HEADER)
+    assert edits.signature(source, 'f', HEADER)[0] is not None
+
+
+def test_nothing_is_handed_out_while_the_compiler_cannot_run(game, monkeypatch):
+    from decompnet import toolchains
+
+    net, agent, _ = game
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: 'The Linux compiler runner is not ready.')
+    said = net.readability.claim(agent, 'game')
+    assert said.startswith("The compiler for what's left can't run right now") and 'MAKE READABLE' not in said
+    assert not net.store.one("SELECT 1 FROM events WHERE kind='polish'") and not net.store.one('SELECT 1 FROM claims')
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: None)
+    assert net.readability.claim(agent, 'game').startswith('MAKE READABLE')
+
+
+def test_a_function_is_handed_out_only_when_its_own_compiler_can_run(game, monkeypatch):
+    # An N64 game's smallest function is built with the compiler its Linux runner runs; the check looked only at
+    # the game's own compiler, which ran, and the function was handed out 10 times while the runner was down.
+    from decompnet import toolchains
+
+    net, agent, _ = game
+    with net.store.tx() as db:
+        cfg = json.loads(db.execute('SELECT config FROM projects').fetchone()['config'])
+        g = db.execute("SELECT vram,rom_offset FROM functions WHERE name='g'").fetchone()
+        cfg['function_compilers'] = {'g': {'vram': g['vram'], 'function': 'g', 'toolchain': 'gcc-4.4.0-n64', 'flags': []}}
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+        db.execute("UPDATE functions SET n_insns=60 WHERE name='g'")  # g first, as the bigger one
+    down = {'gcc-4.4.0-n64': 'The Linux compiler runner is not ready.'}
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda tid: down.get(tid))
+    assert net.readability.claim(agent, 'game').startswith('MAKE READABLE: f')  # g skipped, not handed out
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET readable=1 WHERE name='f'")
+        db.execute('DELETE FROM claims')
+    said = net.readability.claim(agent, 'game')
+    assert said.startswith("The compiler for what's left can't run right now")
+    assert [r['detail'] for r in net.store.all("SELECT detail FROM events WHERE kind='polish'")] == ['f']
+    down.clear()
+    assert net.readability.claim(agent, 'game').startswith('MAKE READABLE: g')

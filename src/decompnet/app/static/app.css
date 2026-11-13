@@ -2132,12 +2132,6 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 
 /* The image map supplements an accessible, sortable region table. */
 .rom-image-map { width:100%; height:52px; border-radius:var(--radius, 6px); cursor:crosshair; display:block; }
-.rom-map-legend { display:flex; flex-wrap:wrap; gap:1rem; }
-.rom-map-legend span::before { content:""; display:inline-block; width:.7rem; height:.7rem; margin-right:.4rem; background:var(--line); }
-.rom-map-legend span:nth-child(1)::before { background:var(--color-status-info-fill); }
-.rom-map-legend span:nth-child(2)::before { background:var(--color-status-success-fill); }
-.rom-map-legend span:nth-child(3)::before { background:var(--color-status-warning-fill); }
-.rom-map-legend span:nth-child(4)::before { background:var(--muted); }
 #romExplorerPanel .pad, #romExplorerPanel .pad > * { min-width:0; max-width:100%; }
 #romExplorerPanel .joblog { white-space:pre-wrap; overflow-wrap:anywhere; }
 #romResult table { min-width:640px; }
@@ -2156,7 +2150,7 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 
 .rom-type-map { display:block; width:100%; margin-top:12px; }
 .rom-type-map:focus-visible { outline:2px solid var(--ink); outline-offset:4px; }
-.rom-type-legend { display:flex; flex-wrap:wrap; gap:8px 18px; }
+.rom-type-legend { margin:8px 0 12px; display:flex; flex-wrap:wrap; gap:8px 18px; }
 .rom-type-legend > span { display:inline-flex; align-items:center; gap:6px; }
 #romTypeStatus { min-height:2.5em; overflow-wrap:anywhere; }
 
@@ -2181,3 +2175,12 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 #romAudioPanel, #romModelPanel { min-width:0; }
 #romModelItems, #romModelResult, #romAudioItems, #romAudioResult, #romAudioSequences { min-width:0; overflow-wrap:anywhere; }
 #romModelItems td:last-child, #romModelItems th:last-child, #romAudioItems td:last-child, #romAudioItems th:last-child { position:sticky; right:0; background:var(--panel); }
+
+/* Settings › Compiler services (compiler-service.js) */
+.cs-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 16px; }
+#compilerService .steps { gap: 12px; margin: 12px 0; }
+#compilerService .steps > li { min-width: 0; }
+#compilerService .cmd { margin: 6px 0; align-items: flex-start; }  /* long commands wrap (as in .manual-mcp) */
+#compilerService .cmd code { white-space: pre-wrap; overflow-wrap: anywhere; }
+#compilerService table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+#compilerService th, #compilerService td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); }

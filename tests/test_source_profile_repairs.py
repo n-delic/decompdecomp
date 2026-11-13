@@ -3,8 +3,9 @@ from dataclasses import replace
 
 import pytest
 
-from decompnet.app import deep_permuter, draft_repairs, operand_order_repairs, source_diagnostics
+from decompnet.app import deep_permuter, draft_repairs, source_diagnostics
 from decompnet.network import NetworkError
+from decomprepair import operand_order_repairs
 from tests.test_deep_permuter import Log, setup
 from tests.test_permute import AGENT
 

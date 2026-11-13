@@ -1,11 +1,5 @@
-from decompnet.app import (
-    allocation_evidence,
-    call_scope_repairs,
-    debug_initializer_repairs,
-    draft_repairs,
-    phase_union_repairs,
-    repair_ranking,
-)
+from decompnet.app import allocation_evidence, draft_repairs, repair_ranking
+from decomprepair import call_scope_repairs, debug_initializer_repairs, phase_union_repairs
 
 HEADER = 'typedef unsigned char u8; typedef unsigned int u32; typedef int s32; typedef float f32; typedef struct Sound Sound;'
 FLAGS = ['-mgp32','-O2','-g3']

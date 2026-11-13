@@ -2,7 +2,8 @@
 import shutil
 import subprocess
 
-from decompnet.app import draft_repairs, loop_guard_storage_repairs
+from decompnet.app import draft_repairs
+from decomprepair import loop_guard_storage_repairs
 
 SOURCE = '''typedef signed char s8;
 typedef unsigned char u8;

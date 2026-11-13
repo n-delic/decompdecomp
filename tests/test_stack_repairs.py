@@ -1,5 +1,6 @@
 """Storage hypotheses stay local and pass through the existing bounded repair pipeline."""
-from decompnet.app import draft_repairs, stack_repairs
+from decompnet.app import draft_repairs
+from decomprepair import stack_repairs
 
 
 def test_unused_scalar_ignores_field_names_and_keeps_lines_literals_and_other_functions():

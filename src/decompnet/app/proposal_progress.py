@@ -5,7 +5,9 @@ The compiler still judges every source. A cursor is scheduling advice, never a c
 import hashlib
 import time
 
-from . import debug_boundary_repairs, experiment_evidence
+from decomprepair import debug_boundary_repairs
+
+from . import experiment_evidence
 
 SCHEMA = '''CREATE TABLE IF NOT EXISTS repair_proposal_progress(
  function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,

@@ -72,11 +72,13 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     if not budget:
         return []
     if diagnosis['return_copy_rotation']:
-        from . import prepared_call_repairs
+        from decomprepair import prepared_call_repairs
         selected=prepared_call_repairs.variants(source,name,header,arch)
         for family,candidate in selected:labels[candidate]=family
         return selected[:budget]
-    from . import identity_lifetime_repairs, later_local_repairs, value_trace_repairs
+    from decomprepair import identity_lifetime_repairs, later_local_repairs
+
+    from . import value_trace_repairs
     extra = later_local_repairs.variants(source,name,header,arch,evidence)
     extra += identity_lifetime_repairs.variants(source,name,header,arch) if arch in {'mips','ppc','x86','arm','thumb'} else []
     trace = (evidence or {}).get('value_trace',{})

@@ -90,6 +90,20 @@ def test_opencode_provider_groups_keep_qualified_model_ids():
     models = agents.get('opencode').read_models(['opencode/example', 'opencode-go/example', 'noise'])
     assert [m['id'] for m in models] == ['opencode/example', 'opencode-go/example']
     assert [m['group'] for m in models] == ['OpenCode', 'OpenCode Go']
+    # The launcher shows which signed-in account each model belongs to.
+    assert [m['account'] for m in models] == ['OpenCode Zen (console)', 'OpenCode Go (API)']
+    assert [m['note'] for m in models] == ['OpenCode Zen (console)', 'OpenCode Go (API)']
+    kind = agents.get('opencode')
+    assert kind.account_label('opencode-go/example') == 'OpenCode Go (API)'
+    assert kind.limit_scope('opencode-go/example') == ('opencode-go', 'opencode-go/example')
+    assert kind.limit_wait_why() != agents.get('claude').limit_wait_why()
+
+
+def test_a_helper_card_names_its_opencode_account():
+    from decompnet.app.agents import Session
+    s = Session('1', 'opencode', 'zen', 'game', 'zen', {'model': 'opencode-go/beam'})
+    assert s.snapshot()['account_label'] == 'OpenCode Go (API)'
+    assert s.snapshot()['account_name'] == ''
 
 
 def test_failed_replacement_record_stops_new_worker_and_retains_original():

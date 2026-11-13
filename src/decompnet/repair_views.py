@@ -14,8 +14,9 @@ def focused(before, after, name):
             'supporting_diff': diff(before[:a[0]]+before[a[1]:], after[:b[0]]+after[b[1]:], 'supporting source'),
             'focus_note': 'Declarations and neighbouring functions may affect compilation; neither diff alone proves the cause.'}
 
+    from decomprepair.observed_repairs import variants
+
     from .app.captured_lifetimes import variants as lifetime_variants
-    from .app.observed_repairs import variants
     from .repair_changes import TOKEN, without_comments
     tokens = lambda text: TOKEN.findall(without_comments(text))
     target = tokens(after[b[0]:b[1]])

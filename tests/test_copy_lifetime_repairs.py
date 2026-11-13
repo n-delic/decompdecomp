@@ -1,5 +1,6 @@
-from decompnet.app import copy_lifetime_repairs as repairs
-from decompnet.app import debug_boundary_repairs, draft_repairs, local_experiments, repair_ranking
+from decompnet.app import draft_repairs, local_experiments, repair_ranking
+from decomprepair import copy_lifetime_repairs as repairs
+from decomprepair import debug_boundary_repairs
 
 
 def test_dead_source_reset_handles_initialized_copy_and_comma_locals():

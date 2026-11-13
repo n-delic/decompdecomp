@@ -1,8 +1,9 @@
 """Bounded target-backed pointer lifetimes and explicit commented retail conditions."""
 import re
 
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank
-from .pattern_repairs import close
 from .reference_stage_repairs import declaration_block
 
 ID=r'[A-Za-z_]\w*'

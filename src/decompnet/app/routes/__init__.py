@@ -49,6 +49,8 @@ class App:
     fail: Callable[..., Any]  # fail(error, code=400): the error as JSON
     ui_call: Callable[..., Any] | None = None  # reserved capacity for snapshot-only UI reads
     fast_call: Callable[..., Any] | None = None  # lightweight counters, isolated from diff/map work
+    live_call: Callable[..., Any] | None = None  # the open project's live feed, its own lane: never starves the sidebar or drawer
+    stream_call: Callable[..., Any] | None = None  # /api/stream's change checks: one worker, held only while a check runs
     control_call: Callable[..., Any] | None = None  # job admission/cancellation cannot queue behind builds
     updater: updates.Updater | None = None
     busy: Callable[[], bool] | None = None  # whether helpers or a job are working

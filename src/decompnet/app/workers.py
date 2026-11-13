@@ -38,9 +38,14 @@ _lock = threading.Lock()
 
 
 def lower_priority() -> None:
-    """Lower only this worker, without lowering the GUI or the agent threads beside it."""
+    """Lower only this worker, without lowering the GUI or the agent threads beside it. Once per thread: threads
+    are reused across operations now (thread_lanes), and on Linux each os.nice call lowers the thread further."""
     from ..compiler import background_thread
+    from .thread_lanes import mark_lowered, priority_lowered
     background_thread()
+    if priority_lowered():
+        return
+    mark_lowered()
     if os.name == "nt":
         import ctypes
 
@@ -63,10 +68,12 @@ def lower_priority() -> None:
 def configure(threads=None) -> int:
     """Set the default width of newly created task groups; running groups keep theirs."""
     global WORKERS
-    with _lock:WORKERS = clamp(threads)
+    with _lock:
+        WORKERS = clamp(threads)
     return WORKERS
 
 
 def pool(purpose='Background task', project='', stop=None) -> Executor:
-    """Return an independent group; callers must close it after their operation."""
+    """Return an independent group, `WORKERS` wide, on the shared lowered-priority threads (thread_lanes); callers
+    must close it after their operation."""
     return Executor(WORKERS, purpose=purpose, project=project, stop=stop, initializer=lower_priority)

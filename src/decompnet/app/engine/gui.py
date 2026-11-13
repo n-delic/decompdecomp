@@ -111,6 +111,67 @@ class GuiMixin:
                        "compiler_ranges": base.get("compiler_ranges") or self._range_rows(cfg),
                        "auto_compiler": self.auto_adjusts(proj)}
 
+    # The live poll's overview, kept between polls (engine.live). It is rebuilt when one of the project's cheap change
+    # counters moves (live_overview_key) or after LIVE_OVERVIEW_TTL; what lives only in memory (autopilot, permuter,
+    # twins, saved-progress checks, the room) is read fresh on every poll, as it costs no query.
+    LIVE_OVERVIEW_TTL = 10.0
+    LIVE_VOLATILE = ('autopilot', 'permuter', 'twins', 'progress_syncing', 'progress_sync', 'room')
+
+    def live_overview_key(self, proj) -> tuple:
+        """One indexed read: function and settings changes (map_revision, also bumped by config edits), attempts,
+        the newest event and the shared header's version. Anything else the overview shows waits for the TTL."""
+        row = self.project_store(proj['id']).one(
+            "SELECT (SELECT map_revision FROM project_totals WHERE project_id=?1) AS map, "
+            "(SELECT attempts FROM project_totals WHERE project_id=?1) AS attempts, "
+            "(SELECT MAX(id) FROM events WHERE project_id=?1) AS event, "
+            "(SELECT MAX(version) FROM context_versions WHERE project_id=?1 AND unit='') AS context", proj['id'])
+        return (proj['slug'], proj['id'], row['map'], row['attempts'], row['event'], row['context'])
+
+    def live_volatile(self, slug: str, stable: dict) -> dict:
+        twins = self.twins.jobs.get(slug)
+        out = {"autopilot": self.autopilot_status(slug), "permuter": self.permuter.status(slug),
+               "twins": None if twins is None else {
+                   k: getattr(twins, k) for k in ("state", "progress", "pairs", "tried", "matched", "asm",
+                                                "cross_candidates", "cross_tried", "cross_matched", "cross_job")},
+               "progress_syncing": self.progress.syncing(slug), "progress_sync": self.progress.status(slug)}
+        if 'room' in stable and not self.fork_slug(slug):
+            out['room'] = self._room_info(slug, refresh=False)
+        return out
+
+    def live_overview(self, slug: str) -> tuple[dict, str]:
+        """The overview for the live poll and a version of it: a digest of its stable part (taken once per rebuild)
+        and of the small in-memory part. Unchanged polls neither rebuild nor serialise the whole overview."""
+        proj = self._project(slug)
+        store = self.project_store(proj['id'])
+        state = self.__dict__.setdefault('_live_overviews', {})
+        lock = self.__dict__.setdefault('_live_overview_lock', threading.Lock())
+        transactional = getattr(store._local, 'in_tx', False)  # (uncommitted rows never go into the cache)
+        key = None if transactional else self.live_overview_key(proj)
+        now = time.monotonic()
+        with lock:
+            item = state.get(slug)
+        if key is None or item is None or item[0] != key or item[1] <= now:
+            full = self.overview(slug, room_members=False)
+            stable = {k: v for k, v in full.items() if k not in self.LIVE_VOLATILE}
+            digest = hashlib.sha256(json.dumps(stable, separators=(',', ':'), sort_keys=True, default=str).encode()).hexdigest()[:24]
+            item = (key, now + self.LIVE_OVERVIEW_TTL, stable, digest)
+            if key is not None:
+                with lock:
+                    state[slug] = item
+                    for other in [s for s, v in state.items() if v[1] <= now]:
+                        state.pop(other, None)
+        stable, digest = item[2], item[3]
+        volatile = self.live_volatile(slug, stable)
+        moving = hashlib.sha256(json.dumps(volatile, separators=(',', ':'), sort_keys=True, default=str).encode()).hexdigest()[:12]
+        return stable | volatile, f'{digest}.{moving}'
+
+    def forget_live_overview(self, slug: str | None = None) -> None:
+        """Rebuild the next live overview now (settings saved outside the counters' sight)."""
+        state = self.__dict__.get('_live_overviews')
+        if state is not None:
+            with self.__dict__['_live_overview_lock']:
+                state.clear() if slug is None else state.pop(slug, None)
+
     def _helper_match_count(self, proj):
         ids = [r['id'] for r in self.store.all(
             "SELECT id FROM agents WHERE origin='local' AND name NOT IN ('you','autopilot')")]
@@ -498,8 +559,12 @@ class GuiMixin:
                 'ORDER BY f.id DESC LIMIT 101',pid,agent,after,before,before)
         return {'functions':[dict(r) for r in rows[:100]],'more':len(rows)>100}
 
-    def live(self, slug: str, since_event: int = 0, since_attempt: int = 0) -> dict:
+    def live(self, slug: str, since_event: int = 0, since_attempt: int = 0, *, sections=None) -> dict:
+        """The project page's live feed. `sections` (a set of "feed", "claims", "overview"; None: all): what the page
+        asked for; a section left out is not read at all, and its key is left out of the answer. `versions` carries the
+        overview's version (live_overview) so the page can be sent only what changed."""
         proj = self._project(slug)
+        wanted = (lambda part: True) if sections is None else (lambda part: part in sections)
         from ..local_claims import expiry_ids
         from ..project_labels import label
         store = self.project_store(proj['id'])
@@ -510,15 +575,31 @@ class GuiMixin:
             identities = expiry_ids(self, store)
             with store.tx() as db:
                 self._expire_claims(db, **identities)
-        events = label(self, store.all(
-            "SELECT id,kind,detail,created_at,agent_id FROM events "
-            f"WHERE project_id=? AND id>? AND COALESCE(agent_id,0) NOT IN (SELECT value FROM json_each(?)) "
-            f"ORDER BY id DESC LIMIT {LIVE_EVENTS}", proj['id'], since_event, hidden), {'agent':'agent_id'})
-        attempts = label(self, store.all(
-            "SELECT t.id,t.score,t.score_before,t.score_improved,t.compiled,t.created_at,"
-            "f.name AS function,f.n_insns,t.agent_id FROM attempts t JOIN functions f ON f.id=t.function_id "
-            "WHERE f.project_id=? AND t.id>? AND COALESCE(t.agent_id,0) NOT IN (SELECT value FROM json_each(?)) "
-            f"ORDER BY t.id DESC LIMIT {LIVE_ATTEMPTS}", proj['id'], since_attempt, hidden), {'agent':'agent_id'})
+        out = {}
+        if wanted('feed'):
+            events = label(self, store.all(
+                "SELECT id,kind,detail,created_at,agent_id FROM events "
+                f"WHERE project_id=? AND id>? AND COALESCE(agent_id,0) NOT IN (SELECT value FROM json_each(?)) "
+                f"ORDER BY id DESC LIMIT {LIVE_EVENTS}", proj['id'], since_event, hidden), {'agent':'agent_id'})
+            attempts = label(self, store.all(
+                "SELECT t.id,t.score,t.score_before,t.score_improved,t.compiled,t.created_at,"
+                "f.name AS function,f.n_insns,t.agent_id FROM attempts t JOIN functions f ON f.id=t.function_id "
+                "WHERE f.project_id=? AND t.id>? AND COALESCE(t.agent_id,0) NOT IN (SELECT value FROM json_each(?)) "
+                f"ORDER BY t.id DESC LIMIT {LIVE_ATTEMPTS}", proj['id'], since_attempt, hidden), {'agent':'agent_id'})
+            # (`cut`: more attempts than it sends, so the map's counts need the whole map again)
+            out |= {"events": [dict(e) for e in reversed(events)], "attempts": [dict(t) for t in reversed(attempts)],
+                    "cut": len(attempts) == LIVE_ATTEMPTS}
+        else:
+            out |= {"events": [], "attempts": [], "cut": False}
+        if wanted('claims'):
+            out["claims"] = self._live_claims(slug, proj, store, hidden)
+        out["versions"] = {}
+        if wanted('overview'):
+            out["overview"], out["versions"]["overview"] = self.live_overview(slug)
+        return out
+
+    def _live_claims(self, slug, proj, store, hidden) -> list[dict]:
+        from ..project_labels import label
         claims = label(self, store.all(
             "SELECT f.name,f.n_insns,f.best_score,f.attempts,c.agent_id,c.claimed_at FROM claims c "
             "JOIN functions f ON f.id=c.function_id WHERE f.project_id=? "
@@ -541,9 +622,30 @@ class GuiMixin:
         from ..function_searches import activity
         occupied = {c['name'] for c in claims}
         claims.extend(row for row in activity(self,proj) if row['name'] not in occupied)
-        # (`cut`: more attempts than it sends, so the map's counts need the whole map again)
-        return {"events": [dict(e) for e in reversed(events)], "attempts": [dict(t) for t in reversed(attempts)],
-                "cut": len(attempts) == LIVE_ATTEMPTS, "claims": claims, "overview": self.overview(slug, room_members=False)}
+        return claims
+
+    def live_signature(self, slug: str) -> dict:
+        """What the live stream (/api/stream) compares between its checks: one token per section of the live feed,
+        from the cheapest reads there are (two indexed rows and the claims table, which holds only what agents
+        work on now) and from memory. A token that moves says that section has news; nothing here builds it."""
+        proj = self._project(slug)
+        store = self.project_store(proj['id'])
+        row = store.one(
+            "SELECT (SELECT map_revision FROM project_totals WHERE project_id=?1) AS map, "
+            "(SELECT attempts FROM project_totals WHERE project_id=?1) AS attempts, "
+            "(SELECT MAX(id) FROM events WHERE project_id=?1) AS event, "
+            "(SELECT MAX(version) FROM context_versions WHERE project_id=?1 AND unit='') AS context, "
+            "(SELECT COUNT(*) || ':' || COALESCE(SUM(c.function_id * 1000003 + COALESCE(c.agent_id, 0)), 0) || ':' || "
+            " COALESCE(MAX(c.claimed_at), 0) || ':' || COALESCE(SUM(c.expires_at < ?2), 0) "
+            " FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.project_id=?1) AS claims", proj['id'], time.time())
+        from ..function_searches import active
+        link = self.links.get(slug)
+        claims = f"{row['claims']}|{active(self, slug)!r}|{link.claims if link else ''!r}"
+        volatile = json.dumps(self.live_volatile(slug, {'room': None}), sort_keys=True, default=str)
+        return {"feed": f"{row['event']}:{row['attempts']}", "map": row['map'],
+                "claims": hashlib.sha256(claims.encode()).hexdigest()[:16],
+                "overview": hashlib.sha256(f"{row['map']}|{row['attempts']}|{row['event']}|{row['context']}|{volatile}".encode()).hexdigest()[:16],
+                "event": row['event'] or 0}
 
     def events_after(self, after: int | None, limit: int = EVENTS_PER_ASK) -> dict:
         """The notification centre's feed, for every project at once: what happened after event `after`, oldest

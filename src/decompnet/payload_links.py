@@ -47,6 +47,48 @@ def fields(store):
             field in {r['name'] for r in store.all('PRAGMA table_info('+table+')')}]
 
 
+def _owners(db):
+    """fields() for a raw connection inside a transaction: (table, field) of every registered reference column."""
+    from .large_text_storage import FIELDS
+    tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    candidates=[('attempts','source_hash'),('repair_examples','evidence_hash')]
+    candidates.extend((table,field) for table,columns in FIELDS.items() for field in columns)
+    return tables,[(table,field) for table,field in candidates if table in tables and
+                   field in {r[1] for r in db.execute('PRAGMA table_info('+table+')')}]
+
+
+def indexed(db):
+    """Whether every reference column's links are complete: then a payload no link names is unused.
+
+    A column's backfill (collect) records `done` once every row behind its cursor is linked; its triggers link
+    each later write, from any process. A column whose triggers are new has no record yet (_install deletes
+    it), so a table created since the last backfill makes this False until collect runs again."""
+    tables,owners=_owners(db)
+    if 'payload_links' not in tables:return False
+    for table,field in owners:
+        trigger='payload_link_'+table+'_'+field+'_insert'
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?",(trigger,)).fetchone() is None:
+            return False
+        row=db.execute('SELECT value FROM settings WHERE key=?',('payload-links:'+table+'.'+field,)).fetchone()
+        if row is None or not json.loads(row[0]).get('done'):return False
+    return True
+
+
+def release(db, hashes):
+    """Delete the payloads a caller just stopped using, inside its writer transaction, if nothing else uses them.
+
+    A cheap, targeted alternative to a full collect after a known replacement: indexed lookups only, no scan.
+    Before the link index is complete a payload's absence from payload_links proves nothing, so this then
+    removes nothing and leaves the payloads to collect (Settings → Database storage)."""
+    hashes=[h for h in dict.fromkeys(hashes) if h]
+    if not hashes or not indexed(db):return 0
+    removed=0
+    for key in hashes:
+        removed+=db.execute('DELETE FROM text_payloads WHERE hash=? AND NOT EXISTS('
+                            'SELECT 1 FROM payload_links WHERE hash=?)',(key,key)).rowcount
+    return removed
+
+
 def collect(store, log=None):
     from .app.maintenance import checkpoint
     check=getattr(log,'check_cancel',lambda:None)

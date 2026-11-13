@@ -119,5 +119,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   // OAuth redirects and Set-Cookie must be handled by the browser itself, especially on iOS.
   if (url.origin !== self.location.origin || url.pathname.startsWith('/login/github')) return;
+  // The live change stream stays open for minutes: never through the worker's read deadline or its offline copies.
+  if (url.pathname === '/api/stream') return;
   event.respondWith(handle(event.request));
 });

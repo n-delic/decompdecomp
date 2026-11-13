@@ -1,9 +1,10 @@
 """Retail table labels and structurally supported arm clones, private until ordinary byte judging."""
 import re
 
+from decomprepair.pattern_repairs import close
+
 from .. import arch as arches
 from ..forks.csource import _blank, find
-from .pattern_repairs import close
 from .source_next_steps import called
 
 

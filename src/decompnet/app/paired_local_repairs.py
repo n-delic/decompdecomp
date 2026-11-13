@@ -3,7 +3,9 @@ import difflib
 import hashlib
 import re
 
-from . import allocation_evidence, macro_repairs
+from decomprepair import macro_repairs
+
+from . import allocation_evidence
 from .repair_tokens import tokens
 
 MAX_TRIALS = 4

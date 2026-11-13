@@ -168,3 +168,17 @@ def test_conflicting_exact_donor_names_are_not_guessed(built, tmp_path):  # noqa
     assert net._function("func_800007D0", "target")["name"] == "func_800007D0"
     assert net.twins.reuse_names("target", donor_slug="not-a-project") == 0
     assert net.twins.reuse_names("target", donor_slug=slug) == 1
+
+
+def test_donors_built_with_the_wanting_functions_own_compiler_come_first():
+    """Donors were ordered by the destination game's default compiler, which a function in another address range
+    (or with its own verified profile) isn't built with."""
+    from decompnet.app.twins import prefer_own_compilers
+
+    sources = [{"fingerprint": "fp", "compiler": "game-default", "name": "a"},
+               {"fingerprint": "fp", "compiler": "range-compiler", "name": "b"},
+               {"fingerprint": "other", "compiler": "game-default", "name": "c"}]
+    own = {1: "range-compiler", 2: "game-default"}
+    prefer_own_compilers(sources, {"fp": [1], "other": [2]}, own.get)
+    assert [s["name"] for s in sources] == ["b", "a", "c"] or [s["name"] for s in sources] == ["b", "c", "a"]
+    assert sources[0]["name"] == "b"

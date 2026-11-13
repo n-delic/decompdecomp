@@ -9,9 +9,14 @@ import os
 import re
 from pathlib import Path
 
-from . import SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool_name, usage_item
+from . import FREE_ALLOWANCE, SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool_name, usage_item
 
 ZEN = "opencode/"  # OpenCode Zen's models: their names start with it, and opencode's default is one of them
+# opencode signs in to each provider separately, so a model's prefix is the account its usage belongs to.
+# Zen's console account and Go's API account have separate allowances, and some models have their own
+# allowance on top: a refusal on one must never pause helpers on the other account or on another model.
+ACCOUNTS = {"opencode": "OpenCode Zen (console)", "opencode-go": "OpenCode Go (API)"}
+GROUPS = {"opencode": "OpenCode", "opencode-go": "OpenCode Go"}
 STANDALONE_FROM = 2  # the major version that runs sessions in a shared service unless told --standalone
 PLACEHOLDER = "Unexpected server error"  # its JSON error when the log line says what failed
 MCP_SERVER = "decompdecomp"  # the app's MCP server, in the config and in the plugin that waits for it
@@ -43,13 +48,34 @@ class Opencode(Agent):
     models_args = ("models",)
     takes_effort = True  # stored as provider/model#high; the CLI syntax depends on its major version
 
+    @staticmethod
+    def _account(model: str) -> tuple[str, str]:
+        """(provider, account label) of a model, from the provider prefix `opencode models` prints."""
+        provider = model.split("/", 1)[0] if "/" in model else ""
+        return provider, ACCOUNTS.get(provider, provider)
+
     def read_models(self, lines: list[str]) -> list[dict]:
-        """`opencode models`: "<provider>/<model>" per model."""
+        """`opencode models`: "<provider>/<model>" per model; the provider names the signed-in account."""
         rows = [r for r in lines if not self.validate_model(r) and r]
-        labels = {'opencode':'OpenCode', 'opencode-go':'OpenCode Go'}
-        return [{"id": r, "name": r.split("/", 1)[1],
-                 "note": labels.get(r.split("/", 1)[0], r.split("/", 1)[0]),
-                 "group": labels.get(r.split("/", 1)[0], r.split("/", 1)[0])} for r in rows]
+        out = []
+        for r in rows:
+            provider, account = self._account(r)
+            group = GROUPS.get(provider, provider)
+            out.append({"id": r, "name": r.split("/", 1)[1], "note": account or group,
+                        "group": group, "account": account or group})
+        return out
+
+    def limit_scope(self, model: str) -> tuple[str, ...]:
+        # A separate account (provider) and a separate allowance (model). Keep both in the cooldown key.
+        provider, _ = self._account(model)
+        return (provider, model) if provider else (model,)
+
+    def account_label(self, model: str) -> str:
+        _, label = self._account(model)
+        return label
+
+    def limit_wait_why(self) -> str:
+        return "This provider account's usage limit is reached for this model"
 
     def resolve_known_model(self, model: str, known: list[dict]) -> str:
         model = model.strip()
@@ -72,10 +98,11 @@ class Opencode(Agent):
 
     def fatal(self, error: str) -> bool:
         # A provider privacy-policy refusal needs an account/model decision.
-        # Repeating the same paid request cannot change that policy.
+        # Repeating the same paid request cannot change that policy. An exhausted
+        # free allowance needs a different model, not a wait on the account.
         return bool(re.search(r'ProviderModelNotFoundError|\bModel not found\b|opencode model needs a provider/model ID'
                               r'|This Go model trains on request data|Allow paid endpoints that train on request data'
-                              r'|\bModel [^\n]{1,120} has been deprecated\b',error,re.I))
+                              r'|\bModel [^\n]{1,120} has been deprecated\b|' + re.escape(FREE_ALLOWANCE),error,re.I))
 
     def config_model(self) -> str | None:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
@@ -177,7 +204,10 @@ class Opencode(Agent):
         # Route only the primary stream for this worker's explicitly selected model.
         if self._primary_error(line, model) and re.search(
                 r'\bFree usage limit reached\b', self.clean_stderr(line), re.I):
-            return "Provider usage limit reached; the selected model's free allowance is exhausted."
+            # The account is not limited: only this free model is. Do not say "usage limit" here, or
+            # the shared runner reads it as the account's subscription limit and pauses every helper.
+            return (f"{FREE_ALLOWANCE} for the selected model; choose an OpenCode Go model or wait for "
+                    "the free allowance to reset.")
         return ""
 
     def stderr_retry(self, line: str, model: str = "") -> str:

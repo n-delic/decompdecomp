@@ -1,9 +1,9 @@
 import pytest
 
 from decompnet.app import hazard_line_repairs as lines
-from decompnet.app import known_bit_repairs as bits
-from decompnet.app import post_call_capture_repairs as captures
 from decompnet.arch.mips_hazards import rows_witness
+from decomprepair import known_bit_repairs as bits
+from decomprepair import post_call_capture_repairs as captures
 
 ROWS=[('i','beq $t0, $zero, 0x18','beq $t0, $zero, 0x14'),(' ','nop','nop'),('i','j f+0x18','j f+0x14')]
 
@@ -88,7 +88,7 @@ def test_unconditional_macro_definitions_remain_opaque_in_shared_generator():
 
 
 def test_macro_continuations_and_hidden_escapes_are_not_rewritten():
-    from decompnet.app.repair_source_view import read
+    from decomprepair.repair_source_view import read
     s=CAPTURE.replace('int x;', 'int x;\n#define HIDDEN(a) \\\n { a++; }\n')
     p=read(s,'f')
     assert p and 'a++' not in p.clean

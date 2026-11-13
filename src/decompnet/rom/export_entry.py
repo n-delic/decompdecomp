@@ -41,6 +41,8 @@ def write(root, manifest, fn, path):
     image=(root/manifest['image']).read_bytes()
     if hashlib.sha1(image).hexdigest()!=manifest['sha1']:raise ValueError('Restore the verified game image before extracting an entry.')
     table=SymbolTable([Symbol(n,a,0,'data') for n,a in manifest['symbols'].items()]+
+                      [Symbol(d['name'],d['vram'],d.get('size',0),'data') for d in manifest.get('data',[])]+
+                      [Symbol(n,a,0,'data') for n,a in manifest.get('labels',{}).items() if n not in manifest['symbols']]+
                       [Symbol(f['name'],f['vram'],0,'func') for f in manifest['functions']])
     target=match.target_from_split(split.parse_function(root/fn['asm'],fn['seg'],manifest['big_endian']),table.resolve,
                                    manifest['big_endian'],manifest.get('gp') or 0)
@@ -60,10 +62,11 @@ def write(root, manifest, fn, path):
             at=offsets.pop();return image[at:at+n]
         missed.append((addr,n))
         return None
-    obj=path.read_bytes();linked=match.link(obj,fn['name'],target,table,read)
+    name=fn.get('symbol') or fn['name']  # the C's name for it (export.py: splat's may be the automatic one)
+    obj=path.read_bytes();linked=match.link(obj,name,target,table,read)
     if not linked.exact or linked.linked_code is None:
         raise ValueError('Entry extraction requires freshly verified exact code and data: '+'; '.join(linked.problems))
     if missed:
         details=', '.join(f'0x{addr:08X}–0x{addr+n:08X} ({n} bytes)' for addr,n in sorted(set(missed))[:16])
-        raise ValueError(f'{fn["name"]}: unverified constant reads: {details}. End addresses are exclusive. Supply reviewed data_mappings in build.json; do not guess a ROM address delta.')
-    path.write_bytes(object_for(obj,fn['name'],linked.linked_code))
+        raise ValueError(f'{name}: unverified constant reads: {details}. End addresses are exclusive. Supply reviewed data_mappings in build.json; do not guess a ROM address delta.')
+    path.write_bytes(object_for(obj,name,linked.linked_code))

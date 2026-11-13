@@ -1,7 +1,7 @@
 """Equality facts may simplify call values, never repeat loads or guess branch entry."""
 import pytest
 
-from decompnet.app import guarded_call_repairs as repair
+from decomprepair import guarded_call_repairs as repair
 
 HEADER = 'typedef unsigned short u16;typedef unsigned char u8;typedef int s32;static void draw(int);'
 SOURCE = 'void f(void){u16 x;x=read();if(x==1){draw((u8)((s32)x));}}'

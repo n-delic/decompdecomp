@@ -1,4 +1,5 @@
-from decompnet.app import constant_pointer_repairs, draft_repairs
+from decompnet.app import draft_repairs
+from decomprepair import constant_pointer_repairs
 
 SOURCE = '''typedef struct State { int count; } State;
 extern State states[];

@@ -3,15 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from decompnet.app import (
-    allocation_targeting,
-    deep_permuter,
-    loop_weight_repairs,
-    return_path_search,
-    reviewed_seed_search,
-)
+from decompnet.app import allocation_targeting, deep_permuter, return_path_search, reviewed_seed_search
 from decompnet.app import return_path_hypotheses as hypotheses
 from decompnet.arch import get, mips_return_paths
+from decomprepair import loop_weight_repairs
 from tests.test_deep_permuter import Log, setup
 from tests.test_permute import AGENT
 from tests.test_return_contract_repairs import asm

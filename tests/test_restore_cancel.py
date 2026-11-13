@@ -16,7 +16,7 @@ from decompnet.app import saves
 def test_a_running_compiler_stops_without_waiting_for_its_timeout(tmp_path, monkeypatch):
     started = threading.Event()
     processes = []
-    popen = subprocess.Popen
+    popen = compiler.spawner.Popen
 
     def launch(*args, **kwargs):
         proc = popen(*args, **kwargs)
@@ -24,7 +24,7 @@ def test_a_running_compiler_stops_without_waiting_for_its_timeout(tmp_path, monk
         started.set()
         return proc
 
-    monkeypatch.setattr(compiler.subprocess, "Popen", launch)
+    monkeypatch.setattr(compiler.spawner, "Popen", launch)
 
     def cancel():
         if started.is_set():

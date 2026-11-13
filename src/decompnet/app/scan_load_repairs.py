@@ -5,9 +5,9 @@ shared declarations or assembly are rewritten. Compiler/judge evidence decides w
 """
 import re
 
-from . import copy_lifetime_repairs, integer_abi
-from .integer_repair_support import IDENT, INTEGER, NUMBER, edit
-from .pattern_repairs import close
+from decomprepair import copy_lifetime_repairs, integer_abi
+from decomprepair.integer_repair_support import IDENT, INTEGER, NUMBER, edit
+from decomprepair.pattern_repairs import close
 
 FAMILIES = ('scan_load_capture', 'scan_load_reuse')
 LIMIT = 12

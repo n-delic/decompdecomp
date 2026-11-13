@@ -106,3 +106,54 @@ def test_shared_contract_update_changes_worker_revision(tmp_path, monkeypatch, m
     before=permuter_worker.revision()
     file.write_text('updated shared contract')
     assert permuter_worker.revision()!=before
+
+
+@pytest.mark.parametrize('action', ['start', 'repair_pass'])
+def test_child_shutdown_waits_for_owned_compiler_workspace_cleanup(tmp_path, monkeypatch, action):
+    import io
+    import json
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    from decompnet.app import engine, permute
+    from decompnet.compiler import _workspace
+
+    started, stopping, release, returned = (threading.Event() for _ in range(4))
+    monkeypatch.setenv('DECOMP_COMPILER_TMPDIR', str(tmp_path/'compiler'))
+    monkeypatch.setattr(engine, 'RomNetwork', lambda *a: SimpleNamespace(links={}))
+    monkeypatch.setattr(permuter_worker, '_worker_logging', lambda: None)
+    paths = []
+    def work(stop):
+        with _workspace('synthetic-worker-') as folder:
+            from pathlib import Path
+            paths.append(Path(folder))
+            (paths[-1]/'compiler-output').write_text('synthetic')
+            started.set()
+            assert stop.wait(3)
+            stopping.set()
+            assert release.wait(3)
+    def loop(self, slug, state):
+        work(state.stop)
+        state.state = 'stopped'
+    def repair(self, slug, stop):
+        work(stop)
+        return permute.State(stop=stop)
+    monkeypatch.setattr(permute.Permuter, '_loop', loop)
+    monkeypatch.setattr(permute.Permuter, 'repair_pass', repair)
+    def messages():
+        yield json.dumps(dict(action=action, slug='game', ident=1))+'\n'
+        assert started.wait(3)
+        yield '{"action":"shutdown"}\n'
+    monkeypatch.setattr(permuter_worker.sys, 'stdin', messages())
+    monkeypatch.setattr(permuter_worker.sys, 'stdout', io.StringIO())
+    def child():
+        try:permuter_worker.child('unused.db', str(tmp_path))
+        finally:returned.set()
+    with ThreadPoolExecutor(1) as pool:
+        pending = pool.submit(child)
+        try:
+            assert stopping.wait(3)
+            assert not returned.wait(.1), 'Child returned while its compiler workspace was still in use'
+        finally:release.set()
+        pending.result(timeout=3)
+    assert paths and not paths[0].exists()

@@ -4,6 +4,9 @@
 # (CodeWarrior, Visual C++, IDO) can't be: the tests that need them skip, and say why. Ghidra is installed on every
 # system (on a Mac it builds its decompiler), so the calling conventions PC imports take from it are checked on each
 # (tests/test_ghidra.py): a Mac's Ghidra had no decompiler, and its imports named every __fastcall function wrong.
+# uv sync installs the dev group, so pytest-xdist and pytest-timeout are here: pytest's addopts in pyproject.toml
+# spreads the ~10,000 tests across the runner's cores and caps a hung test. All three jobs run the whole suite,
+# deliberately: the same tests are the OS coverage for Windows, macOS and Linux.
 name: check
 
 on:
@@ -138,6 +141,11 @@ jobs:
           key: ghidra-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/decompnet/toolchains.toml') }}
       - name: Ghidra (on a Mac its decompiler is built), for tests/test_ghidra.py
         run: uv run python -c "from decompnet import toolchains; toolchains.install('ghidra')"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The MCP gateway (gateway/), so tests/test_mcp_gateway.py runs against it
+        run: |
+          cargo test --locked --manifest-path gateway/Cargo.toml
+          cargo build --release --locked --manifest-path gateway/Cargo.toml
       - run: uv run pytest -q -rs
         env:
           DECOMP_TRAY: "0"

@@ -53,6 +53,67 @@ def collect(net,log=None):
     return sum(collect_payloads(store,log) for store in all_files(net))
 
 
+# Automatic collection of unused shared text. Superseded payloads (an older version's progress manifests above all:
+# 17 GB of one big game's database) are otherwise only removed when the user runs a storage task. It runs in the
+# paced background maintenance lane, in the same 256-row writer transactions as the Settings task, and only on files
+# whose link index a Settings task has completed: before that, finding what is unused means scanning every text
+# column, which stays an explicit choice.
+COLLECT_KIND='Collect unused shared text'
+COLLECT_SECONDS=6*3600
+COLLECT_STARTUP_SECONDS=1800  # leave the first half hour after opening to the work the user opened the app for
+STORAGE_JOBS=('Compress candidate history','Clean old unsuccessful source','Database compaction','C header cleanup',
+              'Database transcript cleanup',COLLECT_KIND)
+_next_collect={}
+
+
+def collect_indexed(net,log):
+    """Collect in each file whose payload link index is complete; the rest wait for a Settings task."""
+    from ..payload_links import collect as collect_payloads
+    from ..payload_links import indexed
+    from .storage_files import all_files
+    removed=0
+    for store in all_files(net):
+        log.check_cancel()
+        with store.tx(wait=log.check_cancel) as db:ready=indexed(db)
+        if ready:removed+=collect_payloads(store,log)
+    log(f'Removed {removed:,} unused shared payloads. Compact the database to return free pages to disk.')
+    return {'removed':removed}
+
+
+class _Rows(list):
+    def fetchone(self):return self[0] if self else None
+
+    def fetchall(self):return list(self)
+
+
+class _Reads:
+    """payload_links.indexed's connection interface over Store reads, for a check made without the writer."""
+    def __init__(self,store):self.store=store
+
+    def execute(self,sql,params=()):return _Rows(self.store.all(sql,*params))
+
+
+def collect_tick(net,jobs,now):
+    """Called by the retention check (database_cleanup.Retention.tick): at most every COLLECT_SECONDS, and only when
+    some file's link index is complete."""
+    from ..payload_links import indexed
+    from .storage_files import all_files
+    key=id(net)
+    if key not in _next_collect:_next_collect[key]=now+COLLECT_STARTUP_SECONDS
+    if jobs is None or now<_next_collect[key]:return None
+    _next_collect[key]=now+COLLECT_SECONDS
+    if not any(indexed(_Reads(store)) for store in all_files(net)):return None
+    with jobs._lock:
+        if any(j['kind'] in STORAGE_JOBS and j['state']=='running' for j in jobs.jobs.values()):return None
+        def work(log):
+            from .maintenance import slot
+            with slot(log.cancel_event) as acquired:
+                if not acquired:log.check_cancel()
+                return collect_indexed(net,log)
+        return jobs.start(COLLECT_KIND,work,foreground=False,
+                          cancel_message='Collection stopped. Completed batches are retained; saved work remains.')
+
+
 def pack(net,log):
     from pathlib import Path
 

@@ -1,6 +1,7 @@
 import pytest
 
-from decompnet.app import agent_tokens, captured_repairs, repair_ranking, tools
+from decompnet.app import agent_tokens, repair_ranking, tools
+from decomprepair import captured_repairs
 
 
 def test_coordinated_arity_changes_call_and_prototype():

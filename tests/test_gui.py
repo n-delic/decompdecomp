@@ -687,6 +687,13 @@ def test_asset_agent_queue_and_review_ui():
                    capture_output=True,text=True,timeout=30)
 
 
+def test_port_readiness_panel_reads_only_when_open_and_ignores_stale_replies():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_port.js'))],check=True,
+                   capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_texture_browser_paging_usage_cancellation_and_explicit_animation():
     if NODE is None:
         pytest.skip('needs node to run the GUI scripts')
@@ -712,3 +719,10 @@ def test_audio_browser_cancellation_errors_and_explicit_playback():
 def test_rom_model_browser_lifecycle():
     subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_model_browser.js'))],check=True,
                    capture_output=True,text=True)
+
+
+def test_other_releases_panel_links_and_brings_names_with_its_progress_bar():
+    if not NODE:
+        pytest.skip('node is not installed')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_releases.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)

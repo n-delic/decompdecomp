@@ -5,8 +5,9 @@ import subprocess
 
 import pytest
 
-from decompnet.app import byte_address_inline_repairs as repairs
-from decompnet.app import debug_boundary_repairs, draft_repairs
+from decompnet.app import draft_repairs
+from decomprepair import byte_address_inline_repairs as repairs
+from decomprepair import debug_boundary_repairs
 
 HEADER = 'typedef unsigned char u8; typedef signed short s16; void ping(void *); void pong(void *);'
 SOURCE = '''int demo(void *ptr, int flag) {

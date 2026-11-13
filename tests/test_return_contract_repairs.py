@@ -4,9 +4,9 @@ import pytest
 
 from decompnet.app import draft_repairs, repair_effects, return_contract_evidence
 from decompnet.app import float_storage_repairs as storage
-from decompnet.app import narrow_expression_repairs as inline
 from decompnet.app import return_contract_repairs as returns
 from decompnet.arch import mips_returns
+from decomprepair import narrow_expression_repairs as inline
 
 
 def asm(*lines):

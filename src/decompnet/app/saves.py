@@ -38,6 +38,11 @@ from ..scoring import percent_text
 from . import save_readme
 from .restore_effects import batched as restore_batch
 
+# Headers that belong to one function, not to a source file: an exact match's (app/exact_match_inputs.py) and the
+# declarations source preparation wrote for it (app/source_preparation.py). A save that kept only the first kind
+# lost the second, and three of an N64 game's matches stopped compiling against the shared header.
+PRIVATE_HEADERS = ("exact_match_", "local_source_")
+
 FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
@@ -47,6 +52,13 @@ SOURCE_PREFIX_BYTES = 80  # readable hint; the SHA-256 suffix distinguishes symb
 GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
 
+
+
+def _settings(row) -> dict:
+    """A project's settings for reading, parsed once per version (engine/core.py Core.cfg): the background loops read
+    a few flags every second or two, and a big project's settings are half a megabyte of JSON."""
+    from .engine.core import Core
+    return Core.cfg(row)
 
 def _source_file(name: str) -> str:
     """Keep C++ template symbols intact, but fit their source files on Windows and Unix filesystems.
@@ -181,6 +193,8 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
                 _remember_revision(net, slug, json.loads(files[MANIFEST]))
             else:
                 net.progress.sync(slug, force=True)  # a contributor wrote meanwhile: apply it, don't overwrite it
+        from .data_saves import publish as publish_data  # the data's C (app/data_saves.py)
+        publish_data(net, slug, target)
         _remember_folder(net, proj["id"], target.resolve(), chosen=chosen)
         if chosen:
             # Local-only receipt: distinguish an untouched app backup from contributor edits.
@@ -216,7 +230,7 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
         path = Path(name)
         if path.is_absolute() or ".." in path.parts or path.as_posix() != name:
             raise NetworkError("Progress contains an unsafe file path. Fix its manifest before saving again.")
-        if name != MANIFEST and name != "README.md" and not name.startswith(("src/", "best/", "include/")):
+        if name not in (MANIFEST, "README.md", "data.json") and not name.startswith(("src/", "best/", "include/", "data/")):
             raise NetworkError("Progress contains an unsupported file path. Fix its manifest before saving again.")
         target = folder / path
         for parent in (target, *target.parents):
@@ -461,7 +475,57 @@ def _knowledge_store(net, project):
     return service(net)._store(project)
 
 
+# Every manifest render reads all of a project's notes (28,000 notes, 12 MB on a big game: the largest part of its
+# manifest and the slowest read of a render), though they rarely change between two publishes. Keep the last rows of
+# a few projects, valid while the notes' own revision (`read_progress_notes`, a Store read-revision trigger installed
+# on first use) and the function-name revision (`read_naming`: a note shows its function's name) are unchanged.
+NOTE_CACHE_PROJECTS = 4
+NOTE_COLUMNS = "project_id,function_id,agent_id,text,created_at,score_before,score_after"
+_note_cache: dict = {}
+_note_lock = threading.Lock()
+
+
+def _notes_revision(store, pid):
+    """What the project's note rows depend on, read before the rows (so a write in between is seen next time), or
+    None when it can't be known yet: the triggers aren't installed and the writer isn't free to install them."""
+    from ..store import in_transaction
+    trigger = store.one("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='read_progress_notes_notes_update'")
+    if trigger is None:
+        if in_transaction():
+            return None
+        with store.try_tx() as db:
+            if db is None:
+                return None
+            store._track_reads("notes", "progress_notes", NOTE_COLUMNS)
+    # The count and newest ID guard against a database replaced underneath (its counters start again).
+    shape = store.one("SELECT count(*) AS n,max(id) AS newest FROM notes WHERE project_id=?", pid)
+    return (store.read_version("progress_notes", pid), store.read_version("naming", pid), shape["n"], shape["newest"])
+
+
 def _note_rows(store, pid):
+    """A project's notes for its manifest: the cached rows while nothing they show changed (read-only to callers)."""
+    import sqlite3
+    try:
+        revision = _notes_revision(store, pid)
+    except (AttributeError, sqlite3.Error):  # a store without read revisions (a bare test double): no cache
+        revision = None
+    key = (id(store), str(getattr(store, "path", "")), pid)
+    if revision is not None:
+        with _note_lock:
+            cached = _note_cache.get(key)
+            if cached is not None and cached[0] == revision:
+                return cached[1]
+    rows = _read_note_rows(store, pid)
+    if revision is not None:
+        with _note_lock:
+            _note_cache.pop(key, None)
+            _note_cache[key] = (revision, rows)
+            while len(_note_cache) > NOTE_CACHE_PROJECTS:
+                _note_cache.pop(next(iter(_note_cache)))
+    return rows
+
+
+def _read_note_rows(store, pid):
     """Transport note metadata in bounded pages without per-row SQLite/GIL handoffs."""
     batches = store.all("""WITH numbered AS (
         SELECT n.id,n.text,n.created_at,n.score_before,n.score_after,n.agent_id,f.name AS fn,
@@ -523,7 +587,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "auto_compiler": cfg.get("auto_compiler"),
         "knowledge_auto": bool(cfg.get("knowledge_auto")), "headers": {u: _header_file(u) for u in sorted(units)},
         "functions": functions,
-        "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith("exact_match_")},
+        "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith(PRIVATE_HEADERS)},
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
                     "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
         "symbols": net.layout_symbols(pid),
@@ -882,6 +946,9 @@ def restore(net, source: str, game: Path | None = None, log=print) -> dict:
                         if not same_linked_save:
                             with net.project_store(slug).tx() as db:
                                 db.execute("DELETE FROM progress_state WHERE project_id=?", (project_id,))
+                                from .progress import MANIFEST_SCHEMA
+                                db.execute(MANIFEST_SCHEMA)
+                                db.execute("DELETE FROM progress_manifests WHERE project_id=?", (project_id,))
                             progress.baselines.pop(project_id, None)
                         progress.disk.pop(slug, None)
                         progress.projected.pop(slug, None)
@@ -897,7 +964,9 @@ def restore(net, source: str, game: Path | None = None, log=print) -> dict:
                     finally:
                         progress.adopting.discard(slug)
                     result = progress.results.pop(slug, None) or _restore_counts(net, slug)
-                    return result | {"slug": slug}
+                    from .data_saves import restore as restore_data  # the data's C, judged again
+                    data_result = restore_data(net, slug, live, log)
+                    return result | {"slug": slug} | ({"data": data_result} if data_result["saved"] else {})
             except Exception:
                 # #101 review: importing and splitting happened before the save could be applied. A restore that
                 # fails (a missing compiler, a cancelled judge) leaves no half-open project, as a failed room join
@@ -1044,7 +1113,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
         # Restore that binding before compilation; older saves have no bindings.
         for name, unit in (manifest.get("function_headers") or {}).items():
             check_cancel()
-            if isinstance(unit, str) and unit.startswith("exact_match_") and unit in (manifest.get("headers") or {}):
+            if isinstance(unit, str) and unit.startswith(PRIVATE_HEADERS) and unit in (manifest.get("headers") or {}):
                 db.execute("UPDATE functions SET unit=? WHERE project_id=? AND name=?", (unit, pid, name))
         for text in manifest.get("knowledge") or []:
             check_cancel()
@@ -1525,7 +1594,7 @@ class Autosave:
     def _reconcile(self):
         projects = {}
         for row in self._projects(active_only=True):
-            cfg = json.loads(row['config'])
+            cfg = _settings(row)  # (parsed once per version: a big project's settings are 0.5 MB)
             if cfg.get('kind') == 'rom' and cfg.get('rom', {}).get('sha1'):
                 projects[row['slug']] = row
         with self.lock:
@@ -1546,7 +1615,7 @@ class Autosave:
                 self._start_commits(slug, worker)
 
     def _start_commits(self, slug, worker):
-        cfg = json.loads(worker['row']['config'])
+        cfg = _settings(worker['row'])
         if worker.get('commit_thread') or not (cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished') or cfg.get('score_commits', {}).get('enabled')):
             return
         worker['commit_thread'] = threading.Thread(target=self._commit_loop, args=(slug, worker),
@@ -1569,7 +1638,7 @@ class Autosave:
         while not self.stop.is_set() and self.workers.get(slug) is worker:
             try:
                 check()
-                cfg = json.loads(worker['row']['config'])
+                cfg = _settings(worker['row'])
                 if not (cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished') or cfg.get('score_commits', {}).get('enabled')):
                     self.stop.wait(1)
                     continue
@@ -1592,7 +1661,7 @@ class Autosave:
         # Read preferences now, not the coordinator's older discovery snapshot.
         proj = self.net.project_row(slug)
         if proj is None:return
-        cfg = json.loads(proj['config'])
+        cfg = _settings(proj)
         if cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished'):
             from . import match_commits
             match_commits.process(self.net, slug, output)
@@ -1667,7 +1736,7 @@ class Autosave:
                 if deep:
                     self.deep_check_after[row["slug"]] = time.monotonic() + 15
                 self.retry_after.pop(row['slug'], None)
-                commit_cfg = json.loads(row['config'])
+                commit_cfg = _settings(row)
                 if commits and (commit_cfg.get('auto_commit_matches') or commit_cfg.get('auto_commit_polished') or commit_cfg.get('score_commits', {}).get('enabled')):
                     self._commit_once(row['slug'], logger or log.info)
             except _AutosavePaused:

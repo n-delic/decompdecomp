@@ -1,8 +1,9 @@
 """Small lifetime hypotheses observed in captured matches; every proposal uses the ordinary judge."""
 import re
 
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank, find
-from .pattern_repairs import close
 
 ID = r'[A-Za-z_]\w*'
 

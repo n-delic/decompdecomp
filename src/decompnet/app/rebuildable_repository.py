@@ -25,8 +25,9 @@ def public(name):
     if path.parts[0] == 'include':return path.suffix in ('.h', '.inc')
     if path.parts[0] == 'progress':
         rest = path.relative_to('progress')
-        return (str(rest) in (saves.MANIFEST, 'README.md', 'decompdecomp-progress.svg') or
-                len(rest.parts) == 2 and rest.parts[0] in ('src', 'best', 'include')
+        # data.json and data/: the game's data in C (app/data_saves.py)
+        return (str(rest) in (saves.MANIFEST, 'README.md', 'decompdecomp-progress.svg', 'data.json') or
+                len(rest.parts) == 2 and rest.parts[0] in ('src', 'best', 'include', 'data')
                 and rest.suffix == ('.h' if rest.parts[0] == 'include' else '.c'))
     return False
 
@@ -40,7 +41,8 @@ def ignore():
             '!/progress/\n/progress/*\n!/progress/decompdecomp.json\n!/progress/README.md\n'
             '!/progress/decompdecomp-progress.svg\n!/progress/src/\n/progress/src/*\n!/progress/src/*.c\n'
             '!/progress/best/\n/progress/best/*\n!/progress/best/*.c\n!/progress/include/\n'
-            '/progress/include/*\n!/progress/include/*.h\n')
+            '/progress/include/*\n!/progress/include/*.h\n!/progress/data.json\n!/progress/data/\n'
+            '/progress/data/*\n!/progress/data/*.c\n')
 
 
 def pending(root):

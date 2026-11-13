@@ -1,7 +1,7 @@
 """Synthetic selector/decision regressions; private game captures never belong in tests."""
-from decompnet.app import decision_address_repairs as repairs
 from decompnet.app import draft_repairs
 from decompnet.diff_summary import advice, text
+from decomprepair import decision_address_repairs as repairs
 
 HEADER='typedef signed short s16; typedef int s32; typedef unsigned char u8;'
 SOURCE='''

@@ -1,7 +1,8 @@
 """Coupled storage/scope hypotheses remain bounded and compiler-setting gated."""
 import pytest
 
-from decompnet.app import draft_repairs, storage_scope_repairs
+from decompnet.app import draft_repairs
+from decomprepair import storage_scope_repairs
 
 SOURCE = '''int f(void *base, int choice) {
 void *p;

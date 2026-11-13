@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from decompnet.app import zero_chain_repairs as repair
+from decomprepair import zero_chain_repairs as repair
 
 BASE = 'int sample(int input){int a;int b;a=(b=0);a+=input;b+=3;return a+b;}'
 

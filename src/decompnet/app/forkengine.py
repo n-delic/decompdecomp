@@ -3187,7 +3187,9 @@ class ForkEngine:
             from ..source_lines import render_candidate
             mapped, mapped_source = self._source_mismatches(fp, unit, fn, d.rows)
             line_note = render_candidate(mapped, mapped_source, source)
-            from . import imported_output, repair_localisation
+            from decomprepair import repair_localisation
+
+            from . import imported_output
             compiled_output=imported_output.read(unit.base,symbol)
             evidence={'compiled_output':compiled_output,'exact':bool(d.matched),'new_match':False,'adopted':False}
             locations=repair_localisation.rebase(source,mapped_source,mapped)
@@ -3483,8 +3485,9 @@ class ForkEngine:
             current = (fp.root / unit.source).read_text(errors="replace", encoding="utf-8")
         except OSError:
             current = ""
+        from decomprepair.narrow_store_repairs import machine_drafts as narrow_drafts
+
         from .carrier_sequence_repairs import machine_drafts as carrier_drafts
-        from .narrow_store_repairs import machine_drafts as narrow_drafts
         original="/* machine draft (m2c), tried by autopilot */\n" + drafts.self_contained(text, span, current)
         for _,candidate in carrier_drafts(narrow_drafts([('raw_m2c',original)],meta.get('symbol') or fn['name'],self._known(fp,unit),proj['arch']),meta.get('symbol') or fn['name'],self._known(fp,unit),proj['arch']):
             yield "",candidate

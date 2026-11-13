@@ -353,5 +353,18 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   await pendingSave;
   requireOk(get("dialog").hidden && accountBox.html.includes("Saved after closing"),
     "a save finishing after the drawer closes must update the list without reopening it");
+  // opencode models name their signed-in account, and creating an agent shows it.
+  ctx.opencodeAgent = { id: "opencode", name: "opencode", installed: true, takes_effort: false, uses_accounts: false,
+    models: [{ id: "opencode/beam-free", name: "beam-free", note: "OpenCode Zen (console)", group: "OpenCode", account: "OpenCode Zen (console)" },
+      { id: "opencode-go/beam", name: "beam", note: "OpenCode Go (API)", group: "OpenCode Go", account: "OpenCode Go (API)" }] };
+  requireOk(vm.runInContext('modelName(opencodeAgent, "opencode-go/beam")', ctx).includes("OpenCode Go (API)"),
+    "the Start button must name the model's account");
+  ctx.S.st.agents = [ctx.opencodeAgent];
+  vm.runInContext('LZ.kind="opencode"; LZ.model="opencode-go/beam"; LZ.multiple=false; LZ.replacement=null; LZ.task="";', ctx);
+  ctx.renderLauncher(box);
+  await settle();
+  requireOk(box.html.includes("Account · OpenCode Go (API)"), "creating an agent must show which account the model uses");
+  requireOk(box.html.includes("isolated to this account and model"), "creating an agent must explain the limit scope");
+
   console.log("launcher model selections and accounts passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

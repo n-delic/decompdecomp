@@ -179,6 +179,8 @@ class Retention:
             rules=json.loads(row["value"]) if row else {}
             if rules.get("automatic"):
                 database_storage.start(self.net,self.jobs,'prune',rules,foreground=False)
+        from . import database_storage
+        database_storage.collect_tick(self.net,self.jobs,now)
         value=saved(self.net)
         # A queued cleanup already owns this scan; polling must not repeat it
         # while the job is waiting for the maintenance lane or deleting rows.
