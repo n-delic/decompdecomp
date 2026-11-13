@@ -994,8 +994,8 @@ Left:
   reached with scripted input (`PORT_INPUT`). Why its 4-bit text needs its texture coordinates halved is still to
   be confirmed. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
-  with the keyboard and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
-  saves other games use, a native window and pads, the
+  with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
+  saves other games use, a native window, the
   sound's effects filter, and the live view on Windows;
 - the judge to compare a switch's jump table too: it compares code, and the table is data, so a matched function
   can keep wrong case labels (19 of a racing game's 29 did; the port has overrides for them);
