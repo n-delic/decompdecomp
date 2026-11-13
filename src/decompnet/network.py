@@ -438,6 +438,7 @@ def claim_query(strategy: str) -> str:
                      CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
                                 AND created_at > :cooled) END,
                      CASE WHEN :custom THEN 0 ELSE f.id IN ({READY}) END DESC, CASE WHEN :custom THEN 0 ELSE f.id IN ({WANTED}) END DESC,
+                     CASE WHEN :custom THEN 0 ELSE f.id IN (SELECT value FROM json_each(:machine_pending)) END,
                      :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
 
 
@@ -1468,8 +1469,24 @@ class Network:
                 "pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
                 "overall": overall, "escalate": escalate, "weak": route == "weak", "strong": route == "strong",
                 "mine": self._own_release_cutoff(store, agent.id, now, proj), "custom": custom,
-                "below": policy.get("match_below"), "tries": policy.get("max_tries")}
+                "below": policy.get("match_below"), "tries": policy.get("max_tries"),
+                "machine_pending": json.dumps(self._machine_pending(proj, agent))}
         return claim_query(strategy), args, route
+
+    def _machine_pending(self, proj, agent: Agent) -> list[int]:
+        """The functions autopilot's running pass will still try (a machine draft through the judge, or a
+        deterministic repair of saved C): the automatic claim takes them after everything else, so a model's tokens
+        go to functions the free tries already had. Both queues go smallest first, so before this a helper started
+        with a project's autopilot took the very functions autopilot was about to match. Only an order: a helper
+        with nothing else left still gets one. A project's config `"machine_first": false` turns it off; an agent's
+        own strategy (`custom`) skips it like the other preferences."""
+        if agent.name in MACHINE_AGENTS or not json.loads(proj["config"] or "{}").get("machine_first", True):
+            return []
+        state = getattr(self, "autopilots", {}).get(proj["slug"]) or {}
+        if state.get("state") != "running":
+            return []
+        pending = state.get("_pending")
+        return sorted(pending.copy()) if pending else []  # (a copy in one step: autopilot's lanes take from it)
 
     @staticmethod
     def _claim_pick(read, query: str, args: dict, route: str | None):

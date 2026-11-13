@@ -37,7 +37,8 @@ def test_claim_history_reads_come_from_covering_indexes_without_sorting(tmp_path
     assert any("COVERING INDEX idx_events_agent_kind_time" in step for step in cutoff), cutoff
     args = {"retry_grants": "[]", "batch_sdk": "[]", "batch_unit": None, "batch_limit": None, "model_tried": "[]",
             "stalled": "[]", "sdk": "[]", "pid": pid, "agent": 1, "kin": "[1]", "cooled": 0, "overall": .5,
-            "escalate": 3, "weak": False, "strong": False, "mine": 0, "custom": False, "below": None, "tries": None}
+            "escalate": 3, "weak": False, "strong": False, "mine": 0, "custom": False, "below": None, "tries": None,
+            "machine_pending": "[]"}
     claim = [row[3] for row in net.store.conn.execute("EXPLAIN QUERY PLAN " + network.claim_query("easiest"), args)]
     on_events = [step for step in claim if "events" in step and "idx_events_project_time" not in step]
     assert on_events and all("COVERING INDEX idx_events_project_kind_agent" in step for step in on_events), claim

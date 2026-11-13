@@ -19,6 +19,21 @@ PRESETS = {'full': ('All tools', None), 'matching': ('Matching essentials', MATC
            'polishing': ('Polishing and names', REQUIRED | {'claim_readable','make_readable','polish_function','tidy_file','read_data','tidy_done','rename_symbol',
                'get_claims','guide','get_context','edit_context','read_file','edit_file','file_status','search_code','add_note','find_similar',
                'port_readiness'})}
+# Tools whose work queue belongs to another kind of helper the app starts: asset discovery, boundary review, data,
+# PC port fixes and polishing. A matching helper's tool definitions carried all of them on every turn, about a
+# quarter of a ROM project's 32,000 characters of definitions, for tools that refuse it (the asset ones and
+# suggest_boundary need their own session) or take it away from its claimed function. Hidden only from helpers the
+# app started for matching (`_agent_tool_tasks`); external MCP clients and the other helpers keep them. get_data_unit
+# and compile_data stay: the investigation preset gives them to matching helpers on purpose.
+OTHER_TASKS = frozenset({'claim_asset_region', 'inspect_asset_region', 'preview_asset_region', 'propose_asset_region',
+                         'defer_asset_region', 'suggest_boundary', 'claim_data', 'release_data', 'claim_port_fix',
+                         'release_port_fix', 'check_for_pc', 'fix_for_pc', 'port_readiness', 'claim_readable',
+                         'make_readable', 'polish_function'})
+
+
+def matching_helper(net, agent):
+    """An agent the app started to match functions (not to polish, or for data, port, asset or boundary work)."""
+    return agent is not None and getattr(net, '_agent_tool_tasks', {}).get(agent.id) == 'matching'
 
 
 def connection_required(net, agent):
@@ -110,6 +125,8 @@ def visible(net, slug, names, agent=None):
         return [name for name in names if name in port_agents.TOOLS and (name in port_agents.REQUIRED or name not in blocked)]
     if agent:
         blocked.update(net.selection(slug, agent.name).get('disabled_tools', []))
+    if matching_helper(net, agent):
+        blocked |= OTHER_TASKS
     return [name for name in names if name in REQUIRED or name not in blocked]
 
 
@@ -127,6 +144,9 @@ def set_global(net, name, enabled):
 def record(net, agent, slug, name, *, count=True):
     from .tools import HANDLERS
     if name not in visible(net, slug, list(HANDLERS), agent):
+        if name in OTHER_TASKS and matching_helper(net, agent):
+            raise NetworkError(f'{name} is for another kind of helper (assets, boundaries, data, PC port or polishing). '
+                               'Work on your claimed function, or claim_function for the next one.')
         raise NetworkError(f'{name} is disabled in agent tool settings. Use an enabled tool instead.')
     if not count:
         return  # App-only connection probes are not agent tool usage.

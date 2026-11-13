@@ -1898,7 +1898,25 @@ class Manager:
         if s.options.get('task') == 'port':
             from .port_agents import prompt
             return prompt(self.net, s) + ('\n\n' + s.startup_context if s.startup_context else '')
-        text = (focused_agents.prompt(s) if s.options.get('focus_id') else self._prompt(s)) + previous(self.net, s.id, s.slug)
+        # What stays the same from one session of the project to the next comes first, and what changes (the last
+        # session's handoff, held work, the claimed function's brief) after it: providers cache a prompt's longest
+        # unchanged start, so the guides line, the owner's order and instructions and the shared knowledge are read
+        # from the cache by every later session, rather than sent again behind a handoff that differs each time.
+        text = focused_agents.prompt(s) if s.options.get('focus_id') else self._prompt(s)
+        # Keep detailed guides on demand; the work prompt already teaches the matching loop.
+        ov = agent_startup.project_facts(self.net, s.slug)
+        text += "\nGuides to load when needed:\n\n" + tools.up_front(
+            ov.get("platform") or "", ov.get("kind") or "", (ov.get("compiler") or {}).get("toolchain", ""))
+        if (order := self.net.claim_order(s.slug)):
+            text += (f"\nThe project's owner chose the order helpers take functions in: {network.CLAIM_ORDERS[order]}. "
+                     "claim_function without a function follows it; one you name still comes.\n")
+        if (wish := self.net.instructions(s.slug)):
+            text += f"\nThe user's instructions for this project (they come first):\n{wish}\n"
+        knowledge_agent = self.net.store.one('SELECT id,name,owner,trusted FROM agents WHERE name=?',s.agent_name)
+        knowledge_agent = network.Agent(knowledge_agent['id'],knowledge_agent['name'],knowledge_agent['owner'],bool(knowledge_agent['trusted'])) if knowledge_agent else None
+        if (known := self.net.knowledge.for_prompt(s.slug, knowledge_agent)):
+            text += f"\n{known}\n"
+        text += previous(self.net, s.id, s.slug)
         if s.options.get('focus_id'):
             text += (f"\nUSER FOCUS: Work only on {s.options['focus_function']} until the app's deadline. "
                      'Do not move to other functions, even after repeated failures. Read callees as needed, save improved candidates and notes. '
@@ -1906,16 +1924,6 @@ class Manager:
         if s.continuation_note:
             text += '\n\nSession continuation guidance:\n' + s.continuation_note
             s.continuation_note = ""
-        # Keep detailed guides on demand; the work prompt already teaches the matching loop.
-        ov = agent_startup.project_facts(self.net, s.slug)
-        text += "\nGuides to load when needed:\n\n" + tools.up_front(
-            ov.get("platform") or "", ov.get("kind") or "", (ov.get("compiler") or {}).get("toolchain", ""))
-        knowledge_agent = self.net.store.one('SELECT id,name,owner,trusted FROM agents WHERE name=?',s.agent_name)
-        knowledge_agent = network.Agent(knowledge_agent['id'],knowledge_agent['name'],knowledge_agent['owner'],bool(knowledge_agent['trusted'])) if knowledge_agent else None
-        if (known := self.net.knowledge.for_prompt(s.slug, knowledge_agent)):
-            text += f"\n{known}\n"
-        if (wish := self.net.instructions(s.slug)):
-            text += f"\nThe user's instructions for this project (they come first):\n{wish}\n"
         if s.options.get('task') != 'readable':
             from . import agent_tokens, local_experiments
             row = self.net.store.one('SELECT id,name,owner,trusted FROM agents WHERE name=?',s.agent_name)
@@ -1928,9 +1936,6 @@ class Manager:
                     text += '\n'+fn['name']+': '+local_experiments.summary(self.net,agent,s.slug,fn,source,revision)
         if s.startup_context:
             text += '\n\n' + s.startup_context
-        if (order := self.net.claim_order(s.slug)):
-            text += (f"\nThe project's owner chose the order helpers take functions in: {network.CLAIM_ORDERS[order]}. "
-                     "claim_function without a function follows it; one you name still comes.\n")
         return text
 
     def _prompt(self, s: Session) -> str:
