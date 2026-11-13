@@ -472,9 +472,14 @@ class EditMixin:
 
     def set_priority(self, slug: str, name: str, on: bool = True) -> list[str]:
         """Functions the user wants done next: automatic claims take these first."""
-        fn = self._function(name, slug)
+        # Claim order is metadata, not a compilation. Let autosave publish it;
+        # a saved-code recheck must not hold the priority button for minutes.
+        with self.progress.view(), self.progress._project_lock(slug):
+            fn = self._function(name, slug)
 
-        def change(cfg):
-            items = [n for n in cfg.get("priority", []) if n != fn["name"]]
-            cfg["priority"] = ([fn["name"]] + items) if on else items
-        return self._update_cfg(slug, change)["priority"]
+            def change(cfg):
+                items = [n for n in cfg.get("priority", []) if n != fn["name"]]
+                cfg["priority"] = ([fn["name"]] + items) if on else items
+            cfg = self._update_cfg(slug, change, synchronize=False)
+            self.progress.foreground_changed(slug)
+            return cfg["priority"]
