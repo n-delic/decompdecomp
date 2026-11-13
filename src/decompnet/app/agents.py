@@ -2112,9 +2112,14 @@ class Manager:
             cmd = [sys.executable, "-I", str(Path(__file__).with_name("winhelper.py")), *cmd]
         # its own session and process group: stopping it ends everything it started
         if self._down or s.stop.is_set():return False
-        proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        try:
+            proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1,
                                 start_new_session=True, creationflags=NO_WINDOW)
+        except OSError as error:
+            from ..spawn_diagnostics import record
+            record(error, 'agent')
+            raise
         if os.name == "nt":
             from ..winprocess import Job
 

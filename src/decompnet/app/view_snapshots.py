@@ -1,6 +1,8 @@
 """Bounded, per-engine view snapshots; no source code or game bytes are retained here."""
 import hashlib
 import json
+import logging
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -9,6 +11,24 @@ from concurrent.futures import Future
 from ..read_cache import ReadPending
 
 SNAPSHOT_WAIT_SECONDS = 10
+BUSY_LOG_SECONDS = 60
+
+
+def _owner_stack(thread_id):
+    """App frame names only: never locals, source lines or absolute paths."""
+    frame = sys._current_frames().get(thread_id)
+    names = []
+    try:
+        for _ in range(32):
+            if frame is None or len(names) == 8:break
+            code = frame.f_code
+            path = code.co_filename.replace('\\', '/')
+            if '/decompnet/' in path:
+                names.append(path.rsplit('/', 1)[-1][:64] + ':' + code.co_name[:64] + ':' + str(frame.f_lineno))
+            frame = frame.f_back
+        return ' > '.join(names) or 'unavailable'
+    finally:
+        del frame
 
 
 class MapPayload(dict):
@@ -26,6 +46,27 @@ class Snapshots:
         self.pending = {}
         self.maps = {}
         self.map_locks = {}
+        self.map_owners = {}
+        self.busy_logged = {}
+
+    def busy(self, kind, owner):
+        """One bounded diagnostic per owner/lane per minute; keep the original timeout."""
+        thread_id, started, phase = owner or (None, None, 'unknown')
+        now = time.monotonic()
+        with self.lock:
+            key = kind, thread_id
+            if now - self.busy_logged.get(key, float('-inf')) < BUSY_LOG_SECONDS:return
+            if len(self.busy_logged) >= 64:self.busy_logged.pop(next(iter(self.busy_logged)))
+            self.busy_logged[key] = now
+        age = max(0, now-started) if started is not None else 0
+        logging.getLogger('decompdecomp').warning(
+            'Project view preparation busy lane=%s phase=%s owner_age=%.3fs owner_stack=%s',
+            kind, phase, age, _owner_stack(thread_id))
+
+    def map_phase(self, pid, phase):
+        with self.lock:
+            thread_id, started, _ = self.map_owners[pid]
+            self.map_owners[pid] = thread_id, started, phase
 
     def get(self, key, build, weight=lambda value: 1, ttl=30):
         with self.lock:
@@ -38,6 +79,7 @@ class Snapshots:
             if owner:
                 future = self.pending[key] = Future()
                 future.builder_thread = threading.get_ident()
+                future.builder_started = time.monotonic()
         if not owner:
             if future.builder_thread == threading.get_ident():
                 raise RuntimeError('A project snapshot cannot wait for its own builder.')
@@ -46,6 +88,7 @@ class Snapshots:
             except TimeoutError:
                 if future.done() and isinstance(future.exception(), TimeoutError):
                     raise future.exception()  # Preserve a builder's own timeout.
+                self.busy('snapshot', (future.builder_thread, future.builder_started, 'building snapshot'))
                 raise ReadPending('The project view is still being prepared. Try again shortly.') from None
         try:
             value = build()
@@ -182,9 +225,14 @@ def incremental_map(net, slug):
     with snapshots.lock:
         lock = snapshots.map_locks.setdefault(pid, threading.Lock())
     if not lock.acquire(timeout=SNAPSHOT_WAIT_SECONDS):
+        with snapshots.lock:owner = snapshots.map_owners.get(pid)
+        snapshots.busy('map', owner)
         raise ReadPending('The function map is still being prepared. Try again shortly.')
+    with snapshots.lock:
+        snapshots.map_owners[pid] = threading.get_ident(), time.monotonic(), 'reading revisions'
     try:
         revision = store.one('SELECT revision FROM map_clock WHERE id=1')['revision']
+        snapshots.map_phase(pid, 'reading shared state')
         shared = (peer_revision(net), store.read_version('fingerprints', pid),
                   store.read_version('naming', pid), store.read_version('sdk_names'), proj['config'],
                   repr(net.links[slug].claims) if slug in net.links else '',
@@ -192,10 +240,12 @@ def incremental_map(net, slug):
         old = snapshots.maps.get(pid)
         rows = None
         if old and old[0] == shared:
+            snapshots.map_phase(pid, 'reading changed functions')
             ids = [r['function_id'] for r in store.all(
                 'SELECT function_id FROM map_changes WHERE project_id=? AND revision>?', pid, old[1])]
             positions = {r['id']: i for i, r in enumerate(old[2]) if 'id' in r}
             if len(positions) == len(old[2]) and len(ids) < max(1, len(old[2]) // 2):
+                snapshots.map_phase(pid, 'building changed rows')
                 changed = net.function_map(slug, function_ids=ids) if ids else []
                 structural = ('name', 'vram', 'size', 'unit')
                 if len(changed) == len(ids) and all(r['id'] in positions and all(
@@ -204,11 +254,14 @@ def incremental_map(net, slug):
                     for row in changed:
                         rows[positions[row['id']]] = row
         if rows is None:
+            snapshots.map_phase(pid, 'building full map')
             rows = net.function_map(slug)
+        snapshots.map_phase(pid, 'publishing snapshot')
         with snapshots.lock:
             snapshots.maps[pid] = (shared, revision, rows)
             while len(snapshots.maps) > 16:
                 snapshots.maps.pop(next(iter(snapshots.maps)))
         return rows
     finally:
+        with snapshots.lock:snapshots.map_owners.pop(pid, None)
         lock.release()

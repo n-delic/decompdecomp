@@ -242,9 +242,14 @@ def _exec_driver(cfg: CompilerConfig, work: Path, argv: list[str], timeout: floa
         wrapped = _wrap(cfg, work, argv)
     with compile_timing.phase('process_launch'):
         # posix_spawn on macOS: forking the whole app per compile serialized concurrent compiles (spawner.py)
-        proc = spawner.Popen(wrapped, cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        try:
+            proc = spawner.Popen(wrapped, cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
                                 start_new_session=os.name != "nt")
+        except OSError as error:
+            from .spawn_diagnostics import record
+            record(error, 'compiler', active_compiles=_SLOTS.active, compile_limit=_SLOTS.limit)
+            raise
     from . import compiler_processes
     compiler_processes.track(proc.pid)
     started = time.monotonic()
