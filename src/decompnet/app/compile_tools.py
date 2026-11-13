@@ -9,6 +9,7 @@ import json
 import os
 import re
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..forks import csource
@@ -68,7 +69,7 @@ def snapshot(engine, slug, function):
     except (OSError, UnicodeError) as exc:
         raise NetworkError('Cannot read the unit source; fix its path and encoding before using patches.') from exc
     _, span = engine._find(text, engine._names(engine._meta(fn), fn))
-    if span is None:
+    if span is None or csource.is_stub(text[span[0]:span[1]]):
         raise NetworkError('Add the definition with compile_and_diff first.')
     source = text[span[0]:span[1]]
     if len(source.encode()) > MAX_SOURCE:
@@ -85,13 +86,16 @@ def snapshot(engine, slug, function):
             if (rel.suffix.lower() in {'.h', '.hpp', '.hh', '.hxx', '.inc'}
                     or rel.parts[0] in {'tools', 'config', 'harness'}):
                 inputs.add(rel.as_posix())
-    # UI counters and the progress-save revision do not change the compiler's inputs.
-    settings = {k: v for k, v in cfg.items() if k not in {
-        'measures', 'uncovered', 'set_aside', 'link_failed', 'instructions', 'spend',
-        'suggestions', 'knowledge_auto', 'autopilot', 'checked', 'legal', 'ready', 'progress_revision'}}
+    # Only compiler selectors belong here: surveys, range-check evidence and UI bookkeeping change on their own.
+    settings = {k: cfg[k] for k in ('platform', 'version', 'compiler', 'compiler_ranges') if k in cfg}
     digest = hashlib.sha256(json.dumps([fn['id'], fn['unit'], settings], sort_keys=True).encode())
     total = 0
-    for name, path in [(name, fp.safe_path(name)) for name in sorted(inputs)] + [('target', unit.target)]:
+    for name, path in [(name, fp.root / name) for name in sorted(inputs)] + [('target', unit.target)]:
+        # External header links are intentionally outside the revision. Fresh builds and the ordinary judge still
+        # run; do not follow directory links or turn a harmless SDK link into an unusable project.
+        if path is not None and path.is_symlink() and name not in {unit.source, 'target'}:
+            digest.update(name.encode() + b'\0symlink\0')
+            continue
         if path is None or not path.exists():
             digest.update(name.encode() + b'\0missing\0')
             continue
@@ -151,6 +155,17 @@ def _fresh_build(engine, proj, fp, unit):
     return False, log
 
 
+@contextmanager
+def _locked(engine, slug, function, read=False):
+    """Serialize this unit; only a build linked into the whole game needs the project to itself."""
+    proj, fp, _ = engine.get(slug)
+    fn = engine._fn(slug, function)
+    unit = fp.unit(fn['unit'])
+    linked = not read and unit.complete and fp.linkable()
+    with engine._tree(proj).exclusive() if linked else engine._tree(proj).shared(), engine._unit_lock(proj, unit.name):
+        yield
+
+
 def preview(engine, agent, slug, function, source):
     """Measure without bookkeeping or publication, restoring source and outputs on every exit."""
     from .forkengine import _CHEAT, _strip_comments, scaled
@@ -162,7 +177,7 @@ def preview(engine, agent, slug, function, source):
         raise NetworkError('Inline assembly and binary includes are not allowed.')
     unit = fp.unit(fn['unit'])
     symbol = engine._meta(fn).get('symbol') or fn['name']
-    with engine._tree(proj).exclusive(), engine._unit_lock(proj, unit.name):
+    with _locked(engine, slug, function):
         _claim(engine, agent, fn)
         _, after, path, before = engine._place(proj, fp, unit, fn, source,
                                                 engine._names(engine._meta(fn), fn))
@@ -210,9 +225,10 @@ def _compact(result, preview_only=False):
 
 
 def brief(net, agent, slug, function):
+    """Return the editable definition and a revision without blocking builds of unrelated units."""
     engine = net.forks
     proj, _, _ = engine.get(slug)
-    with engine._tree(proj).exclusive():
+    with _locked(engine, slug, function, read=True):
         fn, source, revision = snapshot(engine, slug, function)
         return (f"{fn['name']}: {fn['status']}, best score {fn['best_score']} (0 = identical)\n"
                 f'revision: {revision}\n```c\n{source.strip()}\n```\n'
@@ -220,13 +236,16 @@ def brief(net, agent, slug, function):
 
 
 def compile_patch(net, agent, slug, function, revision, edits):
+    """Check the revision under the unit lock, then submit exact edits to the ordinary judge."""
     engine = net.forks
     proj, _, _ = engine.get(slug)
-    with engine._tree(proj).exclusive():
+    with _locked(engine, slug, function):
         fn, source, current = snapshot(engine, slug, function)
         if revision != current:
             raise NetworkError('Stale revision: get function_brief again before editing.')
         source = definition(engine, fn, patch(source, edits))
+        # Trials may have changed generated outputs; a keeping attempt always establishes its own baseline.
+        engine._scores.pop((proj['id'], fn['unit']), None)
         result = engine.attempt(agent, slug, function, source)
         return _compact(result) + '\nrevision: ' + snapshot(engine, slug, function)[2]
 
@@ -239,7 +258,7 @@ def try_recipes(net, agent, slug, function, revision, recipes, apply=False):
         raise NetworkError('Send between 1 and 8 recipes.')
     engine = net.forks
     proj, _, _ = engine.get(slug)
-    with engine._tree(proj).exclusive():
+    with _locked(engine, slug, function):
         fn, source, current = snapshot(engine, slug, function)
         if revision != current:
             raise NetworkError('Stale revision: get function_brief again before trying recipes.')
@@ -262,8 +281,6 @@ def try_recipes(net, agent, slug, function, revision, recipes, apply=False):
         best, winner = baseline['score'], None
         rows = ['Baseline: ' + _compact(baseline, True)]
         for name, candidate in variants:
-            if snapshot(engine, slug, function)[2] != revision:
-                raise NetworkError('Project inputs changed during trials; no winner applied. Refresh function_brief.')
             result = preview(engine, agent, slug, function, candidate)
             rows.append(name + ': ' + _compact(result, True))
             if result['score'] is not None and result['score'] < best:
@@ -272,13 +289,14 @@ def try_recipes(net, agent, slug, function, revision, recipes, apply=False):
                 break
         if snapshot(engine, slug, function)[2] != revision:
             raise NetworkError('Project inputs changed during trials; no winner applied. Refresh function_brief.')
-        if winner is None:
-            rows.append('No strictly better candidate; source unchanged.')
-        elif apply:
-            # A fresh baseline is required after trials, even if ordinary compiles cached one before them.
-            engine._scores.pop((proj['id'], fn['unit']), None)
-            rows.append('Applying ' + winner[0] + ' through the normal judge:\n' + _compact(
-                engine.attempt(agent, slug, function, winner[1])))
-        else:
-            rows.append('Best: ' + winner[0] + '. Preview only; repeat with apply=true to judge and keep it.')
-        return '\n'.join(rows) + '\nrevision: ' + snapshot(engine, slug, function)[2]
+    # Release the batch lock before applying: compile_patch reacquires the current unit's appropriate locks and
+    # rechecks the revision. A different unit can finish/link while the batch is running.
+    if winner is None:
+        rows.append('No strictly better candidate; source unchanged.')
+    elif apply:
+        applied = compile_patch(net, agent, slug, function, revision, [{'old': source, 'new': winner[1]}])
+        rows.append('Applying ' + winner[0] + ' through the normal judge:\n' + applied)
+        return '\n'.join(rows)
+    else:
+        rows.append('Best: ' + winner[0] + '. Preview only; repeat with apply=true to judge and keep it.')
+    return '\n'.join(rows) + '\nrevision: ' + revision

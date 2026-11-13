@@ -25,7 +25,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Status | recommended | beta | beta | beta | beta | beta | beta | beta | beta | beta | beta | the project's own |
 | Start from your own copy | ✓ | ✓ | ✓ | ✓ decrypted EBOOT.ELF | ✓ decrypted ELF | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ ROM | ✓ | ✓ | ✓ default.xbe, .xiso or Redump .iso | ✓ | fork by address |
 | Judge | link · compare | link · compare | link · compare | link · compare | objdiff | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff | objdiff |
-| Compact patches and reversible recipe previews | — | — | — | — | ✓ demo | — | — | — validation pending | — validation pending | — validation pending | — validation pending | shared project engine |
+| Compact patches and reversible recipe previews | — | — | — | — | ✓ demo | — | — | ✓ GC engine · demo test | ✓ demo test | ✓ demo test | ✓ demo test | shared project engine |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | — | ✓ Ghidra | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | ✓ Ghidra | — (no assembly to read) | by architecture |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | — | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes (32-bit); Ghidra's made compilable | ✓ as PC | twins only (no drafts yet) | — |
 | Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | ✓ Ghidra's | — | — |
@@ -914,8 +914,11 @@ The answer goes here: build it, build part of it, or not, and why.
 `function_brief`, `compile_patch` and `try_recipes` use the shared project engine
 ([tool guide](docs/COMPILE_PATCHES.md)). Synthetic PS4 checks exercise patches,
 reversible exact previews, ordinary-judge publication and matched neighbors. The
-other project consoles and public decomps need their own demo runs; their shared
-engine is available, but no console-specific validation is claimed here. ROM-mode
+GC/Wii, PC, Xbox and DS use the same engine, with demo-dispatch tests for GC, PC, Xbox
+and DS that skip when their pinned tools are absent. Wii shares the GC project engine.
+These checks are coverage, not a claim that proprietary compilers were available in
+every test environment; the PR records which demos actually ran. Public decomps use
+their existing source-tree build. ROM-mode
 transactions need an adapter for saved candidates and the original linked-byte
 judge, so these tools are not offered there yet. Architecture-specific presets,
 absent definitions and durable background recipe jobs are follow-up work.

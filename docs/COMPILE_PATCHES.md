@@ -56,20 +56,27 @@ fresh attempt succeeds. Equal scores leave the source alone. Normal project-buil
 memory/time limits apply to each build; a trial also rebuilds the original unit.
 
 Revisions compare content, including the entire unit, local headers, tools/config
-and harness inputs, build configuration and the target object. Python caches and
-ignored build/original directories are excluded. The scan is capped at 4,096
+and harness inputs, build configuration and the target object. Only platform, version, compiler and compiler-range settings enter the revision;
+background surveys and UI bookkeeping do not. Python caches and ignored
+build/original directories are excluded. Symlinked headers/tools are skipped: their
+external contents are outside this revision, but fresh builds and ordinary judging
+still run. The scan is capped at 4,096
 entries and 32 MiB of input content; larger projects can use `compile_and_diff`.
 Generated headers and external compiler files are not a complete revision cache:
 previews force fresh candidate builds, and applying rejudges normally. No preview
 verdict is reused as an acceptance decision.
 
-The exclusive tree lock serializes app-managed edits during a batch. It cannot
+Trials use a shared tree lock and hold their unit lock. Unrelated units can build
+concurrently; linked-game trials use the exclusive tree lock. Briefs take only read
+locks. A batch scans inputs at its start and end, releases its locks, then applies
+through a fresh revision-checked patch. It cannot
 coordinate an external editor or build running outside the app; avoid changing
 project/compiler inputs externally while trials run. A changed revision refuses
 application and asks for a new brief. Candidate outputs must be regular generated
 `.o`/`.obj` files inside the project, separate from targets and originals.
 
 The shared project engine serves all source-tree consoles. End-to-end checks in
-this contribution use the synthetic PS4 demo with pinned Clang/objdiff. Additional
-console demos, ROM-mode transactions and recipes for absent definitions remain
-planned in ROADMAP.md.
+this contribution use the synthetic PS4 demo with pinned Clang/objdiff. The GC, PC,
+Xbox and DS demo tests use the same dispatch calls and skip without their pinned
+tools (Wii shares GC's project engine). ROM-mode transactions and recipes for
+absent definitions remain planned in ROADMAP.md.

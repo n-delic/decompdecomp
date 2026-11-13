@@ -293,3 +293,141 @@ def test_crlf_source_is_restored_byte_for_byte_and_revisions_stay_stable(rig):
     result = compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', before, recipes())
     assert 'Preview only' in result
     assert rig.path.read_bytes() == raw and revision(rig) == before
+
+
+@pytest.mark.parametrize('field', ['range_checks', 'file_survey', 'build_problem', 'joins_refused',
+                                  'boundaries_refused', 'priority', 'progress_revision'])
+def test_background_bookkeeping_does_not_invalidate_the_brief(rig, field):
+    proj, fp, cfg = rig.engine.get('test')
+    rig.engine.get = lambda slug: (proj, fp, cfg)
+    before = revision(rig)
+    cfg[field] = {'new': 'evidence'}
+    assert revision(rig) == before
+
+
+@pytest.mark.parametrize('field', ['platform', 'version', 'compiler', 'compiler_ranges'])
+def test_a_compiler_selector_invalidates_the_brief(rig, field):
+    proj, fp, cfg = rig.engine.get('test')
+    rig.engine.get = lambda slug: (proj, fp, cfg)
+    before = revision(rig)
+    cfg[field] = 'changed'
+    assert revision(rig) != before
+
+
+@pytest.mark.parametrize('stub', ['INCLUDE_ASM("asm", work);', 'GLOBAL_ASM("work.s");'])
+def test_a_stub_needs_a_definition_before_a_brief_or_patch(rig, stub, monkeypatch):
+    rig.path.write_text(stub)
+    monkeypatch.setattr(rig.engine, '_find', lambda *args: ('work', (0, len(stub))))
+    with pytest.raises(NetworkError, match='Add the definition with compile_and_diff first'):
+        compile_tools.brief(rig.net, rig.agent, 'test', 'work')
+
+
+def test_the_brief_returns_a_revision_that_can_be_patched(rig):
+    import re
+
+    text = compile_tools.brief(rig.net, rig.agent, 'test', 'work')
+    assert 'work: open, best score 100' in text and SOURCE.strip() in text
+    current = re.search(r'revision: ([0-9a-f]{64})', text)[1]
+    result = compile_tools.compile_patch(rig.net, rig.agent, 'test', 'work', current, recipes()[0]['edits'])
+    assert 'ordinary keeping judge' in result and 'revision:' in result
+
+
+def test_an_external_header_link_does_not_disable_the_tools(rig, tmp_path):
+    external = tmp_path / 'sdk.h'
+    external.write_text('typedef int sdk_int;')
+    try:
+        (rig.root / 'sdk.h').symlink_to(external)
+    except OSError:
+        pytest.skip('creating symlinks is unavailable')
+    current = revision(rig)
+    assert 'revision:' in compile_tools.brief(rig.net, rig.agent, 'test', 'work')
+    assert 'Preview only' in compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', current, recipes())
+    assert 'ordinary keeping judge' in compile_tools.compile_patch(
+        rig.net, rig.agent, 'test', 'work', current, recipes()[0]['edits'])
+
+
+def test_recipe_batches_scan_inputs_at_the_start_and_end_only(rig, monkeypatch):
+    current, scans = revision(rig), []
+    walk = compile_tools.os.walk
+    monkeypatch.setattr(compile_tools.os, 'walk', lambda *args: scans.append(1) or walk(*args))
+    batch = [{'name': str(n), 'edits': [{'old': '+ 1', 'new': f'+ {n}'}]} for n in range(3, 8)]
+    compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', current, batch)
+    assert len(scans) == 2
+
+
+def test_unlinked_trials_allow_other_units_to_build(rig, monkeypatch):
+    import threading
+
+    entered, release, other = threading.Event(), threading.Event(), threading.Event()
+    build, errors = rig.engine._build_unit, []
+    def blocked(*args):
+        entered.set()
+        assert release.wait(5)
+        return build(*args)
+    monkeypatch.setattr(rig.engine, '_build_unit', blocked)
+    def trial():
+        try:
+            compile_tools.preview(rig.engine, rig.agent, 'test', 'work', SOURCE)
+        except BaseException as exc:
+            errors.append(exc)
+    worker = threading.Thread(target=trial)
+    def unrelated():
+        with rig.engine._tree(rig.proj).shared(), rig.engine._unit_lock(rig.proj, 'other'):
+            other.set()
+    reader = threading.Thread(target=unrelated)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        reader.start()
+        assert other.wait(2), 'an unrelated unit was blocked for the whole trial'
+    finally:
+        release.set()
+        worker.join(5)
+        if reader.ident is not None:
+            reader.join(5)
+    assert not worker.is_alive() and not errors
+
+
+def test_linked_trials_still_take_the_writer_lock(rig, monkeypatch):
+    import threading
+
+    rig.unit.complete, rig.state.linked = True, True
+    build = rig.engine._build_unit
+    def check(*args):
+        assert rig.engine._tree(rig.proj)._writer == threading.get_ident()
+        return build(*args)
+    monkeypatch.setattr(rig.engine, '_build_unit', check)
+    compile_tools.preview(rig.engine, rig.agent, 'test', 'work', SOURCE)
+
+
+def test_apply_releases_the_batch_before_rechecking_the_winner(rig, monkeypatch):
+    apply_patch = compile_tools.compile_patch
+    def check(*args):
+        tree = rig.engine._tree(rig.proj)
+        assert tree._writer is None and tree._readers == 0
+        return apply_patch(*args)
+    monkeypatch.setattr(compile_tools, 'compile_patch', check)
+    result = compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', revision(rig), recipes(), apply=True)
+    assert 'Applying two' in result
+
+
+
+def test_briefs_take_only_read_locks(rig, monkeypatch):
+    snapshot = compile_tools.snapshot
+    def check(*args):
+        tree = rig.engine._tree(rig.proj)
+        assert tree._writer is None and tree._readers == 1
+        return snapshot(*args)
+    monkeypatch.setattr(compile_tools, 'snapshot', check)
+    assert 'revision:' in compile_tools.brief(rig.net, rig.agent, 'test', 'work')
+
+
+def test_a_winner_changed_after_the_batch_is_not_applied(rig, monkeypatch):
+    apply_patch = compile_tools.compile_patch
+    def change(*args):
+        (rig.root / 'layout.h').write_text('extern int changed;')
+        return apply_patch(*args)
+    monkeypatch.setattr(compile_tools, 'compile_patch', change)
+    with pytest.raises(NetworkError, match='Stale revision'):
+        compile_tools.try_recipes(rig.net, rig.agent, 'test', 'work', revision(rig), recipes(), apply=True)
+    assert not rig.state.placements
