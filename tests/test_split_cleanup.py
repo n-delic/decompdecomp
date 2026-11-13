@@ -175,10 +175,13 @@ def test_split_keeps_a_supplied_boundary_reason_over_padding(net):
     # zero fill, _cut must keep the reason instead of replacing it with the generic "alignment padding" label.
     from decompnet.network import set_aside
     agent, _ = net.local_agent("tester")
-    vram = _insert_words(net, "mixfn", [JR_RA, 0x0, 0x0])          # real head, two trailing zero (NOP) words
+    vram = _insert_words(net, "mixfn", [JR_RA, 0x0, 0x0])          # jr $ra, its delay-slot NOP, then a trailing NOP
     proj = net._project(SLUG)
     fn = net._function("mixfn", SLUG)
-    net._cut(proj, fn, vram + 4, "pad_tail", net.symbols(proj["id"]), agent.id, "boundary",
+    # Split past the delay slot so the tail is the lone trailing NOP -- pure padding, which makes tail_padding true
+    # and so exercises _cut's reason-keeping (editing.py:116-119). A +4 split lands in the delay slot: the guard
+    # leaves tail_padding false and that branch never runs, so the test would pass even with the logic removed.
+    net._cut(proj, fn, vram + 8, "pad_tail", net.symbols(proj["id"]), agent.id, "boundary",
              "mixfn ends early", {"asm_code": "data table, not code"})
     aside = set_aside(net._function("pad_tail", SLUG))
     assert aside["set_aside"] == "data table, not code", aside     # the supplied reason survived
