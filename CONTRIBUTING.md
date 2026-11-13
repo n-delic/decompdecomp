@@ -408,6 +408,11 @@ An agent is one of two sorts:
 - A change to a console or a feature says which of the app's features you ran on it and how (AGENTS.md, "Check
   every feature on the console you touch"); reviewers check the same list.
 - Keep each one to one change, and say in the description what it fixes or adds, and how you tested it.
+- A performance change (a `perf/` branch) shows a before and after from the throughput benchmark: run
+  `uv run python -m decompnet.bench --out before.json` on main and `--out after.json` on your branch, on the same
+  computer, and paste `uv run python -m decompnet.bench --compare before.json after.json` into the description.
+  A part that got faster but matches no more functions per CPU-minute isn't a win yet
+  (docs/APP_PERFORMANCE.md, "Throughput: functions matched per CPU-minute").
 - Commit messages describe what users get, in one sentence, with a body explaining why.
 - Don't bump the version. Releases are made separately.
 - Pull requests written with an AI agent are fine (AGENTS.md is there for it). Read the diff yourself, and make sure

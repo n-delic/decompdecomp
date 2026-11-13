@@ -68,6 +68,37 @@ with rollups versus 2.274 ms without them (about 2.3 microseconds extra per upda
 per-transaction durability costs and is not a compiler-throughput benchmark. Compilation and
 project file analysis can still dominate real workloads.
 
+### Throughput: functions matched per CPU-minute
+
+The measurements above time parts of the app. A faster part does not always mean more matches.
+`decompnet.bench` measures the outcome instead. It runs the machine-only pipeline on the demo games:
+twins, machine drafts through the judge, and the saved-source repairs, as the **Run autopilot** button
+does. With `--permuter`, the permuter then works on the near misses that are left. No helper agent starts.
+
+```sh
+uv run python -m decompnet.bench --seconds 120 --out before.json   # on main
+uv run python -m decompnet.bench --seconds 120 --out after.json    # on your branch
+uv run python -m decompnet.bench --compare before.json after.json
+```
+
+- It makes its own throwaway home and removes it afterwards (`--keep` keeps it). It never touches your app.
+- It runs every demo whose tools are installed, one after another. `--demo ps` picks one; repeat it for more.
+  A demo without its tools is listed under `skipped`, with what it needs.
+- `--seconds` is the wall-clock budget for each demo. A demo that finishes sooner stops there.
+- For each demo, the JSON has the functions matched before and after, matches per CPU-minute and per
+  wall-minute, the wall time, and the CPU time of the app and its exited child processes (compilers, m2c).
+  It also has the change in every `compile_timing` counter (requests, cache hits, queue, setup, execute,
+  link, scoring) and the cache hit rate.
+- Compare two runs made on the same computer, with the same settings. CPU time differs between machines.
+- Other work on the computer slows the run. Two runs of the same commit on a busy Mac matched the same 21
+  PS1 functions in 20 s and in 55 s of wall time (42 and 47 CPU seconds). Run on a quiet computer, and repeat
+  a run when its numbers surprise you. The CPU figures vary less than the wall-clock ones.
+- `cpu_seconds.complete` is false when a compiler ran in the Linux VM or WSL (the PS2's EE-GCC on a Mac), or on
+  Windows. That CPU time isn't counted, so compare matches per wall-minute there instead.
+- The GameCube demo builds through its project's own build, so its `compile_timing` counters are empty.
+
+The N64 demo's build needs `ld.lld` and `llvm-objcopy` on the PATH (Homebrew: `/opt/homebrew/opt/llvm/bin`).
+
 Regression checks cover totals versus the original SQL after edits/moves/deletion, migration, rollback,
 map snapshot/delta/fallback behaviour, fresh attempt counts, shared compile identity and result isolation,
 cancellation, and foreground capacity while background/detail requests are blocked.
