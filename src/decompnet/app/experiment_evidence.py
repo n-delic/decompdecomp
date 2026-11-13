@@ -6,6 +6,7 @@ Only fresh trials are recorded; the existing search cache owns repeated inputs.
 import difflib
 import hashlib
 import json
+import threading
 import time
 from itertools import accumulate
 
@@ -120,9 +121,11 @@ def measured(permuter, agent, proj, fn, source, best, fork):
     before = fn['best_source'] or ''
     # A random/retained parent can differ from the saved best: use its cached source/output if known.
     cache = net.__dict__.setdefault('_repair_compile_outputs', {})
+    cache_lock = net.__dict__.setdefault('_repair_compile_outputs_lock', threading.Lock())
     base_hash = provenance.get('base_source_sha256') or hashlib.sha256(before.encode()).hexdigest()
     context = build_scope(net,proj,fn)
-    previous = cache.get((fn['id'],context,base_hash))
+    with cache_lock:
+        previous = cache.get((fn['id'],context,base_hash))
     if previous:
         before = previous[0]
     key = hashlib.sha256((context+base_hash).encode()).hexdigest() if family else None
@@ -140,9 +143,12 @@ def measured(permuter, agent, proj, fn, source, best, fork):
         remember(net,agent,proj,fn,source,score,output=getattr(permuter,'_trial_output',None))
     measured_output = getattr(permuter,'_trial_output',None)
     if measured_output:
-        cache[fn['id'],context,hashlib.sha256(source.encode()).hexdigest()] = (source,measured_output)
-        while len(cache) > 256:
-            del cache[next(iter(cache))]
+        # Background trials share this bounded cache. Keep insertion and eviction
+        # together; another worker can invalidate the eviction iterator between calls.
+        with cache_lock:
+            cache[fn['id'],context,hashlib.sha256(source.encode()).hexdigest()] = (source,measured_output)
+            while len(cache) > 256:
+                del cache[next(iter(cache))]
     if family:
         record(net,fn,key,family,before,source,best,score,previous[1] if previous else None,
                measured_output,(time.monotonic()-started)*1000, compact=getattr(permuter, '_compact_trial', False))
