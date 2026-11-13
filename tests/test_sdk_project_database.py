@@ -44,7 +44,8 @@ def test_library_selection_uses_current_owner_preserving_other_settings(sdk_proj
     assert saved == config | {'sdk_libraries': selection}
     assert sdk_library.state(net, 'selected')['selection'] == selection
     assert net.project_store('other').one("SELECT config FROM projects WHERE slug='other'")['config'] == other
-    assert net.store.one('SELECT COUNT(*) count FROM sdk_signatures')['count'] == 1
+    # (choosing adds nothing; the N64's built-in table, loaded when it's read, isn't the game's choice)
+    assert net.store.one("SELECT COUNT(*) count FROM sdk_signatures WHERE corpus NOT LIKE 'built in / %'")['count'] == 1
 
 
 def test_manual_trigger_route_saves_selection_before_scheduling_sdk_scan(sdk_project, monkeypatch):

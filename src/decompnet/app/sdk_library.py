@@ -24,6 +24,8 @@ def allowed(net, proj, corpus):
 
 
 def choose(net, slug, selection):
+    from .sdk_builtin import ensure
+    ensure(net)
     if selection is not None:
         known = {r['corpus'] for r in net.store.all('SELECT DISTINCT corpus FROM sdk_signatures')}
         if corpus := net.console(net.project_row(slug)).sdk_corpus:
@@ -42,6 +44,8 @@ def choose(net, slug, selection):
 
 
 def state(net, slug=None):
+    from .sdk_builtin import ensure
+    ensure(net)
     saved = inventory(net)
     libraries = [dict(r) for r in net.store.all('SELECT corpus,COUNT(*) AS signatures FROM sdk_signatures GROUP BY corpus ORDER BY corpus')]
     selection, keys = None, set()
@@ -58,7 +62,10 @@ def state(net, slug=None):
                                  'AND fingerprint IN (SELECT value FROM json_each(?))', arch, big, json.dumps(sorted(keys))):
             if row['fingerprint'] in keys:
                 detected.setdefault(row['corpus'], set()).add(row['fingerprint'])
+    from .sdk_builtin import corpora as shipped
+    builtin = shipped(net)
     for row in libraries:
+        row['builtin'] = row['corpus'] in builtin
         row['detected'] = len(detected.get(row['corpus'], ()))
         row['enabled'] = selection is None or row['corpus'] in selection
     if slug and net.console(proj).sdk_corpus:

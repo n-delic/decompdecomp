@@ -466,7 +466,8 @@ async function showSettingsPage() {
   const showSdkInventory = async () => {
     const data = await api("/api/sdk-library");
     $("sdkFolders").value = data.folders.join("\n");
-    $("sdkInventory").textContent = `${data.libraries.length} indexed libraries available to all projects. Each game's Settings can override automatic selection.`;
+    const builtIn = data.libraries.filter(r => r.builtin).length;
+    $("sdkInventory").textContent = `${data.libraries.length - builtIn} indexed libraries${builtIn ? ` and ${builtIn} built in (rebuilt from public source)` : ""} available to all projects. Each game's Settings can override automatic selection.`;
   };
   await showSdkInventory();
   $("sdkFolderPick").onclick = async () => {
