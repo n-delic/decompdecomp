@@ -56,25 +56,51 @@ def wine_setup() -> tuple[str, dict]:
     return wine, {**os.environ, **WINE_QUIET, "WINEPREFIX": prefix}
 
 
+_MSPDB = ("mspdb80.dll", "mspdb100.dll", "mspdb110.dll", "mspdb120.dll", "mspdbcore.dll", "mspdbsrv.exe")
+
+
+def _has_mspdb(folder: Path) -> bool:
+    return any((folder / name).exists() for name in _MSPDB)
+
+
 def _dll_dirs(compiler: str) -> list[str]:
-    """DLL directories a cross-hosted cl.exe needs on PATH. The 2005-2013 x86_amd64 compiler's mspdb*.dll sits in its
-    parent `bin`, not beside it (and some of its tools are in Common7/IDE), so without these it fails to load
-    mspdb80.dll. Empty when the DLLs are already beside cl.exe (2015+ and the native x64 compilers), so an ordinary
-    compile is unchanged."""
+    """DLL directories a cross-hosted cl.exe needs on WINEPATH. A 2005-2013 x86_amd64 compiler's mspdb*.dll sits in
+    its parent `bin`, not beside it; a 2017 Hostx86/x64 compiler's sit in the sibling Hostx86/x86; and some tools are
+    in Common7/IDE. Without these the x64 cross can't load mspdb*.dll. Empty when they're already beside cl.exe (2015+
+    native x64 and ordinary compiles), so those are unchanged."""
     cl = Path(compiler)
-    if (cl.parent / "mspdb80.dll").exists() or (cl.parent / "mspdbcore.dll").exists():
+    if _has_mspdb(cl.parent):
         return []
     dirs: list[str] = []
-    for up in cl.parents:
-        if (up / "mspdb80.dll").exists() or (up / "mspdbcore.dll").exists():
-            dirs.append(str(up))
-            break
+    candidates: list[Path] = []
+    candidates.extend(cl.parents)  # the `bin` root and up: the 32-bit mspdb for an x86_amd64 cross lives here
+    grandparent = cl.parent.parent
+    if grandparent.is_dir():
+        try:
+            candidates.extend(sorted(x for x in grandparent.iterdir() if x.is_dir()))  # siblings, e.g. 2017 Hostx86/x86
+        except OSError:
+            pass
+    seen: set[str] = set()
+    for folder in candidates:
+        key = str(folder)
+        if key not in seen:
+            seen.add(key)
+            if _has_mspdb(folder):
+                dirs.append(key)
+                break
     for up in cl.parents:
         ide = up / "Common7" / "IDE"
         if ide.is_dir():
             dirs.append(str(ide))
             break
     return dirs
+
+
+def _winepath_from_dirs(dirs: list[str], existing: str = "") -> str:
+    """The WINEPATH a cross-hosted cl.exe needs so wibo and wine find its mspdb*.dll: `dirs` in Windows form (Z:\\),
+    joined with Windows' ';', then any existing WINEPATH. wibo and wine search here for a program's DLLs, not the
+    unix PATH."""
+    return ";".join(p for p in [*(windows_path(d) for d in dirs), existing] if p)
 
 
 def main() -> int:
@@ -102,7 +128,7 @@ def main() -> int:
     extra = _dll_dirs(args.compiler)
     if extra:
         current = env if env is not None else dict(os.environ)
-        current["PATH"] = os.pathsep.join([*extra, current.get("PATH", "")])
+        current["WINEPATH"] = _winepath_from_dirs(extra, current.get("WINEPATH", ""))
         env = current
     if args.wine:
         # wine's output to a file, then ours: the services the first wine program after a new server starts

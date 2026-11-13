@@ -6,6 +6,7 @@ the version record a library carries)."""
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -210,27 +211,49 @@ def test_the_installed_vc9_cross_cl_finds_its_mspdb_in_the_parent_bin():
     assert str(cross.parent.parent) in dirs  # .../9.0/Bin holds mspdb80.dll
 
 
-def test_a_pre_2015_x64_cross_compiles_under_wibo(tmp_path):
-    """End-to-end: a 2005-2013 x86_amd64 cross cl.exe is 32-bit-hosted, so it runs under wibo, and the
-    _dll_dirs PATH lets it load mspdb80.dll from its parent bin. A complete copy is needed: a community
-    bundle without Common7/IDE has no mspdb80.dll that exports SigForPbCb, so the compile aborts there (as
-    it does under wine too) -- this skips rather than fails on such an incomplete toolchain."""
-    cross = Path.home() / ".local/share/decompnet/toolchains/msvc2005/9.0/Bin/x86_amd64/cl.exe"
+def test_a_pre_2015_x64_cross_compiles(tmp_path):
+    """End-to-end: a 2005-2013 x86_amd64 cross cl.exe is 32-bit-hosted; with its mspdb*.dll dir on WINEPATH (not the
+    unix PATH) it compiles under both wibo and wine. The fix is the WINEPATH wiring -- with the same dirs on the unix
+    PATH the compile fails. Point DECOMPNET_MSVC2005_X64_TEST at a VC 2005/2008 copy's version root to run this on a
+    copy installed elsewhere."""
+    root = Path(os.environ.get("DECOMPNET_MSVC2005_X64_TEST")
+                or Path.home() / ".local/share/decompnet/toolchains/msvc2005/9.0")
+    cross = root / "Bin" / "x86_amd64" / "cl.exe"
     wibo = Path.home() / ".local/share/decompnet/toolchains/wibo/wibo"
-    if not cross.exists() or not wibo.exists():
-        pytest.skip("the Visual C++ 2008 (VC9) x86_amd64 cross copy or wibo isn't installed")
+    if not cross.exists():
+        pytest.skip("no Visual C++ 2005-2013 x86_amd64 cross cl.exe (set DECOMPNET_MSVC2005_X64_TEST)")
+
+    mod = _pc_compile_module()
+    dirs = mod._dll_dirs(str(cross))
+    assert dirs, "the cross cl.exe's mspdb*.dll is in its parent bin, so _dll_dirs should add a directory"
+    winepath = mod._winepath_from_dirs(dirs)
     (tmp_path / "f.c").write_text("int f(void){ return 0; }\n")
-    obj = tmp_path / "f.obj"
-    env = dict(os.environ)
-    env["PATH"] = os.pathsep.join([*_pc_compile_module()._dll_dirs(str(cross)), env.get("PATH", "")])
-    # cl.exe reads a leading-slash absolute path as an option, so run in tmp_path with plain filenames
-    done = subprocess.run([str(wibo), str(cross), "/c", "/Fof.obj", "f.c"],
-                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
-    blob = done.stdout + done.stderr
-    if "SigForPbCb" in blob:  # the loaded mspdb80.dll is older than this cross cl.exe (no Common7/IDE copy)
-        pytest.skip("this Visual C++ 2008 copy has no Common7/IDE mspdb80.dll exporting SigForPbCb; a live "
-                    "x64 cross compile needs a complete install")
-    assert obj.exists() and obj.stat().st_size > 0, blob[-800:]
+
+    def made_object(runner, extra_env):
+        for stale in tmp_path.glob("*.obj"):
+            stale.unlink()
+        env = {**os.environ, "WINEDEBUG": "-all", "WINEPATH": "", **extra_env}
+        # cl.exe reads a leading-slash absolute path as a switch, so run in tmp_path with plain filenames
+        subprocess.run([str(runner), str(cross), "/c", "/Fof.obj", "f.c"],
+                       cwd=tmp_path, env=env, capture_output=True, text=True, timeout=180)
+        obj = tmp_path / "f.obj"
+        return obj.exists() and obj.stat().st_size > 0
+
+    ran = False
+    if wibo.exists():
+        ran = True
+        assert made_object(wibo, {"WINEPATH": winepath}), "the x86_amd64 cross should compile under wibo with WINEPATH"
+        # necessary: the same dirs on the unix PATH (not WINEPATH) must not be found
+        assert not made_object(wibo, {"PATH": os.pathsep.join([*dirs, os.environ.get("PATH", "")])}), \
+            "mspdb*.dll on the unix PATH should not be found -- it must be on WINEPATH"
+    wine = os.environ.get("DECOMPNET_WINE") or shutil.which("wine")
+    prefix = os.environ.get("DECOMPNET_WINE_PREFIX") or str(Path.home() / ".local/share/decompnet/toolchains/.wine")
+    if wine and Path(prefix).is_dir():
+        ran = True
+        assert made_object(wine, {"WINEPATH": winepath, "WINEPREFIX": prefix}), \
+            "the x86_amd64 cross should compile under wine with WINEPATH"
+    if not ran:
+        pytest.skip("neither wibo nor a wine prefix is available to run the cross")
 
 
 def test_a_2017_copy_finds_the_windows_sdk_beside_it_and_says_when_it_cant(tmp_path):
