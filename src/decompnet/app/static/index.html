@@ -429,7 +429,7 @@
       <summary class="panel-head"><h2>Discover assets with agents <span class="disclosure-context" id="assetAgentContext"></span></h2></summary>
       <div class="pad">
         <p>Ask agents to investigate data regions and propose names, formats and layouts, then review their evidence before accepting local labels. Choose at least two agents for discovery plus independent review; different models provide a stronger challenge.</p>
-        <label class="field"><span>Discovery scope</span><select id="assetAgentScope"><option value="unknown">All unknown or repeated regions</option><option value="range">Selected ROM range</option><option value="function">Regions used by a function</option></select></label>
+        <label class="field"><span>Discovery scope</span><select id="assetAgentScope"><option value="unknown">All unknown or repeated regions</option><option value="models">Model formats and relationships</option><option value="range">Selected ROM range</option><option value="function">Regions used by a function</option></select></label>
         <div id="assetAgentRange" class="rom-asset-fields" hidden><label class="field"><span>ROM start (hex or decimal)</span><input id="assetAgentStartOffset" value="0"></label><label class="field"><span>Exclusive ROM end</span><input id="assetAgentEndOffset"></label></div>
         <label class="field" id="assetAgentFunctionField" hidden><span>Imported referencing function</span><input id="assetAgentFunction" spellcheck="false"></label>
         <div class="row"><button id="assetAgentStart" type="button" class="primary small-btn">Discover assets</button><button id="assetAgentNewPass" type="button" class="ghost small-btn" hidden>Choose a different scope</button><button id="assetAgentStop" type="button" class="ghost small-btn" hidden>Stop discovery</button></div>
@@ -444,7 +444,7 @@
       <summary class="panel-head"><h2>Model browser <span class="disclosure-context" id="romModelContext"></span></h2></summary>
       <div class="pad"><p>Browse detected geometry and rotate individual meshes to inspect their shape.</p>
         <label class="field"><span>Find models or functions</span><input type="search" id="romModelFilter"></label>
-        <p class="small muted">Wireframes use local coordinates. Textures, object transforms, animation and split scenery streams are not rendered. No recorded references does not mean unused.</p>
+        <p class="small muted">Choose a local mesh or supported assembly. Textures follow recorded loader links; missing and ambiguous links stay visible. Animation and special strip commands are not rendered. No recorded references does not mean unused.</p>
         <div id="romModelItems"></div><div class="row"><button id="romModelPrevious" type="button" class="ghost small-btn">Previous models</button><span id="romModelPage" class="small muted"></span><button id="romModelNext" type="button" class="ghost small-btn">Next models</button></div>
         <button id="romModelStop" type="button" class="ghost small-btn" hidden>Stop preparing model</button><pre id="romModelWork" class="joblog" hidden></pre><div id="romModelResult" aria-live="polite"></div>
       </div>
@@ -1194,6 +1194,8 @@
 <script src="/assets/js/rom-audio-browser.js"></script>
 <script src="/assets/js/rom-model-browser.js"></script>
 <script src="/assets/js/rom-assets.js"></script>
+<script src="/assets/js/rom-model-surface.js"></script>
+<script src="/assets/js/rom-model-export.js"></script>
 <script src="/assets/js/rom-discovery.js"></script>
 <script src="/assets/js/rom-textures.js"></script>
 <script src="/assets/js/rom-explorer.js"></script>

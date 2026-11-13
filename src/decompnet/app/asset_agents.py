@@ -74,7 +74,7 @@ def _fresh(run,report):
 def _scope(report,value):
     if not isinstance(value,dict):raise NetworkError('Choose unknown regions, a ROM range or a referencing function.')
     mode=value.get('mode','unknown')
-    if mode not in ('unknown','range','function'):raise NetworkError('Choose unknown regions, a ROM range or a referencing function.')
+    if mode not in ('unknown','range','function','models'):raise NetworkError('Choose unknown regions, a ROM range or a referencing function.')
     result={'mode':mode}
     if mode=='range':
         result.update(start=integer(value.get('start'),'Range start',0,report['size']-1),end=integer(value.get('end'),'Range end',1,report['size']))
@@ -119,6 +119,7 @@ def prepare(net,slug,value=None,identity='',resume=False):
             if row['functions'] or row['kind']=='code':continue
             kind=row['annotation'].get('kind') or row['kind']
             if selected['mode']=='unknown' and (kind not in ('unknown','repeated bytes') or row['annotation'].get('name')):continue
+            if selected['mode']=='models' and kind not in ('unknown','data','compressed','3d model'):continue
             if selected['mode']=='range' and not (selected['start']<row['end'] and row['start']<selected['end']):continue
             if selected['mode']=='function' and selected['function'] not in row.get('function_refs',[]):continue
             # Pending and accepted interpretations await review or are already known.
@@ -229,6 +230,10 @@ def preview(net,agent,slug,region,claim_token,action='textures',options=None,mod
     data=dict(region=region,image_hash=report['image_hash'],options=options or {})
     if action=='preview':
         result=rom_explorer.asset_preview(net,slug,data);result.pop('data_url',None)
+        if result.get('media')=='model':
+            result['vertex_sample']=result.pop('vertices')[:64];result['edge_count']=len(result.pop('edges'));result.pop('points',None)
+            result['surface_count']=len(result.pop('surfaces',[]))
+            for material in result.get('materials',[]):material.pop('image',None)
     else:
         result=rom_explorer.asset_inspect(net,slug,{**data,'action':action,'model_settings':model_settings or {}})
         for candidate in result.get('candidates',[]):candidate.pop('data_url',None)
@@ -273,11 +278,16 @@ def _proposal(net,slug,report,region,data,reads):
         checked.append(dict(offset=address,function=function))
     related=data.get('related_regions',[])
     if not isinstance(related,list) or len(related)>32 or any(not isinstance(identity,str) or identity not in {r['id'] for r in report['regions'] if not r['functions'] and r['kind']!='code'} for identity in related):raise NetworkError('Choose up to 32 current data-region IDs as related regions.')
-    settings=rom_explorer._preview_settings(data.get('preview_settings',{}));model=data.get('model_settings',{})
+    recipe=data.get('parser_recipe')
+    if recipe is not None:
+        if not isinstance(recipe,dict) or set(recipe)!={'kind','options','layout'} or recipe['kind']!='raw-model':raise NetworkError('Use a raw-model parser recipe with options and layout; executable parser code is not accepted.')
+        if data.get('model_settings',{}) not in ({},recipe['layout']) or data.get('preview_settings',{}) not in ({},recipe['options']):raise NetworkError('Choose a parser recipe or individual layout fields, not both.')
+    settings=rom_explorer._preview_settings(recipe['options'] if recipe else data.get('preview_settings',{}));model=recipe['layout'] if recipe else data.get('model_settings',{})
     packet=dict(region=region,image_hash=report['image_hash'],options=settings)
     if settings:rom_explorer.asset_preview(net,slug,packet) if not model else rom_explorer.asset_inspect(net,slug,{**packet,'action':'model','model_settings':model})
     elif model:rom_explorer.asset_inspect(net,slug,{**packet,'action':'model','model_settings':model})
-    return dict(result,kind=kind,confidence=confidence,start=start,end=end,citations=checked,related_regions=related,preview_settings=settings,model_settings=model)
+    if recipe and not model:raise NetworkError('A model parser recipe needs an explicit vertex/index layout.')
+    return dict(result,parser_recipe=recipe,kind=kind,confidence=confidence,start=start,end=end,citations=checked,related_regions=related,preview_settings=settings,model_settings=model)
 
 
 @current
@@ -426,6 +436,7 @@ def prompt(session):
             'Propose a descriptive name, data kind, format notes, exact advisory boundaries and related region IDs. '
             'Include evidence, counter-evidence, uncertainty, approach, confidence (strong/tentative/unclear) and '
             'citations [{"offset":ROM_OFFSET}] or [{"offset":INSTRUCTION_ADDRESS,"function":"NAME"}]. '
+            'For model-focused work, inspect material links, stored transforms, companion streams and omitted commands. Unsupported layouts may be proposed as parser_recipe={kind: raw-model, options: source/offset controls, layout: explicit vertex/index controls}; test action=model first. Recipes are validated and require human acceptance before use as local annotations. '
             'Only include preview/model settings that work. Do not invent decoder code or types from entropy alone. '
             'Read previous_attempts and try a distinct approach; if unresolved, defer_asset_region with findings. '
             f'Work up to {session.options.get("per_session",8)} regions this provider session, then end; the app continues the entire queue automatically. '

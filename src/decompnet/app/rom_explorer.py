@@ -18,7 +18,7 @@ from ..rom.explorer import analyse
 
 PREFIX = 'rom-explorer:'
 CONTRACT_PREFIX='rom-explorer-contracts:'
-ANALYSIS_REVISION=11
+ANALYSIS_REVISION=12
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'animation', 'collision', 'object placements', 'world grid', 'music sequence', 'demo', 'font', 'container', 'repeated bytes')
 
 
@@ -227,11 +227,11 @@ def loader_contracts(net,slug,data=None):
 def _preview_settings(options):
     from ..rom.asset_formats import FORMATS, PALETTES
     if not isinstance(options,dict):raise NetworkError('Preview settings must be named fields.')
-    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture'}
+    allowed={'format','offset','source','block_offset','width','height','palette_offset','palette_format','channels','rate','length','frame','palette','mip','sample','mesh','texture','assembly'}
     if set(options)-allowed:raise NetworkError('Use only the listed preview controls.')
     if options.get('format','auto') not in FORMATS or options.get('palette_format','rgba5551-be') not in PALETTES:
         raise NetworkError('Choose a listed preview format and palette format.')
-    if options.get('source','rom') not in ('rom','decoded'):raise NetworkError('Choose ROM bytes or a decompressed block.')
+    if options.get('source','rom') not in ('rom','decoded','archive'):raise NetworkError('Choose ROM bytes or a decompressed block.')
     if any(isinstance(v,(dict,list,bool)) or len(str(v))>40 for v in options.values()):raise NetworkError('Preview controls must contain short text or numeric values.')
     return options
 
@@ -269,7 +269,13 @@ def _asset_read(net,slug,data,read, *, detect=False):
         header=image[offset:offset+4]
         compressed=header in (b'Yaz0',b'Yay0',b'MIO0',b'RNC\x01',b'RNC\x02') or header.startswith(b'\x1f\x8b\x08') or len(header)>=2 and header[0]==0x78 and int.from_bytes(header[:2],'big')%31==0
         auto_decode=not using_detected and options.get('source','rom')=='rom' and options.get('format','auto')=='auto' and compressed
-        if options.get('source','rom')=='decoded' or auto_decode:
+        if options.get('source')=='archive':
+            from ..rom.asset_archives import member_bytes
+            member=(row.get('detected_asset') or {}).get('archive')
+            if not member:raise NetworkError('This region has no validated archive member. Choose ROM bytes or a supported detected archive.')
+            raw=member_bytes(image,member);result=read(raw,options)
+            result['decoded']=dict(codec='ZIP member',bytes=len(raw),block_offset=member['offset'],member=member['name'])
+        elif options.get('source','rom')=='decoded' or auto_decode:
             block=offset if auto_decode else asset_formats.integer(options.get('block_offset',row['start']),'Compressed block offset',0,len(image)-1)
             block_data=image[block:block+asset_formats.MAX_BYTES]
             raw,codec=net.console(proj).asset_decode(block_data) or asset_formats.unpack(block_data)

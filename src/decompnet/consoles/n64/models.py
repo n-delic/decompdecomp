@@ -142,6 +142,7 @@ def preview(data,asset,selection):
             if len(set(face))<3:continue
             triangles+=1;edges.update(tuple(sorted((face[i],face[(i+1)%3]))) for i in range(3))
         return dict(media='model',vertices=vertices,edges=sorted(edges),points=list(range(count)),triangles=triangles,
+                    surfaces=[dict(indices=face,uv=[[0,0]]*3,colors=[[255,255,255,255]]*3,material=0) for face in faces if len(set(face))==3],materials=[],parts=[dict(name=f'Node {selected["node"]} / part {selected["part"]} / section {selected["section"]}',start=0,vertices=count)],
                     details={key:selected[key] for key in ('node','part','section','texture','material_flags')},
                     note='Validated native mesh in local coordinates. Skeleton poses, animation, textures and material shading are not applied.',
                     settings=dict(format='auto',source='rom',offset=asset['offset'],mesh=mesh))
