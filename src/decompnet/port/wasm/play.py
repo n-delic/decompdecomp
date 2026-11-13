@@ -86,7 +86,10 @@ def play(net, slug: str, log=print) -> dict:
     if (url := running(slug)):
         log(f"already running at {url}")
         return {"url": url}
-    proj = net._project(slug)
+    # Without synchronizing the save folder: the build reads the save as it is on disk, and a sync waits behind the
+    # helpers' upkeep (minutes while they work, with nothing in Play's log)
+    with net.progress.view():
+        proj = net._project(slug)
     if not net.is_rom(proj):
         raise NetworkError("Play builds games imported from a ROM; this project isn't one")
     cfg = net.cfg(proj)
