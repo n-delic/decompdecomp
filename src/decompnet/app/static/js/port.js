@@ -146,7 +146,37 @@ async function fixRenamedCalls() {
   if (S.slug === slug) loadPortReadiness();
 }
 
+/* Play: build the game for the PC and open it in the browser (port/wasm/play.py). The first build takes minutes,
+   later ones only rebuild what changed; a game already running opens again at once. */
+async function playGame() {
+  const slug = S.slug, log = $("portPlayLog");
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, "Building the game for the PC", [$("portPlay")], "Playing.");
+  try {
+    let result = await api("/api/play", { method: "POST", body: { slug } });
+    if (result.job) result = await followJob(result.job, log, null, () => S.slug === slug);
+    if (result && result.url) {
+      const link = document.createElement("a");
+      link.href = result.url; link.target = "_blank"; link.rel = "noopener"; link.textContent = result.url;
+      log.append("\nThe game runs at ", link, " (opened in your browser).");
+      window.open(result.url, "_blank", "noopener");
+      $("portStop").hidden = false;
+    }
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally { finish(); }
+}
+
+async function stopGame() {
+  const slug = S.slug;
+  try { await api("/api/play", { method: "POST", body: { slug, stop: true } }); } catch (error) { showJobError($("portPlayLog"), error.message); }
+  $("portStop").hidden = true;
+}
+
 if ($("portPanel")) {
+  $("portPlay").onclick = playGame;
+  $("portStop").onclick = stopGame;
   $("portRenameCalls").onclick = fixRenamedCalls;
   $("portExtract").onclick = extractAssets;
   $("portAssets").onclick = writeAssetMap;

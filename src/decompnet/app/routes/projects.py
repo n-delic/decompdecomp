@@ -271,6 +271,16 @@ def register(app: App) -> None:
         from ...port import renamed_calls
         return {"job": jobs.start("rename-calls", lambda log: renamed_calls.fix(net, slug, log), project=slug)}
 
+    def p_play(slug, request, data):
+        """Build the game for the PC and run it with its live view in the browser (port/wasm/play.py), in the
+        background; Stop ends it."""
+        from ...port.wasm import play
+        if data.get("stop"):
+            return {"stopped": play.stop(slug)}
+        if (url := play.running(slug)):
+            return {"url": url}
+        return {"job": jobs.start("play", lambda log: play.play(net, slug, log), project=slug)}
+
     def p_asset_map(slug, request, data):
         """Write the ROM's data as the kit's extractor config into the project's folder (port/asset_map.py)."""
         from ...port import asset_map
@@ -1093,6 +1103,7 @@ def register(app: App) -> None:
         "/api/data-drafts": (p_data_drafts, ["POST"]),
         "/api/pc-compile": (p_pc_compile, ["POST"]),
         "/api/asset-map": (p_asset_map, ["POST"]),
+        "/api/play": (p_play, ["POST"]),
         "/api/rename-calls": (p_rename_calls, ["POST"]),
         "/api/port-identity": (p_port_identity, ["POST"]),
         "/api/asset-extract": (p_asset_extract, ["POST"]),

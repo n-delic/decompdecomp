@@ -91,5 +91,14 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    await t.run('fixRenamedCalls()');
    assert.deepEqual(t.calls,['/api/rename-calls','/api/port-readiness?slug=a'],'the report is read again after');
    assert.deepEqual(followed,['r1']);assert.equal(t.c.$('portRenameCalls').disabled,false);}
-  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link and renamed calls passed');
+  {const t=setup();const opened=[];t.c.window={open:u=>opened.push(u)};t.c.followJob=async()=>({url:'http://127.0.0.1:5/'});
+   t.c.reply=async url=>url==='/api/play'?{job:'p1'}:report;
+   await t.run('playGame()');
+   assert.deepEqual(opened,['http://127.0.0.1:5/'],'the game opens in the browser');
+   assert.equal(t.c.$('portStop').hidden,false);assert.equal(t.c.$('portPlay').disabled,false);
+   t.c.reply=async()=>{throw new Error('Save the project first');};
+   await t.run('playGame()');
+   assert.match(t.c.$('portPlayLog').textContent+JSON.stringify(t.c.$('portPlayLog').children),/Save the project first/);
+   assert.equal(t.c.$('portPlay').disabled,false,'a failure gives the button back');}
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, renamed calls and play passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
