@@ -17,7 +17,7 @@ from pathlib import Path
 from ... import consoles, scoring, seeds, toolchains
 from ...network import NetworkError
 from ...project import compiler_for
-from ...rom import Picked, RomError, split
+from ...rom import DisassemblyTimeout, Picked, RomError, split
 from ...rom.symbols import AUTO_NAME, Symbol, SymbolTable
 from .common import BASE_HEADER, GP_NOTE, data_preview, slugify
 
@@ -147,6 +147,9 @@ class ImportMixin:
         try:
             res = console.split_game(workdir, picked, log=log,
                                      symbols=debug.symbol_addrs() if debug is not None and debug.named else None)
+        except DisassemblyTimeout:
+            # Removing names cannot fix an operational deadline; it repeated the whole timed-out split.
+            raise
         except RomError:
             if debug is None or not debug.named:
                 raise

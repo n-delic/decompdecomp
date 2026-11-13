@@ -18,7 +18,7 @@ from pathlib import Path
 import rabbitizer
 
 from ..hostenv import NO_WINDOW, console_python, stop_process_tree
-from . import Picked, RomError
+from . import DisassemblyTimeout, Picked, RomError
 
 _INSN = re.compile(r"^\s*/\* ([0-9A-F]+) ([0-9A-F]{8}) ([0-9A-F]{8}) \*/\s+(\S+)\s*(.*?)\s*$")
 _LOCAL_NAME = r"\.?L([0-9A-F]{8})(?:_(?:overlay_[0-9]{3}|ovl_[0-9]{2,3}))?"
@@ -206,7 +206,7 @@ def _splat(args: list[str], cwd: Path, log=print, *, timeout: float | None = Non
     try:
         while True:
             check_cancel()
-            if deadline is not None and time.monotonic()>=deadline:raise RomError('Staged disassembly exceeded its time limit; no reviewed changes were published.')
+            if deadline is not None and time.monotonic()>=deadline:raise DisassemblyTimeout('Staged disassembly exceeded its time limit; no reviewed changes were published.')
             try:
                 stdout, stderr = proc.communicate(timeout=0.2)
                 break
