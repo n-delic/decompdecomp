@@ -11,13 +11,21 @@ function markNav() {
 }
 /* One ask at a time: when the list took longer than 5 s (11 s with two projects whose game file was gone), the
    timer's asks piled up and kept the app's workers busy. One asked for meanwhile (a project renamed) goes after it. */
-let navLoading = false, navAgain = false;
+let navLoading = false, navAgain = false, navSig = "";
 async function loadNav(timer = false) {
   if (document.hidden && S.projects.length) return;  // the window is minimised: nobody sees the list
   if (navLoading) { navAgain = navAgain || !timer; return; }
   navLoading = true;
-  try { S.projects = await api("/api/projects"); } catch (e) {
-    if (!S.projects?.length) $("navProjects").innerHTML = `<p class="nav-empty">Couldn't load your projects: ${esc(e.message)}</p>`;
+  try {
+    /* With hundreds of projects the list is ~80 KB and rarely changes between two asks: the timer sends the
+       signature it has and an unchanged list answers "same" (anything else asks for the whole list). */
+    const answer = await api(`/api/projects?since=${timer ? encodeURIComponent(navSig) : ""}`);
+    if (Array.isArray(answer)) { S.projects = answer; navSig = ""; }  // (a server from before signatures)
+    else if (answer.same) return;
+    else { S.projects = answer.projects; navSig = answer.sig; }
+    navColours = null;
+  } catch (e) {
+    if (!S.projects?.length) navDrawn = "", $("navProjects").innerHTML = `<p class="nav-empty">Couldn't load your projects: ${esc(e.message)}</p>`;
     return false;
   } finally {
     navLoading = false;
@@ -29,15 +37,30 @@ async function loadNav(timer = false) {
    the order the projects were made (app.css orders the colours so that neighbours differ most): a new project never
    changes the colours of the ones before it. Past six projects the colours come round again. */
 const PROJECT_COLOURS = 6;  // app.css: .pc-0 ... .pc-5
+let navColours = null;  // slug -> colour, made once per list (a search per row was quadratic in the projects)
 function colourOf(slug) {
-  const i = S.projects.length - 1 - S.projects.findIndex((p) => p.slug === slug);  // (the list is newest first)
-  return i < S.projects.length ? i % PROJECT_COLOURS : 0;
+  if (!navColours || navColours.list !== S.projects) {
+    const n = S.projects.length;  // (the list is newest first)
+    navColours = {list: S.projects, map: new Map(S.projects.map((p, i) => [p.slug, (n - 1 - i) % PROJECT_COLOURS]))};
+  }
+  return navColours.map.get(slug) ?? 0;
 }
 
+/* Past NAV_FILTER_FROM projects a filter box shows above the list; the list is only rebuilt when its HTML changed
+   (with hundreds of projects a rebuild every 5 s cost the page more than the ask). */
+const NAV_FILTER_FROM = 12;
+let navDrawn = "";
+function navShown() {
+  const words = ($("navFilter")?.value || "").trim().toLowerCase();
+  if (!words || S.projects.length < NAV_FILTER_FROM) return S.projects;
+  return S.projects.filter((p) => `${p.title} ${p.slug} ${p.platform_short || ""} ${p.platform_name || ""}`.toLowerCase().includes(words));
+}
 function renderNav() {
-  const box = $("navProjects");
-  if (!S.projects.length) { box.innerHTML = `<p class="nav-empty">None yet: drop in a game.</p>`; return; }
-  box.innerHTML = S.projects.map((project) => {
+  const box = $("navProjects"), filter = $("navFilter");
+  if (filter) filter.hidden = S.projects.length < NAV_FILTER_FROM;
+  if (!S.projects.length) { navDrawn = ""; box.innerHTML = `<p class="nav-empty">None yet: drop in a game.</p>`; return; }
+  const shown = navShown();
+  const html = !shown.length ? `<p class="nav-empty">No project matches.</p>` : shown.map((project) => {
     const selected = project.variants?.find(v => v.project === S.slug);
     const p = selected ? {...project, ...selected.summary, slug:project.slug, title:project.title, working:project.working} : project;
     const pct = codePct(p);
@@ -52,9 +75,10 @@ function renderNav() {
       <span class="np-meta"><span>${p.progress_error ? "progress needs attention" : esc(short)}</span><span class="grow"></span><span>${p.kind === "fork" && !p.ready ? "set up" : pctNum(pct) + "%"}</span></span>
       <span class="np-bar"><i data-w="${pct.toFixed(2)}"></i></span></a>`;
   }).join("");
-  setWidths(box);
+  if (html !== navDrawn) { box.innerHTML = navDrawn = html; setWidths(box); }
   markNav();
 }
+$("navFilter")?.addEventListener("input", renderNav);
 /* The list every NAV_MS (not while the window is hidden), less often after errors or slow answers. */
 const NAV_MS = 5000, NAV_MAX_MS = 30000;
 let navDelay = NAV_MS;

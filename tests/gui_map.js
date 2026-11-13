@@ -143,11 +143,42 @@ const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
   ctx.loadNav(true);
   ctx.loadNav(true);
   await settle();
-  assert.equal(asked.filter((u) => u === "/api/projects").length, 1);
+  assert.equal(asked.filter((u) => u.startsWith("/api/projects")).length, 1);
   ctx.loadNav();
   held.shift()();
   await settle();
-  assert.equal(asked.filter((u) => u === "/api/projects").length, 2);
+  assert.equal(asked.filter((u) => u.startsWith("/api/projects")).length, 2);
+
+  // hundreds of projects: the timer asks with the list's signature, and "the same" redraws nothing
+  const nav = document.getElementById("navProjects");
+  let drawnNav = 0, navHtml = "";
+  elements.set("navProjects", new Proxy(nav, { set(t, k, v) { if (k === "innerHTML") { drawnNav++; navHtml = v; } t[k] = v; return true; } }));
+  const filterBox = { value: "", hidden: true, addEventListener() {} };
+  elements.set("navFilter", filterBox);
+  const many = Array.from({ length: 300 }, (_, i) => ({ slug: `g${i}`, title: `Game ${i}`, functions: 10, matched: i % 10,
+    bytes: 10, matched_bytes: i % 10, platform_short: "PS2" }));
+  answers["/api/projects"] = (url) => (url.includes("since=s1") ? { sig: "s1", same: true } : { sig: "s1", projects: many });
+  asked.length = 0;
+  await ctx.loadNav();
+  await ctx.loadNav(true);
+  await ctx.loadNav(true);
+  assert.deepEqual(asked.filter((u) => u.startsWith("/api/projects")),
+    ["/api/projects?since=", "/api/projects?since=s1", "/api/projects?since=s1"]);
+  assert.equal(drawnNav, 1);
+  assert.equal(vm.runInContext("S.projects.length", ctx), 300);
+  assert.equal(filterBox.hidden, false);  // past a dozen projects the filter box shows
+  assert.equal(vm.runInContext("colourOf('g299')", ctx), 0);  // the oldest keeps the first colour
+  vm.runInContext("renderNav()", ctx);  // the same list again (another page asked for it) isn't rebuilt either
+  assert.equal(drawnNav, 1);
+  filterBox.value = "game 29";  // the filter box: only the projects whose name has what's typed
+  vm.runInContext("renderNav()", ctx);
+  assert.equal(drawnNav, 2);
+  assert.equal((navHtml.match(/class="nav-proj"/g) || []).length, 11);  // Game 29, 290-299
+  // an older server answers with the plain list
+  answers["/api/projects"] = () => many.slice(0, 2);
+  filterBox.value = "";
+  await ctx.loadNav();
+  assert.equal(vm.runInContext("S.projects.length", ctx), 2);
 
   // the stats: one ask at a time
   asked.length = 0;
