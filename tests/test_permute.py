@@ -18,6 +18,8 @@ from decompnet.app.permute import MAX_TURNS, Permuter, State, weight_family
 from decompnet.network import Agent, Network
 from decompnet.store import IN_MEMORY, Store
 
+from .test_rom import ROM, built  # noqa: F401  (fixture that builds the demo ROM)
+
 SOURCE = "s32 f(s32 a) {\n    s32 b = a + 1;\n    return b * 2;\n}\n"
 HEADER = "/* the game's types */\n#define TWO 2\ntypedef int s32;\n"
 
@@ -525,3 +527,28 @@ def test_progress_movement_does_not_exhaust_remaining_random_turns(monkeypatch, 
     assert [fn['id'] for fn in p.candidates(net.project_row('game'))] == [1]
     assert caplog.records[-1].exc_info is None
     assert 'deferred' in caplog.records[-1].getMessage()
+
+
+def test_a_turn_reads_the_projects_saved_files_once(built, tmp_path):  # noqa: F811
+    """Every lookup in a turn synced the project's saved files: on a 2,000-function game eight threads queued on
+    its lock and ran about half as many variants. A turn reads them once, as an agent's tool call does."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.app.permute import State
+
+    from .test_app_engine import CLAMP
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("claude-opus-5.5-1")
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")
+    near = CLAMP.replace("if (v > hi)", "if (v >= hi)")
+    assert not net.compile_and_diff(agent, "func_800007D0", near, slug).startswith("✅ MATCH")
+    net.release(agent, "func_800007D0", "near", slug)
+    p = net.permuter
+    p.seconds = 3
+    fn, proj = net._function("func_800007D0", slug), net.project_row(slug)
+    checked = []
+    real = net.progress._sync_checked
+    net.progress._sync_checked = lambda *a, **k: (checked.append(a), real(*a, **k))[1]
+    p._turn(net.attribution_agent("permuter"), proj, fn, State())
+    assert len(checked) == 1  # it was 6

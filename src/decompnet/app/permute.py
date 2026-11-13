@@ -349,9 +349,10 @@ class Permuter:
                 except NetworkError:
                     return  # the project is gone
                 from .source_preparation import run as prepare_sources
-                prepare_sources(self, proj, st, agent=agent)
-                proj = self.net.project_row(slug)
-                self._repair_round(agent, proj, st)
+                with self._deferring():
+                    prepare_sources(self, proj, st, agent=agent)
+                    proj = self.net.project_row(slug)
+                    self._repair_round(agent, proj, st)
                 todo = self.candidates(proj)
                 if not todo:
                     idle += 1
@@ -519,11 +520,19 @@ class Permuter:
                 st.holding(fn['name'], False)
                 self._let_go(agent, fn)
 
+    def _deferring(self):
+        """Inside a turn, a project's saved files are read once and database-only changes published every few
+        seconds (Progress.deferring, as for agents' tool calls): each lookup synced, and on a 2,000-function game
+        eight threads queued on the project's lock to render its save, about half the variants of a 4-minute run."""
+        progress = getattr(self.net, 'progress', None)
+        return progress.deferring() if progress is not None else nullcontext()
+
     def _turn(self, agent, proj, fn, st: State) -> None:
         from .progress import ProgressMoved
 
         try:
-            self._permute(agent, proj, fn, st)
+            with self._deferring():
+                self._permute(agent, proj, fn, st)
         except ProgressMoved:
             # A stale result is no evidence that the current source cannot be permuted.
             log.info("permuter: %s: progress moved; random turn deferred", fn["name"])
