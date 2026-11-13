@@ -434,3 +434,43 @@ def test_export_does_not_regenerate_the_linked_source_repository(project):
     (Path(result['path'])/'.git').mkdir()
     with pytest.raises(NetworkError, match='Update build files'):
         net.export_rom('game', lambda _:None)
+
+
+def test_commit_waits_for_a_busy_repository_instead_of_failing(project):
+    """A click on Commit saved progress while an automatic commit or push holds the repository queues behind it."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import repository_operations
+
+    from .test_repository_push import QueueLog
+    net, folder, _ = project
+    repository_setup.run(net, 'game', 'init', '', lambda line: None)
+    git(folder, 'config', 'user.name', 'Test')
+    git(folder, 'config', 'user.email', 'test@example.invalid')
+    log = QueueLog()
+    with ThreadPoolExecutor(1) as pool:
+        with repository_operations.operation(folder, 'game', 'Committing a verified match', lambda _: None):
+            future = pool.submit(repository_setup.run, net, 'game', 'checkpoint', '', log)
+            assert log.queued.wait(5)
+            assert not future.done()
+        assert future.result(timeout=60)['checkpoint']
+    assert any('Committing a verified match' in update['phase'] for update in log.updates if update.get('queued'))
+
+
+def test_queued_commit_can_be_stopped(project):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import repository_operations
+
+    from .test_repository_push import QueueLog
+    net, folder, _ = project
+    repository_setup.run(net, 'game', 'init', '', lambda line: None)
+    log = QueueLog()
+    with ThreadPoolExecutor(1) as pool:
+        with repository_operations.operation(folder, 'game', 'Committing a verified match', lambda _: None):
+            future = pool.submit(repository_setup.run, net, 'game', 'checkpoint', '', log)
+            assert log.queued.wait(5)
+            log.cancel.set()
+            with pytest.raises(RuntimeError, match='cancelled'):
+                future.result(timeout=5)
+    assert not repository_operations._STATES

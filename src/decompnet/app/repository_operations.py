@@ -39,6 +39,33 @@ class Operation:
         return getattr(self.output, name)
 
 
+class _Ticket:
+    """A queued request: who asked and for what, so Background work can show the queue."""
+    def __init__(self, project, label):
+        self.project, self.label, self.started = project, label, time.monotonic()
+
+
+def snapshot():
+    """Each busy repository's holder and queue, oldest first. Identical requests (the same project asking for
+    the same operation again while the first still waits) are one entry with a count, not a repeated row."""
+    now = time.monotonic()
+    with _CONDITION:
+        states = [(identity, state['holder'], list(state['waiters'])) for identity, state in _STATES.items()]
+    rows = []
+    for identity, holder, waiters in states:
+        repository = str(Path(identity).parent) if Path(identity).name == '.git' else str(identity)
+        queued = {}
+        for ticket in waiters:
+            entry = queued.setdefault((ticket.project, ticket.label),
+                                      {'project':ticket.project, 'operation':ticket.label, 'requests':0,
+                                       'position':len(queued)+1, 'wait_seconds':int(now-ticket.started)})
+            entry['requests'] += 1
+        rows.append({'repository':repository, 'queued':list(queued.values()),
+                     'holder':{'project':holder.project, 'operation':holder.label, 'phase':holder.phase,
+                               'elapsed_seconds':int(now-holder.started)} if holder else None})
+    return rows
+
+
 def _state(identity):
     return _STATES.setdefault(identity, {'holder':None, 'waiters':deque()})
 
@@ -75,8 +102,8 @@ def _duration(seconds):
 @contextmanager
 def push(root, project, log, check, *, label='Pushing commits'):
     identity = key(root)
-    ticket = object()
-    started = time.monotonic()
+    ticket = _Ticket(project, label)
+    started = ticket.started
     acquired = None
     previous = None
     refreshed = float('-inf')
