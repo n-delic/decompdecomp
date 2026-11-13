@@ -127,6 +127,36 @@ def test_answers_while_the_app_is_down(gateway):
     assert down["result"]["isError"] and ("still running" in text(down) or "isn't running" in text(down))
 
 
+def test_a_new_connection_gets_the_tools_while_the_app_is_down_even_after_a_restart(tmp_path):
+    """A helper starting while the app was busy or restarting got "decompdecomp is busy or starting" for its tool
+    list: answers were kept per token, and a new token had none. Now the last list is kept (on disk too) and given to
+    a new connection; the app still judges every call."""
+    port, state = free_port(), tmp_path / "answers.json"
+    gw = mcp_gateway.Gateway(mcp_gateway.built(), f"http://127.0.0.1:{port}/mcp", tmp_path / "gateway.log",
+                             call_deadline=1.0, meta_deadline=1.5, state=state)
+    gw.start()
+    try:
+        with App(port):
+            live = rpc(gw.url, "tools/list", id=1)
+        assert state.is_file()
+        other = {**AUTH, "Authorization": "Bearer another-token"}
+        reply = httpx.post(gw.url, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                           headers=other, timeout=30).json()
+        assert reply["result"] == live["result"], "a new connection gets the last tool list, not busy"
+    finally:
+        gw.stop()
+    again = mcp_gateway.Gateway(mcp_gateway.built(), f"http://127.0.0.1:{port}/mcp", tmp_path / "gateway2.log",
+                                call_deadline=1.0, meta_deadline=1.5, state=state)
+    again.start()
+    try:  # a restarted gateway, the app still down: the list comes from the state file
+        third = {**AUTH, "Authorization": "Bearer third-token"}
+        reply = httpx.post(again.url, json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
+                           headers=third, timeout=30).json()
+        assert reply["result"] == live["result"]
+    finally:
+        again.stop()
+
+
 def test_restarts_on_the_same_port(gateway):
     port = gateway.port
     gateway.process.kill()

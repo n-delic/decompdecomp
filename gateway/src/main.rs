@@ -6,7 +6,9 @@
 //! agents and the app and keeps three promises:
 //!
 //! 1. Every request gets an answer within a deadline. `initialize` and `tools/list` fall back to the last good
-//!    answer for that agent; a tool call that is still running answers "still running, repeat the same call".
+//!    answer for that agent, else for its project, else the latest one (kept in `--state` across restarts, so a
+//!    helper starting while the app is busy or restarting gets its tools at once); a tool call that is still
+//!    running answers "still running, repeat the same call".
 //! 2. A repeated call never runs twice. A call with the same agent, tool and arguments as one still running (or
 //!    finished but not yet delivered) waits for that one instead of starting another, so "repeat the call" is safe.
 //! 3. Waiting is free. The agent pays for responses, not for time: while the app is slow or restarting, the gateway
@@ -60,6 +62,8 @@ struct Config {
     read_tools: HashSet<String>,
     /// How long the reader may take before the call goes to the app instead.
     reader_limit: Duration,
+    /// A file that keeps each project's last `initialize` / `tools/list` answers across restarts.
+    state: Option<String>,
 }
 
 impl Config {
@@ -77,6 +81,7 @@ impl Config {
             reader: None,
             read_tools: HashSet::new(),
             reader_limit: Duration::from_secs(20),
+            state: None,
         };
         let mut args = std::env::args().skip(1);
         while let Some(flag) = args.next() {
@@ -106,6 +111,7 @@ impl Config {
                     config.read_tools = value()?.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
                 }
                 "--reader-limit" => config.reader_limit = seconds(value()?)?,
+                "--state" => config.state = Some(value()?),
                 _ => return Err(format!("unknown option {flag}")),
             }
         }
@@ -129,6 +135,8 @@ struct Gateway {
     calls: Mutex<HashMap<String, Arc<Call>>>,
     /// The last good `initialize` / `tools/list` result per (agent, method).
     answers: Mutex<HashMap<(String, String), Value>>,
+    /// The same per (project, method), and the latest per method, for agents with none of their own yet.
+    by_project: Mutex<Remembered>,
     agents: Mutex<HashMap<String, Arc<Semaphore>>>,
     total: Arc<Semaphore>,
     served: AtomicU64,
@@ -141,6 +149,49 @@ struct Gateway {
     native: Arc<native::Native>,
     answered: AtomicU64,
     reports: AtomicU64,
+}
+
+/// Answers kept for new connections: per (project, method), and the latest per method. Saved to `--state`.
+#[derive(Default)]
+struct Remembered {
+    projects: HashMap<String, Value>, // "slug\tmethod" -> result
+    latest: HashMap<String, Value>,   // method -> result
+}
+
+impl Remembered {
+    fn load(path: &Option<String>) -> Remembered {
+        let mut kept = Remembered::default();
+        let Some(path) = path else { return kept };
+        let Ok(text) = std::fs::read_to_string(path) else { return kept };
+        let Ok(value) = serde_json::from_str::<Value>(&text) else { return kept };
+        for (field, map) in [("projects", &mut kept.projects), ("latest", &mut kept.latest)] {
+            if let Some(entries) = value.get(field).and_then(|v| v.as_object()) {
+                map.extend(entries.iter().map(|(k, v)| (k.clone(), v.clone())));
+            }
+        }
+        kept
+    }
+
+    /// Keep `result` for the project and as the latest; true when anything changed (and should be saved).
+    fn keep(&mut self, project: Option<&str>, method: &str, result: &Value) -> bool {
+        let mut changed = self.latest.get(method) != Some(result);
+        self.latest.insert(method.to_string(), result.clone());
+        if let Some(project) = project {
+            let key = format!("{project}\t{method}");
+            changed |= self.projects.get(&key) != Some(result);
+            self.projects.insert(key, result.clone());
+        }
+        changed
+    }
+
+    fn save(&self, path: &Option<String>) {
+        let Some(path) = path else { return };
+        let value = json!({"projects": self.projects, "latest": self.latest});
+        let temporary = format!("{path}.tmp");
+        if std::fs::write(&temporary, value.to_string()).is_ok() {
+            let _ = std::fs::rename(&temporary, path);
+        }
+    }
 }
 
 fn log(message: impl AsRef<str>) {
@@ -464,14 +515,37 @@ impl Gateway {
         let slot = (bearer(&headers), method.to_string());
         let deadline = self.config.meta_deadline;
         let fresh = tokio::time::timeout(deadline, self.send_patiently(&message, &headers, deadline)).await;
+        let project = {
+            let native = self.native.clone();
+            let auth = slot.0.clone();
+            tokio::task::spawn_blocking(move || native.project_of_bearer(&auth)).await.ok().flatten()
+        };
         if let Ok(Upstream::Reply(reply)) = fresh {
             if let Some(result) = reply.get("result") {
                 self.answers.lock().unwrap().insert(slot, result.clone());
+                let mut kept = self.by_project.lock().unwrap();
+                if kept.keep(project.as_deref(), method, result) {
+                    kept.save(&self.config.state);
+                }
             }
             return with_id(reply, &id);
         }
         if let Some(result) = self.answers.lock().unwrap().get(&slot).cloned() {
             return json!({"jsonrpc": "2.0", "id": id, "result": result});
+        }
+        // A new connection (a helper just started, or the app restarted under it): its project's last answer, else
+        // the latest any agent got. The app still judges every call, so a tool listed here it wouldn't offer this
+        // agent is refused when called; a refusal now would leave the agent with no tools at all.
+        {
+            let kept = self.by_project.lock().unwrap();
+            let found = project
+                .as_deref()
+                .and_then(|p| kept.projects.get(&format!("{p}\t{method}")))
+                .or_else(|| kept.latest.get(method))
+                .cloned();
+            if let Some(result) = found {
+                return json!({"jsonrpc": "2.0", "id": id, "result": result});
+            }
         }
         if method == "initialize" {
             // Nothing to fall back on: answer the handshake ourselves; the tool list comes when the app answers.
@@ -637,6 +711,7 @@ async fn main() {
         client,
         calls: Mutex::new(HashMap::new()),
         answers: Mutex::new(HashMap::new()),
+        by_project: Mutex::new(Remembered::load(&config.state)),
         agents: Mutex::new(HashMap::new()),
         served: AtomicU64::new(0),
         late: AtomicU64::new(0),

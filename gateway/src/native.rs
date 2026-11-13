@@ -195,6 +195,26 @@ impl Native {
         Some(shared)
     }
 
+    /// The project an agent's token belongs to, from the routes the app last sent (however old: an agent's project
+    /// doesn't change). Blocking: run off the runtime.
+    pub fn project_of_bearer(&self, auth: &str) -> Option<String> {
+        let routes = self.routes.lock().unwrap().as_ref()?.0.clone();
+        let token = auth.strip_prefix("Bearer ").unwrap_or(auth).trim();
+        if token.is_empty() {
+            return None;
+        }
+        let token_hash = hex(&Sha256::digest(token.as_bytes()));
+        let agent_id = {
+            let catalog = self.connection(&routes.catalog)?;
+            let catalog = catalog.lock().unwrap();
+            catalog
+                .query_row("SELECT id FROM agents WHERE token_hash=?", [&token_hash], |r| r.get::<_, i64>(0))
+                .optional()
+                .ok()??
+        };
+        routes.project_of(agent_id).cloned()
+    }
+
     /// The answer the app would give, or None to let the reader and the app answer. Blocking: run off the runtime.
     pub fn answer(&self, auth: &str, tool: &str, arguments: &Value) -> Option<Served> {
         if !TOOLS.contains(&tool) {

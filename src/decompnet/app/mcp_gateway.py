@@ -139,8 +139,11 @@ class Gateway:
 
     def __init__(self, exe: Path, upstream: str, log_path: Path | None = None, *,
                  call_deadline: float = CALL_DEADLINE, meta_deadline: float = META_DEADLINE,
-                 reader: str | None = None, read_tools=()):
+                 reader: str | None = None, read_tools=(), state: Path | None = None):
         self.exe, self.upstream, self.log_path = exe, upstream, log_path
+        # The tool lists the gateway gave, kept across restarts: a helper connecting while the app is busy or
+        # starting gets its project's tools from there instead of "busy or starting" (gateway/src/main.rs).
+        self.state = state
         self.reader, self.read_tools = reader, sorted(read_tools)
         self.call_deadline, self.meta_deadline = call_deadline, meta_deadline
         self.port: int | None = None
@@ -164,7 +167,8 @@ class Gateway:
         return [str(self.exe), "--listen", f"127.0.0.1:{port}", "--upstream", self.upstream,
                 "--call-deadline", str(self.call_deadline), "--meta-deadline", str(self.meta_deadline),
                 "--max-body", str(MAX_BODY)] + (
-                    ["--reader", self.reader, "--read-tools", ",".join(self.read_tools)] if self.reader else [])
+                    ["--reader", self.reader, "--read-tools", ",".join(self.read_tools)] if self.reader else []) + (
+                    ["--state", str(self.state)] if self.state else [])
 
     def _launch(self, port: int) -> int:
         """Start the program and return the port it listens on (it prints `LISTENING <port>` first)."""
@@ -298,7 +302,8 @@ def start(app_port: int, log_path: Path | None = None, port_file: Path | None = 
         return None
     from .tool_reader import READER_TOOLS
     gateway = Gateway(exe, f"http://127.0.0.1:{app_port}/mcp", log_path,
-                      reader=reader.url if reader is not None else None, read_tools=READER_TOOLS)
+                      reader=reader.url if reader is not None else None, read_tools=READER_TOOLS,
+                      state=port_file.with_name("mcp-gateway-answers.json") if port_file else None)
     try:
         preferred = int(port_file.read_text().strip()) if port_file and port_file.is_file() else 0
     except (OSError, ValueError):
