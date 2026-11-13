@@ -28,6 +28,9 @@ uv run pytest tests/test_forks.py -q   # one file
 uv run ruff check src tests projects   # the linter (CI runs it and the tests)
 ```
 
+Don't build the Rust gateway (`gateway/`) in a checkout or worktree unless the change touches it: the app uses the
+downloaded copy, and parallel release builds of it starve the machine (docs/MCP_GATEWAY.md).
+
 ## Never disturb the user's own decompdecomp
 
 The user usually has decompdecomp running (installed, port 6464, in its configured data home) with agents working in it.

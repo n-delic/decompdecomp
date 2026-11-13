@@ -111,6 +111,14 @@ cd gateway && cargo build --release   # a checkout finds gateway/target/release/
 uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tests/test_tool_reader.py tests/test_gateway_native.py && (cd gateway && cargo test)
 ```
 
+- Build it only when you change `gateway/`. A checkout or worktree that hasn't built it uses the copy `decomp setup`
+  downloaded, so a branch that leaves `gateway/` alone needs no Rust build. The release profile (thin LTO, one
+  codegen unit) takes minutes of every core, and several worktrees building it at once slow down everything else on
+  the machine, including the user's running app.
+- Iterating on the gateway, share one target folder between worktrees for `cargo test` and `cargo check`
+  (`CARGO_TARGET_DIR=~/.cache/decomp-gateway-target cargo test`): dependencies build once. Don't use it for the
+  `--release` build the app runs: the app looks in this checkout's `gateway/target/release/`, so a shared folder
+  would hand one branch's gateway to another.
 - Every package carries it: the macOS app, the Linux .deb/.rpm/AppImage and the Windows setup and portable ZIP run
   `packaging/build_gateway.py` before building the wheel, which puts it in `decompnet/bin/`, and their smoke tests
   fail without it (`DECOMP_BUILD_GATEWAY=0` packages without it). Linux builds link it statically with musl,
