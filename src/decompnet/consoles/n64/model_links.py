@@ -21,6 +21,7 @@ def index(image,members,check=lambda:None):
         if key in names:duplicates.add(key)
         else:names[key]=m
     for key in duplicates:names.pop(key)
+    models=[(key,m) for key,m in names.items() if key.endswith('.v3d')]
     for script in members:
         check()
         if not script['name'].lower().endswith('.ini') or script['expanded']>65536:continue
@@ -42,7 +43,8 @@ def index(image,members,check=lambda:None):
             targets=[];companions=[];folder=''
             if command=='LOADN3D' and len(words)==3:
                 prefix=path(directory+'/'+words[1]);folder=path(words[2])
-                targets=[m for key,m in names.items() if re.fullmatch(re.escape(prefix)+r'_\d+\.v3d',key)]
+                pattern=re.compile(re.escape(prefix)+r'_\d+\.v3d')
+                targets=[m for key,m in models if pattern.fullmatch(key)]
             elif command=='LOADV3D' and len(words)==5:
                 target=names.get(path(directory+'/'+words[1]));folder=path(words[4])
                 companions=[names.get(path(directory+'/'+v)) for v in words[2:4]]
