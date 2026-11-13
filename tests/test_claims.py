@@ -581,3 +581,20 @@ def test_a_function_pieces_were_joined_to_is_open_again_but_library_code_stays_a
         db.execute("UPDATE functions SET status='asm', meta=?", (json.dumps({"asm_code": "libc", "set_aside": True}),))
     net.joined("piece", "game")
     assert net.store.one("SELECT status FROM functions")["status"] == "asm"
+
+
+def test_a_starred_function_on_a_fork_is_handed_out_first(tmp_path):
+    """A fork/PC project: a function the user stars (set_priority) is the next an agent claims, ahead of the usual
+    smallest-first order -- the same star-steering ROM projects already had. Regression guard for the fork-only gate
+    in claim_row that silently ignored stars on forks."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "x86", 0, str(tmp_path), json.dumps({"kind": "fork"}))).lastrowid
+        for name, n in [("tiny", 4), ("small", 8), ("big", 400)]:
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,abandons) VALUES(?,?,?,?,?,?,?)",
+                       (pid, name, n * 4, n, "open", "a", 0))
+    # The starred function is the largest, so "easiest" alone would never pick it: only priority can put it first.
+    net.set_priority("game", "big", True)
+    agent, _ = net.local_agent("a0")
+    assert net.claim_row(agent, "game", None, "easiest")["name"] == "big"
