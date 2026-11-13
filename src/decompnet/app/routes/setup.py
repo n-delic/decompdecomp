@@ -28,6 +28,17 @@ def register(app: App) -> None:
     net, mcp, manager, jobs = app.net, app.mcp, app.manager, app.jobs
     settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
 
+    @mcp.custom_route("/api/compiler-service", methods=["GET"])
+    async def api_compiler_service(request: Request) -> Response:
+        """Settings › Compiler services: this computer's commands for serving a hosted project (compiler_service.py)."""
+        if (bad := guard(request)):
+            return bad
+        compiler_service, = await app.imports('decompnet.app', ('compiler_service',))
+        try:
+            return JSONResponse(await call(lambda: compiler_service.info(net, app.home)))
+        except NetworkError as error:
+            return fail(error)
+
     @mcp.custom_route("/api/sdk-library", methods=["GET", "POST"])
     async def api_sdk_library(request: Request) -> Response:
         sdk_library, = await app.imports('decompnet.app', ('sdk_library',))
@@ -229,12 +240,12 @@ def register(app: App) -> None:
             if given.get("account_id"):
                 options.update(settings.account_options(kind, str(given["account_id"])))
             agents.report_start("Reading project metadata…")
-            if options.get('focus_function') or options.get('task')=='assets':
+            if options.get('focus_function') or options.get('task') in ('assets', 'data'):
                 with net.progress.view():
                     net.project_row(slug)
             else:
                 net.project_row(slug)
-            if not options.get('focus_function') and options.get("task") not in {"readable", "boundary", "assets"}:
+            if not options.get('focus_function') and options.get("task") not in {"readable", "boundary", "assets", "data", "port"}:
                 net.warm_briefs_soon(slug)  # matching briefs and machine drafts are not polishing inputs
             if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
                 options["effort"] = given["effort"]

@@ -5,7 +5,7 @@ import pytest
 
 from decompnet import toolchains
 from decompnet.app import deep_repair_feedback, imported_output, repair_sequences
-from decompnet.app import repair_localisation as local
+from decomprepair import repair_localisation as local
 from tests.test_permute import FakeNet
 
 SOURCE='''void f(int x) {

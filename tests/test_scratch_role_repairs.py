@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from decompnet.app import draft_repairs, integer_abi, iterative_repairs, repair_ranking
+from decompnet.app import draft_repairs, iterative_repairs, repair_ranking
 from decompnet.app import scratch_role_repairs as repairs
+from decomprepair import integer_abi
 
 HEADER='typedef unsigned char u8; typedef unsigned short u16; typedef int s32;'
 SOURCE='''int f(u8 *object, int key) {

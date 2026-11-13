@@ -1,7 +1,7 @@
 """Preflight skips only fixed, plain C arity errors, never guesses about ambiguous C."""
 import pytest
 
-from decompnet.app.repair_preflight import invalid_call
+from decomprepair.repair_preflight import invalid_call
 
 
 def test_known_prototype_rejects_generated_missing_argument():
@@ -52,7 +52,7 @@ def test_header_fragments_keep_the_combined_scan():
 
 
 def test_header_cache_is_bounded_and_large_headers_are_not_retained():
-    from decompnet.app import repair_preflight
+    from decomprepair import repair_preflight
     repair_preflight._header.cache_clear()
     for i in range(8):
         assert invalid_call('int f(void){return send();}', 'f', f'int send(int value{i});')

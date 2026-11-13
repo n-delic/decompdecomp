@@ -57,7 +57,7 @@ class Example(Console):
         raise RomError(f"reading {self.name} games isn't written yet ({len(data)} bytes)")
 
     # Also, as this console needs them (each is explained on Console):
-    # default_compiler, default_flags, add_code, find_gp, debug_info, debug_brief, after_import, on_start,
+    # default_compiler, default_flags, add_code, find_gp, debug_info, debug_brief, release_key, after_import, on_start,
     # asm_reason, up_front_guide, m2c_target; PROJECT mode: create_project, game_info, tool_args, identity,
     # check_rebuild, read_data, upload_name, generated_functions, debug_of.
 

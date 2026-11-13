@@ -506,3 +506,22 @@ def test_source_disappears_during_preflight(monkeypatch):
         p._permute(AGENT, net.project_row('game'), net.function(), State())
     assert p.judged == []
     assert net.store.one('SELECT 1 FROM claims') is None
+
+
+@pytest.mark.parametrize('spent', [0, 2])
+def test_progress_movement_does_not_exhaust_remaining_random_turns(monkeypatch, caplog, spent):
+    from decompnet.app.progress import ProgressMoved
+
+    net = FakeNet()
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET permuted=? WHERE id=1', (spent,))
+    p = Permuter(net)
+    def moved(*args):
+        raise ProgressMoved('Progress changed while this attempt compiled.')
+    monkeypatch.setattr(p, '_permute', moved)
+    with caplog.at_level('INFO', logger='decompdecomp'):
+        p._turn(AGENT, net.project_row('game'), net.function(), State())
+    assert net.function()['permuted'] == spent
+    assert [fn['id'] for fn in p.candidates(net.project_row('game'))] == [1]
+    assert caplog.records[-1].exc_info is None
+    assert 'deferred' in caplog.records[-1].getMessage()

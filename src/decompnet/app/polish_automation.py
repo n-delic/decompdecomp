@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from .. import compiler
-from ..forks.csource import _blank
+from ..forks.csource import _blank, find
 from ..forks.project import ForkProject
 from ..network import NetworkError
 from ..project import compiler_for
@@ -67,14 +67,24 @@ def input_key(net, proj, fn, original, candidate='', *, receipt=None):
     """
     # Publishing saved files changes this receipt, never the compiler input.
     # Retain the generation/header/symbol guards and all other settings below.
-    config = {key:value for key,value in net.cfg(proj).items() if key != 'progress_revision'}
+    # Spending, advice and save locations change whenever any agent works ("spend" with every usage report):
+    # guarding on them refused about a fifth of all polishes of an N64 game with no compile input changed.
+    from .exact_match_inputs import WORKFLOW_SETTINGS
+    config = {key:value for key,value in net.cfg(proj).items() if key not in WORKFLOW_SETTINGS}
     # The automatic Git push poll advances next_check even when nothing is pushed.
     # It schedules network work; it cannot change compiler, source or judge inputs.
     # Copy the nested mapping: Engine.cfg returns a shared immutable-by-convention cache.
     if isinstance(config.get('auto_push'), dict):
         config['auto_push'] = {key:value for key,value in config['auto_push'].items() if key != 'next_check'}
+    generation = net._generation.get(proj['id'], 0)
+    if net.is_rom(proj):
+        # Agents rename constantly while polishing (80 in a quarter of an hour on an N64 game), and each rename
+        # bumped the generation, refusing every polish in flight. A ROM rename that reaches this function shows
+        # in the components below anyway: its own or a used name's address (symbols), its unit's header, its
+        # compiler profile (configuration). Fork projects have none of those, so every rename still counts there.
+        generation -= net._rename_generation.get(proj['id'], 0)
     parts = [str(POLISH_REVISION), original, json.dumps(config, sort_keys=True), str(fn['id']), str(fn['target']), str(fn['relocs']),
-             str(fn['vram']), str(fn['meta']), str(net._generation.get(proj['id'], 0))]
+             str(fn['vram']), str(fn['meta']), str(generation)]
     if net.is_rom(proj):
         ctx = net._context(proj['id'], fn['unit'])
         parts += [ctx['header'], str(ctx['version'])]
@@ -180,8 +190,10 @@ def learn(net, proj, fn, original, source):
         before, old = polish_edits.signature(original,fn['name'],context)
         after, new = polish_edits.signature(source,fn['name'],context)
         if before is None or before != after or len(old) != len(new):return
-        comment = re.match(r'\s*/\*([^\r\n]*?)\*/',source)
-        comment = comment[1].strip() if comment else ''
+        # The one-line comment right before the function (polish_edits.apply puts it there), not a draft's banner.
+        span = find(source,fn['name'])
+        comment = re.search(r'/\*((?:[^*\r\n]|\*(?!/))*)\*/\s*$',source[:span[0]]) if span else None
+        comment = comment[1].strip() if comment and comment[0].strip() not in original else ''
         renames = {a:b for a,b in zip(old,new,strict=True) if a != b}
         if not renames and not comment:return
         # Reconstructing exactly the intended tokens is checked again when reused.

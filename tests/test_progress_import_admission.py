@@ -174,3 +174,43 @@ def test_verification_holder_phase_tracks_saved_judge_child_and_clears_on_error(
             worker._judge_saved('game', folder)
     assert worker.verification_owner is None
     assert worker.verification_details is None
+
+
+def test_two_projects_verify_at_once_but_one_project_takes_one_lane(project, monkeypatch):  # noqa: F811
+    """A small game's import waited 40 s behind a big game's saved check while one lane served every project."""
+    from decompnet.app import progress
+    net, _, _ = project
+    monkeypatch.delenv('DECOMP_VERIFICATION_PROJECTS')
+    assert progress.verification_projects() == progress.VERIFICATION_PROJECTS >= 2
+    worker = progress.Progress(net)
+    admitted, finish = threading.Event(), threading.Event()
+    def other(slug):
+        lock = worker._project_lock(slug)
+        with lock, worker._verification(slug) as acquired:
+            assert acquired
+            admitted.set()
+            # the saved judge waits for its worker with this project's lock released, its lane still held
+            lock.release()
+            try:
+                assert finish.wait(5)
+            finally:
+                lock.acquire()
+    with ThreadPoolExecutor(2) as pool:
+        held = pool.submit(other, 'big-game')
+        assert admitted.wait(3)
+        assert worker.verification_owner[0] == 'big-game'
+        # Another project is admitted while the first still holds its lane.
+        with worker._project_lock('game'), worker._verification('game') as acquired:
+            assert acquired
+            assert set(worker.verification_holders) == {'big-game', 'game'}
+        # The same project waits for its own running check, though a lane is free.
+        admitted.clear()
+        second = pool.submit(other, 'big-game')
+        assert not admitted.wait(0.5)
+        finish.set()
+        held.result(timeout=5)
+        assert admitted.wait(3)
+        second.result(timeout=5)
+    assert worker.verification_owner is None and worker.verification_details is None
+    for _ in range(progress.VERIFICATION_PROJECTS):
+        assert worker.verification_slot.acquire(blocking=False)

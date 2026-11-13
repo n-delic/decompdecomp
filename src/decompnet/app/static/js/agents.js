@@ -148,12 +148,12 @@ function sortAgentCards(sessions, board, mode, now = Date.now() / 1000) {
     const x = a.metrics || board.get(a.agent), y = b.metrics || board.get(b.agent);
     const value = mode === "matches" ? (y?.matched || 0) - (x?.matched || 0)
       : mode === "improved" ? (y?.improved || 0) - (x?.improved || 0)
-      : mode === "recent_improvement" ? (y?.last_improvement || 0) - (x?.last_improvement || 0)
+      : mode === "recent_improvement" ? (y?.last_polish || y?.last_improvement || 0) - (x?.last_polish || x?.last_improvement || 0)
       : mode === "runtime" ? agentRuntime(b, now) - agentRuntime(a, now)
       : mode === "model" ? (a.model || a.agent).localeCompare(b.model || b.agent)
       : mode === "efficiency" ? (agentTokenRate(a, x) ?? Infinity) - (agentTokenRate(b, y) ?? Infinity)
       : STATE_ORDER[a.state] - STATE_ORDER[b.state];
-    const rank={assets:1,boundary:2,readable:3};
+    const rank={assets:1,boundary:2,readable:3,data:4};
     return (rank[a.task]||0)-(rank[b.task]||0) || value || a.label.localeCompare(b.label);
   });
 }
@@ -206,13 +206,14 @@ function agentMetrics(s, stats) {
   const elapsed = agentRuntime(s);
   const runtime = LIVE.includes(s.state) ? `${Math.floor(elapsed / 3600)}h ${Math.floor(elapsed % 3600 / 60)}m` : "Not running";
   const metric = (kind,count) => `<button type="button" class="agent-metric-link" data-agent-results="${esc(s.id)}" data-result-kind="${kind}" ${count ? '' : 'disabled'} aria-label="View ${count} ${kind} functions for ${esc(s.label)}"><strong>${count}</strong><span>${kind === "worked" ? "worked on" : kind} <span aria-hidden="true">↗</span></span></button>`;
-  const last = stats?.last_improvement;
+  const polishing = s.task === 'readable';
+  const last = polishing ? stats?.last_polish : stats?.last_improvement;
   const seconds = last ? Math.max(0, Date.now() / 1000 - last) : null;
   const ago = seconds == null ? "None yet" : seconds < 60 ? `${Math.floor(seconds)}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
   return `<div class="agent-results-summary">${s.task === 'readable' ? `<span><strong>${stats?.polished || 0}</strong> polished</span>` : metric('matched',stats?.matched || 0)}${metric('improved',stats?.improved || 0)}${metric('worked',stats?.worked || 0)}</div>
     ${s.task === "boundary" ? `<p class="small"><b>Boundary investigation:</b> ${esc(s.boundary_function || "selected function")} · advice only · no compilation or layout edits</p>` : ""}
     ${s.focus_function ? `<p class="small"><b>Focused:</b> ${esc(s.focus_function)} · deadline ${s.focus_until ? esc(new Date(s.focus_until*1000).toLocaleTimeString()) : "starting"}</p>` : ""}
-    <div class="agent-timing"><span>${runtime} <span class="muted">since latest start</span></span><span><span class="muted">Last improvement</span> ${ago === 'None yet' ? ago : ago + ' ago'}</span></div>`;
+    <div class="agent-timing"><span>${runtime} <span class="muted">since latest start</span></span><span><span class="muted">${polishing ? 'Last polish' : 'Last improvement'}</span> ${ago === 'None yet' ? ago : ago + ' ago'}</span></div>`;
 }
 function agentEfficiency(s) {
   return (s.efficiency || []).slice(-3).map(e => {
@@ -258,7 +259,7 @@ function renderSessions(sessions, refreshCosts = true) {
   $("removePaused").textContent = paused.length ? `Remove paused (${paused.length})` : "Remove paused";
   // decompiling helpers, then polishing ones (task "readable"), each group under its heading when both are at work
   const sorted = sortAgentCards(sessions, board, agentSort);
-  const taskGroup=s=>s.task==='assets'?'Discovering assets':s.task==='boundary'?'Reviewing boundaries':s.task==='readable'?'Polishing':'Decompiling';
+  const taskGroup=s=>s.task==='assets'?'Discovering assets':s.task==='data'?'Writing data as C':s.task==='boundary'?'Reviewing boundaries':s.task==='readable'?'Polishing':'Decompiling';
   const both=new Set(sorted.map(taskGroup)).size>1;
   const html = sorted.map((s, i) => {
     const group=taskGroup(s);
@@ -267,7 +268,8 @@ function renderSessions(sessions, refreshCosts = true) {
     const claim = S.claims.find((c) => c.agent === s.agent);
     const dot = s.state === "paused" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
     const live = LIVE.includes(s.state), id = esc(s.id), b = s.metrics || board.get(s.agent);
-    const facts = [s.task === "assets" ? `<b>discovering assets</b>` : s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), s.account_name ? `account: ${esc(s.account_name)}` : "", s.model ? esc(s.model) : "its default model", s.task === "readable" ? helperResults(b, s.task) : "", b ? `${plural(b.compiles, "compile")} submitted by this agent` : "",
+    const account = s.account_label || s.account_name;
+    const facts = [s.task === "assets" ? `<b>discovering assets</b>` : s.task === "data" ? `<b>writing data as C</b>` : s.task === "port" ? `<b>fixing C for the PC</b>` : s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), account ? `account: ${esc(account)}` : "", s.model ? esc(s.model) : "its default model", s.task === "readable" ? helperResults(b, s.task) : "", b ? `${plural(b.compiles, "compile")} submitted by this agent` : "",
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" && !s.configuration_error ? " Then press Start again." : ""}` : "";
@@ -277,21 +279,21 @@ function renderSessions(sessions, refreshCosts = true) {
         <details class="agent-menu" data-agent-menu="${id}" ${agentMenusOpen.has(s.id) ? 'open' : ''}><summary aria-label="Actions for ${esc(s.label)}" title="Agent actions">⋮</summary><div class="agent-menu-items">
           <button data-rename="${id}" type="button">Rename</button>${!S.st?.agents?.find(a=>a.id===s.kind)?.uses_endpoints ? `<button data-change-model="${id}" type="button">Change model</button>` : ""}<button data-queue="${id}" type="button">Work settings</button><button data-agent-prompts="${id}" type="button">Prompts</button><button data-agent-tools="${id}" type="button">Tools</button>
           <button data-log="${id}" type="button" aria-pressed="${S.logFor === s.id}">${S.logFor === s.id ? 'Back to everything' : 'What it said and did'}</button>
-          ${["readable","boundary","assets"].includes(s.task) ? "" : `<button data-retry-paused="${id}" type="button">Retry paused functions</button>`}
+          ${["readable","boundary","assets","data","port"].includes(s.task) ? "" : `<button data-retry-paused="${id}" type="button">Retry paused functions</button>`}
           <button data-reset-metrics="${id}" type="button" class="agent-menu-reset">Reset metrics</button>
           ${live ? '' : `<button data-remove="${id}" type="button">Remove agent</button>`}</div></details></div>
       ${agentMetrics(s, b)}
       <span class="state ${s.state === 'paused' ? 'err' : ''}">${helperState(s, claim)}</span>
       ${["starting", "working"].includes(s.state) && s.startup_stage ? `<progress class="workbar" aria-label="Agent startup"></progress>` : ""}
       ${todo ? `<span class="todo-line">${esc(todo)}</span>${s.can_login && !live && /login|sign.?in/i.test(s.todo || "") ? `<button class="ghost" type="button" data-login="${id}">Sign in to ${esc(s.kind_name)}</button>` : ""}` : ''}
-      ${s.provider_waiting ? `<button class="ghost" data-retry-provider="${id}" type="button" ${s.provider_retry_requested ? "disabled" : ""}>${s.provider_retry_requested ? "Provider retry requested…" : "Retry provider now"}</button>` : !["readable","boundary","assets"].includes(s.task) && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
+      ${s.provider_waiting ? `<button class="ghost" data-retry-provider="${id}" type="button" ${s.provider_retry_requested ? "disabled" : ""}>${s.provider_retry_requested ? "Provider retry requested…" : "Retry provider now"}</button>` : !["readable","boundary","assets","data","port"].includes(s.task) && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
       ${agentUsage(s)}
       <details class="agent-details" data-agent-details="${id}" ${agentDetailsOpen.has(s.id) ? 'open' : ''}><summary>Details</summary><div class="agent-details-body">
       <span class="facts-line">${facts.join(' · ')}</span>
       ${rate == null ? '' : `<span class="small muted">${compactAgentNumber(rate)} reported tokens / match${s.estimated_cost != null && b?.matched ? ` · ≈ ${money(s.estimated_cost / b.matched)} / match` : ''}</span>`}
       ${agentEfficiency(s)}
       ${s.metrics_since ? `<span class="small muted">Metrics since reset · ${new Date(s.metrics_since * 1000).toLocaleString()}</span>` : ''}
-      <span class="small muted">Work settings · ${s.per_session || 8} ${s.task==='assets'?'regions':'functions'}/session${["readable","assets","boundary"].includes(s.task) ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>
+      <span class="small muted">Work settings · ${s.per_session || 8} ${s.task==='assets'?'regions':s.task==='data'?'data units':'functions'}/session${["readable","assets","boundary","data","port"].includes(s.task) ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>
       ${s.last_message ? `<div class="agent-message"><b class="small">Latest agent reply${["starting", "working", "waiting"].includes(s.state) ? " · helper continues" : ""}</b><q class="said">${esc(s.last_message)}</q></div>` : ''}
       </div></details></div>`;
   }).join("");
@@ -515,7 +517,7 @@ function modelChoiceList(models, selected) {
 function modelOptions(a) {
   const recent = (S.st.settings.recent_models || {})[a.id] || [];
   const opts = [{ id: "", name: LZ.replacement ? "Choose a model…" : a.uses_accounts && LZ.account ? "Account’s default" : a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
-  for (const m of a.models || []) opts.push({ id: m.id, name: m.name, note: m.note || "", group: m.group || "" });
+  for (const m of a.models || []) opts.push({ id: m.id, name: m.name, note: m.note || "", group: m.group || "", account: m.account || "" });
   for (const r of recent) if (!opts.some((o) => o.id === r)) opts.push({ id: r, name: r, note: "used before" });
   if (!LZ.replacement) opts.push({ id: "__multiple", name: "Multiple models", note: "" });
   opts.push({ id: "__other", name: "Another model…", note: "" });
@@ -544,7 +546,7 @@ function selectableModels(a) {
 function modelName(a, model) {
   if (!model) return "";
   const m = (a.models || []).find((x) => x.id === model);
-  return m ? m.name : model;
+  return m ? `${m.name}${m.account ? ` · ${m.account}` : ""}` : model;
 }
 function launchLabel(a, model, count, models = []) {
   if (LZ.replacement) return "Replace agent";
@@ -630,7 +632,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     }
     if (S.slug === slug) hideLaunch();
     const total = LZ.multiple ? models.length * count : count;
-    toast(replacement ? "Agent replaced. The original history and saved work are kept." : `${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : LZ.task==="assets" ? "Review discoveries in ROM Explorer" : "Watch the map fill in"}; Agents says what each one does.`, "match");
+    toast(replacement ? "Agent replaced. The original history and saved work are kept." : `${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : LZ.task==="assets" ? "Review discoveries in ROM Explorer" : LZ.task==="data" ? "Port readiness counts the data in C" : LZ.task==="port" ? "Port readiness counts what still doesn't build for a PC" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     if(LZ.task==='assets'&&S.slug===slug&&S.tab==='rom')loadAssetAgents();
     poll(false);
     loadNav();
@@ -650,7 +652,9 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
    typed in here asks only what starting needs (the rest is on Agents & models). */
 const TASKS = [["", "Decompile", "match functions the game has, byte for byte"],
   ["readable", "Polish matched code", "give matched functions real names, types and a comment; they still match"],
-  ["assets","Discover assets","investigate ROM data and propose names and formats for user review"]];
+  ["assets","Discover assets","investigate ROM data and propose names and formats for user review"],
+  ["data","Write data as C","turn the game's data into C for a port; each definition is kept only if it holds the game's bytes"],
+  ["port","Fix C for the PC","fix what Compile for PC lists; each fix is kept only if the console build still matches and the PC build improves"]];
 const POLISH_FROM_SHARE = 0.5;  // polishing comes once most of the work is matching: before that, agents decompile
 // of the game's own code (cFunctions, as the header counts): an Xbox game whose 33 functions all matched had no Polish
 // to choose, its 241 set-aside ones (library code, assembly) counted against it
@@ -706,7 +710,9 @@ function renderLauncher(box, compact = true) {
     const known = opts.some((o) => o.id === LZ.model);
     const custom = LZ.customModel || (!known && !!LZ.model);
     LZ.models = LZ.models.filter((id) => available.some((m) => m.id === id));
-    body = `<label class="field"><span>Model <button type="button" class="link-btn small" data-act="detect">Refresh models</button></span><select data-f="model">${groupedModelOptions(opts, (o) => (!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple"))}</select></label>
+    const chosen = (a.models || []).find((m) => m.id === LZ.model);
+    const accountLine = chosen && chosen.account ? `<span class="muted small" data-account-label>Account · ${esc(chosen.account)}. Usage limits are isolated to this account and model.</span>` : "";
+    body = `<label class="field"><span>Model <button type="button" class="link-btn small" data-act="detect">Refresh models</button></span><select data-f="model">${groupedModelOptions(opts, (o) => (!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple"))}</select>${accountLine}</label>
       ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${modelChoiceList(available, LZ.models)}</div>
       <span class="muted small" data-model-limit>Each selected model gets ${LZ.count} session${LZ.count === 1 ? "" : "s"}.</span>
       ${!(a.models || []).length ? `<div class="row"><input data-f="manual-model" class="mono" placeholder="Model name"><button type="button" class="ghost small-btn" data-act="add-cli-model">Add model</button></div>` : ""}</div>` : ""}
@@ -723,7 +729,7 @@ function renderLauncher(box, compact = true) {
   }
   const ready = a.installed;
   // helpers can also polish matched C (app/readable.py), once half the game matches
-  const availableTasks=TASKS.filter(([key])=>!key || key==='readable'&&polishOffered(S.ov) || key==='assets'&&!!S.ov&&S.ov.kind!=='fork');
+  const availableTasks=TASKS.filter(([key])=>!key || key==='readable'&&polishOffered(S.ov) || key==='assets'&&!!S.ov&&S.ov.kind!=='fork' || key==='data'&&polishOffered(S.ov)&&S.ov.kind!=='fork');
   if(!LZ.replacement && !availableTasks.some(([key])=>key===LZ.task))LZ.task="";
   const tasks = !LZ.replacement && availableTasks.length>1 ?`<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
     availableTasks.map(([k, label, what]) => `<button type="button" role="radio" aria-checked="${LZ.task === k}" class="${LZ.task === k ? "on" : ""}" data-task="${k}" title="${what}">${label}</button>`).join("")}</div>
@@ -1008,6 +1014,8 @@ function eventHtml(ev) {
     case "claim": return `${who} started ${fnLink(d)}`;
     case "polish": return `${who} started polishing ${fnLink(d)} ${POLISH_TAG}`;
     case "readable": return `<span class="ok">✎</span> ${who} polished ${fnLink(d)} ${POLISH_TAG}`;
+    case "polish_retry": return `${fnLink(d)} can be polished again: its brief is short enough to read now ${POLISH_TAG}`;
+    case "polish_failed": return `${who}'s rewrite of ${fnLink(d)} didn't keep it matching ${POLISH_TAG}`;
     // a source file tidied once its functions are polished (app/readable.py: its types, names and declarations)
     case "tidy": return `${who} started tidying ${esc(d)} ${POLISH_TAG}`;
     case "tidied": return `<span class="ok">✎</span> ${who} tidied ${esc(d)} ${POLISH_TAG}`;
@@ -1135,8 +1143,14 @@ function addActivity(events, attempts, first) {
   }
   const list = $("activity");
   while (list.children.length > ACTIVITY_ROWS) list.lastChild.remove();
-  list.querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
+  list.onclick = activityClick;  // (one handler for the list, however many lines the polls add)
   if (!list.children.length) list.innerHTML = `<li class="placeholder"><time></time><span class="muted">Nothing yet. Start an agent and its work shows up here.</span></li>`;
+}
+
+/* A function named in the activity list opens it. */
+function activityClick(e) {
+  const x = e.target.closest?.(".fn[data-fn]");
+  if (x) openFn(x.dataset.fn);
 }
 
 /* Agents write Markdown. Escape everything first, then allow only **bold** and `code`. */
@@ -1215,7 +1229,7 @@ function showRetryPaused(session) {
 
 function clearedAgentMetrics(session, reset) {
   return {...session, tokens:0, usd:0, runs:0, restarts:0, estimated_cost:0, efficiency:null,
-    metrics:{matched:0, improved:0, compiles:0, worked:0, polished:0, last_improvement:null},
+    metrics:{matched:0, improved:0, compiles:0, worked:0, polished:0, last_improvement:null, last_polish:null},
     metrics_since:reset.metrics_since, metrics_after:reset.metrics_after};
 }
 

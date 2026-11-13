@@ -45,6 +45,12 @@ VERSION_CHARS = 60  # of the first line `--version` prints
 SAID_CHARS = 400  # what the feed keeps of an error, or of a line that isn't JSON
 STDERR_CHARS = 300  # of an error an agent printed on stderr in its own format
 
+# OpenCode Zen's free models are refused once the free allowance is used up, while the same account's
+# OpenCode Go models keep working. agents/opencode.py reports that refusal with this exact wording and
+# app/agents.py keeps it out of the account's usage-limit cooldown: one free helper's refusal otherwise
+# stopped every opencode helper, on every project and model, for an hour at a time.
+FREE_ALLOWANCE = "Free model allowance exhausted"
+
 # what each agent said its version is, and the models it listed, with when it was asked: {id: (time, answer)}
 known_versions: dict[str, tuple[float, str | None]] = {}
 _models: dict[str, tuple[float, list[dict]]] = {}
@@ -231,6 +237,21 @@ class Agent:
         starts on it, as resolve_model makes it an id its CLI takes, and records it so that a later change of that
         default doesn't switch the helper (#204)."""
         return None
+
+    def limit_scope(self, model: str) -> tuple[str, ...]:
+        """Extra cooldown-key parts separating one sign-in's usage limits from another's. Most connectors have
+        one subscription, so a limit pauses the whole account. opencode signs in to each provider separately
+        and gives some models their own allowance: a refusal there belongs to one account and one model, and
+        must not pause every other helper on the connector."""
+        return ()
+
+    def account_label(self, model: str) -> str:
+        """Which sign-in/account a model uses, shown when choosing models and on a helper's card; "" for one."""
+        return ""
+
+    def limit_wait_why(self) -> str:
+        """Why helpers wait out a published usage-limit cooldown, given the connector's limit scope."""
+        return "This provider account's usage limit is reached"
 
     def resolve_model(self, model: str, path: str | None) -> str:
         """`model`, a name the agent's own settings hold, as the model id its own command line takes; "" when that

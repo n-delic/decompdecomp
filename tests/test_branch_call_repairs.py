@@ -2,15 +2,6 @@
 import pytest
 
 from decompnet.app import (
-    branch_scalar_repairs as branches,
-)
-from decompnet.app import (
-    call_assignment_repairs as arguments,
-)
-from decompnet.app import (
-    call_count_repairs as counts,
-)
-from decompnet.app import (
     draft_repairs,
     repair_selection,
     residual_followups,
@@ -18,6 +9,9 @@ from decompnet.app import (
 from decompnet.app import (
     pointer_snapshot_repairs as snapshots,
 )
+from decomprepair import branch_scalar_repairs as branches
+from decomprepair import call_assignment_repairs as arguments
+from decomprepair import call_count_repairs as counts
 
 HEADER = 'typedef int s32; typedef short s16; typedef unsigned short u16; typedef unsigned char u8;'
 SOURCE = '''void label(int, int, int, void *, int, u16, int);
@@ -203,7 +197,7 @@ def test_record_members_are_not_scalar_locals_and_parameter_shadows_are_not_coun
 
 
 def test_uncompiled_machine_draft_gets_the_same_advisory_without_renaming():
-    from decompnet.app.local_flow import hints
+    from decomprepair.local_flow import hints
     notes=hints(SOURCE,'f')
     assert any('branch-local lifetimes' in n and 'does not rewrite' in n for n in notes)
     assert '__repair_' not in SOURCE

@@ -39,6 +39,12 @@ def _repair_rules():
               Path(__file__).parent/'permuter_capture.py']
     paths += [app/'branch_tail_distribution.py',app/'branch_frame_recovery.py',app/'dispatch_specialization.py',app/'layout_frontiers.py',app/'targeted_debug_layout.py',app/'compiler_phase_routing.py',Path(__file__).parent/'arch/mips_stack.py']
     paths += [Path(__file__).parent/'arch/mips_local_storage.py',Path(__file__).parent/'arch/mips_hazards.py',Path(__file__).parent/'arch/mips_source_recovery.py',Path(__file__).parent/'arch/mips_materializations.py',Path(__file__).parent/'arch/mips_regions.py',Path(__file__).parent/'arch/mips_search.py',Path(__file__).parent/'arch/mips_live_return_address.py',Path(__file__).parent/'arch/mips_addresses.py']
+    # The pure repair families moved to the decomprepair library: a name no longer under app/ or arch/ is read
+    # there, and the library's own families count like app/'s (same names, so fingerprints keep their keys).
+    import decomprepair
+    library = Path(decomprepair.__file__).parent
+    paths = [p if p.exists() else library / p.name for p in paths]
+    paths = sorted(set(paths) | set(library.glob('*repairs.py')), key=lambda p: p.name)
     return [(p.name,file_digest(p)) for p in paths]
 
 

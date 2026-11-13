@@ -3,7 +3,9 @@
 Each step uses the original repair's guards. No statement shuffle, guessed types,
 ABI change or compiler override is introduced. The normal judge decides acceptance.
 """
-from . import allocation_evidence, compiler_shape_repairs, narrow_load_subtraction, parameter_carriers
+from decomprepair import compiler_shape_repairs
+
+from . import allocation_evidence, narrow_load_subtraction, parameter_carriers
 
 FAMILY = 'narrow_carrier_sequence'
 LIMIT = 32

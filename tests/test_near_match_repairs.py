@@ -1,4 +1,4 @@
-from decompnet.app.near_match_repairs import variants
+from decomprepair.near_match_repairs import variants
 
 
 def test_sum_order_proposals_are_bounded_and_do_not_duplicate_evaluations():

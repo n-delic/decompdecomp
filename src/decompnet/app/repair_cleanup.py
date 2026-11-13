@@ -5,9 +5,10 @@ Only a sole unescaped scalar assignment is unwrapped; declarations and loop cont
 """
 import re
 
+from decomprepair import branch_call_support
+from decomprepair.integer_repair_support import IDENT, edit, view
+
 from .. import compile_timing
-from . import branch_call_support
-from .integer_repair_support import IDENT, edit, view
 
 FAMILIES = ('revisit_one_shot_scope',)
 LIMIT = 8
@@ -28,9 +29,9 @@ def variants(source, name, header='', arch=None):
         # The wrapper must be a complete statement, never an arm with a dangling else.
         if part.clean[:hit.start()].rstrip()[-1:] not in ';{}':
             continue
-        from .narrow_store_repairs import declared
+        from decomprepair.narrow_store_repairs import declared
         kind = declared(part, variable, hit.start(), header)
-        from .integer_abi import scalar
+        from decomprepair.integer_abi import scalar
         if not kind or kind[1] or scalar(kind[0], header+'\n'+source, arch) is None:
             continue
         if re.search(r'&\s*\(*\s*'+re.escape(variable)+r'\b', part.body):

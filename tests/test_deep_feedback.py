@@ -4,8 +4,9 @@ from types import SimpleNamespace
 import pytest
 
 from decompnet import scoring, source_lines
-from decompnet.app import deep_permuter, draft_repairs, prototype_alignment, register_reuse_repairs
+from decompnet.app import deep_permuter, draft_repairs, prototype_alignment
 from decompnet.app.permute import Permuter, State
+from decomprepair import register_reuse_repairs
 from tests.test_deep_permuter import Log, setup
 from tests.test_permute import AGENT, batches
 

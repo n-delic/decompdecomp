@@ -423,3 +423,31 @@ def test_the_permuter_uses_the_gcc_weights_for_agbcc():
     from decompnet.app.permute import weight_family
 
     assert weight_family({"compiler": {"toolchain": "agbcc"}}, None, False) == "gcc"
+
+
+def test_the_export_builds_each_function_with_its_own_compiler(tmp_path):
+    """The GBA export compiled every function with the game's compiler; one matched with another compiler (its
+    address range's, or its own verified profile) didn't rebuild."""
+    import importlib.util
+    import shutil
+
+    from decompnet.consoles.gba import export as gba_export
+
+    game = {"toolchain": "agbcc", "flags": ["-O2"]}
+    build = {"compiler": game, "compiler_ranges": [{"start": 0x08000400, "end": 0x08000500, "toolchain": "agbcc",
+                                                    "flags": ["-O1"]}],
+             "function_compilers": {"own": {"function": "own", "vram": 0x08000600, "toolchain": "agbcc", "flags": ["-O0"]}},
+             "functions": []}
+    (tmp_path / "build.json").write_text(json.dumps(build))
+    shutil.copyfile(Path(gba_export.__file__).with_name("export_build.py"), tmp_path / "build.py")
+    spec = importlib.util.spec_from_file_location("gba_build_under_test", tmp_path / "build.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.compiler_config = lambda root, cfg: cfg["compiler"]
+    flags = lambda name, addr: module.own_config({"name": name, "addr": addr}, {})["flags"]
+    assert flags("plain", 0x08000100) == ["-O2"]
+    assert flags("ranged", 0x08000410) == ["-O1"]
+    assert flags("own", 0x08000600) == ["-O0"]
+    # and the export writes what the build needs to know that
+    source = Path(gba_export.__file__).read_text()
+    assert '"compiler_ranges"' in source and '"function_compilers"' in source

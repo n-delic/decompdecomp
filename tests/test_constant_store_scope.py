@@ -3,7 +3,8 @@ import subprocess
 
 import pytest
 
-from decompnet.app import constant_store_scope, draft_repairs
+from decompnet.app import draft_repairs
+from decomprepair import constant_store_scope
 
 SOURCE = '''typedef unsigned int u32;
 typedef struct { u32 first, second, third; } Record;

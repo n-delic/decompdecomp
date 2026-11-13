@@ -126,6 +126,33 @@ def test_checksum_and_missing_payload_fail_closed():
     with pytest.raises(ValueError):payload_storage.unpack('wrong',zlib.compress(b'text'))
 
 
+def test_a_payload_is_hashed_once_but_a_different_one_under_its_hash_still_fails(monkeypatch):
+    import hashlib
+    import zlib
+    text='checked once '*100;key=payload_storage.digest(text);hashed=[]
+    real=hashlib.sha256
+    monkeypatch.setattr(payload_storage.hashlib,'sha256',lambda data=b'':hashed.append(1) or real(data))
+    monkeypatch.setattr(payload_storage,'CACHED_TEXT_BYTES',0)  # every read decompresses again
+    for _ in range(3):assert payload_storage.unpack(key,zlib.compress(text.encode()))==text
+    assert hashed==[1]
+    with pytest.raises(ValueError,match='checksum failed'):payload_storage.unpack(key,zlib.compress(b'other text'))
+    with pytest.raises(zlib.error):payload_storage.unpack(key,zlib.compress(text.encode())[:-4]+b'xxxx')
+
+
+def test_a_statement_is_routed_to_its_detail_view_once(data,monkeypatch):
+    net,fid=data
+    add(net,fid,'routed '*100)
+    sql='SELECT source FROM attempts WHERE function_id=?'
+    calls=[]
+    from collections import OrderedDict
+    monkeypatch.setattr(payload_storage,'_routes',OrderedDict())
+    sub=payload_storage.TABLE.sub
+    monkeypatch.setattr(payload_storage,'TABLE',type('Table',(),{'sub':staticmethod(lambda *a:calls.append(1) or sub(*a))}))
+    for _ in range(3):assert net.store.one(sql,fid)['source']=='routed '*100
+    assert len(calls)==1
+    assert net.store.conn._route(sql)=='SELECT source FROM attempt_details AS attempts WHERE function_id=?'
+
+
 def test_options_reject_accidental_retention():
     for rules in ({'days':-1},{'days':True},{'automatic':'yes'}):
         with pytest.raises(ValueError):database_storage.options(rules)

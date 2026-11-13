@@ -1,4 +1,4 @@
-from decompnet.app.near_repairs import addresses, variants
+from decomprepair.near_repairs import addresses, variants
 
 
 def asm(*words):

@@ -57,7 +57,7 @@ def _run(net, proj, fn, log, check, max_profiles):
         if source := candidate(dict(fn).get('asm', ''), fn['name']):
             ranked = prioritized(proj, fn, own)
             probes.insert(1, (ranked[0] if ranked else list(own['flags']), source))
-    from . import guarded_loop_repairs
+    from decomprepair import guarded_loop_repairs
     context = net._context(proj['id'],fn['unit']) if hasattr(net,'_context') else None
     paired = guarded_loop_repairs.probes(proj,fn,own,context['header'] if context else '')
     # Preserve this tiny joint frontier independently of isolated source scores.

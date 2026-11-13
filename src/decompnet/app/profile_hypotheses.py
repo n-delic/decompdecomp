@@ -22,7 +22,7 @@ def prioritized(proj, fn, own):
         out.append(['-O1','-mips3','-32',*kept])
     meta=json.loads(dict(fn).get('meta') or '{}')
     naming=meta.get('naming') or {}
-    from .sdk_io_repairs import io_target
+    from decomprepair.sdk_io_repairs import io_target
     if naming.get('method')=='sdk_signature' or io_target(dict(fn).get('asm','')):
         # Prioritize -O1 only for an identity recorded from SDK signature evidence.
         candidate=[('-O1' if flag.startswith('-O') else flag) for flag in flags]

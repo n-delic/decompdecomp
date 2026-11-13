@@ -23,7 +23,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import compile_sessions, compile_timing, limits, linuxvm, wsl
+from . import compile_sessions, compile_timing, limits, linuxvm, spawner, wsl
 from .compile_admission import Admission
 from .request_timing import span
 
@@ -241,7 +241,8 @@ def _exec_driver(cfg: CompilerConfig, work: Path, argv: list[str], timeout: floa
     with compile_timing.phase('runtime_setup'):
         wrapped = _wrap(cfg, work, argv)
     with compile_timing.phase('process_launch'):
-        proc = subprocess.Popen(wrapped, cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        # posix_spawn on macOS: forking the whole app per compile serialized concurrent compiles (spawner.py)
+        proc = spawner.Popen(wrapped, cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW,
                                 start_new_session=os.name != "nt")
     from . import compiler_processes

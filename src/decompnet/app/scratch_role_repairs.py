@@ -5,11 +5,11 @@ protects previous values; all candidates still need the ordinary linked-byte jud
 """
 import re
 
-from . import integer_abi, local_flow
-from .allocator_call_guards import dominators
-from .call_lifetime_repairs import block_path
-from .integer_repair_support import IDENT, NUMBER, edit, integer, locals_for, refs, view
-from .pattern_repairs import close
+from decomprepair import integer_abi, local_flow
+from decomprepair.allocator_call_guards import dominators
+from decomprepair.call_lifetime_repairs import block_path
+from decomprepair.integer_repair_support import IDENT, NUMBER, edit, integer, locals_for, refs, view
+from decomprepair.pattern_repairs import close
 
 FAMILY = 'scratch_role_reuse'
 FAMILIES = (FAMILY,)

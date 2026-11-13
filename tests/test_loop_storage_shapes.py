@@ -1,4 +1,5 @@
-from decompnet.app import loop_storage_shapes, repair_localisation
+from decompnet.app import loop_storage_shapes
+from decomprepair import repair_localisation
 
 SOURCE='void f(void) { unsigned int i; i=0; do { use(i); i++; use(i); } while(i<4); }'
 

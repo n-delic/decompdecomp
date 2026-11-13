@@ -1,5 +1,5 @@
 from decompnet.app.source_context_diagnostics import identity, route, shadows
-from decompnet.app.typed_draft_repairs import variants
+from decomprepair.typed_draft_repairs import variants
 
 
 def test_shadowed_implicit_int_is_advisory():

@@ -310,3 +310,22 @@ def test_shared_diff_publication_does_not_relabel_evidence_after_inputs_change(t
     assert agent_evidence.baseline(net,a,'game',fn,fn['best_source'])['verified']
     with pytest.raises(NetworkError,match='No verified diff'):
         agent_tokens.diff_page(net,a,'game','f')
+
+
+def test_recently_released_work_never_starts_a_new_provider_conversation(tmp_path, monkeypatch):
+    from decompnet.app.agents import Manager, Session
+    net, agent, fn = game(tmp_path)
+    net.claim_row(agent, 'game', function='f')
+    net.release(agent, 'f', 'Synthetic attempt finished', 'game')
+    manager = object.__new__(Manager)
+    manager.net = net
+    session = Session('1', 'claude', 'worker', 'game', 'worker', {})
+    session.context_budget = session_budget.start(net, agent.id, 'game', {})
+    monkeypatch.setattr(net, 'authenticate', lambda token: agent)
+    monkeypatch.setattr(manager, '_preflight_tools', lambda *args, **kwargs: None)
+    monkeypatch.setattr(manager, 'prepare_session', lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError('Cooling work must wait before provider setup')))
+    monkeypatch.setattr(manager, '_command', lambda *args: (_ for _ in ()).throw(
+        AssertionError('Cooling work must not launch a provider')))
+    assert manager._run_cli(session, 'synthetic-token', tmp_path)
+    assert session.rotated and session.context_budget.waiting

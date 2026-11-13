@@ -177,6 +177,22 @@ function setup(){
     t.run('romView().report.stale=true;drawRomTypeMap()');canvas.onkeydown({key:'Enter',preventDefault(){}});assert.equal(opened.length,2);
     t.run('romView().report=null;drawRomTypeMap()');assert.equal(t.context.$('romTypeMapPanel').hidden,true);
   }
+  // The byte strip and the grid draw the same rows in the same colours, and
+  // grouping changes both.
+  {
+    const t=setup(),strip=[],grid=[];
+    const map=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/map.js'),'utf8');
+    vm.runInContext(map.slice(map.indexOf('function squareMapLayout('),map.indexOf('function layoutMap(')),t.context);
+    t.context.getComputedStyle=()=>({getPropertyValue:name=>name});
+    const paint=(log,cell)=>{const ctx={scale(){},beginPath(){},fill(){},strokeRect(){},roundRect(){log.push(ctx.fillStyle);},fillRect(){log.push(ctx.fillStyle);}};return ()=>ctx;};
+    t.context.$('romMap').getContext=paint(strip);t.context.$('romMap').clientWidth=200;
+    t.context.$('romTypeMap').getContext=paint(grid);t.context.$('romTypeMap').clientWidth=200;
+    t.run("romView().report={available:true,size:40,regions:[{id:'a',start:0,end:10,size:10,kind:'code'},{id:'b',start:10,end:20,size:10,kind:'image'},{id:'c',start:20,end:30,size:10,kind:'image'},{id:'d',start:30,end:40,size:10,kind:'repeated bytes'}],asset_groups:[{id:'g',start:10,end:30,size:20,region_ids:['b','c']}]};drawRomMap();drawRomTypeMap()");
+    assert.deepEqual(strip,['--cc-1','--cc-2','--muted']);assert.deepEqual(grid,strip);
+    assert.match(t.context.$('romTypeLegend').innerHTML,/Image \(1\)/);assert.equal(t.context.$('romMapKey').hidden,false);
+    strip.length=0;grid.length=0;t.context.$('romGroupAssets').checked=false;t.context.$('romGroupAssets').onchange();
+    assert.equal(strip.length,4);assert.deepEqual(grid,strip);assert.match(t.context.$('romTypeLegend').innerHTML,/Image \(2\)/);
+  }
   // Discovery shares the preview lock and retains errors through delayed requests.
   {
     const t=setup(),body=element(),pending=deferred();t.context.body=body;
@@ -240,6 +256,13 @@ function setup(){
     t.context.reply=async()=>{throw Error('Resource header changed. Rescan.');};await button.onclick();assert.match(body.querySelector('[data-asset-work]').textContent,/Rescan/);
     t.run("romView().report={regions:[{id:'anim',kind:'animation',symbols:[],mappings:[],functions:[],detected_asset:region.detected_asset}]};romView().query='object[9]'");
     assert.equal(t.run('romRows(romView()).length'),1);assert.equal(t.run('romRegionType({kind:"animation"})[1]'),'Animation');
+  }
+  {
+    // A ZIP member's path names its region, and searching for the file finds it.
+    const t=setup();
+    t.run("romView().report={regions:[{id:'b',kind:'compressed',symbols:[],mappings:[],functions:[],archive_path:'Stages/stage2.V3S'},{id:'a',kind:'compressed',symbols:[],mappings:[],functions:[],archive_path:'Stages/stage1.V3S'},{id:'c',kind:'unknown',symbols:[],mappings:[],functions:[]}]};romView().sort='name';romView().direction=1");
+    assert.equal(t.run("romRows(romView()).map(r=>r.id).join(',')"),'c,a,b');
+    t.run("romView().query='stage2.v3s'");assert.equal(t.run("romRows(romView()).map(r=>r.id).join(',')"),'b');
   }
   console.log('ROM Explorer lifecycle, sorting and notes passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -457,7 +457,7 @@ def attempt(permuter, proj, fn, source, header, agent, fork, diagnostic=None, le
     record(net,proj,fn,source,header,0 if diff.bytes_match else max(1,diff.score),diff.rows,lead,
            (time.monotonic()-started)*1000,scope=scope,source_locations=source_locations)
     if diagnostic and dict(proj).get('arch')=='mips':
-        from .sdk_io_repairs import hints
+        from decomprepair.sdk_io_repairs import hints
         for hint in hints(source,dict(fn).get('asm',''),diff.rows):diagnostic(fn['name']+': '+hint)
     if diagnostic:
         from .source_context_diagnostics import hints as context_hints

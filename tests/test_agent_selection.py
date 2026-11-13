@@ -339,3 +339,36 @@ def test_combined_startup_selection_preserves_filters(net, monkeypatch, policy):
     assert counts['selected'] == net.selection_remaining('game', a, include_paused=True)
     assert counts['eligible'] == net.selection_remaining('game', a)
     assert counts['available'] == net.selection_remaining('game', a, available_only=True)
+
+
+@pytest.mark.parametrize('resume', ['expiry', 'grant', 'explicit'])
+def test_startup_availability_honors_own_release_cooldown_and_its_exceptions(net, resume):
+    import time
+
+    from decompnet import claim_stalls
+    from decompnet.network import SELF_RELEASE_WINDOW
+    agent, _ = net.local_agent('cooldown-worker')
+    other, _ = net.local_agent('other-worker')
+    for name in ('small', 'middle', 'large'):
+        assert net.claim_row(agent, 'game', function=name)
+        net.release(agent, name, 'Synthetic attempt finished', 'game')
+    assert net.claim_row(agent, 'game') is None
+    counts = net.selection_counts('game', agent)
+    assert counts['selected'] == counts['eligible'] == 3
+    assert counts['available'] == net.selection_remaining('game', agent, available_only=True) == 0
+    assert net.selection_counts('game', other)['available'] == 3
+    if resume == 'expiry':
+        with net.store.tx() as db:
+            db.execute("UPDATE events SET created_at=? WHERE kind='release' AND agent_id=?",
+                       (time.time() - SELF_RELEASE_WINDOW - 1, agent.id))
+        assert net.selection_counts('game', agent)['available'] == 3
+        assert net.selection_remaining('game', agent, available_only=True) == 3
+        assert net.claim_row(agent, 'game') is not None
+    elif resume == 'grant':
+        fn = net._function('small', 'game')
+        claim_stalls.resume(net, fn, agent, single_turn=True)
+        assert net.selection_counts('game', agent)['available'] == 1
+        assert net.selection_remaining('game', agent, available_only=True) == 1
+        assert net.claim_row(agent, 'game')['id'] == fn['id']
+    else:
+        assert net.claim_row(agent, 'game', function='small')['name'] == 'small'

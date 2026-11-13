@@ -1,7 +1,9 @@
 /* Explicit, local image exploration. Server-owned jobs survive navigation/windows. */
 const romViews=new Map();
 let romEpoch=0, romDetailEpoch=0;
-const ROM_COLORS={code:'var(--color-status-info-fill)',data:'var(--color-status-success-fill)',strings:'var(--color-status-success-fill)',compressed:'var(--color-status-warning-fill)',image:'var(--color-status-warning-fill)',audio:'var(--color-status-warning-fill)','3d model':'var(--color-status-warning-fill)',animation:'var(--color-status-warning-fill)',collision:'var(--color-status-info-fill)','object placements':'var(--color-status-success-fill)','world grid':'var(--color-status-info-fill)','music sequence':'var(--color-status-warning-fill)',demo:'var(--color-status-success-fill)',container:'var(--color-status-warning-fill)','pointer table':'var(--color-status-warning-fill)','repeated bytes':'var(--muted)',unknown:'var(--line)'};
+// One palette for both maps: the byte strip and the grid below it show the same
+// regions (grouped or not) in the same colours, under one legend.
+const ROM_TYPES=[['code','Function','--cc-1'],['data','Data','--cc-0'],['unknown','Unknown','--line'],['repeated bytes','Repeated bytes','--muted'],['image','Image','--cc-2'],['audio','Audio','--cc-3'],['3d model','3D model','--cc-4'],['compressed','Compressed','--cc-5'],['strings','Strings','--cc-6'],['animation','Animation','--cc-2'],['collision','Collision','--cc-4'],['object placements','Placements','--cc-0'],['world grid','World grid','--cc-1'],['music sequence','Music sequence','--cc-3'],['demo','Demo','--cc-6'],['other','Other data','--cc-7']];
 function romView(slug=S.slug) {
   if(!romViews.has(slug))romViews.set(slug,{sort:'start',direction:1,limit:100,query:'',function:'',report:null,job:null,busy:false});
   return romViews.get(slug);
@@ -25,7 +27,7 @@ async function loadRomExplorer() {
   if(typeof stopRomTextureGallery==='function')stopRomTextureGallery();
   $('romTexturePanel').hidden=true;view._textureReport=null;
   view.busy=true;romControls(view);
-  $('romTypeMapPanel').hidden=true;$('romTypeStatus').textContent='';$('romResult').replaceChildren();$('romSummary').textContent='';$('romMap').hidden=true;$('romMapRange').textContent='';$('romStale').hidden=true;$('romNotes').textContent='';$('romRuntime').hidden=true;$('romRuntimeItems').replaceChildren();$('romLoaderGroups').hidden=true;$('romLoaderItems').replaceChildren();
+  $('romTypeMapPanel').hidden=true;$('romTypeStatus').textContent='';$('romResult').replaceChildren();$('romSummary').textContent='';$('romMap').hidden=true;$('romMapKey').hidden=true;$('romMapRange').textContent='';$('romStale').hidden=true;$('romNotes').textContent='';$('romRuntime').hidden=true;$('romRuntimeItems').replaceChildren();$('romLoaderGroups').hidden=true;$('romLoaderItems').replaceChildren();
   $('assetAgentPanel').hidden=true;
   const roles=$('romLoaderRoleBody');if(roles.dataset.slug!==slug){roles.replaceChildren();roles.dataset.slug=slug;}
   showJobError(log,'');
@@ -97,10 +99,10 @@ async function stopRomExplorer() {
 }
 function romRows(view) {
   const query=view.query.toLowerCase();
-  const rows=(view.report?.regions || []).filter(r=>!query || [r.kind,r.annotation?.kind,r.id,r.annotation?.name,r.detected_asset?.resource_type,r.detected_asset?.resource_path,...r.symbols.map(s=>s.name),...r.mappings.map(m=>m.segment)].some(v=>String(v||'').toLowerCase().includes(query)));
+  const rows=(view.report?.regions || []).filter(r=>!query || [r.kind,r.annotation?.kind,r.id,r.annotation?.name,r.detected_asset?.resource_type,r.detected_asset?.resource_path,r.archive_path,...r.symbols.map(s=>s.name),...r.mappings.map(m=>m.segment)].some(v=>String(v||'').toLowerCase().includes(query)));
   if(view.function)rows.splice(0,rows.length,...rows.filter(r=>r.function_refs?.includes(view.function) || r.functions.includes(view.function)));
   return rows.sort((a,b)=>{
-    const key=view.sort,value=r=>key==='name' ? r.annotation?.name || r.symbols[0]?.name || r.detected_asset?.resource_path || r.detected_asset?.label || '' : key==='kind' ? r.annotation?.kind || r.kind : key==='confidence' && r.annotation?.kind ? 'Your annotation' : r[key],av=value(a),bv=value(b);
+    const key=view.sort,value=r=>key==='name' ? r.annotation?.name || r.symbols[0]?.name || r.detected_asset?.resource_path || r.archive_path || r.detected_asset?.label || '' : key==='kind' ? r.annotation?.kind || r.kind : key==='confidence' && r.annotation?.kind ? 'Your annotation' : r[key],av=value(a),bv=value(b);
     if(av==null || bv==null)return av==null ? bv==null ? a.start-b.start : 1 : -1;
     return (typeof av==='number' ? av-bv : String(av).localeCompare(String(bv)))*view.direction || a.start-b.start;
   });
@@ -126,7 +128,7 @@ function renderRomExplorer(view=romView()) {
   $('romLoaderItems').querySelectorAll('[data-rom-loader]').forEach(button=>button.onclick=()=>{const chain=flow.chains.find(c=>c.id===button.dataset.romLoader),row=report.regions.find(r=>r.start<=chain.source.start && chain.source.start<r.end);if(row)openRomRegion(row.id);});
   const rows=romRows(view), host=$('romResult');
   const headings=[['start','ROM offset'],['name','Name'],['size','Bytes'],['kind','Type'],['confidence','Evidence'],['used_by','Functions']];
-  host.innerHTML=`<div class="compiler-table"><table><thead><tr>${headings.map(([key,label])=>`<th scope="col" aria-sort="${view.sort===key ? view.direction===1 ? 'ascending' : 'descending' : 'none'}"><button class="table-sort" type="button" data-rom-sort="${key}">${label}${view.sort===key ? view.direction===1 ? ' ↑' : ' ↓' : ' ↕'}</button></th>`).join('')}</tr></thead><tbody>${rows.slice(0,view.limit).map(r=>`<tr><td><button type="button" class="link-btn mono" data-rom-region="${r.id}" ${report.stale ? 'disabled' : ''}>${hex8(r.start)}</button></td><td>${esc(r.annotation?.name || r.symbols[0]?.name || r.functions[0] || r.detected_asset?.resource_path || r.detected_asset?.label || 'Unnamed region')}<div class="small muted">${esc(r.mappings.map(m=>m.segment).join(', ') || 'No runtime mapping')}</div></td><td>${r.size.toLocaleString()}</td><td>${esc(r.annotation?.kind || r.kind)}</td><td>${r.annotation?.kind ? 'Your annotation' : esc(r.confidence)}</td><td>${r.used_by ? `<button type="button" class="link-btn" data-rom-region="${r.id}" ${report.stale ? 'disabled' : ''}>${r.used_by} functions</button>` : 'No references found'}${r.traced_users ? `<div class="small muted">${r.traced_users} traced leads</div>` : ''}</td></tr>`).join('')}</tbody></table></div><p class="small muted">${Math.min(view.limit,rows.length)} of ${rows.length} regions</p>${rows.length>view.limit ? '<button type="button" class="ghost small-btn" data-rom-more>Show more regions</button>' : ''}`;
+  host.innerHTML=`<div class="compiler-table"><table><thead><tr>${headings.map(([key,label])=>`<th scope="col" aria-sort="${view.sort===key ? view.direction===1 ? 'ascending' : 'descending' : 'none'}"><button class="table-sort" type="button" data-rom-sort="${key}">${label}${view.sort===key ? view.direction===1 ? ' ↑' : ' ↓' : ' ↕'}</button></th>`).join('')}</tr></thead><tbody>${rows.slice(0,view.limit).map(r=>`<tr><td><button type="button" class="link-btn mono" data-rom-region="${r.id}" ${report.stale ? 'disabled' : ''}>${hex8(r.start)}</button></td><td>${esc(r.annotation?.name || r.symbols[0]?.name || r.functions[0] || r.detected_asset?.resource_path || r.archive_path || r.detected_asset?.label || 'Unnamed region')}<div class="small muted">${esc(r.mappings.map(m=>m.segment).join(', ') || 'No runtime mapping')}</div></td><td>${r.size.toLocaleString()}</td><td>${esc(r.annotation?.kind || r.kind)}</td><td>${r.annotation?.kind ? 'Your annotation' : esc(r.confidence)}</td><td>${r.used_by ? `<button type="button" class="link-btn" data-rom-region="${r.id}" ${report.stale ? 'disabled' : ''}>${r.used_by} functions</button>` : 'No references found'}${r.traced_users ? `<div class="small muted">${r.traced_users} traced leads</div>` : ''}</td></tr>`).join('')}</tbody></table></div><p class="small muted">${Math.min(view.limit,rows.length)} of ${rows.length} regions</p>${rows.length>view.limit ? '<button type="button" class="ghost small-btn" data-rom-more>Show more regions</button>' : ''}`;
   host.querySelectorAll('[data-rom-sort]').forEach(b=>b.onclick=()=>{if(view.sort===b.dataset.romSort)view.direction*=-1;else{view.sort=b.dataset.romSort;view.direction=view.sort==='size' || view.sort==='used_by' ? -1 : 1;}renderRomExplorer(view);});
   host.querySelectorAll('[data-rom-region]').forEach(b=>b.onclick=()=>openRomRegion(b.dataset.romRegion));
   const more=host.querySelector('[data-rom-more]');if(more)more.onclick=()=>{view.limit+=100;renderRomExplorer(view);};
@@ -142,14 +144,22 @@ function drawRomMap(view=romView()) {
   const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);
   const lo=view.zoom?.[0] || 0,hi=view.zoom?.[1] || report.size,span=hi-lo || 1;
   const style=getComputedStyle(document.documentElement);
-  for(const row of report.regions){if(row.end<=lo || row.start>=hi)continue;
-    const variable=(ROM_COLORS[row.annotation?.kind || row.kind] || ROM_COLORS.unknown).slice(4,-1);
-    ctx.fillStyle=style.getPropertyValue(variable).trim() || style.getPropertyValue('--muted').trim();
+  const rows=romTypeRows(view);
+  for(const row of rows){if(row.end<=lo || row.start>=hi)continue;
+    ctx.fillStyle=style.getPropertyValue(romRegionType(row)[2]).trim() || style.getPropertyValue('--muted').trim();
     ctx.fillRect(Math.max(0,(row.start-lo)/span*width),0,Math.max(1,(Math.min(row.end,hi)-Math.max(row.start,lo))/span*width),52);
   }
   $('romMapRange').textContent=`ROM ${hex8(lo)}–${hex8(hi)} (exclusive) · click the map to inspect a region`;
   canvas.onclick=event=>{const at=lo+(event.clientX-canvas.getBoundingClientRect().left)/width*span;
-    const row=report.regions.find(r=>r.start<=at && r.end>at);if(row && !report.stale)openRomRegion(row.id);};
+    const row=rows.find(r=>r.start<=at && r.end>at);if(row && !report.stale)openRomRegion(row.id);};
+  drawRomLegend(view,rows);
+}
+function drawRomLegend(view,rows) {
+  const counts=new Map();for(const row of rows){const key=romRegionType(row)[0];counts.set(key,(counts.get(key)||0)+1);}
+  $('romGroupAssets').checked=view.groupAssets!==false;$('romGroupCount').textContent=`(${(view.report.asset_groups || []).length} groups)`;
+  $('romTypeLegend').innerHTML=ROM_TYPES.map(([key,label,color])=>`<span><i class="sw" data-rom-color="${color}"></i>${label} (${counts.get(key)||0})</span>`).join('');
+  $('romTypeLegend').querySelectorAll('[data-rom-color]').forEach(node=>{node.style.background=`var(${node.dataset.romColor})`;});
+  $('romMapKey').hidden=false;
 }
 async function openRomRegion(id) {
   const slug=S.slug,report=romView(slug).report,epoch=++romDetailEpoch;if(!report || report.stale)return;
@@ -192,8 +202,6 @@ new MutationObserver(()=>{if(S.tab==='rom'){drawRomMap();drawRomTypeMap();}}).ob
 
 $('romLoaderRoles').addEventListener('toggle',()=>{if($('romLoaderRoles').open && S.tab==='rom')loadRomLoaderRoles();});
 
-// This map keeps the whole image visible even when the byte strip is zoomed.
-const ROM_TYPES=[['code','Function','--cc-1'],['data','Data','--cc-0'],['unknown','Unknown','--muted'],['image','Image','--cc-2'],['audio','Audio','--cc-3'],['3d model','3D model','--cc-4'],['compressed','Compressed','--cc-5'],['strings','Strings','--cc-6'],['animation','Animation','--cc-2'],['collision','Collision','--cc-4'],['object placements','Placements','--cc-0'],['world grid','World grid','--cc-1'],['music sequence','Music sequence','--cc-3'],['demo','Demo','--cc-6'],['other','Other data','--cc-7']];
 function romRegionType(row) {
   const kind=row.annotation?.kind || row.kind;
   return ROM_TYPES.find(t=>t[0]===kind) || ROM_TYPES.find(t=>t[0]==='other');
@@ -203,11 +211,7 @@ function drawRomTypeMap(view=romView()) {
   panel.hidden=!report?.available;if(panel.hidden)return;
   const canvas=$('romTypeMap'),rows=romTypeRows(view),width=canvas.clientWidth || 800;
   if(!rows.length){panel.hidden=true;return;}
-  $('romGroupAssets').checked=view.groupAssets!==false;$('romGroupCount').textContent=`(${(report.asset_groups || []).length} groups)`;
   const layout=squareMapLayout(width,rows.length),ratio=window.devicePixelRatio || 1,style=getComputedStyle(document.documentElement);
-  const counts=new Map();for(const row of rows){const key=romRegionType(row)[0];counts.set(key,(counts.get(key)||0)+1);}
-  $('romTypeLegend').innerHTML='<span class="small muted">Map regions:</span>'+ROM_TYPES.map(([key,label,color])=>`<span><i class="sw" data-rom-color="${color}"></i>${label} (${counts.get(key)||0})</span>`).join('');
-  $('romTypeLegend').querySelectorAll('[data-rom-color]').forEach(node=>{node.style.background=`var(${node.dataset.romColor})`;});
   view.typeSelection=Math.max(0,Math.min(rows.length-1,view.typeSelection || 0));
   const describe=i=>{const row=rows[i];return `${row.asset_group ? 'Asset group · ' : ''}${romRegionType(row)[1]} · ${hex8(row.start)}–${hex8(row.end)} · ${row.size.toLocaleString()} bytes · ${row.annotation?.name || row.functions?.[0] || row.symbols?.[0]?.name || row.detected_asset?.resource_path || row.confidence}${row.annotation?.kind ? ' · Your annotation' : ''}`;};
   const paint=()=>{
@@ -234,4 +238,4 @@ function drawRomTypeMap(view=romView()) {
   paint();
 }
 
-$('romGroupAssets').onchange=()=>{const view=romView();view.groupAssets=$('romGroupAssets').checked;view.typeSelection=0;drawRomTypeMap(view);};
+$('romGroupAssets').onchange=()=>{const view=romView();view.groupAssets=$('romGroupAssets').checked;view.typeSelection=0;drawRomMap(view);drawRomTypeMap(view);};

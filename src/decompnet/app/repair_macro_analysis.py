@@ -50,7 +50,7 @@ def summary(report, name, arch=None):
     """Only structured eligibility evidence leaves the private analysis buffer."""
     result = {k:v for k,v in report.items() if k not in {'analysis','analysis_header'}}
     if report.get('available'):
-        from .call_preparation_repairs import explain
+        from decomprepair.call_preparation_repairs import explain
         result['expanded_call_eligibility'] = explain(report['analysis'],name,report.get('analysis_header',''),arch)
         result['note'] += ' Eligible expanded shapes are leads; edits still require mapping to original source and normal judging.'
     return result

@@ -1,11 +1,11 @@
 """Expose pure comma initializers as statements and join a nearby independent address initializer."""
 import re
 
-from . import allocation_repairs, local_flow
-from .allocator_call_guards import context, declarations, dominators
-from .call_lifetime_repairs import block_path
-from .integer_repair_support import IDENT, NUMBER, edit, locals_for, split_args
-from .pattern_repairs import close
+from decomprepair import allocation_repairs, local_flow
+from decomprepair.allocator_call_guards import context, declarations, dominators
+from decomprepair.call_lifetime_repairs import block_path
+from decomprepair.integer_repair_support import IDENT, NUMBER, edit, locals_for, split_args
+from decomprepair.pattern_repairs import close
 
 FAMILY = 'initialization_cluster'
 

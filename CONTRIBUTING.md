@@ -27,10 +27,16 @@ decompdecomp is Python 3.12+, managed with [uv](https://docs.astral.sh/uv/).
 git clone https://github.com/n-delic/decompdecomp && cd decompdecomp
 uv sync
 uv run decomp                 # the development copy, in its own window (projects in ~/Decomp-RetroReversing-dev, or $DECOMP_HOME)
-uv run pytest -q              # the tests
+uv run pytest -q              # the tests (parallel by default)
 uv run pytest tests/test_ps2.py -q   # one file
+uv run pytest -q -n 0          # one process, when debugging a worker or its output
 uv run ruff check src tests projects   # the linter
 ```
+
+There are about 10,000 tests, so `pytest` runs them across all cores (`pytest-xdist`, configured in
+`pyproject.toml`). Modules that build a demo ROM share `projects/<demo>/build/`, so `tests/conftest.py` keeps them
+on one worker; everything else spreads across the rest. `-n 0` turns parallelism off. `pytest --durations=25`
+shows what is still slow. Tests that need a real compiler or decompiler skip when it isn't installed.
 
 A checkout is a separate app, "decompdecomp dev": its own folder (`~/Decomp-RetroReversing-dev`), port and window. It never
 replaces the decompdecomp you have installed, and never touches its projects in `~/Decomp-RetroReversing`. For an experiment, give
@@ -171,6 +177,7 @@ A console works in one of two modes:
    | `export_project(net, slug, out, log)` | ROM: write and check a tree that rebuilds the game. |
    | `find_gp(image, program, segments)` | ROM: `$gp` as the game sets it. |
    | `debug_info(program, known)`, `debug_brief(known)` | The game's own symbols and types, and their lines in a brief. |
+   | `release_key(rom)` | What every release (region) of one game shares, from its header (N64, GBA: the game code without its region letter): other releases are found by it. None: by identical code. |
    | `after_import(net, slug, chosen)`, `on_start(net, slug)` | Work a new project gets once; work each project gets at start. |
    | `create_project(root, game, compiler)`, `game_info(game)` | PROJECT: makes the project; says which game a file is. |
    | `tool_args()` | PROJECT: points the project's configure step at the pinned tools. |

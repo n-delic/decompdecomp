@@ -321,7 +321,7 @@ class BriefMixin:
         return text + self._lifetime_hints(fn) + search_brief(self,proj,fn)
 
     def _lifetime_hints(self, fn):
-        from ..local_flow import hints
+        from decomprepair.local_flow import hints
         source = fn['best_source'] or fn['seed'] or ''
         suggestions = hints(source, fn['name']) if fn['status'] == 'open' and source else []
         return ('\n\nDraft lifetime hints (advisory; original names retained):\n' + '\n'.join(suggestions)) if suggestions else ''
@@ -501,6 +501,11 @@ class BriefMixin:
             lines += section(fn, proj)
         twin = self._twin_lines(proj, fn) if fn["status"] != "matched" else []
         lines += twin
+        if not twin:  # the other release's C for this function, if a linked release matched it (app/regional.py)
+            from .. import regional
+            release = regional.brief(self, proj, fn)
+            lines += release
+            twin = twin or release  # (its C stands in for a look-alike's)
         cross = self.twins.suggestions(proj["slug"], fn["name"], limit=3) if fn["status"] != "matched" else []
         if cross:
             lines += ["", "### Other games and local SDK signatures (name suggestions, not verified for this game)"]

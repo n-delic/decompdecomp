@@ -1,10 +1,11 @@
 """Reuse current exact callers' scalar prototypes as local hypotheses, never shared-header edits."""
 import re
 
+from decomprepair.integer_repair_support import IDENT, INTEGER, edit, view
+from decomprepair.repair_preflight import _PROTO
+
 from .. import match_bundle
 from ..project import compiler_for
-from .integer_repair_support import IDENT, INTEGER, edit, view
-from .repair_preflight import _PROTO
 
 FAMILY = 'verified_caller_prototype'
 LIMIT = 6

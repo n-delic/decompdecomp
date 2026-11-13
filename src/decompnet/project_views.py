@@ -17,6 +17,13 @@ def install(db):
         CREATE TABLE IF NOT EXISTS layout_revision(id INTEGER PRIMARY KEY CHECK(id=1), revision TEXT);
         INSERT OR IGNORE INTO layout_revision VALUES(1,hex(randomblob(16)));
         CREATE INDEX IF NOT EXISTS idx_events_project_time ON events(project_id,created_at);
+        -- The automatic claim's reads (network.claim_query, Network._route): one agent's releases in a project, and
+        -- every agent's claim count, answered from the index alone. On a game with 48,000 claim events, model
+        -- routing sorted all of them for each claim (54 ms -> 11) and the claim query took 25 ms (now 12).
+        CREATE INDEX IF NOT EXISTS idx_events_project_kind_agent ON events(project_id,kind,agent_id,created_at,detail);
+        -- An agent's last 'freed'/'stopped' (Network._own_release_cutoff) walked every agent's 36,000 'freed'
+        -- events: 5 ms warm, 130 ms from a cold disk; now two seeks.
+        CREATE INDEX IF NOT EXISTS idx_events_agent_kind_time ON events(agent_id,kind,created_at);
     ''')
     # Same accounting as network.PROGRESS_COLUMNS: excluded code never counts as matched.
     def values(alias):

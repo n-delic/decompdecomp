@@ -1,9 +1,10 @@
 """Evidence-directed private layout/constant trials; no target or shared context is edited."""
 import re
 
+from decomprepair.pattern_repairs import close
+
 from .. import arch as arches
 from ..forks.csource import _blank
-from .pattern_repairs import close
 
 ID=r'[A-Za-z_]\w*'
 NUM=r'-?(?:0x[0-9a-fA-F]+|\d+)'

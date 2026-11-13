@@ -1,8 +1,8 @@
 """Homemade sources only; proprietary compiler/game inputs never enter this suite."""
 import pytest
 
-from decompnet.app import compiler_phase_repairs as repairs
 from decompnet.app import layout_frontiers, search_frontier, targeted_debug_layout
+from decomprepair import compiler_phase_repairs as repairs
 
 LOOP='void f(void) { unsigned int i; unsigned int x; unsigned int y; i=0; do { x=i+3; y=i+4; use(x,y); i=i+1; } while(i<3); }'
 ADDRESS='extern unsigned char table[]; void f(void) { unsigned int a; int b; unsigned short *p; a=2; b=3; p = (unsigned short *) ((table + 8) + ((a + b) * 2)); use(p); }'

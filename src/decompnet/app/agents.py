@@ -103,6 +103,8 @@ _SIGNIN = re.compile(r"auth|log ?in|sign(ed)? ?in|credential|api.?key|unauthori[
 # diffs would otherwise ride along into the next one), but pays for its system prompt, tools and guides again:
 # with 2 per session that was most of what small functions cost.
 PER_SESSION = 8
+# Tasks that are not matching functions: polishing, boundary reviews, asset discovery, the game's data as C
+NOT_MATCHING = frozenset({"readable", "boundary", "assets", "data", "port"})
 STARTUP_FACTS_CHARS = 1800
 STARTUP_BRIEF_CHARS = 6000
 MAX_AT_ONCE = 8  # helpers started with one click
@@ -220,6 +222,12 @@ LIMIT = re.compile(r"(?:usage|session|weekly) limit|(?<!rate )(?<!rate-)(?<!rate
                     r"(?<!concurrency-)(?<!concurrency_)limit (?:reached|exceeded)|"
                     r"hit your (?:(?!rate\b)[\w-]+ )?limit|quota[ _](?:exceeded|exhausted)|resource[ _]exhausted|"
                     r"out of (?:usage|messages)", re.I)
+# OpenCode Zen's free models are refused once the free allowance is used up, while the same account's
+# OpenCode Go models keep working. It is a model decision, not the account's subscription limit: one
+# N64 game's Go helpers all waited out an "account" cooldown because a free helper was refused, and
+# each free retry re-armed it. Both the provider's wording and agents.FREE_ALLOWANCE must be kept out
+# of the account-limit classifier, including the title-request lines opencode logs on stderr.
+FREE_MODEL_ALLOWANCE = re.compile(r'Free usage limit reached|' + re.escape(agents.FREE_ALLOWANCE), re.I)
 # When a limit resets, as agents say it. Claude Code: "usage limit reached|1792140000" (seconds since 1970), or
 # "5-hour limit reached ∙ resets 3pm (Europe/Berlin)"; Codex: "try again in 2 hours 13 minutes" or "try again at
 # 8:05 PM"; Gemini: "Please retry in 46.6s"; others an ISO time after "reset" or "until".
@@ -470,8 +478,10 @@ class Session:
             log.info("helper %s (%s): %s", self.agent_name, self.slug, text[:500])
 
     def snapshot(self, since: int = 0) -> dict:
-        return {"id": self.id, "kind": self.kind, "kind_name": agents.get(self.kind).name, "can_login": agents.get(self.kind).supports_login, "label": self.label,
+        kind = agents.get(self.kind)
+        return {"id": self.id, "kind": self.kind, "kind_name": kind.name, "can_login": kind.supports_login, "label": self.label,
                 "account_id": self.options.get("account_id") or "", "account_name": self.options.get("account_name") or "",
+                "account_label": kind.account_label(self.model),
                 "selection": self.options.get("selection") or {},
                 "boundary_function":self.options.get("boundary_function"), "boundary_until":self.options.get("boundary_until"),
                 "focus_function":self.options.get("focus_function"), "focus_until":self.options.get("focus_until"),
@@ -787,6 +797,10 @@ class Manager:
         options = boundary_investigations.configure(self.net,slug,options,count)
         from . import asset_agents
         options = asset_agents.configure(self.net,slug,options,count)
+        from . import data_agents
+        options = data_agents.configure(self.net,slug,options,count)
+        from . import port_agents
+        options = port_agents.configure(self.net,slug,options,count)
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
         if agent.id != kind:
             kind = agent.id
@@ -816,7 +830,7 @@ class Manager:
                     options["model"] = name_model = pinned
         ids = []
         report_start("Preparing the project before creating workers…")
-        if not options.get("focus_id") and options.get("task") not in {"readable", "boundary", "assets"}:
+        if not options.get("focus_id") and options.get("task") not in NOT_MATCHING:
             self._prepare(slug)
         report_start("Waiting for the worker registry, then reserving new identities…")
         with self._lock:
@@ -869,7 +883,7 @@ class Manager:
         with self._lock:
             session=self.sessions.get(sid)
             if session is None:raise ValueError('This agent no longer exists. Refresh the agents list.')
-            if session.options.get('task') in ('readable','boundary','assets'):raise ValueError('Retry paused functions applies to matching agents.')
+            if session.options.get('task') in NOT_MATCHING:raise ValueError('Retry paused functions applies to matching agents.')
             slug, name = session.slug, session.agent_name
         agent=self.net.attribution_agent(name)
         return retry_paused.retry(self.net,slug,agent,limit,log=log)
@@ -966,7 +980,7 @@ class Manager:
         with self._lock:
             for s in self.sessions.values():
                 if (s.agent_name!=row['name'] or s.slug!=proj['slug'] or s.state!='working'
-                        or s.stop.is_set() or s.options.get('task') in ('readable','boundary','assets')):continue
+                        or s.stop.is_set() or s.options.get('task') in NOT_MATCHING):continue
                 s.rotated=True
                 completed(s,self.net)
                 s.continuation_note=function+' was matched and saved by another operation. Claim a different eligible function.'
@@ -990,7 +1004,7 @@ class Manager:
                 raise ValueError("its account or API endpoint was removed: start a new helper and choose another one")
             options.pop('focus_until',None)  # A manual restart explicitly begins a fresh time allowance.
             s.options, s.restarts = options, 0
-            if not s.options.get("focus_id") and s.options.get("task") not in {"readable", "boundary", "assets"}:
+            if not s.options.get("focus_id") and s.options.get("task") not in NOT_MATCHING:
                 self._prepare(s.slug)
             self._launch(s)
 
@@ -1007,7 +1021,7 @@ class Manager:
             except NetworkError:
                 continue
             options = self.options_now(s.kind, dict(s.options))
-            if options is not None and not options.get("focus_id") and options.get("task") not in {"readable", "boundary", "assets"}:
+            if options is not None and not options.get("focus_id") and options.get("task") not in NOT_MATCHING:
                 self._prepare(s.slug)
             with self._lock:
                 if self._down or not resumable(s):
@@ -1137,7 +1151,7 @@ class Manager:
                  "GROUP BY kind, model")
         self.transcripts.for_project(slug)
         rows = self.net.project_store(slug).all(query.format(""), slug, 0)
-        recent = [dict(r) for r in self.net.project_store(slug).all(query.format("AND task NOT IN ('readable','boundary','assets')"), slug,
+        recent = [dict(r) for r in self.net.project_store(slug).all(query.format("AND task NOT IN (" + ",".join(f"'{task}'" for task in sorted(NOT_MATCHING)) + ")"), slug,
                                                       time.time() - SPIN_WINDOW)]
         advice = spin_advice(recent)
         out = []
@@ -1330,6 +1344,12 @@ class Manager:
             return left(self.net,slug)
         if task == "readable":
             return self.net.readability.left(proj)
+        if task == "data":
+            from .data_agents import left
+            return left(self.net, slug)
+        if task == "port":
+            from .port_agents import left
+            return left(self.net, slug)
         row = self.net.project_store(proj["id"]).one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
         return row["n"]
 
@@ -1453,14 +1473,18 @@ class Manager:
         from . import asset_agents, boundary_investigations
         boundary_investigations.bind(self.net,s,agent)
         asset_agents.bind(self.net,s,agent)
+        from . import data_agents
+        data_agents.bind(self.net,s,agent)
+        from . import port_agents
+        port_agents.bind(self.net,s,agent)
         if not hasattr(self.net, '_agent_tool_tasks'): self.net._agent_tool_tasks = {}
-        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'boundary' if s.options.get('task') == 'boundary' else 'assets' if s.options.get('task')=='assets' else 'matching'
+        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'boundary' if s.options.get('task') == 'boundary' else 'assets' if s.options.get('task')=='assets' else 'data' if s.options.get('task')=='data' else 'port' if s.options.get('task')=='port' else 'matching'
 
         workdir = self.home / "agents" / s.agent_name
         workdir.mkdir(parents=True, exist_ok=True)
         s.push("info", f"{s.label} starting on {s.slug}")
         # Targeted work already has its input; unrelated matching preparation cannot unlock it.
-        targeted = bool(s.options.get("focus_id")) or s.options.get("task") in {"readable", "boundary", "assets"}
+        targeted = bool(s.options.get("focus_id")) or s.options.get("task") in NOT_MATCHING
         if not targeted and (prep := self._prep.get(s.slug)) is not None:
             agent_startup.stage(s, "Waiting for source preparation")
             self._set(s, "starting", "first giving the game's code without a source file one (about a minute)")
@@ -1499,12 +1523,12 @@ class Manager:
                 self._finish(s,'Boundary recommendation saved; review it in Review function boundaries.')
                 break
             if task != 'boundary' and self._left(s.slug, task) == 0:
-                self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
+                self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'write as C' if task == 'data' else 'fix for the PC' if task == 'port' else 'decompile'} here 🎉")
                 break
             agent_startup.stage(s, "Selecting eligible work")
             from ..read_cache import ReadPending
             try:
-                counts = self.net.selection_counts(s.slug, agent) if not s.options.get("focus_id") and task not in {"readable", "boundary", "assets"} else None
+                counts = self.net.selection_counts(s.slug, agent) if not s.options.get("focus_id") and task not in NOT_MATCHING else None
                 policy = self.net.selection(s.slug, agent.name)
             except ReadPending:
                 if s.stop.is_set():break
@@ -1519,7 +1543,7 @@ class Manager:
                     self._pause(s, why + " for this worker (unscored functions also count)",
                                 "Change Work selection, then press Start again.")
                     break
-            if not s.options.get('focus_id') and task not in {'readable', 'boundary', 'assets'} and not counts['available'] and not self.net.project_store(s.slug).one(
+            if not s.options.get('focus_id') and task not in NOT_MATCHING and not counts['available'] and not self.net.project_store(s.slug).one(
                     'SELECT 1 FROM claims WHERE agent_id=?',agent.id):
                 why, todo = self.net.selection_wait_reason(s.slug, agent, counts=counts)
                 self._wait(s, why, time.time()+30, todo)
@@ -1540,8 +1564,8 @@ class Manager:
                 break
             if (shared_until := session_followups.cooldown(self, s)) is not None:
                 s.cooldown_observed = shared_until
-                self._wait(s, "This provider account's usage limit is reached", shared_until + session_followups.stagger(s),
-                           "Helpers using this account resume automatically after reset.", wall_clock=True)
+                self._wait(s, agents.get(s.kind).limit_wait_why(), shared_until + session_followups.stagger(s),
+                           "Helpers on the same account or model resume automatically after reset.", wall_clock=True)
                 continue
             s.runs += 1
             with self._lock:
@@ -1846,7 +1870,9 @@ class Manager:
             return
         facts = tools._project_info(self.net, s.slug, detail=False).split('Next:')[0][:STARTUP_FACTS_CHARS]
         parts = ['App-provided startup context (already fetched; no project_info call needed):', facts]
-        if s.options.get('task') != 'readable':
+        # Only a matching session gets a function claimed for it: the other tasks claim their own work (a port-fix
+        # helper given claim_function's answer found nothing to match on a finished game and waited forever).
+        if s.options.get('task') not in NOT_MATCHING:
             # A fresh provider session has no copy of a previous session's brief/C.
             getattr(self.net, '_claim_packets', {}).pop((agent.id, s.slug), None)
             packet = tools._claim(self.net, agent, s.slug, '', '', count=1)
@@ -1866,6 +1892,12 @@ class Manager:
         if s.options.get('task') == 'boundary':
             from .boundary_investigations import prompt
             return prompt(s)
+        if s.options.get('task') == 'data':
+            from .data_agents import prompt
+            return prompt(self.net, s) + ('\n\n' + s.startup_context if s.startup_context else '')
+        if s.options.get('task') == 'port':
+            from .port_agents import prompt
+            return prompt(self.net, s) + ('\n\n' + s.startup_context if s.startup_context else '')
         text = (focused_agents.prompt(s) if s.options.get('focus_id') else self._prompt(s)) + previous(self.net, s.id, s.slug)
         if s.options.get('focus_id'):
             text += (f"\nUSER FOCUS: Work only on {s.options['focus_function']} until the app's deadline. "
@@ -2041,7 +2073,7 @@ class Manager:
             # Availability may change after the runner's selection check while local
             # connection setup is in progress. Do not launch a paid handshake for an
             # empty queue; retained claims and explicitly targeted tasks still run.
-            if not s.options.get('focus_id') and s.options.get('task') not in {'readable', 'boundary', 'assets'}:
+            if not s.options.get('focus_id') and s.options.get('task') not in NOT_MATCHING:
                 counts = self.net.selection_counts(s.slug, agent)
                 if not counts['available'] and not self.net.project_store(s.slug).one(
                         'SELECT 1 FROM claims WHERE agent_id=?', agent.id):
@@ -2051,7 +2083,7 @@ class Manager:
                     return True
             pending = self.net.__dict__.setdefault('_pending_tool_handshakes', set())
             # Selection was checked by the runner. The authenticated claim rechecks live availability.
-            if s.options.get('task') not in {'readable', 'boundary', 'assets'}:
+            if s.options.get('task') not in NOT_MATCHING:
                 pending.add((agent.id, s.slug))
                 s.tool_handshake_required = True
             agent_startup.stage(s, "Preparing compact startup context")
@@ -2200,9 +2232,18 @@ class Manager:
         refused = refused or next((text for text in errors if k.fatal(text)), "")
         if refused:
             raise Fatal(refused + " Review the agent settings and resolve this error before restarting.")  # every retry would meet it the same way
-        if LIMIT.search(everything):
+        # stderr_failure only reports this after confirming the selected primary stream was refused;
+        # a title request can fail for the same reason while the main model turn still works. Pause
+        # just this helper with a model choice, never the whole account's cooldown.
+        if any(FREE_MODEL_ALLOWANCE.search(f) for f in stream_errors):
+            raise Fatal(f"{agents.FREE_ALLOWANCE} for the selected model. Choose an OpenCode Go model "
+                        "in Add agents, or wait for the free allowance to reset.")
+        # Raw stderr (including title requests) still carries the provider's "usage limit" wording.
+        # Strip it so a free-tier refusal cannot publish the account-wide cooldown.
+        limit_text = FREE_MODEL_ALLOWANCE.sub("", everything)
+        if LIMIT.search(limit_text):
             s.limited = True  # whatever the exit code: Claude Code says so in an ordinary result
-            s.limit_until = limit_reset(everything)
+            s.limit_until = limit_reset(limit_text)
             # Publish the account cooldown before closing this session, so siblings
             # do not launch another paid request while its exit is being recorded.
             from . import session_followups

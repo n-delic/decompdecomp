@@ -5,8 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from decompnet import claim_stalls
-from decompnet.app import pattern_repairs, release_repairs, temporary_repairs
+from decompnet.app import release_repairs
 from decompnet.app.permute import Permuter
+from decomprepair import pattern_repairs, temporary_repairs
 from tests.test_claims import _game
 
 

@@ -19,6 +19,7 @@ SAMPLE_BYTES = 4096
 DECODE_BYTES = 1024 * 1024
 MAX_DECODE_PROBES = 256
 MAX_FORMAT_CLUES = 8192
+MAX_ARCHIVE_EXPANSION = 256 * 1024 * 1024
 HEADERS = re.compile(b'\x1f\x8b\x08|\x78[\x01\x5e\x9c\xda]|Yaz0|Yay0|MIO0|RNC[\x01\x02]|\x89PNG\r\n\x1a\n|RIFF|OggS|VAGp|\xff\xd8\xff')
 STRINGS = re.compile(rb'[\x20-\x7e]{8,}\x00')
 
@@ -75,6 +76,39 @@ def _clue(image, offset, budget):
     return None
 
 
+def _archive_clues(image, check):
+    """Name each ZIP member's bytes by its path in the archive.
+
+    An N64 rally game keeps 7.7 MB of stages, scripts and demos as deflated members of one ZIP; without the archive's
+    own directory the scan showed them as 1,194 unknown high-entropy regions. A member is validated only when its data
+    expands to the declared size and checksum, within a total expansion budget.
+    """
+    from .asset_archives import member_bytes, zip_members
+    from .asset_formats import AssetError
+    clues=[];budget=MAX_ARCHIVE_EXPANSION;archives=[]
+    members=zip_members(image,check=check,archives=archives)
+    for archive in archives:
+        clues.append(dict(offset=archive['central'],size=archive['end']-archive['central'],kind='container',
+                          label=f"ZIP central directory ({archive['count']:,} entries)",confidence='validated',
+                          reason="Every record agrees with its file's local header and the end record."))
+        clues+=[dict(offset=f['offset'],size=f['size'],kind='container',label=f"ZIP folder: {f['name']}",archive_path=f['name'],
+                     confidence='validated',reason='A folder entry in the ZIP; it holds no data.') for f in archive['folders']]
+    for member in members:
+        check()
+        clue=dict(offset=member['offset'],size=member['size'],kind='compressed' if member['method']==8 else 'data',
+                  label=f"ZIP member: {member['name']}",archive_path=member['name'],expanded_size=member['expanded'],
+                  confidence='tentative',reason='Listed in a ZIP central directory that agrees with its local header; '
+                  'the expansion budget was reached, so its data was not checked.')
+        if member['expanded']<=budget:
+            budget-=member['expanded']
+            try:member_bytes(image,member)
+            except AssetError as error:
+                clue.pop('kind');clue.update(confidence='rejected',reason=f'Listed in a ZIP central directory, but its data failed: {error}')
+            else:clue.update(confidence='validated',reason='Listed in a ZIP central directory; its data expanded to the declared size and checksum.')
+        clues.append(clue)
+    return clues
+
+
 def analyse(image, segments, functions, symbols, *, big_endian=True, progress=lambda _: None, check=lambda: None, ranges=(), assets=()):
     """Partition the entire image, retaining overlapping mappings rather than choosing an overlay.
 
@@ -129,6 +163,7 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
             entry = dict(s, segment=m['segment'], ambiguous=len(mappings)>1)
             symbol_spans.append(entry)
             span(lo, hi, 'symbol', len(symbol_spans)-1)
+    assets = [*assets, *_archive_clues(image, check)]
     clues = [dict(asset) for asset in assets]
     asset_starts = sorted(c['offset'] for c in assets)
     asset_ends = []
@@ -195,7 +230,8 @@ def analyse(image, segments, functions, symbols, *, big_endian=True, progress=la
         rows.append(dict(id=f'{lo:x}-{hi:x}',start=lo,end=hi,size=hi-lo,kind=kind,confidence=confidence,
                          mappings=maps,symbols=syms,functions=owners,evidence=evidence,entropy=entropy,
                          sampled_bytes=len(sample),references=[],pointers=[],
-                         detected_asset=next((e for e in evidence if 'preview_settings' in e),None)))
+                         detected_asset=next((e for e in evidence if 'preview_settings' in e),None),
+                         archive_path=next((e['archive_path'] for e in evidence if 'archive_path' in e and e['confidence']!='rejected'),None)))
     starts = [r['start'] for r in rows]
 
     def region(offset):

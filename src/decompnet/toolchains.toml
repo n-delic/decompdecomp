@@ -936,6 +936,154 @@ sha256 = "3623232f33a9c3baadf304480b2535f9a3cba8a58d42ecbb438ba267315d9998"
 subdir = "jdk-21.0.12.1+1/Contents/Home"
 platforms = ["macos-arm64"]
 
+[zig]
+name = "Zig 0.14.1 (clang 19), a C compiler for the PC"
+kind = "tool"
+license = "MIT"
+source = "ziglang.org/download 0.14.1"
+description = "Compiles a finished game's C for a 64-bit PC, to list what a port has to fix first (Port readiness, Compile for PC). Its clang brings its own headers for every target, so the result is the same on every computer."
+binary_name = "zig"
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz"
+sha256 = "24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c"
+subdir = "zig-x86_64-linux-0.14.1"
+platforms = ["linux-x86_64"]
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-aarch64-linux-0.14.1.tar.xz"
+sha256 = "f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b"
+subdir = "zig-aarch64-linux-0.14.1"
+platforms = ["linux-aarch64"]
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-x86_64-macos-0.14.1.tar.xz"
+sha256 = "b0f8bdfb9035783db58dd6c19d7dea89892acc3814421853e5752fe4573e5f43"
+subdir = "zig-x86_64-macos-0.14.1"
+platforms = ["macos-x86_64"]
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-aarch64-macos-0.14.1.tar.xz"
+sha256 = "39f3dc5e79c22088ce878edc821dedb4ca5a1cd9f5ef915e9b3cc3053e8faefa"
+subdir = "zig-aarch64-macos-0.14.1"
+platforms = ["macos-arm64"]
+[[zig.parts]]
+url = "https://ziglang.org/download/0.14.1/zig-x86_64-windows-0.14.1.zip"
+sha256 = "554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c"
+subdir = "zig-x86_64-windows-0.14.1"
+platforms = ["windows-x86_64"]
+
+[wabt]
+name = "WABT 1.0.42 (wasm2c)"
+kind = "tool"
+license = "Apache-2.0"
+source = "github.com/WebAssembly/wabt releases 1.0.42"
+description = "Turns a WebAssembly build of a finished game's C back into C a PC compiles (port/wasm): the game runs in a sandboxed memory laid out as the console's, big-endian, at the console's addresses."
+binary_name = "wasm2c"
+[[wabt.parts]]
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-macos-arm64.tar.gz"
+sha256 = "3f654779b436c628db3ca4323c51538815f5fbc887a6d5f3bb1c18d36281e240"
+subdir = "wabt-1.0.42"
+platforms = ["macos-arm64"]
+[[wabt.parts]]
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-linux-x64.tar.gz"
+sha256 = "84895407a6bbb80e918f33b16b2fb2206021c150b6bc9ff6f761263a745ab131"
+subdir = "wabt-1.0.42"
+platforms = ["linux-x86_64"]
+[[wabt.parts]]
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-linux-arm64.tar.gz"
+sha256 = "a7632c1cc66f70886441842ecf5a2ffa91a98c79e026059458451234ad013ea8"
+subdir = "wabt-1.0.42"
+platforms = ["linux-aarch64"]
+[[wabt.parts]]
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-windows-x64.tar.gz"
+sha256 = "62f1eb2b51aa57cf0f0b8ba333bf2c72a049930aa9c5de01dcad271c4fe48c88"
+subdir = "wabt-1.0.42"
+platforms = ["windows-x86_64"]
+
+[cmake]
+name = "CMake 4.4.4"
+kind = "tool"
+license = "BSD-3-Clause"
+source = "github.com/Kitware/CMake releases v4.4.4"
+description = "Builds the tools that come as C++ source (Torch, for N64 ports): the build system they're written for."
+binary_name = "cmake"
+[[cmake.parts]]
+url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-linux-x86_64.tar.gz"
+sha256 = "e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb"
+subdir = "cmake-4.4.4-linux-x86_64"
+platforms = ["linux-x86_64"]
+[[cmake.parts]]
+url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-linux-aarch64.tar.gz"
+sha256 = "a1b6cc63636a0e55c63257cf3315a8a5f129e42fade25db1afea4ff8ab06f25e"
+subdir = "cmake-4.4.4-linux-aarch64"
+platforms = ["linux-aarch64"]
+[[cmake.parts]]
+url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-macos-universal.tar.gz"
+sha256 = "4b7b73704b1db9b374e5c9ab8e17ac6148b817b6396ee75cd94a852cbac9d305"
+subdir = "cmake-4.4.4-macos-universal/CMake.app/Contents"
+platforms = ["macos-x86_64", "macos-arm64"]
+[[cmake.parts]]
+url = "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-windows-x86_64.zip"
+sha256 = "bace36e94b31c68ab6fa295f26dfa11219e0701cf7c94b0284a7d1cb13dac536"
+subdir = "cmake-4.4.4-windows-x86_64"
+platforms = ["windows-x86_64"]
+
+[torch]
+name = "Torch (HarbourMasters), the N64 asset extractor"
+kind = "tool"
+license = "MIT"
+source = "HarbourMasters/Torch 7f5d55f and the libraries it fetches, each pinned by commit"
+description = "Extracts a game's data from your own ROM into the archive an N64 port reads (libultraship's .o2r), from the asset map Port readiness writes. Built here from its source with the pinned CMake and this computer's C++ compiler."
+binary_name = "torch"
+build = "torch"
+requires = ["cmake"]
+[[torch.parts]]
+url = "https://codeload.github.com/HarbourMasters/Torch/tar.gz/7f5d55f9de53f96e61c11399cb3066f8dd8e835e"
+sha256 = "ab0baa4345cefd661d2e65ccc475b09323ce37ef8fbc9933b867808aa15b101e"
+file = "torch-torch-7f5d55f9de53f96e61c11399cb3066f8dd8e835e.tar.gz"
+subdir = "Torch-7f5d55f9de53f96e61c11399cb3066f8dd8e835e"
+into = "source/torch"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[torch.parts]]
+url = "https://codeload.github.com/mackron/dr_libs/tar.gz/da35f9d6c7374a95353fd1df1d394d44ab66cf01"
+sha256 = "2704d347f480ca1bc92233fb01747e4550cc8031735b6ea62ca9990ebb8851ae"
+file = "torch-dr_libs-da35f9d6c7374a95353fd1df1d394d44ab66cf01.tar.gz"
+subdir = "dr_libs-da35f9d6c7374a95353fd1df1d394d44ab66cf01"
+into = "source/deps/dr_libs"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[torch.parts]]
+url = "https://codeload.github.com/glankk/libgfxd/tar.gz/96fd3b849f38b3a7c7b7f3ff03c5921d328e6cdf"
+sha256 = "96d830f6ff9c8a91c8052b51ca02ffdfd1d44ab0a9d20f899f65d4c931073696"
+file = "torch-libgfxd-96fd3b849f38b3a7c7b7f3ff03c5921d328e6cdf.tar.gz"
+subdir = "libgfxd-96fd3b849f38b3a7c7b7f3ff03c5921d328e6cdf"
+into = "source/deps/libgfxd"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[torch.parts]]
+url = "https://codeload.github.com/gabime/spdlog/tar.gz/79524ddd08a4ec981b7fea76afd08ee05f83755d"
+sha256 = "c6dee844e35a54cc80e3ab76aae2310763e0b49c7397549dfa4d4657d9737138"
+file = "torch-spdlog-79524ddd08a4ec981b7fea76afd08ee05f83755d.tar.gz"
+subdir = "spdlog-79524ddd08a4ec981b7fea76afd08ee05f83755d"
+into = "source/deps/spdlog"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[torch.parts]]
+url = "https://codeload.github.com/leethomason/tinyxml2/tar.gz/321ea883b7190d4e85cae5512a12e5eaa8f8731f"
+sha256 = "d5ae097578717b42b4f05f2c6b2d09f473a1c30d1552ca4e2dcb4eab5b34de84"
+file = "torch-tinyxml2-321ea883b7190d4e85cae5512a12e5eaa8f8731f.tar.gz"
+subdir = "tinyxml2-321ea883b7190d4e85cae5512a12e5eaa8f8731f"
+into = "source/deps/tinyxml2"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[torch.parts]]
+url = "https://codeload.github.com/jbeder/yaml-cpp/tar.gz/56e3bb550c91fd7005566f19c079cb7a503223cf"
+sha256 = "b8e01ea231a96d6984b0795f225281d1e9989f40ccd589568a051450f41e9151"
+file = "torch-yaml-cpp-56e3bb550c91fd7005566f19c079cb7a503223cf.tar.gz"
+subdir = "yaml-cpp-56e3bb550c91fd7005566f19c079cb7a503223cf"
+into = "source/deps/yaml-cpp"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[torch.parts]]
+url = "https://codeload.github.com/madler/zlib/tar.gz/51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf"
+sha256 = "d9e270d46252734aa49770fbc544125391617956266f220bd63216c834f3a522"
+file = "torch-zlib-51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf.tar.gz"
+subdir = "zlib-51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf"
+into = "source/deps/zlib"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+
 [binutils-mips]
 name = "GNU binutils for MIPS (decompals)"
 kind = "tool"

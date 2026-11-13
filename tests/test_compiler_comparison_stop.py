@@ -1,6 +1,5 @@
 """Stopping a comparison terminates its compiler and preserves only completed comparisons."""
 import json
-import subprocess
 import sys
 import threading
 import time
@@ -25,13 +24,13 @@ def test_stop_kills_active_compiler_keeps_results_and_resumes(tmp_path, monkeypa
     monkeypatch.setattr(net, '_comparison_digest', lambda proj, fn, *args: fn['name'])
     started = threading.Event()
     processes = []
-    popen = subprocess.Popen
+    popen = compiler.spawner.Popen
     def launch(*args, **kwargs):
         process = popen(*args, **kwargs)
         processes.append(process)
         started.set()
         return process
-    monkeypatch.setattr(compiler.subprocess, 'Popen', launch)
+    monkeypatch.setattr(compiler.spawner, 'Popen', launch)
     def judge(proj, fn, *args):
         assert compiler._CANCEL_CHECK.get() is not None
         if fn['name'] == 'func_1':

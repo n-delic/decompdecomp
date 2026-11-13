@@ -1,4 +1,5 @@
-from decompnet.app import draft_repairs, scalar_storage_reuse
+from decompnet.app import draft_repairs
+from decomprepair import scalar_storage_reuse
 
 SOURCE = 'int f(int mode, int x) { int resource; short next; if (mode) { resource = x; use(resource); } else { next = x + 8; use(next); } return 0; }'
 

@@ -3,16 +3,8 @@ import subprocess
 
 import pytest
 
-from decompnet.app import (
-    allocation_repairs,
-    allocator_call_guards,
-    draft_repairs,
-    initializer_clusters,
-    iterative_repairs,
-    phase_lifetime_repairs,
-    region_repairs,
-    search_frontier,
-)
+from decompnet.app import draft_repairs, initializer_clusters, iterative_repairs, region_repairs, search_frontier
+from decomprepair import allocation_repairs, allocator_call_guards, phase_lifetime_repairs
 
 
 def test_pointer_guards_follow_goto_dominance_and_keep_four_identical_call_leaves():

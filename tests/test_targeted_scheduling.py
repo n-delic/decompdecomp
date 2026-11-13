@@ -1,8 +1,8 @@
 import pytest
 
-from decompnet.app import address_association_repairs as addresses
-from decompnet.app import call_initialization_repairs as initialization
 from decompnet.app import draft_repairs, local_experiments, stack_layout
+from decomprepair import address_association_repairs as addresses
+from decomprepair import call_initialization_repairs as initialization
 
 
 def test_byte_pointer_address_association_preserves_other_definitions_and_own_helpers():

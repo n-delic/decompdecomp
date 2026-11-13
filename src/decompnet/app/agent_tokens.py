@@ -6,11 +6,13 @@ import json
 import re
 import time
 
+from decomprepair import expression_repairs, pattern_repairs
+
 from .. import scoring
 from ..network import NetworkError
 from ..project import compiler_for
 from ..repair_feedback import trial
-from . import agent_targets, expression_repairs, pattern_repairs
+from . import agent_targets
 
 
 def candidate(net, agent, slug, function):

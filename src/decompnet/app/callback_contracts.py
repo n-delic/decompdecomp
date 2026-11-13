@@ -1,11 +1,12 @@
 """Bounded advisory review of explicit callback arguments, never a signature rewrite."""
 import re
 
+from decomprepair import zero_argument_repairs
+from decomprepair.integer_repair_support import IDENT, calls, split_args, view
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank, find
 from . import callee_contracts as contracts
-from . import zero_argument_repairs
-from .integer_repair_support import IDENT, calls, split_args, view
-from .pattern_repairs import close
 
 LIMIT = 2
 POINTER = re.compile(r'\s*(void|int|s32|u32)\s*\(\s*\*\s*(?:'+IDENT+r')?\s*\)\s*\(([^()]*)\)\s*')

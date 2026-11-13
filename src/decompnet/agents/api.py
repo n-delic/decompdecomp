@@ -604,6 +604,29 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                               s(queries={"type":"array","items":{"type":"string","minLength":1,"maxLength":200},"minItems":1,"maxItems":20,"req":True}, context_function=st("canonical function in the intended original image"))),
         "read_data": ("Hex dump of the original's data at an address or symbol.", s(what=st("address or symbol", True),
                                                                                     length=it("bytes, up to 512"))),
+        "get_data_unit": ("One of the game's data symbols to write as C: address, extent, bytes, users.",
+                          s(name=st("data symbol (D_80012340 or its name)", True))),
+        "claim_data": ("Data agents: take the next data unit to write as C (or the one named).",
+                       s(name=st("data symbol, or empty for the next"))),
+        "release_data": ("Data agents: give a unit back with what you learned.",
+                         s(name=st("data symbol", True), note=st("what you learned"))),
+        "claim_port_fix": ("Port-fix agents: take the next matched function to fix for the PC (or the one named).",
+                           s(function=st("function, or empty for the next"))),
+        "release_port_fix": ("Port-fix agents: give a function back with what you learned.",
+                             s(function=st("function", True), note=st("what you learned"))),
+        "check_for_pc": ("What a 64-bit PC compiler says of C for a matched function. Nothing is judged or saved. "
+                         "Give its whole C, or edits (each old once in its C) for a long function.",
+                         s(function=st("function", True), source=st("its whole C"), edits={"type": "array", "minItems": 1, "maxItems": 12,
+                                "items": {"type": "object", "properties": {"old": {"type": "string"}, "new": {"type": "string"}},
+                                          "required": ["old", "new"]}})),
+        "fix_for_pc": ("Judge a function's C fixed for the PC: kept only if the console build still matches and the "
+                       "PC build is no worse on errors and pointer-size warnings and better on one. Give its whole C, "
+                       "or edits (each old once in its C) for a long function.",
+                       s(function=st("function", True), source=st("its whole fixed C"), edits={"type": "array", "minItems": 1, "maxItems": 12,
+                                "items": {"type": "object", "properties": {"old": {"type": "string"}, "new": {"type": "string"}},
+                                          "required": ["old", "new"]}})),
+        "compile_data": ("Judge C defining one data symbol: kept only if it holds the game's bytes there, all of it.",
+                         s(name=st("data symbol", True), source=st("C defining it", True))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "
                       "Give a vtable address or one of its functions; empty lists the classes.",
                       s(what=st("vtable address, or a virtual function / constructor"))),
@@ -618,6 +641,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                          "the judge's survey of other compilers in the background; check_ranges=true looks at the "
                          "applied ranges again.", s(survey=bo("start the survey"), check_ranges=bo("check applied ranges"))),
         "list_functions": ("List functions by status.", s(status=st("open | matched | all"), limit=it("max rows"))),
+        "port_readiness": ("What still stands between this game and a native PC port. Read-only.", s()),
         "add_note": ("Leave a note on a function for the next agent on it. Something every agent on this game should "
                      "know goes through share_knowledge.",
                      s(text=st("note", True), function=st("function", True))),

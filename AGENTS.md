@@ -98,7 +98,8 @@ own tests pass: run each feature the app already has on that console, for real, 
 list is ROADMAP.md's "What works where" table, one row per feature; today:
 - starting from your own copy, the judge, machine drafts, autopilot, drafts that follow the header (`redraft`),
   C++ methods drafted as `Class::method`;
-- twins (in a game and across your games), the permuter, shared knowledge;
+- twins (in a game and across your games), other releases of a game (`release_key`, app/regional.py), the permuter,
+  shared knowledge;
 - hand-written assembly and kernel stubs set aside, pieces joined to their function, the agents' "no C makes this"
   verdict, Check again, function-end reports (`report_boundary`);
 - compiler ranges and suggestions, range checks, the compiler map and the judge's survey, flag search
@@ -136,6 +137,14 @@ is in `app/agents.py`. The rest of the app asks `agents.get(kind)` and never com
 Adding an agent (copy `agents/template.py`, fill in its parts, register it, pass `tests/test_agent_kinds.py`):
 CONTRIBUTING.md, "Adding an agent".
 
+The repair families that propose C changes from a byte difference are a library of their own, decomprepair, in its
+own repository: RetroReversing/decomp-repair (public, AGPL-3.0, history kept). decompdecomp depends on a tagged archive
+of it (`pyproject.toml`), so installing needs no git. The library never imports `decompnet`, and never compiles or
+judges. A new repair that only reads C and code goes there: change it in decomp-repair, tag a release, then bump the tag
+in `pyproject.toml` and `uv lock` here. A repair that needs the network or a project stays in `app/` and calls it.
+`forks/csource.py`, `rom/symbols.py`, `arch/mips.py` and `m2cfix.py` are names for the library's modules
+(`tests/test_decomprepair.py`). The ~130 tests here that exercise its families with the app's compilers stay here.
+
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
 from the vtables constructors store, MIPS and x86, named by a PC program's RTTI, `consoles/pc/rtti.py`: the `get_class`
@@ -145,7 +154,7 @@ tool and the class lines of `get_function`),
 `Arch.field_accesses`, MIPS: `arch/mips_fields.py`, x86: `arch/x86_fields.py`; the `guess_struct` tool and the brief's lines, `app/engine/layouts.py`),
 `compilermap.py` (which compiler built each part of a MIPS game; the judge's survey is `engine.survey_compilers`;
 `app/rangecheck.py` tests a suggested range on its neighbours before it applies), `app/tools.py` (the MCP
-tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts), `app/window.py`
+tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts; helpers reach it through the MCP gateway, `gateway/` (Rust) started by `app/mcp_gateway.py`, which answers every request within a deadline: docs/MCP_GATEWAY.md), `app/window.py`
 + `app/gtkwindow.py` + `app/macwindow.py` + `app/tray.py` (the window: Linux uses system GTK/WebKitGTK, macOS uses
 Cocoa/WebKit through the app's Python; the page answers only a window with the secret in its user agent; Linux and
 Windows have a tray icon; tests set `DECOMP_WINDOW=0` and

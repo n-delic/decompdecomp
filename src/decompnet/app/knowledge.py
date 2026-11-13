@@ -102,6 +102,10 @@ class Knowledge:
 
     def _prepare(self, store):
         if store in self.ready:return store
+        from .. import store as storage
+        if storage.ATTACH_ONLY:  # a reader process: the app makes these tables
+            self.ready.add(store)
+            return store
         with store.tx() as db:
             if store in self.ready:return store
             for sql in SCHEMA:db.execute(sql)

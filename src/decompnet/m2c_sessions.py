@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 
-from . import compiler, limits
+from . import compiler, limits, spawner
 from .hostenv import NO_WINDOW, stop_process_tree
 
 _current=ContextVar('m2c_session',default=None)
@@ -38,7 +38,7 @@ class Session:
         if self.process is not None and (self.key!=key or self.requests>=64):self.close()
         if self.process is None:
             self.lines=queue.Queue()
-            self.process=subprocess.Popen(limits.capped([str(python),str(Path(__file__).with_name('m2c_worker.py'))],memory=2<<30),
+            self.process=spawner.Popen(limits.capped([str(python),str(Path(__file__).with_name('m2c_worker.py'))],memory=2<<30),
                 stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,creationflags=NO_WINDOW)
             process=self.process
             def read():

@@ -4,8 +4,9 @@ import hashlib
 import pytest
 
 from decompnet import candidate_quality, claim_stalls
-from decompnet.app import evidence_repairs, register_reuse_repairs, release_repairs
+from decompnet.app import release_repairs
 from decompnet.app.permute import Permuter
+from decomprepair import evidence_repairs, register_reuse_repairs
 from tests.test_claims import _game
 
 

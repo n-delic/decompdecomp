@@ -4,8 +4,9 @@ import subprocess
 
 import pytest
 
-from decompnet.app import bit_predicate_repairs as repairs
-from decompnet.app import draft_repairs, scope_topology_repairs
+from decompnet.app import draft_repairs
+from decomprepair import bit_predicate_repairs as repairs
+from decomprepair import scope_topology_repairs
 
 SCOPE=dict(language='c',int_bits=32)
 SOURCE='int f(unsigned short word,int index){if((word & (1 << index)) == (1 << index)) return 1;return 0;}'
@@ -99,7 +100,7 @@ def test_only_our_pure_known_helper_body_is_retuned():
 
 
 def test_masked_sequence_reuses_only_disjoint_existing_storage():
-    from decompnet.app import bit_role_repairs
+    from decomprepair import bit_role_repairs
     source='int f(unsigned int word,unsigned int mask){unsigned int old;unsigned int value;int result;old=word+1;use(old);value=mask+2;use(value);result=(word & mask)==mask;return result;}'
     choices=bit_role_repairs.variants(source,'f',arch='mips',**SCOPE)
     assert 0<len(choices)<=bit_role_repairs.LIMIT

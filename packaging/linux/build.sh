@@ -22,6 +22,7 @@ OUT="$ROOT/dist"
 mkdir -p "$OUT"
 
 # 1. decompdecomp, installed into a Python of its own
+uv run --no-project --python 3.12 "$ROOT/packaging/build_gateway.py"  # the MCP gateway, carried in the wheel
 (cd "$ROOT" && uv build --wheel --out-dir "$WORK/wheel" >/dev/null)
 (cd "$ROOT" && uv export --locked --no-dev --no-emit-project --format requirements.txt \
   --output-file "$WORK/runtime-requirements.txt" >/dev/null)
@@ -35,6 +36,7 @@ uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-pack
   --requirements "$WORK/runtime-requirements.txt"
 uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages --no-deps "$WORK"/wheel/*.whl
 "$APP/python/bin/python3.12" "$ROOT/packaging/stamp_build.py" "$ROOT"
+[ "${DECOMP_BUILD_GATEWAY:-1}" = 0 ] || "$APP/python/bin/python3.12" -c 'from decompnet.app import mcp_gateway; assert mcp_gateway.built(), "no MCP gateway in the package"'
 rm -f "$APP/python/bin/decomp"  # its shebang names this build's folder: the launchers below run the module instead
 cp "$(command -v uv)" "$APP/bin/uv"
 find "$APP/python" -name __pycache__ -prune -exec rm -rf {} +

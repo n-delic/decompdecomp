@@ -1,6 +1,7 @@
 import pytest
 
-from decompnet.app import draft_repairs, local_experiments, store_address_repairs
+from decompnet.app import draft_repairs, local_experiments
+from decomprepair import store_address_repairs
 
 SOURCE = '''void f(void *node, int base) {
     *((short *)((char *)((*(int *)((char *)node + 8) * 20) + base) + 12)) = 0;

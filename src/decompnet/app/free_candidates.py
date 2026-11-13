@@ -89,7 +89,9 @@ def exhausted(job):
 
 def run(twins, slug, job):
     """Try recognisable leaf patterns and exact SDK fingerprints before spending CPU on wider similarity."""
-    from . import repair_mappings, repair_preflight, reuse_traversal, wrapper_families
+    from decomprepair import repair_preflight
+
+    from . import repair_mappings, reuse_traversal, wrapper_families
     from .address_repairs import variants as address_variants
     from .sdk_library import allowed
     from .sdk_source_repairs import variant as sdk_variant

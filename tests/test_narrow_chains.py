@@ -1,7 +1,8 @@
 """A bounded linked hypothesis can cross a score valley; only the normal judge keeps it."""
 import pytest
 
-from decompnet.app import draft_repairs, narrow_chains
+from decompnet.app import draft_repairs
+from decomprepair import narrow_chains
 
 SOURCE='void f(){s32 wide;s32 copy;u8 narrow;wide=read();copy=wide;copy=(u16)copy&0xFF;narrow=wide&0xFF;if(narrow)return;send(wide&0xFF);}'
 

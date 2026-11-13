@@ -4,7 +4,8 @@ import json
 import pytest
 
 from decompnet import repair_changes
-from decompnet.app import agent_tokens, tools, value_repairs
+from decompnet.app import agent_tokens, tools
+from decomprepair import value_repairs
 from tests.test_claims import _game
 
 

@@ -2,7 +2,7 @@
 import pytest
 
 from decompnet.app import draft_repairs
-from decompnet.app import loaded_byte_repairs as repairs
+from decomprepair import loaded_byte_repairs as repairs
 
 HEADER = 'typedef unsigned char u8; typedef unsigned int u32;'
 SOURCE = '''extern u8 values[5];

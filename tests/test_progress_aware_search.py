@@ -2,7 +2,8 @@ import json
 from types import SimpleNamespace
 
 from decompnet.app import repair_diversity as diversity
-from decompnet.app import repair_localisation, repair_replay, scan_donor_ranking
+from decompnet.app import repair_replay, scan_donor_ranking
+from decomprepair import repair_localisation
 
 
 def node(family):return dict(source=family,parent_source='base',parent_output='parent',path=[family])

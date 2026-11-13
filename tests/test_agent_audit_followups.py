@@ -66,6 +66,26 @@ def test_account_cooldown_persists_and_is_credential_scoped(tmp_path,monkeypatch
     assert 'secret' not in session_followups.account_key(s)
 
 
+def test_opencode_limits_are_isolated_by_account_and_model(tmp_path,monkeypatch):
+    net,manager,s,agent=setup(tmp_path,monkeypatch)
+    def helper(kind,model,name):
+        return manager._record('game',kind,name,name,{'model':model})
+    zen=helper('opencode','opencode/beam-free','zen')
+    go=helper('opencode','opencode-go/beam','go')
+    zen_other=helper('opencode','opencode/other-free','zen-other')
+    claude_a=helper('claude','haiku','claude-a')
+    claude_b=helper('claude','opus','claude-b')
+
+    until=time.time()+3600
+    session_followups.remember_limit(manager,zen,until)
+    assert session_followups.cooldown(manager,zen)==until
+    assert session_followups.cooldown(manager,go) is None, 'a console-account limit must not pause the Go account'
+    assert session_followups.cooldown(manager,zen_other) is None, 'one model limit must not pause another model'
+    assert session_followups.configuration_key(zen)!=session_followups.configuration_key(zen_other)
+    # Every other connector still has one subscription: its helpers share a cooldown.
+    assert session_followups.account_key(claude_a)==session_followups.account_key(claude_b)
+
+
 def test_account_wait_precedes_any_provider_session(tmp_path,monkeypatch):
     net,manager,s,agent=setup(tmp_path,monkeypatch)
     session_followups.remember_limit(manager,s,time.time()+3600)

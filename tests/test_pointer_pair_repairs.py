@@ -4,8 +4,9 @@ import subprocess
 
 import pytest
 
-from decompnet.app import draft_repairs, field_order_repairs
-from decompnet.app import pointer_pair_repairs as repairs
+from decompnet.app import draft_repairs
+from decomprepair import field_order_repairs
+from decomprepair import pointer_pair_repairs as repairs
 
 HEADER='typedef struct { int a; int b; } Pair;\n'
 INLINE='''int work(Pair *input) {
@@ -108,7 +109,7 @@ def test_macros_that_capture_a_local_are_not_treated_as_pure_loads():
 
 
 def test_zero_only_reuse_keeps_an_unused_signed_local_and_the_later_loop_phase():
-    from decompnet.app import zero_test_repairs
+    from decomprepair import zero_test_repairs
     source='void work(unsigned int n) { unsigned int t; int r; t=n; n--; if(t != 0) { do { t=n; n--; } while(t != 0); } }'
     candidates=zero_test_repairs.variants(source,'work','mips')
     assert candidates and any('r=n; n--; if(r != 0)' in text for _,text in candidates)
@@ -130,7 +131,7 @@ def test_volatile_aliases_nested_records_and_escaped_rhs_stay_unchanged():
 
 
 def test_zero_test_reuse_preserves_high_bit_values_with_a_host_compiler(tmp_path):
-    from decompnet.app import zero_test_repairs
+    from decomprepair import zero_test_repairs
     cc=shutil.which('cc')
     if not cc:pytest.skip('Host compiler needed for the synthetic execution check.')
     source='int work(unsigned int n) { unsigned int t; int r; t=n; if(t != 0) { return 1; } return 0; }'

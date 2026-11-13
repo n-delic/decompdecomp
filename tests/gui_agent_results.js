@@ -42,5 +42,9 @@ vm.runInContext(source.slice(source.indexOf('async function showAgentResults'),s
  assert(body.children.at(-1).innerHTML.includes('Functions worked on'));
  assert(body.children.at(-1).innerHTML.includes('Repeated submissions count once'));
  assert(metrics.includes('Last improvement') && metrics.includes('2m'));
+ // A polishing agent's card times its latest polish, not a score improvement.
+ const polish=context.agentMetrics({id:'two',label:'Polisher',state:'working',task:'readable'}, {polished:4,last_improvement:null,last_polish:Date.now()/1000-300});
+ assert(polish.includes('Last polish') && polish.includes('5m ago') && !polish.includes('Last improvement'));
+ assert(context.agentMetrics({id:'three',label:'Polisher',state:'working',task:'readable'}, {polished:0}).includes('Last polish</span> None yet'));
  console.log('Agent metric links, paged results, safe names and function navigation passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

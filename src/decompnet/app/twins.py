@@ -53,6 +53,14 @@ UNDECLARED_RETRIES = 4  # names a fork twin's file declares later, declared and 
 _GENERATED = ("__dt__", "__ct__", "__sinit", "__vt__")  # C++ code the compiler writes: nothing to copy
 
 
+
+def prefer_own_compilers(sources: list, wanted: dict, own) -> None:
+    """Donors built with the compiler of a function that wants them first: the function's own compiler (its range's
+    or its verified profile), not the game's default, which a function in another range doesn't use."""
+    keys = {fp: {own(b) for b in found} for fp, found in wanted.items()}
+    sources.sort(key=lambda a: a["compiler"] not in keys.get(a["fingerprint"], ()))
+
+
 @dataclass
 class Print:
     """A function's fingerprint: masked code + relocation layout, and what each relocation refers to."""
@@ -609,6 +617,10 @@ class Twins:
             job.ordered.set()
             self.run(slug, job)
             job.state = "running"  # run() finishes its local pass; cross-project work is still cancellable
+            from . import regional  # another release of this game first: its pairs are the surest donors
+            if regional.linked(self.net, proj):
+                report(job, "Trying the other release's code")
+                job.matched += regional.transfer(self.net, slug, job)['matched']
             report(job, 'Searching other games and local SDKs')
             job.matched += self.across_games(slug, job)
             from . import free_candidates, named_donors, similar_phase
@@ -795,7 +807,16 @@ class Twins:
                 other["id"], *part)
         if not sources:
             return 0
-        sources.sort(key=lambda a: a["compiler"] != self._compiler_key(cfg["compiler"]))
+        store = self.net.project_store(proj["id"])
+        ids = [i for found in wanted.values() for i in found]
+        destinations = {}
+        for at in range(0, len(ids), SQL_CHUNK):
+            part = ids[at:at + SQL_CHUNK]
+            destinations.update((r["id"], r) for r in store.all(
+                "SELECT id,name,vram,rom_offset FROM functions WHERE id IN (" + ",".join("?" for _ in part) + ")", *part))
+        own = lambda b_id: (self._compiler_key(compiler_for(cfg, destinations[b_id]["vram"], destinations[b_id]))
+                            if b_id in destinations else None)
+        prefer_own_compilers(sources, wanted, own)
         source_prints = self.prints(other)
         source_symbols = self.net.symbols(other["id"])
         target_symbols = self.net.symbols(proj["id"])
@@ -1305,7 +1326,9 @@ class Twins:
                     res = forks.attempt(agent, slug, b["name"], note + src, keep=False,
                                         prelude="\n".join([prelude, *decls]).strip("\n"))
             else:
-                res = self.net.try_quietly(agent, proj, b, note + source)
+                # Saved files follow through the progress watcher, as for autopilot's drafts: syncing them before and
+                # after each try took most of a try's time on a big game.
+                res = self.net.try_quietly(agent, proj, b, note + source, synchronize=False)
         except NetworkError as e:
             log.info("twins: %s from %s: %s", b["name"], a["name"], str(e)[:WHY_CHARS])
             return "skip", ""

@@ -4,11 +4,12 @@ import struct
 import pytest
 
 from decompnet import toolchains
-from decompnet.app import draft_repairs, live_return_address_repairs
-from decompnet.arch import mips_debug_break, mips_live_return_address
+from decompnet.app import draft_repairs
+from decompnet.arch import mips_debug_break
 from decompnet.compiler import SourceRejected, check_source, compile_source
 from decompnet.elfobj import extract_function
 from decompnet.project import compiler_config
+from decomprepair import live_return_address_repairs, mips_live_return_address
 
 ASM='/* 0 80001000 3C01800B */ lui $at, 0x800b\n/* 4 80001004 AC3F2000 */ sw $ra, 0x2000($at)'
 SOURCE='extern void *D_800B2000; void f(void) { void *unknown; D_800B2000=unknown; }'

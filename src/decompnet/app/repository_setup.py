@@ -134,6 +134,43 @@ def bind(net, slug, path, proj, log=lambda line:None):
     net._update_cfg(slug, lambda cfg: cfg.update(progress_folder=str(path)))
 
 
+def checkpoint(net, slug, root, path, log, *, message='Save decompilation progress'):
+    """Commit all saved progress on the checked-out branch: Commit saved progress, and the automatic commits'
+    own checkpoint after functions were renamed (match_commits.process). Returns the commit."""
+    proj = net.project_store(slug).one('SELECT * FROM projects WHERE slug=?', slug)
+    bind(net, slug, path, proj, log)
+    for identity in ('GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT'):
+        git(root, 'var', identity, error='Set Git user.name and user.email before committing saved progress.')
+    head = git(root, 'rev-parse', '--verify', '--quiet', 'HEAD', missing=True)
+    branch = git(root, 'symbolic-ref', '--quiet', 'HEAD', error='Switch to a named branch before committing saved progress.')
+    if head:
+        files, paths, _ = repository_progress.snapshot(net, slug, root, log, allow_unrelated_edits=True)
+    else:
+        net.progress.sync(slug, force=True, logger=log)
+        if net.progress.errors.get(slug):raise NetworkError(net.progress.errors[slug])
+        net.progress.prune_matched_drafts(slug)
+        saves._check_save_paths(path, chosen=True)
+        manifest = json.loads((path/saves.MANIFEST).read_text(encoding='utf-8'))
+        names = repository_progress.owned(manifest, path)
+        files = {}
+        for name in names:
+            item = repository_sync.inside(path, name)
+            if not item.is_file():raise NetworkError('Save current progress before creating its first commit.')
+            files[(path.relative_to(root)/name).as_posix()] = item.read_bytes()
+        paths = set(files)
+    from . import rebuildable_repository
+    scaffold = rebuildable_repository.files(root)
+    files.update(scaffold)
+    paths.update(scaffold)
+    paths.update(rebuildable_repository.retired(root))
+    if root == path and (root/'.gitignore').is_file():
+        files['.gitignore'] = repository_sync.inside(root, '.gitignore').read_bytes()
+        paths.add('.gitignore')
+    commit = repository_progress.commit_snapshot(root, files, paths, log, expected_head=head, expected_branch=branch,
+        message=message)
+    return commit
+
+
 def run(net, slug, action, origin, log, *, github_name="", visibility="private"):
     path, proj = folder(net, slug)
     with net.progress._project_lock(slug):
@@ -168,36 +205,7 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
                 log('Added origin. Nothing was fetched or pushed.')
             elif action == 'checkpoint':
                 if not root or not net.is_rom(proj):raise NetworkError('Choose a portable Git progress save before committing.')
-                bind(net, slug, path, proj, log)
-                for identity in ('GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT'):
-                    git(root, 'var', identity, error='Set Git user.name and user.email before committing saved progress.')
-                head = git(root, 'rev-parse', '--verify', '--quiet', 'HEAD', missing=True)
-                branch = git(root, 'symbolic-ref', '--quiet', 'HEAD', error='Switch to a named branch before committing saved progress.')
-                if head:
-                    files, paths, _ = repository_progress.snapshot(net, slug, root, log, allow_unrelated_edits=True)
-                else:
-                    net.progress.sync(slug, force=True, logger=log)
-                    if net.progress.errors.get(slug):raise NetworkError(net.progress.errors[slug])
-                    net.progress.prune_matched_drafts(slug)
-                    saves._check_save_paths(path, chosen=True)
-                    manifest = json.loads((path/saves.MANIFEST).read_text(encoding='utf-8'))
-                    names = repository_progress.owned(manifest)
-                    files = {}
-                    for name in names:
-                        item = repository_sync.inside(path, name)
-                        if not item.is_file():raise NetworkError('Save current progress before creating its first commit.')
-                        files[(path.relative_to(root)/name).as_posix()] = item.read_bytes()
-                    paths = set(files)
-                from . import rebuildable_repository
-                scaffold = rebuildable_repository.files(root)
-                files.update(scaffold)
-                paths.update(scaffold)
-                paths.update(rebuildable_repository.retired(root))
-                if root == path and (root/'.gitignore').is_file():
-                    files['.gitignore'] = repository_sync.inside(root, '.gitignore').read_bytes()
-                    paths.add('.gitignore')
-                commit = repository_progress.commit_snapshot(root, files, paths, log, expected_head=head, expected_branch=branch,
-                    message='Save decompilation progress')
+                commit = checkpoint(net, slug, root, path, log)
                 log('Saved progress commit '+commit[:12]+'. Nothing was pushed.')
             else:raise NetworkError('This repository action is not supported. Close and reopen decompdecomp after updating, then reload Settings.')
         return status(net, slug)

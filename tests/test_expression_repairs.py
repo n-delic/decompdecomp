@@ -2,7 +2,8 @@
 
 import pytest
 
-from decompnet.app import draft_repairs, expression_repairs
+from decompnet.app import draft_repairs
+from decomprepair import expression_repairs
 
 
 def test_mask_cast_and_address_constant_candidates():

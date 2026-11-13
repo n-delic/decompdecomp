@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 from decompnet.app.agents import no_credit
 from decompnet.app.declaration_recovery import recover
-from decompnet.app.observed_repairs import variants
 from decompnet.repair_views import focused
+from decomprepair.observed_repairs import variants
 
 
 def test_usage_credit_requirement_is_permanent_actionable_failure():

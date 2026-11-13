@@ -1,7 +1,7 @@
 import pytest
 
-from decompnet.app import argument_mask_repairs as repairs
 from decompnet.app import draft_repairs
+from decomprepair import argument_mask_repairs as repairs
 
 SOURCE = '''void work(int key) {
     int count; void *node;

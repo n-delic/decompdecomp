@@ -6,11 +6,14 @@ import threading
 from decompnet.store import Store
 
 
-def test_worker_readers_close_at_thread_exit_without_gc(tmp_path,monkeypatch):
-    store=Store(tmp_path/'test.db');closed=[];errors=[]
+def test_worker_threads_share_pooled_readers_without_gc(tmp_path,monkeypatch):
+    store=Store(tmp_path/'test.db');closed=[];opened=[];errors=[]
     connect=sqlite3.connect
     from decompnet.payload_storage import Connection as PayloadConnection
     class Connection(PayloadConnection):
+        def __init__(self,*args,**kwargs):
+            opened.append(1)
+            super().__init__(*args,**kwargs)
         def close(self):
             closed.append(threading.get_ident())
             super().close()
@@ -25,8 +28,11 @@ def test_worker_readers_close_at_thread_exit_without_gc(tmp_path,monkeypatch):
         for _ in range(20):
             worker=threading.Thread(target=read);worker.start();worker.join()
         assert not errors
-        assert len(closed)==20
+        # 20 threads came and went: one reading connection served them all, and it stays open for the next.
+        assert len(opened)==1 and closed==[] and len(store._readers)==1
         assert store.one('SELECT 3 AS value')['value']==3
     finally:
         if enabled:gc.enable()
+        store.close_readers()
+        assert closed
         store.conn.close()

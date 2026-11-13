@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from decompnet.app import preheader_order_repairs as repair
+from decomprepair import preheader_order_repairs as repair
 
 BASE = 'typedef void (*Hook)(void);void cb(void);int sample(int v){int a;int b;Hook hook;a=v+3;hook=cb;b=1;again:return a+b+(hook==cb);}'
 

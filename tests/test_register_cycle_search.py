@@ -7,9 +7,9 @@ from decompnet.app import (
     compiler_diagnostics,
     deep_permuter,
     gcc_allocation,
-    identity_lifetime_repairs,
     search_frontier,
 )
+from decomprepair import identity_lifetime_repairs
 from tests.test_deep_permuter import Log
 from tests.test_permute import FakeNet
 

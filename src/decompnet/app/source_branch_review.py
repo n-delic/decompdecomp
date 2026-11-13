@@ -1,8 +1,9 @@
 """Locate control-flow disagreements for review; never synthesize behavioral edits."""
 import re
 
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank
-from .pattern_repairs import close
 from .source_lead_analysis import features
 
 MAX_REVIEWS = 4

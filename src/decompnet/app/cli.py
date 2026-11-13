@@ -233,11 +233,21 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         log.exception('Database corruption prevented startup')
         print(str(error), file=sys.stderr, flush=True)
         return 1
-    mcp, manager, security, quit_app = build(net, internal, port, secret, **({"headless":True} if headless else {}))
+    from . import mcp_gateway, tool_reader
+    # Read-only tools in a process of their own, behind the gateway (it sends them there first).
+    reader = tool_reader.start(net, internal) if mcp_gateway.program() else None
+    gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port", reader=reader)
+    if gateway is None and reader is not None:
+        reader.stop()
+        reader = None
+    mcp, manager, security, quit_app = build(net, internal, port, secret, mcp_url=gateway.url if gateway else None,
+                                             reader=reader, gateway=gateway, **({"headless":True} if headless else {}))
     if restarted and restarted.get('switch_home'):
         from .data_directories import remember
         remember(home,selected=True)
-    app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
+    # Behind the gateway the app's MCP keeps no sessions: either side can restart without breaking the other.
+    app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1",
+                                  stateless_http=gateway is not None, json_response=gateway is not None)
     from ..mcp_acknowledgments import Acknowledgments
     from ..ui_diagnostics import Diagnostics
     app = Acknowledgments(Diagnostics(app, stack_path=internal / "logs" / "event-loop-stacks.log"))
@@ -256,6 +266,8 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         log.exception("the server stopped")
         traceback.print_exc()
     finally:
+        if gateway is not None:
+            gateway.stop()
         quit_app()
     return 0
 
@@ -304,6 +316,29 @@ def update_cmd(args) -> int:
     return 0
 
 
+def hosted_export(args) -> int:
+    from ..hosted_export import main as export
+    return export(args.slug, args.dir, home_dir())
+
+
+def hosted_link(args) -> int:
+    from .hosted_sync import main as link
+    return link(args, home_dir() / ".decomp")
+
+
+def hosted_publish(args) -> int:
+    if not args.token:
+        print("hosted-publish needs --token (an admin's token on the server) or DECOMP_HOSTED_TOKEN", file=sys.stderr)
+        return 2
+    from ..hosted_export import publish_main
+    return publish_main(args.slug, args.server, args.token, home_dir())
+
+
+def judge_worker(args) -> int:
+    from ..hosted_judge import main as judge
+    return judge(home_dir(), Path(args.packs) if args.packs else None, Path(args.cache) if args.cache else None)
+
+
 def install_info(args) -> int:
     """Remember how decompdecomp was installed (by the installers): where its updates come from."""
     from . import updates
@@ -330,6 +365,11 @@ def setup(args) -> int:
             toolchains.install(tid, log=lambda line: print(f"  {line}"))
         except Exception as e:  # keep going: the app shows what's missing
             print(f"  ! {tc.name}: {e}")
+    from . import mcp_gateway
+    try:
+        mcp_gateway.install(log=lambda line: print(f"  {line}"))
+    except Exception as e:  # the app falls back to its own endpoint
+        print(f"  ! MCP gateway: {e}")
     print("  IDO (most first-party games) is proprietary: install it from the app if you accept its license.")
     if why := window.missing():
         print(f"  ! {why}")
@@ -377,6 +417,24 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("shortcut", help="add decompdecomp to your apps menu")
     up = sub.add_parser("update", help="install the newest decompdecomp (the running app restarts into it)")
     up.add_argument("--check", action="store_true", help="only say whether there is one")
+    he = sub.add_parser("hosted-export", help="write a project as a small hosted file, for decomp-mcp-gateway hosted serve")
+    he.add_argument("slug", help="the project's slug")
+    he.add_argument("dir", help="the hosted server's folder (writes DIR/projects/SLUG.sqlite3; again to update it)")
+    hp = sub.add_parser("hosted-publish", help="upload a project to a hosted server (an admin's token)")
+    hp.add_argument("slug", help="the project's slug")
+    hp.add_argument("--server", required=True, help="the hosted server's address, https://...")
+    hp.add_argument("--token", default=os.environ.get("DECOMP_HOSTED_TOKEN", ""),
+                    help="an admin's token on that server (or DECOMP_HOSTED_TOKEN)")
+    jw = sub.add_parser("judge-worker", help=argparse.SUPPRESS)  # a verifier's judge (hosted_judge.py)
+    jw.add_argument("--packs", help="judge from the verification packs in this folder (hosted_pack.py)")
+    jw.add_argument("--cache", help="where to build their scratch projects (default: PACKS/.judge-cache)")
+    hl = sub.add_parser("hosted-link", help="take verified matches from a hosted server into a project")
+    hl.add_argument("slug", help="the project's slug here")
+    hl.add_argument("--server", help="the hosted server's address, https://...")
+    hl.add_argument("--token", default=os.environ.get("DECOMP_VERIFIER_TOKEN", ""),
+                    help="a verifier's token on that server (or DECOMP_VERIFIER_TOKEN)")
+    hl.add_argument("--remote", help="the project's slug on the server (default: the same)")
+    hl.add_argument("--remove", action="store_true", help="stop taking matches from it")
     ii = sub.add_parser("install-info", help=argparse.SUPPRESS)  # the installers: where updates come from
     ii.add_argument("--channel", choices=["release", "branch"], default="release")
     ii.add_argument("--branch", default="")
@@ -388,7 +446,9 @@ def main(argv: list[str] | None = None) -> int:
     limits.raise_open_file_limit()
     limits.no_core_dumps()
     return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd,
-            "install-info": install_info}.get(args.cmd, run)(args)
+            "install-info": install_info, "hosted-export": hosted_export,
+            "judge-worker": judge_worker, "hosted-link": hosted_link,
+            "hosted-publish": hosted_publish}.get(args.cmd, run)(args)
 
 
 if __name__ == "__main__":

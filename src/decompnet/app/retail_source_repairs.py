@@ -2,8 +2,9 @@
 import re
 from collections import Counter
 
+from decomprepair.pattern_repairs import close
+
 from ..forks.csource import _blank
-from .pattern_repairs import close
 
 ID=r'[A-Za-z_]\w*'
 

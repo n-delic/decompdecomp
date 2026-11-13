@@ -4,7 +4,7 @@ import json
 import pytest
 
 from decompnet.app import draft_repairs, local_experiments
-from decompnet.app import matched_prototype_repairs as repair
+from decomprepair import matched_prototype_repairs as repair
 from tests.test_claims import _game
 
 SOURCE = 'extern short helper(short value); int sample(int x){return helper((short)x)+1;}'

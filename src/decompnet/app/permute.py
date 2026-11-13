@@ -300,12 +300,23 @@ class Permuter:
         if slug in self.net.links:  # a room member: the host's copy permutes, and its matches come back here
             return None
         st = self.jobs[slug] = State()
-        threading.Thread(target=self._loop, args=(slug, st), daemon=True, name=f"permuter-{slug}").start()
+        st.thread = threading.Thread(target=self._loop, args=(slug, st), daemon=True, name=f"permuter-{slug}")
+        st.thread.start()
         return st
 
     def stop(self, slug: str) -> None:
         if (st := self.jobs.get(slug)) is not None:
             st.stop.set()
+
+    def join(self) -> None:
+        """Drain owned loops before interpreter finalizers can remove active compiler scratch.
+
+        The worker process's parent retains its bounded terminate/kill deadline.
+        """
+        for state in list(self.jobs.values()):
+            thread = getattr(state, 'thread', None)
+            if thread is not None and thread is not threading.current_thread():
+                thread.join()
 
     def candidates(self, proj, limit: int | None = None) -> list:
         limit = limit or max(CANDIDATES, 2 * workers.WORKERS)  # (a worker for each, and the next ones waiting)
@@ -373,6 +384,8 @@ class Permuter:
         Cache individual candidates with their target, header and configured compiler. A new source/header/
         configuration gets another chance. This uses the same judge for ROM and imported project modes.
         """
+        from .progress import ProgressMoved
+
         key = f"draft-repair-cursor:{proj['id']}"
         saved = self.net.project_store(proj['id']).one("SELECT value FROM settings WHERE key=?", key)
         cursor = int(saved['value']) if saved else 0
@@ -397,7 +410,9 @@ class Permuter:
                 continue
             # Autopilot's deterministic pass must reach joint hypotheses too, before
             # source-only scores discard their corrected loop exit. No claim is held yet.
-            from . import guarded_loop_repairs, matching_preflight
+            from decomprepair import guarded_loop_repairs
+
+            from . import matching_preflight
             if (not fork and hasattr(self.net,'_comparison_digest')
                     and guarded_loop_repairs.probes(proj,fn,compiler_for(self.net.cfg(proj),fn['vram'],fn),header)):
                 try:
@@ -417,7 +432,9 @@ class Permuter:
                     continue
             labels = {}
             candidates = draft_repairs.variants(fn['best_source'], fn['name'], proj['arch'], fn['asm'] or '', flags=compiler_for(self.net.cfg(proj),fn['vram'], fn).get('flags',[]) if not fork else [], labels=labels,header=header,limit=None,tables=switch_tables.read(self.net,proj,fn),callees=draft_repairs.capture_followup_repairs.callee_evidence(self.net,proj,fn,fn['best_source']),entry_scope=draft_repairs.promoted_entry_repairs.scope(self.net,proj,fn))
-            from . import normalization_repairs, repair_ranking
+            from decomprepair import normalization_repairs
+
+            from . import repair_ranking
             normalization_repairs.extend_frame(candidates, labels, fn['best_source'], fn['name'], proj['arch'], repair_ranking.evidence(self.net,fn['id'],agent.id))
             ranked = repair_ranking.order(dict.fromkeys(labels.get(text, 'draft_repair') for text in candidates),repair_ranking.evidence(self.net,fn['id'],agent.id))
             effect_scope=repair_ranking.effect_scope(self.net,fn,fn['best_source']) if hasattr(self.net,'_context') else None
@@ -492,6 +509,10 @@ class Permuter:
                             break
                 if function_id is None and not fork and best > 0 and attempts <= budget-3 and time.monotonic() < deadline and not st.stop.is_set():
                     attempts += self._repair_flags(agent, proj, fn, st, deadline)
+            except ProgressMoved:
+                # Discard this round's project/header/source snapshot; the next pass reloads it.
+                log.info("permuter: %s: progress moved; targeted repairs deferred", fn['name'])
+                return
             except Exception:
                 log.exception("permuter: targeted repairs failed for %s", fn['name'])
             finally:
@@ -499,8 +520,13 @@ class Permuter:
                 self._let_go(agent, fn)
 
     def _turn(self, agent, proj, fn, st: State) -> None:
+        from .progress import ProgressMoved
+
         try:
             self._permute(agent, proj, fn, st)
+        except ProgressMoved:
+            # A stale result is no evidence that the current source cannot be permuted.
+            log.info("permuter: %s: progress moved; random turn deferred", fn["name"])
         except NetworkError as e:  # the project refused its source (a helper the file hasn't): an answer, not a crash
             log.info("permuter: %s: %s (left to agents)", fn["name"], str(e).splitlines()[0])
             with self.net.project_store(proj['id']).tx() as db:  # the same best attempt is refused every time: no more turns on it
@@ -765,7 +791,9 @@ class Permuter:
         from . import permuter_inputs, permuter_local, source_preparation
         state = (st.started_at, proj['config'], self.net.forks.permuter_header(fork, fn['name']),
                  permuter_inputs.build_state(proj)) if fork else source_preparation.inputs(self.net, proj, fn)
-        from . import independent_address_repairs, pointer_index_scope, repair_ranking
+        from decomprepair import independent_address_repairs
+
+        from . import pointer_index_scope, repair_ranking
         rows=repair_ranking.evidence(self.net,fn['id'],agent.id)
         header=(self.net._context(proj['id'],fn['unit']) or {'header':''})['header'] if not fork else ''
         independent=independent_address_repairs.variants(best_src,fn['name'],proj['arch'],rows,header) if not fork else []
@@ -856,7 +884,7 @@ class Permuter:
                 self._trial_locations=res.get('repair_locations')
             return res.get("score")
         ctx = self.net._context(proj["id"], fn["unit"])
-        from .repair_preflight import invalid_call
+        from decomprepair.repair_preflight import invalid_call
         if source != fn['best_source'] and invalid_call(source, fn['name'], ctx['header']):
             return None
         guard = None
@@ -903,9 +931,10 @@ class Permuter:
         from .experiment_evidence import output
         self._trial_output = output(cand)
         self._trial_output_granularity = 'function'
+        from decomprepair.repair_localisation import bind
+
         from ..repair_feedback import current_trial
         from ..source_lines import mismatches
-        from .repair_localisation import bind
         lean = ((current_trial() or {}).get('kind') == 'random rewrite' and source != fn['best_source'])
         target = self.net._target_obj(fn, proj)
         # Use this actual compiled object; never recompile with different debug flags.

@@ -144,3 +144,41 @@ def test_n64_only_recovers_whole_called_balanced_gaps():
     assert not complete(bytes(image),known)  # mismatched frame restoration
     image[0x101c:0x1020]=words(0x27bd0018);image[0x1000:0x1004]=words(0)
     assert not complete(bytes(image),known)  # a frame/return alone is not enough
+
+
+def test_n64_recovers_a_gap_only_its_data_points_at():
+    """#V-Rally: command handlers called only through a table of pointers have no jal; their stored address
+    counts under the mapping the code on both sides shares, never inside code or across differing mappings."""
+    from decompnet.consoles.n64.code_references import complete
+    image=bytearray(0x1200)
+    image[0x1000:0x1010]=words(0x03e00008,0,0,0)
+    image[0x1010:0x1020]=words(0x27bdffe8,0,0x03e00008,0x27bd0018)
+    known=[(0x1000,0x1010,0x80001000),(0x1020,0x1030,0x80001020)]
+    assert not complete(bytes(image),known)
+    image[0x1028:0x102c]=words(0x80001010)
+    assert not complete(bytes(image),known)  # an instruction equal to the address is no pointer
+    image[0x1028:0x102c]=words(0);image[0x1180:0x1184]=words(0x80001010)
+    assert complete(bytes(image),known)==[(0x1010,0x1020,0x80001010)]
+    assert not complete(bytes(image),[known[0],(0x1020,0x1030,0x80002020)])  # neighbours disagree
+
+
+def test_n64_gap_with_a_switch_follows_its_table_in_declared_data():
+    from decompnet.consoles.n64.code_references import complete
+    image=bytearray(0x1200)
+    image[0x1000:0x1010]=words(0x03e00008,0,0,0)
+    body=[0x27bdffe8,                         # 1010 frame
+          (11<<26)|(4<<21)|(9<<16)|2,         # 1014 sltiu t1, a0, 2
+          (4<<26)|(9<<21)|9,                  # 1018 beqz t1, 1040
+          0,
+          (4<<16)|(10<<11)|(2<<6),            # 1020 sll t2, a0, 2
+          (15<<26)|(8<<16)|0x8000,            # 1024 lui t0, 0x8000
+          (8<<21)|(10<<16)|(8<<11)|33,        # 1028 addu t0, t0, t2
+          (35<<26)|(8<<21)|(11<<16)|0x1180,   # 102c lw t3, 0x1180(t0)
+          (11<<21)|8,0]                       # 1030 jr t3
+    image[0x1010:0x1010+4*len(body)]=words(*body)
+    image[0x10f8:0x1100]=words(0x03e00008,0x27bd0018)
+    image[0x1180:0x1188]=words(0x80001038,0x80001040)
+    image[0x1190:0x1194]=words(0x80001010)
+    known=[(0x1000,0x1010,0x80001000),(0x1100,0x1110,0x80001100)]
+    assert not complete(bytes(image),known)  # the table's address isn't mapped: its cases can't be followed
+    assert complete(bytes(image),known,[(0x1000,0x1200,0x80001000)])==[(0x1010,0x1100,0x80001010)]

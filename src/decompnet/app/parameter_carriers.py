@@ -6,11 +6,20 @@ simultaneous, bijective rewrite avoids capturing an overwritten pointer/value.
 import itertools
 import re
 
-from . import integer_abi, local_flow
-from .allocator_call_guards import dominators
-from .call_lifetime_repairs import block_path
-from .integer_repair_support import IDENT, INTEGER, edit, locals_for, refs, split_args, split_plain_declarations, view
-from .scalar_storage_reuse import initialized
+from decomprepair import integer_abi, local_flow
+from decomprepair.allocator_call_guards import dominators
+from decomprepair.call_lifetime_repairs import block_path
+from decomprepair.integer_repair_support import (
+    IDENT,
+    INTEGER,
+    edit,
+    locals_for,
+    refs,
+    split_args,
+    split_plain_declarations,
+    view,
+)
+from decomprepair.scalar_storage_reuse import initialized
 
 FAMILY = 'parameter_carriers'
 FAMILIES = (FAMILY,)
@@ -35,7 +44,7 @@ def variants(source, name, header='', arch=None):
                and integer_abi.scalar(d['type'],header+'\n'+source,arch)==(32,True)]
     flow = local_flow.analyze(source,name,declarations=locals_+parameters)
     if not flow:return []
-    from .equal_value_flow import macros_safe
+    from decomprepair.equal_value_flow import macros_safe
     if not macros_safe(source,header,part.body,flow.names):return []
     dom = dominators(flow)
     locals_ = [d for d in locals_ if d['name'] in flow.names and initialized(flow,d,dom)]

@@ -35,6 +35,9 @@ class Core(Network):
         self.workspace = Path(workspace)
         self._syms: dict[int, SymbolTable] = {}
         self._sym_override: dict[int, SymbolTable] = {}
+        # project id -> held by one rename at a time, from reading the symbols to writing the new name: two at once
+        # replaced each other's trial symbol table and checked sources the other had just changed.
+        self._rename_locks: dict[int, threading.RLock] = {}
         self._roms: dict[int, tuple[bytes, list[split.Segment]]] = {}
         self._xrefs: dict[int, dict] = {}
         self._draft_locks: dict[int, threading.Lock] = {}  # function id -> held while its machine draft is made
@@ -72,8 +75,14 @@ class Core(Network):
         self.drafter = Drafter(self)
         from ..reuse_cascade import Cascade
         self.cascades = Cascade(self)
-        self.find_moved_projects()
+        from ... import store as storage
         from ..progress import Progress
+        if storage.ATTACH_ONLY:
+            # A reader process (app/tool_reader.py): the app moves projects, runs repair analyses and keeps the
+            # progress folders; another process doing any of it would race the app's own.
+            self.progress = Progress(self)
+            return
+        self.find_moved_projects()
         self.progress = Progress(self)
         from .. import repair_outcomes
         repair_outcomes.prepare(self.repair_feedback)
@@ -170,9 +179,11 @@ class Core(Network):
         return said
 
     def fork_slug(self, project: str | None) -> str | None:
-        """The slug when `project` is a fork of a public decomp, else None."""
+        """The slug when `project` is a fork of a public decomp, else None. (A project's kind never changes, so this
+        reads the row without syncing its saved files: twins and the other release's code ask it on every try, and
+        each sync of a finished 2,000-function game took seconds.)"""
         try:
-            proj = self._project(project)
+            proj = Network._project(self, project)
         except NetworkError:
             return None
         return proj["slug"] if self.cfg(proj).get("kind") == "fork" else None

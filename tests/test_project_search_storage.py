@@ -58,7 +58,8 @@ def test_repair_input_costs_aggregate_without_sharing_writers(scoped):
 
 
 def test_checkpoint_and_proposal_cursor_do_not_write_catalog(scoped):
-    from decompnet.app import debug_boundary_repairs, proposal_progress, random_safety
+    from decompnet.app import proposal_progress, random_safety
+    from decomprepair import debug_boundary_repairs
     net, stores = scoped
     fn = dict(net._function('same_name','first')) | {'best_source':'before','best_score':100}
     random_safety.checkpoint(net,fn)

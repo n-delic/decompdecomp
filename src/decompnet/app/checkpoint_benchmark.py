@@ -62,7 +62,7 @@ def run(cases, factory, *, trials=32, seconds=30, generate=None, minimize_trials
                 trials=trials,deadline=time.monotonic()+seconds,generate_report=True,
                 check_cancel=check_cancel,arch=context.get('arch'),header=context.get('header',''))
         search_wall_seconds = time.monotonic()-start
-        from .call_preparation_repairs import explain
+        from decomprepair.call_preparation_repairs import explain
         applicability = (explain(case['source'],context['name'],context.get('header',''),context.get('arch'))
                          if context.get('name') else None)
         recipe = None
