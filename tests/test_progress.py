@@ -1471,3 +1471,65 @@ def test_adopt_adds_the_saved_name_when_the_symbol_row_is_a_siblings(tmp_path):
                         {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_b"}]}
     _adopt_saved_names(net, pid, saved)
     assert net.symbols(pid).resolve("draw_sprite") == 0x4BF720    # added, though the only symbol row named the sibling
+
+
+def test_a_first_sync_keeps_a_deliberate_rename_over_the_folders_old_name(project):
+    """#174 review 2: a first sync (no baseline: an old project or a restored database) must keep a deliberate
+    database rename, not hand back the folder's older name. The gate on the row rename alone is not enough -- the
+    folder's layout still keeps the old name -- so the stale saved entry must give way to the deliberate database
+    name in both the database and the folder."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:          # the user deliberately renamed f -> draw_sprite in the database
+        db.execute("UPDATE functions SET name='draw_sprite' WHERE project_id=? AND name='f'", (pid,))
+        db.execute("DELETE FROM progress_state WHERE project_id=?", (pid,))   # no baseline: the next sync is a first sync
+    net._syms.pop(pid, None)
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert "draw_sprite" in names and "f" not in names, names                 # the folder took the deliberate name
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='draw_sprite'", pid)  # the database kept it
+    assert not net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='f'", pid)
+
+
+def test_a_later_adopt_does_not_rename_before_the_folder_is_fully_validated(project):
+    """#174 review 3: the later-sync adopt runs before _read and _manifest, which also refuse git conflicts and
+    malformed metadata. A folder with a git conflict must be refused with nothing renamed -- not after the matched
+    row has already been renamed and its source rewritten. Adoption fires only once the whole folder validates."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:          # a re-analysis reset the deliberate name back to its auto name
+        db.execute("UPDATE functions SET name='func_00001000' WHERE project_id=? AND name='f'", (pid,))
+    net._syms.pop(pid, None)
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/f.c").write_text(                                          # a git conflict _read refuses
+        "int f(void){\n<<<<<<< HEAD\n return 0;\n=======\n return 1;\n>>>>>>> other\n}\n", encoding="utf-8")
+    with pytest.raises(NetworkError):
+        net.progress.sync("game", force=True)
+    names = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+    assert "func_00001000" in names and "f" not in names, names              # the conflicted folder renamed nothing
+
+
+def test_a_first_sync_matches_a_long_renamed_names_source_file(project):
+    """#174 nit: on a first sync a renamed database function keeps its saved (old) name, so its rendered source is
+    the saved file, not a new one. _source_file must shorten the long database name to the same digested filename
+    the render used, or that long file is wrongly queued as new while a renamed overlay sibling joins beside it."""
+    sha = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    long = "render_sprite_batch_" + "a" * 250                                 # over SOURCE_COMPONENT_BYTES: a digest file
+    digest = saves._source_file(long)
+    assert digest != long + ".c"                                             # the name is long enough to be digested
+
+    disp = {"name": long, "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}      # the database's (auto-default) rename of
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 40, "unit": "ovl_b"}    # draw_sprite, plus a sibling
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}         # disp's saved (old) name
+    base = {"format": saves.FORMAT, "game": {"sha1": sha}, "headers": {"": "common.h"}}
+    disk = {saves.MANIFEST: json.dumps(base | {"layout": [renamed]}), "include/common.h": "/* */"}
+    projected = {saves.MANIFEST: json.dumps(base | {"layout": [disp, crit]}), "include/common.h": "/* */",
+                 f"src/{digest}": "int x;", "src/ovl_b_crit_004BF720.c": "int y;"}
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
+    assert f"src/{digest}" not in pending                                    # the long renamed source is the saved file
+    assert "src/ovl_b_crit_004BF720.c" in pending                            # the sibling still joins
+    merged = disk | pending
+    merged[saves.MANIFEST] = json.dumps(manifest)
+    _manifest(merged, {"rom": {"sha1": sha}})                                # the merged folder still saves
