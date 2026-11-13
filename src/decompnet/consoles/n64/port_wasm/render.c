@@ -362,7 +362,7 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
     if (maxx > scissor[2]) maxx = scissor[2];
     if (maxy > scissor[3]) maxy = scissor[3];
     float wa = 1 / a->w, wb = 1 / b->w, wc = 1 / c->w, inv = 1 / area;
-    int smooth = (geometry & 0x200000) != 0;
+    int smooth = (geometry & 0x200000) != 0, persp = (mode_h & 0x80000) != 0; /* G_TP_PERSP */
     Tile *tl = &tiles[tex_tile];
     for (int y = miny; y < maxy; y++)
         for (int x = minx; x < maxx; x++) {
@@ -378,15 +378,23 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
                                         l0 * a->shade.a + l1 * b->shade.a + l2 * c->shade.a} : c->shade;
             Color t0 = {1, 1, 1, 1};
             if (tex_on) {
-                float q = l0 * wa + l1 * wb + l2 * wc;
-                float s = (l0 * a->s * wa + l1 * b->s * wb + l2 * c->s * wc) / q;
-                float t = (l0 * a->t * wa + l1 * b->t * wb + l2 * c->t * wc) / q;
+                float s, t;
+                if (persp) {
+                    float q = l0 * wa + l1 * wb + l2 * wc;
+                    s = (l0 * a->s * wa + l1 * b->s * wb + l2 * c->s * wc) / q;
+                    t = (l0 * a->t * wa + l1 * b->t * wb + l2 * c->t * wc) / q;
+                } else { /* no perspective correction: interpolated as they are, at half scale (below) */
+                    s = l0 * a->s + l1 * b->s + l2 * c->s;
+                    t = l0 * a->t + l1 * b->t + l2 * c->t;
+                }
                 if (tl->shifts) s = tl->shifts > 10 ? s * (float)(1 << (16 - tl->shifts)) : s / (float)(1 << tl->shifts);
                 if (tl->shiftt) t = tl->shiftt > 10 ? t * (float)(1 << (16 - tl->shiftt)) : t / (float)(1 << tl->shiftt);
-                /* 4-bit textures: a racing game's menu text gives each glyph twice the texel coordinates of its
-                   place in a 128-texel font page (the matched C doubles its table's values); halved, the text reads
-                   as on the console. Found by trying it: the RDP rule behind it is still to be confirmed. */
-                if (tl->siz == 0) { s *= 0.5f; t *= 0.5f; }
+                /* Without perspective correction the RDP takes texture coordinates at half the scale it takes
+                   them with it: a racing game's menu text (perspective off) gives each glyph twice the texel
+                   coordinates of its place in its font page. This was once done for every 4-bit texture, which
+                   also halved the cars' 4-bit skins (perspective on): each car showed the top-left quarter of its
+                   skin, stretched over the body. */
+                if (!persp) { s *= 0.5f; t *= 0.5f; }
                 t0 = texel(tl, (int)floorf(s), (int)floorf(t));
             }
             plot(x, y, z, sh, t0, (geometry & 1) != 0);
