@@ -252,6 +252,10 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
 - the app's **Play in browser** (Porting): builds the game from the project's last save, starts it with
   `PORT_LIVE` on a free port and opens it in a window of its own (the app window's program; the browser where no
   window can open); closing the window, Stop the game or quitting the app ends it.
+  Its bar counts the build's steps and each step's files, and Stop cancels the build. A rebuild redoes only what
+  changed: each file the build makes keeps a key of what it was made from (its C and the headers that C includes;
+  for placing, its IR and its own rows of the signature and address tables; for the host, the wasm2c part), so a
+  Save that changed one function recompiles that function and the one wasm2c part holding it.
   Its saves stay in the build folder (`game.eep`);
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
   machine only, which shows each frame and sends the keyboard or a gamepad to the first controller (arrows steer, X is A,

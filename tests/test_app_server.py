@@ -906,6 +906,21 @@ def test_a_job_always_ends_and_says_why(tmp_path):
     assert "reading the ROM" in logged and "KeyError" in logged and "Traceback" in logged
 
 
+def test_a_panel_finds_the_running_job_of_its_own_project():
+    """Play's panel follows its project's build again after navigating away, never another project's."""
+    from decompnet.app.support import Jobs
+
+    jobs = Jobs()
+    release = threading.Event()
+    a = jobs.start("play", lambda log: release.wait(2), project="game-a")
+    try:
+        assert jobs.active(("play",), project="game-a")["id"] == a
+        assert jobs.active(("play",), project="game-b") is None
+        assert jobs.active(("play",))["id"] == a
+    finally:
+        release.set()
+
+
 def test_a_cancelled_job_stops_at_its_next_checkpoint(tmp_path):
     from decompnet.app.support import Jobs
 

@@ -227,3 +227,83 @@ def test_an_unsigned_byte_argument_widens_without_its_sign():
           "  ret void\n}\n")
     out = adapt(ir, [], Types(ir), {})
     assert "zext i8" in out and "sext i8" not in out
+
+
+def test_a_rebuild_compiles_a_file_again_only_when_it_or_a_header_it_includes_changed(tmp_path):
+    """Play rebuilt a 2,000-file game in minutes after a Save that changed one function: the keys follow each file's
+    own C and the headers it includes, not times a Save rewrites, and a header only some files include (a part's
+    common_<part>.h) leaves the others alone."""
+    from decompnet.port.wasm.build import _Files
+    inc = tmp_path / "include"
+    inc.mkdir()
+    (inc / "common.h").write_text('#include "types.h"\n')
+    (inc / "types.h").write_text("typedef int s32;\n")
+    (inc / "common_part.h").write_text('#include "common.h"\n')
+    a, b = tmp_path / "a.c", tmp_path / "b.c"
+    a.write_text('#include "common.h"\n#include <stdarg.h>\ns32 a;\n')
+    b.write_text('#include "common_part.h"\ns32 b;\n')
+    keys = lambda: (_Files().key(a, [inc], "zig", "-O0"), _Files().key(b, [inc], "zig", "-O0"))  # noqa: E731
+    before = keys()
+    a.write_text(a.read_text())  # rewritten as it was: still the same
+    assert keys() == before
+    (inc / "common_part.h").write_text('#include "common.h"\nextern s32 c;\n')
+    after = keys()
+    assert after[0] == before[0] and after[1] != before[1]
+    (inc / "types.h").write_text("typedef long s32;\n")  # included through another header
+    assert all(x != y for x, y in zip(keys(), after))
+    assert _Files().key(a, [inc], "zig", "-O1") != _Files().key(a, [inc], "zig", "-O0")  # the flags count
+
+
+def test_placing_reads_only_the_table_rows_of_the_names_its_function_uses():
+    """The signatures and addresses change with nearly every Save, so keying each function's placing on the whole
+    tables placed all 2,000 again; it depends only on the rows of the names its IR uses, a call's new name among them."""
+    from decompnet.port.wasm.build import table_rows
+    ir = "define void @caller() {\n  call void @func_8007F798(i32 1)\n  %1 = load i32, ptr @gRecords\n  ret void\n}\n"
+    sigs = {"caller": "void\t", "stream_poll": "void\ti32", "other": "i32\t"}
+    fixed = {"caller": "0x80001000 func", "gRecords": "0x800C35A0 data", "other": "0x80002000 func"}
+    renamed = {"func_8007F798": "stream_poll"}
+    rows = table_rows(ir, sigs, fixed, {"caller", "stream_poll", "other"}, renamed)
+    assert [r.split("|")[0] for r in rows] == ["caller", "func_8007F798", "gRecords", "stream_poll"]
+    unrelated = table_rows(ir, {**sigs, "other": "void\ti32", "new_fn": "void\t"}, {**fixed, "new_fn": "0x80003000 func"},
+                           {"caller", "stream_poll", "other", "new_fn"}, renamed)
+    assert unrelated == rows
+    assert table_rows(ir, {**sigs, "stream_poll": "void\ti32, i32"}, fixed, {"caller", "stream_poll"}, renamed) != rows
+
+
+def test_wasm2c_output_that_didnt_change_keeps_its_file(tmp_path):
+    """wasm2c writes every part again; only the parts that differ replace the build's, so the host compiles only those."""
+    import os
+
+    from decompnet.port.wasm.build import _sync
+    old, new = tmp_path / "c", tmp_path / "c.new"
+    old.mkdir()
+    new.mkdir()
+    for name, text in {"game_0.c": "same", "game_1.c": "old", "game_9.c": "gone"}.items():
+        (old / name).write_text(text)
+    os.utime(old / "game_0.c", (1, 1))
+    (new / "game_0.c").write_text("same")
+    (new / "game_1.c").write_text("new")
+    (new / "game.h").write_text("h")
+    _sync(new, old)
+    assert sorted(p.name for p in old.iterdir()) == ["game.h", "game_0.c", "game_1.c"] and not new.exists()
+    assert (old / "game_0.c").stat().st_mtime == 1 and (old / "game_1.c").read_text() == "new"
+
+
+def test_the_build_reports_its_steps_and_each_steps_files(tmp_path):
+    """Play's bar: which step of how many, and how many of a step's files are done; the log says how many a rebuild
+    could keep."""
+    from decompnet.port.wasm.build import STEPS, Progress, _parallel
+    seen, lines = [], []
+
+    def log(line):
+        lines.append(line)
+    log.progress = seen.append
+    progress = Progress(log, (*STEPS, "Starting the game"))
+    progress.start(STEPS[1])
+    failed = _parallel(["a.c", "b.c", "c.c"], lambda job: False if job == "a.c" else ("broken" if job == "c.c" else None),
+                       log, "files", progress.files)
+    assert failed == ["c.c: broken"]
+    assert seen[0] == {"phase": STEPS[1], "step": 2, "steps": len(STEPS) + 1}
+    assert seen[-1] == {"phase": STEPS[1], "step": 2, "steps": len(STEPS) + 1, "done": 3, "total": 3}
+    assert "2 files redone, 1 unchanged" in lines
+    Progress(print).start(STEPS[0])  # a log without a bar (the command line) builds the same

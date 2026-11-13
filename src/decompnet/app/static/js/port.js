@@ -55,10 +55,15 @@ function renderPortReadiness(report) {
     + (assets.extracted && assets.extracted.current
       ? `; extracted: ${assets.extracted.mapped} of ${assets.extracted.total} are the ROM's bytes` : "")));
   renderPortSteps(report);
+  attachPlay(report.play);
   const todo = $("portBlockers");
   todo.replaceChildren(...report.blockers.map((b) => { const li = document.createElement("li"); li.textContent = b; return li; }));
   $("portReady").textContent = report.ready ? "Nothing found in the way of a port." : "Next, in order";
 }
+
+/* A log with what beginWork and showJobError put before it (its status line, progress bar and error), moved
+   together: a refresh that moved the log alone left a running build's bar in the step list it replaced. */
+const withWork = (log) => [log._workStatus, log._workBar, log._errorBox, log].filter(Boolean);
 
 const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, Math.round(100 * part / whole))) : null);
 
@@ -101,9 +106,11 @@ function renderPortSteps(report) {
   const list = $("portSteps");
   if (!list) return;
   const steps = portSteps(report), parked = $("portParked");
-  for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portAssets", "portExtract", "portPlay", "portStop",
-    "portDraftLog", "portCompileLog", "portRenameLog", "portAssetsLog", "portExtractLog", "portPlayLog"]) {
+  for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portAssets", "portExtract", "portPlay", "portStop"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
+  }
+  for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portAssetsLog", "portExtractLog", "portPlayLog"]) {
+    if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
   const overall = shown.length ? Math.round(shown.reduce((a, s) => a + s.pct, 0) / shown.length) : 0;
@@ -132,7 +139,7 @@ function renderPortSteps(report) {
     const actions = document.createElement("div"); actions.className = "row port-actions";
     for (const id of step.buttons || []) if ($(id)) actions.append($(id));
     if (actions.children.length) body.append(actions);
-    for (const id of step.logs || []) if ($(id)) body.append($(id));
+    for (const id of step.logs || []) if ($(id)) body.append(...withWork($(id)));
     row.append(mark, body);
     return row;
   }));
@@ -225,35 +232,70 @@ async function fixRenamedCalls() {
 }
 
 /* Play: build the game for the PC and open it in the browser (port/wasm/play.py). The first build takes minutes,
-   later ones only rebuild what changed; a game already running opens again at once. */
-async function playGame() {
+   later ones only rebuild what changed; a game already running opens again at once. The bar counts the build's
+   steps and each step's files; Stop cancels the build, then stops the game. A build still running when the panel
+   is drawn again (another project, another window) is followed, not started again (report.play.job). */
+let playJob = null;
+
+function playStopLabel() {
+  $("portStop").textContent = playJob ? "Stop the build" : "Stop the game";
+}
+
+async function playGame(existing = null) {
+  if (playJob) return;
   const slug = S.slug, log = $("portPlayLog");
+  playJob = existing ? existing.id : "starting";
   log.hidden = false; log._showJobProgress = true;
   showJobError(log, "");
   const finish = beginWork(log, "Building the game for the PC", [$("portPlay")], "Playing.");
+  if (existing?.progress) updateWorkProgress(log, existing.progress);
+  $("portStop").hidden = false; $("portStop").disabled = false; playStopLabel();
+  let playing = false;
   try {
-    let result = await api("/api/play", { method: "POST", body: { slug } });
-    if (result.job) result = await followJob(result.job, log, null, () => S.slug === slug);
+    let result = existing ? { job: existing.id } : await api("/api/play", { method: "POST", body: { slug } });
+    if (result.job) { playJob = result.job; result = await followJob(result.job, log, null, () => S.slug === slug); }
     if (result && result.url) {
       const link = document.createElement("a");
       link.href = result.url; link.target = "_blank"; link.rel = "noopener"; link.textContent = result.url;
       if (result.window) log.append("\nThe game opened in its own window; closing it stops the game. Or play in the browser at ", link, ".");
       else { log.append("\nThe game runs at ", link, " (opened in your browser)."); window.open(result.url, "_blank", "noopener"); }
-      $("portStop").hidden = false;
+      playing = true;
     }
   } catch (error) {
     showJobError(log, error.message);
-  } finally { finish(); }
+  } finally {
+    playJob = null; finish();
+    $("portStop").hidden = !playing; $("portStop").disabled = false; playStopLabel();
+  }
 }
 
 async function stopGame() {
-  const slug = S.slug;
-  try { await api("/api/play", { method: "POST", body: { slug, stop: true } }); } catch (error) { showJobError($("portPlayLog"), error.message); }
-  $("portStop").hidden = true;
+  const slug = S.slug, stop = $("portStop");
+  stop.disabled = true;
+  if (playJob) {
+    stop.textContent = "Stopping the build…";
+    // the build ends at its next step or file, and playGame's finally gives the buttons back
+    try { if (playJob !== "starting") await api("/api/job/cancel", { method: "POST", body: { id: playJob } }); }
+    catch (error) { showJobError($("portPlayLog"), error.message); stop.disabled = false; playStopLabel(); }
+    return;
+  }
+  stop.textContent = "Stopping the game…";
+  try {
+    await api("/api/play", { method: "POST", body: { slug, stop: true } });
+    stop.hidden = true;
+  } catch (error) { showJobError($("portPlayLog"), error.message); }
+  finally { stop.disabled = false; playStopLabel(); }
+}
+
+/* The report says whether this project's game is building or running; a build started elsewhere is followed. */
+function attachPlay(play) {
+  if (!play || playJob) return;
+  if (play.job) { playGame(play.job); return; }
+  $("portStop").hidden = !play.url; playStopLabel();
 }
 
 if ($("portPanel")) {
-  $("portPlay").onclick = playGame;
+  $("portPlay").onclick = () => playGame();
   $("portStop").onclick = stopGame;
   $("portRenameCalls").onclick = fixRenamedCalls;
   $("portExtract").onclick = extractAssets;

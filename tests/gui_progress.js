@@ -364,4 +364,12 @@ main().catch((error) => { console.error(error); process.exitCode = 1; });
   ctx.updateWorkProgress(log,{phase:'Compiling candidate',game:'Demo',donor:'old<fn',function:'new',confirmed:1});
   assert.match(log._workStatus.textContent,/Demo.*old<fn.*new.*1 matches confirmed/);
   assert.equal(bar.className,'workbar');assert.equal(bar.attrs['aria-valuenow'],undefined);
+  // A job of several steps (Play's build): the bar is the whole job, each step an equal share filled by its files
+  ctx.updateWorkProgress(log,{phase:'Compiling to WebAssembly IR',step:2,steps:8,done:1000,total:2000});
+  assert.equal(log._workStatus.textContent,'Step 2 of 8: Compiling to WebAssembly IR · 1,000 / 2,000 (18% overall)');
+  assert.equal(bar.className,'workbar counted');assert.equal(bar.style['--work-progress'],'18%');
+  assert.equal(bar.attrs['aria-valuemax'],'100');assert.equal(bar.attrs['aria-valuenow'],'18');
+  ctx.updateWorkProgress(log,{phase:'Linking',step:5,steps:8});
+  assert.equal(log._workStatus.textContent,'Step 5 of 8: Linking (50% overall)');
+  assert.equal(bar.style['--work-progress'],'50%');
 }

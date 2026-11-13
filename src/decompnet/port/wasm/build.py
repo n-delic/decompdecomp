@@ -12,11 +12,18 @@ Inputs, all from the game's save repository (the folder Save writes, under git) 
 
 The build goes to port/wasm/build/ (generated, never committed: git ignores it). Its result is a program that runs
 the game from the user's own ROM: `port/wasm/build/game ROM [seconds]`.
+
+A rebuild redoes only what changed. Each file the build makes keeps a key beside it (`<file>.key`): the hash of
+everything it was made from, the headers its C includes among them. Times aren't trusted: a Save
+rewrites files whose text didn't change, a part's header changes without its C, and the tables every function's
+placing reads (signatures, addresses) change on almost every Save, so a function is placed again only when its own
+rows in them change.
 """
 
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import os
 import re
@@ -48,6 +55,9 @@ LINK_FLAGS = ["--no-entry", "--allow-undefined", "--export-all", "--export-table
               "--emit-relocs", "--global-base=1048576", "-z", "stack-size=65536", "--stack-first",
               "--initial-memory=4294967296", "--max-memory=4294967296"]
 TIMEOUT = 900
+# What the progress bar counts, in order (play.py adds starting the game).
+STEPS = ("Gathering the game's C from its save", "Compiling to WebAssembly IR", "Reading each function's signature",
+         "Placing every symbol at its console address", "Linking", "Translating to C (wasm2c)", "Building the host")
 
 
 def _write(path: Path, text: str) -> None:
@@ -60,6 +70,111 @@ def _names(path: Path) -> set[str]:
     if not path.is_file():
         return set()
     return {line.split("#", 1)[0].strip() for line in path.read_text(encoding="utf-8").splitlines()} - {""}
+
+
+def _digest(*parts) -> str:
+    h = hashlib.sha256()
+    for part in parts:
+        h.update(part if isinstance(part, bytes) else str(part).encode("utf-8"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
+
+
+class _Files:
+    """The hashes of the files a build step reads and the headers each includes, each read once per build (2,000
+    files share a header)."""
+
+    def __init__(self):
+        self.seen: dict[Path, str] = {}
+        self.included: dict[Path, list[str]] = {}
+
+    def __call__(self, path: Path) -> str:
+        path = Path(path)
+        if path not in self.seen:
+            try:
+                data = path.read_bytes()
+            except OSError:
+                data = None
+            self.seen[path] = _digest(data) if data is not None else "missing"
+            self.included[path] = _INCLUDE.findall(data.decode("utf-8", "replace")) if data else []
+        return self.seen[path]
+
+    def key(self, source: Path, dirs, *inputs) -> str:
+        """The key of what's compiled from `source`: the inputs given, the source and every header it includes,
+        found in its own folder or `dirs` as the compiler finds them. One the folders don't have (the compiler's
+        own) comes with the compiler, which the inputs name. An include inside an #if counts too: at worst a file
+        is compiled again for nothing. (Not the compiler's dependency list: zig's `-MD` dropped the IR it wrote.)"""
+        seen, todo, parts = set(), [Path(source)], []
+        while todo:
+            path = todo.pop()
+            if path in seen:
+                continue
+            seen.add(path)
+            parts.append(f"{path}={self(path)}")
+            for name in self.included[path]:
+                for folder in (path.parent, *dirs):
+                    if (found := Path(folder) / name).is_file():
+                        todo.append(found)
+                        break
+        return _digest(*inputs, *sorted(parts))
+
+
+def _fresh(made: Path, key: str) -> bool:
+    stamp = made.with_name(made.name + ".key")
+    try:
+        return made.exists() and stamp.read_text(encoding="utf-8") == key
+    except OSError:
+        return False
+
+
+def _stamp(made: Path, key: str) -> None:
+    made.with_name(made.name + ".key").write_text(key, encoding="utf-8")
+
+
+def _unstamp(made: Path) -> None:
+    """A failed or redone file loses its key, so it's made again next time whatever its inputs say."""
+    made.with_name(made.name + ".key").unlink(missing_ok=True)
+
+
+def _sync(new: Path, old: Path) -> None:
+    """Make folder `old` hold what `new` does, rewriting only the files that differ: an unchanged file keeps its key
+    and isn't compiled again."""
+    old.mkdir(exist_ok=True)
+    names = {p.name for p in new.iterdir()}
+    for p in old.iterdir():
+        if p.name not in names:
+            p.unlink()
+    for p in new.iterdir():
+        target = old / p.name
+        if not target.exists() or target.read_bytes() != p.read_bytes():
+            shutil.copyfile(p, target)
+    shutil.rmtree(new)
+
+
+_REF = re.compile(r"@([\w.$]+)(?![\w.$])")
+
+
+def table_rows(text: str, sigs: dict, fixed: dict, functions: set, renamed: dict) -> list[str]:
+    """The rows of the build's tables that placing one function's IR (beir.py) reads: those of the names it uses
+    (and the names a renamed call goes to). The tables change with almost every Save; this IR's rows rarely do."""
+    names = set(_REF.findall(text))
+    names |= {renamed[n] for n in names if n in renamed}
+    rows = []
+    for n in sorted(names):
+        rows.append(f"{n}|{sigs.get(n, '')}|{fixed.get(n, '')}|{n in functions}|{renamed.get(n, '')}")
+    return rows
+
+
+def _rows(path: Path, sep: str | None = None) -> dict[str, str]:
+    out = {}
+    for row in path.read_text(encoding="utf-8").splitlines():
+        if row.strip():
+            name, _, rest = row.partition(sep or " ")
+            out[name.strip()] = rest
+    return out
 
 
 # A bitfield's declared type: its storage unit's size in bytes.
@@ -203,16 +318,56 @@ def _run(argv: list, log, cwd: Path | None = None, env: dict | None = None) -> s
                           timeout=TIMEOUT)
 
 
-def _parallel(jobs, work, log, what: str) -> list[str]:
-    """Run work(job) for every job, a core each; the jobs that failed, with their first error line."""
-    failed = []
+def _parallel(jobs, work, log, what: str, step=None) -> list[str]:
+    """Run work(job) for every job, a core each; the jobs that failed, with their first error line. work returns an
+    error line, or None when it did the job, or False when the job was already done (its key matched). `step`
+    counts the jobs done for the progress bar, and the log says how many were already done."""
+    failed, done, cached = [], 0, 0
+    jobs = list(jobs)
+    if step:
+        step(0, len(jobs))
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
-        for job, error in zip(jobs, pool.map(work, jobs)):
-            if error:
-                failed.append(f"{job}: {error}")
+        futures = {pool.submit(work, job): job for job in jobs}
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                error = future.result()
+                if error:
+                    failed.append(f"{futures[future]}: {error}")
+                elif error is False:
+                    cached += 1
+                done += 1
+                if step:
+                    step(done, len(jobs))
+        except BaseException:  # cancelled (Stop) or failed: the queued jobs don't start
+            for future in futures:
+                future.cancel()
+            raise
+    if jobs:
+        log(f"{len(jobs) - cached} {what} redone, {cached} unchanged")
     if failed:
         log(f"{len(failed)} {what} failed: " + "; ".join(failed[:5]))
     return failed
+
+
+class Progress:
+    """The build's steps for the job's progress bar (the log's `progress`, where it has one): {phase, step, steps,
+    done, total}; done and total count a step's files."""
+
+    def __init__(self, log, steps=STEPS):
+        self.report = getattr(log, "progress", None)
+        self.steps, self.at = tuple(steps), 0
+
+    def start(self, phase: str) -> None:
+        self.at = self.steps.index(phase) + 1
+        self.phase = phase
+        self.files(None, None)
+
+    def files(self, done, total) -> None:
+        if self.report:
+            value = {"phase": self.phase, "step": self.at, "steps": len(self.steps)}
+            if total:
+                value.update(done=done, total=total)
+            self.report(value)
 
 
 def renames(lls: list[Path], fixed: list[str]) -> dict[str, str]:
@@ -283,8 +438,10 @@ def function_table(header: str, fixed: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build(repo: Path, *, console: str = "n64", log=print) -> Path:
-    """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game)."""
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS) -> Path:
+    """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
+    what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
+    caller adds its own after these (play.py)."""
     repo = Path(repo).expanduser().resolve()
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
@@ -294,11 +451,14 @@ def build(repo: Path, *, console: str = "n64", log=print) -> Path:
     for name in ("ll", "o", "c", "obj"):
         (out / name).mkdir(parents=True, exist_ok=True)
     _write(repo / "port" / "wasm" / ".gitignore", "build/\n")
+    progress = Progress(log, steps)
+    progress.start(STEPS[0])
     toolchains.ensure("zig", log=log)
     zig = toolchains.binary("zig")
     wabt = toolchains.ensure("wabt", log=log)
     env = {**os.environ, "ZIG_GLOBAL_CACHE_DIR": str(out / "zig-cache"), "ZIG_LOCAL_CACHE_DIR": str(out / "zig-cache")}
     py = sys.executable
+    files = _Files()
 
     log("gathering the game's C from its save")
     sources = gather(repo, out)
@@ -307,26 +467,34 @@ def build(repo: Path, *, console: str = "n64", log=print) -> Path:
     _write(out / "fixed.txt", "\n".join(fixed) + "\n")
     _write(out / "functions.txt", "\n".join(sorted(functions)) + "\n")
 
+    progress.start(STEPS[1])
     log(f"compiling {len(sources)} files to WebAssembly IR")
 
-    def ir(name: str) -> str | None:
+    def ir(name: str) -> str | None | bool:
         src, ll = out / "src" / name, out / "ll" / (name[:-2] + ".ll")
-        if ll.exists() and ll.stat().st_mtime >= src.stat().st_mtime:
-            return None
+        key = files.key(src, [out / "include"], zig, *IR_FLAGS)
+        if _fresh(ll, key):
+            return False
+        _unstamp(ll)
         port = ["-DPORT=1"] if NEEDS_PORT.search(src.read_text(encoding="utf-8")) else []
         done = _run([zig, "cc", *IR_FLAGS, *port, "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll], log, env=env)
         if done.returncode and not port:
             done = _run([zig, "cc", *IR_FLAGS, "-DPORT=1", "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll],
                         log, env=env)
-        return None if done.returncode == 0 else (done.stderr.strip().splitlines() or ["failed"])[0]
-    if failed := _parallel(sorted(sources), ir, log, "files"):
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["failed"])[0]
+        _stamp(ll, key)
+        return None
+    if failed := _parallel(sorted(sources), ir, log, "files", progress.files):
         raise NetworkError(f"{len(failed)} of the game's files don't compile for the WebAssembly build: "
                            + "; ".join(failed[:3]))
     compiled = {name.casefold() for name in sources}
     for stale in (out / "ll").glob("*.ll"):
         if (stale.name[:-3] + ".c").casefold() not in compiled:
-            stale.unlink()
+            for made in (stale, stale.with_name(stale.name + ".key")):
+                made.unlink(missing_ok=True)
 
+    progress.start(STEPS[2])
     log("one signature per function")
     lls = sorted((out / "ll").glob("*.ll"))
     done = _run([py, HERE / "sigs.py", out / "sigs.txt", host / "libultra.sigs", *lls], log)
@@ -334,58 +502,77 @@ def build(repo: Path, *, console: str = "n64", log=print) -> Path:
         raise NetworkError(f"reading the functions' signatures failed: {done.stderr.strip()[-400:]}")
 
     _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renames(lls, fixed).items())))
+    progress.start(STEPS[3])
     log("placing every symbol at its console address, data big-endian")
-    sigs_changed = max([(out / n).stat().st_mtime for n in ("sigs.txt", "fixed.txt", "functions.txt", "renames.txt")]
-                       + [(HERE / n).stat().st_mtime for n in ("beir.py", "adapt.py")])  # a fix to the tools too
+    # Each function's IR is placed again only when its own rows in these tables change, or the tools do
+    tables = (_rows(out / "sigs.txt", "\t"), _rows(out / "fixed.txt"), set(functions), _rows(out / "renames.txt"))
+    tools = tuple(files(HERE / n) for n in ("beir.py", "adapt.py"))
 
-    def place(ll: Path) -> str | None:
+    def place(ll: Path) -> str | None | bool:
         be, obj = out / "o" / (ll.stem + ".be.ll"), out / "o" / (ll.stem + ".o")
-        if obj.exists() and obj.stat().st_mtime >= max(ll.stat().st_mtime, sigs_changed):
-            return None
+        text = ll.read_text(encoding="utf-8")
+        key = _digest(zig, *tools, text, *table_rows(text, *tables))
+        if _fresh(obj, key):
+            return False
+        _unstamp(obj)
         done = _run([py, HERE / "beir.py", ll, be, "--functions", out / "functions.txt", "--renames", out / "renames.txt",
                      "--signatures", out / "sigs.txt", "--fixed", out / "fixed.txt"], log)
         if done.returncode:
             return (done.stderr.strip().splitlines() or ["beir failed"])[-1]
         done = _run([zig, "cc", "-target", "wasm32-freestanding", "-O0", "-c", be, "-o", obj], log, env=env)
-        return None if done.returncode == 0 else (done.stderr.strip().splitlines() or ["failed"])[0]
-    if failed := _parallel(lls, place, log, "functions"):
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["failed"])[0]
+        _stamp(obj, key)
+        return None
+    if failed := _parallel(lls, place, log, "functions", progress.files):
         raise NetworkError(f"{len(failed)} functions couldn't be placed at their addresses: " + "; ".join(failed[:3]))
     objects = linked(out / "o", sources)
     _write(out / "objects.txt", "\n".join(str(p) for p in objects) + "\n")
 
+    progress.start(STEPS[4])
     log(f"linking {len(objects)} functions")
     done = _run([zig, "wasm-ld", "-o", out / "game.wasm", f"@{out / 'objects.txt'}", *LINK_FLAGS], log, env=env)
     if done.returncode:
         raise NetworkError(f"linking the WebAssembly build failed: {done.stderr.strip()[-600:]}")
     _run([py, HERE / "beslots.py", out / "game.wasm"], log)
 
+    progress.start(STEPS[5])
     log("translating it to C (wasm2c)")
-    shutil.rmtree(out / "c")
-    (out / "c").mkdir()
-    done = _run([wabt / "bin" / "wasm2c", out / "game.wasm", "-o", out / "c" / "game.c", "-n", "game",
+    fresh = out / "c.new"
+    shutil.rmtree(fresh, ignore_errors=True)
+    fresh.mkdir()
+    done = _run([wabt / "bin" / "wasm2c", out / "game.wasm", "-o", fresh / "game.c", "-n", "game",
                  "--num-outputs", "8"], log)
     if done.returncode:
         raise NetworkError(f"wasm2c failed: {done.stderr.strip()[-600:]}")
-    done = _run([py, HERE / "bemem.py", out / "c" / "game-impl.h"], log)
+    done = _run([py, HERE / "bemem.py", fresh / "game-impl.h"], log)
     if done.returncode:
         raise NetworkError(f"making memory big-endian failed: {done.stderr.strip()[-400:]}")
+    _sync(fresh, out / "c")  # only the parts that changed are compiled again
     _write(out / "funcs.c", function_table((out / "c" / "game.h").read_text(encoding="utf-8"), fixed))
     _run([py, HERE / "stubs.py", out / "c" / "game.h", host / "host.c", out / "stubs.c"], log)
 
+    progress.start(STEPS[6])
     log("building the host")
     rt = wabt / "share" / "wabt" / "wasm2c"
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-mem-impl.c",
              rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), out / "funcs.c", out / "stubs.c"]
     includes = ["-I", wabt / "include", "-I", rt, "-I", out / "c"]
     cc = host_compiler(zig)
+    host_flags = ["-O1", "-g", "-fno-inline"]
 
-    def compile_unit(unit: Path) -> str | None:
+    def compile_unit(unit: Path) -> str | None | bool:
         obj = out / "obj" / (unit.stem + ".o")
-        if obj.exists() and obj.stat().st_mtime >= unit.stat().st_mtime and unit.parent == out / "c":
-            return None
-        done = _run([*cc, "-O1", "-g", "-fno-inline", *includes, "-c", unit, "-o", obj], log, env=env)
-        return None if done.returncode == 0 else (done.stderr.strip().splitlines() or ["failed"])[0]
-    if failed := _parallel(units, compile_unit, log, "host files"):
+        key = files.key(unit, [wabt / "include", rt, out / "c"], *cc, *host_flags)
+        if _fresh(obj, key):
+            return False
+        _unstamp(obj)
+        done = _run([*cc, *host_flags, *includes, "-c", unit, "-o", obj], log, env=env)
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["failed"])[0]
+        _stamp(obj, key)
+        return None
+    if failed := _parallel(units, compile_unit, log, "host files", progress.files):
         raise NetworkError("building the host failed: " + "; ".join(failed[:3]))
     program = out / "game"
     libs = ["-lpthread"] + (["-lws2_32"] if sys.platform == "win32" else [])  # Winsock, for the live view (live.c)
