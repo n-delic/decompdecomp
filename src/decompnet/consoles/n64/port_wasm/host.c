@@ -620,6 +620,10 @@ static uint8_t *read_file(const char *path, size_t *size) {
 }
 
 #include <signal.h>
+#ifndef SIGUSR1 /* Windows: no signal to interrupt a thread with, so no backtraces from PORT_SAMPLE there */
+#define SIGUSR1 0
+#define pthread_kill(t, sig) ((void)(t), 0)
+#endif
 /* PORT_SAMPLE: once a second, where the running game thread is (a backtrace for atos) */
 static void sample_handler(int sig) { (void)sig; port_trace(); }
 static void sample(void) {
@@ -654,7 +658,7 @@ static void sample(void) {
 }
 
 int main(int argc, char **argv) {
-    signal(SIGUSR1, sample_handler);
+    if (SIGUSR1) signal(SIGUSR1, sample_handler);
     if (argc < 2) { fprintf(stderr, "usage: %s rom.z64 [seconds, 0: until stopped]\n", argv[0]); return 2; }
     rom = read_file(argv[1], &rom_size);
     if (!rom) { fprintf(stderr, "can't read %s\n", argv[1]); return 2; }
@@ -707,6 +711,9 @@ int main(int argc, char **argv) {
 }
 
 /* An indirect call to nothing: say which, before the trap stops the thread. */
+#ifdef _WIN32
+void port_trace(void) { fprintf(stderr, "(no backtrace on Windows)\n"); }
+#else
 #include <execinfo.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -722,6 +729,7 @@ void port_trace(void) {
     backtrace_symbols_fd(frames + 1, n - 1, 2);
 #endif
 }
+#endif
 void port_bad_call(uint32_t index) {
     fprintf(stderr, "a call through a function pointer to table entry %u, which holds no function\n", index);
     port_trace();

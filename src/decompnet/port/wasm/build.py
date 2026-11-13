@@ -372,7 +372,8 @@ def build(repo: Path, *, console: str = "n64", log=print) -> Path:
     if failed := _parallel(units, compile_unit, log, "host files"):
         raise NetworkError("building the host failed: " + "; ".join(failed[:3]))
     program = out / "game"
-    done = _run([*cc, "-o", program, *(out / "obj" / (u.stem + ".o") for u in units), "-lpthread"], log, env=env)
+    libs = ["-lpthread"] + (["-lws2_32"] if sys.platform == "win32" else [])  # Winsock, for the live view (live.c)
+    done = _run([*cc, "-o", program, *(out / "obj" / (u.stem + ".o") for u in units), *libs], log, env=env)
     if done.returncode:
         raise NetworkError(f"linking the host failed: {done.stderr.strip()[-600:]}")
     log(f"built {program}: run it with the game's ROM, `{program} ROM [seconds]`")
