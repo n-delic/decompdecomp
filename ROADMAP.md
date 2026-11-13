@@ -992,7 +992,8 @@ Left:
 - the renderer (`consoles/n64/port_wasm/render.c`, a software RSP and RDP into the game's own frame buffer) draws
   the racing game's opening and title screens, its language menu (3D flags, menu text) and the Rumble Pak prompt,
   reached with scripted input (`PORT_INPUT`). Why its 4-bit text needs its texture coordinates halved is still to
-  be confirmed. Next: past the prompt into a race, then a window, keyboard and pad input, and audio;
+  be confirmed. Past the prompt the game loads a race's track (Indonesia); it stops there, a message thread
+  calling a handler that is 0. Then a window, keyboard and pad input, and audio;
 - the overrides moved into the matched C behind `#ifdef PORT` through Fix C for the PC;
 - Play in the GUI;
 - the console's other connector parts for PS1 and the rest: "—" until a host exists.

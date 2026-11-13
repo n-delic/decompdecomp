@@ -117,3 +117,34 @@ def test_every_game_load_and_store_is_volatile_so_none_is_narrowed():
     assert volatile(lines) == ["  %1 = load volatile i32, ptr %v, align 4", "  store volatile i32 %2, ptr %w, align 4",
                                "  %3 = load volatile i8, ptr %x", "  %4 = load atomic i32, ptr %y seq_cst, align 4",
                                "  call void @f(ptr %v)"]
+
+
+def test_a_variadic_function_the_c_declared_fixed_gets_its_arguments_in_its_buffer():
+    """A text-table loader declared its sprintf `f(u8 *, u8 *, u8 *)`; the sprintf is variadic, so its third
+    argument was read from a varargs buffer that wasn't there: a texture pack's name came out wrong, its size 0, and
+    the heap stopped the game."""
+    from decompnet.port.wasm.adapt import adapt
+    from decompnet.port.wasm.beir import Types
+    ir = ("declare void @fmt(ptr, ptr, ...)\n"
+          "define void @caller(ptr %b, ptr %f, ptr %s) {\n"
+          "  call void @fmt(ptr noundef %b, ptr noundef %f, ptr noundef %s)\n"
+          "  ret void\n}\n")
+    out = adapt(ir, [], Types(ir), {})
+    assert "call void (ptr, ptr, ...) @fmt(ptr noundef %b, ptr noundef %f, ptr noundef %s)" in out
+    unprototyped = ("declare i32 @read_status(...)\ndefine i32 @caller() {\n  %r = call i32 @read_status()\n"
+                    "  ret i32 %r\n}\n")  # C's `f()`: no varargs buffer for it
+    assert "call i32 @read_status()" in adapt(unprototyped, [], Types(unprototyped), {})
+
+
+def test_a_call_through_a_pointer_leaves_its_arguments_in_the_register_words():
+    """A text-table loader was called through a pointer with the table's record in $a0, declared no parameter, and
+    passed $a0 on to the next call: its table came from a stale register word."""
+    from decompnet.port.wasm.adapt import REGS, adapt
+    from decompnet.port.wasm.beir import Types
+    ir = ("define void @run(ptr %h, ptr %rec, i16 %n) {\n"
+          "  call void %h(ptr noundef %rec, i16 noundef %n)\n"
+          "  ret void\n}\n")
+    out = adapt(ir, [], Types(ir), {})
+    stores = [line for line in out.splitlines() if line.strip().startswith("store i32")]
+    assert len(stores) == 2 and f"inttoptr (i32 {REGS} to ptr)" in stores[0]
+    assert out.index("store i32") < out.index("call void %h(")
