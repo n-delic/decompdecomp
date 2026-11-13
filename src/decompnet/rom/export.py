@@ -347,7 +347,10 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     functions.sort(key=lambda f: f["vram"])
 
     objects, private, as_fallback = [], [], []
-    for f in functions:
+    for index, f in enumerate(functions):
+        if hasattr(log, 'check_cancel'):log.check_cancel()
+        if hasattr(log, 'progress'):
+            log.progress({'phase': 'Checking exported functions', 'done': index, 'total': len(functions), 'function': f['name']})
         row = rows.get(f["vram"])
         f["obj_asm"] = f"build/{Path(f['asm']).with_suffix('.o').as_posix()}"
         if row is None or row["status"] != "matched" or not row["matched_source"]:
@@ -357,7 +360,14 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         row = dict(row) | {"matched_source": canonical_source(row, row["matched_source"])}
         unit = net._effective_unit(row, units)
         hdr = net._context(proj["id"], unit)["header"]
-        compiled = net._compile(proj, hdr, row["matched_source"], row)
+        try:
+            compiled = net._compile(proj, hdr, row["matched_source"], row)
+        except toolchains.ToolchainError as error:
+            # A saved per-function profile may need an optional runner absent on this
+            # machine. Keep its original assembly; never substitute another compiler.
+            as_fallback.append((f["name"], f"compiler unavailable: {error}"))
+            f["kind"] = "asm"
+            continue
         if not compiled.ok:
             as_fallback.append((f["name"], "doesn't compile any more"))
             f["kind"] = "asm"
@@ -392,6 +402,9 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         f["src"] = src.relative_to(out).as_posix()
         f["obj"] = f"build/src/{f['seg']}/{f['name']}.o"
         private += [(f["obj"], section, base) for section, base in bases.items()]
+
+    if hasattr(log, 'progress'):
+        log.progress({'phase': 'Writing data and layout', 'done': len(functions), 'total': len(functions)})
 
     # 3. everything else splat wrote: entry code, data, bss, binary blobs
     config = yaml.safe_load((out / "splat.yaml").read_text(encoding="utf-8"))
@@ -477,14 +490,13 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         entry = {"name": f["name"], "seg": f["seg"], "vram": f["vram"], "rom": f["rom"], "asm": f["asm"]}
         if f["kind"] == "c":
             entry["c"] = f["src"]
+            # Splitter filenames can retain an old name after the C entry was renamed.
+            if rows[f["vram"]]["name"] != f["name"]:
+                entry['symbol'] = rows[f["vram"]]["name"]
             if rows[f['vram']]['id'] in sources:
                 entry['shared_instance'] = rows[f['vram']]['id']
             if f.get('entry_only'):
                 entry['entry_only']=True
-                # the C defines the function by its name in the project, which splat's file name may not be (it kept
-                # func_8005D0B0 for a renamed function, and its extraction found no function by that name)
-                if rows[f["vram"]]["name"] != f["name"]:
-                    entry['symbol'] = rows[f["vram"]]["name"]
             entry["own"] = {sec: base for (obj, sec, base) in private if obj == f["obj"]}
         fn_json.append(entry)
 
@@ -561,6 +573,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
 
     # 6. prove it
     log("building the exported project to check it rebuilds the game byte for byte")
+    if hasattr(log, 'progress'):log.progress({'phase': 'Rebuilding exported image'})
     from .export_process import run as verify_build
     proc = verify_build([console_python(), "build.py"], out, log)
     identical = proc.returncode == 0 and "identical" in proc.stdout
