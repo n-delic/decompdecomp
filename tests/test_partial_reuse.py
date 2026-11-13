@@ -209,3 +209,59 @@ def test_all_saved_cross_game_matches_are_loaded_on_demand(pair):
     assert len(full['matches']) == 45
     assert full['counts']['match'] == 45
     assert len(full['recent']) == 30
+
+
+@pytest.mark.parametrize('gate', ['missing fingerprint', 'small', 'assembly', 'different', 'claimed', 'worse', 'cancelled'])
+def test_rejected_partial_donors_do_not_decode_saved_source(pair, monkeypatch, gate):
+    from decompnet import large_text_storage, payload_storage
+    from decompnet.app.twins import Print
+    prepare(pair)
+    large_text_storage.install(pair.store.conn, {'functions'})
+    source = '/* ' + 'unused synthetic source\n' * 4000 + ' */\nint old(int x){return x;}'
+    with pair.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=? WHERE id=1', (source,))
+        if gate == 'worse':db.execute('UPDATE functions SET best_score=200 WHERE id=1')
+        if gate == 'claimed':
+            agent, _ = pair.local_agent('busy')
+            db.execute('INSERT INTO claims VALUES(?,?,0,99999999999)', (2, agent.id))
+    reads = []
+    digest = payload_storage.digest(source)
+    def unpack(key, payload):
+        if key == digest:reads.append(key)
+        return payload_storage.unpack(key, payload)
+    pair.store.conn.create_function('payload_read', 2, unpack, deterministic=True)
+    pair.store._reader().create_function('payload_read', 2, unpack, deterministic=True)
+    assert pair.store.one('SELECT best_source FROM functions WHERE id=1')['best_source'] == source
+    assert reads == [digest]
+    reads.clear()
+    job = Job()
+    def prints(proj):
+        if gate == 'cancelled':job.stop.set()
+        if gate == 'missing fingerprint':return {}
+        return {1: Print('different' if gate == 'different' else 'same', [], 8 if gate == 'small' else 32,
+                         asm=gate == 'assembly')}
+    monkeypatch.setattr(pair.twins, 'prints', prints)
+    monkeypatch.setattr(pair, 'try_quietly', lambda *args: pytest.fail('rejected donor compiled'))
+    partial_reuse.run(pair.twins, pair.project_row('destination'), {'same': [2]}, {2: Print('same', [], 32)},
+                      job, projects=[pair.project_row('source')])
+    assert reads == []
+
+
+@pytest.mark.parametrize('change', ['source', 'matched', 'deleted', 'worse'])
+def test_partial_donor_details_are_fresh_after_fingerprint_selection(pair, monkeypatch, change):
+    from decompnet.app.twins import Print
+    prepare(pair)
+    def prints(proj):
+        with pair.store.tx() as db:
+            if change == 'source':db.execute("UPDATE functions SET best_source='int old(int x){return x+7;}' WHERE id=1")
+            elif change == 'matched':db.execute("UPDATE functions SET status='matched' WHERE id=1")
+            elif change == 'deleted':db.execute('DELETE FROM functions WHERE id=1')
+            else:db.execute('UPDATE functions SET best_score=200 WHERE id=1')
+        return {1: Print('same', [], 32)}
+    monkeypatch.setattr(pair.twins, 'prints', prints)
+    calls = []
+    monkeypatch.setattr(pair, 'try_quietly', judge(pair, calls, 20))
+    partial_reuse.run(pair.twins, pair.project_row('destination'), {'same': [2]}, {2: Print('same', [], 32)},
+                      projects=[pair.project_row('source')])
+    assert len(calls) == (1 if change == 'source' else 0)
+    if calls:assert 'return x+7;' in calls[0]

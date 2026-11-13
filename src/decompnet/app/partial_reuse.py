@@ -48,16 +48,21 @@ def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None
         try:
             if machine(net, other) != target_machine:
                 continue
-            donors = net.project_store(other['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' "
+            donor_store = net.project_store(other['id'])
+            # Selection needs only scalar scores/IDs. Saved C can be a large
+            # compressed payload, and most donors have no eligible target here.
+            # Test presence on the raw reference: the detail view decodes even in WHERE.
+            donors = donor_store.all("SELECT id,best_score,n_insns FROM main.functions WHERE project_id=? AND status='open' "
                                    'AND best_source IS NOT NULL AND best_score IS NOT NULL ORDER BY best_score,id', other['id'])
             if not donors:
                 continue
             prints = (twins._fork_prints(other,function_ids=[row['id'] for row in donors],job=job)
                       if net.fork_slug(other['slug']) else twins.prints(other))
-            for a in donors:
-                pa = prints.get(a['id'])
+            for selected in donors:
+                pa = prints.get(selected['id'])
                 if not pa or pa.asm or pa.size < ACROSS_MIN_BYTES:
                     continue
+                a = None
                 # A live donor may have changed since selection; target code, never candidate output, is fingerprinted.
                 for bid in wanted.get(pa.key, []):
                     from .free_candidates import exhausted
@@ -67,6 +72,13 @@ def run(twins, proj, wanted, mine, job=None, *, projects=None, budget_state=None
                     b = net.project_store(proj['id']).one("SELECT * FROM functions WHERE id=? AND status='open'", bid)
                     if not b or net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?', bid):
                         continue
+                    if b['best_score'] is not None and selected['best_score'] / max(1, selected['n_insns']) >= b['best_score'] / max(1, b['n_insns']):
+                        continue
+                    if a is None:
+                        a = donor_store.one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='open' "
+                                            'AND best_source IS NOT NULL AND best_score IS NOT NULL', selected['id'], other['id'])
+                    if not a:
+                        break
                     if b['best_score'] is not None and a['best_score'] / max(1, a['n_insns']) >= b['best_score'] / max(1, b['n_insns']):
                         continue
                     source, _ = adapt(twins, proj, other, a, b, pa, mine[bid])
