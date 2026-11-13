@@ -41,7 +41,10 @@ def test_slow_route_helpers_do_not_block_health(app, monkeypatch, case):  # noqa
         monkeypatch.setattr(net,'project_row',slow)
         method,path='GET','/api/collab/matches?slug=slow'
     elif case == 'room-stop':
-        monkeypatch.setitem(net.rooms,'slow',type('Room',(),{'close':staticmethod(slow)})())
+        # Stopping also reads reconciliation state after close. Supply its
+        # metadata so the fake still tests worker dispatch through the full route.
+        monkeypatch.setitem(net.rooms,'slow',type('Room',(),{
+            'close':staticmethod(slow), 'store':net.store, 'proj':{'id':0}})())
         path,data='/api/collab/stop',{'slug':'slow'}
         # This action has no route error conversion: let the fake close complete normally.
         original=slow
