@@ -1,5 +1,6 @@
 """The other release's C fitted to this release's numbers (app/regional_adapt.py), and the names and offsets the
 release plan gives it (app/regional.py)."""
+from decompnet.app import regional
 from decompnet.app import regional_adapt as ra
 from decompnet.app.regional import AddressMap, Plan, pair
 from decompnet.rom.symbols import Symbol, SymbolTable
@@ -55,6 +56,17 @@ def test_a_struct_the_c_defines_is_laid_out_as_this_release_reads_it():
     assert ra.moved_layout(s, fields, 0x50, {0x4c: 0x2, 0x28: 0x24}, set(), {}) is None
 
 
+def test_a_field_read_earlier_here_takes_the_place_of_fields_nothing_reads():
+    """A list node's key read at 0x24 in one release and 0x20 in the other: the other release's C has an unread
+    unk20 there, which makes way; fields this release reads still never overlap."""
+    node = ra.structs("typedef struct Node { int unk00; struct Node *next; int unk08; int unk20; int key; } Node;\n")[0]
+    fields = [(0, 4), (4, 4), (8, 4), (0x20, 4), (0x24, 4)]
+    placed, size, _ = ra.moved_layout(node, fields, 0x28, {0x24: 0x20}, {4}, {})
+    assert [(name, at) for _, name, at, _ in placed] == [('unk00', 0), ('next', 4), ('unk08', 8), ('key', 0x20)]
+    assert size == 0x24
+    assert ra.moved_layout(node, fields, 0x28, {0x24: 0x6}, {4}, {}) is None  # over `next`, which is read
+
+
 def test_numbers_in_the_c_change_where_the_instructions_map_them_one_way():
     source = ('/* 0x4C in a comment stays */\nvoid f(u8 *p) { p[0x4C] = 56; *(s32 *)(p + 0x4C) = 0x4C; '
               'g(p, 350); h(1.5f, 0x28u); }')
@@ -63,6 +75,26 @@ def test_numbers_in_the_c_change_where_the_instructions_map_them_one_way():
     assert 'p[0x42] = 48' in out and '(p + 0x42) = 0x4C' in out  # an offset only where it's added or indexed
     assert 'g(p, 256)' in out and '1.5f' in out and '0x24u' in out
     assert ra.adapt_numbers(source, {}, {}) is None
+
+
+def test_a_negative_number_that_changed_is_written_back_the_same_way():
+    """A mask written `-9` or `~8` builds the instructions' -9; this release's -0x21 is `-0x21` and `~0x20`."""
+    source = 'void f(u8 *p) { s32 clear_mask = -9; p[1] &= ~0x8; p[2] = 3 - 9; q = -4; }'
+    out = ra.adapt_numbers(source, {}, {-9: -0x21, 3: 5})
+    assert 'clear_mask = -33' in out and '&= ~0x20' in out and 'p[2] = 5 - 33' in out
+    assert 'q = -4' in out  # a negative number that didn't change stays
+
+
+def test_a_number_that_is_the_other_releases_address_names_this_releases_variable():
+    """`*(u8 **)0x800b68f0`: the other release's address of a variable, written as a number. Here it is inside
+    one of this release's big blocks, named by its address and declared; a number below any address stays."""
+    pal = [fn(1, 0x100, 'k1', relocs=[(0, 5, 0x800B68F0), (8, 5, 0x800B6900)])]
+    ntsc = [fn(11, 0x100, 'k1', relocs=[(0, 5, 0x800BA340), (8, 5, 0x800BA350)])]
+    p = _plan([Symbol('gVoices', 0x800B68F0, 4)], [Symbol('D_800B21B0', 0x800B21B0, 0x20000)], pal, ntsc)
+    out = regional._raw_addresses(p, 'base = *(u8 **)0x800b68f0; mask = x & 0x80000000;', '')
+    assert out == 'extern char D_800BA340[];\nbase = *(u8 **)((u32)&D_800BA340); mask = x & 0x80000000;'
+    declared = regional._raw_addresses(p, 'base = *(u8 **)0x800b68f0;', 'extern s32 D_800BA340;')
+    assert declared == 'base = *(u8 **)((u32)&D_800BA340);'
 
 
 def _plan(pal_syms, ntsc_syms, pal_fns, ntsc_fns):

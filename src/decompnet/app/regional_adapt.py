@@ -183,17 +183,25 @@ def anchors(s: Struct, fields, moves, kept) -> dict[int, int] | None:
 def place(s: Struct, fields, size, found: dict[int, int], constants):
     """[(declaration, member, new offset, width)] for the struct's fields (filler dropped) and its new size, with
     the fields in `found` where it says and the others moved with the field before them; or None when they don't
-    fit."""
-    placed, delta, end = [], 0, 0  # what comes before the first field read stays where it is
+    fit. A field this release reads that moved back over fields it doesn't read takes their place: the struct is
+    this C's own copy, and a field nothing here reads is a guess of the other release's (a list node's `key` read at
+    0x24 in one release and 0x20 in the other, where the other release's C had an unread `unk20`, missed by one
+    operand)."""
+    placed, read, delta, end = [], [], 0, 0  # what comes before the first field read stays where it is
     for i, ((decl, name), (offset, width)) in enumerate(zip(s.members, fields)):
         if FILLER.match(name):
             continue
         if i in found:
             delta = found[i] - offset
+            new = offset + delta
+            while placed and not read[-1] and placed[-1][2] + placed[-1][3] > new:
+                placed.pop(), read.pop()
+            end = placed[-1][2] + placed[-1][3] if placed else 0
         new = offset + delta
         if new < end:
-            return None  # two fields would overlap: the guess is wrong
+            return None  # two fields this release reads would overlap: the guess is wrong
         placed.append((decl, name, new, width))
+        read.append(i in found)
         end = new + width
     # its size: as this release's code says (a stride, a sizeof), or moved with the last field (the compiler rounds
     # it up to the struct's alignment)
@@ -320,6 +328,16 @@ def adapt_numbers(source: str, moves: dict[int, int], constants: dict[int, int])
     code = _code_only(source)
     for m in C_INTEGER.finditer(code):
         value = int(m.group(1), 0)
+        # `-9` and `~8` build the instructions' -9 (a mask: `clear_mask = -9`, `x & ~8`): a negative number that
+        # changed is written back the same way, `-0x21` and `~0x20`
+        sign = re.search(r'([-~])\s*$', code[:m.start()])
+        signed = (-value if sign.group(1) == '-' else ~value) if sign else None
+        changed = constants.get(signed) if sign else None
+        if changed is not None and changed < 0:
+            magnitude = -changed if sign.group(1) == '-' else ~changed
+            text = (f'0x{magnitude:X}' if m.group(1).lower().startswith('0x') else str(magnitude)) + m.group(2)
+            edits.append((m.start(), m.end(), text))
+            continue
         new = constants.get(value)
         if new is None and value in moves and re.search(r'(?:\+|\[)\s*$', code[:m.start()]):
             new = moves[value]

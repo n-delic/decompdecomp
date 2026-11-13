@@ -925,10 +925,13 @@ def _fitted_sources(net, proj, donor, p, a, b, pair=None) -> tuple[list[str], st
     except (NetworkError, ValueError, KeyError):
         return None
     header = net._context(proj['id'], b['unit'])['header']
-    plain = p.text(a['matched_source'])
     own = p.for_pair(*pair) if pair else p
-    moved = own.text(own.offsets(a['matched_source']))
+    translated = p.text(a['matched_source'])  # what the transfer tried as it is
+    plain = _raw_addresses(own, translated, header)
+    moved = _raw_addresses(own, own.text(own.offsets(a['matched_source'])), header)
     tries = [moved] if moved != plain else []
+    if plain != translated:  # its numbers that were addresses are this release's: a version of its own
+        tries.append(plain)
     fields = ({}, set())
     for word in set(_IDENT.findall(a['matched_source'])):
         moved_fields, kept_fields = own.field_moves(word)
@@ -941,6 +944,34 @@ def _fitted_sources(net, proj, donor, p, a, b, pair=None) -> tuple[list[str], st
     if declared:  # without them none of these builds: each takes them
         tries = [declared + '\n' + t for t in ([plain] if moved == plain else []) + tries]
     return tries[:regional_adapt.MAX_VARIANTS + 1], header
+
+
+_RAW_ADDRESS = re.compile(r'(?<![\w.])0[xX]([0-9a-fA-F]{8})[uU]?(?![\w.])')
+
+
+def _raw_addresses(p: Plan, source: str, header: str) -> str:
+    """The C with each of the other release's addresses written as a number (`*(u8 **)0x800b68f0`, an agent's way
+    to reach a variable it hadn't named) as this release's variable there, `((u32)&D_800BA340)`, where the pair's
+    relocations or the address map place it: the number is the other release's address, so the code missed by the
+    two instructions that build it, and the target reaches it through a relocation. Undeclared names get a
+    declaration. On a game's other release, 16 of the 302 open pairs' C had one."""
+    from . import regional_adapt
+    code = regional_adapt._code_only(source)
+    edits, needed = [], []
+    for m in _RAW_ADDRESS.finditer(code):
+        value = int(m.group(1), 16)
+        here = p._here(value) if value >= 0x80000400 else None
+        if here is None or p.name_at is None:
+            continue
+        current, offset = p.name_at(here)
+        name = current if current and not offset else f'D_{here:08X}'
+        edits.append((m.start(), m.end(), f'((u32)&{name})'))
+        if not re.search(rf'\b{re.escape(name)}\b', header + '\n' + source) and name not in needed:
+            needed.append(name)
+    out = source
+    for start, end, text in reversed(edits):
+        out = out[:start] + text + out[end:]
+    return ''.join(f'extern char {name}[];\n' for name in needed) + out
 
 
 def _try_fitted(net, agent, proj, donor, p, a, b, pair=None) -> str | None:
