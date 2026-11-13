@@ -883,10 +883,13 @@ class Manager:
     # -- the loop
 
     def _progress(self, agent_id: int) -> int:
-        """Compiles + claims + notes by this agent: a session that adds none of these made no progress."""
+        """Compiles + claims + notes by this agent: a session that adds none of these made no progress. A release
+        refused without a compile (release_pushed) isn't progress: a session with only those, the agent is told to
+        compile or end its session, counted as one that worked, and the next one started 3 seconds later on the
+        same function, an infinity times. This burns the user's quota unnecessarily."""
         row = self.net.store.one(
-            "SELECT (SELECT COUNT(*) FROM attempts WHERE agent_id=?) + (SELECT COUNT(*) FROM events WHERE agent_id=?) AS n",
-            agent_id, agent_id)
+            "SELECT (SELECT COUNT(*) FROM attempts WHERE agent_id=?) + (SELECT COUNT(*) FROM events WHERE agent_id=? "
+            "AND kind != 'release_pushed') AS n", agent_id, agent_id)
         return row["n"]
 
     def _left(self, slug: str, task: str = "") -> int:

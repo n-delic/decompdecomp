@@ -42,6 +42,41 @@ def test_a_release_without_a_compile_is_pushed_back_until_it_compiles_once_more(
     assert _held(net, a) is None
 
 
+def test_asking_again_and_again_without_a_compile_is_told_to_stop(tmp_path):
+    # an agent whose own instructions said it was out of tries asked 7 times in 90 seconds, each answer the full
+    # advice, until the user's session quota ran out
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    for _ in range(2):
+        assert "a release with no compile isn't taken" in net.release_function(a, "f", "out of tries", "game")
+    for _ in range(2):
+        said = net.release_function(a, "f", "out of tries", "game")
+        assert said.startswith("Not released yet: you haven't compiled f since you claimed it")
+        assert "end your session here" in said and "isn't taken" not in said
+    assert _held(net, a) == "f"
+    time.sleep(0.01)
+    _attempts(net, a, "f", [40])  # compiled after all: the next ask goes through, as before
+    assert net.release_function(a, "f", "tried it", "game").startswith("Released f")
+
+
+def test_a_session_of_refused_releases_made_no_progress(tmp_path):
+    # so it fails like any session that compiled nothing: a pause between them, and after a few the helper stops
+    # with the reason for the user, instead of a new session on the same function 3 s later
+    from decompnet.app import agents
+
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    m = agents.Manager(net, tmp_path, "http://127.0.0.1:1/mcp")  # (first: it frees claims left from before)
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    before = m._progress(a.id)
+    for _ in range(3):
+        net.release_function(a, "f", "out of tries", "game")
+    assert m._progress(a.id) == before
+    _attempts(net, a, "f", [40])
+    assert m._progress(a.id) == before + 1
+
+
 def test_claiming_while_a_pushed_back_release_still_holds_says_so(tmp_path):
     # an agent read its held function coming back as the queue handing back what it had just released
     net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
