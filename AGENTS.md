@@ -149,6 +149,14 @@ in `pyproject.toml` and `uv lock` here. A repair that needs the network or a pro
 (`mips_stack`, `mips_regions`, `mips_runtime`, the CP0/FPU leaves `mips_count` etc., since 0.2.0) are names for the
 library's modules (`tests/test_decomprepair.py`); `seeds.intrinsic_leaf` decides which compilers get the leaves. The ~130 tests here that exercise its families with the app's compilers stay here.
 
+The permuter and deep permuter (`app/permute.py`, `app/deep_permuter.py`, `app/permuter_worker.py`,
+`app/deep_sweep.py`) follow the same rule. Adding or changing one of their C rewrites (a mutation, a search
+strategy over source, which rewrites to try for a difference) goes in decomp-repair: make the change there on a
+branch, open and merge its pull request, tag a release, then bump the tag link in `pyproject.toml`, `uv lock`, and
+call the new code from the permuter here, in one pull request. What runs candidates stays in `app/`: compiling,
+scoring, the judge, workers, budgets, progress and the database. A permuter change that is only about running them
+needs no library release.
+
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
 from the vtables constructors store, MIPS and x86, named by a PC program's RTTI, `consoles/pc/rtti.py`: the `get_class`
