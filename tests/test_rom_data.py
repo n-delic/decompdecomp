@@ -217,7 +217,7 @@ def test_gp_rel_in_a_defined_region_is_relocated(tmp_path):
 _EE = pytest.mark.skipif(toolchains.installed("ee-gcc-2.96") is None, reason="needs ee-gcc-2.96")
 
 
-def _defined_region_oracle(tmp_path, src, named_ext=(), gp=0x80018000, base=0x80010000):
+def _defined_region_oracle(tmp_path, src, named_ext=(), gp=0x80018000, base=0x80010000, gp_datum=None):
     """Compile `src` (its entry point is `caller`, at .text+0) with ee-gcc and build an oracle ROM for it.
 
     Returns (obj, RomTarget, SymbolTable, read). `named_ext` is (name, addr, bytes, kind) for symbols the game
@@ -283,6 +283,19 @@ def _defined_region_oracle(tmp_path, src, named_ext=(), gp=0x80018000, base=0x80
     image = {sec_base[nm]: apply(nm) for nm in prog if e.get_section_by_name(nm)["sh_type"] != "SHT_NOBITS"}
     for _n, (a, b, _k) in ext.items():
         image[a] = b
+
+    # Serve the ROM's view of a $gp-relative static datum where the judge will look for it: the clone body loads
+    # it at (applied immediate) + gp, which the oracle's own small-data placement does not fall on (it lays each
+    # section in a 0x2000 slot). Decoding dest the way place_pointees does guarantees verify_data byte-compares it.
+    if gp_datum is not None:
+        for sec in prog:
+            applied = image.get(sec_base.get(sec))
+            if applied is None:
+                continue
+            for off, typ, _a in relocs_of(sec):
+                if typ == match.R_MIPS_GPREL16 and off + 4 <= len(applied):
+                    imm = int.from_bytes(applied[off:off + 4], "little") & 0xFFFF
+                    image[(imm - 0x10000 if imm & 0x8000 else imm) + gp] = gp_datum
 
     def read(a, n):
         for b, data in image.items():
@@ -357,3 +370,19 @@ def test_static_helper_in_the_functions_own_text_is_out_of_scope(tmp_path):
     res = match.link(obj, "caller", target, table, read)
     assert not res.exact
     assert any("not a known symbol" in p for p in res.problems), res.problems
+
+
+@_EE
+def test_gp_rel_load_width_ignores_an_unused_array_element(tmp_path):
+    """A .fclone helper that loads only g[0] from `static int g[2]` matches even when the ROM's unused g[1] differs:
+    place_pointees records the lw's 4-byte width from the $gp load, so verify_data compares only the word read, not
+    the whole datum. Without the width (the bug) the differing g[1] is a false rejection."""
+    src = ("static int g[2] = {0x11223344, 0x55667788};\n"
+           "static int helper(void) __attribute__((noinline, section(\".fclone\")));\n"
+           "static int helper(void){ return g[0]; }\n"
+           "int caller(void){ return helper(); }\n")
+    # The ROM's datum: g[0] equal to the clone, the unused g[1] different. Only g[0] is loaded, so it still matches.
+    rom_datum = (0x11223344).to_bytes(4, "little") + b"\xde\xad\xbe\xef"
+    obj, target, table, read = _defined_region_oracle(tmp_path, src, gp_datum=rom_datum)
+    res = match.link(obj, "caller", target, table, read)
+    assert res.exact, res.problems
