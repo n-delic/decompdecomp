@@ -222,6 +222,24 @@ def test_the_other_releases_code_matches_and_polishes_here(built, tmp_path):  # 
     assert fn["readable"] and "value" in fn["matched_source"]
 
 
+def test_near_misses_the_pass_leaves_go_to_the_background_permuter(built, tmp_path):  # noqa: F811
+    """Without agents the permuter never started on a project: near misses the pass leaves start it."""
+    from decompnet.app import regional
+
+    net, slug, agent = _two_releases(tmp_path)
+    started = []
+    net.permuter.start = lambda name, automatic=False: started.append((name, automatic)) or object()
+    lines = []
+    assert regional.transfer(net, "other-release", log=lines.append)["near"] == 0
+    assert started == []  # nothing near: nothing to permute
+    fn = net._function("func_800007D0", "other-release")
+    with net.project_store(fn["project_id"]).tx() as db:
+        db.execute("UPDATE functions SET best_source='int x;', best_score=10, n_insns=20 WHERE id=?", (fn["id"],))
+    assert regional.transfer(net, "other-release", log=lines.append)["near"] == 1
+    assert started == [("other-release", True)]
+    assert any("permuter works on them" in line for line in lines)
+
+
 def test_a_function_built_with_other_settings_takes_them_when_they_match(built, tmp_path, monkeypatch):  # noqa: F811
     from decompnet.app import regional
     from decompnet.project import compiler_for

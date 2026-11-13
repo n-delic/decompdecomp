@@ -895,7 +895,29 @@ def transfer(net, slug: str, job=None, log=lambda *_: None) -> dict:
     progress(dict(phase="Trying the other release's code", done=len(work), total=len(work)))
     log(f"{counts['matched']} matched and {counts['polished']} polished from {donor['name']}; "
         f"{counts['tried']} tried.")
+    if stop is None or not stop.is_set():
+        counts['near'] = _permute_near_misses(net, proj, log)
     return counts
+
+
+def _permute_near_misses(net, proj, log) -> int:
+    """Start the background permuter on the near misses the pass leaves (its saved C a few operands off), as
+    agents starting does: without agents it never ran, and a game's other release had 40 near misses nothing ever
+    permuted. Returns how many there are."""
+    from .permute import MAX_INSNS, NEAR
+    permuter = getattr(net, 'permuter', None)
+    row = net.project_store(proj['id']).one(
+        "SELECT COUNT(*) n FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
+        "AND best_score>0 AND best_score<=n_insns*100*? AND n_insns<=?", proj['id'], NEAR,
+        getattr(permuter, 'max_insns', MAX_INSNS))
+    near = row['n'] if row else 0
+    if near and permuter is not None:
+        try:
+            if permuter.start(proj['slug'], automatic=True) is not None:
+                log(f"{near} near misses left: the permuter works on them in the background.")
+        except Exception:  # the pass's matches stand without it
+            logging.getLogger('decompdecomp').exception('regional: the permuter did not start for %s', proj['slug'])
+    return near
 
 
 def _likeliest(x: Fn, y: Fn, score: float) -> tuple:

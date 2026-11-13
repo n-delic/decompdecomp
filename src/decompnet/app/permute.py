@@ -292,9 +292,10 @@ class Permuter:
                 "state", "tried", "variants", "improved", "matched", "current", "started_at", "repairs"
             )} | {"threads": workers.WORKERS}
 
-    def start(self, slug: str) -> State | None:
+    def start(self, slug: str, *, automatic=False) -> State | None:
         """Run on the project's near misses until there are none (looking again every few minutes while the
-        app runs: agents make new ones)."""
+        app runs: agents make new ones). `automatic`: started by the app, not the user (the worker process's
+        start tells them apart; here they run the same)."""
         if (st := self.jobs.get(slug)) is not None and st.state in ("running", "update_wait"):
             return st
         if slug in self.net.links:  # a room member: the host's copy permutes, and its matches come back here
