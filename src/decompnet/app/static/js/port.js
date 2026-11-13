@@ -1,5 +1,5 @@
-/* The port readiness panel (docs/PORTING.md): what still stands between a game and a native PC port. Read-only;
-   asked for only while the panel is open, never on its own. */
+/* The Porting tab (docs/PORTING.md): what still stands between a game and a PC port, as a checklist of steps, each
+   with how far along it is and the button that does it. Read-only; asked for only while the tab is open. */
 let portEpoch = 0;
 
 function portRow(label, value) {
@@ -54,14 +54,92 @@ function renderPortReadiness(report) {
     + (assets.written ? ` (written to ${assets.folder})` : ", not written yet")
     + (assets.extracted && assets.extracted.current
       ? `; extracted: ${assets.extracted.mapped} of ${assets.extracted.total} are the ROM's bytes` : "")));
+  renderPortSteps(report);
   const todo = $("portBlockers");
   todo.replaceChildren(...report.blockers.map((b) => { const li = document.createElement("li"); li.textContent = b; return li; }));
-  $("portReady").textContent = report.ready ? "Nothing found in the way of a port." : "To do, in order:";
+  $("portReady").textContent = report.ready ? "Nothing found in the way of a port." : "Next, in order";
+}
+
+const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, Math.round(100 * part / whole))) : null);
+
+/* The steps, from the report: each {title, pct (null: done or not, no share to show), detail, buttons and logs (the
+   panel's own elements, moved into the step)}. */
+function portSteps(report) {
+  const code = report.code, pc = report.pc, link = report.link, assets = report.assets;
+  const library = code.replaced + code.native + (code.glue || 0);
+  const steps = [
+    { title: "The game's code in C", pct: pct(code.c, code.total),
+      detail: `${code.c.toLocaleString()} of ${code.total.toLocaleString()} functions`
+        + (code.game_asm || code.open ? `; ${code.game_asm} still in assembly, ${code.open} not matched yet` : "") },
+    { title: "Library code accounted for", pct: pct(library, library + code.library_other),
+      detail: `${code.replaced} the kit replaces, ${code.native} compiled as it is, ${code.glue || 0} from the port's glue`
+        + (code.library_other ? `, ${code.library_other} other` : "") },
+    { title: "The game's data as C", pct: report.data.units != null && report.data.symbols ? pct(report.data.units, report.data.symbols) : null,
+      detail: `${(report.data.units || 0).toLocaleString()} data units in C, for ${report.data.symbols.toLocaleString()} symbols the code reaches`,
+      buttons: ["portDrafts"], logs: ["portDraftLog"] },
+    { title: "No addresses written as numbers", pct: report.addresses.literals ? pct(code.total - report.addresses.functions, code.total) : 100,
+      detail: report.addresses.literals ? `${report.addresses.literals} in ${report.addresses.functions} functions` : "none left" },
+    { title: "Compiles for a PC", pct: pc ? pct(pc.ok + pc.warned, pc.total) : 0,
+      detail: pc ? `${(pc.ok + pc.warned).toLocaleString()} of ${pc.total.toLocaleString()} functions compile, ${pc.failed} don't`
+        : "not tried yet", buttons: ["portCompile", "portRenameCalls"], logs: ["portCompileLog", "portRenameLog"] },
+    { title: "Links for a PC", pct: link ? (link.undefined || link.duplicates.length ? null : 100) : 0,
+      detail: link ? `${link.undefined.toLocaleString()} symbols needed and defined nowhere`
+        + (link.duplicates.length ? `, ${link.duplicates.length} defined twice` : "") : "after Compile for PC" },
+    { title: "Assets extracted", pct: assets ? (assets.extracted && assets.extracted.current ? pct(assets.extracted.mapped, assets.extracted.total)
+        : assets.written ? 50 : 0) : 0,
+      detail: assets ? `${assets.resources} resources mapped` + (assets.extracted && assets.extracted.current
+        ? `, ${assets.extracted.mapped} of ${assets.extracted.total} extracted` : assets.written ? ", not extracted yet" : ", map not written yet")
+        : "map not written yet", buttons: ["portAssets", "portExtract"], logs: ["portAssetsLog", "portExtractLog"] },
+    { title: "Play it", pct: null, play: true,
+      detail: "The WebAssembly build of your last save, in the browser: no native port needed",
+      buttons: ["portPlay", "portStop"], logs: ["portPlayLog"] },
+  ];
+  return steps;
+}
+
+function renderPortSteps(report) {
+  const list = $("portSteps");
+  if (!list) return;
+  const steps = portSteps(report), parked = $("portParked");
+  for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portAssets", "portExtract", "portPlay", "portStop",
+    "portDraftLog", "portCompileLog", "portRenameLog", "portAssetsLog", "portExtractLog", "portPlayLog"]) {
+    if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
+  }
+  const shown = steps.filter((s) => s.pct != null);
+  const overall = shown.length ? Math.round(shown.reduce((a, s) => a + s.pct, 0) / shown.length) : 0;
+  $("portOverall").textContent = overall + "%";
+  $("portOverallBar").style.width = overall + "%";
+  list.replaceChildren(...steps.map((step, i) => {
+    const row = document.createElement("li");
+    const state = step.play ? "play" : step.pct === 100 ? "done" : step.pct > 0 ? "part" : "todo";
+    row.className = "port-step " + state;
+    const mark = document.createElement("span"); mark.className = "port-mark";
+    mark.textContent = state === "done" ? "✓" : state === "play" ? "▶" : String(i + 1);
+    const body = document.createElement("div"); body.className = "port-body";
+    const head = document.createElement("div"); head.className = "port-step-head";
+    const title = document.createElement("b"); title.textContent = step.title;
+    const share = document.createElement("span"); share.className = "port-pct";
+    share.textContent = step.pct == null ? (step.play ? "" : "to do") : step.pct + "%";
+    head.append(title, share);
+    const detail = document.createElement("p"); detail.className = "small muted"; detail.textContent = step.detail;
+    body.append(head);
+    if (step.pct != null) {
+      const meter = document.createElement("div"); meter.className = "meter";
+      const fill = document.createElement("i"); fill.style.width = step.pct + "%"; meter.append(fill);
+      body.append(meter);
+    }
+    body.append(detail);
+    const actions = document.createElement("div"); actions.className = "row port-actions";
+    for (const id of step.buttons || []) if ($(id)) actions.append($(id));
+    if (actions.children.length) body.append(actions);
+    for (const id of step.logs || []) if ($(id)) body.append($(id));
+    row.append(mark, body);
+    return row;
+  }));
 }
 
 async function loadPortReadiness() {
-  const panel = $("portPanel");
-  if (!panel || !panel.open || !S.slug) return;
+  if (!$("portPanel") || S.tab !== "porting" || !S.slug) return;
   const slug = S.slug, epoch = ++portEpoch, log = $("portWork");
   showJobError(log, "");
   const finish = beginWork(log, "Reading the project", [$("portReload")], "Read.");
@@ -182,6 +260,5 @@ if ($("portPanel")) {
   $("portAssets").onclick = writeAssetMap;
   $("portDrafts").onclick = draftPortData;
   $("portCompile").onclick = compileForPc;
-  $("portPanel").addEventListener("toggle", loadPortReadiness);
   $("portReload").onclick = loadPortReadiness;
 }

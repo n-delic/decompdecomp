@@ -790,10 +790,10 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
-| The game's C compiled for a PC (Port readiness → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
-| The ROM's data as the kit's extractor config (Port readiness → Write asset map, docs/PORTING.md phase 2) | ✓ (Torch YAML, one BLOB per resource; typed textures and display lists not yet) |
-| The ROM's data extracted and checked (Port readiness → Extract with Torch) | ✓ macOS and Linux (Torch built from pinned source with pinned CMake); — Windows: Torch's MSVC build isn't driven yet | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
-| What stops the C linking for a PC (Port readiness, from Compile for PC's objects, docs/PORTING.md phase 3) | ✓ (undefined and twice-defined symbols, sorted by what fixes each; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| The ROM's data as the kit's extractor config (Porting → Write asset map, docs/PORTING.md phase 2) | ✓ (Torch YAML, one BLOB per resource; typed textures and display lists not yet) |
+| The ROM's data extracted and checked (Porting → Extract with Torch) | ✓ macOS and Linux (Torch built from pinned source with pinned CMake); — Windows: Torch's MSVC build isn't driven yet | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
+| What stops the C linking for a PC (Porting, from Compile for PC's objects, docs/PORTING.md phase 3) | ✓ (undefined and twice-defined symbols, sorted by what fixes each; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port fixes judged twice (Start agents → Fix C for the PC, `fix_for_pc`, docs/PORTING.md phase 4) | ✓ (console match by the function judge, PC build by the pinned Zig's clang) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | shared export adapter | source already in checkout | source already in checkout | source already in checkout | source already in checkout |
@@ -978,7 +978,7 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ### A finished game runs as a WebAssembly build
 
-The Port readiness panel's **Play in browser** builds the game from its last save (only what changed) and opens it
+The Porting tab's **Play in browser** builds the game from its last save (only what changed) and opens it
 in the browser (`port/wasm/play.py`).
 
 `python -m decompnet.port.wasm SAVE` (`src/decompnet/port/wasm/`) builds a finished N64 game from its save
@@ -1087,7 +1087,7 @@ once it's a pinned tool.
 ### Calls by a function's old name put right
 
 The link check finds callers that use a function's old name (an automatic `func_` name, or an earlier chosen one
-the symbol table keeps) and knows the name it has now. Port readiness → **Fix calls by old names** rewrites them,
+the symbol table keeps) and knows the name it has now. Porting → **Fix calls by old names** rewrites them,
 whole words, in the calling functions only, and judges each of those twice: its console build must still be the
 game's exact bytes (the regression test, on those functions alone) and the PC compiler must find no more errors;
 one that fails keeps its C and is listed (`port/renamed_calls.py`). The rewritten functions' recorded symbols are
@@ -1123,7 +1123,7 @@ task for the renamed calls and the duplicates, then the real link against a pinn
 
 Torch (HarbourMasters, MIT) is a pinned tool: its source and the six libraries its CMake would fetch, each a
 commit tarball with a SHA-256 in `toolchains.toml`, built on first use with a pinned CMake 4.4.4 and the system's
-C++ compiler, downloading nothing else (`_build_torch`; 81 s on an M-series Mac). Port readiness → **Extract with
+C++ compiler, downloading nothing else (`_build_torch`; 81 s on an M-series Mac). Porting → **Extract with
 Torch** writes the asset map, runs Torch on it and the user's ROM, and checks every resource against the ROM bytes
 it names (`asset_map.extract`, the N64 kit's `torch_extract` and `torch_resources`); the archive (`.o2r`, the
 game's own bytes) goes in the project's `build/port`, out of git, and the readiness report says whether the map
@@ -1133,7 +1133,7 @@ display lists), libultraship pinned the same way for the port export.
 
 ### The ROM's data written as Torch's asset map
 
-Port readiness → **Write asset map** (ROM projects with a port kit, once ROM Explorer has scanned): every byte of
+Porting → **Write asset map** (ROM projects with a port kit, once ROM Explorer has scanned): every byte of
 the ROM outside its code segments is put in one resource, grouped as ROM Explorer read it: an archive the game
 unpacks itself (kept whole: a ZIP's members are inflated by the game's own code, which Torch can't do), audio, or
 other data; padding and a few unnamed bytes between files join their neighbours, the cartridge's trailing fill and
@@ -1173,7 +1173,7 @@ build to find; a per-function view of the PC errors in Functions.
 
 ### The game's C compiled for a PC
 
-Port readiness → **Compile for PC**: every matched function the port keeps (the game's own and the library code it
+Porting → **Compile for PC**: every matched function the port keeps (the game's own and the library code it
 compiles as it is, not what the kit replaces) is compiled on its own with the project's shared header by a current
 clang for a 64-bit PC: the pinned Zig (`toolchains.toml`), whose clang brings its own headers, so every computer
 gets the same result. What fails and what keeps pointers in 32-bit integers is kept per function
@@ -1195,7 +1195,7 @@ Left: data the split wrote as assembly, and data whose C brings strings of its o
 
 ### The game's data drafted as typed C, from its code
 
-Port readiness → **Write data as C from the code**: no agents, no tokens. The game's own loads and stores say each
+Porting → **Write data as C from the code**: no agents, no tokens. The game's own loads and stores say each
 datum's fields (width, sign, float, pointer); a draft is written only when they explain every byte, and kept only
 when it holds the game's bytes. What's left goes to the data agents, whose brief lists what the code does with it.
 The last datum before `.bss` now ends there (it had no end). Left: data reached only through pointers the reader

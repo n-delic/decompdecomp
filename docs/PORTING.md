@@ -44,7 +44,9 @@ Each phase is useful on its own, and each is a prerequisite for the next.
 
 ### 0. Port readiness report
 
-Built. **Port readiness** on a ROM project's Overview (opened, it reads; it never runs on its own), the
+Built. The **Porting** tab of a ROM project (opened, it reads; it never runs on its own) shows it as a checklist: each
+step with how far along it is (in C, library code, data as C, addresses, compiled and linked for a PC, assets, Play)
+and the button that does it, and the
 `port_readiness` tool for agents and `GET /api/port-readiness` (src/decompnet/port/readiness.py). It reads the
 project and changes nothing, with no compiler run: under a second on a 2,121-function N64 game. It counts:
 - functions with and without C; library code the kit replaces and library code compiled as it is. Library code is
@@ -92,7 +94,7 @@ Driven through the agents' own tool calls on a copy of a finished N64 game: 80 c
 drafts, none handed out twice. Mechanical drafts (raw `u32` words, pointers cast to `u32`) match the bytes but are
 what a 64-bit port must undo; the prompt asks agents for the types the code uses, which the judge can't check.
 
-- **Machine drafts** (`app/data_drafts.py`): Port readiness → **Write data as C from the code**, a background job
+- **Machine drafts** (`app/data_drafts.py`): Porting → **Write data as C from the code**, a background job
   with no agents and no tokens. Each datum's type comes from the game's code: every load and store of it (the
   facts guess_struct uses, `Arch.field_accesses`) says each field's width, sign or float, and which fields are
   pointers; a word holding a known symbol's address is a pointer to it. A draft is written only when the code
@@ -121,7 +123,7 @@ after the symbol that loads it, and writes the game's Torch YAML, keyed by the R
 when Torch extracts it and the extracted asset round-trips to the same bytes. The map is publishable: no game
 bytes are in it.
 
-Built first (`port/asset_map.py`, the N64 kit's `torch_files`): Port readiness → **Write asset map** puts every
+Built first (`port/asset_map.py`, the N64 kit's `torch_files`): Porting → **Write asset map** puts every
 byte outside the code segments in one resource, grouped from ROM Explorer's scan: an archive the game unpacks
 itself, audio, or other data. Each is a Torch `BLOB` for now, and the map is checked to cover the ROM exactly once
 with the code, the N64's 0x1000 boot bytes and the trailing fill. Typing comes next: a game that stores its data
@@ -143,7 +145,7 @@ A sibling of today's Export: a CMake project that builds the game natively. It h
   resource loads from the archive, the audio mixer;
 - a first-run step that runs Torch on the user's ROM to make the archive.
 
-Built first: **Compile for PC** (Port readiness; `port/pc_compile.py`), which compiles every function the port
+Built first: **Compile for PC** (Porting; `port/pc_compile.py`), which compiles every function the port
 keeps, on its own, with the project's shared header, by a current clang for 64-bit x86 Linux (the pinned Zig, whose
 clang brings its own headers: the same result on every computer). Nothing is linked or run. Each function's errors
 and pointer-size warnings are kept in the project's database, sorted into what a port fixes (MIPS `asm`, calls
@@ -153,7 +155,7 @@ fail, 397 more cast pointers to 32-bit integers; the 32-bit build failed the sam
 what 64-bit adds. The game's C declares libultra itself (its shared header), so libultraship's headers aren't
 needed yet; they come with the export's glue.
 
-Then what a link would refuse: Compile for PC keeps each object's defined and needed symbols, and Port readiness
+Then what a link would refuse: Compile for PC keeps each object's defined and needed symbols, and Porting
 lists what's needed and defined nowhere, by what fixes it, and what's defined twice (`port/pc_link.py`). On a
 finished N64 game: 1,424 data symbols still only addresses in assembly, 43 calls to functions by an automatic name
 they lost when polishing renamed them, 14 functions in assembly, 10 libultra functions the kit provides, and 4
@@ -247,7 +249,7 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   in software, and each buffer the game gives the audio interface is played in the live view (its Sound button)
   and, with `PORT_AUDIO=file.wav`, saved. The interface's registers answer in real time at the game's rate, so the
   game paces its sound as on the console. Not yet: the effects filter (`A_POLEF`), and the resampler's exact taps;
-- the app's **Play in browser** (Port readiness): builds the game from the project's last save, starts it with
+- the app's **Play in browser** (Porting): builds the game from the project's last save, starts it with
   `PORT_LIVE` on a free port and opens it in the browser; Stop the game ends it, and so does quitting the app.
   Its saves stay in the build folder (`game.eep`);
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this

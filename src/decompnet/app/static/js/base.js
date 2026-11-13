@@ -340,7 +340,7 @@ const S = {
 const VIEWS = ["home", "catalog", "project", "agentsPage", "toolsPage", "settingsPage", "backgroundPage"];
 /* A project's views. Activity is in Agents now, Team and Source are the header's Decompile together and Export:
    seven tabs were too many to tell apart. */
-const TABS = ["overview", "functions", "rom", "agents", "settings"];
+const TABS = ["overview", "functions", "rom", "porting", "agents", "settings"];
 
 /* The project folder in the computer's file manager (decompdecomp in Docker says where it is instead). */
 function openFolder() {

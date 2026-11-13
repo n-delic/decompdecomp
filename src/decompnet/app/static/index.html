@@ -215,6 +215,7 @@
       <a data-ptab="overview">Overview</a>
       <a data-ptab="functions">Functions <span class="count" id="fnTabCount"></span></a>
       <a data-ptab="rom">ROM Explorer</a>
+      <a data-ptab="porting">Porting</a>
       <a data-ptab="agents">Agents <span class="count" id="agTabCount"></span></a>
       <a data-ptab="settings">Settings</a>
     </nav>
@@ -342,24 +343,6 @@
       </section>
     </div>
 
-    <details class="panel settings-disclosure" id="portPanel">
-      <summary class="panel-head"><h2>Port readiness</h2></summary>
-      <div class="pad">
-        <p>What still stands between this game and a native PC port. Refresh only reads: nothing changes and no compiler runs.</p>
-        <p class="small muted" id="portKit"></p>
-        <div class="row"><button class="ghost small-btn" id="portReload" type="button">Refresh</button><button class="ghost small-btn" id="portDrafts" type="button" title="Write the game's data as typed C where its code says every byte's type; each definition is judged by its bytes. Local CPU, no AI tokens.">Write data as C from the code</button><button class="ghost small-btn" id="portCompile" type="button" title="Compile every function the port keeps for a 64-bit PC with a current clang, and list what it refuses. Nothing is linked or run, and the game's own build doesn't change. Local CPU, no AI tokens.">Compile for PC</button><button class="ghost small-btn" id="portAssets" type="button" title="Write the ROM's data outside its code as the kit's extractor config (Torch YAML for the N64), from ROM Explorer's scan, into the project's port/assets folder. Offsets and sizes only, no game bytes. Local CPU, no AI tokens.">Write asset map</button><button class="ghost small-btn" id="portExtract" type="button" title="Write the asset map, then run Torch on it and your own ROM: the archive a port reads, in the project's build/port folder (game data, kept out of git). Every resource is checked against the ROM's bytes. The first run builds Torch from its pinned source (a few minutes). Local CPU, no AI tokens.">Extract with Torch</button><button class="small-btn" id="portPlay" type="button" title="Build the game for the PC from your last save (WebAssembly, only what changed) and play it in your browser: the keyboard or a gamepad, its sound, its saves. It runs on this computer only, until you stop it or quit the app. Local CPU, no AI tokens.">Play in browser</button><button class="ghost small-btn" id="portStop" type="button" hidden>Stop the game</button><button class="ghost small-btn" id="portRenameCalls" type="button" title="Where a function calls another by a name it had before polishing renamed it, write the name it has now. Each rewritten function must still match the console byte for byte and compile no worse for the PC. Local CPU, no AI tokens.">Fix calls by old names</button></div>
-        <pre id="portPlayLog" class="joblog" hidden></pre>
-        <pre id="portCompileLog" class="joblog" hidden></pre>
-        <pre id="portAssetsLog" class="joblog" hidden></pre>
-        <pre id="portExtractLog" class="joblog" hidden></pre>
-        <pre id="portRenameLog" class="joblog" hidden></pre>
-        <pre id="portDraftLog" class="joblog" hidden></pre>
-        <pre id="portWork" class="joblog" hidden></pre>
-        <ul class="small" id="portFacts"></ul>
-        <p id="portReady"></p>
-        <ol class="small" id="portBlockers"></ol>
-      </div>
-    </details>
   </section>
 
   <!-- functions -->
@@ -518,6 +501,44 @@
   </section>
 
   <!-- settings -->
+  <!-- porting: what stands between this game and a PC port, as a checklist (port.js draws it) -->
+  <section class="ptab" data-pane="porting" id="portPanel" hidden>
+    <section class="panel port-head">
+      <div class="pad">
+        <div class="port-title">
+          <div>
+            <h2>Porting</h2>
+            <p class="muted small">What stands between this game and a PC port, step by step. Reading this changes nothing; each step's button does its work on this computer, with no AI tokens.</p>
+          </div>
+          <div class="port-overall"><b id="portOverall">–</b><span class="muted small">ready</span></div>
+        </div>
+        <div class="meter big"><i id="portOverallBar"></i></div>
+        <p class="small muted" id="portKit"></p>
+        <div class="row"><button class="ghost small-btn" id="portReload" type="button">Refresh</button></div>
+        <pre id="portWork" class="joblog" hidden></pre>
+      </div>
+    </section>
+    <ol class="port-steps" id="portSteps"></ol>
+    <section class="panel">
+      <div class="pad">
+        <h3 id="portReady">Next, in order</h3>
+        <ol class="small" id="portBlockers"></ol>
+        <details class="port-details">
+          <summary class="small">The report in full</summary>
+          <ul class="small" id="portFacts"></ul>
+        </details>
+      </div>
+    </section>
+    <div id="portParked" hidden><button class="ghost small-btn" id="portDrafts" type="button" title="Write the game's data as typed C where its code says every byte's type; each definition is judged by its bytes. Local CPU, no AI tokens.">Write data as C from the code</button><button class="ghost small-btn" id="portCompile" type="button" title="Compile every function the port keeps for a 64-bit PC with a current clang, and list what it refuses. Nothing is linked or run, and the game's own build doesn't change. Local CPU, no AI tokens.">Compile for PC</button><button class="ghost small-btn" id="portAssets" type="button" title="Write the ROM's data outside its code as the kit's extractor config (Torch YAML for the N64), from ROM Explorer's scan, into the project's port/assets folder. Offsets and sizes only, no game bytes. Local CPU, no AI tokens.">Write asset map</button><button class="ghost small-btn" id="portExtract" type="button" title="Write the asset map, then run Torch on it and your own ROM: the archive a port reads, in the project's build/port folder (game data, kept out of git). Every resource is checked against the ROM's bytes. The first run builds Torch from its pinned source (a few minutes). Local CPU, no AI tokens.">Extract with Torch</button><button class="primary small-btn" id="portPlay" type="button" title="Build the game for the PC from your last save (WebAssembly, only what changed) and play it in your browser: the keyboard or a gamepad, its sound, its saves. It runs on this computer only, until you stop it or quit the app. Local CPU, no AI tokens.">Play in browser</button><button class="ghost small-btn" id="portStop" type="button" hidden>Stop the game</button><button class="ghost small-btn" id="portRenameCalls" type="button" title="Where a function calls another by a name it had before polishing renamed it, write the name it has now. Each rewritten function must still match the console byte for byte and compile no worse for the PC. Local CPU, no AI tokens.">Fix calls by old names</button>
+        <pre id="portPlayLog" class="joblog" hidden></pre>
+        <pre id="portCompileLog" class="joblog" hidden></pre>
+        <pre id="portAssetsLog" class="joblog" hidden></pre>
+        <pre id="portExtractLog" class="joblog" hidden></pre>
+        <pre id="portRenameLog" class="joblog" hidden></pre>
+        <pre id="portDraftLog" class="joblog" hidden></pre>
+    </div>
+  </section>
+
   <section class="ptab" data-pane="settings">
           <details class="panel settings-disclosure" id="dataRegionReviews"><summary class="panel-head"><h2>Data region review <span class="disclosure-context" id="dataRegionContext">— Loading</span></h2><button class="disclosure-action" type="button" id="dataRegionRefresh">↻ Refresh</button></summary><div class="pad"><p class="small muted">Agent reports of data mistaken for code. Regions belong to one unit and original image. Pausing prevents new claims; existing work and saved matches continue. No entry is classified as data automatically.</p><div id="dataRegionItems" class="profile-failure-cards"></div><div id="dataRegionWork" role="status"></div></div></details>
     <details class="panel settings-disclosure" id="codeCoveragePanel" hidden>
