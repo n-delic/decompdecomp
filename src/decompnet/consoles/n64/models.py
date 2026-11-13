@@ -141,7 +141,15 @@ def preview(data,asset,selection):
         for face in faces:
             if len(set(face))<3:continue
             triangles+=1;edges.update(tuple(sorted((face[i],face[(i+1)%3]))) for i in range(3))
-        return dict(media='model',vertices=vertices,edges=sorted(edges),points=list(range(count)),triangles=triangles,
+        from . import resource_inspection
+        inspection={}
+        try:
+            rows=resource_inspection.hierarchy(raw)
+            inspection['table']=resource_inspection.table('Skeleton nodes',['index','parent','children','part_variants'],len(rows),lambda i:{k:v for k,v in rows[i].items() if k!='index'},selection)
+        except resource_inspection.SchemaError as exc:inspection['inspection_warning']=str(exc)
+        texture,flags=struct.unpack_from('>II',raw,material[0])
+        inspection['material']=dict(texture_id=texture if texture!=0xffffffff else None,flags=flags,features=[name for bit,name in enumerate(resource_inspection.MATERIAL_FLAGS) if flags&(1<<bit)],color=list(raw[material[0]+8:material[0]+12]),black_color=list(raw[material[0]+12:material[0]+16]),uv_multiplier=list(struct.unpack_from('>HH',raw,material[0]+16)))
+        return dict(media='model',vertices=vertices,**inspection,edges=sorted(edges),points=list(range(count)),triangles=triangles,
                     details={key:selected[key] for key in ('node','part','section','texture','material_flags')},
                     note='Validated native mesh in local coordinates. Skeleton poses, animation, textures and material shading are not applied.',
                     settings=dict(format='auto',source='rom',offset=asset['offset'],mesh=mesh))

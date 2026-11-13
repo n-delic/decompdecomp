@@ -60,7 +60,12 @@ Open a model region, select a mesh and press **Preview asset** for a rotatable w
 Meshes use local coordinates; skeleton poses, animation playback and textured rendering remain planned.
 A supported indexed cartridge directory is also recognized by structure: animations, collision,
 object placements, grid sections/bounds, music sequences and demo recordings gain typed labels
-and metadata inspection. No game names or fixed ROM offsets are used.
+and linked record inspection. Inspect skeleton parents/children and alternative parts, material flags
+and texture links, collision surfaces and neighbours, object bounds/animation types, and paged
+placement records. Directory and object links open related resources. Text/pointer candidates
+have paged inspectors on all ROM adapters, and supported PSF2 bitmap fonts get a glyph atlas.
+No game names or fixed ROM offsets are used. Compressed animation playback, assembled poses,
+textured rendering and game-specific font identification remain planned.
 Use **Discover assets with agents** to investigate unknown data, a ROM range or a function’s
 referenced regions. Agents claim regions, retain failed approaches and propose names, formats
 and layouts for your review. Accepting updates local annotations; symbols and matching stay untouched.

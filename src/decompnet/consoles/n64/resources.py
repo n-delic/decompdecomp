@@ -66,6 +66,7 @@ def directory(image,start,check):
     if not objects or not textures or not levels:raise SchemaError('Core directory collections are empty.')
     if stream(image,root[2],2)['records']!=len(objects) or stream(image,root[10],4)['records']!=len(binaries):
         raise SchemaError('Object or binary ID counts disagree with their directories.')
+    object_ids=[struct.unpack_from('>H',image,root[2][0]+8+i*2)[0] for i in range(len(objects))]
     binary_ids=[struct.unpack_from('>I',image,root[10][0]+8+i*4)[0] for i in range(len(binaries))]
     if binary_ids!=sorted(set(binary_ids)):raise SchemaError('Binary IDs are not unique and ordered.')
     tables=[];leaves=[]
@@ -76,11 +77,11 @@ def directory(image,start,check):
             if span[0]<span[1]:leaves.append((span,role,path,identity))
             return
         children=blocks(image,span,len(FIXED[role]) if role in FIXED else None)
-        tables.append(dict(span=(span[0],span[0]+(4*(len(children)+2)+7)//8*8),role=role,path=path,count=len(children)))
+        tables.append(dict(span=(span[0],span[0]+(4*(len(children)+2)+7)//8*8),role=role,path=path,count=len(children),identity=identity,type_flag=object_ids[identity] if role=='object' else None,children=[dict(offset=a,size=b-a,label=FIXED[role][i] if role in FIXED else f'{COLLECTIONS[role]}[{i}]') for i,(a,b) in enumerate(children)]))
         for i,child in enumerate(children):
             label=FIXED[role][i] if role in FIXED else COLLECTIONS[role]
             token=label if role in FIXED else f'{label}[{i}]'
-            walk(child,label,path+'/'+token,binary_ids[i] if role=='binaries' else identity)
+            walk(child,label,path+'/'+token,binary_ids[i] if role=='binaries' else i if role=='objects' else identity)
     walk((start,end),'directory','directory')
     return tables,leaves
 
@@ -153,7 +154,10 @@ def regions(image,*,known=(),check=lambda:None,progress=lambda _:None):
             lo,hi=table['span']
             if lo in claimed or lo in existing:continue
             claimed.add(lo)
-            result.append(descriptor(lo,hi-lo,table['role'],table['path'],dict(entries=table['count']),start))
+            asset=descriptor(lo,hi-lo,table['role'],table['path'],dict(entries=table['count']),start)
+            if table['role']=='object':asset['resource_fields'].update(object_id=table['identity'],type_flag=table['type_flag'])
+            asset['resource_children']=table['children']
+            result.append(asset)
         for i,(span,role,path,identity) in enumerate(leaves):
             check();lo,hi=span
             if len(result)+len(existing)>=MAX_TABLES:break
@@ -237,6 +241,16 @@ def preview(data,asset,selection):
             if parsed!=role:raise SchemaError('The resource header changed.')
         except SchemaError as exc:raise AssetError(str(exc)+' Rescan ROM Explorer.') from None
         info={**info,**checked}
-    return dict(media='metadata',title=asset['label'],fields=info,resource_path=asset['resource_path'],
-                compression=asset.get('compression'),note='Storage-layout inspection only. Animation playback, sequence synthesis and scene reconstruction are not implemented.',
+    from . import resource_inspection
+    extra={}
+    try:
+        if asset.get('resource_children') is not None:
+            children=asset['resource_children']
+            extra['table']=resource_inspection.table('Directory resources',['index','label','offset','size'],len(children),lambda i:children[i],selection)
+        else:
+            extra=resource_inspection.inspect(data[lo:lo+size],role,selection)
+    except SchemaError as exc:
+        extra['inspection_warning']=str(exc)+' Header counts remain available; unsupported records are not rendered.'
+    return dict(media='metadata',title=asset['label'],fields=info,resource_path=asset['resource_path'],**extra,
+                compression=asset.get('compression'),note='Source-layout records and directory links. ADPCM animation tracks are identified but not played; object behaviour, music synthesis and scene reconstruction remain unresolved.',
                 settings=dict(format='auto',source='rom',offset=asset['offset']))
