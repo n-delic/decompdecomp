@@ -1216,6 +1216,7 @@ class Network:
         excluded = tried(self, project, agent) if policy.get('model_untried') else set()
         from . import claim_stalls
         paused = claim_stalls.blocked(self, proj, agent)
+        unavailable = set(paused) | self._selection_cooling(proj, agent)
         from .app.data_regions import blocked as data_blocked
         excluded.update(data_blocked(self, proj))
         row = self.project_store(project).one(
@@ -1228,9 +1229,27 @@ class Network:
             "AND f.status='open' AND (? IS NULL OR f.best_score IS NULL OR "
             "MAX(0.0, 100.0 * (1.0 - CAST(f.best_score AS REAL) / MAX(1, f.n_insns * 100))) < ?) "
             "AND (? IS NULL OR (SELECT COUNT(*) FROM attempts a WHERE a.function_id=f.id AND a.agent_id=?) < ?)",
-            json.dumps(list(paused)), json.dumps(list(paused)), time.time(), project, json.dumps(list(excluded)),
+            json.dumps(list(paused)), json.dumps(list(unavailable)), time.time(), project, json.dumps(list(excluded)),
             policy.get('match_below'), policy.get('match_below'), policy.get('max_tries'), agent.id, policy.get('max_tries'))
         return dict(row)
+
+    def _selection_cooling(self, proj, agent: Agent) -> set[int]:
+        """The same worker's recent releases are not automatic work, even in a fresh session.
+
+        Startup counts must honor the claim query's cooldown, or the app starts a
+        model every thirty seconds just to discover that it cannot claim anything.
+        Explicit retry grants and a recorded model switch retain their normal escape.
+        """
+        store = self.project_store(proj['id'])
+        cutoff = self._own_release_cutoff(store, agent.id, time.time(), proj)
+        cooling = {r['id'] for r in store.all(
+            "SELECT id FROM main.functions WHERE project_id=? AND status='open' AND name IN "
+            "(SELECT detail FROM events WHERE project_id=? AND agent_id=? AND kind='release' AND created_at>?)",
+            proj['id'], proj['id'], agent.id, cutoff)}
+        if cooling:
+            from . import claim_stalls
+            cooling.difference_update(claim_stalls.grants(self, proj, agent))
+        return cooling
 
     def selection_remaining(self, project: str, agent: Agent, *, include_paused: bool = False, available_only: bool = False) -> int:
         policy = self.selection(project, agent.name)
@@ -1241,6 +1260,8 @@ class Network:
             excluded.update(claim_stalls.blocked(self,self._project(project),agent))
         from .app.data_regions import blocked as data_blocked
         excluded.update(data_blocked(self,self._project(project)))
+        if available_only:
+            excluded.update(self._selection_cooling(self._project(project), agent))
         return self.project_store(project).one(
             "SELECT COUNT(*) AS n FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? "
             "AND f.id NOT IN (SELECT value FROM json_each(?)) "
