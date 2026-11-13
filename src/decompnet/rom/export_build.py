@@ -239,7 +239,13 @@ def trim_data(path: Path, name: str, size: int) -> None:
 
 
 def build_objects(todo: list[tuple[str, str, str]]) -> None:
-    function_of = {c_source(fn): fn for fn in B["functions"] if c_source(fn)}
+    # Resolve source paths once: looking through every function for each object
+    # performed millions of filesystem checks on a 2,000-function release.
+    function_of, entry_of = {}, {}
+    for fn in B['functions']:
+        if source := c_source(fn):
+            function_of[source] = fn
+            entry_of.setdefault(source, fn)
     datum_of = {d["src"]: d for d in B.get("data", [])}
     configs = {}
     as_ = binutils("as")
@@ -263,7 +269,7 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
             if src.endswith(".cpp"):  # C++ names back to the game's, as decompdecomp judged it
                 names = {*B["symbols"], *(f["name"] for f in B["functions"])}
                 target.write_bytes(unmangle(target.read_bytes(), lambda n: n in names or bool(AUTO_NAME.match(n))))  # noqa: B023  called within this pass of the loop
-            entry=next((f for f in B['functions'] if c_source(f)==src),None)
+            entry = entry_of.get(src)
             if datum:
                 trim_data(target, datum["name"], datum["size"])
             elif entry and entry.get('entry_only'):
