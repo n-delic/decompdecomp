@@ -174,9 +174,9 @@ class Hermes(Agent):
     def search_dirs(self) -> list[Path]:
         """Where Hermes' installer stages the program off PATH: the Windows install.ps1 puts it in $HermesHome\\bin,
         default %LOCALAPPDATA%\\hermes\\bin. On other systems that path doesn't exist, so the entry is harmless there
-        (the unix install.sh's ~/.local/bin is already searched)."""
+        (the unix install.sh's ~/.local/bin, off PATH for a Finder-launched macOS app, is searched too)."""
         local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        dirs = [Path(local) / "hermes" / "bin"]
+        dirs = [Path(local) / "hermes" / "bin", Path.home() / ".local" / "bin"]
         home = os.environ.get("HERMES_HOME")
         if home:
             dirs.insert(0, Path(home) / "bin")

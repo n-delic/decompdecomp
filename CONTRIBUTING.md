@@ -381,6 +381,8 @@ An agent is one of two sorts:
    | `clean_stderr(line)` | A line of its stderr worth showing, or "" for noise. |
    | `fatal(error)` | Whether an error means every try would fail the same way: the helper pauses instead. |
    | `end_leftovers(env)` | End what a session leaves running outside its process group (Hermes' daemonised gateway). |
+   | `search_dirs()` | Extra folders to look in for the program, beyond PATH and the app's bin folders: an installer that stages it off PATH (Hermes' installer dir, the unix `~/.local/bin`) names them, so detection and teardown resolve the same program. |
+   | `resolve_exe()` | The program's path: on PATH, else in a `search_dirs` folder. `end_leftovers` uses it, so teardown reaches a gateway an install off PATH started. |
    | `models(path, run)`, `read_models(lines)` | The models to offer in the launcher. |
    | `config_model()` | The default model in the agent's own settings. |
    | `version(path)` | Its version (`--version` by default). |

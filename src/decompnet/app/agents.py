@@ -801,9 +801,13 @@ class Manager:
         self._down = True
         processes = [s.proc for s in list(self.sessions.values())]  # retain Windows handles until _end_groups returns
         groups = {proc.pid for proc in processes if proc is not None and proc.poll() is None}
+        # Only helpers still live at quit are told to end what they left running: one that already ended ran
+        # its own end_leftovers at run end, and s.env is never cleared, so without this gate a long-stopped
+        # Hermes helper would get a second, synchronous 30 s `gateway stop` before the app can exit.
+        live = [s for s in self.sessions.values() if s.proc is not None and s.proc.poll() is None]
         self.stop()
         _end_groups(groups | self._strays())
-        for s in list(self.sessions.values()):  # a daemonised gateway (Hermes) is outside those process groups
+        for s in live:  # a daemonised gateway (Hermes) is outside those process groups
             try:
                 agents.get(s.kind).end_leftovers(s.env or {})
             except Exception:

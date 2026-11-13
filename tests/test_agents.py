@@ -1601,8 +1601,19 @@ def test_hermes_config_is_not_world_readable(tmp_path):
     hermes.HERMES.session_command("hermes", tmp_path, "http://127.0.0.1:6464/mcp", "tok", "m",
                                   options={"base_url": "http://127.0.0.1:1/v1", "api_key": "sk-secret"})
     cfg = tmp_path / ".hermes" / "config.yaml"
-    assert oct(cfg.stat().st_mode & 0o777) == "0o600"
-    assert oct((tmp_path / ".hermes").stat().st_mode & 0o777) == "0o700"
+    assert cfg.exists()
+    if os.name != "nt":  # Windows reports 0o666 for the file and 0o777 for the dir; the chmod is a POSIX guarantee
+        assert oct(cfg.stat().st_mode & 0o777) == "0o600"
+        assert oct((tmp_path / ".hermes").stat().st_mode & 0o777) == "0o700"
+
+
+def _patch_path_lookup_only(monkeypatch):
+    """Stub shutil.which so a bare PATH lookup finds nothing, while a lookup with an explicit path= (the
+    installer-dir probe resolve_exe and _which run on Windows) still works. A blanket which->None would, on
+    Windows, also suppress that installer-dir probe and stop the test exercising detection there."""
+    real = shutil.which
+    monkeypatch.setattr(shutil, "which",
+                        lambda cmd, mode=os.F_OK, path=None: None if path is None else real(cmd, mode, path))
 
 
 def test_hermes_is_found_in_its_installer_dir(tmp_path, monkeypatch):
@@ -1614,7 +1625,7 @@ def test_hermes_is_found_in_its_installer_dir(tmp_path, monkeypatch):
     exe = bindir / ("hermes.exe" if os.name == "nt" else "hermes")
     exe.write_text("")
     exe.chmod(0o755)
-    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)  # not on PATH
+    _patch_path_lookup_only(monkeypatch)  # not on PATH, but the installer-dir probe still works (Windows too)
     assert str(bindir) in [str(d) for d in hermes.HERMES.search_dirs()]
     assert hermes.HERMES.resolve_exe() == str(exe)
 
@@ -1628,7 +1639,7 @@ def test_hermes_stops_gateway_via_its_installer_dir(tmp_path, monkeypatch):
     exe = bindir / ("hermes.exe" if os.name == "nt" else "hermes")
     exe.write_text("")
     exe.chmod(0o755)
-    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)  # off PATH
+    _patch_path_lookup_only(monkeypatch)  # off PATH, but the installer-dir probe still works (Windows too)
     calls = []
     monkeypatch.setattr(hermes.subprocess, "run", lambda argv, **kw: calls.append(argv))
     hermes.HERMES.end_leftovers({"HERMES_HOME": str(tmp_path / "sess" / ".hermes")})
@@ -1660,6 +1671,7 @@ def test_shutdown_stops_leftover_gateways(tmp_path, monkeypatch):
     m.sessions = {}
     s = agents.Session("hermes-1", "hermes", "h", "demo", "hermes-1", {})
     s.env = {"HERMES_HOME": str(tmp_path / "x" / ".hermes")}
+    s.proc = _LiveProc()  # still running when quit begins
     m.sessions["hermes-1"] = s
     m.stop = lambda *a, **k: None
     m._strays = lambda: set()
@@ -1669,3 +1681,67 @@ def test_shutdown_stops_leftover_gateways(tmp_path, monkeypatch):
     monkeypatch.setattr(agents, "_end_groups", lambda groups: None)
     m.shutdown()
     assert ended == [str(tmp_path / "x" / ".hermes")]
+
+
+class _LiveProc:
+    """Stand-in for a running helper's process: alive (poll() is None) with a pid, enough for Manager.shutdown."""
+    pid = 424242
+
+    def poll(self):
+        return None
+
+
+def test_shutdown_skips_gateways_of_already_stopped_helpers(tmp_path, monkeypatch):
+    """A helper that already ended stopped its own gateway at run end and its proc is gone; quitting must not run a
+    second, synchronous `hermes gateway stop` for it. Only a helper still live when quit begins is told to end what
+    it left running -- so a night's worth of long-stopped helpers can't each add a 30 s wait to exit."""
+    m = agents.Manager.__new__(agents.Manager)
+    m._down = False
+    live = agents.Session("hermes-live", "hermes", "h", "demo", "hermes-live", {})
+    live.env = {"HERMES_HOME": str(tmp_path / "live" / ".hermes")}
+    live.proc = _LiveProc()
+    ended = agents.Session("hermes-ended", "hermes", "h", "demo", "hermes-ended", {})
+    ended.env = {"HERMES_HOME": str(tmp_path / "ended" / ".hermes")}
+    ended.proc = None  # already finished; it ran its own end_leftovers when it did
+    m.sessions = {"hermes-live": live, "hermes-ended": ended}
+    m.stop = lambda *a, **k: None
+    m._strays = lambda: set()
+    m.on_stop = lambda: None
+    stopped = []
+    monkeypatch.setattr(hermes.HERMES, "end_leftovers", lambda env: stopped.append(env.get("HERMES_HOME")))
+    monkeypatch.setattr(agents, "_end_groups", lambda groups: None)
+    m.shutdown()
+    assert stopped == [str(tmp_path / "live" / ".hermes")]
+
+
+def test_hermes_stops_gateway_from_its_unix_install_dir(tmp_path, monkeypatch):
+    """The unix install.sh stages hermes in ~/.local/bin, off PATH for a Finder-launched macOS app, so end_leftovers
+    must resolve it there the same way detection (_which) does -- otherwise that app's gateway is never stopped."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() on Windows
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    bindir = tmp_path / ".local" / "bin"
+    bindir.mkdir(parents=True)
+    exe = bindir / ("hermes.exe" if os.name == "nt" else "hermes")
+    exe.write_text("")
+    exe.chmod(0o755)
+    _patch_path_lookup_only(monkeypatch)  # nothing on PATH; only the ~/.local/bin lookup can find it
+    assert str(bindir) in [str(d) for d in hermes.HERMES.search_dirs()]
+    calls = []
+    monkeypatch.setattr(hermes.subprocess, "run", lambda argv, **kw: calls.append(argv))
+    hermes.HERMES.end_leftovers({"HERMES_HOME": str(tmp_path / "sess" / ".hermes")})
+    assert [str(exe), "gateway", "stop"] in calls
+
+
+def test_run_cli_stores_the_session_env_for_teardown(tmp_path, monkeypatch):
+    """_run_cli must record the session's environment on s.env, so Manager.shutdown can hand it to end_leftovers and
+    stop a gateway the session left running. The env carries a marker the base environment doesn't, proving s.env is
+    what _command built; dropping the `s.env = env` line fails this."""
+    m = agents.Manager(RomNetwork(tmp_path / "app.db", tmp_path), tmp_path, "http://127.0.0.1:9/mcp")
+    env = dict(os.environ, HERMES_HOME=str(tmp_path / "sess" / ".hermes"))
+    monkeypatch.setattr(m, "_command", lambda s, token, workdir: ([sys.executable, "-c", ""], env, ""))
+    monkeypatch.setattr(hermes.HERMES, "end_leftovers", lambda env: None)  # don't really hunt a gateway
+    s = agents.Session("hermes-1", "hermes", "h", "demo", "hermes-1", {})
+    m._run_cli(s, "token", tmp_path)
+    assert s.env is env and s.env.get("HERMES_HOME") == str(tmp_path / "sess" / ".hermes")
