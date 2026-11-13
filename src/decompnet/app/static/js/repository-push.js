@@ -110,7 +110,8 @@ $("repositoryPushGo").onclick = async () => {
   repositoryPushRequest++; repositoryPushPending = false;
   return followRepositoryPush(key, null, {slug, folder});
 };
-setInterval(() => refreshRepositoryPush(), 10000);
+// A hidden window (minimised, another tab) skips the check; it runs again within 10 s of being shown.
+setInterval(() => { if (!globalThis.document?.hidden) refreshRepositoryPush(); }, 10000);
 
 
 let repositoryAutoPushBusy = false, repositoryAutoPushSlug = "", repositoryAutoPushState = {};

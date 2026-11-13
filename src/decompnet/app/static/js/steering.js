@@ -1690,7 +1690,8 @@ async function refreshCompilerComparison() {
     if (compilerComparisonDiscovery === discovery) compilerComparisonDiscovery = null;
   }
 }
-if (typeof setInterval === "function") setInterval(refreshCompilerComparison, 5000);
+// A hidden window skips the comparison poll; it reattaches within 5 s of being shown again.
+if (typeof setInterval === "function") setInterval(() => { if (!globalThis.document?.hidden) refreshCompilerComparison(); }, 5000);
 async function followCompilerComparison(existing = null) {
   const slug = S.slug, gen = S.gen;
   const button = $("testInstalledCompilers"), log = $("installedCompilerLog");

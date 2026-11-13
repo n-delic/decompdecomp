@@ -985,6 +985,7 @@ async function renderTeam(box) {
   renderHost(box, info);
   teamTimer = setInterval(async () => {
     if (!teamOpen()) { clearInterval(teamTimer); return; }
+    if (globalThis.document?.hidden) return;  // nobody is looking; the next tick after showing it refreshes
     if (box._editingAddress || box._working || box._hostActionError) return;
     const revision=box._hostActionRevision || 0;
     if (box.contains(document.activeElement) && document.activeElement.matches("input")) return;  // typing
