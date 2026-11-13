@@ -55,6 +55,17 @@ class Compiler:
 
 
 @dataclass(frozen=True)
+class PortRuntime:
+    """One way to run a finished game on a PC (docs/PORTING.md), offered in the Porting tab's Play step: the
+    WebAssembly build runs the game's C as the console's, the native runtimes need the checklist's steps first."""
+    id: str  # "wasm", what Play is asked for
+    name: str  # "libultraship"
+    summary: str  # one sentence: what it is, what it gives
+    needs: tuple = ()  # the readiness steps it waits for: "code", "compiles", "links", "assets" (port/readiness.py)
+    built: bool = False  # decompdecomp builds and plays the game on it; False: planned (ROADMAP.md, Ports)
+
+
+@dataclass(frozen=True)
 class PortKit:
     """The library a finished game of a console is ported to a PC with (docs/PORTING.md): libultraship and Torch
     for the N64. What the port readiness report asks of it; a console with no kit has `port_kit = None`."""
@@ -75,6 +86,7 @@ class PortKit:
     wasm: object = None  # the WebAssembly build's console part (port/wasm/): a folder with host.c, the host that
     # runs the game's translated C (threads, DMA, the hardware's registers), and the library's prototypes
     # (libultra.sigs: each a name, a return type and parameter types, tab-separated); None: no such build yet
+    runtimes: tuple = ()  # PortRuntime each, the order the Play step offers them; the first playable one is chosen
 
 
 class Console:

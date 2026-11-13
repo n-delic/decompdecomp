@@ -160,3 +160,31 @@ def test_the_boot_values_follow_the_games_country():
     tv = lambda code: boot_globals({"rom": {"game_code": code}})[0x80000300][3]
     assert (tv("NVLP"), tv("NSMJ"), tv("NSME"), tv("NABB"), tv("")) == (0, 1, 1, 2, 1)  # PAL, NTSC, NTSC, MPAL
     assert boot_globals({})[0x80000318][1:] == ("uint32_t", 4, 0x400000)  # osMemSize: 4 MB, no Expansion Pak
+
+
+def test_the_play_step_offers_each_runtime_with_what_it_still_needs(project):
+    """WebAssembly plays now; the native runtimes wait for the checklist's steps, and stay closed while
+    decompdecomp can't build on them."""
+    net, _ = project
+    with net.progress.view():
+        report = readiness(net, "game")
+    runtimes = {r["id"]: r for r in report["runtimes"]}
+    assert list(runtimes) == ["wasm", "libultraship", "n64modernruntime"]
+    assert runtimes["wasm"]["playable"] and runtimes["wasm"]["missing"] == []
+    assert runtimes["libultraship"]["missing"] == ["The game's code in C", "Compiles for a PC", "Links for a PC",
+                                                   "Assets extracted"]
+    assert "Assets extracted" not in runtimes["n64modernruntime"]["missing"]  # it reads the ROM as it runs
+    assert not runtimes["libultraship"]["playable"] and not runtimes["n64modernruntime"]["playable"]
+
+
+def test_a_native_runtime_is_closed_until_decompdecomp_builds_on_it():
+    from decompnet.port.readiness import runtimes
+    done = {"code": {"open": 0, "game_asm": 0}, "pc": {"failed": 0, "warned": 0},
+            "link": {"undefined": 0, "duplicates": []},
+            "assets": {"extracted": {"current": True, "mapped": 3, "total": 3}}}
+    kit = consoles.get("n64").port_kit
+    native = {r["id"]: r for r in runtimes(kit, done)}
+    assert native["libultraship"]["missing"] == [] and not native["libultraship"]["playable"]
+    pointers = done | {"pc": {"failed": 0, "warned": 4}}  # 64-bit ports lose half of each cast pointer
+    assert runtimes(kit, pointers)[2]["missing"] == ["Compiles for a PC"]
+    assert runtimes(None, done) == []

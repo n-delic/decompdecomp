@@ -171,7 +171,38 @@ def readiness(net, slug: str) -> dict:
     }
     report["blockers"] = blockers(report)
     report["ready"] = not report["blockers"]
+    report["runtimes"] = runtimes(kit, report)
     return report
+
+
+# The checklist steps a native runtime waits for, as the Porting tab names them (js/port.js)
+STEPS = {"code": "The game's code in C", "compiles": "Compiles for a PC", "links": "Links for a PC",
+         "assets": "Assets extracted"}
+
+
+def steps_done(report: dict) -> set[str]:
+    """Which of STEPS the report shows done. Compiling counts only with no pointers cast to 32-bit integers: a
+    native port runs 64-bit (macOS has nothing else)."""
+    code, pc, link, assets = report["code"], report.get("pc"), report.get("link"), report.get("assets")
+    extracted = (assets or {}).get("extracted")
+    done = {"code": not code["open"] and not code["game_asm"],
+            "compiles": bool(pc) and not pc["failed"] and not pc["warned"],
+            "links": bool(link) and not link["undefined"] and not link["duplicates"],
+            "assets": bool(extracted) and extracted["current"] and extracted["mapped"] == extracted["total"]}
+    return {step for step, ok in done.items() if ok}
+
+
+def runtimes(kit, report: dict) -> list[dict]:
+    """The kit's runtimes for the Play step: each {"id", "name", "summary", "built", "missing" (the steps it still
+    waits for, by their names), "playable"}. A runtime decompdecomp can't build on yet is never playable, however
+    far the checklist is."""
+    done = steps_done(report)
+    out = []
+    for runtime in kit.runtimes if kit else ():
+        missing = [STEPS[step] for step in runtime.needs if step not in done]
+        out.append({"id": runtime.id, "name": runtime.name, "summary": runtime.summary, "built": runtime.built,
+                    "missing": missing, "playable": runtime.built and not missing})
+    return out
 
 
 def blockers(report: dict) -> list[str]:

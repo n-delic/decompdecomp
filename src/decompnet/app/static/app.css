@@ -2223,6 +2223,13 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .port-step.part .meter i { background: var(--work); }
 .port-body { display: grid; gap: 6px; min-width: 0; }
 .port-body p { margin: 0; }
+.port-runtimes { border: 0; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+.port-runtimes legend { padding: 0; margin-bottom: 4px; }
+.port-runtime { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; cursor: pointer; }
+.port-runtime > span { display: grid; gap: 2px; min-width: 0; }
+.port-runtime input { margin-top: 2px; }
+.port-runtime.unavailable { cursor: not-allowed; }
+.port-runtime.unavailable b { color: var(--muted); }
 .port-step-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .port-pct { font: 600 13px/1 var(--mono); color: var(--muted); white-space: nowrap; }
 .port-actions { flex-wrap: wrap; gap: 6px; margin-top: 2px; }
