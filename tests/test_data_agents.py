@@ -2,7 +2,9 @@
 image of test_data_units (a table at DATA and a count at DATA+0x10, both used by `boot`)."""
 from types import SimpleNamespace
 
+import anyio
 import pytest
+from mcp.server.mcpserver import Context
 
 from decompnet import toolchains
 from decompnet.app import data_agents, data_units, tool_policy
@@ -115,3 +117,53 @@ def test_starting_counting_and_tool_calls_never_wait_for_a_progress_sync(project
     assert data_agents.left(net, "game") == 2
     agent = start(net, "writer")
     assert _invoke_once(net, agent, "game", "claim_data", {}).startswith("Claimed D_80000500")
+
+
+@pytest.mark.parametrize('reader_process', [False, True])
+@pytest.mark.parametrize('tool,arguments', [
+    ('get_data_unit', {'name': 'D_80000500'}),
+    ('claim_data', {'name': 'D_80000500'}),
+    ('claim_data', {}),
+    ('release_data', {'name': 'D_80000500', 'note': 'Synthetic table'}),
+    ('compile_data', {'name': 'D_80000500', 'source': TABLE}),
+])
+def test_mcp_data_tools_keep_the_unit_name_separate_from_the_tool(project, monkeypatch, reader_process, tool, arguments):
+    """Exercise MCP's registered wrappers: direct dispatch missed the duplicate `name` argument."""
+    from decompnet.app import tools
+    net = project
+    agent = start(net, 'writer')
+    monkeypatch.setattr(Context, 'headers', property(lambda self: {}))
+    calls = []
+    def dispatch(net, who, slug, name, args, **kwargs):
+        assert who == agent and slug == 'game'
+        calls.append((name, args))
+        return 'Synthetic verdict'
+    def reader(ctx, name, args):
+        return dispatch(net, agent, 'game', name, args)
+    monkeypatch.setattr(tools, '_dispatch', dispatch)
+    records = []
+    server = tools.build_mcp(net, lambda ctx: (agent, 'game'),
+                             lambda *args: records.append(args[-1]), reader=reader if reader_process else None)
+    async def request():return await server.call_tool(tool, arguments)
+    assert 'Synthetic verdict' in str(anyio.run(request))
+    expected = dict(arguments)
+    if tool == 'claim_data':expected.setdefault('name', '')
+    assert calls == [(tool, expected)]
+    if not reader_process:
+        assert records[0]['name'] == tool and records[0]['arguments'] == expected
+        assert records[-1]['content'] == 'Synthetic verdict'
+
+
+def test_mcp_data_claim_and_release_use_real_handlers(project, monkeypatch):
+    from decompnet.app import tools
+    net = project
+    agent = start(net, 'writer')
+    monkeypatch.setattr(Context, 'headers', property(lambda self: {}))
+    server = tools.build_mcp(net, lambda ctx: (agent, 'game'))
+    async def request():
+        claim = await server.call_tool('claim_data', {'name': 'D_80000500'})
+        assert 'Claimed D_80000500' in str(claim)
+        assert data_agents._held(net, net.project_row('game'), agent) == {DATA}
+        await server.call_tool('release_data', {'name': 'D_80000500', 'note': 'Synthetic table'})
+        assert data_agents._held(net, net.project_row('game'), agent) == set()
+    anyio.run(request)
