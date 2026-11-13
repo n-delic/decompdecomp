@@ -53,6 +53,8 @@ def register(app: App) -> None:
             started = time.monotonic()
             try:
                 def perform():
+                    if request.url.path == '/api/priority':
+                        return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
                     if request.url.path == '/api/try' or (request.method=='POST' and request.url.path=='/api/reimport'):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
