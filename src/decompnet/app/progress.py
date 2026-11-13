@@ -44,6 +44,7 @@ log = logging.getLogger("decompdecomp")
 # spimdisasm can name a function piece by the numeric label at its first instruction.
 LOCAL_PIECE = re.compile(r"\.L[0-9A-F]+")
 from . import saves
+from .project_lock import ProjectLock
 
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
 # A sync that failed (its game file gone) is tried again by reads and the autosave only when what it reads changed, or
@@ -562,7 +563,7 @@ class Progress:
         self.checked: dict[str, float] = {}
         self.results: dict[str, dict] = {}
         self.revisions: dict[str, int] = {}
-        self.project_locks: dict[str, threading.RLock] = {}
+        self.project_locks: dict[str, ProjectLock] = {}
         self.rechecking: dict[str, _Recheck] = {}
         self.last_write: dict[str, float] = {}  # slug -> when a database-only change was last published
         self.publish_tried: dict[str, float] = {}  # slug -> when a tool call last tried to publish one
@@ -699,7 +700,8 @@ class Progress:
 
     def _project_lock(self, slug: str):
         with self.lock:
-            return self.project_locks.setdefault(slug, threading.RLock())
+            if slug not in self.project_locks:self.project_locks[slug] = ProjectLock()
+            return self.project_locks[slug]
 
     def _baseline(self, project_id: int) -> _Baseline | None:
         store = self.net.project_store(project_id)
@@ -1188,6 +1190,8 @@ class Progress:
             self.local.viewing = previous
 
     def _activity(self, slug: str, **fields):
+        lock = getattr(self, 'project_locks', {}).get(slug)
+        if lock is not None:lock.set_phase(fields.get('phase'))
         with self.activity_lock:
             now = time.monotonic()
             current = self.activity.setdefault(slug, {"started": now})
