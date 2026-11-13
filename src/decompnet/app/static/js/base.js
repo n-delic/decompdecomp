@@ -160,7 +160,62 @@ function frameJoblog(log) {
   log.replaceWith(frame);
   frame.append(log, button);
   log._frame = frame;
+  watchJoblogColour(log);
   return log;
+}
+
+/* Log boxes are coloured the way a terminal colours the same output, by reading the text: the tools run through
+   pipes, so they send no colour codes of their own, and asking them for codes would put escape bytes into what
+   agents, job records and bug reports read. Errors and exception lines red, warnings yellow, notes blue, a
+   compiler's file:line:col bold, traceback frames dim, success lines green. Only the page's copy is coloured: the
+   text is unchanged (textContent, and so Copy, give exactly what was written). Code keeps writing plain text; the
+   box redraws after each batch of writes. `data-plain` on a log opts out. */
+const JOBLOG_COLOUR_LINES = 3000;
+const JOBLOG_EXTENSIONS = "c|cc|cpp|cxx|h|hh|hpp|hxx|inc|s|asm|py|rs|ld|lcf|x|ini|json|toml|ya?ml|mk|cmake|txt|cs|js";
+const JOBLOG_TOKENS = new RegExp(
+  `(^|[\\s;(,'"\\[])((?:[A-Za-z]:)?[\\w./\\\\~+-]*[\\w~+-]\\.(?:${JOBLOG_EXTENSIONS})(?::\\d+){1,2}(?=:))`
+  + "|\\b(fatal error|error|ERROR)(?=:)|\\b(warning|WARNING)(?=:)|\\b(note)(?=:)", "g");
+const JOBLOG_LINES = [
+  ["jl-err", /^\s*Traceback \(most recent call last\)|^\s*[\w.]*(?:Error|Exception)(?::|$)|^make(?:\[\d+\])?: \*\*\*|^\s*(?:FAILED|FAIL|ERROR|Error)\b|^\s*[✗✘×]/],
+  ["jl-warn", /^\s*(?:WARNING|Warning)\b|^\s*⚠/],
+  ["jl-dim", /^\s+File ".*", line \d+|^\s*[\^~]+\s*$|^\s*\.\.\.\s*$/],
+  ["jl-ok", /^\s*[✓✔]|^\s*(?:Matched|Finished|Done|Success(?:fully)?|All checks passed|OK)\b|\b\d+ passed\b(?!.*\b(?:failed|error))/],
+];
+const joblogEscape = (text) => text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+function joblogLineHtml(line) {
+  let html = "", last = 0;
+  JOBLOG_TOKENS.lastIndex = 0;
+  for (const m of line.matchAll(JOBLOG_TOKENS)) {
+    const start = m.index + (m[1] ? m[1].length : 0), token = m[2] || m[3] || m[4] || m[5];
+    const kind = m[2] ? "jl-loc" : m[3] ? "jl-err jl-key" : m[4] ? "jl-warn jl-key" : "jl-note jl-key";
+    html += joblogEscape(line.slice(last, start)) + `<span class="${kind}">${joblogEscape(token)}</span>`;
+    last = start + token.length;
+  }
+  html += joblogEscape(line.slice(last));
+  const kind = JOBLOG_LINES.find(([, pattern]) => pattern.test(line))?.[0];
+  return kind ? `<span class="${kind}">${html}</span>` : html;
+}
+/* The HTML for a log's text: its textContent is exactly `text` again. A long log colours its last lines only. */
+function joblogHtml(text) {
+  const lines = String(text ?? "").split("\n");
+  const plain = Math.max(0, lines.length - JOBLOG_COLOUR_LINES);
+  const head = plain ? joblogEscape(lines.slice(0, plain).join("\n")) + "\n" : "";
+  return head + lines.slice(plain).map(joblogLineHtml).join("\n");
+}
+function watchJoblogColour(log) {
+  if (typeof MutationObserver === "undefined" || log.dataset?.plain != null) return;
+  // A mutation callback runs once per batch of writes (a poll's lines), also while the window is hidden, where an
+  // animation frame would wait. The redraw's own mutations come back with the text already coloured.
+  const draw = () => {
+    const text = log.textContent;
+    if (text === log._colouredText) return;
+    const top = log.scrollTop, atBottom = top + log.clientHeight >= log.scrollHeight - 4;
+    log.innerHTML = joblogHtml(text);
+    log._colouredText = log.textContent;
+    log.scrollTop = atBottom ? log.scrollHeight : top;
+  };
+  new MutationObserver(draw).observe(log, { childList: true, characterData: true, subtree: true });
+  draw();
 }
 async function copyJoblog(log, button) {
   const ok = await copyText(log.textContent);

@@ -235,6 +235,14 @@ a.ghost, a.primary { text-decoration: none; }
 .joblog-copy { position: absolute; top: 6px; right: 6px; z-index: 1; padding: 2px 8px; font: inherit; font-size: 11px; line-height: 18px; color: var(--ink-2); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; opacity: .85; }
 .joblog-copy:hover, .joblog-copy:focus-visible { opacity: 1; color: var(--ink); background: var(--bg-alt); }
 .joblog-copy[data-state="done"] { color: var(--match-ink); }
+/* Terminal-like colours for log lines (base.js, joblogHtml), from the theme's status tokens. */
+.joblog .jl-err { color: var(--miss); }
+.joblog .jl-warn { color: var(--work); }
+.joblog .jl-note { color: var(--move); }
+.joblog .jl-ok { color: var(--match-ink); }
+.joblog .jl-key { font-weight: 700; }
+.joblog .jl-loc { color: var(--ink); font-weight: 600; }
+.joblog .jl-dim { opacity: .7; }
 .privacy { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--muted); }
 .privacy svg { width: 16px; height: 16px; fill: var(--match); flex: none; }
 .starts { margin-top: 26px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
