@@ -2,7 +2,7 @@ const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('p
 const nodes=new Map(),posts=[];
 const get=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,querySelectorAll(){return [];},disabled:false,checked:false,value:'0',textContent:'',firstElementChild:{style:{}},setAttribute(){},classList:{toggle(){},add(){},remove(){}}});return nodes.get(id);};
 let finished=0,release,errors=[];
-const ctx={renderSavedMatchRecovery:()=>{},plural:()=>'',esc:s=>s,$:get,S:{slug:'overlay-demo'},cFunctions:()=>10,
+const ctx={renderReleases:()=>{},renderSavedMatchRecovery:()=>{},plural:()=>'',esc:s=>s,$:get,S:{slug:'overlay-demo'},cFunctions:()=>10,
  beginWork:(log,label,buttons)=>{log._workStatus={textContent:''};assert.match(label,/Regenerating/);buttons.forEach(b=>b.disabled=true);return ()=>{finished++;buttons.forEach(b=>b.disabled=false);};},
  showJobError:(_,e)=>errors.push(e),api:async(url,options)=>{posts.push([url,options]);return {job:'draft-job'};},
  followJob:(id,log)=>{assert.equal(log._showJobProgress,true);return new Promise(resolve=>release=resolve);}};

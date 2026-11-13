@@ -25,7 +25,6 @@ from elftools.elf.elffile import ELFFile
 from .. import toolchains
 from ..candidate_work import elf as candidate_elf
 from ..hostenv import NO_WINDOW, console_python
-from ..limits import capped
 from ..project import compiler_for
 from . import match, split
 from .symbols import AUTO_NAME
@@ -278,7 +277,7 @@ def _data_in_c(net, proj, out: Path, layout: list, objects: list, image: bytes, 
     return placed
 
 
-def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
+def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -> dict:
     """Write the rebuildable tree to `out`, build it once and report: {"path", "identical", "matched", ...}.
     `console` (consoles/) says its processor's assembler flags, the image's extension, its assembly's preamble."""
     from ..consoles import EXPORT
@@ -325,6 +324,9 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
 
     # 2. which function is where, and which are matched
     rows = {r["vram"]: r for r in net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=?", proj["id"])}
+    sources = sources or {}
+    rows = {address: dict(row) | ({"matched_source": sources[row['id']]['source'], "status": "matched"}
+                                if row['id'] in sources else {}) for address, row in rows.items()}
     units = net._unit_contexts(proj["id"])
     header = net._context(proj["id"])["header"]
     (out / "include").mkdir(exist_ok=True)
@@ -475,6 +477,8 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         entry = {"name": f["name"], "seg": f["seg"], "vram": f["vram"], "rom": f["rom"], "asm": f["asm"]}
         if f["kind"] == "c":
             entry["c"] = f["src"]
+            if rows[f['vram']]['id'] in sources:
+                entry['shared_instance'] = rows[f['vram']]['id']
             if f.get('entry_only'):
                 entry['entry_only']=True
                 # the C defines the function by its name in the project, which splat's file name may not be (it kept
@@ -557,8 +561,8 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
 
     # 6. prove it
     log("building the exported project to check it rebuilds the game byte for byte")
-    proc = subprocess.run(capped([console_python(), "build.py"]), cwd=out, capture_output=True, text=True, timeout=3600,
-                          encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+    from .export_process import run as verify_build
+    proc = verify_build([console_python(), "build.py"], out, log)
     identical = proc.returncode == 0 and "identical" in proc.stdout
     if not identical:
         log((proc.stdout + proc.stderr)[-3000:])

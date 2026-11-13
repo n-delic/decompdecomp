@@ -53,7 +53,7 @@ def register(app: App) -> None:
             started = time.monotonic()
             try:
                 def perform():
-                    if request.url.path == '/api/priority':
+                    if request.url.path in ('/api/priority', '/api/variants'):
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
                     if request.url.path == '/api/try' or (request.method=='POST' and request.url.path=='/api/reimport'):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
@@ -917,6 +917,31 @@ def register(app: App) -> None:
             check.state = 'done'
             raise
 
+    def p_variants(slug, request, data):
+        from .. import variants
+        if request.method == 'POST':
+            action = data.get('action')
+            if action == 'attach':
+                return variants.attach(net, slug, data['other'], data['variant'], data.get('primary', 'default'))
+            if action == 'detach':return variants.detach(net, slug, data['variant'])
+            if action == 'bind':
+                logical = variants.bind(net, slug, data['name'], data['instances'], data.get('logical'))
+                return {'logical': logical}
+            if action == 'publish':
+                return {'job': variants.start_job(net, jobs, slug, 'Verify shared variant source',
+                    lambda log: variants.publish(net, slug, data['logical'], data['source'], data.get('header', ''),
+                                                 data.get('expected'), log=log))}
+            if action == 'export':
+                return {'job': variants.start_job(net, jobs, slug, 'Export variants', lambda log: net.export_rom(slug, log))}
+            raise NetworkError('Choose attach, detach, bind, publish or export.')
+        if request.query_params.get('view') == 'jobs':return {'jobs': variants.job_status(net, jobs, slug)}
+        if request.query_params.get('view') == 'selector':
+            own, group = variants.member(net, slug), variants.game(net, slug)
+            return {'selected': own['variant'] if own else None, 'game': dict(group) if group else None,
+                    'variants': [dict(row) for row in variants.members(net, slug)]}
+        result = variants.status(net, slug)
+        return result | {'jobs': variants.job_status(net, jobs, slug)}
+
     REGIONAL_JOBS = {'names': 'Names from another release', 'code': 'Code from another release'}
 
     def p_regional(slug, request, data):
@@ -1087,6 +1112,7 @@ def register(app: App) -> None:
                             if r.query_params.get("function") else []}, ["GET"]),
         "/api/sdk-signatures": (p_sdk, ["POST"]),
         "/api/cross-game/run": (p_cross_run, ["POST"]),
+        "/api/variants": (p_variants, ["GET", "POST"]),
         "/api/regional": (p_regional, ["GET", "POST"]),
         "/api/regional/names": (p_regional_names, ["POST"]),
         "/api/regional/code": (p_regional_code, ["POST"]),

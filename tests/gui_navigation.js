@@ -14,7 +14,7 @@ function setup() {
   const ctx = vm.createContext({S, $, console, Map, Set, Symbol, Date, JSON, Math, Promise, Error, AbortController,
     document: {querySelectorAll: () => []}, navigator: {clipboard: {}}, location: {},
     api: (url, options={}) => new Promise((resolve,reject) => calls.push({url,resolve,reject,...options})),
-    show: () => {}, stopPolling: () => {}, markNav: () => {}, showDrawer: id => {el(id).hidden=false;},
+    show: () => {}, startLive: () => {}, stopPolling: () => {}, markNav: () => {}, showDrawer: id => {el(id).hidden=false;},
     discoverFunctionAttempt: () => {}, giveBack: () => {}, drawMap: () => {}, toast: e => errors.push(e), esc: String, hex8: String,
     renderFunctionFocusedAgents: () => {}, prepareProjectPeers: () => {}, renderKnownCompilerProfiles: () => {}, renderFnChart: () => {}, showFnTab: () => {},
     setEditorSourceMapping:data=>{S.sourceMap=data;},
@@ -26,6 +26,8 @@ function setup() {
     renderMapView: () => {}, resetMap: () => {}, layoutMap: () => {}, applyClaims: () => {}, renderList: () => {},
     renderProgress: () => {}, renderOverview: () => {}, renderSessions: () => {}, loadMapColumns: () => {}});
   function $(id) {return el(id);}
+  const functions = read('function'), sourceStart = functions.indexOf('function renderFunctionSource(');
+  vm.runInContext(functions.slice(sourceStart, functions.indexOf('\n}\n', sourceStart) + 3), ctx);
   return {ctx,S,el,calls,errors,timers};
 }
 const flush = async () => {for(let i=0;i<8;i++) await Promise.resolve();};

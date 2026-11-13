@@ -2054,3 +2054,9 @@ label propagation. Parser success and static references remain evidence rather
 than proof of intended use. Human acceptance is unchanged. These features share
 the ROM Explorer adapter on all supported ROM consoles; project-mode object/data
 mapping remains planned before these tools can reach project-mode consoles.
+
+
+ROM projects can group releases and revisions in **Variants**. Existing targets keep
+their own work and history. Shared C is checked independently, and a grouped export
+builds with `--variant <id>` or `--all-variants`. See [ROM variants](docs/ROM_VARIANTS.md)
+for the workflow and current adapter boundaries.

@@ -3,7 +3,8 @@ import json
 
 SHARED = set('''agents helpers pairings sdk_shapes sdk_sources sdk_signatures expression_recipes
 repair_policy repair_policy_coverage repair_sequences repair_sequence_outcomes repair_promotions
-agent_tool_usage agent_tool_task_usage room_membership_effects activity_events'''.split())
+agent_tool_usage agent_tool_task_usage room_membership_effects activity_events
+variant_games game_variants logical_functions variant_bindings variant_sources variant_edit_locks variant_jobs'''.split())
 SCOPED = set('''functions agent_family_targets agent_selection agent_variant_runs attempt_hints attempts
 claims auto_match_commits candidate_rechecks compiler_tests compiler_trial_evidence context_history
 context_versions cross_game_attempts cross_game_index deep_permutation_improvements

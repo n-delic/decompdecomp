@@ -91,7 +91,7 @@
         <li><small>Built by</small><b>KMC GCC 2.7.2</b><span>or IDO 5.3 / 7.1, the game's own compiler; another build from your own copy</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>Explore</small><b>ROM data and assets</b><span>static loader/buffer chains, texture gallery with reference links, automatic CI4/CI8 and RGBA32 texture banks including mixed-size CI8 palettes, RGBA16 mipmaps with RNC 1/2 decompression, embedded ZIP texture packs, texture/frame/palette/mip selection and explicit animation, searchable model browser with sortable counts and mesh choices, embedded ZIP PD3V textured assemblies, linked split scenery, explicit file relationships and static glTF export, indexed model detection with byte-plane vertices, cache-relative polygons and selectable local wireframes, validated directory roles with linked skeleton/material/object/placement records, collision wireframes and neighbour IDs, three-bit ADPCM animation playback with rigid node assemblies, linked native texture surfaces, source-family I4 font atlases, shared text/pointer inspectors and PSF2 glyph atlases, plus music sequence and demo metadata, audio browser, B1/libmus pointer-bank detection with sample choices, editable preview rates, archived sequence leads and mono VADPCM/PCM16 previews, image and texture/palette previews, PCM and mono VAGp audio; raw layouts are explicit interpretations</span></li>
-        <li><small>You get</small><b>A rebuildable project</b><span>that builds your ROM again, byte for byte</span></li>
+        <li><small>You get</small><b>A rebuildable project</b><span>that builds your ROM again, byte for byte; group releases and revisions with independently checked shared C and selectable variant builds</span></li>
       </ol>
     </article>
     <article class="pipeline" data-platform="gc" data-file="game.iso">
@@ -291,5 +291,6 @@ jr      $ra
   <p class="foot-small"><span data-version hidden><a href="https://github.com/n-delic/decompdecomp/releases"></a> · </span>AGPL-3.0 · Not related to Nintendo, Sony or Microsoft. Platform names are trademarks of their owners.</p>
 </footer>
 <script src="main.js" defer></script>
+<section class="section"><h2>ROM release variants</h2><p>Group local releases and revisions under one game, keep independent progress, and verify shared C against every linked target. Export one repository with <code>--variant</code> and <code>--all-variants</code> builds. N64 demo rebuilds are verified; other ROM export adapters need validation. PROJECT-mode grouping and overlapping overlay-bank exports are planned.</p></section>
 </body>
 </html>

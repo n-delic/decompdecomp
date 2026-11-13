@@ -7,7 +7,7 @@ const get = id => {
 };
 const opened = [];
 let elapsedTick, timersCleared=0;
-const ctx = { closeDialog(){ctx.S.dialogKind='';get('dialog').hidden=true;}, dialog(title,html,kind){ctx.S.dialogKind=kind;get('dialogBody').innerHTML=html;}, api:async()=>({results:{counts:{},recent:[],matches:[]}}), setInterval:fn=>{elapsedTick=fn;return 1;},clearInterval:()=>timersCleared++, S: {slug: "target-game"}, renderSavedMatchRecovery: () => {}, openNoted: (slug, name) => opened.push([slug, name]), $: get, esc: s => String(s).replaceAll("<", "&lt;"), cFunctions: () => 0 };
+const ctx = { closeDialog(){ctx.S.dialogKind='';get('dialog').hidden=true;}, dialog(title,html,kind){ctx.S.dialogKind=kind;get('dialogBody').innerHTML=html;}, api:async()=>({results:{counts:{},recent:[],matches:[]}}), setInterval:fn=>{elapsedTick=fn;return 1;},clearInterval:()=>timersCleared++, S: {slug: "target-game"}, renderReleases:()=>{},renderSavedMatchRecovery: () => {}, openNoted: (slug, name) => opened.push([slug, name]), $: get, esc: s => String(s).replaceAll("<", "&lt;"), cFunctions: () => 0 };
 vm.createContext(ctx);
 const source = fs.readFileSync(path.join(__dirname, "../src/decompnet/app/static/js/steering.js"), "utf8");
 vm.runInContext(source.slice(source.indexOf("function renderAutopilot("), source.indexOf("async function renderSdkSelection(")), ctx);

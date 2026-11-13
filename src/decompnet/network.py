@@ -2389,6 +2389,8 @@ class Network:
 
     def remove_project(self, slug: str) -> int:
         """Remove a project from the catalog, preserving fenced recovery files after upgrade."""
+        if self.store.one('SELECT 1 FROM game_variants WHERE project=?', slug):
+            raise NetworkError('Detach this variant from its game before removing the project.')
         proj = self._project(slug)
         if self._project_files is not None:
             count = self._project_files.remove(proj)

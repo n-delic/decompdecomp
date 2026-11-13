@@ -211,12 +211,14 @@
       <span class="muted small" id="phSub"></span>
     </div>
     <div id="projectDetailsPending" class="small muted" hidden>Loading additional project details…<div class="workbar" role="progressbar" aria-label="Loading project details"><i></i></div></div>
+    <label id="variantSelectorLabel" hidden>Variant <select id="variantSelector" aria-label="Selected ROM variant"></select></label>
     <nav class="ptabs" id="ptabs" aria-label="This project">
       <a data-ptab="overview">Overview</a>
       <a data-ptab="functions">Functions <span class="count" id="fnTabCount"></span></a>
       <a data-ptab="rom">ROM Explorer</a>
       <a data-ptab="porting">Porting</a>
       <a data-ptab="agents">Agents <span class="count" id="agTabCount"></span></a>
+      <a data-ptab="variants">Variants</a>
       <a data-ptab="settings">Settings</a>
     </nav>
   </header>
@@ -245,6 +247,38 @@
   </section>
 
   <!-- overview: the map first, then the numbers, then what to do next -->
+  <section class="ptab" data-pane="variants" hidden>
+    <section class="panel"><header class="panel-head"><h2>Variants</h2></header><div class="pad">
+      <p>Keep releases and revisions together, with independent progress and a build for each variant.</p>
+      <div id="variantsSummary" role="status"></div><p id="variantsOutcome" role="status"></p><div id="variantsList"></div>
+      <button id="variantsExport" class="primary" type="button" hidden>Export all variants</button>
+      <button id="variantsStop" class="ghost" type="button" hidden>Stop</button>
+      <pre id="variantsLog" class="joblog" hidden></pre>
+    </div></section>
+    <details class="panel settings-disclosure"><summary class="panel-head"><h2>Attach an existing project</h2></summary><div class="pad">
+      <p>Choose another release of this game. Its work and history stay intact.</p>
+      <label>Project <select id="variantAttachProject"></select></label>
+      <label>Variant ID <input id="variantAttachId" placeholder="us-rev1" maxlength="40"></label>
+      <label>This variant's ID <input id="variantPrimaryId" value="default" maxlength="40"></label>
+      <button id="variantAttach" class="primary" type="button">Attach variant</button>
+      <pre id="variantAttachLog" class="joblog" hidden></pre>
+    </div></details>
+    <details class="panel settings-disclosure" id="variantIdentityPanel"><summary class="panel-head"><h2>Link a logical function</h2></summary><div class="pad">
+      <p>Link implementations of one operation across releases. Leave functions independent when their relationship is unknown.</p>
+      <label>Logical function <select id="variantIdentitySelect"><option value="">New logical function</option></select></label>
+      <label>Name <input id="variantLogicalName" placeholder="update_player"></label>
+      <div id="variantBindings"></div>
+      <button id="variantBind" class="primary" type="button">Link implementations</button>
+      <pre id="variantBindLog" class="joblog" hidden></pre>
+    </div></details>
+    <details class="panel settings-disclosure" id="variantSourcePanel"><summary class="panel-head"><h2>Shared source</h2></summary><div class="pad">
+      <p>Save shared C only after every linked implementation matches independently. Existing target matches remain saved.</p>
+      <label>Logical function <select id="variantLogicalSelect"></select></label>
+      <label>Shared header <textarea id="variantSharedHeader" rows="5" spellcheck="false"></textarea></label>
+      <label>Shared C <textarea id="variantSharedSource" rows="14" spellcheck="false"></textarea></label>
+      <button id="variantPublish" class="primary" type="button">Verify and save shared source</button>
+    </div></details>
+  </section>
   <section class="ptab" data-pane="overview">
     <section class="panel map-panel">
       <header class="panel-head">
@@ -1258,6 +1292,7 @@
 <script defer src="/assets/js/repository-setup.js"></script>
 <script defer src="/assets/js/repository-push.js"></script>
 <script defer src="/assets/js/steering.js"></script>
+<script defer src="/assets/js/variants.js"></script>
 <script defer src="/assets/js/background-work.js"></script>
 <script defer src="/assets/js/data-directories.js"></script>
 <script defer src="/assets/js/compiler-service.js"></script>

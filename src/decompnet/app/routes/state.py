@@ -179,7 +179,8 @@ def register(app: App) -> None:
                     else:
                         out.append({"slug": p["slug"], "title": p["name"] or p["slug"], "working": 0,
                                     "broken": job_error(e, jobs.log_path)})
-        return out
+        from ..variants import visible
+        return visible(net, out)
 
     @mcp.custom_route("/api/projects", methods=["GET"])
     async def api_projects(request: Request) -> Response:

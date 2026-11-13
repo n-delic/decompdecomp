@@ -3373,3 +3373,38 @@ def test_other_release_jobs_start_at_once_and_one_at_a_time(app, monkeypatch):
         time.sleep(0.05)
     assert job["state"] == "done"
     assert client.post("/api/regional/names", headers=headers, json={"slug": slug}).status_code == 200
+
+
+def test_variants_attach_preserves_targets_and_selector_avoids_operational_reads(app, monkeypatch):
+    from decompnet.app import variants
+
+    from .test_loading import tiny_game
+    client, net, _ = app
+    first, second = 'variants-pal-route', 'variants-us-route'
+    a, b = tiny_game(net, first), tiny_game(net, second)
+    before = [dict(r) for r in net.store.all('SELECT * FROM functions WHERE project_id IN (?,?)', a['id'], b['id'])]
+    body = {'slug':first,'action':'attach','other':second,'variant':'us','primary':'pal'}
+    assert client.post('/api/variants', json=body).status_code == 403
+    response = client.post('/api/variants', json=body, headers={'X-Decomp':'1'})
+    assert response.status_code == 200, response.text
+    assert {v['variant'] for v in response.json()['variants']} == {'pal','us'}
+    assert [dict(r) for r in net.store.all('SELECT * FROM functions WHERE project_id IN (?,?)', a['id'], b['id'])] == before
+    monkeypatch.setattr(net, 'project_row', lambda *_:pytest.fail('Selector and job discovery must not open target state'))
+    assert client.get(f'/api/variants?slug={second}&view=selector').json()['selected'] == 'us'
+    assert client.get(f'/api/variants?slug={second}&view=jobs').json() == {'jobs':[]}
+    assert len(variants.visible(net,[{'slug':first},{'slug':second}])) == 1
+    assert client.get(f'/api/variants?slug={second}', headers={'User-Agent':'external'}).status_code == 401
+
+
+def test_variant_agent_facts_name_only_the_explicit_target(app):
+    from decompnet.app import tools, variants
+
+    from .test_loading import tiny_game
+    _, net, _ = app
+    first, second = 'variants-agent-pal', 'variants-agent-us'
+    tiny_game(net, first)
+    tiny_game(net, second)
+    variants.attach(net, first, second, 'us', 'pal')
+    facts = tools.project_info(net, second)
+    assert f'Variant scope: us (target {second})' in facts
+    assert 'Match results and claims apply only to this target' in facts

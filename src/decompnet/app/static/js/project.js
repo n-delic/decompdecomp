@@ -34,6 +34,7 @@ function showProjectLoadError(slug, error, step, retry) {
 
 async function openProject(slug, tab = "overview") {
   cancelProjectLoad();
+  if (typeof resetVariantView === "function") resetVariantView(slug);
   const controller = projectLoad = typeof AbortController !== "undefined" ? new AbortController() : null;
   stopPolling();
   show("project");
@@ -261,6 +262,7 @@ function setTab(tab) {
   if (tab === "porting" && typeof loadPortReadiness === "function") loadPortReadiness();
   if (tab === "agents") { renderSessions(S.sessions); renderLog(); loadStats(); }
   if (tab === "settings") renderProjectSettings();
+  if (tab === "variants") loadVariants(S.slug);
   if ((tab === "overview" || tab === "functions") && S.primed &&
       (S.mapPending || Date.now() - S.lastMapFetch > MAP_EVERY_MS)) {
     refreshMap(!!S.mapPending).catch(() => {});
@@ -492,6 +494,7 @@ function renderQuietProgressSync(sync) {
 }
 
 function renderHeader(ov) {
+  if (typeof renderVariantSelector === "function") renderVariantSelector(ov.slug);
   const sync = ov.progress_sync;
   $("progressSyncNotice").hidden = !sync?.full_recheck;
   renderQuietProgressSync(sync);

@@ -733,3 +733,10 @@ def test_rom_model_gltf_preserves_geometry_materials_and_source_limits():
         pytest.skip('needs node to run the GUI scripts')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_rom_model_export.js'))],check=True,
                    capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_variant_jobs_acknowledge_delays_reattach_stop_and_ignore_stale_views():
+    if NODE is None:
+        pytest.skip('needs node to run the GUI scripts')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_variants.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
