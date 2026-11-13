@@ -19,8 +19,8 @@ from decompnet.compiler import CompilerConfig, compile_source
 from decompnet.rom import match
 from decompnet.rom.symbols import Symbol, SymbolTable
 
-pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
-                                reason="needs gcc-2.7.2-kmc and ld.lld")
+_KMC = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
+                          reason="needs gcc-2.7.2-kmc and ld.lld")
 
 GAME = """
     .set noreorder
@@ -134,11 +134,13 @@ def judge(game, hey="hey", k="2.5", hello="hello"):
     return {name: match.link(res.obj, "b", target, table, read) for name, table in tables(syms).items()}
 
 
+@_KMC
 def test_own_data_in_another_layout_matches(game):
     for name, linked in judge(game).items():
         assert linked.exact, (name, linked.problems)
 
 
+@_KMC
 @pytest.mark.parametrize("change", [{"hey": "hez"}, {"hello": "hellp"}, {"k": "2.25"}, {"hey": "he"},
                                     {"hello": "hell"}])
 def test_wrong_data_is_caught(game, change):
@@ -256,6 +258,8 @@ def _defined_region_oracle(tmp_path, src, named_ext=(), gp=0x80018000, base=0x80
                         a += (w & 0x03FFFFFF) << 2
                     elif typ == match.R_MIPS_32:
                         a += w
+                    elif typ == match.R_MIPS_GPREL16:  # section-relative: the offset rides in the immediate
+                        a += w & 0xFFFF
                     out.append((off, typ, a))
         return out
 

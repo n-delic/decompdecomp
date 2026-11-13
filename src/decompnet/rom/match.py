@@ -340,7 +340,12 @@ class _Linker:
                         self.problem(f"{sec.name}+0x{off + r['off']:X} points to conflicting ROM addresses")
                     continue
                 self.local_map[own] = self.data[own] = dest
-                self.widths[own] = None
+                if rtype == R_MIPS_GPREL16:  # the $gp load says how much of the datum it reads (address() does this for .text)
+                    w = _WIDTH.get(linked[k]["value"] >> 26)
+                    prev = self.widths.get(own, 0)
+                    self.widths[own] = None if w is None or prev is None else max(prev, w)
+                else:
+                    self.widths.setdefault(own, None)
                 todo.append(own)
 
     def significant(self, mine: bytes, addr: int, width: int | None) -> int:
