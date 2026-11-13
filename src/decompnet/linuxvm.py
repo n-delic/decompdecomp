@@ -48,6 +48,26 @@ class VMError(RuntimeError):
     pass
 
 
+def vm_cpus() -> int | None:
+    """The CPUs Docker's VM has, or None when Docker doesn't say."""
+    try:
+        result = _plain([*_docker(), 'info', '--format', '{{.NCPU}}'], 10)
+        return int(result.stdout.decode().strip()) if result.returncode == 0 else None
+    except (OSError, ValueError, VMError, subprocess.TimeoutExpired):
+        return None
+
+
+def wanted_size() -> tuple[int, int]:
+    """CPUs and GB of memory for a new VM: half this Mac's cores (2 to 8), a GB per job and two to spare, at most a
+    quarter of its memory. Setup gave every Mac 2 CPUs and 3 GB, which held PS2 compiles to 1 to 1.7 a second."""
+    cpus = max(2, min(8, (os.cpu_count() or 4) // 2))
+    try:
+        memory = int(subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, timeout=5).stdout) >> 30
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        memory = 8
+    return cpus, max(3, min(cpus + 2, memory // 4))
+
+
 def profile() -> str:
     name = os.environ.get('DECOMP_LINUX_VM_PROFILE', 'decompdecomp')
     if not re.fullmatch(r'[a-z][a-z0-9-]{0,47}', name):
@@ -202,11 +222,18 @@ def setup(log=print) -> dict:
     with _setup_lock:
         if status(refresh=True)[0]:
             log('Linux compiler runner is ready.')
+            # An existing VM keeps its size: resizing restarts it, which stops every compile running in it.
+            cpus, memory = wanted_size()
+            if (have := vm_cpus()) is not None and have < cpus:
+                log(f'Its VM has {have} CPUs; this computer can give it {cpus}, for faster compiles. With no compiles '
+                    f'running, resize it: colima stop {profile()} && colima start {profile()} --cpus {cpus} '
+                    f'--memory {memory}, then restart decompdecomp.')
             return {'ready': True}
         name = profile()
         log('Starting the dedicated Linux compiler VM (the first start downloads its OS image).')
+        cpus, memory = wanted_size()
         command = [executable('colima'), 'start', name, '--activate=false', '--vm-type', 'vz',
-                   '--cpus', '2', '--memory', '3', '--disk', '12']
+                   '--cpus', str(cpus), '--memory', str(memory), '--disk', '12']
         if platform.machine().lower() in ('arm64', 'aarch64'):
             command += ['--vz-rosetta']
         result = _plain(command, 300)
