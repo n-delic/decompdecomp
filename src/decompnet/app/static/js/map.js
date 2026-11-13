@@ -227,7 +227,9 @@ $("map").addEventListener("mousemove", (ev) => {
   if (i < 0) { tip.hidden = true; return; }
   const f = S.map[i];
   const p = pctOf(f.best, f.insns);
-  const status = f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}` : f.status === "working" ? `${esc(f.agent)} is on it` : f.best != null ? `best ${pctText(p)}` : "not started";
+  const status = f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}`
+    : f.status === "working" ? `${esc(f.agent)} is on it` : f.best != null ? `best ${pctText(p)}`
+    : noBest(f.attempts || 0);
   const where = S.ov && S.ov.kind === "fork" ? esc(f.unit || "") : hex8(f.vram);
   const cc = f.cc ? `<br>looks built by ${esc(f.cc)}${f.ccx ? ", not its compiler today" : ""}` : "";
   tip.innerHTML = `<b>${esc(f.name)}</b><br>${where} · ${f.insns} instructions<br>${status}${cc}`;

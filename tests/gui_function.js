@@ -124,6 +124,14 @@ const which = () => vm.runInContext("S.which", ctx);
   await settle();
   assert.equal(get("diffWhich").hidden, true);
   assert.equal(which(), "latest");
+  // its badge says it was tried, not "not started" (a report: 12 compiles, none built, said "not started")
+  assert.equal(get("fnStatus").textContent, "1 compile, none built");
+
+  // A function nobody compiled is not started.
+  detail = { ...detail, name: "f4", scores: [] };
+  await ctx.openFn("f4");
+  await settle();
+  assert.equal(get("fnStatus").textContent, "not started");
 
   console.log("ok");
 })().catch((e) => { console.error(e); process.exit(1); });
