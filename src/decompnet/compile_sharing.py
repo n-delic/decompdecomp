@@ -1,6 +1,6 @@
 """Coalesce only simultaneous identical compilation work, never judge or publish results.
 
-No persistent compiler cache: subsequent requests compile again. Owners keep their
+Objects kept across requests and processes are compile_cache.py's, looked up by the builder. Owners keep their
 normal cancellation/artifact semantics and followers receive independent result objects.
 """
 import copy

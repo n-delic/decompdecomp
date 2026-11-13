@@ -23,7 +23,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import compile_sessions, compile_timing, limits, linuxvm, spawner, wsl
+from . import compile_cache, compile_sessions, compile_timing, limits, linuxvm, spawner, wsl
 from .compile_admission import Admission
 from .request_timing import span
 
@@ -295,6 +295,10 @@ def _workspace(prefix):
         yield temporary
 
 
+# What writes the compiler's input (func.c's wrapper, the C++ retry, the command's placeholders) is part of every
+# object the persistent cache keeps: an object stored by another version of this code is not reused.
+_PIPELINE = hashlib.sha256(Path(__file__).read_bytes()).digest()
+
 MIN_CACHED_INPUT_BYTES = 4096
 MAX_CACHED_INPUT_BYTES = 2*1024*1024
 
@@ -398,14 +402,29 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
             key = digest.digest()
             if check := _CANCEL_CHECK.get():check()
             result = session.get(key) if session else None
+            # The same eligibility and key, plus what an object kept across processes needs (compile_cache.py).
+            persistent = compile_cache.key(cfg, key, _sandbox_mode(cfg), _PIPELINE) if result is None else None
             if result is not None:
                 compile_timing.add('cache_hits', 1)
             elif session:
-                from .compile_sharing import current as shared_group
-                group = shared_group()
-                result = group.run(key, build, _CANCEL_CHECK.get()) if group else build()
-                if check := _CANCEL_CHECK.get():check()
+                result = compile_cache.load(persistent) if persistent else None
+                if result is None:
+                    from .compile_sharing import current as shared_group
+                    group = shared_group()
+                    result = group.run(key, build, _CANCEL_CHECK.get()) if group else build()
+                    # Checked before storing too: a search cancelled meanwhile writes nothing anywhere.
+                    if check := _CANCEL_CHECK.get():check()
+                    if persistent:compile_cache.store(persistent, result)
                 session.put(key, result)
+            elif persistent:
+                def stored():
+                    found = compile_cache.load(persistent)
+                    if found is not None:return found
+                    built = build()
+                    compile_cache.store(persistent, built)
+                    return built
+                # (No cancellation reaches here: `share` needs a session for that.)
+                result = shared_compile(key, stored)
             else:
                 result = shared_compile(key, build)
         else:

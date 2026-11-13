@@ -3697,6 +3697,8 @@ Portable-save Git setup shares the Save location panel. Create repository adds G
 
 - Compile throughput: scoped per-worker header/workspace and successful-object reuse, prepared target/disassembly state, lean permutation scoring with full winner diagnostics, numeric phase timings and an installed-toolchain concurrency benchmark. See docs/compile-performance.md.
 
+- Done: persistent compiled-object cache. Successful single-function compiles that the session cache may reuse are also kept on disk under the data home, keyed by the session key plus the compiler's pinned manifest and program contents, bounded (DECOMP_OBJECT_CACHE_MB, default 1024, 0 off) with least-recently-used removal. Hits and misses are in `compile_timing.snapshot()`. Planned: fingerprint the copies that WSL and the macOS Linux VM run, so their compilers persist too; until then they compile fresh in each new session. See docs/compile-performance.md.
+
 - Candidate overhead: share per-trial ROM fingerprints and ELF/symbol readers, batch bounded miss-only bookkeeping with read-your-writes, throttle routine progress while publishing winners immediately, and skip repeated eligible ROM candidates before persistent lookup. See docs/candidate-overhead.md.
 
 ### Search pipeline throughput
