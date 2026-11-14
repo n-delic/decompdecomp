@@ -316,6 +316,17 @@ def host_compiler(zig: Path) -> list:
     return [zig, "cc"]
 
 
+# A Mac app that runs on both kinds of Mac: Apple Silicon and Intel. Only the export asks for it (export.py), since
+# Play runs the game on this Mac and a second architecture would double its build for nothing.
+UNIVERSAL = ["-arch", "arm64", "-arch", "x86_64"]
+
+
+def host_arch_flags(universal: bool, platform: str = sys.platform) -> list:
+    """The flags that make the host a universal program: only on macOS, whose clang builds both architectures into
+    one file; elsewhere the program is for this computer, as before."""
+    return list(UNIVERSAL) if universal and platform == "darwin" else []
+
+
 def _run(argv: list, log, cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(limits.capped([str(a) for a in argv]), cwd=cwd, env=env, capture_output=True, text=True,
                           timeout=TIMEOUT)
@@ -525,11 +536,13 @@ _builds: dict[str, threading.Lock] = {}
 _builds_guard = threading.Lock()
 
 
-def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=()) -> Path:
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
     caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
-    build of one save (Play while compare_behaviour builds) waits for the first, then finds little left to do."""
+    build of one save (Play while compare_behaviour builds) waits for the first, then finds little left to do.
+    `universal`: on macOS, a program for Apple Silicon and Intel Macs alike (port/wasm/build/game-universal), its
+    objects kept apart from Play's so neither build undoes the other's."""
     repo = Path(repo).expanduser().resolve()
     with _builds_guard:
         lock = _builds.setdefault(str(repo), threading.Lock())
@@ -537,12 +550,12 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
         log("waiting for another build of this game to finish")
         lock.acquire()
     try:
-        return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
+        return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal)
     finally:
         lock.release()
 
 
-def _build(repo: Path, *, console: str, log, steps, leave_out) -> Path:
+def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False) -> Path:
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
         raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
@@ -643,11 +656,14 @@ def _build(repo: Path, *, console: str, log, steps, leave_out) -> Path:
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-mem-impl.c",
              rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), out / "funcs.c", out / "stubs.c"]
     includes = ["-I", wabt / "include", "-I", rt, "-I", out / "c"]
-    cc = host_compiler(zig)
+    arch = host_arch_flags(universal)
+    cc = [*host_compiler(zig), *arch]
     host_flags = ["-O1", "-g", "-fno-inline"]
+    objs = out / ("obj-universal" if arch else "obj")
+    objs.mkdir(parents=True, exist_ok=True)
 
     def compile_unit(unit: Path) -> str | None | bool:
-        obj = out / "obj" / (unit.stem + ".o")
+        obj = objs / (unit.stem + ".o")
         key = files.key(unit, [wabt / "include", rt, out / "c"], *cc, *host_flags)
         if _fresh(obj, key):
             return False
@@ -659,9 +675,9 @@ def _build(repo: Path, *, console: str, log, steps, leave_out) -> Path:
         return None
     if failed := _parallel(units, compile_unit, log, "host files", progress.files):
         raise NetworkError("building the host failed: " + "; ".join(failed[:3]))
-    program = out / "game"
+    program = out / ("game-universal" if arch else "game")
     libs = ["-lpthread"] + (["-lws2_32"] if sys.platform == "win32" else [])  # Winsock, for the live view (live.c)
-    done = _run([*cc, "-o", program, *(out / "obj" / (u.stem + ".o") for u in units), *libs], log, env=env)
+    done = _run([*cc, "-o", program, *(objs / (u.stem + ".o") for u in units), *libs], log, env=env)
     if done.returncode:
         raise NetworkError(f"linking the host failed: {done.stderr.strip()[-600:]}")
     log(f"built {program}: run it with the game's ROM, `{program} ROM [seconds]`")

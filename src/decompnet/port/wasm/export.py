@@ -1,8 +1,9 @@
 """Export: the game as something to keep and share, without decompdecomp (docs/PORTING.md, "Export").
 
-- "app": the native build (build.py) as a program for this computer's system: on macOS an app (Game.app) that asks
-  for the player's ROM once, keeps the saves in its own Application Support folder and opens the game in the
-  browser; on Linux and Windows a folder with the program and play.sh / play.bat.
+- "app": the native build (build.py) as a program for this computer's system: on macOS a universal app (Game.app,
+  for Apple Silicon and Intel Macs) that asks for the player's ROM once, keeps the saves in its own Application
+  Support folder and opens the game in the browser; on Linux and Windows a folder with the program and play.sh /
+  play.bat.
 - "web": the browser build (web.py): a folder with index.html and what it loads, to put on any web server (it
   needs http, not a file: page); the player chooses their ROM in the page.
 - "miyoo": the native build for the Miyoo Mini family (miyoo.py): the folders to copy to its SD card (App/ for the
@@ -171,9 +172,11 @@ def export(net, slug: str, kind: str, log=print) -> dict:
     build._write(out / ".gitignore", "*\n")  # built from the game: never committed
     if kind == "app":
         steps = (*build.STEPS, PACKING)
-        program = build.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
+        # On macOS the app runs on Apple Silicon and Intel Macs alike, whichever kind exported it.
+        program = build.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=True)
         build.Progress(log, steps).start(PACKING)
-        log(f"packing {title} as an app for this computer")
+        log(f"packing {title} as an app for " + ("Apple Silicon and Intel Macs" if sys.platform == "darwin"
+                                                  else "this computer"))
         path = package_app(program, out / "app", title)
         folder = out / "app"
     elif kind == "miyoo":
