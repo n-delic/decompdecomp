@@ -283,6 +283,18 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     becomes passive and is copied in after instantiation). The page (the kit's `web/`) shows the
     frames, plays the sound, reads the keyboard and gamepads, and keeps the ROM and the saves in the browser. The
     racing game's frames are byte for byte the native build's (its opening, menus and a race);
+  - *For Miyoo Mini (SD card)*: the native build for the Miyoo Mini family (Mini, Mini Plus, v4, Flip; 32-bit ARM
+    Linux), `port/wasm/miyoo.py`. The game's C is the native build's own wasm2c output; only the host is compiled
+    again, by the pinned Zig for `arm-linux-gnueabihf` (glibc 2.28, Cortex-A7), linked at 0x40000000. Two kit files
+    take the place of what a 32-bit computer can't do: `miyoo/mem32.c` replaces wasm2c's allocator, mapping only
+    what the game touches, at its own address (low memory with page 0, the shadow stacks, the console's RAM and its
+    registers; I/O beyond those lands after the registers by its low bits, host.c's `IO_FAR`), so a console
+    address is still the host's address; `miyoo/miyoo.c` replaces `live.c` with the device's own SDL 1.2, opened
+    at run time (the panel turned 180 degrees, the buttons as keys, sound through the audioserver: what the Miyoo64
+    ports, mr-finster/miyoo64, found on devices). The pack is `App/<Game>/` (program, `launch.sh`, `config.json`:
+    the stock OS and Onion) and `Tools/miyoomini/<Game>.pak/` (MinUI); the player's ROM goes beside the program,
+    in any byte order (the host turns .v64 and .n64 into .z64 as it reads them). Under qemu-arm a racing game
+    boots to its language menu with the PC build's frames; on a device it is untried;
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
   machine only, which shows each frame and sends the keyboard or a gamepad to the first controller (arrows steer, X is A,
   Z is B, Enter is Start; a gamepad in the browser's standard layout), and can go full screen. A key held wins over `PORT_INPUT`, so a script can bring the game to a race and leave it to

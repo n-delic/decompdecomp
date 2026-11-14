@@ -1065,6 +1065,13 @@ Left:
 - the Linux and Windows apps run untried (the macOS app is tried end to end), and signing the macOS app;
 - the browser build for consoles other than the N64: "—" until their kits have a host.
 
+The Miyoo Mini is a third kind (Export… → For Miyoo Mini, `port/wasm/miyoo.py`): the same build's game with its
+host compiled for the handheld's 32-bit ARM by the pinned Zig, the game's memory mapped at its own addresses
+(`miyoo/mem32.c`), the screen, buttons and sound through the device's SDL 1.2 (`miyoo/miyoo.c`), packed for the
+stock OS, Onion and MinUI. A racing game boots to its language menu under qemu-arm with the PC build's frames.
+Left: the first run on a device (speed above all: next, "The Miyoo Mini export at full speed"), Allium and spruce's
+launchers, an icon, save states and the in-game menu Miyoo64's ports have.
+
 ### A finished game runs as a WebAssembly build
 
 The Porting tab's **Play in browser** builds the game from its last save (only what changed) and opens it
@@ -2295,6 +2302,16 @@ and a port-fix task for agents judged twice: the console build still matches and
 first (`Console.port_kit`), PS1 next on PsyCross; the rest "—" until a kit exists. First check: libultraship's
 S2DEX coverage, then a hand port of one N64 game's boot, title screen and one track. Phase 0 is built (Recently
 done: Port readiness report).
+
+### The Miyoo Mini export at full speed
+
+The export runs the PC build's code (wasm2c, bounds checks, every access byte-swapped) and its renderer
+(`render.c`: the RDP in floats, one core) on a 1.2 GHz Cortex-A7. On a Mac the racing game's build uses most of one
+fast core; the Mini is roughly ten times slower, so expect it to run below full speed until: its frames are measured
+on a device (the log's swap count); wasm2c's bounds checks are turned off (`mem32.c` already maps every address
+the game may use); the renderer draws in integers on both cores, as Miyoo64's `gfx_soft.c` does (MIT:
+keep its notice), or the frame is drawn at 320 wide where the game draws at 640. If that isn't enough, Miyoo64's
+own route: the game's C compiled straight for ARM, which needs each game's big-endian data turned at load time.
 
 ### A software renderer for the libultraship runtime
 

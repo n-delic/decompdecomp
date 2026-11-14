@@ -5,6 +5,8 @@
   browser; on Linux and Windows a folder with the program and play.sh / play.bat.
 - "web": the browser build (web.py): a folder with index.html and what it loads, to put on any web server (it
   needs http, not a file: page); the player chooses their ROM in the page.
+- "miyoo": the native build for the Miyoo Mini family (miyoo.py): the folders to copy to its SD card (App/ for the
+  stock OS and Onion, Tools/ for MinUI); the player puts their ROM beside the program.
 
 Neither holds the ROM: each asks the player for their own. Both go to the save repository's port/wasm/export/,
 which git ignores (they're built from the game: game data). Exporting again replaces that kind's folder.
@@ -20,7 +22,7 @@ from pathlib import Path
 
 from ...network import NetworkError
 
-KINDS = {"app": "a standalone app", "web": "a browser build"}
+KINDS = {"app": "a standalone app", "web": "a browser build", "miyoo": "a Miyoo Mini SD card folder"}
 PACKING = "Packing the export"
 
 
@@ -153,9 +155,9 @@ def package_app(program: Path, dest: Path, title: str, platform: str = sys.platf
 
 
 def export(net, slug: str, kind: str, log=print) -> dict:
-    """Build the project's game (only what changed) and export it as `kind` ("app" or "web"): {"kind", "folder",
-    "path" (what to open), "files"}."""
-    from . import build, play, web
+    """Build the project's game (only what changed) and export it as `kind` ("app", "web" or "miyoo"): {"kind",
+    "folder", "path" (what to open), "files"}."""
+    from . import build, miyoo, play, web
 
     if kind not in KINDS:
         raise NetworkError(f"export as one of: {', '.join(KINDS)}")
@@ -173,6 +175,15 @@ def export(net, slug: str, kind: str, log=print) -> dict:
         log(f"packing {title} as an app for this computer")
         path = package_app(program, out / "app", title)
         folder = out / "app"
+    elif kind == "miyoo":
+        steps = (*miyoo.STEPS, PACKING)
+        program = miyoo.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
+        build.Progress(log, steps).start(PACKING)
+        log("packing the Miyoo Mini's SD card folders")
+        rom = cfg.get("rom", {})
+        version = " ".join(x for x in (rom.get("title"), rom.get("region"), rom.get("sha1") and f"SHA-1 {rom['sha1']}") if x)
+        folder = miyoo.package(program, out / "miyoo", title, version)
+        path = folder / "README.txt"
     else:
         steps = (*web.STEPS, PACKING)
         folder = web.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
@@ -186,4 +197,4 @@ def export(net, slug: str, kind: str, log=print) -> dict:
     log(f"exported {KINDS[kind]} to {path} ({len(files)} files, {size / 1e6:.1f} MB); the ROM isn't in it: "
         "the player chooses their own")
     return {"kind": kind, "folder": str(folder), "path": str(path), "files": files, "bytes": size,
-            "system": sys.platform if kind == "app" else "browser"}
+            "system": {"app": sys.platform, "web": "browser"}.get(kind, kind)}
