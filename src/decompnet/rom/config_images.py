@@ -7,8 +7,17 @@ in `palettes`), or a project's own segment type whose arguments are an image for
 ROM Explorer shows them as the project declares them: their offsets are the project's, not found by a recogniser,
 so they are read only from a config that splits exactly the game file the project asks for
 (`ForkProject.splat_config_for`).
+
+Projects in the style of the first 3D platformer's decompilation list their assets in JSON instead
+(`assets.json`, `assets_image.json`): a path ending in the format (`bank_0/2.ci4.png`), `meta.dims` and, for
+colour-indexed images, `meta.pal` naming the palette's entry, and `offsets` per release: the ROM offset and the
+offset inside the block there, which is packed when a Yay0, MIO0 or Yaz0 block starts at it (`asset_list_images`).
 """
 from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
 
 from . import asset_formats
 from .asset_formats import AssetError
@@ -20,6 +29,8 @@ FORMATS = {'rgba16': ('rgba5551-be', 16, 'RGBA16'), 'rgba32': ('rgba8888', 32, '
 PALETTE_ENTRIES = {'ci4': 16, 'ci8': 256}
 PACKED = (b'Yay0', b'Yaz0', b'MIO0')
 MAX_IMAGES = 20000
+MAX_LIST = 32 * 1024 * 1024
+LISTED = re.compile(r'\.(rgba16|rgba32|ci4|ci8|i4|i8|ia4|ia8|ia16)\.png$')
 
 
 def _entries(segments, end=None):
@@ -75,13 +86,52 @@ def images(config):
     return out
 
 
-def _bytes(image, offset, size):
-    """`size` bytes at `offset`, unpacked first when a packed block starts there: (bytes, codec or None)."""
+def asset_list_images(root, version):
+    """The images a project's JSON asset lists declare for one release (`version`, or the only one they list)."""
+    entries = {}
+    for path in sorted(Path(root).glob('assets*.json')):
+        try:
+            if path.stat().st_size > MAX_LIST:continue
+            data = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):continue
+        if isinstance(data, dict):entries.update({k: v for k, v in data.items() if isinstance(v, dict)})
+    releases = {key for entry in entries.values() if isinstance(entry.get('offsets'), dict) for key in entry['offsets']}
+    # The release asked for, or the only one the lists name: another release's offsets are not this file's.
+    release = version if version in releases else next(iter(releases)) if len(releases) == 1 else None
+    found = {}
+    for name, entry in entries.items():
+        kind = LISTED.search(name)
+        meta, offsets = entry.get('meta'), entry.get('offsets')
+        if not kind or not isinstance(meta, dict) or not isinstance(offsets, dict) or release not in offsets:continue
+        place = offsets[release]
+        dims = meta.get('dims')
+        try:
+            offset, inner = (int(str(v), 16) for v in place[:2])
+            width, height = (int(v) for v in dims[:2])
+        except (TypeError, ValueError, IndexError):continue
+        found[name] = (kind.group(1), offset, inner, width, height, meta.get('pal'))
+    out = []
+    for name, (kind, offset, inner, width, height, pal) in found.items():
+        if not all(0 < v <= asset_formats.MAX_DIMENSION for v in (width, height)):continue
+        palette = None
+        if kind in PALETTE_ENTRIES:
+            pal = pal[0] if isinstance(pal, list) and pal else pal
+            if pal not in found or found[pal][2]:continue                # a palette inside a packed block isn't read
+            palette = found[pal][1]
+        preview, bits, shown = FORMATS[kind]
+        out.append(dict(offset=offset, inner=inner, end=None, format=preview, bits=bits, shown=shown, width=width,
+                        height=height, name=name.removeprefix('assets/'), palette=palette, declared='asset list'))
+        if len(out) >= MAX_IMAGES:break
+    return out
+
+
+def _bytes(image, offset, size, inner=0):
+    """`size` bytes at `offset` (from `inner` on, in a packed block that starts there): (bytes, codec or None)."""
     head = bytes(image[offset:offset+4])
     if head in PACKED:
         raw, codec = asset_formats.unpack(bytes(image[offset:offset+asset_formats.MAX_BYTES]))
-        return raw[:size], codec
-    return bytes(image[offset:offset+size]), None
+        return raw[inner:inner+size], codec
+    return bytes(image[offset+inner:offset+inner+size]), None
 
 
 def _pixels(item):
@@ -94,9 +144,12 @@ def regions(image, declared, source):
     for item in declared:
         size = _pixels(item)
         packed = bytes(image[item['offset']:item['offset']+4]) in PACKED
-        if not packed and item['offset'] + size > len(image):continue
+        if not packed and item['offset'] + item.get('inner', 0) + size > len(image):continue
         span = (item['end'] - item['offset']) if item['end'] and item['end'] > item['offset'] else size
-        settings = dict(format=item['format'], width=item['width'], height=item['height'], offset=item['offset'], source='rom')
+        listed = item['declared'] == 'asset list'
+        where, what = ('asset list', 'an image') if listed else (f'splat config ({source})', f"a {item['declared']} segment")
+        settings = dict(format=item['format'], width=item['width'], height=item['height'],
+                        offset=item['offset'] + (0 if packed else item.get('inner', 0)), source='rom')
         if item['palette'] is not None:settings.update(palette_offset=item['palette'], palette_format='rgba5551-be')
         out.append(dict(offset=item['offset'], size=min(span, len(image) - item['offset']), kind='image', provider='splat-config',
                         label=f"{item['name']} · {item['shown']} {item['width']}×{item['height']}", confidence='declared',
@@ -105,8 +158,7 @@ def regions(image, declared, source):
                         palette_offsets=[item['palette']] if item['palette'] is not None else [],
                         palette_entries=[PALETTE_ENTRIES[item['format']]] if item['palette'] is not None else [],
                         levels=[dict(width=item['width'], height=item['height'], offset=0)],
-                        reason=f"The project's splat config ({source}) declares a {item['declared']} segment here: "
-                               f"{item['shown']} {item['width']}×{item['height']}"
+                        reason=f"The project's {where} declares {what} here: {item['shown']} {item['width']}×{item['height']}"
                                + (', packed' if packed else '') + '. The project worked out this layout; it is shown as declared.'))
     return out
 
@@ -114,7 +166,7 @@ def regions(image, declared, source):
 def preview(image, asset, selection):
     """The declared image, unpacked first when its bytes are a packed block, with its palette."""
     item = asset['declared']
-    texels, codec = _bytes(image, item['offset'], _pixels(item))
+    texels, codec = _bytes(image, item['offset'], _pixels(item), item.get('inner', 0))
     if len(texels) < _pixels(item):raise AssetError('The declared image is shorter than its size. Check the project\'s splat config, then rescan.')
     settings = dict(format=item['format'], width=item['width'], height=item['height'], offset=0)
     data = texels
