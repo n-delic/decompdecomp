@@ -611,16 +611,51 @@ static void s2d_load(uint32_t txtr) { /* uObjTxtr: a block, a tile or a palette 
                 tmem_word((uint32_t)(tm + l * words + i) * 8, src + (uint32_t)(l * words + i) * 8, l & 1);
     }
 }
-static void s2d_sprite(uint32_t sp) { /* uObjSprite: an unrotated rectangle from TMEM */
-    float x = (int16_t)rd16(sp) / 4.0f, y = (int16_t)rd16(sp + 8) / 4.0f;
-    float sw = rd16(sp + 2) / 1024.0f, sh = rd16(sp + 10) / 1024.0f;
-    int iw = rd16(sp + 4) >> 5, ih = rd16(sp + 12) >> 5;
+/* A uObjSprite's place (objX, objY, s10.2), scale (u5.10) and image size in texels, its image set up as tile 7. */
+typedef struct { float x, y, sw, sh; int iw, ih; } Sprite;
+static Sprite s2d_sprite_tile(uint32_t sp) {
+    Sprite o = {(int16_t)rd16(sp) / 4.0f, (int16_t)rd16(sp + 8) / 4.0f, rd16(sp + 2) / 1024.0f, rd16(sp + 10) / 1024.0f,
+                rd16(sp + 4) >> 5, rd16(sp + 12) >> 5};
     Tile t = {.fmt = R[sp + 20], .siz = R[sp + 21], .line = rd16(sp + 16), .tmem = rd16(sp + 18), .palette = R[sp + 22],
-              .cms = 2, .cmt = 2, .lrs = (float)(iw - 1), .lrt = (float)(ih - 1)};
-    if (sw == 0) sw = 1;
-    if (sh == 0) sh = 1;
+              .cms = 2, .cmt = 2, .lrs = (float)(o.iw - 1), .lrt = (float)(o.ih - 1)};
+    if (o.sw == 0) o.sw = 1;
+    if (o.sh == 0) o.sh = 1;
     tiles[7] = t;
-    tex_rect(7, x, y, x + iw / sw, y + ih / sh, 0, 0, 1.0f / sw, 1.0f / sh, 0);
+    return o;
+}
+static void s2d_sprite(uint32_t sp) { /* an unrotated rectangle from TMEM */
+    Sprite o = s2d_sprite_tile(sp);
+    tex_rect(7, o.x, o.y, o.x + o.iw / o.sw, o.y + o.ih / o.sh, 0, 0, 1.0f / o.sw, 1.0f / o.sh, 0);
+}
+/* The 2D matrix (uObjMtx, G_OBJ_MOVEMEM at index 0, 24 bytes): A, B, C, D (s15.16) and X, Y (s10.2). */
+static float obj_mtx[6] = {1, 0, 0, 1, 0, 0};
+static void s2d_matrix(uint32_t w0, uint32_t a) {
+    if ((w0 & 0xFF) != 0 || ((w0 >> 19) & 0x1F) != 2) return; /* another load (the viewport, at index 8) */
+    for (int i = 0; i < 4; i++) obj_mtx[i] = (float)(int32_t)rd32(a + (uint32_t)i * 4) / 65536.0f;
+    obj_mtx[4] = (int16_t)rd16(a + 16) / 4.0f;
+    obj_mtx[5] = (int16_t)rd16(a + 18) / 4.0f;
+}
+/* G_OBJ_SPRITE: the sprite through the 2D matrix, rotated and scaled: its corners in object space are mapped to
+   the screen as (A x + B y + X, C x + D y + Y), and each pixel they cover back to the texel it shows. A racing
+   game's rev counter needle turns this way; drawn unrotated, it was a grey streak above the gauge. */
+static void s2d_sprite_rotated(uint32_t sp) {
+    Sprite o = s2d_sprite_tile(sp);
+    float A = obj_mtx[0], B = obj_mtx[1], C = obj_mtx[2], D = obj_mtx[3], X = obj_mtx[4], Y = obj_mtx[5];
+    float det = A * D - B * C, w = o.iw / o.sw, h = o.ih / o.sh;
+    if (fabsf(det) < 1e-6f || w <= 0 || h <= 0) return;
+    float cx[4] = {o.x, o.x + w, o.x, o.x + w}, cy[4] = {o.y, o.y, o.y + h, o.y + h};
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    for (int i = 0; i < 4; i++) {
+        float sx = A * cx[i] + B * cy[i] + X, sy = C * cx[i] + D * cy[i] + Y;
+        x0 = fminf(x0, sx); x1 = fmaxf(x1, sx); y0 = fminf(y0, sy); y1 = fmaxf(y1, sy);
+    }
+    for (int py = (int)floorf(y0); py < (int)ceilf(y1); py++)
+        for (int px = (int)floorf(x0); px < (int)ceilf(x1); px++) {
+            float dx = px + 0.5f - X, dy = py + 0.5f - Y;
+            float ox = (D * dx - B * dy) / det, oy = (-C * dx + A * dy) / det;
+            if (ox < o.x || oy < o.y || ox >= o.x + w || oy >= o.y + h) continue;
+            plot(px, py, 0, (Color){1, 1, 1, 1}, sample(&tiles[7], (ox - o.x) * o.sw, (oy - o.y) * o.sh), 0);
+        }
 }
 static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight from memory */
     float ix = rd16(bg) / 32.0f, iw = rd16(bg + 2) / 4.0f, fx = (int16_t)rd16(bg + 4) / 4.0f, fw = rd16(bg + 6) / 4.0f;
@@ -651,12 +686,15 @@ static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight f
 }
 static void s2dex(uint8_t op, uint32_t w0, uint32_t w1) {
     switch (op) {
-    case 0x01: case 0x02: case 0xDA: s2d_sprite(phys(w1)); break; /* rotated sprites drawn unrotated for now */
+    case 0x02: s2d_sprite_rotated(phys(w1)); break;
+    case 0x01: case 0xDA: s2d_sprite(phys(w1)); break; /* the rectangles: no rotation (their scale is the sprite's) */
     case 0x05: s2d_load(phys(w1)); break;
-    case 0x06: case 0x07: case 0x08: s2d_load(phys(w1)); s2d_sprite(phys(w1) + 24); break;
+    case 0x06: s2d_load(phys(w1)); s2d_sprite_rotated(phys(w1) + 24); break;
+    case 0x07: case 0x08: s2d_load(phys(w1)); s2d_sprite(phys(w1) + 24); break;
+    case 0xDC: s2d_matrix(w0, phys(w1)); break;
     case 0x09: s2d_bg(phys(w1), 1); break;
     case 0x0A: s2d_bg(phys(w1), 0); break;
-    case 0x0B: case 0x04: case 0xDC: case 0xD7: case 0xD9: break;
+    case 0x0B: case 0x04: case 0xD7: case 0xD9: break;
     default: rdp(op, w0, w1);
     }
 }
