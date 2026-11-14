@@ -23,19 +23,23 @@ HARNESS = r"""
 #include <string.h>
 void port_render_task(uint32_t task);
 void port_frame_shown(uint32_t fb, unsigned long n);
+void port_vi_mode(uint32_t mode);
+void port_vi_features(uint32_t f);
 static uint8_t ram[0x400000];
 uint8_t *port_memory(void) { return ram - 0x80000000u; }
 static uint8_t shown[640 * 480 * 3]; static int shown_w, shown_h;
 int port_live_active(void) { return 1; }
 void port_live_frame(const uint8_t *rgb, int w, int h) { memcpy(shown, rgb, (size_t)w * h * 3); shown_w = w; shown_h = h; }
-/* argv: memory in, memory out, the frame as the VI shows it out, then tasks (hex RAM addresses); "show:ADDR" shows
-   a frame instead */
+/* argv: memory in, memory out, the frame as the VI shows it out, then steps: tasks (hex RAM addresses), "show:ADDR"
+   (the VI shows a frame), "mode:ADDR" (osViSetMode), "features:HEX" (osViSetSpecialFeatures) */
 int main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "rb");
     if (!f || fread(ram, 1, sizeof ram, f) != sizeof ram) return 3;
     fclose(f);
     for (int i = 4; i < argc; i++) {
         if (!strncmp(argv[i], "show:", 5)) port_frame_shown((uint32_t)strtoul(argv[i] + 5, NULL, 16), 1);
+        else if (!strncmp(argv[i], "mode:", 5)) port_vi_mode((uint32_t)strtoul(argv[i] + 5, NULL, 16));
+        else if (!strncmp(argv[i], "features:", 9)) port_vi_features((uint32_t)strtoul(argv[i] + 9, NULL, 16));
         else port_render_task((uint32_t)strtoul(argv[i], NULL, 16));
     }
     f = fopen(argv[2], "wb"); fwrite(ram, 1, sizeof ram, f); fclose(f);
@@ -164,7 +168,8 @@ class Gfx:
 
 
 def run(program: Path, mem: Memory, folder: Path, *steps: str | int) -> tuple[Memory, tuple[int, int, bytes]]:
-    """The tasks (RAM addresses) and frame showings ("show:ADDR") in order; memory as the renderer left it and the
+    """The steps in order: tasks (RAM addresses), frame showings ("show:ADDR"), VI modes ("mode:ADDR") and
+    features ("features:HEX"); memory as the renderer left it and the
     last frame the VI showed (width, height, RGB)."""
     src, dst, shown = folder / "in.bin", folder / "out.bin", folder / "shown.bin"
     src.write_bytes(mem.ram)
@@ -194,3 +199,12 @@ def load_texture(g: Gfx, image: int, tile: int = 0, tmem: int = 0, size: int = 8
     g(0xF4000000, 7 << 24 | ((size - 1) * 4) << 12 | (size - 1) * 4)
     g(0xF5100000 | line << 9 | tmem, tile << 24 | cm << 18 | cm << 8)
     return g(0xF2000000, tile << 24 | ((size - 1) * 4) << 12 | (size - 1) * 4)
+
+
+def vi_mode(mem: Memory, width: int, lines: int, ctrl: int = 0x2) -> int:
+    """An OSViMode: `ctrl` (2: 16-bit pixels; 0x8 gamma), the frame's width, X scale, and a Y scale making `lines`
+    lines of NTSC's 237 active ones (as 240)."""
+    mode = bytearray(80)
+    struct.pack_into(">IIIIIIIII", mode, 4, ctrl, width, 0, 0, 0, 0, 0, width * 1024 // 640, 0)
+    struct.pack_into(">IIIII", mode, 40, FB, lines * 1024 // 240, 0x002501FF, 0, 0)
+    return mem.put(bytes(mode))

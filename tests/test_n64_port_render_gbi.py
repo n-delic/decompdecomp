@@ -12,11 +12,13 @@ from tests.n64_render_kit import (
     QUADRANT_COLOURS,
     SHADE,
     TEX,
+    ZB,
     Gfx,
     H,
     Memory,
     W,
     build,
+    combine,
     light,
     load_texture,
     matrix,
@@ -25,6 +27,7 @@ from tests.n64_render_kit import (
     run,
     ucode_data,
     vertex,
+    vi_mode,
 )
 
 
@@ -232,3 +235,316 @@ def test_g_mw_matrix_rewrites_one_element_of_the_combined_matrix(renderer, tmp_p
     out, _ = run(renderer, mem, tmp_path, g.end())
     assert out.pixel(W // 2, H // 2) == (31, 0, 0)
     assert out.pixel(20, H // 2) == (0, 0, 0)
+
+
+# ---------------------------------------------------------------- the RDP
+
+NO_DITHER = 3 << 6  # other mode H: G_CD_DISABLE
+
+
+def _texrect(g: Gfx, tile: int, x0: int, y0: int, x1: int, y1: int, s: float = 0, t: float = 0,
+             dsdx: float = 1, dtdy: float = 1) -> None:
+    """G_TEXRECT and its two halves: corners in 10.2, s and t in s10.5, steps in s5.10."""
+    g(0xE4000000 | (x1 * 4) << 12 | y1 * 4, tile << 24 | (x0 * 4) << 12 | y0 * 4)
+    g(0xE1000000, (int(s * 32) & 0xFFFF) << 16 | (int(t * 32) & 0xFFFF))
+    g(0xF1000000, (int(dsdx * 1024) & 0xFFFF) << 16 | (int(dtdy * 1024) & 0xFFFF))
+
+
+def _solid_texture(mem: Memory, colour: int, size: int = 8) -> int:
+    return mem.put(colour.to_bytes(2, "big") * size * size)
+
+
+def test_a_pixel_on_a_shared_edge_is_drawn_once(renderer, tmp_path):
+    """A half-transparent square (x scaled by 0.75: 40 to 280 by 0 to 240) over black: the pixels whose centres lie
+    exactly on its diagonal (x = y + 40) belong to one of its triangles, so they're as red as the rest. Drawn by
+    both, they were blended twice: a bright seam."""
+    mem = Memory()
+    g = Gfx(mem)
+    _f3dex2_start(mem, g)
+    g(0xDA380003, 0x80000000 | mem.put(matrix([0.75, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])))
+    g.othermode(NO_DITHER, 0x4000 | 1 << 22 | 1 << 20)       # force blend: IN * IN_A + MEM * (1 - IN_A)
+    g(*SHADE)
+    g(0xD9000000, 0x200000)
+    g(0x01000000 | 4 << 12 | 4 << 1, 0x80000000 | _screen_quad(mem, [0xFF000080] * 4))
+    g(0x06000204, 0x00000406)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    inside = out.pixel(100, 150)
+    assert 14 <= inside[0] <= 17, inside
+    for y in (3, 60, 200):
+        assert out.pixel(y + 40, y) == inside, y
+
+
+def test_a_clamped_tile_mirrors_inside_its_mask(renderer, tmp_path):
+    """A tile 16 texels wide, clamped and mirrored with an 8-texel mask: texels 8 to 15 are the first 8 mirrored
+    (texel 12 shows texel 3, red; texel 9 texel 6, green). Taking clamp as "clamp only" read them raw from TMEM."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame().fill(0)
+    g.othermode(NO_DITHER, 0)
+    g(*TEX)
+    load_texture(g, quadrant_texture(mem))
+    g(0xF5100000 | 2 << 9, 0 << 24 | 3 << 18 | 3 << 14 | 3 << 8 | 3 << 4)  # mirror + clamp, masks 3 (8 texels)
+    g(0xF2000000, 0 << 24 | (15 * 4) << 12 | 7 * 4)
+    _texrect(g, 0, 0, 0, 16, 4)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.r16(FB + (2 * W + 12) * 2) == RED
+    assert out.r16(FB + (2 * W + 9) * 2) == GREEN
+
+
+def _two_tiles(mem: Memory, g: Gfx) -> None:
+    """Tile 0: the quadrant texture; tile 1: solid blue, 16 words further in TMEM."""
+    load_texture(g, quadrant_texture(mem), tile=0, tmem=0)
+    load_texture(g, _solid_texture(mem, BLUE), tile=1, tmem=16)
+
+
+def test_texel1_is_the_next_tiles_texel(renderer, tmp_path):
+    """The combiner's TEXEL1 reads G_TEXTURE's tile + 1 (two textures on one surface: water's two layers, flames).
+    The renderer once gave TEXEL0 for it."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame().fill(0)
+    g.othermode(NO_DITHER, 0)
+    g(*combine(15, 15, 31, 2, 7, 7, 7, 2))
+    _two_tiles(mem, g)
+    _texrect(g, 0, 0, 0, 8, 8)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.r16(FB + (2 * W + 2) * 2) == BLUE
+
+
+@pytest.mark.parametrize("lod, colour", [(True, BLUE), (False, RED)])
+def test_the_level_of_detail_picks_the_mip_level(renderer, tmp_path, lod, colour):
+    """With G_TL_LOD, a rectangle stepping two texels a pixel draws from the next level (tile 1, blue), G_TEXTURE
+    giving one level beyond the first; without it, from tile 0 (red at the top left)."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame().fill(0)
+    g.othermode(NO_DITHER | (0x10000 if lod else 0), 0)
+    g(0xD7000002 | 1 << 11, 0xFFFFFFFF)                      # G_TEXTURE: one more level
+    g(*TEX)
+    _two_tiles(mem, g)
+    _texrect(g, 0, 0, 0, 4, 4, dsdx=2, dtdy=2)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.r16(FB + (1 * W + 1) * 2) == colour
+
+
+def _depth_frame(g: Gfx, z_fill: int) -> None:
+    """The z image filled with `z_fill` (drawn into as a colour image), then the frame black."""
+    g.frame(ZB).fill(z_fill)
+    g.frame().zimage().fill(0)
+
+
+def test_depth_is_kept_in_the_games_z_image(renderer, tmp_path):
+    """A triangle drawn with Z_UPD leaves its depth in the z image in RDRAM, in the RDP's format: depth 511 of 1023
+    is 0x1FF00 in 18 bits, exponent 0 and mantissa 0x7FC. The renderer once kept depth in a buffer of its own."""
+    mem = Memory()
+    g = Gfx(mem)
+    _f3dex2_start(mem, g)
+    _depth_frame(g, 0xFFFC)
+    g.othermode(NO_DITHER, 0x10 | 0x20)                       # Z_CMP, Z_UPD
+    g(*SHADE)
+    g(0xD9000000, 0x200000 | 1)                               # G_ZBUFFER
+    g(0x01000000 | 4 << 12 | 4 << 1, 0x80000000 | _screen_quad(mem, [0xFF0000FF] * 4))
+    g(0x06000204, 0x00000406)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    word = out.r16(ZB + (100 * W + 100) * 2)
+    assert word >> 13 == 0 and (word >> 2) & 0x7FF == 0x7FC, hex(word)
+    assert out.pixel(100, 100) == (31, 0, 0)
+
+
+def test_a_depth_the_game_wrote_hides_what_is_behind_it(renderer, tmp_path):
+    """The game draws into its z image itself (a lens's circle, a prerendered room's depth): here filled with the
+    nearest depth, the triangle behind it doesn't draw. Fill-mode clears were all the renderer's depth once saw."""
+    mem = Memory()
+    g = Gfx(mem)
+    _f3dex2_start(mem, g)
+    _depth_frame(g, 0x0000)
+    g.othermode(NO_DITHER, 0x10 | 0x20)
+    g(*SHADE)
+    g(0xD9000000, 0x200000 | 1)
+    g(0x01000000 | 4 << 12 | 4 << 1, 0x80000000 | _screen_quad(mem, [0xFF0000FF] * 4))
+    g(0x06000204, 0x00000406)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.pixel(100, 100) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("prim_z, drawn", [(0x0000, True), (0x7FFF, False)])
+def test_a_rectangle_takes_the_primitives_depth(renderer, tmp_path, prim_z, drawn):
+    """G_ZS_PRIM with G_SETPRIMDEPTH: a 2D rectangle compared at the primitive's depth against a z image half way
+    (0x1FF00): in front, it draws; behind, it doesn't. Rectangles were never depth-tested."""
+    mem = Memory()
+    g = Gfx(mem)
+    _depth_frame(g, 0x7FC << 2)
+    g.othermode(NO_DITHER, 0x10 | 4)                          # Z_CMP, G_ZS_PRIM
+    g(*TEX)
+    g(0xEE000000, prim_z << 16)
+    load_texture(g, quadrant_texture(mem))
+    _texrect(g, 0, 0, 0, 4, 4)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert (out.r16(FB + (1 * W + 1) * 2) == RED) == drawn
+
+
+@pytest.mark.parametrize("z, drawn", [(0, True), (-1, False)])
+def test_a_decal_draws_only_on_a_surface_at_its_depth(renderer, tmp_path, z, drawn):
+    """ZMODE_DEC (a shadow or a mark on a wall): after a green surface at depth 511, a red decal at the same depth
+    draws over it, one nearer (z = -1, depth 0) doesn't. Without decal mode it passed wherever it was in front."""
+    mem = Memory()
+    g = Gfx(mem)
+    _f3dex2_start(mem, g)
+    _depth_frame(g, 0xFFFC)
+    g(*SHADE)
+    g(0xD9000000, 0x200000 | 1)
+    g.othermode(NO_DITHER, 0x10 | 0x20)
+    g(0x01000000 | 4 << 12 | 4 << 1, 0x80000000 | _screen_quad(mem, [0x00FF00FF] * 4))
+    g(0x06000204, 0x00000406)
+    g.othermode(NO_DITHER, 0x10 | 3 << 10)                    # Z_CMP, ZMODE_DEC
+    g(0x01000000 | 4 << 12 | 4 << 1, 0x80000000 | _screen_quad(mem, [0xFF0000FF] * 4, z=z))
+    g(0x06000204, 0x00000406)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.pixel(100, 100) == ((31, 0, 0) if drawn else (0, 31, 0))
+
+
+def test_texture_generation_follows_the_normal(renderer, tmp_path):
+    """G_TEXTURE_GEN (chrome, metal): s and t from the normal along the look-at X and Y axes, (d + 1) / 2 of
+    G_TEXTURE's scale >> 6 texels. A normal toward -X takes s = 0 (red, the left of the top row), toward +X s = 7
+    (green). The vertex's own s and t (here 0) were used before."""
+    mem = Memory()
+    g = Gfx(mem)
+    _f3dex2_start(mem, g)
+    g.othermode(NO_DITHER | 0x80000, 0)                       # perspective correction
+    g(*TEX)
+    load_texture(g, quadrant_texture(mem))
+    g(0xD7000002, 0x01C001C0)                                 # G_TEXTURE: scale 0x1C0, 7 texels across
+    g(0xDC080000 | 0 << 8 | 10, 0x80000000 | mem.put(light(0, 0, 0, 127, 0, 0)))   # look-at X
+    g(0xDC080000 | 3 << 8 | 10, 0x80000000 | mem.put(light(0, 0, 0, 0, 127, 0)))   # look-at Y
+    g(0xDB020000, 0)                                          # no lights
+    g(0xD9000000, 0x20000 | 0x40000 | 0x200000)               # G_LIGHTING, G_TEXTURE_GEN, smooth
+    left, right = normal(-127, 0, 0), normal(127, 0, 0)
+    vtx = mem.put(b"".join(vertex(x, y, 0, rgba=n) for x, y, n in
+                           [(-1, 1, left), (0, 1, left), (0, -1, left), (-1, -1, left),
+                            (0, 1, right), (1, 1, right), (1, -1, right), (0, -1, right)]))
+    g(0x01000000 | 8 << 12 | 8 << 1, 0x80000000 | vtx)
+    g(0x06000204, 0x00000406)
+    g(0x06080A0C, 0x00080C0E)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.r16(FB + (120 * W + 80) * 2) == RED
+    assert out.r16(FB + (120 * W + 240) * 2) == GREEN
+
+
+@pytest.mark.parametrize("dither, differ", [(0, True), (NO_DITHER, False)])
+def test_colours_are_dithered_as_they_are_cut_to_5_bits(renderer, tmp_path, dither, differ):
+    """The RDP adds an ordered dither (the magic square by default) before cutting each 8-bit channel to 5 bits: a
+    flat 132 (16.5 in 5 bits) comes out 16 or 17 by the pixel's place; with G_CD_DISABLE every pixel is 16."""
+    mem = Memory()
+    g = Gfx(mem)
+    _f3dex2_start(mem, g)
+    g.othermode(dither, 0)
+    g(*SHADE)
+    g(0xD9000000, 0x200000)
+    g(0x01000000 | 4 << 12 | 4 << 1, 0x80000000 | _screen_quad(mem, [0x848484FF] * 4))
+    g(0x06000204, 0x00000406)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    first, second = out.pixel(0, 0), out.pixel(1, 0)
+    assert first[0] == 16
+    assert (first != second) == differ
+
+
+def test_alpha_times_coverage_drops_a_cut_outs_clear_texels(renderer, tmp_path):
+    """CVG_X_ALPHA with anti-aliasing (a texture's cut-out edge: leaves, fences): coverage times alpha, so a clear
+    texel covers nothing and isn't drawn, while an opaque one is. It was drawn whole before."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame().fill(0)
+    g.othermode(NO_DITHER, 0x8 | 0x1000)                      # AA_EN, CVG_X_ALPHA
+    g(*TEX)
+    clear_left = b"".join((RED if s >= 4 else RED & ~1).to_bytes(2, "big") for _ in range(8) for s in range(8))
+    load_texture(g, mem.put(clear_left))
+    _texrect(g, 0, 0, 0, 8, 8)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.r16(FB + (2 * W + 1) * 2) == 0
+    assert out.r16(FB + (2 * W + 6) * 2) == RED
+
+
+def test_an_ia16_palette_reads_intensity_and_alpha(renderer, tmp_path):
+    """G_TT_IA16 (other mode H): a colour-indexed texture's palette entries are intensity and alpha, not RGBA 5551.
+    Entry 0x80FF is a half grey; read as RGBA it was red with a little green and full blue."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame().fill(0)
+    g.othermode(NO_DITHER | 3 << 14, 0)
+    g(*TEX)
+    tlut = mem.put((0x80FF).to_bytes(2, "big") * 16)
+    g(0xFD100000, 0x80000000 | tlut)
+    g(0xF5000100, 7 << 24)
+    g(0xF0000000, 7 << 24 | 15 << 14)
+    image = mem.put(b"\x00" * 32)                              # CI4, 8x8, every texel entry 0
+    g(0xFD000000 | 2 << 21 | 7, 0x80000000 | image)
+    g(0xF5000000 | 2 << 21 | 1 << 9, 0)
+    g(0xF4000000, (7 << 2) << 12 | 7 << 2)
+    _texrect(g, 0, 0, 0, 8, 8)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    r, gr, b = out.pixel(2, 2)
+    assert r == gr == b and 15 <= r <= 16, (r, gr, b)
+
+
+def test_a_32_bit_colour_image_gets_32_bit_pixels(renderer, tmp_path):
+    """G_SETCIMG's size 32: each pixel is RGBA 8888. Drawn as 16-bit pixels, the image came out half its width and
+    the wrong colours."""
+    mem = Memory()
+    g = Gfx(mem)
+    ident = mem.put(matrix())
+    g(0xFF180000 | (W - 1), 0x80000000 | FB)
+    g.othermode(NO_DITHER, 0)
+    g(0xDA380007, 0x80000000 | ident)
+    g(0xDA380003, 0x80000000 | ident)
+    g(*SHADE)
+    g(0xD9000000, 0x200000)
+    g(0x01000000 | 4 << 12 | 4 << 1, 0x80000000 | _screen_quad(mem, [0xFF0000FF] * 4))
+    g(0x06000204, 0x00000406)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    at = FB + (100 * W + 300) * 4
+    assert bytes(out.ram[at:at + 4]) == b"\xff\x00\x00\xff"
+
+
+# ---------------------------------------------------------------- the VI
+
+
+def test_the_vi_shows_the_frame_at_its_modes_size(renderer, tmp_path):
+    """osViSetMode's mode gives the frame's size: a game drawing at 400 x 300 is shown at 400 x 300. The size was
+    guessed from the width (wider than 320: 480 lines), so its frame was read past its end."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame(width=400)
+    g(0xED000000, (400 * 4) << 12 | 300 * 4)                   # G_SETSCISSOR: the whole 400 x 300
+    g.fill(0xF801, x1=399, y1=299)
+    g(0xDF000000)
+    mode = vi_mode(mem, 400, 300)
+    _, (w, h, rgb) = run(renderer, mem, tmp_path, g.end(), f"mode:{mode:x}", f"show:{FB:x}")
+    assert (w, h) == (400, 300)
+    assert rgb[(299 * 400 + 399) * 3] == 255
+
+
+def test_the_vis_gamma_brightens_as_the_console_does(renderer, tmp_path):
+    """A mode with gamma on shows each channel through the VI's square-root curve: 66 of 255 comes out about 129.
+    osViSetSpecialFeatures(OS_VI_GAMMA_OFF) turns it off again."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame().fill(0x4210)                                     # 8 of 31 in each channel: 66 of 255
+    g(0xDF000000)
+    mode = vi_mode(mem, W, H, ctrl=0x2 | 0x8)
+    _, (_, _, on) = run(renderer, mem, tmp_path, g.end(), f"mode:{mode:x}", f"show:{FB:x}")
+    _, (_, _, off) = run(renderer, mem, tmp_path, g.end(), f"mode:{mode:x}", "features:2", f"show:{FB:x}")
+    assert 125 <= on[0] <= 132, on[0]
+    assert 64 <= off[0] <= 68, off[0]
