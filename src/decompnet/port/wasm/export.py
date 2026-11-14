@@ -112,8 +112,8 @@ example, in this folder:
 
     python3 -m http.server 8000
 
-then open http://localhost:8000/ in Chrome or Edge 137 or later (the page needs WebAssembly JavaScript Promise
-Integration). It can go on any static web server the same way.
+then open http://localhost:8000/ in Chrome or Edge 137 or later, or Safari 27 (the page needs WebAssembly
+JavaScript Promise Integration). It can go on any static web server the same way.
 
 Keys: arrows steer, X is A, Z is B, Enter is Start, Space is Z, Q and W are L and R, I/J/K/L are the C buttons; a
 gamepad works too.

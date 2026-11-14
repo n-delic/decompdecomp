@@ -5,6 +5,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -156,3 +157,14 @@ def test_the_browser_export_copies_the_build_and_never_a_rom(tmp_path):
                                                      "play.js", "runtime.js"]
     kit = web.HERE.parent.parent / "consoles" / "n64" / "port_wasm" / "web"
     assert "indexedDB" in (kit / "play.js").read_text() and 'type="file"' in (kit / "index.html").read_text()
+
+
+def test_the_page_places_data_segments_above_2_gb_itself():
+    """Safari refuses a module whose data segment is above 2 GB (it reads the address as negative), and every
+    segment of a browser build is: the runtime turns them passive and copies them in (web_runtime_data.mjs)."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node isn't installed")
+    done = subprocess.run([node, str(Path(__file__).with_name("web_runtime_data.mjs"))], capture_output=True,
+                          text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
