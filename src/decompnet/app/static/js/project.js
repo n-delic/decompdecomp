@@ -1293,17 +1293,18 @@ $("decompDirectory").addEventListener("toggle", async () => {
   $("decompDirectoryWork").hidden = false;
   $("decompDirectoryStatus").textContent = "Reading the directory…";
   try {
-    const { projects } = await api("/api/fork/directory?console=nintendo-64");
-    $("decompDirectoryStatus").textContent = projects.length ? "" : "The directory lists no decompilations for this console.";
-    $("decompDirectoryCount").textContent = `${projects.length} Nintendo 64 decompilations`;
-    setHtml($("decompDirectoryList"), `<table class="data"><thead><tr><th scope="col">Game</th><th scope="col">Status</th><th scope="col">Last commit</th><th scope="col"></th></tr></thead><tbody>${projects.map((p, i) => `<tr>
+    const { projects } = await api("/api/fork/directory");
+    $("decompDirectoryStatus").textContent = projects.length ? "" : "The directory lists no decompilations for the consoles decompdecomp supports.";
+    $("decompDirectoryCount").textContent = `${projects.length} decompilations`;
+    setHtml($("decompDirectoryList"), `<table class="data"><thead><tr><th scope="col">Game</th><th scope="col">Console</th><th scope="col">Status</th><th scope="col">Last commit</th><th scope="col"></th></tr></thead><tbody>${projects.map((p, i) => `<tr>
       <td><b>${esc(p.name)}</b><br><span class="mono small muted">${esc(p.repo_url)}</span></td>
+      <td class="small">${esc(p.platform_name)}</td>
       <td class="small">${esc(p.archived ? "Archived" : p.status || "")}${p.ai_used === true ? " · uses AI" : p.ai_used === false ? " · no AI" : ""}</td>
       <td class="small">${esc((p.last_commit_at || "").slice(0, 10))}</td>
       <td><button class="ghost small-btn" type="button" data-dir-import="${i}">Import</button></td></tr>`).join("")}</tbody></table>`);
     $("decompDirectoryList").querySelectorAll("[data-dir-import]").forEach((b) => {
       const p = projects[Number(b.dataset.dirImport)];
-      b.onclick = () => openForkDialog({ name: p.repo_url.replace(/\/+$/, "").split("/").pop().replace(/\.git$/, ""), repo_url: p.repo_url, platform: p.platform, platform_name: "Nintendo 64", id: p.repo_url });
+      b.onclick = () => openForkDialog({ name: p.repo_url.replace(/\/+$/, "").split("/").pop().replace(/\.git$/, ""), repo_url: p.repo_url, platform: p.platform, platform_name: p.platform_name, id: p.repo_url });
     });
   } catch (e) {
     $("decompDirectoryStatus").textContent = e.message;

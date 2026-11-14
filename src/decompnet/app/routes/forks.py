@@ -41,8 +41,7 @@ def register(app: App) -> None:
             return bad
         from ...forks import directory
         try:
-            return JSONResponse({"projects": await call(lambda: directory.listing(
-                request.query_params.get("console") or "nintendo-64"))})
+            return JSONResponse({"projects": await call(directory.listing)})
         except NetworkError as e:
             return fail(e)
 
