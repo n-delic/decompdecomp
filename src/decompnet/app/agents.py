@@ -884,9 +884,9 @@ class Manager:
 
     def _progress(self, agent_id: int) -> int:
         """Compiles + claims + notes by this agent: a session that adds none of these made no progress. A release
-        refused without a compile (release_pushed) isn't progress: a session with only those, the agent is told to
-        compile or end its session, counted as one that worked, and the next one started 3 seconds later on the
-        same function, an infinity times. This burns the user's quota unnecessarily."""
+        refused without a compile (release_pushed) isn't progress: without this, a session with only those (the
+        agent told to compile or end its session) counted as one that worked, and the next one started 3 seconds
+        later on the same function, again and again, until the user's quota ran out."""
         row = self.net.store.one(
             "SELECT (SELECT COUNT(*) FROM attempts WHERE agent_id=?) + (SELECT COUNT(*) FROM events WHERE agent_id=? "
             "AND kind != 'release_pushed') AS n", agent_id, agent_id)

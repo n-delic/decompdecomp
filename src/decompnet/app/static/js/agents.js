@@ -652,7 +652,7 @@ function eventHtml(ev) {
     case "link": return `<span class="ok">🔗</span> ${esc(d)} is linked: the game builds from its C, byte for byte`;
     case "release": return `${who} set ${fnLink(d)} aside, with notes for the next agent`;
     // (#55: a release before compile_and_diff's move-on rule says so is refused, with what to try instead)
-    case "release_pushed": return `${who} wanted to give up ${fnLink(d)} too early, and was told to keep trying`;
+    case "release_pushed": return `${who} wanted to give up ${fnLink(d)} too early, and was told to compile it or stop`;
     case "expired": return `${fnLink(d)} was left unfinished`;
     case "freed": return d ? `${fnLink(d)} is free again: ${who} stopped` : `${who} stopped`;
     case "context": return `${who} updated ${ev.agent ? "shared code" : "context"}: ${esc(d)}`;

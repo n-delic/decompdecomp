@@ -282,7 +282,9 @@ class JudgeMixin:
         release_function twice to get past it untried). An agent whose own instructions said it was out of tries
         wouldn't compile and asked again and again, 7 times in 90 seconds, each answer the full advice, until the
         user's quota ran out: after UNCOMPILED_PUSH_BACKS it's told in one line to end its session instead (the
-        function stays held until the claim lapses, so it still isn't passed around untried). It used to let a
+        function stays held until the claim lapses, so it still isn't passed around untried). A function compiling
+        can't help with (release_exempt, _rom_release_exempt) goes through whenever it's asked, also after those: a
+        boundary report filed after two push-backs says itself to release it. It used to let a
         pushed-back release through after exactly one more compile, which agents then spent on nothing (446
         push-backs, 36 improved after it)."""
         if fn["status"] != "open" or agent.name in MACHINE_AGENTS:
@@ -294,11 +296,6 @@ class JudgeMixin:
                                 "detail=? AND created_at >= ?", agent.id, fn["name"], progress["claimed_at"])["n"]
         if n and pushed:
             return None  # asked again after the push-back, having tried it: it goes through
-        if not n and pushed >= UNCOMPILED_PUSH_BACKS:  # it won't compile it: asking again only spends the user's quota
-            with self.store.tx() as db:
-                self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
-            return (f"Not released yet: you haven't compiled {fn['name']} since you claimed it, and asking again "
-                    f"won't release it. Compile it now, or end your session here: don't call release_function again.")
         fork = self.fork_slug(project)
         try:
             exempt = self.forks.release_exempt(fork, fn) if fork else self._rom_release_exempt(fn)
@@ -306,7 +303,12 @@ class JudgeMixin:
         except (NetworkError, OSError, ValueError, KeyError):
             exempt, hints = None, []
         if exempt:
-            return None
+            return None  # compiling can't help with it (it may have become so since the last ask)
+        if not n and pushed >= UNCOMPILED_PUSH_BACKS:  # it won't compile it: asking again only spends the user's quota
+            with self.store.tx() as db:
+                self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
+            return (f"Not released yet: you haven't compiled {fn['name']} since you claimed it, and asking again "
+                    f"won't release it. Compile it now, or end your session here: don't call release_function again.")
         with self.store.tx() as db:
             self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
         head = (f"Not released yet: you haven't compiled {fn['name']} since you claimed it." if not n else

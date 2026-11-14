@@ -60,6 +60,23 @@ def test_asking_again_and_again_without_a_compile_is_told_to_stop(tmp_path):
     assert net.release_function(a, "f", "tried it", "game").startswith("Released f")
 
 
+def test_a_boundary_report_after_two_refusals_still_releases_it(tmp_path):
+    # report_boundary's own answer says "release it or work on with its current size": the one-line refusal came
+    # before the check for functions compiling can't help with, so that release was told "Compile it now" instead
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    with net.store.tx() as db:  # (boundary reports: a MIPS game, and a function with an address and its bytes)
+        db.execute("UPDATE projects SET arch='mips'")
+        db.execute("UPDATE functions SET vram=?, target=? WHERE name='f'", (0x80001000, bytes(40)))
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    for _ in range(2):
+        assert "a release with no compile isn't taken" in net.release_function(a, "f", "out of tries", "game")
+    assert "release it" in net.request_boundary(a, "game", "f", "0x80001020", "zero padding after the jr ra")
+    said = net.release_function(a, "f", "ends at 0x80001020, the rest is padding", "game")
+    assert said.startswith("Released f")
+    assert _held(net, a) is None
+
+
 def test_a_session_of_refused_releases_made_no_progress(tmp_path):
     # so it fails like any session that compiled nothing: a pause between them, and after a few the helper stops
     # with the reason for the user, instead of a new session on the same function 3 s later
