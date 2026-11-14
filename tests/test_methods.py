@@ -45,10 +45,56 @@ def _program(tmp_path: Path, ltcg: bool) -> tuple[Path, dict]:
                                                      []))
     relocs = {0x1040: [[8, REL32, "_A@4", 0], [0x12, REL32, "_M", 0]], 0x1100: [[0xB, REL32, "_Add2", 0]]}
     fn = lambda at: {"name": NAMES[at], "addr": BASE + at, "size": len(CODE[at]), "relocs": relocs.get(at, [])}  # noqa: E731
-    info = {"exe": "orig/game.exe", "units": {"u": [fn(0x1040), fn(0x1100)], "v": [fn(a) for a in CODE if a not in (0x1040, 0x1100)]}}
+    info = {"units": {"u": [fn(0x1040), fn(0x1100)], "v": [fn(a) for a in CODE if a not in (0x1040, 0x1100)]}}
     (tmp_path / "config" / "game").mkdir(parents=True)
     (tmp_path / "config" / "game" / "functions.json").write_text(json.dumps(info))
     return tmp_path, {"platform": "win32", "version": "game", "game": {"path": "orig/game.exe"}, "ltcg": ltcg}
+
+
+def test_two_projects_keep_their_programs_and_never_wait_on_each_other(tmp_path, monkeypatch):
+    """One program was cached for every project: agents claiming in two Xbox games at once evicted each other's, and
+    each claim read the game and analysed it whole again under one lock both waited on (claims timed out at 5
+    minutes, compiles took 4)."""
+    import os
+    import threading
+
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    a_root, a = _program(tmp_path / "a", ltcg=False)
+    b_root, b = _program(tmp_path / "b", ltcg=True)
+    pa = convention.load(a_root, a)
+    objs_a = methods.recover(pa, ltcg=False)
+    pb = convention.load(b_root, b)
+    objs_b = methods.recover(pb, ltcg=True)
+    assert convention.load(a_root, a) is pa and methods.recover(pa, ltcg=False) is objs_a  # b didn't evict a
+    # an analysis of one project holding its program doesn't hold up another's
+    holding, done = threading.Event(), threading.Event()
+
+    def hold():
+        with pa.lock:
+            holding.set()
+            done.wait(10)
+
+    held = threading.Thread(target=hold)
+    held.start()
+    assert holding.wait(5)
+    got = []
+    other = threading.Thread(target=lambda: got.append(methods.recover(convention.load(b_root, b), ltcg=True)))
+    other.start()
+    other.join(5)
+    done.set()
+    held.join(5)
+    assert got == [objs_b]
+    # a project whose functions.json changed is read again, and only it
+    fj = a_root / "config" / "game" / "functions.json"
+    os.utime(fj, ns=(fj.stat().st_atime_ns, fj.stat().st_mtime_ns + 10**9))
+    assert convention.load(a_root, a) is not pa and convention.load(b_root, b) is pb
+    # and the cache keeps a few, the least recently used going first
+    monkeypatch.setattr(convention, "CACHED_PROGRAMS", 1)
+    monkeypatch.setattr(convention, "_CACHE", {})
+    pa = convention.load(a_root, a)
+    convention.load(b_root, b)
+    assert convention.load(a_root, a) is not pa
 
 
 def test_functions_called_on_one_global_object_are_member_functions_of_one_struct_with_its_fields(tmp_path):
@@ -80,8 +126,8 @@ def test_a_constructor_storing_a_vtable_makes_a_class_with_its_virtual_functions
     assert g.vtables[0].slots == [BASE + 0x10A0, BASE + 0x10B0]
     assert objs.of[BASE + 0x10A0] is g and objs.of[BASE + 0x10B0] is g and g.ctors == {BASE + 0x1080}
     assert 0 not in g.fields and g.fields[8].ctype() == "f32"  # +0 is the vtable pointer
-    shown = methods.declaration(prog, g)
-    assert "virtual int V1(void);  // slot 0" in shown
+    shown = methods.describe(prog, g, focus=BASE + 0x10A0)
+    assert "virtual int V1(void);  // slot 0" in shown and "0 (+0x0): V1 ← this function" in shown
     assert objs.find(VTBL) is g
 
 
@@ -144,21 +190,26 @@ def test_agents_claiming_at_once_never_see_a_convention_still_being_worked_out(t
     assert add2 not in fresh.__dict__.get("_conventions", {})
 
 
-def _engine():
+def test_briefs_and_standins_say_which_struct_a_function_belongs_to(tmp_path):
     from decompnet.app.forkengine import ForkEngine
 
-    return ForkEngine.__new__(ForkEngine)
-
-
-def test_briefs_and_standins_say_which_struct_a_function_belongs_to(tmp_path):
     root, manifest = _program(tmp_path, ltcg=True)
     fp = SimpleNamespace(root=root, manifest=manifest)
-    engine = _engine()
-    brief = "\n".join(engine._method_brief(fp, {"platform": "xbox"}, {"symbol": "_Add2"}, {"name": "Add2", "meta": None}))
-    assert "### Looks like a member function of struct" in brief and "`this` arrives in esi" in brief
-    assert "```cpp\nstruct " in brief  # the declaration to start from
-    plain = SimpleNamespace(root=root, manifest={**manifest, "ltcg": False})
-    assert engine._method_brief(plain, {}, {"symbol": "_Add2"}, {"name": "Add2", "meta": None}) == []  # (ECX-only readers cover it)
+    conv = "\n".join(ForkEngine._convention_brief(fp, {"symbol": "_Add2"}, {"name": "Add2"}))
+    assert "`this` arrives in esi: it's the base of the fields this function uses" in conv
+    # whether the agent's compile goes through the harness (agents released LTCG functions untried, as "plain")
+    unit_fn = {"name": "Add2", "unit": "u"}
+    plain = "\n".join(ForkEngine._convention_brief(fp, {"symbol": "_Add2"}, unit_fn))
+    # a plain unit can be right (code the game built without /GL): it says how to get a register convention there
+    assert "builds plain, without /GL" in plain and "`static`" in plain and "can't match" not in plain
+    (root / "harness").mkdir()
+    (root / "harness" / "u.drv.cpp").write_text('extern "C" __declspec(dllexport) void HarnessEntry(void) {}\n')
+    assert "Your compile already goes through the harness" in "\n".join(
+        ForkEngine._convention_brief(fp, {"symbol": "_Add2"}, unit_fn))
+    brief = "\n".join(ForkEngine._method_brief(fp, {"symbol": "_Add2"}, {"name": "Add2"}))
+    assert "### Looks like a member function of struct" in brief
+    assert ForkEngine._method_brief(SimpleNamespace(root=root, manifest={**manifest, "platform": "gc"}),
+                                    {"symbol": "_Add2"}, {"name": "Add2"}) == []
     prog = convention.load(root, manifest)
     s = standins.skeleton(prog, "u")
     name = methods.recover(prog, True).of[BASE + 0x1000].name
@@ -169,42 +220,26 @@ def test_briefs_and_standins_say_which_struct_a_function_belongs_to(tmp_path):
         in standins.render(prog, "u")
     # a symbol that says the real signature wins over the guess from the registers
     meta = {"symbol": "_Add2", "demangled": "public: virtual void __thiscall C_vt_003A94FC::Update(struct CCamOut *,float)"}
-    brief = "\n".join(engine._method_brief(fp, {}, meta, {"name": "Add2", "meta": None}))
+    brief = "\n".join(ForkEngine._method_brief(fp, meta, {"name": "Add2"}))
     assert "`virtual void C_vt_003A94FC::Update(CCamOut *, float)`" in brief and "Struct_" not in brief
 
 
-def _delink():
-    import importlib.util
+def test_get_class_in_an_ltcg_project_gives_the_structs_its_member_functions_make(tmp_path):
+    """get_class goes to the member functions' structs (forks/methods.py) in an LTCG or Xbox project, where `this`
+    arrives in the register the linker chose: listed, and one by a function of it."""
+    from decompnet.app.forkengine import ForkEngine
 
-    path = Path(methods.__file__).parents[1] / "consoles" / "pc" / "project_template" / "tools" / "delink.py"
-    spec = importlib.util.spec_from_file_location("template_delink", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_an_attempt_whose_function_the_linker_gave_another_convention_is_told_so(tmp_path):
-    """The harness-made object holds Add2 reading `this` from ecx where the original reads esi (a driver call or a
-    helper changed the linker's choice): the result says which registers differ and what to do about it."""
     root, manifest = _program(tmp_path, ltcg=True)
     fp = SimpleNamespace(root=root, manifest=manifest)
-    ours = bytes.fromhex("8b01" "03c2" "8901" "c3")  # this in ecx, k in edx
-    obj = tmp_path / "u.obj"
-    obj.write_bytes(_delink().coff([{"name": "_Add2", "offset": 0, "size": len(ours), "relocs": [], "addr": BASE}],
-                                   ours))
-    unit = SimpleNamespace(base=obj)
-    text = "\n".join(_engine()._convention_warning(fp, {"symbol": "_Add2"}, {"name": "Add2"}, unit))
-    assert "registers read before written: original edx, esi, yours ecx, edx" in text
-    assert "keep the original's number of call sites" in text
-    same = tmp_path / "same.obj"
-    original = bytes.fromhex("8b06" "03c2" "8906" "c3")
-    same.write_bytes(_delink().coff([{"name": "_Add2", "offset": 0, "size": 7, "relocs": [], "addr": BASE}], original))
-    assert _engine()._convention_warning(fp, {"symbol": "_Add2"}, {"name": "Add2"}, SimpleNamespace(base=same)) == []
-    assert _engine()._convention_warning(fp, {"symbol": "_Add2"}, {"name": "Add2"}, SimpleNamespace(base=None)) == []
+    engine = ForkEngine.__new__(ForkEngine)
+    engine.get = lambda slug: (None, fp, {"platform": manifest["platform"]})
+    name = methods.recover(convention.load(root, manifest), True).of[BASE + 0x1000].name
+    assert "structs and classes, found from functions that use `this`" in engine.get_class("p")
+    assert name in engine.get_class("p") and name in engine.get_class("p", f"{BASE + 0x1000:08X}")
 
 
 def test_a_member_functions_known_signature_is_read_from_its_undecorated_name():
-    """An Xbox game built with link-time code generation: a brief suggested `int Struct_0015F270::?Update(int arg1, int arg2)` for a function whose symbol
+    """An Xbox game: a brief suggested `int Struct_0015F270::?Update(int arg1, int arg2)` for a function whose symbol
     said `public: virtual void __thiscall C_vt_003A94FC::Update(struct CCamOut *, float)`."""
     assert methods.known_signature("public: virtual void __thiscall C_vt_003A94FC::Update(struct CCamOut *,float)") \
         == ("C_vt_003A94FC", "virtual void C_vt_003A94FC::Update(CCamOut *, float)")

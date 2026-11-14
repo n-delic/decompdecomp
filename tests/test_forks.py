@@ -206,6 +206,27 @@ def test_near_miss_gets_a_diff_and_release_restores_the_best(fork):
 
 
 @needs_tools
+def test_a_brief_checks_the_conventions_of_the_current_link_after_its_diff(fork, monkeypatch):
+    """An LTCG project's brief says from the start whether the harness link gives the function and its callees the
+    original's conventions (ForkEngine._link_check_lines, tested in test_ltcg.py), so an agent knows before compiling
+    whether the driver or the code is what to work on."""
+    from decompnet.app.forkengine import ForkEngine
+
+    net, slug, agent = fork
+    seen = []
+
+    def check(fp, meta, fn, unit):
+        seen.append(fn["name"])
+        return ["", "LINK CHECK"]
+    monkeypatch.setattr(ForkEngine, "_link_check_lines", staticmethod(check))
+    fn = net.store.one("SELECT * FROM functions WHERE name='player_take_damage'")
+    assert fn["status"] == "open"
+    text = net.forks.brief(fn, agent, "CLAIMED")
+    assert seen == ["player_take_damage"]
+    assert text.index("### Diff against the current build") < text.index("LINK CHECK")
+
+
+@needs_tools
 def test_guards(fork):
     net, slug, agent = fork
     root = Path(net.project_row(slug)["root"])
@@ -356,6 +377,95 @@ def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for(
     assert csource.structor("A::CFoo::CFoo(int x) : y(x) {\n}\n") == "A::CFoo::CFoo"
     assert csource.structor("CFoo::CFoo() {}\nCFoo::~CFoo() {}\n") is None  # two: which one is the function?
     assert csource.structor("void CFoo::Update() {}\nCFoo::CFoo();\n" + c) is None
+
+
+def test_the_definition_the_build_sees_beside_a_parked_one_is_found_by_its_annotation_too():
+    """A function found by its `// FUNCTION:` annotation: past the parked copy there's no annotation, so the `#else`
+    copy wasn't found, and a try put a second definition beside it (every compile a build error)."""
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fp = SimpleNamespace(never_defined=lambda names: set(names))  # (no build defines PARKED)
+    key = csource.address_key(0x11000)
+    text = ("// FUNCTION: 0x11000\n#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#else\nint f(void) {\n"
+            "    return 1;\n}\n#endif\nint g(void) {\n    f();\n    if (1) {\n    }\n}\n")
+    span = csource.find(text, key)
+    assert text[span[0]:span[1]].endswith("return 2;\n}\n")
+    seen = ForkEngine._seen_beside(fp, text, span, key, [key, "func_00011000"])
+    assert seen is not None and text[seen[0]:seen[1]] == "int f(void) {\n    return 1;\n}\n"
+    # the parked draft's name past `__declspec(noinline)`: read as `__declspec`, the next function written the same
+    # way (H) was taken for its visible copy, and a try overwrote it
+    text = ("// FUNCTION: 0x11000\n#ifdef PARKED\n__declspec(noinline) int F(void) { return 2; }\n#endif\n"
+            "__declspec(noinline) int H(void) { return 3; }\n")
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, key), key, [key, "func_00011000"]) is None
+    text = text.replace("#endif\n", "#else\nint F(void) { return 1; }\n#endif\n")
+    seen = ForkEngine._seen_beside(fp, text, csource.find(text, key), key, [key, "func_00011000"])
+    assert seen is not None and text[seen[0]:seen[1]] == "int F(void) { return 1; }\n"
+    # and past any macro written the same way, not a list of known ones: `MY_ATTR(1) int F(void)` read as MY_ATTR
+    text = ("#define MY_ATTR(x)\n#ifdef PARKED\nMY_ATTR(1) int F(void) { return 2; }\n#endif\n"
+            "MY_ATTR(1) int H(void) { return 3; }\n")
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "F"), "F", ["F"]) is None
+    # and after the parameter list: `THROW_SPEC()` was taken for the name, and H for F's visible copy
+    text = ("#define THROW_SPEC()\n#ifdef PARKED\nint Car::F(void) const THROW_SPEC() { return 2; }\n#endif\n"
+            "int Car::H(void) const THROW_SPEC() { return 3; }\n")
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "Car::F"), "Car::F", ["Car::F"]) is None
+    for head, name in DEFINITION_HEADS:
+        assert csource.defined_name(head + " {\n}\n", (0, len(head) + 4)) == name, head
+
+
+# a definition's head, and the name it gives its function (csource.parameter_list; dll2coff takes the same,
+# tests/test_ltcg_judge.py)
+DEFINITION_HEADS = (
+    ("MY_ATTR(1, (2)) static int F(int a) const", "F"), ("__declspec(align(16)) int F(void)", "F"),
+    ("__attribute__((format(printf, 1, 2))) int P(const char *f, ...)", "P"),
+    ("void __attribute__((noinline)) G(int a)", "G"), ("int (*Pick(int a))(int b)", "Pick"),
+    ("CFoo::CFoo(int a) : m_a(a), m_b(0)", "CFoo::CFoo"), ("int Get() const throw()", "Get"),
+    ("void Car::operator()(int)", "Car::operator()"), ("int f(a, b)\nint a; int b;\n", "f"),
+    # a macro after the parameter list, with or without its own, or between the type and the name
+    ("int Car::H(void) const THROW_SPEC()", "Car::H"), ("int F(void) MY_NORETURN(1)", "F"),
+    ("int Get() const THROW_SPEC()", "Get"), ("int F(int a) __THROW", "F"), ("int MY_ATTR(x) F(void)", "F"),
+    ("void __declspec(noinline) F(int a)", "F"), ("__declspec(noinline) Car::Car()", "Car::Car"),
+    ("MY_ATTR(x) Car::Car() : m_a(0)", "Car::Car"), ("int\nmain(void)", "main"), ("int Log(...)", "Log"),
+    # a K&R definition's declarations, past a macro's call (its `;` isn't the macro's)
+    ("MY_ATTR(1) int f(a)\nint a;", "f"),
+    # no name's parameter list leads to the body: none, not the first name (`int`)
+    ("int (F)(void)", None),
+)
+
+
+def test_csource_takes_no_macro_written_prototype_for_a_definition():
+    """A function written inside a macro without a body (`HEADER_INLINE(int Clamp(int x))`, a project's marker for
+    a header inline) was found as a definition running to the next function's `{`: its brief showed the stretch in
+    between as its C, and a compile would have replaced it. Qualifiers, throw() and initialisers still count."""
+    src = ("// FUNCTION: 0x00013b80\nHEADER_INLINE(int Clamp(int x, int lo, int hi))\n\n// FUNCTION: 0x00013bd0\n"
+           "void Next(void)\n{\n}\nCFoo::CFoo(int a) : m_a(a), m_b(0) {\n}\nint Get() const throw() {\n    return 1;\n}\n")
+    assert csource.find(src, "Clamp") is None
+    assert csource.get(src, "Next").startswith("void Next(void)")
+    assert csource.get(src, "CFoo::CFoo").startswith("CFoo::CFoo(int a) : m_a(a)")
+    assert csource.get(src, "Get").startswith("int Get() const throw()")
+    # a function returning a pointer to a function closes a parenthesis opened before its name
+    src = "int (*Pick(int a))(int b)\n{\n    return a ? f : g;\n}\n"
+    assert csource.get(src, "Pick") == src
+
+
+def test_an_annotated_function_isnt_the_inline_helper_before_it():
+    """The annotation's definition was the first after it: an inline helper in between was taken for the function,
+    so compiles, polishing and the brief would replace the helper."""
+    src = ("// FUNCTION: 0x00011000\nstatic inline int Clamp(int x)\n{\n    return x < 0 ? 0 : x;\n}\n"
+           "int Score(int x)\n{\n    return Clamp(x) * 2;\n}\n// FUNCTION: 0x00011040\n"
+           "static inline int Only(void)\n{\n    return 1;\n}\n")
+    span = csource.find(src, csource.address_key(0x11000))
+    assert src[span[0]:span[1]].startswith("int Score(int x)")
+    span = csource.find(src, csource.address_key(0x11040))  # an inline function annotated itself is still found
+    assert src[span[0]:span[1]].startswith("static inline int Only(void)")
+    # an annotated inline G before H is G when G is the function's name, as the LTCG judge's dll2coff takes it: a try
+    # on G replaced H
+    src = "// FUNCTION: 0x11000\ninline void G()\n{\n}\n__declspec(noinline) void Car::H()\n{\n}\n"
+    key = csource.address_key(0x11000)
+    assert csource.get(src, key, [key, "G"]).startswith("inline void G()")
+    assert csource.get(src, key, [key, "func_00011000"]).startswith("__declspec(noinline) void Car::H()")
+    assert csource.get(src, key, [key, "Car::H", "H"]).startswith("__declspec(noinline) void Car::H()")
 
 
 def test_clone_rejects_odd_sources(tmp_path):
@@ -1108,6 +1218,8 @@ def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):
     ok, _ = fp.build_all(failed=failed)
     assert not ok and [Path(t).as_posix() for t in failed] == ["b/part.o"] and fp.failed_units(failed) == {"b"}
     assert fp.build_unit(fp.unit("a"))[0] and (tmp_path / "sub" / "a.o").exists()
+    # and a run of builds names them so too: it asked for sub/a.o and sub/c.o, failed, and built each alone
+    assert fp.build_units([fp.unit("a"), fp.unit("c")]) == [(True, ""), (True, "")]
 
 
 def _steps_project(tmp_path: Path, broken: str = "b"):
@@ -1348,6 +1460,19 @@ def test_builds_asked_for_during_a_run_go_together_in_the_next():
         raise AssertionError("b's error was lost")
     except OSError as e:
         assert str(e) == "b's own" and e.__cause__ is None
+    # the engine's run passes it on too: a project made from scratch read every result as (built, log), and the
+    # TypeError went to the whole batch
+    from collections import defaultdict
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    engine = ForkEngine.__new__(ForkEngine)
+    engine._build_locks = defaultdict(threading.Lock)
+    raised = OSError("a's own")
+    fp = SimpleNamespace(manifest={"created": "from scratch", "setup": []},
+                         build_units=lambda units: [raised, (False, "ninja: error: unknown target 'b.obj'")])
+    assert engine._build_units({"id": 1}, fp, ["a", "b"]) == [raised, (False, "ninja: error: unknown target 'b.obj'")]
 
     builds, runs = _UnitBuilds(), []
     first, release = threading.Event(), threading.Event()
@@ -1493,3 +1618,20 @@ def test_code_under_a_macro_the_compiler_defines_isnt_hidden(tmp_path, macro):
     text = f"#ifdef {macro}\nint f(void) {{ return 1; }}\n#endif\n"
     (tmp_path / "src" / "a.c").write_text(text)
     assert ForkEngine._hidden(ForkProject(tmp_path), text, text.index("int f")) is None
+
+
+def test_a_file_as_the_build_sees_it_once_one_flag_is_defined():
+    """An LTCG harness's stand-in under `#ifndef FLAG` goes when a draft parked under `#ifdef FLAG` comes out
+    (ForkEngine._attempt): only the conditionals testing FLAG alone are resolved; the rest stays as written."""
+    assert csource.guard_macro("#ifdef REAL // parked") == "REAL"
+    assert csource.guard_macro("#if defined( REAL )") == "REAL"
+    assert csource.guard_macro("#ifndef REAL") is None and csource.guard_macro("#if !defined(REAL)") is None
+    assert csource.guard_macro("#if defined(A) || defined(B)") is None and csource.guard_macro("#else") is None
+    text = ("int a;\n#ifndef REAL\nint stand_in(void) { return 0; }\n#if X\nint x;\n#endif\n#else\nint real;\n#endif\n"
+            "#if X\nint y;\n#else\nint z;\n#endif\n#if !defined REAL  /* x */\nint b;\n#endif\n"
+            "#if defined(REAL)\nint c;\n#endif\n/* #ifndef REAL */\nint d;\n")
+    assert csource.as_defined(text, "REAL") == ("int a;\nint real;\n#if X\nint y;\n#else\nint z;\n#endif\n"
+                                                "int c;\n/* #ifndef REAL */\nint d;\n")
+    assert csource.as_defined(text, "OTHER") == text
+    mixed = "#ifdef REAL\nint a;\n#elif X\nint b;\n#endif\n"
+    assert csource.as_defined(mixed, "REAL") == mixed  # an #elif: left as it is

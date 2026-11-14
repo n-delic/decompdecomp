@@ -73,26 +73,6 @@ class Convention:
         return [r for r in self.reads if r not in ("ecx", "edx")]
 
 
-def differences(original: Convention, compiled: Convention) -> list[str]:
-    """What the compiled function's convention does differently from the original's (registers read before written,
-    stack arguments, `ret N`, float registers), one clause each; empty when they agree. Callee-less analyses of both:
-    the compiled object's calls carry no targets to follow."""
-    out = []
-    for what, a, b in (("registers read before written", original.reads, compiled.reads),
-                       ("XMM registers read", original.xmm, compiled.xmm),
-                       ("stack arguments", [f"[esp+{n}]" for n in original.stack],
-                        [f"[esp+{n}]" for n in compiled.stack])):
-        if a != b:
-            out.append(f"{what}: original {', '.join(a) or 'none'}, yours {', '.join(b) or 'none'}")
-    if original.ret != compiled.ret:
-        out.append(f"{_ret(original.ret)} in the original, {_ret(compiled.ret)} in yours")
-    return out
-
-
-def _ret(n: int | None) -> str:
-    return "no ret" if n is None else f"ret {n}" if n else "ret (the caller pops)"
-
-
 def _rw(ins) -> tuple[set[str], set[str]]:
     try:
         r, w = ins.regs_access()
@@ -248,6 +228,9 @@ class Program:
     by_name: dict[str, int]
     calls: dict[int, list[tuple[int, int]]]  # callee address -> [(caller address, offset of the rel32)]
     pointers: dict[int, list[tuple[int, int]]]  # function address -> [(function using it as an address, offset)]
+    # its analyses one at a time (convention, methods.recover): agents claim in parallel threads and share it.
+    # Re-entrant for the callees' analyses. The program's own: analysing one project never waits for another's
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def code(self, addr: int) -> bytes:
         fn = self.functions[addr]
@@ -256,7 +239,7 @@ class Program:
     def convention(self, addr: int) -> Convention:
         # One analysis at a time: the program is shared by every agent's claim (load caches it), and another thread
         # must never see the recursion guard below as a result. The lock is re-entrant for the callees' analyses.
-        with _ANALYSE_LOCK:
+        with self.lock:
             memo = self.__dict__.setdefault("_conventions", {})
             if addr not in memo:
                 memo[addr] = None  # a guard while it's worked out (recursion): a callee in a cycle passes nothing on
@@ -291,23 +274,38 @@ class Program:
         return None
 
 
-_CACHE: dict[tuple, Program] = {}
-_ANALYSE_LOCK = threading.RLock()  # agents claim in parallel threads, and they share the cached program
+# Each project's program, by its functions.json: (what it was read from, the program), the most recently used last.
+# One program was cached for every project: agents claiming in two Xbox games at once evicted each other's, and each
+# claim read a 13 MB functions.json and analysed the whole game again (methods.recover's memo lives on the program),
+# under one lock every claim and compile of both waited on: claims timed out at 5 minutes, compiles took 4.
+CACHED_PROGRAMS = 4
+_CACHE: dict[str, tuple[tuple, Program]] = {}
+_CACHE_LOCK = threading.Lock()  # the dict itself, and _LOADING
+_LOADING: dict[str, threading.Lock] = {}  # a project's functions.json -> held while its program is read
 
 
 def load(root: Path, manifest: dict) -> Program:
     """The project's program and function index (cached while functions.json and the program are unchanged)."""
     fj = root / "config" / manifest["version"] / "functions.json"
     exe = root / manifest["game"]["path"]
-    key = (str(fj), fj.stat().st_mtime_ns, str(exe), exe.stat().st_mtime_ns)
-    with _ANALYSE_LOCK:
-        if key in _CACHE:
-            return _CACHE[key]
+    key = (fj.stat().st_mtime_ns, str(exe), exe.stat().st_mtime_ns)
+    name = str(fj)
+    with _CACHE_LOCK:
+        loading = _LOADING.setdefault(name, threading.Lock())
+    with loading:  # one read of a project at a time; other projects' go on meanwhile
+        with _CACHE_LOCK:
+            hit = _CACHE.pop(name, None)
+            if hit is not None and hit[0] == key:
+                _CACHE[name] = hit  # (most recently used: last)
+                return hit[1]
         info = json.loads(fj.read_text(encoding="utf-8"))
-        pe = read_pe(exe.read_bytes())
-        _CACHE.clear()
-        _CACHE[key] = index(pe, info)
-        return _CACHE[key]
+        pe = read_pe(exe.read_bytes())  # (an Xbox game's too: orig/ holds its XBE as a Windows program)
+        prog = index(pe, info)
+        with _CACHE_LOCK:
+            _CACHE[name] = (key, prog)
+            while len(_CACHE) > CACHED_PROGRAMS:
+                _CACHE.pop(next(iter(_CACHE)))  # the least recently used
+        return prog
 
 
 def index(pe, info: dict) -> Program:
@@ -394,6 +392,126 @@ def evidence(prog: Program, addr: int, sites: int = 3) -> list[str]:
         out.append(f"its address is taken in {len(refs)} place{'s' if len(refs) != 1 else ''} (a callback or a "
                    f"table): {', '.join(_where(prog, c, off + 1) for c, off in refs[:3])}")
     return out
+
+
+# ------------------------------------------------------------------------------------------- checking a harness link
+
+# A function in a harness link's map: `0001:00000140  ?Begin@C@@SAXPAU1@@Z  10001140 f  00_unit.obj`
+_MAP_FUNCTION = re.compile(r"^\s*000[1-9]:[0-9a-fA-F]{8}\s+(\S+)\s+([0-9a-fA-F]{8})\s+f\s+(?:\S+:)?(\S+)\s*$", re.M)
+
+
+def interface(c: Convention) -> tuple:
+    """How a function takes its arguments: registers and XMM registers read before written, whether it has stack
+    arguments, the bytes `ret N` pops. Not which stack slots it reads (a body reading half an argument, or not using
+    one, reads others), nor the registers it saves (they follow from its body)."""
+    return tuple(c.reads), tuple(c.xmm), bool(c.stack), c.ret
+
+
+def same_interface(a: Convention, b: Convention) -> bool:
+    """interface() alike, where a function with no `ret` (it ends in a tail jump, or never returns) counts as popping
+    whatever the other does."""
+    ia, ib = interface(a), interface(b)
+    return ia[:3] == ib[:3] and (a.ret is None or b.ret is None or a.ret == b.ret)
+
+
+def _brief_interface(c: Convention) -> str:
+    regs = ", ".join([*c.reads, *c.xmm]) or "no registers"
+    stack = f"stack arguments {', '.join(f'[esp+{n}]' for n in c.stack[:6])}" if c.stack else "no stack arguments"
+    ret = "no ret" if c.ret is None else f"ret {c.ret}" if c.ret else "ret"
+    return f"reads {regs}; {stack}; {ret}"
+
+
+@dataclass
+class LinkCheck:
+    """A function's convention in a harness link against the original's, and its callees' (check_link)."""
+
+    own: tuple[Convention, Convention]  # (the original's, the link's)
+    callees: list[tuple[str, str, Convention, Convention]] = field(default_factory=list)  # (name, object, orig, ours)
+    absent: list[str] = field(default_factory=list)  # callees of the original's that the link has no function for
+
+    @property
+    def own_differs(self) -> bool:
+        return not same_interface(*self.own)
+
+    @property
+    def saves_differ(self) -> bool:
+        return self.own[0].saves != self.own[1].saves
+
+    def differing_callees(self) -> list[tuple[str, str, Convention, Convention]]:
+        return [c for c in self.callees if not same_interface(c[2], c[3])]
+
+
+def link_functions(map_text: str) -> dict[str, tuple[int, str]]:
+    """A harness link's functions from its map: symbol -> (address, the object that defines it)."""
+    return {m.group(1): (int(m.group(2), 16), m.group(3)) for m in _MAP_FUNCTION.finditer(map_text)}
+
+
+def check_link(prog: Program, addr: int, dll, ours: int, size: int, functions: dict[str, tuple[int, str]]) -> LinkCheck:
+    """The original function at `addr` against its build at `ours` (`size` bytes) in a harness link (`dll`: the
+    linked DLL, read_pe's shape; `functions`: link_functions of its map), and each function the original calls
+    against the link's function of the same name. Both sides are read alike, without following callees (the link's
+    callees are other code at other addresses), so what differs is the convention the link gave, not the reading."""
+    found = LinkCheck((analyse(prog.code(addr), addr), analyse(dll.read(ours, size), ours)))
+    ends = sorted(a for a, _ in functions.values())
+    by_identifier: dict[str, list[str]] = {}
+    for symbol in functions:
+        by_identifier.setdefault(_identifier(symbol), []).append(symbol)
+    seen = set()
+    for off, rtype, name, addend in prog.functions[addr]["relocs"]:
+        target = prog.by_name.get(name) if name else None
+        if target is None or target == addr or target in seen or rtype != REL32 or addend \
+                or prog.pe.read(addr + off - 1, 1) != b"\xe8":
+            continue
+        seen.add(target)
+        callee = prog.functions[target]["name"]
+        symbol = callee if callee in functions else next(iter(by_identifier.get(_identifier(callee), [])[:1]), None)
+        if symbol is None:
+            found.absent.append(callee)
+            continue
+        at, obj = functions[symbol]
+        end = next((e for e in ends if e > at), at + 0x1000)
+        found.callees.append((callee, obj, analyse(prog.code(target), target),
+                              analyse(dll.read(at, min(end - at, 0x4000)), at)))
+    return found
+
+
+def _identifier(symbol: str) -> str:
+    """The name source code uses for a decorated one (unresolved.identifier's simple cases)."""
+    if symbol.startswith("?"):
+        return symbol[1:].split("@", 1)[0]
+    return symbol.lstrip("_@").split("@", 1)[0]
+
+
+def link_lines(found: LinkCheck, name: str, where) -> list[str]:
+    """For a compile result: what the check says to do. `where(object)`: the source file an object of the link was
+    compiled from (or the object's name)."""
+    orig, ours = found.own
+    lines = []
+    if found.own_differs:
+        lines.append(f"- {name} itself: the original {_brief_interface(orig)}; your link gives it "
+                     f"{_brief_interface(ours)}. Under LTCG the linker picks this from the calls it sees, so the "
+                     "code around every use of an argument differs until it agrees: make the driver's call (or the "
+                     "unit's own callers) load what the original's call sites load (the brief lists them), and "
+                     "declare the parameters it reads.")
+    for callee, obj, o, b in found.differing_callees()[:6]:
+        lines.append(f"- {callee} (in {where(obj)}): the original {_brief_interface(o)}; the one in your link "
+                     f"{_brief_interface(b)}. Your function's code around the call follows the callee's convention: "
+                     "shape that definition like the original's (its parameters, what it reads and returns) first.")
+    if lines:
+        # agents read the first version of this, wrote what to fix into a note and released the function: the fix is
+        # theirs to make, in this claim
+        return ["", "### Conventions in your link that differ from the original's (fix these before the code)", *lines,
+                "These files are part of this claim's work: change them now with edit_file and compile again. Don't "
+                "release the function for them or leave them to a note: the next agent would find the same thing."]
+    n = len(found.callees)
+    saves = (f" (it saves {', '.join(ours.saves) or 'nothing'} where the original saves "
+             f"{', '.join(orig.saves) or 'nothing'}: that follows from the code, how many values it keeps alive at "
+             "once)") if found.saves_differ else ""
+    return ["", f"Conventions: {name} takes its arguments as the original does"
+                + (f", and so {'does' if n == 1 else 'do'} the {n} function{'s' if n != 1 else ''} it calls in your "
+                   "link" if n else "")
+                + f". What still differs comes from the code itself{saves} or the data it uses, not from the "
+                  "calls: keep working on the function rather than the driver."]
 
 
 # ------------------------------------------------------------------------------------------- detecting LTCG

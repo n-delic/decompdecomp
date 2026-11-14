@@ -27,8 +27,172 @@ def is_stub(code: str) -> bool:
     return bool(re.match(r"\s*(?:#\s*pragma\s+)?(?:INCLUDE_ASM|GLOBAL_ASM|INCLUDE_RODATA_FN)\s*\(", code))
 
 
-def find(text: str, name: str) -> tuple[int, int] | None:
-    """(start, end) of the definition of `name`, or of its asm stub; None when absent."""
+ADDRESS_KEY = "// FUNCTION: 0x"  # find(text, address_key(va)): the definition annotated with the original's address
+_ANNOTATION = re.compile(r"^[ \t]*//[ \t]*FUNCTION:[ \t]*0x([0-9a-fA-F]+)\b[^\n]*(?:\n|$)", re.M)
+
+
+def address_key(addr: int) -> str:
+    """A name for find() meaning the definition after a `// FUNCTION: 0x<address>` annotation (reccmp's form, which
+    decompilations of PC and Xbox games put before each function: its own name can be anything)."""
+    return f"{ADDRESS_KEY}{addr:X}"
+
+
+def _block_end(clean: str, brace: int) -> int:
+    depth, k = 0, brace
+    while k < len(clean):
+        depth += (clean[k] == "{") - (clean[k] == "}")
+        k += 1
+        if depth == 0:
+            break
+    return k
+
+
+def _annotated(text: str, addr: int, names: tuple[str, ...] | list[str] = ()) -> tuple[int, int] | None:
+    """The function definition after the annotation, before the next one: types and declarations the code needs
+    may come in between (`struct CRigOwner { ... };`), and so may an inline helper (`static inline int Clamp(...)
+    { ... }`), which is never the annotated function when another definition follows. Of the definitions there: the
+    one of the function's own `names` (an annotated `inline void G()` before `void H()` is G), else the first that
+    isn't inline, else the first; as the LTCG judge's tools/dll2coff.py takes it."""
+    found = list(_ANNOTATION.finditer(text))
+    clean = None
+    for n, m in enumerate(found):
+        if int(m.group(1), 16) != addr:
+            continue
+        clean = clean if clean is not None else _blank(text)
+        bound = found[n + 1].start() if n + 1 < len(found) else len(text)
+        spans = list(_definitions(text, clean, m.end(), bound))
+        named = [s for s in spans if _is_named(clean[s[0]:s[2]], names, exact=True)] or \
+            [s for s in spans if _is_named(clean[s[0]:s[2]], names, exact=False)]
+        own = [s for s in spans if not _INLINE_HEAD.search(clean[s[0]:s[2]])]
+        if spans:
+            return (named or own or spans)[0][:2]
+    return None
+
+
+_CALLED = re.compile(r"((?:[\w~]+::)*~?\w+)\s*\(")
+
+
+def _is_named(head: str, names, exact: bool) -> bool:
+    """True when a definition's head (`__declspec(noinline) bool Town::Update(int a) const`) names one of `names`:
+    as it is (`Town::Update`), or, not `exact`, a name without a class as its last part (`Update`: any class's, so
+    only when no definition there has one of the names as it is)."""
+    said = {m.group(1) for m in _CALLED.finditer(head)}
+    return any(n in said or (not exact and "::" not in n and any(s.rsplit("::", 1)[-1] == n for s in said))
+               for n in names if not n.startswith(ADDRESS_KEY))
+
+
+_INLINE_HEAD = re.compile(r"\b(?:inline|__inline|__forceinline)\b")
+
+
+def _definitions(text: str, clean: str, pos: int, bound: int):
+    """Each function definition from `pos` to `bound`: (start, end, where its body's `{` is)."""
+    while True:
+        brace = clean.find("{", pos, bound)
+        if brace < 0:
+            return  # only declarations up to the next annotation
+        head_at = max(clean.rfind(";", pos, brace), clean.rfind("}", pos, brace), pos - 1) + 1
+        head = clean[head_at:brace]
+        k = _block_end(clean, brace)
+        pos = k
+        if "(" not in head or re.match(r"\s*(?:typedef\s+)?(?:struct|class|union|enum|namespace)\b", head):
+            continue  # a type (or a brace initialiser): past it
+        i = head_at
+        while i < brace:  # comments, blank and #pragma lines before the definition's first line
+            end = text.find("\n", i)
+            end = len(text) if end < 0 else end
+            line = text[i:end].strip()
+            if line and not line.startswith(("//", "#")):
+                break
+            i = end + 1
+        if k < len(text) and text[k] == "\n":
+            k += 1
+        yield min(i, brace), k, brace
+
+
+# what's written before a declaration with parentheses of its own, never the function's name
+_NAME_THEN_PAREN = re.compile(  # (not `int (*Pick(int a))(int b)`'s `int (*`: a declarator's parenthesis)
+    r"(?<![\w~:<>])((?:[\w~<>]+::)*operator\s*(?:\(\)|[^\s(]+)|(?:[\w~<>]+::)*~?\w+)\s*\((?!\s*[*&^])")
+_GROUP = r"\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"  # a parenthesised group, two levels deep
+# what can come between a parameter list and the body: qualifiers, exception specifications, attributes and any
+# macro (`THROW_SPEC()`, `MY_NORETURN(1)`), then a constructor's initialisers, a trailing return type, or a
+# declarator's closing `)`. (`\b`: a word is never split into words, which would backtrack without end)
+_AFTER_PARAMETERS = re.compile(rf"(?:\s|&&?|\w+\b(?:\s*{_GROUP})?)*(?:(?::(?!:)|->|\)).*)?", re.S)
+_KR_DECLARATIONS = re.compile(r"[^(]*;")  # a K&R definition's parameter declarations: a `;`, no call before it
+# keywords written like a call (`__declspec(noinline)`, `throw()`), never a function's name; unlike macros, a list
+_KEYWORDS = frozenset({"__declspec", "__attribute__", "alignas", "_Alignas", "__pragma", "_Pragma", "decltype",
+                       "throw", "noexcept", "sizeof", "typeof", "__typeof__", "asm", "__asm", "__asm__"})
+_ARGUMENTS = re.compile(r"\(\s*(?:[\d\"'-]|\.\d)")  # `MY_ATTR(1)`: a macro's arguments, never a parameter list
+_PARAMETERS = re.compile(r"\(\s*void\s*\)|\(.*(?:\w[\s*&]+\w|[*&]|\.\.\.)", re.S)  # (void), `int a`, `char *`, `...`
+
+
+def parameter_list(head: str) -> re.Match | None:
+    """The `NAME(` whose parentheses are a definition's parameter list in `head`, the text before its body (comments
+    and strings blanked): group 1 is the name. It's a name whose list the body follows, past qualifiers, `throw()`,
+    macros, initialisers, or a K&R definition's declarations. `MY_ATTR(1) int F(void)` and `int F(void)
+    THROW_SPEC()` look alike, a `NAME(...)` beside another, so of those a list that can only be parameters wins
+    (`void`, `int a`), then a name with a type before it; never a keyword or a group starting with a literal. None
+    when no name's list leads to the body (`int (F)(void)`)."""
+    best, rank = None, None
+    for m in _NAME_THEN_PAREN.finditer(head):
+        if m.group(1) in _KEYWORDS or not _in_declarator(head, m.start()):
+            continue
+        depth, k = 0, m.end() - 1
+        while k < len(head):
+            depth += (head[k] == "(") - (head[k] == ")")
+            k += 1
+            if depth == 0:
+                break
+        group, rest = head[m.end() - 1:k], head[k:]
+        if _ARGUMENTS.match(group) or not (_KR_DECLARATIONS.match(rest) or _AFTER_PARAMETERS.fullmatch(rest)):
+            continue
+        typed = re.search(r"[\w*&>]\s*$", head[:m.start()]) is not None
+        if rank is None or (_PARAMETERS.match(group) is not None, typed) > rank:
+            best, rank = m, (_PARAMETERS.match(group) is not None, typed)
+    return best
+
+
+def defined_name(text: str, span: tuple[int, int]) -> str | None:
+    """The name a definition gives its function (`CAIBehaviour::Update` for `void CAIBehaviour::Update(int)`): the
+    one whose parameter list the body follows (parameter_list). The name before the first `(` was taken for it, and
+    of a parked draft written `__declspec(noinline) int F(void)` (or with any macro, before the name or after its
+    parameters) the next function written the same way was taken for its visible copy."""
+    m = parameter_list(_blank(text[span[0]:span[1]]).split("{", 1)[0])
+    return m.group(1) if m else None
+
+
+def _in_declarator(head: str, at: int) -> bool:
+    """True when `at` isn't inside another call's parentheses: at the top, or only in a declarator's own (`(*`), as
+    `Pick` is in `int (*Pick(int a))(int b)`. `align` in `__declspec(align(16))` is an argument."""
+    opened = []
+    for k, c in enumerate(head[:at]):
+        if c == "(":
+            opened.append(re.match(r"\(\s*[*&^]", head[k:]) is not None)
+        elif c == ")" and opened:
+            opened.pop()
+    return all(opened)
+
+
+def _unbalanced(between: str) -> bool:
+    """True when what lies between a parameter list and the next `{` closes a parenthesis it didn't open: the
+    parameter list was inside a macro call (`HEADER_INLINE(int Clamp(int x))`), and the `{` is another function's.
+    Qualifiers, `throw()` and a constructor's initialisers (`: m_a(0)`) open what they close. A `)` followed by a
+    parameter list closes a declarator opened before the name: a function returning a pointer to a function,
+    `int (*f(int a))(int b)`."""
+    depth = 0
+    for k, c in enumerate(between):
+        depth += (c == "(") - (c == ")")
+        if depth < 0:
+            if not between[k + 1:].lstrip().startswith(("(", "[")):
+                return True
+            depth = 0
+    return False
+
+
+def find(text: str, name: str, names: tuple[str, ...] | list[str] = ()) -> tuple[int, int] | None:
+    """(start, end) of the definition of `name`, or of its asm stub; None when absent. `name` may be an
+    address_key(): the definition annotated with that address, of the function's other `names` when one is."""
+    if name.startswith(ADDRESS_KEY):
+        return _annotated(text, int(name[len(ADDRESS_KEY):], 16), names)
     clean = _blank(text)
     simple = name.split("::")[-1]
     if "::" in name:  # Class::method: match it exactly
@@ -57,7 +221,10 @@ def find(text: str, name: str) -> tuple[int, int] | None:
                 j = len(clean)
                 break
             if nxt == -1 or brace < nxt:
-                j = brace
+                if _unbalanced(clean[j:brace]):  # inside a macro's parentheses: `MACRO(int f(int a))`, no body
+                    j = len(clean)
+                else:
+                    j = brace
                 break
             if any(c in clean[j:nxt] for c in "(){}="):
                 j = len(clean)
@@ -133,8 +300,8 @@ def marker_above(text: str, at: int) -> int:
     return prev if at > 0 and _MARKER.match(text[prev:at].strip()) else at
 
 
-def get(text: str, name: str) -> str | None:
-    span = find(text, name)
+def get(text: str, name: str, names: tuple[str, ...] | list[str] = ()) -> str | None:
+    span = find(text, name, names)
     return text[span[0]:span[1]] if span else None
 
 
@@ -315,3 +482,54 @@ def _branches(text: str, pos: int, undefined: set[str]) -> list[list]:
         elif kind == "endif" and stack:
             stack.pop()
     return stack
+
+
+def _when_defined(kind: str, cond: str, macro: str) -> bool | None:
+    """Whether an `#if` line's first branch is compiled once `macro` is defined: only for a test of `macro` alone
+    (`#ifdef M`, `#ifndef M`, `#if defined(M)`, `#if !defined M`); None for any other condition."""
+    if kind in ("ifdef", "ifndef"):
+        return None if cond != macro else kind == "ifdef"
+    m = re.fullmatch(r"(!\s*)?defined\s*(?:\(\s*(\w+)\s*\)|(\w+))", cond)
+    if kind == "if" and m and (m.group(2) or m.group(3)) == macro:
+        return not m.group(1)
+    return None
+
+
+def guard_macro(directive: str) -> str | None:
+    """The macro whose definition compiles a branch that starts with `directive` (hidden_by's): M for `#ifdef M`
+    or `#if defined(M)`, else None."""
+    m = _CONDITIONAL.match(_blank(directive))  # (the line as written: `#ifdef M // parked`)
+    if m is None or m.group(1) not in ("if", "ifdef"):
+        return None
+    cond = m.group(2).strip()
+    name = cond if m.group(1) == "ifdef" else next(iter(_IDENTIFIER.findall(cond.replace("defined", ""))), None)
+    return name if name and _when_defined(m.group(1), cond, name) else None
+
+
+def as_defined(text: str, macro: str) -> str:
+    """The text as the build sees it once `macro` is defined, with only the conditionals that test `macro` alone
+    resolved: their directive lines go, and so do the branches it leaves out (a stand-in under `#ifndef M`). The
+    rest, other conditionals included, is untouched; so is the whole text if such a conditional has an #elif."""
+    clean = _blank(text)
+    events = {clean.count("\n", 0, m.start()): (m.group(1), m.group(2).strip()) for m in _CONDITIONAL.finditer(clean)}
+    stack: list[bool | None] = []  # per open #if: whether its current branch is compiled (None: not about macro)
+    out = []
+    for n, line in enumerate(text.splitlines(keepends=True)):
+        kind, cond = events.get(n, (None, ""))
+        if kind in ("if", "ifdef", "ifndef"):
+            stack.append(_when_defined(kind, cond, macro))
+            if stack[-1] is not None:
+                continue
+        elif kind in ("elif", "else", "endif") and stack:
+            mine = stack[-1] is not None
+            if kind == "elif" and mine:
+                return text
+            if kind == "else" and mine:
+                stack[-1] = not stack[-1]
+            elif kind == "endif":
+                stack.pop()
+            if mine:
+                continue
+        if all(v is not False for v in stack):
+            out.append(line)
+    return "".join(out)

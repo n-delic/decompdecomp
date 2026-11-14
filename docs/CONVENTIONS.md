@@ -19,7 +19,7 @@ says how to send a change. Examples point at real code by file and name: search 
 | What agents read about a function | `app/engine/briefs.py` |
 | Claims, attempts, the judge's bookkeeping | `app/engine/judging.py`, under it `network.py` |
 | Compilers, ranges, suggestions | `app/engine/compilers.py`; the compiler map `compilermap.py`; range checks `app/rangecheck.py` |
-| C++ classes found in the code | `classes.py`; a PC program's (its RTTI's names, its fields from x86's reader): `consoles/pc/rtti.py` (`Console.classes`) |
+| C++ classes found in the code | `classes.py`; a PC program's (its RTTI's names, its fields from x86's reader): `consoles/pc/rtti.py` (`Console.classes`); Xbox and link-time code generation projects' structs, classes and member functions: `forks/methods.py` (`forkengine._by_members`) |
 | Struct layouts guessed from the code | `structs.py` (the types), `arch/mips_fields.py`, `arch/x86_fields.py` (the readers), `app/engine/layouts.py` (`guess_struct`, the brief's lines; a project's: `Console.structs`) |
 | Free matches | twins `app/twins.py` (also across your games), autopilot `app/engine/autopilot.py`, the permuter `app/permute.py` (and its generator `permuter_gen.py`, run in decomp-permuter's environment; `permuter.py` the simple rewrites without it) |
 | Machine drafts | `seeds.py` (m2c, and C++ methods), drafted in the background by `app/drafts.py`; forks: `forks/drafts.py` |
