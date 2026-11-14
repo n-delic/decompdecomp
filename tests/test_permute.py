@@ -599,3 +599,27 @@ def test_a_turn_reads_the_projects_saved_files_once(built, tmp_path):  # noqa: F
     net.progress._sync_checked = lambda *a, **k: (checked.append(a), real(*a, **k))[1]
     p._turn(net.attribution_agent("permuter"), proj, fn, State())
     assert len(checked) == 1  # it was 6
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_generator_filters_variants_during_legacy_alias_import(tmp_path, monkeypatch, stream):
+    """Concurrent cold imports can still see the compatibility shim before its module alias is replaced."""
+    from types import ModuleType
+
+    monkeypatch.setitem(sys.modules, "decompnet.app.permuter_initialization",
+                        ModuleType("decompnet.app.permuter_initialization"))
+    parent = "int f(int condition) { return 0; }"
+    safe = "int f(int condition) { int temp = 3; return temp; }"
+    unsafe = "int f(int condition) { int temp; if (condition) temp = 3; return temp; }"
+    script = tmp_path / "variants.py"
+    replies = [{"variant": unsafe}, {"variant": safe}, {"done": True}]
+    script.write_text("import sys, json\nfor line in sys.stdin:\n"
+                      + " for reply in " + repr(replies) + ": print(json.dumps(reply), flush=True)\n")
+    gen = permute.Generator([sys.executable, str(script)])
+    try:
+        job = {"source": parent, "function": "f"}
+        variants = [v for chunk in gen.chunks(job, lambda: None) for v in chunk] if stream else gen.batch(job)
+        assert variants == [safe]
+        if stream:assert not gen.failed and not gen.empty
+    finally:
+        gen.close()
