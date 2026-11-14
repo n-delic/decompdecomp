@@ -125,6 +125,8 @@ SIGNATURES = {
     "F3DEX": "RSP Gfx ucode F3DEX       1.23 Yoshitaka Yasumoto 1997 Nintendo.",
     "F3DLX": "RSP Gfx ucode F3DLX.Rej   1.21 Yoshitaka Yasumoto 1996 Nintendo.",
     "S2DEX": "RSP Gfx ucode S2DEX       1.07 Yoshitaka Yasumoto 1998 Nintendo.",
+    "L3DEX2": "RSP Gfx ucode L3DEX       fifo 2.04  Yoshitaka Yasumoto 1998 Nintendo.",
+    "L3DEX": "RSP Gfx ucode L3DEX       1.23 Yoshitaka Yasumoto 1997 Nintendo.",
     "Fast3D": "RSP SW Version: 2.0D, 04-01-96",
 }
 

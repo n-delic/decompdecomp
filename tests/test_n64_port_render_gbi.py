@@ -548,3 +548,58 @@ def test_the_vis_gamma_brightens_as_the_console_does(renderer, tmp_path):
     _, (_, _, off) = run(renderer, mem, tmp_path, g.end(), f"mode:{mode:x}", "features:2", f"show:{FB:x}")
     assert 125 <= on[0] <= 132, on[0]
     assert 64 <= off[0] <= 68, off[0]
+
+
+def test_one_cycle_mode_runs_the_combiners_second_cycle(renderer, tmp_path):
+    """In one cycle the RDP runs the second cycle's combiner settings (angrylion's renderer does, from the
+    hardware): here the first cycle says the shade (green) and the second the primitive colour (red)."""
+    mem = Memory()
+    g = Gfx(mem)
+    _f3dex2_start(mem, g)
+    g.othermode(NO_DITHER, 0)
+    shade_first = combine(15, 15, 31, 4, 7, 7, 7, 4)[1] & ~(7 << 6 | 7) | 3 << 6 | 3
+    g(SHADE[0], shade_first)
+    g(0xFA000000, 0xFF0000FF)                               # G_SETPRIMCOLOR: red
+    g(0xD9000000, 0x200000)
+    g(0x01000000 | 4 << 12 | 4 << 1, 0x80000000 | _screen_quad(mem, [0x00FF00FF] * 4))
+    g(0x06000204, 0x00000406)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.pixel(W // 2, H // 2) == (31, 0, 0)
+
+
+@pytest.mark.parametrize("ucode", ["L3DEX2", "L3DEX", "Fast3D"])
+def test_lines_are_drawn(renderer, tmp_path, ucode):
+    """G_LINE3D (gSPLineW3D, width 2: 2.5 pixels): a horizontal red line through the middle and a vertical green
+    one at a quarter of the width, from F3DEX2's line microcode (0x08), F3DEX 1.x's (0xB5, which F3DEX itself
+    takes as G_QUAD) and Fast3D (0xB5, indices by ten). Lines weren't drawn; F3DEX2's 0x08 went to the RDP."""
+    mem = Memory()
+    g = Gfx(mem, ucode)
+    if ucode == "L3DEX2":
+        _f3dex2_start(mem, g)
+    else:
+        _gbi1_start(mem, g)
+    g.othermode(NO_DITHER, 0)
+    g(*SHADE)
+    left = mem.put(b"".join(vertex(x, y, 0, rgba=0x00FF00FF) for x, y in [(0, 1), (0, -1)]))
+    red = mem.put(b"".join(vertex(x, 0, 0, rgba=0xFF0000FF) for x in (-1, 1)))
+    lines = [(red, 0), (left, 1)]
+    for at, which in lines:
+        if which:  # move the green line to x = -0.5
+            shift = mem.put(matrix([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.5, 0, 0, 1]))
+            g(0xDA380003 if ucode == "L3DEX2" else 0x01020040, 0x80000000 | shift)
+        if ucode == "L3DEX2":
+            g(0x01000000 | 2 << 12 | 2 << 1, 0x80000000 | at)
+            g(0x08000000 | 0 << 16 | 2 << 8 | 2)
+        elif ucode == "L3DEX":
+            g(0x04000000 | 0 << 16 | 2 << 10 | (2 * 16 - 1), 0x80000000 | at)
+            g(0xB5000000, 0 << 16 | 2 << 8 | 2)
+        else:
+            g(0x04000000 | 1 << 20 | 0 << 16 | 32, 0x80000000 | at)
+            g(0xB5000000, 0 << 16 | 10 << 8 | 2)
+    g(0xDF000000 if ucode == "L3DEX2" else 0xB8000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.pixel(W * 3 // 4, H // 2) == (31, 0, 0)
+    assert out.pixel(W * 3 // 4, H // 2 - 3) == (0, 0, 0)
+    assert out.pixel(W // 4, H // 4) == (0, 31, 0)
+    assert out.pixel(W // 4 + 3, H // 4) == (0, 0, 0)
