@@ -315,6 +315,18 @@ def test_a_fork_config_that_splits_another_image_maps_no_segments(fork):
         assert all(not r['mappings'] for r in rom_explorer.listing(net,'game')['regions'])
 
 
+def test_a_fork_config_with_an_empty_code_segment_still_explores(fork):
+    """An overlay whose next segment starts where it does maps nothing, and doesn't stop the scan."""
+    net,pid,root=fork
+    (root/'game.yaml').write_text('options:\n  target_path: game.z64\nsegments:\n'
+                                  '  - {name: main, type: code, start: 0x1000, vram: 0x80000400}\n'
+                                  '  - {name: empty, type: code, start: 0x1100, vram: 0x80100000}\n  - [0x1100]\n')
+    with net.progress.view():
+        rom_explorer.run(net,'game',Log())
+        mapped={m['segment'] for r in rom_explorer.listing(net,'game')['regions'] for m in r['mappings']}
+    assert mapped=={'main'}
+
+
 def test_a_fork_without_the_recorded_game_is_explained(fork):
     net,pid,root=fork
     (root/'game.z64').write_bytes(bytes(0x1300))
