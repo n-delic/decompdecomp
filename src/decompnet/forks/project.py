@@ -62,6 +62,17 @@ def _sha1(path: Path) -> str:
     return h.hexdigest()
 
 
+def _file_sha1(path: Path) -> str:
+    """A file's SHA-1, hashed again only when its size or modification time changes (ROM Explorer asks often)."""
+    stat = path.stat()
+    return _stat_sha1(str(path), stat.st_size, stat.st_mtime_ns)
+
+
+@functools.lru_cache(maxsize=64)
+def _stat_sha1(path: str, size: int, mtime_ns: int) -> str:
+    return _sha1(Path(path))
+
+
 class ForkError(NetworkError):
     """Shown to the user or agent as is."""
 
@@ -334,6 +345,63 @@ class ForkProject:
         return {version: digest.lower() for version, digest in re.findall(
             r"`?baserom\.([A-Za-z0-9._-]+)\.z64`?\s*:\s*`?([0-9a-fA-F]{40})\b", text)
                 if version in configured}
+
+    def original_image(self, version: str | None, known: set[str], image_ext: str) -> Path | None:
+        """The user's own copy of the game inside the project, when its SHA-1 is one the import recorded.
+
+        `known` holds the hashes that identify the game (what `needs` asks for, the game's identity at
+        import). The file `needs` names comes first, then files with the console's image extension at the
+        root or one folder down. A file outside the project, or one whose hash isn't known, is never used."""
+        if not known:
+            return None
+        try:
+            wanted = self.needs(version).get("path")
+        except ForkError:
+            wanted = None
+        root = self.root.resolve()
+        candidates = [self.root / wanted] if wanted and not wanted.endswith("/") else []
+        candidates += sorted(self.root.glob("*" + image_ext)) + sorted(self.root.glob("*/*" + image_ext))
+        seen = set()
+        for path in candidates:
+            try:
+                real = path.resolve()
+                if real in seen or root not in real.parents or not real.is_file():
+                    continue
+            except OSError:
+                continue
+            seen.add(real)
+            if _file_sha1(real) in known:
+                return real
+        return None
+
+    def segments_for(self, image: Path, version: str | None) -> tuple[list[dict], int]:
+        """The code segments (and $gp) of the splat config that splits exactly `image`, else none.
+
+        A config that splits another image (a decompressed one built from the cartridge, say) describes other
+        offsets, so its segments are not used for this one."""
+        import yaml
+
+        from ..rom.split import segments_from_config_data
+
+        configs = self._splat_version_configs()
+        path = configs.get(version or "") or (next(iter(configs.values())) if len(configs) == 1 else self._splat_yaml())
+        try:
+            config = yaml.safe_load(path.read_text(encoding="utf-8")) if path else None
+        except (OSError, ValueError, yaml.YAMLError):
+            return [], 0
+        options = config.get("options") if isinstance(config, dict) else None
+        if not isinstance(options, dict) or not isinstance(options.get("target_path"), str):
+            return [], 0
+        target = (path.parent / str(options.get("base_path", ".")) / options["target_path"]).resolve()
+        if target != image.resolve():
+            return [], 0
+        try:
+            segments = [dict(name=s.name, rom_start=s.rom_start, rom_end=s.rom_end, vram=s.vram)
+                        for s in segments_from_config_data(config)]
+        except (TypeError, ValueError, KeyError):
+            return [], 0
+        gp = options.get("gp_value")
+        return segments, gp if isinstance(gp, int) else 0
 
     def splat_default_version(self) -> str | None:
         versions = self.splat_baseroms()

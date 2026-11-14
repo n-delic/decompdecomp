@@ -269,3 +269,55 @@ def test_damaged_or_unexpanded_zip_members_are_not_validated(monkeypatch):
     monkeypatch.setattr(module,'MAX_ARCHIVE_EXPANSION',0)
     rows=analyse(_zip_image([('demo.dmo',b'recorded inputs '*8,zipfile.ZIP_STORED)]),[],[],[])['regions']
     assert [r['confidence'] for r in rows if r['archive_path']]==['tentative']
+
+
+@pytest.fixture
+def fork(tmp_path):
+    """A forked splat decomp with the user's game in it: no ROM path, segments or function offsets in its config."""
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    root=tmp_path/'decomp';root.mkdir()
+    image=bytes(0x1000)+bytes(8)+b'hello world\0'+bytes(0x200)
+    (root/'game.z64').write_bytes(image)
+    (root/'other.z64').write_bytes(bytes(64))                      # never chosen: its hash isn't the game's
+    (root/'game.yaml').write_text('options:\n  target_path: game.z64\n  base_path: .\nsegments:\n'
+                                  '  - {name: main, type: code, start: 0x1000, vram: 0x80000400}\n  - [0x1100]\n')
+    cfg=dict(kind='fork',platform='n64',fork_kind='splat',game_sha1=hashlib.sha1(image).hexdigest())
+    with net.store.tx() as db:
+        pid=db.execute('INSERT INTO projects(slug,name,arch,root,config) VALUES(?,?,?,?,?)',('game','game','',str(root),json.dumps(cfg))).lastrowid
+    yield net,pid,root
+    if hasattr(net,'autosave'):net.autosave.close()
+
+
+def test_a_forked_decomp_explores_the_users_own_game(fork):
+    net,pid,root=fork
+    jobs=Jobs()
+    with net.progress.view():
+        assert rom_explorer.status(net,'game',jobs)['supported']
+        rom_explorer.run(net,'game',Log())
+        report=rom_explorer.listing(net,'game')
+    assert report['available'] and not report['stale'] and report['image_name']=='game.z64' and not report['derived']
+    text=next(r for r in report['regions'] if r['kind']=='strings')
+    assert text['mappings']==[dict(segment='main',address=0x80000400+text['start']-0x1000)]
+    # The fork's own work (functions without ROM offsets) never makes the map stale.
+    with net.project_store(pid).tx() as db:
+        db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs) VALUES(?,?,?,?,?,?)',(pid,'func_80000400',8,2,bytes(8),'[]'))
+    with net.progress.view():
+        assert not rom_explorer.listing(net,'game')['stale']
+        assert 'hello wo' in rom_explorer.detail(net,'game',text['id'],report['image_hash'])['preview']
+
+
+def test_a_fork_config_that_splits_another_image_maps_no_segments(fork):
+    net,pid,root=fork
+    (root/'game.yaml').write_text('options:\n  target_path: decompressed.z64\nsegments:\n'
+                                  '  - {name: main, type: code, start: 0x1000, vram: 0x80000400}\n  - [0x1100]\n')
+    with net.progress.view():
+        rom_explorer.run(net,'game',Log())
+        assert all(not r['mappings'] for r in rom_explorer.listing(net,'game')['regions'])
+
+
+def test_a_fork_without_the_recorded_game_is_explained(fork):
+    net,pid,root=fork
+    (root/'game.z64').write_bytes(bytes(0x1300))
+    with net.progress.view():
+        assert not rom_explorer.status(net,'game',Jobs())['supported']
+        with pytest.raises(NetworkError,match='SHA-1 recorded'):rom_explorer.run(net,'game',Log())

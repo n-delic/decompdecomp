@@ -1,6 +1,9 @@
 """User-started ROM exploration, saved locally without changing build inputs or progress.
 
-Project-mode adapters need original-image/section mappings first (ROADMAP.md).
+A ROM project explores its analysis image. A forked decomp explores the user's own copy of the game inside it,
+the file whose SHA-1 the import recorded, with the splat config's segments when that config splits exactly
+this file (a fork's functions have no ROM offsets yet, so their references are not drawn). Forks whose
+original is a disc or a folder still need an image adapter (ROADMAP.md).
 Scans never run as routine maintenance or merely because a project is saved.
 """
 from __future__ import annotations
@@ -22,9 +25,33 @@ ANALYSIS_REVISION=15
 KINDS=('', 'unknown', 'code', 'data', 'strings', 'pointer table', 'compressed', 'image', '3d model', 'palette', 'audio', 'animation', 'collision', 'object placements', 'world grid', 'music sequence', 'demo', 'font', 'container', 'repeated bytes')
 
 
+def _source(net, proj):
+    """What ROM Explorer reads: the image's path, its code segments, $gp, processor and byte order, or None."""
+    cfg=net.cfg(proj)
+    console=net.console(proj)
+    if net.is_rom(proj):
+        return dict(path=Path(proj['root'])/cfg['rom']['file'],segments=cfg['segments'],gp=cfg.get('gp',0),
+                    arch=proj['arch'],big_endian=bool(proj['big_endian']),fork=False)
+    if cfg.get('kind')!='fork' or not console.arch:return None
+    from ..forks.project import ForkError, ForkProject
+    try:
+        fp=ForkProject(Path(proj['root']),create_state=False)
+        try:need=fp.needs(cfg.get('version'))
+        except ForkError:need={}
+        known={h.lower() for h in (need.get('sha1'),cfg.get('game_sha1')) if isinstance(h,str)}
+        image=fp.original_image(cfg.get('version'),known,console.image_ext)
+        if image is None:return None
+        segments,gp=fp.segments_for(image,cfg.get('version'))
+    except (OSError,ForkError):return None
+    return dict(path=image,segments=segments,gp=gp,arch=console.arch,big_endian=console.big_endian,fork=True)
+
+
 def _project(net, slug):
     proj = net.project_row(slug)
-    if not net.is_rom(proj):
+    if _source(net,proj) is None:
+        if net.cfg(proj).get('kind')=='fork':
+            raise NetworkError('ROM Explorer reads your own copy of the game, and none was found in this project with the SHA-1 '
+                               'recorded when it was imported. Put the game file the project asks for back in its folder, then open ROM Explorer again.')
         raise NetworkError('ROM Explorer needs an imported ROM image. Object-build projects need an original-image mapping adapter first.')
     return proj
 
@@ -33,11 +60,15 @@ def _revision(net, proj):
     # Layout and symbols can change without changing the ROM bytes. Old reports
     # remain visible as stale, and cannot supply previews or accept annotations.
     store = net.project_store(proj['id'])
-    rows = store.all('SELECT name,vram,rom_offset,size,unit,relocs FROM functions WHERE project_id=? ORDER BY id',proj['id'])
+    source=_source(net,proj)
+    # A fork's functions carry no ROM offsets, so its own matching work never makes the map stale.
+    # A ROM project's revision is computed as it always was, so its saved maps stay current.
+    rows = store.all('SELECT name,vram,rom_offset,size,unit,relocs FROM functions WHERE project_id=? '+('AND rom_offset IS NOT NULL ' if source['fork'] else '')+'ORDER BY id',proj['id'])
     syms = store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name',proj['id'])
     cfg=net.cfg(proj)
-    stat=(Path(proj['root'])/cfg['rom']['file']).stat()
+    stat=source['path'].stat()
     layout={key:cfg.get(key) for key in ('rom','segments','platform','big_endian','gp')}
+    if source['fork']:layout['source']=[str(source['path']),source['segments'],source['gp']]
     return hashlib.sha256(json.dumps([ANALYSIS_REVISION,layout,proj['big_endian'],(stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns),[tuple(r) for r in rows],[tuple(r) for r in syms],_contracts(net,proj)],sort_keys=True).encode()).hexdigest()
 
 
@@ -57,7 +88,7 @@ def status(net, slug, jobs):
     with jobs._lock:
         job = next((j for j in reversed(list(jobs.jobs.values())) if j['kind']=='rom-explorer' and j.get('activity_project')==slug),None)
         snapshot = {k:job[k] for k in ('id','state','error','progress') if k in job} if job else None
-    return dict(supported=net.is_rom(proj),job=snapshot)
+    return dict(supported=_source(net,proj) is not None,job=snapshot)
 
 
 def listing(net, slug):
@@ -104,30 +135,35 @@ def _run(net, slug, log):
         log.progress(dict(phase='ROM map is current',done=1,total=1))
         return dict(regions=len(previous['regions']),size=previous['size'],cached=True)
     log('Reading the analysis image and imported mappings. No compiler or AI calls are made.')
-    path = Path(proj['root'])/cfg['rom']['file']
+    source = _source(net,proj)
+    path = source['path']
     store = net.project_store(proj['id'])
-    functions = [dict(r) for r in store.all(f'SELECT name,vram,rom_offset,size,unit,relocs FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id'])]
+    # A fork's functions have no addresses yet: only its image and segments are read.
+    functions = [] if source['fork'] else [dict(r) for r in store.all(f'SELECT name,vram,rom_offset,size,unit,relocs FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id'])]
     for f in functions:f['relocs'] = json.loads(f['relocs'] or '[]')
     symbols = [dict(r) for r in store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=?',proj['id'])]
     if not path.stat().st_size:raise NetworkError('The analysis image is empty. Restore it or reimport before exploring.')
     with path.open('rb') as stream, mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ) as image:
-        from .analysis_image import verify
-        verify(image,proj,cfg,check=log.check_cancel)
+        if source['fork']:log("Reading your copy of the game in this forked project, "+path.name+": its SHA-1 is the one recorded at import.")
+        else:
+            from .analysis_image import verify
+            verify(image,proj,cfg,check=log.check_cancel)
         from ..rom import asset_flow, resource_catalog
         console=net.console(proj)
-        flow=asset_flow.trace(image,cfg['segments'],functions,arch.get(proj['arch']).asset_flow,
+        segments,gp=source['segments'],source['gp']
+        flow=asset_flow.trace(image,segments,functions,arch.get(source['arch']).asset_flow,
                               contracts=console.asset_calls | _contracts(net,proj),argument_count=console.asset_argument_count,
-                              big_endian=bool(proj['big_endian']),gp=cfg.get('gp',0),cpu=console.cpu_variant,ram=console.ram,
+                              big_endian=source['big_endian'],gp=gp,cpu=console.cpu_variant,ram=console.ram,
                               check=log.check_cancel,progress=log.progress)
-        report = analyse(image,cfg['segments'],functions,symbols,big_endian=bool(proj['big_endian']),
+        report = analyse(image,segments,functions,symbols,big_endian=source['big_endian'],
                          progress=log.progress,check=log.check_cancel,ranges=[c['source'] for c in flow['chains']],
-                         assets=resource_catalog.regions(image,check=log.check_cancel)+console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=cfg['segments'],gp=cfg.get('gp',0)),check=log.check_cancel,progress=log.progress))
+                         assets=resource_catalog.regions(image,check=log.check_cancel)+console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=segments,gp=gp),check=log.check_cancel,progress=log.progress))
         resource_catalog.attach(report)
         asset_flow.attach(report,flow)
     log.check_cancel()
     if revision!=_revision(net,proj):raise NetworkError('The project layout changed during the scan. Scan again to use the current mappings.')
     report.update(revision=revision,scanned_at=time.time(),image_name=path.name,
-                  derived=bool(cfg['rom'].get('program') and cfg['rom']['program']!=cfg['rom']['file']))
+                  derived=bool(not source['fork'] and cfg['rom'].get('program') and cfg['rom']['program']!=cfg['rom']['file']))
     if report['derived']:report['note']='This is a derived analysis image (for example a flattened executable or expanded code), not physical-media offsets. Its hash freezes this scan; it does not certify a reconstruction of the original file. '+report['note']
     # Merge notes only at publication, so edits made during a rescan survive.
     with store.tx():
@@ -154,7 +190,7 @@ def _current(net, slug, region_id, image_hash):
 def detail(net, slug, region_id, image_hash):
     """Inspect a current region; previews never come from a stale engine image cache."""
     proj,state,row = _current(net,slug,region_id,image_hash)
-    path = Path(proj['root'])/net.cfg(proj)['rom']['file']
+    path = _source(net,proj)['path']
     # Verify the on-disk image, not a potentially stale engine cache.
     lo=row['start']
     with path.open('rb') as stream, mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ) as image:
@@ -264,10 +300,11 @@ def _asset_read(net,slug,data,read, *, detect=False):
         original_read=read
         if detected.get('provider') in ('portable-font','portable-records'):
             from ..rom import resource_catalog
-            read=lambda image,settings:resource_catalog.preview(image,detected,selection,net.cfg(proj)['segments'],bool(proj['big_endian']))
+            source=_source(net,proj)
+            read=lambda image,settings:resource_catalog.preview(image,detected,selection,source['segments'],source['big_endian'])
         else:
             read=lambda image,settings:net.console(proj).asset_preview(image,detected,selection) or original_read(image,settings)
-    path=Path(proj['root'])/net.cfg(proj)['rom']['file']
+    path=_source(net,proj)['path']
     with path.open('rb') as stream,mmap.mmap(stream.fileno(),0,access=mmap.ACCESS_READ) as image:
         if hashlib.sha256(image).hexdigest()!=data['image_hash']:raise NetworkError('The image changed. Reopen ROM Explorer before previewing assets.')
         offset=asset_formats.integer(options.get('offset',row['start']),'Data offset',0,len(image)-1) if options.get('source','rom')=='rom' else row['start']
