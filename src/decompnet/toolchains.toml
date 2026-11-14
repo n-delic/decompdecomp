@@ -997,6 +997,39 @@ sha256 = "62f1eb2b51aa57cf0f0b8ba333bf2c72a049930aa9c5de01dcad271c4fe48c88"
 subdir = "wabt-1.0.42"
 platforms = ["windows-x86_64"]
 
+[binaryen]
+name = "Binaryen 133 (wasm-merge, wasm-opt)"
+kind = "tool"
+license = "Apache-2.0"
+source = "github.com/WebAssembly/binaryen releases version_133"
+description = "Makes a finished game's browser build play in browsers without JavaScript Promise Integration (port/wasm/web.py): the game and its host merged into one module, then rewritten with Asyncify so its threads can pause."
+binary_name = "wasm-opt"
+[[binaryen.parts]]
+url = "https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-arm64-macos.tar.gz"
+sha256 = "ad66da82ac13f163e424b1643f16c6dfcccc98b5966296b43e52d3cab04f84a8"
+subdir = "binaryen-version_133"
+platforms = ["macos-arm64"]
+[[binaryen.parts]]
+url = "https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-macos.tar.gz"
+sha256 = "13a9b90be775c6389ce3d1f879cb8627bea56708ba8c122983941d53a8199b95"
+subdir = "binaryen-version_133"
+platforms = ["macos-x86_64"]
+[[binaryen.parts]]
+url = "https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz"
+sha256 = "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489"
+subdir = "binaryen-version_133"
+platforms = ["linux-x86_64"]
+[[binaryen.parts]]
+url = "https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-aarch64-linux.tar.gz"
+sha256 = "89c07ea56faf38d0fbecf36ca8ec0721756716185f265b568e133d427f299bf8"
+subdir = "binaryen-version_133"
+platforms = ["linux-aarch64"]
+[[binaryen.parts]]
+url = "https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-windows.tar.gz"
+sha256 = "17a2cbeac6b5693c5fbafab3838d3c65fd9c1eb38b05f5baec6c657e8c84995b"
+subdir = "binaryen-version_133"
+platforms = ["windows-x86_64"]
+
 [cmake]
 name = "CMake 4.4.4"
 kind = "tool"

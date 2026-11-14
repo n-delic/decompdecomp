@@ -9,6 +9,10 @@ host-web.wasm, sharing the game's memory: its data and C stacks live above the g
 are coroutines (web/co.c) the page switches with JavaScript Promise Integration, and the page (the kit's
 web/play.js, on web/runtime.js) shows the frames, plays the sound and reads the keyboard and gamepads.
 
+For browsers without JavaScript Promise Integration, the two modules are also merged into one (Binaryen's
+wasm-merge) and rewritten with Asyncify (wasm-opt), app-asyncify.wasm: there a waiting thread unwinds its own wasm
+stack into a buffer and is rewound to where it waited, which needs the whole stack, game and host, in one module.
+
 Built from the native build's own files (its IR, tables and wasm2c header), into port/wasm/build/web/: only what
 changed is made again, as there.
 """
@@ -28,7 +32,7 @@ from . import build as native
 HERE = Path(__file__).parent
 RUNTIME = HERE / "web"
 STEPS = (*native.STEPS, "Placing every function for the browser", "Linking the game for the browser",
-         "Building the host for the browser")
+         "Building the host for the browser", "Making the build for browsers without Promise Integration")
 # The host's data, heap and coroutine stacks: above the game's RAM (0x80000000 up) and its uncached mirror
 HOST_BASE = 0xB0000000
 MEMORY = ["--initial-memory=4294967296", "--max-memory=4294967296"]
@@ -38,6 +42,13 @@ HOST_MEMORY = ["--initial-memory=4294901760"]
 HOST_FLAGS = ["-target", "wasm32-wasi", "-O1", "-DPORT_WEB=1", "-fno-delete-null-pointer-checks", "-Wno-everything"]
 # Game functions the host calls, besides those its C names as w2c_game_*: thread entries, the game's stack pointer
 HOST_CALLS = {"port_call1": ("void", ["u32", "u32"]), "port_sp": ("u32", []), "port_set_sp": ("void", ["u32"])}
+ASYNCIFY = "app-asyncify.wasm"
+# The features the two modules use (zig's clang's defaults). Not --all-features: its newest encodings (compact
+# imports) were refused by Chrome 156.
+BINARYEN_FEATURES = ["--enable-bulk-memory", "--enable-mutable-globals", "--enable-sign-ext",
+                     "--enable-nontrapping-float-to-int", "--enable-reference-types", "--enable-multivalue"]
+# The one import that pauses a thread (web/co.c's js_suspend): only stacks that can reach it are made to unwind
+ASYNCIFY_FLAGS = ["--asyncify", "--pass-arg=asyncify-imports@port_web.suspend", "-O2"]
 
 
 def _c_params(text: str) -> list[str]:
@@ -107,6 +118,114 @@ def glue(game_h: str, host_sources: list[str]) -> tuple[str, str, list[str]]:
         source.append(f'__attribute__((export_name("{name}"))) {ret} port_web_import_{i}({args}) '
                       f"{{ {'' if ret == 'void' else 'return '}{c}((struct w2c_env *)0{names}); }}")
     return "\n".join(header) + "\n", "\n".join(source) + "\n", [name for _, name, _, _ in calls]
+
+
+def _leb(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        byte, n = n & 0x7F, n >> 7
+        out.append(byte | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def _read_leb(b: bytes, at: int) -> tuple[int, int]:
+    result = shift = 0
+    while True:
+        byte = b[at]
+        at += 1
+        result |= (byte & 0x7F) << shift
+        shift += 7
+        if not byte & 0x80:
+            return result, at
+
+
+def _sections(code: bytes) -> list[tuple[int, bytes]]:
+    if code[:4] != b"\0asm":
+        raise NetworkError("that isn't a WebAssembly module")
+    out, at = [], 8
+    while at < len(code):
+        size, body = _read_leb(code, at + 1)
+        out.append((code[at], code[body:body + size]))
+        at = body + size
+    return out
+
+
+def _module(sections) -> bytes:
+    return b"\0asm\1\0\0\0" + b"".join(bytes([i]) + _leb(len(body)) + body for i, body in sections)
+
+
+def _name(b: bytes, at: int) -> tuple[bytes, int]:
+    length, at = _read_leb(b, at)
+    return b[at:at + length], at + length
+
+
+def without_custom_sections(code: bytes) -> bytes:
+    """The module without its custom sections, which the merged module doesn't need and Binaryen can't always read:
+    the game's linker sections (relocations), the host's DWARF ("TODO: DW_LNE_define_file")."""
+    return _module([(i, body) for i, body in _sections(code) if i != 0])
+
+
+def host_for_merge(code: bytes) -> bytes:
+    """The host as wasm-merge takes it beside the game: the memory it imports comes from "js" (named "env" in the
+    merge, the host would import from itself), is declared as the game declares it (exactly 4 GB; zig's driver
+    says 64 KB less and no maximum) and is exported as "memory", which the game's own import of it then finds.
+    Without its custom sections, as without_custom_sections."""
+    sections, memories = [], 0
+    for i, body in _sections(without_custom_sections(code)):
+        if i == 2:  # imports
+            count, at = _read_leb(body, 0)
+            out = bytearray(_leb(count))
+            for _ in range(count):
+                start = at
+                module, at = _name(body, at)
+                field, at = _name(body, at)
+                kind = body[at]
+                at += 1
+                if kind == 0:
+                    _, at = _read_leb(body, at)
+                elif kind in (1, 2):
+                    at += 1 if kind == 1 else 0  # a table's element type
+                    flags = body[at]
+                    _, at = _read_leb(body, at + 1)
+                    if flags & 1:
+                        _, at = _read_leb(body, at)
+                elif kind == 3:
+                    at += 2
+                else:
+                    raise NetworkError(f"the browser host imports something Binaryen's merge can't take (kind {kind})")
+                if kind == 2 and (module, field) == (b"env", b"memory"):
+                    memories += 1
+                    out += _leb(2) + b"js" + _leb(6) + b"memory" + bytes([2, 1]) + _leb(65536) + _leb(65536)
+                else:
+                    out += body[start:at]
+            body = bytes(out)
+        elif i == 7:  # exports
+            count, at = _read_leb(body, 0)
+            body = _leb(count + 1) + body[at:] + _leb(6) + b"memory" + bytes([2]) + _leb(0)
+        sections.append((i, body))
+    if memories != 1:
+        raise NetworkError("the browser host doesn't import its memory as env.memory, as the merge expects")
+    return _module(sections)
+
+
+def merge_for_asyncify(host: Path, game: Path, out: Path, binaryen: Path, log) -> None:
+    """The browser build for browsers without JavaScript Promise Integration: the host and the game merged into one
+    module, then rewritten with Asyncify, into `out`."""
+    bins = binaryen / "bin"
+    work = out.with_name(out.stem + "-work")
+    work.mkdir(exist_ok=True)
+    (work / "host.wasm").write_bytes(host_for_merge(host.read_bytes()))
+    (work / "game.wasm").write_bytes(without_custom_sections(game.read_bytes()))
+    merged = work / "merged.wasm"
+    done = native._run([bins / "wasm-merge", work / "host.wasm", "env", work / "game.wasm", "game", "-o", merged,
+                        *BINARYEN_FEATURES, "--rename-export-conflicts"], log)
+    if done.returncode:
+        raise NetworkError(f"merging the game and its host failed: {done.stderr.strip()[-600:]}")
+    done = native._run([bins / "wasm-opt", merged, *BINARYEN_FEATURES, *ASYNCIFY_FLAGS, "-o", out], log)
+    if done.returncode:
+        raise NetworkError(f"Asyncify failed on the merged game: {done.stderr.strip()[-600:]}")
+    shutil.rmtree(work, ignore_errors=True)
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=()) -> Path:
@@ -186,6 +305,16 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     if done.returncode:
         raise NetworkError(f"linking the browser host failed: {done.stderr.strip()[-600:]}")
 
+    progress.start(STEPS[len(native.STEPS) + 3])
+    log("merging the game and its host for browsers without Promise Integration (Asyncify)")
+    binaryen = toolchains.ensure("binaryen", log=log)
+    key = native._digest(files(web / "host-web.wasm"), files(web / "game-web.wasm"), files(Path(__file__)), binaryen,
+                         *BINARYEN_FEATURES, *ASYNCIFY_FLAGS)
+    if not native._fresh(web / ASYNCIFY, key):
+        native._unstamp(web / ASYNCIFY)
+        merge_for_asyncify(web / "host-web.wasm", web / "game-web.wasm", web / ASYNCIFY, binaryen, log)
+        native._stamp(web / ASYNCIFY, key)
+
     # the page: the kit's (what the console shows and takes) on the shared runtime, and what it needs to know
     for page in sorted((host / "web").glob("*")):
         if page.suffix in (".html", ".js", ".css"):
@@ -201,7 +330,7 @@ def export(web: Path, dest: Path) -> Path:
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
-    for name in ("index.html", "play.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm"):
+    for name in ("index.html", "play.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm", ASYNCIFY):
         if (web / name).is_file():
             shutil.copyfile(web / name, dest / name)
     for extra in web.glob("*.css"):

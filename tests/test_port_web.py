@@ -2,6 +2,7 @@
 host's glue, and the exports a player opens."""
 
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -149,12 +150,13 @@ def test_the_browser_export_copies_the_build_and_never_a_rom(tmp_path):
     own files, whatever else lies in the build folder."""
     built = tmp_path / "web"
     (built / "obj").mkdir(parents=True)
-    for name in ("index.html", "play.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm", "game.z64",
-                 "obj/be.o"):
+    for name in ("index.html", "play.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm",
+                 "app-asyncify.wasm", "game.z64", "obj/be.o", "app-asyncify-work/merged.wasm"):
+        (built / name).parent.mkdir(exist_ok=True)
         (built / name).write_text("x")
     out = web.export(built, tmp_path / "export")
-    assert sorted(p.name for p in out.iterdir()) == ["build.json", "game-web.wasm", "host-web.wasm", "index.html",
-                                                     "play.js", "runtime.js"]
+    assert sorted(p.name for p in out.iterdir()) == ["app-asyncify.wasm", "build.json", "game-web.wasm",
+                                                     "host-web.wasm", "index.html", "play.js", "runtime.js"]
     kit = web.HERE.parent.parent / "consoles" / "n64" / "port_wasm" / "web"
     assert "indexedDB" in (kit / "play.js").read_text() and 'type="file"' in (kit / "index.html").read_text()
 
@@ -168,3 +170,77 @@ def test_the_page_places_data_segments_above_2_gb_itself():
     done = subprocess.run([node, str(Path(__file__).with_name("web_runtime_data.mjs"))], capture_output=True,
                           text=True, timeout=60)
     assert done.returncode == 0, done.stderr
+
+
+def _module(*sections) -> bytes:
+    return web._module(list(sections))
+
+
+def _imports(*entries) -> tuple[int, bytes]:
+    return 2, web._leb(len(entries)) + b"".join(entries)
+
+
+def _import(module: bytes, field: bytes, desc: bytes) -> bytes:
+    return web._leb(len(module)) + module + web._leb(len(field)) + field + desc
+
+
+def test_the_host_for_the_merge_imports_its_memory_from_js_and_exports_it():
+    """In wasm-merge the host is named env, so its own env.memory import would point at itself: it takes the memory
+    from "js" instead, declared exactly as the game declares it (4 GB, with a maximum), and exports it, so the game's
+    env.memory import finds the host's. Its other imports and exports stay as they are."""
+    host = _module(
+        (1, bytes([1, 0x60, 0, 0])),  # one type: () -> ()
+        _imports(_import(b"port_web", b"suspend", bytes([0, 0])),
+                 _import(b"env", b"memory", bytes([2, 0]) + web._leb(65535))),
+        (7, web._leb(1) + web._leb(3) + b"run" + bytes([0, 0])),
+        (0, web._leb(11) + b".debug_line" + b"x"))
+    merged = web._sections(web.host_for_merge(host))
+    assert [i for i, _ in merged] == [1, 2, 7]  # no custom sections: Binaryen stopped on the host's DWARF
+    sections = dict(merged)
+    imports = sections[2]
+    assert b"port_web" in imports and b"suspend" in imports
+    assert _import(b"js", b"memory", bytes([2, 1]) + web._leb(65536) + web._leb(65536)) in imports
+    assert b"env" not in imports
+    assert sections[7] == web._leb(2) + web._leb(3) + b"run" + bytes([0, 0]) + web._leb(6) + b"memory" + bytes([2, 0])
+    with pytest.raises(NetworkError, match="env.memory"):
+        web.host_for_merge(_module((1, bytes([1, 0x60, 0, 0]))))
+
+
+def test_the_game_for_the_merge_loses_its_linker_sections():
+    game = _module((0, web._leb(7) + b"linking" + b"\x02"), (1, bytes([1, 0x60, 0, 0])),
+                   (0, web._leb(4) + b"name" + b"x"))
+    assert web._sections(web.without_custom_sections(game)) == [(1, bytes([1, 0x60, 0, 0]))]
+
+
+def test_the_merged_module_pauses_where_the_host_suspends(tmp_path):
+    """A host that suspends and a game that calls it, merged and rewritten with Asyncify: one module, importing its
+    memory from js and only the page's own imports, exporting Asyncify's controls beside both modules' functions."""
+    if not (toolchains.installed("binaryen") and toolchains.installed("wabt")):
+        pytest.skip("binaryen or wabt isn't installed")
+    wat2wasm = toolchains.path("wabt") / "bin" / "wat2wasm"
+    host = tmp_path / "host.wat"
+    host.write_text("""(module
+      (import "port_web" "suspend" (func $suspend))
+      (import "env" "memory" (memory 65535))
+      (func (export "wait") (call $suspend))
+      (func (export "co_main") (param i32) (call $suspend)))""")
+    game = tmp_path / "game.wat"
+    game.write_text("""(module
+      (import "env" "memory" (memory 65536 65536))
+      (import "env" "wait" (func $wait))
+      (func (export "thread") (call $wait)))""")
+    for wat in (host, game):
+        done = subprocess.run([str(wat2wasm), str(wat), "-o", str(wat.with_suffix(".wasm"))], capture_output=True,
+                              text=True)
+        assert done.returncode == 0, done.stderr
+    out = tmp_path / "app-asyncify.wasm"
+    web.merge_for_asyncify(host.with_suffix(".wasm"), game.with_suffix(".wasm"), out, toolchains.path("binaryen"),
+                           log=lambda *a: None)
+    text = subprocess.run([str(toolchains.path("binaryen") / "bin" / "wasm-dis"), str(out)], capture_output=True,
+                          text=True).stdout
+    imports = set(re.findall(r'\(import "([^"]+)" "([^"]+)"', text))
+    assert imports == {("js", "memory"), ("port_web", "suspend")}
+    exports = set(re.findall(r'\(export "([^"]+)"', text))
+    assert {"thread", "co_main", "asyncify_start_unwind", "asyncify_start_rewind", "asyncify_stop_unwind",
+            "asyncify_stop_rewind", "asyncify_get_state"} <= exports
+    assert not (tmp_path / "app-asyncify-work").exists()
