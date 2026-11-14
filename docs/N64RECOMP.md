@@ -1,6 +1,6 @@
 # N64Recomp in decompdecomp: a port before the decomp is done, and a reference for every function
 
-Status: plan. Nothing here is built yet. ROADMAP.md, "N64Recomp: a playable game from day one", tracks it.
+Status: phase 0 is built (Porting → Recompile with N64Recomp; `consoles/n64/recomp.py`, `app/recompile.py`); the rest is a plan. ROADMAP.md, "N64Recomp: a playable game from day one", tracks it.
 
 ## Why
 
@@ -53,7 +53,21 @@ between the two worlds.
 
 ## Phases
 
-### 0. Pin and run it
+### 0. Pin and run it (built)
+
+On a racing game: all 2,125 of the split's functions and 12 it doesn't list, as C in 16 seconds. 14 were set aside as
+stubs, each with N64Recomp's reason: the kernel's coprocessor-0 code its runtime replaces, one branch it can't follow,
+and guessed low-memory code that is data or RSP microcode. Four libultra functions are left for the runtime, one name
+clashed with the C library (renamed), and the rest compiles.
+
+What was built, beyond the plan below:
+- **Code the split doesn't list:** a call into code no function covers becomes a function of its own (`discover`):
+  the entry point, and the code the split left as data. A call into a guess splits it.
+- **Functions between segments:** each gets a section of its own.
+- **Refused functions:** N64Recomp stops at the first function it can't translate, so each is set aside as a stub
+  and it runs again.
+- **The compile check:** the C is checked with this computer's compiler against N64Recomp's own `recomp.h`.
+
 
 - `[n64recomp]` in `toolchains.toml`: N64Recomp by commit, with the libraries it fetches pinned as parts, built from
   source with the pinned CMake (as Torch and mupenRE are).

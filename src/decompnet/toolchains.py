@@ -745,6 +745,13 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
             _build_psyq_parser(dest, linux, log)
         if tc.build == "torch":
             _build_torch(dest, log)
+        if tc.build == "n64recomp":
+            from .consoles.n64 import recomp
+
+            try:
+                recomp.build(dest, binary("cmake"), log)
+            except recomp.RecompError as error:
+                raise ToolchainError(str(error)) from None
         if tc.build == "mupenre":
             from .consoles.n64 import emulator
 

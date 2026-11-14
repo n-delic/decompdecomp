@@ -790,6 +790,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | The reversing emulator for agents (`watch_in_emulator`: which code writes an address, what a function is called with, on the user's ROM) | ✓ mupenRE (Linux, macOS) | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no ROM to run |
+| Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS) | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no ROM to recompile |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
@@ -977,6 +978,16 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### The game as C before the decomp is done: Recompile with N64Recomp
+
+Porting's **Recompile with N64Recomp** turns a ROM project's every function into C by N64Recomp (MIT, pinned with
+its five libraries and built from source like Torch): from the split, and the user's own ROM, into build/recomp
+(`consoles/n64/recomp.py` through `Console.recompiler`, `app/recompile.py`). It finds the code the split doesn't list
+by the calls into it, sets aside as stubs what N64Recomp can't translate, with its reason, and checks the C with the
+computer's compiler. Port readiness shows the last run. On a racing game: 2,125 functions and 12 more, 14 stubs, the
+rest compiling, in 16 seconds. docs/N64RECOMP.md phase 0; next, phase 1 (each function's recorded calls run through
+its recompiled and decompiled C).
 
 ### Agents watch the real game: watch_in_emulator
 

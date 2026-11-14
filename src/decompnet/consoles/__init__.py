@@ -140,6 +140,9 @@ class Console:
     # the console's reversing emulator: a module with run(rom, vis, ...) -> its Run, as consoles/n64/emulator has, which
     # runs the user's own ROM headless with breakpoints (app/emulator_watch.py, the watch_in_emulator tool); None: none yet
     emulator: object = None
+    # its static recompiler: a module with TOOL, recompile(program, rom, segments, functions, out, log, stop),
+    # folder(root), load(root) and RecompError, as consoles/n64/recomp has (app/recompile.py); None: none yet
+    recompiler: object = None
     # PROJECT mode: its import recognises code that isn't the game's own (library code, an SDK, the C runtime) and
     # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
     sets_aside = False

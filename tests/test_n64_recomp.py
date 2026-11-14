@@ -1,0 +1,126 @@
+"""N64Recomp from the project's split (consoles/n64/recomp.py, app/recompile.py): the symbols it's given, code found by
+the calls into it, the pinned build, and a real run on a homemade ROM when the tool is installed (CI has none)."""
+import hashlib
+import json
+
+import pytest
+
+from decompnet import toolchains
+from decompnet.app import recompile
+from decompnet.app.engine import RomNetwork
+from decompnet.consoles.n64 import recomp
+from decompnet.port.readiness import describe, readiness
+
+JR_RA, NOP = 0x03E00008, 0
+
+
+def jal(target: int) -> int:
+    return (3 << 26) | ((target >> 2) & 0x03FFFFFF)
+
+
+def j(target: int) -> int:
+    return (2 << 26) | ((target >> 2) & 0x03FFFFFF)
+
+
+def homemade_rom() -> bytes:
+    """A header whose entry point is 0x80000400, and code at 0x1000 (0x80000400): `entry` calls `listed`, which calls
+    `unlisted` (the split doesn't know it) and jumps to a label of its own; `unlisted` returns 7."""
+    words = {
+        0x1000: [jal(0x80000420), NOP, JR_RA, NOP],                            # entry
+        0x1020: [jal(0x80000440), NOP, j(0x80000430), NOP, JR_RA, NOP],       # listed (j to its own label)
+        0x1040: [0x24020007, JR_RA, NOP],                                     # unlisted: li v0, 7
+    }
+    rom = bytearray(0x2000)
+    rom[0:4] = bytes.fromhex("80371240")
+    rom[8:12] = (0x80000400).to_bytes(4, "big")
+    for at, ws in words.items():
+        for i, w in enumerate(ws):
+            rom[at + 4 * i:at + 4 * i + 4] = w.to_bytes(4, "big")
+    return bytes(rom)
+
+
+SEGMENTS = [{"name": "main", "rom_start": 0x1000, "rom_end": 0x1100, "vram": 0x80000400}]
+SPLIT = [{"name": "entry", "vram": 0x80000400, "rom": 0x1000, "size": 0x10},
+         {"name": "listed", "vram": 0x80000420, "rom": 0x1020, "size": 0x18}]
+
+
+def test_code_the_split_doesnt_list_is_found_by_the_calls_into_it():
+    found = recomp.discover(homemade_rom(), SEGMENTS, SPLIT, 0x80000400)
+    assert [(f["name"], f["size"], f["why"]) for f in found] == [("func_80000440", 0xC, "called from listed")], \
+        "the jump to listed's own label is no new function; unlisted ends after its jr $ra and delay slot"
+    # a call into the body of a function the split lists is a label there
+    assert recomp.discover(homemade_rom(), SEGMENTS, [{**SPLIT[0], "size": 0x60}], 0x80000400) == []
+
+
+def test_a_call_into_a_guess_splits_it():
+    rom = bytearray(homemade_rom())
+    rom[0x1000:0x1004] = jal(0x80000440).to_bytes(4, "big")   # entry calls 0x440 and 0x420 (none listed)
+    rom[0x1008:0x100C] = jal(0x80000420).to_bytes(4, "big")
+    found = recomp.discover(bytes(rom), SEGMENTS, [SPLIT[0]], 0x80000400)
+    assert [(f["vram"], f["size"]) for f in found] == [(0x80000420, 0x18), (0x80000440, 0xC)]
+
+
+def test_the_symbols_file_and_config():
+    text = recomp.symbols(SEGMENTS, SPLIT)
+    assert 'name = "main"\nrom = 0x1000\nvram = 0x80000400\nsize = 0x100' in text
+    assert '{ name = "listed", vram = 0x80000420, size = 0x18 }' in text
+    cfg = recomp.config(recomp.Path("/x/rom.z64"), 0x80000400, ["bad"], ["atan"])
+    assert 'entrypoint = 0x80000400' in cfg and 'stubs = ["bad"]' in cfg and 'renamed = ["atan"]' in cfg
+
+
+def test_n64recomp_is_pinned_with_its_submodules():
+    tc = toolchains.get("n64recomp")
+    assert tc.build == "n64recomp" and tc.license == "MIT" and "cmake" in tc.requires
+    assert [p["into"] for p in tc.parts] == ["source"] + [f"source/lib/{n}" for n in
+                                                         ("rabbitizer", "ELFIO", "fmt", "tomlplusplus", "sljit")]
+    assert all(len(p["sha256"]) == 64 and "windows-x86_64" not in p["platforms"] for p in tc.parts)
+
+
+@pytest.fixture
+def project(tmp_path):
+    image = homemade_rom()
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    (tmp_path / "game.z64").write_bytes(image)
+    cfg = dict(kind="rom", platform="n64", rom=dict(file="game.z64", sha1=hashlib.sha1(image).hexdigest()),
+               segments=SEGMENTS, compiler={"toolchain": "gcc-2.7.2-kmc", "flags": []})
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)",
+                         ("game", "game", "mips", 1, str(tmp_path), json.dumps(cfg))).lastrowid
+        for f in SPLIT:
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,vram,rom_offset,status,meta) "
+                       "VALUES(?,?,?,?,?,?,?,?)", (pid, f["name"], f["size"], f["size"] // 4, f["vram"], f["rom"],
+                                                   "open", "{}"))
+    yield net, tmp_path
+    if hasattr(net, "autosave"):
+        net.autosave.close()
+
+
+def test_readiness_shows_the_last_run(project):
+    net, root = project
+    with net.progress.view():
+        assert readiness(net, "game")["recomp"] is None and readiness(net, "game")["recomp_available"]
+    out = recomp.folder(root)
+    out.mkdir(parents=True)
+    (out / "recomp.json").write_text(json.dumps({
+        "at": 1.0, "functions": 2, "found": [{"name": "func_80000440", "vram": 0x80000440, "size": 12,
+                                              "why": "called from listed"}],
+        "refused": [{"name": "listed", "why": "Unhandled instruction: lwc2"}], "renamed": [], "runtime": [],
+        "errors": [], "error_count": 0, "between": [], "unusable": [], "files": 1, "folder": str(out)}))
+    with net.progress.view():
+        report = readiness(net, "game")
+    assert report["recomp"]["stubs"] == 1 and report["recomp"]["found"] == 1
+    text = describe(report)
+    assert "Recompiled (static recompiler, last run): 2 of the split's functions and 1 the split doesn't list" in text
+    assert "listed (Unhandled instruction: lwc2)" in text and "func_80000440 (called from listed)" in text
+
+
+@pytest.mark.skipif(toolchains.installed("n64recomp") is None, reason="needs the n64recomp tool")
+def test_recompile_writes_c_that_compiles(project):
+    net, root = project
+    summary = recompile.run(net, "game", log=lambda *a: None)
+    assert summary["functions"] == 2 and [f["name"] for f in summary["found"]] == ["func_80000440"]
+    assert summary["refused"] == [] and summary["error_count"] == 0, summary
+    text = "".join(p.read_text() for p in (recomp.folder(root) / "funcs").glob("*.c"))
+    assert "RECOMP_FUNC void recomp_entrypoint(" in text and "RECOMP_FUNC void listed(" in text
+    assert "func_80000440(rdram, ctx);" in text and "RECOMP_FUNC void func_80000440(" in text
+    assert recomp.load(root)["files"] == summary["files"]
