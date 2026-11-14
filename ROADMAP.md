@@ -1024,6 +1024,18 @@ Measured on three test functions: proposing takes 10-130 ms, about 1% of a run w
 and 5-10% with IDO 7.1 (about 40 ms), spread over 119 families with none above 9 ms: no case for rewriting it in
 another language.
 
+### The asset recognisers stand on their own
+
+They now live in their own public repository, RetroReversing/decomp-assets (v0.1.0, history kept), which
+decompdecomp pins by tag. The N64 recognisers (textures, sound banks, models, animation, fonts, resource
+directories), the RNC unpacker and the pixel, PCM and VAG readers every console shares moved from
+`consoles/n64/` and `rom/asset_formats.py`/`asset_archives.py` into `decompassets`, a library that uses only the
+standard library and imports nothing from decompdecomp (`tests/test_decompassets.py` checks it; the old module
+names are aliases). `decompassets.n64.regions(image)` finds every asset with no offsets given, and `preview` shows
+one. The one thing it needs from the app is a reader of MIPS code, for the loader calls that place a sound bank's
+samples: the N64 console passes `arch.mips_assets.read`. The tests that use only these modules (129) run in the
+library; the ones that go through ROM Explorer stay here.
+
 ### Microcode and wrong base symbols put right for a port
 
 Of the last data a finished N64 game's link check listed, two were the RSP's microcode (rspboot, 208 bytes, and the
@@ -1802,6 +1814,13 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 - Readers for PowerPC, x86 and ARM (today the evidence is MIPS).
 - Publish it on PyPI, so other projects can depend on it by version.
 - Move the tests here that only need a compiler to decomp-repair, with the compilers as an optional part.
+
+### decomp-assets: other consoles, and other projects using it
+
+- Recognisers for PS1 and PS2 assets under `decompassets/ps1`, `ps2`, beside `n64`.
+- A command (`python -m decompassets IMAGE`) that writes what it finds as a splat or Torch asset list, so projects
+  that extract from offsets can start from it.
+- Publish it on PyPI, so other projects can depend on it by version.
 
 ### ROM Explorer: image adapters and deeper asset analysis
 

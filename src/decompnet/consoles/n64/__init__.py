@@ -1,17 +1,8 @@
 """Nintendo 64: the VR4300's MIPS (big-endian), KMC GCC, IDO and SN64 GCC, ROM mode.
 
-- ptr_audio.py: validated libmus pointer banks and marked sample tables.
-- audio.py: source-assisted B1 sound banks, sample tables and mono VADPCM previews.
-- resources.py: validated directory schemas, animation/world metadata and RNC extents.
-- models.py: validated indexed geometry and local mesh wireframes.
-- animation.py: bounded shared-header three-bit ADPCM and local transform tracks.
-- native_scene.py: directory-linked textures, rigid node assemblies and animation.
-- fonts.py: named-writer I4 glyph tables with corroborated data mappings.
-- archived_models.py: CRC-checked PD3V meshes, static assembly and material previews.
-- model_links.py: bounded loader-script links to textures and companion streams.
-- model_scenery.py: split XZ/Y scenery with checked triangle/quad commands.
-- textures.py: source-assisted indexed texture banks and bounded RNC asset previews.
-- texture_packs.py: trailer-count image/palette packs inside embedded ZIP members.
+- Its assets (textures, sound banks, models, animation, fonts, resource directories, RNC) are found and previewed
+  by the decomp-assets library, `decompassets.n64`; the old module names here (textures.py, audio.py, ...) are
+  aliases for its modules. The console gives it the MIPS code reader its audio and fonts use (`asset_regions`).
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
 - code.py: code splat's own look misses: segments the game loads later, and code kept compressed in the ROM.
 - loader_code.py: full-bank closed-body recovery with CPU call, callback and adjacency evidence.
@@ -84,30 +75,20 @@ class Nintendo64(Console):
     asm_preamble = '.include "macro.inc"\n.set noat\n.set noreorder\n.set gp=64\n.section .text, "ax"\n'
 
     def asset_regions(self, image, *, context=None, **kwargs):
-        from . import archived_models, audio, models, ptr_audio, resources, texture_packs, textures
-        known=textures.regions(image, **kwargs)+texture_packs.regions(image, **kwargs)+audio.regions(image, context=context, **kwargs)+ptr_audio.regions(image, **kwargs)+ptr_audio.sequences(image, **kwargs)+models.regions(image, **kwargs)+archived_models.regions(image, **kwargs)
-        from . import fonts, native_scene
-        assets=known+resources.regions(image,known=known,**kwargs)
-        native_scene.link(assets)
-        return assets+fonts.regions(image,context=context,known=assets,**kwargs)
+        from decompassets import n64
+
+        from ...arch.mips_assets import read
+        # Sound banks find their sample tables from the constant arguments of the game's alBnkfNew calls,
+        # read with the app's MIPS reader (decomp-assets has none of its own).
+        return n64.regions(image, context={'read_code': read, **(context or {})}, **kwargs)
 
     def asset_preview(self, data, asset, selection):
-        from . import archived_models, audio, models, ptr_audio, resources, texture_packs, textures
-        if asset.get('font_layout')=='native-i4-pointer-glyphs':
-            from . import fonts
-            return fonts.preview(data,asset,selection)
-        if asset.get('audio_kind') in ('libmus sample bank','libmus sequence'):return ptr_audio.preview(data,asset,selection)
-        if asset.get('layout')=='archived-pd3v-model':return archived_models.preview(data,asset,selection)
-        if asset.get('layout')=='trailer-count-texture-pack':return texture_packs.preview(data,asset,selection)
-        return {'audio':audio.preview,'model':models.preview,'metadata':resources.preview}.get(asset.get('media'),textures.preview)(data, asset, selection)
+        from decompassets import n64
+        return n64.preview(data, asset, selection)
 
     def asset_scene(self, image, asset, selection, assets):
-        from ...rom.asset_formats import AssetError
-        from . import native_scene
-        from .models import ModelError
-        from .resources import SchemaError
-        try:return native_scene.preview(image,asset,selection,assets)
-        except (ModelError,SchemaError) as exc:raise AssetError(str(exc)+' Rescan ROM Explorer or choose another resource.') from None
+        from decompassets import n64
+        return n64.scene(image, asset, selection, assets)
 
     def asset_decode(self, data):
         from .textures import decode

@@ -149,6 +149,14 @@ in `pyproject.toml` and `uv lock` here. A repair that needs the network or a pro
 (`mips_stack`, `mips_regions`, `mips_runtime`, the CP0/FPU leaves `mips_count` etc., since 0.2.0) are names for the
 library's modules (`tests/test_decomprepair.py`); `seeds.intrinsic_leaf` decides which compilers get the leaves. The ~130 tests here that exercise its families with the app's compilers stay here.
 
+The asset recognisers are a library of their own too, decompassets, in RetroReversing/decomp-assets (public,
+AGPL-3.0, history kept), pinned by tag the same way: the N64 recognisers (textures, sound banks, models, animation,
+fonts, resource directories), RNC, and the pixel/PCM/VAG readers every console shares. It uses only the standard
+library and never imports `decompnet`; what it needs from the app comes in its `context` (the N64 console passes
+`arch.mips_assets.read` as `read_code`). A change to how an asset is recognised or previewed goes there, released
+and bumped like decomprepair. `rom/asset_formats.py`, `rom/asset_archives.py` and `consoles/n64/<asset module>.py`
+are names for its modules (`tests/test_decompassets.py`).
+
 The permuter and deep permuter (`app/permute.py`, `app/deep_permuter.py`, `app/permuter_worker.py`,
 `app/deep_sweep.py`) follow the same rule. Adding or changing one of their C rewrites (a mutation, a search
 strategy over source, which rewrites to try for a difference) goes in decomp-repair: make the change there on a
