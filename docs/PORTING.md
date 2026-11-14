@@ -260,8 +260,8 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
 - the app's **Export…** (Porting, beside Play; `port/wasm/export.py`): the game as something to keep and share,
   into the save repository's `port/wasm/export/` (git ignores it: it's built from the game). Neither export holds
   the ROM; each asks the player for their own.
-  - *Standalone app for this computer*: the native program with a launcher. On macOS an app (`Game.app`, macOS 11
-    and up) that asks for the ROM once, keeps its saves in its own Application Support folder and opens the game
+  - *Standalone app for this computer*: the native program with a launcher. On macOS a universal app (`Game.app`,
+    macOS 11 and up, for Apple Silicon and Intel Macs alike, whichever kind exported it) that asks for the ROM once, keeps its saves in its own Application Support folder and opens the game
     in the browser; quitting it stops the game. On Linux and Windows the program with `play.sh` / `play.bat`
     (they take the ROM's path and remember it).
   - *For a web browser*: the browser build (`port/wasm/web.py`), a folder with `index.html` for any static web

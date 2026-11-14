@@ -1062,7 +1062,9 @@ Left:
 - the browser build in Firefox, untried. Browsers without JavaScript Promise Integration play its Asyncify
   module (`app-asyncify.wasm`): a racing game runs to a race on it in Chrome as fast as with JSPI, and in Safari
   more slowly (4 to 9 frames a second while stages load, against 12 to 17), so JSPI stays the first choice;
-- the Linux and Windows apps run untried (the macOS app is tried end to end), and signing the macOS app;
+- the Linux and Windows apps run untried (the macOS app is tried end to end), and signing the macOS app. The macOS
+  app is universal (arm64 and x86_64): a racing game's Intel half reaches its language menu under Rosetta with the
+  Apple Silicon half's frame counts; a physical Intel Mac is untried;
 - the browser build for consoles other than the N64: "—" until their kits have a host.
 
 The Miyoo Mini is a third kind (Export… → For Miyoo Mini, `port/wasm/miyoo.py`): the same build's game with its
