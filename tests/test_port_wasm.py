@@ -335,3 +335,45 @@ def test_the_build_leaves_out_the_library_files_play_proves_besides_exclude_txt(
     repo, _ = save(tmp_path)
     chosen = gather(repo, tmp_path / "build", {"race_update.c"})
     assert sorted(chosen) == ["func_8001E640.c", "tokenize.c"]
+
+
+def test_calls_that_disagree_with_their_callee_are_recorded_by_kind(tmp_path):
+    """Matched but suspicious: the build bridges each call whose C disagrees with its callee, and records it. A
+    result counts only when the caller uses it (an unprototyped call names its result either way)."""
+    from decompnet.port.wasm import calls
+    from decompnet.port.wasm.adapt import adapt
+    from decompnet.port.wasm.beir import Types
+    ir = ("declare void @wrapper(i32, i32)\n"
+          "declare i32 @sprintf(ptr, ptr, ...)\n"
+          "declare void @loader(ptr, i32, i32)\n"
+          "declare void @set_uv(i32)\n"
+          "declare void @flush()\n"
+          "define void @start_yaw(i32 %x) {\n"
+          "  %1 = call i32 @wrapper(i32 noundef %x, i32 noundef 2)\n"
+          "  store i32 %1, ptr null, align 4\n"
+          "  %2 = call i32 @wrapper(i32 noundef %x, i32 noundef 3)\n"
+          "  %3 = call i32 @sprintf(ptr noundef null, ptr noundef null, i32 noundef 1)\n"
+          "  call void @loader(ptr noundef null)\n"
+          "  call void @set_uv(i8 noundef zeroext 255)\n"
+          "  call void @flush(i32 noundef 7)\n"
+          "  ret void\n}\n")
+    report = []
+    adapt(ir, report, Types(ir), {})
+    kinds = sorted((r["kind"], r["callee"]) for r in report)
+    assert kinds == [("argument-type", "set_uv"), ("extra-arguments", "flush"), ("missing-arguments", "loader"),
+                     ("variadic-declared-fixed", "sprintf"), ("void-result", "wrapper")], kinds
+    assert next(r for r in report if r["kind"] == "argument-type")["unsigned"]
+    # gathered from the build's files, only the linked objects', worst kind first
+    o = tmp_path / "o"
+    o.mkdir()
+    (o / "start_yaw.be.ll.calls").write_text("\n".join(json.dumps(r) for r in report) + "\n")
+    (o / "gone.be.ll.calls").write_text(json.dumps({**report[0], "caller": "gone"}) + "\n")
+    (o / "old.be.ll.calls").write_text("old calls new with 0 of its 1 arguments\n")  # an older build's sentence
+    found = calls.write(tmp_path, [o / "start_yaw.o", o / "old.o"])
+    assert list(found) == ["start_yaw"] and json.loads((tmp_path / "calls.json").read_text()) == found
+    summary = calls.load(tmp_path)
+    assert (summary["functions"], summary["calls"]) == (1, 5)
+    assert [k["kind"] for k in summary["kinds"]] == ["void-result", "variadic-declared-fixed", "missing-arguments",
+                                                     "argument-type", "extra-arguments"]
+    assert summary["kinds"][0]["examples"] == ["start_yaw → wrapper"]
+    assert "argument 1: unsigned i8 for i32" in summary["kinds"][3]["examples"][0]

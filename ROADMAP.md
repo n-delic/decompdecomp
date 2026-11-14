@@ -977,6 +977,18 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### Matched but suspicious: calls that disagree with what they call
+
+A WebAssembly build records each call whose C disagrees with the function it calls (`port/wasm/calls.py`). Each one
+matches the console, because on MIPS arguments and results are just registers, but can behave differently in any
+other build. Port readiness lists them by kind, worst first, with a step of its own: results taken from a void
+function, variadic and fixed prototypes mixed up, structs passed by value at another size, arguments missing, extra
+or of another width, and results of another width. A result counts only when the caller uses it. On a racing game:
+794 calls in 505 functions, the worst 19 among them the backwards race start's.
+
+Left: a helper task that puts each one right while the function still matches; the same report for native PC builds
+(`port/pc_compile.py` sees the same C).
+
 ### Your N64 ROM runs in the reversing emulator
 
 **mupenRE** (Compilers & tools → Tools) is RetroReversing's mupen64plus core with libRetroReversing, pinned by
