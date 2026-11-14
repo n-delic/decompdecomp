@@ -2140,6 +2140,20 @@ first (`Console.port_kit`), PS1 next on PsyCross; the rest "—" until a kit exi
 S2DEX coverage, then a hand port of one N64 game's boot, title screen and one track. Phase 0 is built (Recently
 done: Port readiness report).
 
+### A software renderer for the libultraship runtime
+
+A third back end for libultraship's Fast3D beside Metal, OpenGL and DirectX, drawn on the CPU: a native port
+that runs without a GPU (headless machines, CI's screenshots, weak hardware). Start from Miyoo64's `gfx_soft.c`
+(mr-finster/miyoo64, MIT: keep its notice), the software back end its fifteen native N64 ports draw with on a
+handheld, under Fast3D. What carries over is its rasterizer: edge functions, the colour combiner evaluated from
+Fast3D's shader ids, depth, NEON paths. What's new: it implements sm64-port's older C interface (26 calls, vertices
+already projected on the CPU, a layout from its PSP port), while the libultraship that Torch pins has a C++
+`GfxRenderingAPI` of about 45 (triangles in clip space laid out per shader, frame buffers created, copied, read
+back and resolved, 64-bit shader ids, depth readback, textures for its ImGui menus). Waits for the native build
+above to link and run on libultraship. Not a replacement for the WebAssembly build's renderer
+(`consoles/n64/port_wasm/render.c`): that one draws into the game's own frame buffer as the RDP does, which
+Fast3D doesn't.
+
 ### Browser room contributions
 
 Delivered: normal GUI hosts serve a member-authorized browser workspace from the existing
