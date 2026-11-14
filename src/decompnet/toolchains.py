@@ -706,6 +706,10 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 _build_sn64_gcc(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "gcc-papermario":
                 _build_gcc_papermario(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "gcc-2.7.2-kmc":
+                _build_gcc_kmc(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "binutils-2.6-kmc":
+                _build_binutils_kmc(archive, dest, part.get("subdir"), log)
             elif part.get("build") in ("psx-gcc-2.6.3", "psx-gcc"):
                 _build_psx_gcc(archive, dest, part, log)
                 for url_key, hash_key, _ in (
@@ -1048,6 +1052,11 @@ def _build_gcc_papermario(archive: Path, dest: Path, subdir: str | None, log) ->
 def _check_gcc_papermario(build: Path, tmp: Path) -> None:
     """The two ways a native build went wrong, checked before it is installed: a float constant folded to the
     wrong words, and a compile error that crashes instead of being reported."""
+    _check_native_gcc(build, tmp, "GCC 2.8.1 (PM matching)")
+
+
+def _check_native_gcc(build: Path, tmp: Path, name: str) -> None:
+    """(_check_gcc_papermario, for any old GCC built natively for Apple Silicon.)"""
     floats, broken = tmp / "floats.c", tmp / "broken.c"
     floats.write_text("double f(unsigned int x) { return x; }\n", encoding="utf-8")
     broken.write_text("int f(void) { return undeclared; }\n", encoding="utf-8")
@@ -1058,14 +1067,186 @@ def _check_gcc_papermario(build: Path, tmp: Path) -> None:
                                         "-o", str(src.with_suffix(".s"))],
                                        capture_output=True, text=True, errors="replace", timeout=30)
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise ToolchainError(f"The native GCC 2.8.1 (PM matching) failed its check: {error}") from error
+            raise ToolchainError(f"The native {name} failed its check: {error}") from error
     asm = floats.with_suffix(".s").read_text(errors="replace") if floats.with_suffix(".s").is_file() else ""
     if runs[floats].returncode or not re.search(r"li\.d\s+\$f\d+,4\.29496729600000000000e9", asm):
-        raise ToolchainError("The native GCC 2.8.1 (PM matching) folds float constants wrongly; not installing it.\n"
+        raise ToolchainError(f"The native {name} folds float constants wrongly; not installing it.\n"
                              + runs[floats].stderr[-2000:] + asm[-2000:])
     if runs[broken].returncode != 33 or "undeclared" not in runs[broken].stderr:
-        raise ToolchainError("The native GCC 2.8.1 (PM matching) doesn't report compile errors (exit "
+        raise ToolchainError(f"The native {name} doesn't report compile errors (exit "
                              f"{runs[broken].returncode}); not installing it.\n" + runs[broken].stderr[-2000:])
+
+
+# GCC 2.7.2 (KMC) has the same unprototyped diagnostics as GCC 2.8.1 (_GCC_PM_VARARGS covers both), declared
+# old-style in other files, and C++'s errors reach them through an unprototyped pointer (cp_thing): those calls
+# get the variadic convention too, except compiler_error's, which isn't variadic. One call in cp/method.c passes
+# error_with_decl too few arguments; it keeps its old (unprototyped) call. Edits are exact: the build fails closed
+# when the pinned source no longer has them.
+_GCC_KMC_DECLARATIONS = {
+    "config/mips/mips.c": ("extern void   error ();\n", "extern void   fatal ();\n", "extern void   warning ();\n"),
+    "cp/call.c": ("extern void sorry ();\n",),
+    "cp/sig.c": ("extern void error ();\n", "extern void sorry ();\n"),
+    "cp/typeck.c": ("extern void error ();\n", "extern void warning ();\n"),
+    "cp/typeck2.c": ("extern void pedwarn (), error ();\n",),
+    "cp/errfn.c": _GCC_PM_DECLARATIONS["cp/errfn.c"],
+}
+_GCC_KMC_EDITS = {
+    "cp/errfn.c": (
+        ("static void\ncp_thing (", "extern errorfn compiler_error;\n\nstatic void\ncp_thing ("),
+        ("      (*errfn) (file, line, fmt, ARGSLIST);\n",
+         "      (*(void (*) (char *, int, char *, ...)) errfn) (file, line, fmt, ARGSLIST);\n"),
+        ("  else\n    (*errfn) (fmt, ARGSLIST);\n",
+         "  else if (errfn == compiler_error)\n    (*errfn) (fmt, ARGSLIST);\n"
+         "  else\n    (*(void (*) (char *, ...)) errfn) (fmt, ARGSLIST);\n"),
+    ),
+    "cp/method.c": (
+        ("      error_with_decl (\"implementation-reserved name `%s' used\");\n",
+         "      (*(void (*) ()) error_with_decl) (\"implementation-reserved name `%s' used\");\n"),
+        ("    error (\"overloading function `%s' cannot be done in C language context\");\n",
+         "    error (\"overloading function `%s' cannot be done in C language context\", (char *) 0);\n"),
+    ),
+    # Four diagnostics have a %s and no argument: Intel read whatever its register held (a transparent union
+    # warned "cannot make `(null)'..."), arm64 the stack, which crashed. A null pointer prints Intel's "(null)".
+    "c-common.c": (("\t\terror (\"unrecognized format specifier for `%s'\");\n",
+                    "\t\terror (\"unrecognized format specifier for `%s'\", (char *) 0);\n"),),
+    "c-decl.c": (("      warning (\"cannot make `%s' a transparent union\");\n",
+                  "      warning (\"cannot make `%s' a transparent union\", (char *) 0);\n"),),
+    "cp/init.c": (("multiple inheritance lattice\");\n", "multiple inheritance lattice\", (char *) 0);\n"),),
+}
+# What upstream's CI passed (no -O: GCC itself unoptimised), plus what a newer clang turned into errors.
+_OLD_GNU_QUIET = ("-DDARWIN -Wno-return-type -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int "
+                  "-Wno-int-conversion -Wno-incompatible-pointer-types -Wno-deprecated-non-prototype")
+
+
+def _old_gnu_build(source: Path, commands: list[list[str]], quiet: str, what: str, log) -> None:
+    """Run an old GNU package's configure and make with Xcode's clang and nothing else from PATH (a modern bison
+    makes parsers that don't build). The CFLAGS reach configure too: its probes fail under a newer clang's
+    errors otherwise (gas then decided `inline` doesn't exist and macOS's ctype.h defined its functions twice)."""
+    env = {k: v for k, v in os.environ.items() if k not in ("CC", "CXX", "CFLAGS", "CPPFLAGS", "LDFLAGS")}
+    env.update(PATH="/usr/bin:/bin:/usr/sbin:/sbin", CC="/usr/bin/clang", CFLAGS=quiet)
+    for argv in commands:
+        log(f"  building native {what} for Apple Silicon (first install only): {Path(argv[0]).name} "
+            + " ".join(a for a in argv[1:] if not a.startswith("-") and "=" not in a))
+        try:
+            res = subprocess.run(limits.capped(argv), cwd=source, capture_output=True, text=True,
+                                 errors="replace", timeout=900, env=env)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"Couldn't build {what}: {error}. Check Xcode Command Line Tools and try again.") from error
+        if res.returncode:
+            raise ToolchainError(f"Couldn't build {what}. Check Xcode Command Line Tools and try again.\n"
+                                 + (res.stdout + res.stderr)[-4000:])
+
+
+def _edit_exactly(source: Path, removals: dict, edits: dict, what: str) -> None:
+    for name in dict.fromkeys([*removals, *edits]):
+        file = source / name
+        text = file.read_text(encoding="latin-1") if file.is_file() else ""
+        for old, new in [(line, "") for line in removals.get(name, ())] + list(edits.get(name, ())):
+            if text.count(old) != 1:
+                raise ToolchainError(f"The pinned {what} {name} no longer matches its arm64 fix.")
+            text = text.replace(old, new, 1)
+        file.write_text(text, encoding="latin-1")
+
+
+def _date_generated(source: Path, generated: tuple[str, ...], what: str) -> None:
+    """An archive gives every file one time: sources older, the shipped generated files (parsers) newer, so make
+    uses them rather than regenerating them."""
+    now = time.time()
+    for file in source.rglob("*"):
+        if file.is_file():
+            os.utime(file, (now - 60, now - 60))
+    for name in generated:
+        if not (source / name).is_file():
+            raise ToolchainError(f"The pinned {what} source has no generated {name}.")
+        os.utime(source / name, (now, now))
+
+
+def _build_gcc_kmc(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """Build the checksum-pinned decompals GCC 2.7.2 (the source of the KMC compiler's released Mac build) natively
+    for Apple Silicon, as _build_gcc_papermario does GCC 2.8.1: the released Intel build costs a Rosetta start on
+    every compile. Built as upstream's CI built it (unoptimised, -DDARWIN), with the variadic prototypes and the
+    edits above; wherever the Intel build compiles, the output is the same (docs/COMPILER_MATCHING_LEARNINGS.md
+    has the comparison, and the variable-length arrays only the Intel build crashes on)."""
+    what = "GCC 2.7.2 (KMC)"
+    if not shutil.which("/usr/bin/clang") or not shutil.which("/usr/bin/make"):
+        raise ToolchainError(f"Building {what} needs Xcode Command Line Tools: run `xcode-select --install`, "
+                             "then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-gcc-kmc-") as tmp:
+        source = Path(tmp) / "source"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        _edit_exactly(source, _GCC_KMC_DECLARATIONS, _GCC_KMC_EDITS, what)
+        header = source / "decomp-arm64-varargs.h"
+        header.write_text(_GCC_PM_VARARGS, encoding="latin-1")
+        _date_generated(source, ("c-parse.c", "c-parse.h", "cexp.c", "cp/parse.c", "cp/parse.h", "bi-parser.c",
+                                 "bi-parser.h"), what)
+        quiet = "-std=gnu89 " + _OLD_GNU_QUIET
+        jobs = "-j" + str(min(6, os.cpu_count() or 1))
+        _old_gnu_build(source, [
+            ["./configure", "--target=mips-mips-gnu", "--prefix=/opt/cross", "--with-gnu-as", "--disable-gprof",
+             "--disable-gdb", "--disable-werror", "--host=i386-apple-darwin", "--build=i386-apple-darwin"],
+            # The prototypes go into GCC's own files, not the generators (their static fatal()) ...
+            ["/usr/bin/make", jobs, "xgcc", "cc1", "cc1plus", "cpp", "cccp", "CC=/usr/bin/clang",
+             f"CFLAGS={quiet} -include {header}", f"HOST_CFLAGS=$(INTERNAL_CFLAGS) $(X_CFLAGS) $(T_CFLAGS) {quiet}"],
+            # ... nor the g++ driver, which has static error() and fatal() and no macro the header could test.
+            ["/usr/bin/make", "g++", "CC=/usr/bin/clang", f"CFLAGS={quiet}"],
+        ], quiet, what, log)
+        _check_native_gcc(source, Path(tmp), what)
+        for name, binary in {"gcc": "xgcc", "cc1": "cc1", "cc1plus": "cc1plus", "cpp": "cpp", "cccp": "cccp",
+                             "g++": "g++"}.items():
+            if not (source / binary).is_file():
+                raise ToolchainError(f"The {what} build did not produce {name} ({binary}).")
+            shutil.copy2(source / binary, dest / name)
+            (dest / name).chmod(0o755)
+
+
+def _build_binutils_kmc(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """Build the checksum-pinned decompals binutils 2.6 (the KMC compiler's assembler and tools) natively for Apple
+    Silicon, the programs upstream's release holds, from the same source and options."""
+    what = "binutils 2.6 (KMC)"
+    if not shutil.which("/usr/bin/clang") or not shutil.which("/usr/bin/make"):
+        raise ToolchainError(f"Building {what} needs Xcode Command Line Tools: run `xcode-select --install`, "
+                             "then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-binutils-kmc-") as tmp:
+        source = Path(tmp) / "source"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        _date_generated(source, ("binutils/arparse.c", "binutils/arparse.h", "binutils/arlex.c"), what)
+        quiet = "-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 " + _OLD_GNU_QUIET
+        _old_gnu_build(source, [
+            ["./configure", "--target=mips-kmc-elf", "--prefix=/opt/cross", "--disable-gprof", "--disable-gdb",
+             "--disable-werror", "--host=i386-apple-darwin", "--build=i386-apple-darwin"],
+            *[["/usr/bin/make", "-C", folder, "CC=/usr/bin/clang", f"CFLAGS={quiet}"]
+              for folder in ("bfd", "opcodes", "libiberty", "gas", "binutils")],
+        ], quiet, what, log)
+        _check_kmc_as(source / "gas" / "as.new", Path(tmp))
+        for name, binary in {"as": "gas/as.new", "ar": "binutils/ar", "strip": "binutils/strip.new",
+                             "objcopy": "binutils/objcopy", "c++filt": "binutils/c++filt"}.items():
+            if not (source / binary).is_file():
+                raise ToolchainError(f"The {what} build did not produce {name} ({binary}).")
+            shutil.copy2(source / binary, dest / name)
+            (dest / name).chmod(0o755)
+
+
+def _check_kmc_as(assembler: Path, tmp: Path) -> None:
+    """A native assembler that assembles a MIPS III function to its known words and reports a bad opcode."""
+    good, bad = tmp / "good.s", tmp / "bad.s"
+    good.write_text("\t.set noreorder\n\t.text\nf:\n\tdaddu $2,$4,$5\n\tjr $31\n\tnop\n", encoding="utf-8")
+    bad.write_text("\t.text\n\tnotanopcode $3\n", encoding="utf-8")
+    runs = {}
+    for src in (good, bad):
+        try:
+            runs[src] = subprocess.run([str(assembler), "-G0", "-mips3", "-o", str(src.with_suffix(".o")), str(src)],
+                                       capture_output=True, text=True, errors="replace", timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"The native binutils 2.6 (KMC) assembler failed its check: {error}") from error
+    obj = good.with_suffix(".o").read_bytes() if good.with_suffix(".o").is_file() else b""
+    if runs[good].returncode or not obj.startswith(b"\x7fELF") or bytes.fromhex("0085102d03e00008") not in obj:
+        raise ToolchainError("The native binutils 2.6 (KMC) assembler doesn't assemble MIPS correctly; not "
+                             "installing it.\n" + runs[good].stderr[-2000:])
+    if runs[bad].returncode != 1 or "notanopcode" not in runs[bad].stderr:
+        raise ToolchainError("The native binutils 2.6 (KMC) assembler doesn't report errors (exit "
+                             f"{runs[bad].returncode}); not installing it.\n" + runs[bad].stderr[-2000:])
 
 
 def _build_psx_gcc(archive: Path, dest: Path, part: dict, log) -> None:
