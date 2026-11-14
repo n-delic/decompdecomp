@@ -1845,6 +1845,23 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 
 ## Next
 
+### N64Recomp: a playable game from day one, and a reference for every function
+
+Plan in docs/N64RECOMP.md. N64Recomp (MIT) turns each of the game's functions into C that does exactly what the
+instructions do:
+- **Fallback:** a port uses that C wherever the project hasn't matched a function yet, so a WebAssembly or
+  N64ModernRuntime build plays before the decomp is done, and becomes decompiled C one function at a time.
+- **Reference:** the same functions are a reference beside the reversing emulator. Recorded calls, run through the
+  recompiled and the decompiled C, show where the port's C behaves differently even though its bytes match (the
+  backwards race start's lost `$v0` would have shown on its first call).
+
+Phases:
+- pin and build N64Recomp, and write its configuration from the split;
+- differential tests per function;
+- the WebAssembly port with recomp where there's no matched C, with bridges generated from `sigs.txt`;
+- N64ModernRuntime native ports;
+- functions swapped to decompiled C as they match and pass their tests.
+
 ### The reversing emulator for agents, ports and other platforms
 
 - An agent tool: watch an address or stop at a function in the user's ROM, with the project's names for each
@@ -1853,7 +1870,7 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   first differing range named by symbol (the port's frames and the emulator's VIs line up through the input script).
 - libRetroReversing's function-call log (which functions ran, with what) read back, for a call-by-call comparison
   with the port's own trace.
-- N64Recomp's output as a third reference, beside the emulator and the decompiled C.
+- N64Recomp's output as a third reference, beside the emulator and the decompiled C (next item).
 - Windows: "—" for now (the frontend loads the core with `dlopen`); a ROM that never starts its video interface
   counts no VIs, so only breakpoints and the timeout end its run.
 
