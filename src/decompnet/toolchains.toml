@@ -1548,7 +1548,7 @@ name = "GCC 2.8.1 (PM matching)"
 platform = "N64"
 arch = "mips"
 license = "GPL-2.0-or-later"
-source = "pmret/gcc-papermario and pmret/binutils-papermario master releases"
+source = "pmret/gcc-papermario and pmret/binutils-papermario master releases; Apple Silicon: gcc-papermario d97824f built from source"
 description = "Distinct matching compiler and paired GNU assembler; not an SN64 compiler alias."
 cc = ["{tc}/gcc", "-B{tc}/", "-c"]
 flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2"]
@@ -1567,8 +1567,17 @@ platforms = ["linux-x86_64"]
 url = "https://github.com/pmret/gcc-papermario/releases/download/master/mac.tar.gz"
 sha256 = "772efc8272a992401f9a9a3faef58ef2f4b6028e792afa0015d894de96fe584e"
 file = "pm-gcc-mac.tar.gz"
-platforms = ["macos-x86_64", "macos-arm64"]
-rosetta = true
+platforms = ["macos-x86_64"]
+rosetta = true  # (only read on Apple Silicon; kept so Intel Macs' installs keep their fingerprint)
+# Apple Silicon builds the same source natively (toolchains._build_gcc_papermario): about 2.6 times less CPU a
+# compile than the Intel build under Rosetta, the same objects.
+[["gcc-2.8.1-pm".parts]]
+url = "https://codeload.github.com/pmret/gcc-papermario/tar.gz/d97824ffc7517675646960442b3f512a473e4404"
+sha256 = "9d8ce88450d2df774f28931b7dfa84588cfe50419753887d6130efe75260b2f3"
+file = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404.tar.gz"
+subdir = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404"
+build = "gcc-papermario"
+platforms = ["macos-arm64"]
 [["gcc-2.8.1-pm".parts]]
 url = "https://github.com/pmret/binutils-papermario/releases/download/master/mac.tar.gz"
 sha256 = "7c1680dbbd207bc6e85d113da601dd75d93e1f982282b1f4bef0b25c15c5432c"
@@ -1892,7 +1901,7 @@ name = "GCC 2.8.1 + SN ASN64 2.56"
 platform = "N64"
 arch = "mips"
 license = "proprietary"
-source = "pmret/gcc-papermario and preserved SN64 0001 assembler"
+source = "pmret/gcc-papermario (Apple Silicon: d97824f built from source) and preserved SN64 0001 assembler"
 description = "GCC 2.8.1 PM code generation paired with original SN ASN64 2.56. Tests assembler macro encodings and scheduling independently; not proof of a game's original toolchain."
 requires = ["sn-n64-272-0001", "wibo", "psyq-obj-parser"]
 driver = "consoles/n64/sn64.py"
@@ -1907,8 +1916,17 @@ platforms = ["linux-x86_64"]
 url = "https://github.com/pmret/gcc-papermario/releases/download/master/mac.tar.gz"
 sha256 = "772efc8272a992401f9a9a3faef58ef2f4b6028e792afa0015d894de96fe584e"
 file = "pm-gcc-mac.tar.gz"
-platforms = ["macos-x86_64", "macos-arm64"]
-rosetta = true
+platforms = ["macos-x86_64"]
+rosetta = true  # (only read on Apple Silicon; kept so Intel Macs' installs keep their fingerprint)
+# Apple Silicon builds the same source natively (toolchains._build_gcc_papermario): about 2.6 times less CPU a
+# compile than the Intel build under Rosetta, the same objects.
+[["gcc-2.8.1-pm-sn-as".parts]]
+url = "https://codeload.github.com/pmret/gcc-papermario/tar.gz/d97824ffc7517675646960442b3f512a473e4404"
+sha256 = "9d8ce88450d2df774f28931b7dfa84588cfe50419753887d6130efe75260b2f3"
+file = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404.tar.gz"
+subdir = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404"
+build = "gcc-papermario"
+platforms = ["macos-arm64"]
 
 [playstation-titles]
 name = "PlayStation game titles (libretro-database)"
