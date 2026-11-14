@@ -106,6 +106,25 @@ def test_an_import_with_the_checkbox_gets_its_project_folder(tmp_path, console):
     assert layout and layout["units"] >= 1 and layout["identical"] is True
     units = json.loads((Path(layout["path"]) / "units.json").read_text())["units"]
     assert sum(len(u["functions"]) for u in units) == net.overview(slug)["functions"]
+    # objdiff shows each guessed file's progress: every function's unit sits in one
+    config = json.loads((Path(layout["path"]) / "objdiff.json").read_text())
+    assert {c["id"] for c in config["progress_categories"]} == {u["name"] for u in units}
+    assert layout["objdiff_units"] == len(config["units"])
+    assert all(u["metadata"]["progress_categories"][0] in {c["id"] for c in config["progress_categories"]}
+               for u in config["units"])
+    # a later plain export keeps the folder's files and groups (it would otherwise drop them)
+    (Path(layout["path"]) / "units.json").unlink()
+    again = net.export_rom(slug, log=lambda *_: None)
+    assert again["project_layout"]["units"] == layout["units"]
+    assert (Path(layout["path"]) / "units.json").is_file()
+    assert "progress_categories" in json.loads((Path(layout["path"]) / "objdiff.json").read_text())
+    # objdiff itself reads it: a report per guessed file
+    if toolchains.installed("objdiff-cli") is None:  # (objdiff.report would download it)
+        return
+    assert layout["objdiff_ready"] is True
+    from decompnet.forks import objdiff
+    rep =objdiff.report(Path(layout["path"]), tmp_path / "report.json")
+    assert {c["id"] for c in rep.get("categories", [])} == {u["name"] for u in units}
 
 
 def test_export_panel_project_folder_controls():

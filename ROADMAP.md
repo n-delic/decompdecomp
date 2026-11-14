@@ -1834,9 +1834,11 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 ### ROM projects as project folders: editable units
 
 Importing a ROM can now also lay it out as a project folder (`rom/project_layout.py`): the rebuildable export plus
-guessed source files in `units.json`, each provisional until all its functions match. Agents still work through ROM
-mode, and the folder is regenerated from the database. Next:
-- objdiff units over the guessed files (`forks/linkedimages.py`), so the project page measures them as a fork's;
+guessed source files in `units.json`, each provisional until all its functions match. Its `objdiff.json` groups the
+export's per-function units into one progress category per guessed file, and their targets are built, so the folder
+opens in objdiff as it is. Every later export refreshes both. Agents still work through ROM mode, and the folder is
+regenerated from the database. Next:
+- the project page measuring the folder with objdiff as it does a fork's (today it shows ROM mode's own counts);
 - an adapter that judges an edit to `src/<unit>.c` back through `rom/match.py` at the real address, so agents,
   autopilot, the permuter and polishing can work in the folder (this clears linked-image exports' "—");
 - regenerating the affected units after joins, splits, function-end reports and compiler-range changes, keeping

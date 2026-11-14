@@ -87,6 +87,39 @@ def write_units(folder: Path, units: list[dict]) -> Path:
     return path
 
 
+def group_objdiff(folder: Path, units: list[dict]) -> int:
+    """Give the export's objdiff.json one progress category per guessed file, so objdiff shows each file's progress.
+    The export writes one objdiff unit per function, named "<segment>/<function>"; the categories group them.
+    Returns how many objdiff units were placed in a file."""
+    path = folder / "objdiff.json"
+    if not path.is_file():
+        return 0
+    config = json.loads(path.read_text(encoding="utf-8"))
+    owner = {name: u["name"] for u in units for name in u["functions"]}
+    placed = 0
+    for unit in config.get("units", []):
+        file = owner.get(unit["name"].rsplit("/", 1)[-1])
+        if file:
+            meta = unit.setdefault("metadata", {})
+            meta["progress_categories"] = [file]
+            placed += 1
+    config["progress_categories"] = [{"id": u["name"], "name": u["name"] + (" (guessed)" if u["provisional"] else "")}
+                                     for u in units]
+    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    return placed
+
+
+def build_targets(folder: Path, log=print) -> bool:
+    """Assemble each function's target object (`build.py targets`), so the folder opens in objdiff as it is.
+    False (and the reason logged) when that fails: the folder is still right, objdiff just has to wait for it."""
+    from ..hostenv import console_python
+    from .export_process import run
+    proc = run([console_python(), "build.py", "targets"], folder, log)
+    if proc.returncode != 0:
+        log("objdiff's targets weren't built: " + (proc.stdout + proc.stderr)[-800:])
+    return proc.returncode == 0
+
+
 def summary(units: list[dict], folder: Path) -> dict:
     return {"t": time.time(), "path": str(folder), "units": len(units),
             "confirmed": sum(not u["provisional"] for u in units)}
