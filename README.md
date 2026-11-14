@@ -86,7 +86,7 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in its own win
 1. **Open a game.** Pick a ROM, a disc image or a program file of a game that you own. To try the app first, open Demo Quest 64. For an N64, PlayStation or
    PlayStation 2 game, the app offers to install that console's compilers first. Tick the box only if you accept the proprietary ones.
 2. **Start helper agents.** Click **Start agents**. Choose any API model (DeepSeek, OpenRouter, OpenAI, or a local model), or a CLI helper agent: Claude Code,
-   Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI, ZCode CLI or Oh My Pi. Run several; they work on different functions at the same time.
+   Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI, ZCode CLI, Oh My Pi or Hermes Agent. Run several; they work on different functions at the same time.
 3. **Watch the map.** Each square is a function and turns green when it matches. The autopilot matches the easy functions at no cost before any helper agent
    starts.
 4. **Export.** Use **Export** in the project header. You get a decomp project that builds your game again, byte for byte.

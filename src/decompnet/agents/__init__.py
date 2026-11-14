@@ -1,13 +1,14 @@
 """The connector: how decompdecomp talks to a helper agent. Every agent the app can start is a module in this folder
-(agents/claude.py, codex.py, cursor.py, kimi.py, antigravity.py, opencode.py, zcode.py, ohmy.py, api.py) that makes
-an `Agent` below and fills in its parts; the list at the end of this file registers them. The rest of the app (the
-helpers' manager in
+(agents/claude.py, codex.py, cursor.py, kimi.py, antigravity.py, opencode.py, hermes.py, zcode.py, ohmy.py, api.py)
+that makes an `Agent` below and fills in its parts; the list at the end of this file registers them. The rest of the
+app (the helpers' manager in
 app/agents.py, the routes, the GUI) asks the agent of a helper, `agents.get(kind)`, and never compares agent names.
 A person or an agent adding support for another agent reads its module and this file, nothing else.
 
 An agent is one of two sorts:
-- A program the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, ZCode CLI, Oh My Pi). The
-  app runs it headless, once per session, in a private working folder, connected only to the app's own MCP endpoint on
+- A program the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, ZCode CLI, Oh My Pi),
+  or that runs an API endpoint the user saved (Hermes Agent). The app
+  runs it headless, once per session, in a private working folder, connected only to the app's own MCP endpoint on
   127.0.0.1 with a token of its own (`session_command`): MCP is the app's private wiring to it. The prompt goes in
   on stdin (`stdin`), or in a file the agent is given by path when its CLI has no stdin prompt (`prompt_file`,
   zcode's `--attach`), never as text on the command line; what it prints, one JSON object a line, is read into the
@@ -115,6 +116,7 @@ class Agent:
     tool_meta: dict = {}  # what it reads on the definition of each of decompdecomp's MCP tools (tools.ALWAYS_LOAD)
     recommended = False  # the launcher lists it first, and starts on it until the user picks another
     uses_endpoints = False  # its model and key come from the API endpoints saved in Agents & models, not a sign-in
+    built_in = False  # the app's own loop drives the model, with no program to install (only the "API key" helper)
     uses_accounts = False  # named sign-ins in separate configuration directories
     takes_effort = False  # the launcher offers a reasoning effort: with the model's name ("provider/model#high"), or
     # for an agent whose model is an endpoint's, as the helper's `effort` option
@@ -127,7 +129,8 @@ class Agent:
         """What the GUI shows about it, before what app/agents.py `detect` finds out (installed, version, models)."""
         return {"id": self.id, "name": self.name, "vendor": self.vendor, "signin": self.signin, "docs": self.docs,
                 "install": self.install_text(), "recommended": self.recommended, "uses_endpoints": self.uses_endpoints,
-                "uses_accounts": self.uses_accounts, "takes_effort": self.takes_effort, "efforts": list(self.efforts)}
+                "built_in": self.built_in, "uses_accounts": self.uses_accounts, "takes_effort": self.takes_effort,
+                "efforts": list(self.efforts)}
 
     def install_text(self) -> str:
         return (self.windows_install or self.install) if sys.platform == "win32" else self.install
@@ -218,7 +221,8 @@ class Agent:
         """One session's command line (`exe`: its program, found), and what it adds to the environment. The session
         runs in `workdir`, where it writes its own config files. It connects only to `mcp_url`, the app's MCP server,
         with `token` (never to the user's own MCP servers), and may use only decompdecomp's tools there. `model`: ""
-        for the agent's default."""
+        for the agent's default. An agent that `uses_endpoints` is also given `options=`: the helper's endpoint
+        (base_url, api_key, effort), as the API helper gets them."""
         raise RuntimeError(f"{self.name} isn't a program the app runs")
 
     def stdin(self, prompt: str) -> str:
@@ -263,6 +267,34 @@ class Agent:
         """Whether an error it said is one every try would meet the same way (Antigravity refusing decompdecomp's
         tools): the helper pauses with it, instead of starting again."""
         return False
+
+    def end_leftovers(self, env: dict) -> None:
+        """End what a session of it leaves running outside its process group (`env`: the session's environment, as
+        `session_command` made it): Hermes Agent starts a gateway that daemonises and outlives its session. Called
+        before a session starts and after it ends."""
+
+    def search_dirs(self) -> list[Path]:
+        """Extra folders to look in for `command`, beyond PATH and the app's known bin folders: an agent whose
+        installer stages it off PATH (Hermes' %LOCALAPPDATA%\\hermes\\bin) names them here, so detection and
+        teardown resolve the same program."""
+        return []
+
+    def resolve_exe(self) -> str | None:
+        """The agent's program: on PATH, else in one of `search_dirs`. Detection (`_which`) falls back to this and
+        `end_leftovers` uses it, so a teardown reaches a gateway an install off PATH started, not only one on PATH."""
+        if not self.command:
+            return None
+        found = shutil.which(self.command)
+        if found:
+            return found
+        for d in self.search_dirs():
+            if os.name == "nt":
+                hit = shutil.which(self.command, path=str(d))
+                if hit:
+                    return hit
+            elif (Path(d) / self.command).exists():
+                return str(Path(d) / self.command)
+        return None
 
     # ------------------------------------------------------------------ an agent built into the app
 
@@ -346,13 +378,14 @@ def _registry() -> list[Agent]:
     from .claude import CLAUDE
     from .codex import CODEX
     from .cursor import CURSOR
+    from .hermes import HERMES
     from .kimi import KIMI
     from .ohmy import OMP
     from .opencode import OPENCODE
     from .zcode import ZCODE
 
     # the order the Agents page lists them in (the launcher puts the recommended one first)
-    return [CLAUDE, CODEX, CURSOR, KIMI, ANTIGRAVITY, OPENCODE, ZCODE, OMP, API]
+    return [CLAUDE, CODEX, CURSOR, KIMI, ANTIGRAVITY, OPENCODE, HERMES, ZCODE, OMP, API]
 
 
 AGENTS: list[Agent] = _registry()

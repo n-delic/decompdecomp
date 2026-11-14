@@ -291,7 +291,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     }
     hideLaunch();
     const total = LZ.multiple ? models.length * count : count;
-    toast(`${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
+    toast(`${esc(a.built_in ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     poll(false);
     loadNav();
   } catch (e) { toast(esc(e.message), "err"); } finally { if (btn) btn.disabled = false; }
@@ -311,8 +311,8 @@ function renderLauncher(box, compact = true) {
   const list = [...S.st.agents].sort((x, y) => y.recommended - x.recommended);
   const a = list.find((x) => x.id === LZ.kind) || list[0];
   const kinds = list.map((x) => `<button type="button" class="lz-kind ${x.id === a.id ? "on" : ""}" data-k="${esc(x.id)}">
-      <b>${esc(x.name)}</b><span>${x.uses_endpoints ? `${x.recommended ? "Recommended · " : ""}any model with an API key` : x.installed ? esc(x.version ? x.version.replace(/\s*\(.*\)/, "") : x.vendor) : "not installed"}</span>
-      ${x.installed || x.uses_endpoints ? "" : `<em>install</em>`}</button>`).join("");
+      <b>${esc(x.name)}</b><span>${x.built_in ? `${x.recommended ? "Recommended · " : ""}any model with an API key` : x.installed ? esc(x.version ? x.version.replace(/\s*\(.*\)/, "") : x.vendor) : "not installed"}</span>
+      ${x.installed || x.built_in ? "" : `<em>install</em>`}</button>`).join("");
   let body = "";
   if (!a.installed) {
     body = `<p class="small"><b>${esc(a.name)}</b> isn't installed on this computer.${a.needs ? ` It needs ${esc(a.needs)} first.` : ""}</p>
@@ -321,7 +321,7 @@ function renderLauncher(box, compact = true) {
       <p class="muted small">${esc(a.signin)}</p><pre class="joblog" data-log hidden></pre>`;
   } else if (a.uses_endpoints) {
     const eps = S.st.settings.endpoints || [];
-    const why = `<p class="muted small">The app talks to the model itself: nothing else to install, and no other program's update can break it. Any OpenAI-compatible provider works (OpenAI, DeepSeek, OpenRouter) or a model on this computer; you pay your provider for what it uses.</p>`;
+    const why = a.built_in ? `<p class="muted small">The app talks to the model itself: nothing else to install, and no other program's update can break it. Any OpenAI-compatible provider works (OpenAI, DeepSeek, OpenRouter) or a model on this computer; you pay your provider for what it uses.</p>` : "";
     LZ.eps = (LZ.eps || []).filter((id) => eps.some((e) => e.id === id));
     const live = new Set(eps.map((e) => e.id));
     LZ.models = LZ.models.filter((m) => typeof m === "object" && live.has(m.endpoint));
@@ -380,7 +380,7 @@ function renderLauncher(box, compact = true) {
         <label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="${MAX_PER_SESSION}" value="${LZ.per || S.st.settings.per_session}"></label>
         <span class="grow"></span>
         <button class="primary" data-act="start" type="button">${esc(launchLabel(a, LZ.model, LZ.count, LZ.models))}</button></div>
-        <p class="muted small">${a.uses_endpoints ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
+        <p class="muted small">${a.built_in ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
     </div>`;
   wireCopies(box);
   const account = box.querySelector('[data-f="account"]');

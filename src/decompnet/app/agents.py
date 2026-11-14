@@ -292,7 +292,7 @@ def detect(quick: bool = False) -> list[dict]:
         if not k.command:
             row.update(installed=True, version=None, path=None)
         else:
-            path = _which(k.command)
+            path = _which(k.command) or k.resolve_exe()
             row.update(installed=path is not None, path=path, version=None)
             if path:
                 row.update(version=k.version(path, run=not quick), models=k.models(path, run=not quick),
@@ -352,6 +352,7 @@ class Session:
     thread: threading.Thread | None = None
     proc: subprocess.Popen | None = None
     pid_start: int | None = None
+    env: dict | None = None  # the session's process environment while it runs; shutdown uses it to end leftovers
     usd: float = 0.0  # what the agent's provider charged, as the agent reports it
     tokens: int = 0
     usage: dict = field(default_factory=_fresh_usage)  # this session's counts (helper_sessions)
@@ -612,7 +613,7 @@ class Manager:
         if agent.command and not chosen:
             name_model = str(agent.default_model(options) or "")
             if name_model:
-                pinned = agent.resolve_model(name_model, _which(agent.command))
+                pinned = agent.resolve_model(name_model, _which(agent.command) or agent.resolve_exe())
                 if pinned:
                     options["model"] = name_model = pinned
         ids = []
@@ -800,8 +801,17 @@ class Manager:
         self._down = True
         processes = [s.proc for s in list(self.sessions.values())]  # retain Windows handles until _end_groups returns
         groups = {proc.pid for proc in processes if proc is not None and proc.poll() is None}
+        # Only helpers still live at quit are told to end what they left running: one that already ended ran
+        # its own end_leftovers at run end, and s.env is never cleared, so without this gate a long-stopped
+        # Hermes helper would get a second, synchronous 30 s `gateway stop` before the app can exit.
+        live = [s for s in self.sessions.values() if s.proc is not None and s.proc.poll() is None]
         self.stop()
         _end_groups(groups | self._strays())
+        for s in live:  # a daemonised gateway (Hermes) is outside those process groups
+            try:
+                agents.get(s.kind).end_leftovers(s.env or {})
+            except Exception:
+                log.exception("ending %s leftovers while quitting failed", s.kind)
         try:
             self.on_stop()
         except Exception:  # the app quits anyway
@@ -1210,7 +1220,7 @@ class Manager:
         if options is None:
             raise Fatal("Its account or API endpoint was removed. Start a new helper and choose another one.")
         s.options = options
-        exe = _which(k.command)
+        exe = _which(k.command) or k.resolve_exe()
         if not exe:
             raise RuntimeError(f"{k.name} is not installed")
         # zcode has no stdin prompt: its session command attaches a file, and this writes the prompt into it. Every
@@ -1222,7 +1232,9 @@ class Manager:
             prompt_file = k.prompt_file(workdir, prompt)
         except ValueError as e:
             raise Fatal(str(e)) from e
-        cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model)
+        # an agent that runs a saved endpoint (Hermes Agent) is given it, as the API helper is
+        endpoint = {"options": s.options} if k.uses_endpoints else {}
+        cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model, **endpoint)
         cmd = k.launch_command(agents.cli_argv(cmd))
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
@@ -1236,6 +1248,8 @@ class Manager:
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
         k = agents.get(s.kind)
         cmd, env, prompt = self._command(s, token, workdir)
+        s.env = env  # retained so Manager.shutdown can end what the session left running (Hermes' gateway)
+        k.end_leftovers(env)  # what a session before this one left running (a crash, or the app restarting)
         s.push("info", f"session {s.runs}: {k.name} started")
         if os.name == "nt":
             import sys
@@ -1300,6 +1314,7 @@ class Manager:
         code = proc.wait()
         _close_windows_job(proc.pid)
         s.proc = None
+        k.end_leftovers(env)
         if s.stop.is_set():
             return True
         everything = " ".join([*said, *errors])
