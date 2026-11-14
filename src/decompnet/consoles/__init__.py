@@ -137,6 +137,9 @@ class Console:
     demo_tools: tuple[str, ...] = ()  # what building and importing the demo needs: toolchains, or programs on PATH
     own_features: frozenset[str] = frozenset()  # EXPORT, REBUILD_CHECK
     port_kit: PortKit | None = None  # what a finished game is ported with (docs/PORTING.md); None: no kit yet
+    # the console's reversing emulator: a module with run(rom, vis, ...) -> its Run, as consoles/n64/emulator has, which
+    # runs the user's own ROM headless with breakpoints (app/emulator_watch.py, the watch_in_emulator tool); None: none yet
+    emulator: object = None
     # PROJECT mode: its import recognises code that isn't the game's own (library code, an SDK, the C runtime) and
     # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
     sets_aside = False
