@@ -1220,13 +1220,13 @@ def test_a_first_sync_keeps_a_new_function_at_an_address_another_overlay_has():
     crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 40}
     disk = files([disp], ["ovl_a_disp_004BF720"])
     projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
-    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    manifest, pending, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk, auto_only=False)
     assert [f["name"] for f in manifest["layout"]] == ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"]
     assert "src/ovl_b_crit_004BF720.c" in pending
 
     renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36}
     disk = files([renamed])
-    manifest, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), files([disp]), disk)
+    manifest, _, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), files([disp]), disk, auto_only=False)
     assert [f["name"] for f in manifest["layout"]] == ["draw_sprite"]
 
 
@@ -1247,7 +1247,7 @@ def test_a_first_sync_adds_a_new_function_where_another_at_its_address_was_renam
     renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36}  # the saved (old) name of disp
     disk = files([renamed])
     projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
-    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    manifest, pending, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk, auto_only=False)
     assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
     assert "src/ovl_b_crit_004BF720.c" in pending
     assert "src/ovl_a_disp_004BF720.c" not in pending   # the renamed entry's source is the saved file, not a new one
@@ -1266,7 +1266,7 @@ def test_a_first_sync_keeps_set_aside_functions_sharing_an_address():
     a = {"name": "ovl_a_004BF720", "vram": 0x4BF720, "size": 36}
     b = {"name": "ovl_b_004BF720", "vram": 0x4BF720, "size": 40}
     disk = files([a])
-    manifest, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), files([a, b]), disk)
+    manifest, _, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), files([a, b]), disk, auto_only=False)
     assert [f["name"] for f in manifest["set_aside"]] == ["ovl_a_004BF720", "ovl_b_004BF720"]
 
 
@@ -1295,7 +1295,7 @@ def test_a_first_sync_keeps_a_same_size_overlay_sibling_by_unit():
     renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}         # disp's saved (old) name
     disk = files([renamed])
     projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
-    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    manifest, pending, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk, auto_only=False)
     assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
     assert "src/ovl_b_crit_004BF720.c" in pending and "src/ovl_a_disp_004BF720.c" not in pending
     merged = (disk | pending)
@@ -1346,7 +1346,7 @@ def test_a_first_sync_from_an_old_folder_keeps_both_same_size_siblings():
     renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36}                          # old folder: no unit
     disk = files([renamed])
     projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
-    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    manifest, pending, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk, auto_only=False)
     names = [f["name"] for f in manifest["layout"]]
     assert "ovl_a_disp_004BF720" in names and "ovl_b_crit_004BF720" in names, names        # neither sibling dropped
     assert "src/ovl_a_disp_004BF720.c" in pending and "src/ovl_b_crit_004BF720.c" in pending
@@ -1510,26 +1510,88 @@ def test_a_later_adopt_does_not_rename_before_the_folder_is_fully_validated(proj
     assert "func_00001000" in names and "f" not in names, names              # the conflicted folder renamed nothing
 
 
-def test_a_first_sync_matches_a_long_renamed_names_source_file(project):
-    """#174 nit: on a first sync a renamed database function keeps its saved (old) name, so its rendered source is
-    the saved file, not a new one. _source_file must shorten the long database name to the same digested filename
-    the render used, or that long file is wrongly queued as new while a renamed overlay sibling joins beside it."""
+def test_a_first_sync_publishes_a_long_deliberate_renames_digested_source(project):
+    """#174: a first sync passes auto_only=True, so a deliberate database rename wins over the folder's older name;
+    the long new name's rendered source is published under its digested filename. _source_file must shorten the long
+    name to the same digest the render used, or that long file is wrongly left out while a sibling joins beside it."""
     sha = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
     long = "render_sprite_batch_" + "a" * 250                                 # over SOURCE_COMPONENT_BYTES: a digest file
     digest = saves._source_file(long)
     assert digest != long + ".c"                                             # the name is long enough to be digested
 
-    disp = {"name": long, "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}      # the database's (auto-default) rename of
+    disp = {"name": long, "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}      # the database's deliberate rename of
     crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 40, "unit": "ovl_b"}    # draw_sprite, plus a sibling
     renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}         # disp's saved (old) name
     base = {"format": saves.FORMAT, "game": {"sha1": sha}, "headers": {"": "common.h"}}
     disk = {saves.MANIFEST: json.dumps(base | {"layout": [renamed]}), "include/common.h": "/* */"}
     projected = {saves.MANIFEST: json.dumps(base | {"layout": [disp, crit]}), "include/common.h": "/* */",
                  f"src/{digest}": "int x;", "src/ovl_b_crit_004BF720.c": "int y;"}
-    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
-    assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
-    assert f"src/{digest}" not in pending                                    # the long renamed source is the saved file
+    manifest, pending, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk, auto_only=True)
+    assert [f["name"] for f in manifest["layout"]] == [long, "ovl_b_crit_004BF720"]          # the deliberate name wins
+    assert f"src/{digest}" in pending                                        # its digested source is published
     assert "src/ovl_b_crit_004BF720.c" in pending                            # the sibling still joins
     merged = disk | pending
     merged[saves.MANIFEST] = json.dumps(manifest)
     _manifest(merged, {"rom": {"sha1": sha}})                                # the merged folder still saves
+
+
+def test_a_first_sync_keeps_a_deliberate_rename_when_the_folder_has_the_stale_source(project):
+    """#174 review 1: a first sync must keep a deliberate database rename even when the folder still has the old
+    name's matched source. The stale `src/<old>.c` was left behind when the superseded entry was dropped, so
+    `_manifest(candidate)` refused the save ("Add <old> to the function layout"). The file is removed with the
+    entry, and the database's source under the new name is published in its place."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:              # f is matched, so the folder is saved with src/f.c
+        db.execute("UPDATE functions SET status='matched',matched_source='int f(void){ return 0; }' "
+                   "WHERE project_id=? AND name='f'", (pid,))
+    net.progress.sync("game", force=True)                                     # writes src/f.c
+    assert (folder / "src" / "f.c").exists()
+    with net.store.tx() as db:              # the user deliberately renamed f -> draw_sprite
+        db.execute("UPDATE functions SET name='draw_sprite' WHERE project_id=? AND name='f'", (pid,))
+        db.execute("DELETE FROM progress_state WHERE project_id=?", (pid,))   # no baseline: the next sync is a first sync
+    net._syms.pop(pid, None)
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)                                     # must not raise "Add f ..."
+    names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert "draw_sprite" in names and "f" not in names, names                 # the folder took the deliberate name
+    assert not (folder / "src" / "f.c").exists()                              # the stale source was removed with it
+    assert (folder / "src" / "draw_sprite.c").exists()                        # the database's source is published
+
+
+def test_a_later_adopt_runs_after_repair_rebuilds_a_missing_header(project):
+    """#174 review 2: the later-sync pre-check validates the folder the way the sync will accept it -- after
+    `_repair`. A folder an older version wrote lacking its header must still have its saved name adopted over the
+    database's auto name, not skipped because `_manifest` refused the folder before `_repair` rebuilt the header."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:              # a re-analysis reset the deliberate name back to its auto name
+        db.execute("UPDATE functions SET name='func_00001000' WHERE project_id=? AND name='f'", (pid,))
+    net._syms.pop(pid, None)
+    (folder / "include" / "common.h").unlink()                               # an older folder lost its header
+    net.progress.sync("game", force=True)
+    names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert "f" in names and "func_00001000" not in names, names              # adoption ran once _repair fixed it
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='f'", pid)   # adopted back in the db
+
+
+def test_a_later_sync_reads_only_the_manifest_when_the_saved_names_agree(project, monkeypatch):
+    """#174 review 3: a database-driven sync (every agent compile) must not read every source just to check for an
+    adoption that can do nothing. When no saved name is missing from the database, the pre-check reads the manifest
+    alone and skips the full `_read`, so the common publish path does no `_read` of its own."""
+    import decompnet.app.progress as progress_module
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    reads = {"n": 0}
+    real_read = progress_module._read
+
+    def counting_read(arg):
+        reads["n"] += 1
+        return real_read(arg)
+
+    monkeypatch.setattr(progress_module, "_read", counting_read)
+    with net.store.tx() as db:              # a database-only change: the folder is untouched and the names agree
+        db.execute("UPDATE functions SET status='matched',matched_source='int f(void){ return 0; }' "
+                   "WHERE project_id=? AND name='f'", (pid,))
+    assert net.progress.sync("game", force=True)                             # the fast publish path runs
+    assert reads["n"] == 0                                                    # no full folder read: only the manifest

@@ -123,6 +123,18 @@ def _read(folder: Path) -> dict[str, str]:
     return files
 
 
+def _saved_layout_names(folder: Path) -> set[str]:
+    """The names in a folder's saved layout, read from the manifest alone. A database-driven sync checks these against
+    the database before the full folder read, so the costly `_read`/`_manifest` (1.1 s on an 18k-function folder) run
+    only when a saved name is missing -- the precondition for adoption to do anything (#174 review 3)."""
+    try:
+        manifest = json.loads((folder / saves.MANIFEST).read_text(encoding="utf-8"))
+        layout = manifest.get("layout") if isinstance(manifest, dict) else None
+        return {entry.get("name") for entry in (layout or []) if isinstance(entry, dict)}
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
+        return set()
+
+
 def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[str, str]:
     """What a folder an older version wrote lacks, put right before it's checked (#167: a PS2 project's folder, kept
     since before the folder was read back, stopped opening):
@@ -288,7 +300,7 @@ def _merge_manifest(old, new, current, key: str = ""):
 
 
 def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, str],
-                   auto_only: bool = False) -> tuple[dict, dict[str, str]]:
+                   auto_only: bool) -> tuple[dict, dict[str, str], set[str]]:
     """A first sync has no deletion history, so keep database work while adding saved contributions.
 
     `auto_only` applies the adoption rule the later sync already follows (#174 review 2): a deliberate database
@@ -363,7 +375,11 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
     for name, text in projected.items():
         if name.startswith(("src/", "best/")) and name not in disk and name not in renamed_files:
             pending[name] = text
-    return manifest, pending
+    # A saved entry a deliberate database rename superseded is gone from the layout, so its own src/best file in the
+    # folder would make `_manifest` refuse the save ("Add <old name> to the function layout"). Remove it with the
+    # entry; the database's source under the new name is published in its place (#174 review 1).
+    superseded_files = {f"{d}/{saves._source_file(n)}" for n in superseded for d in ("src", "best")} & set(disk)
+    return manifest, pending, superseded_files
 
 
 def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]:
@@ -968,21 +984,29 @@ class Progress:
         baseline = self._baseline(pid)
         signature = self._signature(folder)
         if baseline is not None and slug not in self.adopting:
-            # Not only on a first sync: before a later publish renders the database's name, keep a database function
-            # at the saved name the folder still uses for it (#174 review 1). _adopt_saved_names acts only when a
-            # saved name is missing from the database and exactly one row matches, so this is a no-op once they agree.
-            # Validate the whole folder first: _adopt_check sees only format, sha1 and layout, but _read and _manifest
-            # also refuse git conflicts, missing headers and malformed metadata -- and adopting renames rows and
-            # rewrites their matched source and header, so a folder those later checks will reject must change nothing
-            # here (#174 review 3). A failure is swallowed; the same _read/_manifest below raises it for the user.
-            try:
-                preview = _read(folder)
-                if saves.MANIFEST in preview:
-                    _manifest(preview, cfg, {row["name"] for row in net.store.all(
-                        "SELECT name FROM functions WHERE project_id=?", pid)})
-                    _adopt_saved_names(net, pid, json.loads(preview[saves.MANIFEST]), auto_only=True, cfg=cfg)
-            except (OSError, UnicodeError, ValueError, NetworkError):
-                pass  # a foreign, conflicted or malformed folder is left for _read/_manifest below to reject
+            # Not only on a first sync: before a later publish renders the database's name, keep a database function at
+            # the saved name the folder still uses for it (#174 review 1). Adoption does something only when a saved
+            # name is missing from the database and one row matches, so read the manifest alone and skip the full
+            # folder read on the common path -- every agent compile, where the names already agree (#174 review 3).
+            saved_names = _saved_layout_names(folder)
+            if saved_names:
+                db_names = {row["name"] for row in net.store.all(
+                    "SELECT name FROM functions WHERE project_id=?", pid)}
+                if saved_names - db_names:
+                    # Validate the whole folder as the sync will accept it -- after `_repair` rebuilds a missing
+                    # header or sets aside a stale source (#174 review 2) -- because `_read` and `_manifest` also
+                    # refuse git conflicts and malformed metadata, and adopting renames rows and rewrites their
+                    # matched source and header, so a folder those checks reject must change nothing here (#174
+                    # review 3). A failure is swallowed; the same `_read`/`_repair`/`_manifest` below raises it.
+                    report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
+                    try:
+                        preview = _read(folder)
+                        if saves.MANIFEST in preview:
+                            preview = _repair(net, pid, folder, preview, report)
+                            _manifest(preview, cfg, db_names)
+                            _adopt_saved_names(net, pid, json.loads(preview[saves.MANIFEST]), auto_only=True, cfg=cfg)
+                    except (OSError, UnicodeError, ValueError, NetworkError):
+                        pass  # a foreign, conflicted or malformed folder is left for _read/_manifest below to reject
         if baseline is not None and self.signatures.get(slug) == signature:
             if not db_changed and not config_changed:
                 return False
@@ -1026,9 +1050,10 @@ class Progress:
                 changed = {name for name in set(disk) | set(before.files)
                            if _hash(disk.get(name)) != before.files.get(name)}
             initial_pending = {}
+            initial_removed: set[str] = set()
             if before is None and slug not in self.adopting:
                 changed = {name for name in changed if name in disk}
-                manifest, initial_pending = _initial_merge(manifest, comparison, disk, auto_only=True)
+                manifest, initial_pending, initial_removed = _initial_merge(manifest, comparison, disk, auto_only=True)
             legacy_newer = set()
             if before is None and slug not in self.adopting:
                 # A database match newer than the folder's snapshot wins even when the folder has an older file of
@@ -1064,6 +1089,7 @@ class Progress:
                                         json.loads(disk[saves.MANIFEST])), indent=1) + "\n"
                 removed = {name: None for name in previous.files
                            if name not in changed and name not in rendered}
+                removed.update({name: None for name in initial_removed})  # stale sources of superseded entries (#174)
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, cfg, known_names)
                 all_code = any(name.startswith("include/") for name in changed)
