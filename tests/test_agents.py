@@ -1627,7 +1627,7 @@ def test_hermes_is_found_in_its_installer_dir(tmp_path, monkeypatch):
     exe.chmod(0o755)
     _patch_path_lookup_only(monkeypatch)  # not on PATH, but the installer-dir probe still works (Windows too)
     assert str(bindir) in [str(d) for d in hermes.HERMES.search_dirs()]
-    assert hermes.HERMES.resolve_exe() == str(exe)
+    assert os.path.normcase(hermes.HERMES.resolve_exe()) == os.path.normcase(str(exe))
 
 
 def test_hermes_stops_gateway_via_its_installer_dir(tmp_path, monkeypatch):
@@ -1643,7 +1643,8 @@ def test_hermes_stops_gateway_via_its_installer_dir(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(hermes.subprocess, "run", lambda argv, **kw: calls.append(argv))
     hermes.HERMES.end_leftovers({"HERMES_HOME": str(tmp_path / "sess" / ".hermes")})
-    assert [str(exe), "gateway", "stop"] in calls
+    assert any(os.path.normcase(c[0]) == os.path.normcase(str(exe)) and list(c[1:]) == ["gateway", "stop"]
+               for c in calls)
 
 
 def test_hermes_uses_result_text_when_nothing_streamed():
@@ -1661,6 +1662,14 @@ def test_hermes_does_not_repeat_streamed_text_on_result():
     hermes.HERMES.parse({"type": "text", "text": "answer"}, state)
     out = [o for o in hermes.HERMES.parse({"type": "result", "text": "streamed answer", "tokens": {}}, state) if o]
     assert [t for (k, t) in out if k == "text"] == ["streamed answer"]
+
+
+def test_hermes_drops_the_session_id_stderr_trailer():
+    """Hermes ends a session's stderr with a `session_id: …` line; it must be dropped so it can't become
+    the tail of a failed session's "exited with code N" message. A real error line is kept."""
+    assert hermes.HERMES.clean_stderr("session_id: 0b9f-ac12") == ""
+    assert hermes.HERMES.clean_stderr("  session_id: x  ") == ""
+    assert hermes.HERMES.clean_stderr("ConnectionError: refused") == "ConnectionError: refused"
 
 
 def test_shutdown_stops_leftover_gateways(tmp_path, monkeypatch):
@@ -1731,7 +1740,8 @@ def test_hermes_stops_gateway_from_its_unix_install_dir(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(hermes.subprocess, "run", lambda argv, **kw: calls.append(argv))
     hermes.HERMES.end_leftovers({"HERMES_HOME": str(tmp_path / "sess" / ".hermes")})
-    assert [str(exe), "gateway", "stop"] in calls
+    assert any(os.path.normcase(c[0]) == os.path.normcase(str(exe)) and list(c[1:]) == ["gateway", "stop"]
+               for c in calls)
 
 
 def test_run_cli_stores_the_session_env_for_teardown(tmp_path, monkeypatch):

@@ -59,6 +59,12 @@ class Hermes(Agent):
     uses_endpoints = True
     takes_effort = True
 
+    def clean_stderr(self, line: str) -> str:
+        """Hermes ends a session's stderr with a `session_id: …` line; drop it so it can't become the tail
+        of a failed session's \"exited with code N\" message (the default keeps every non-empty line)."""
+        line = line.strip()
+        return "" if line.startswith("session_id:") else line
+
     def session_command(self, exe: str, workdir: Path, mcp_url: str, token: str, model: str,
                         options: dict | None = None) -> tuple[list[str], dict]:
         """`options`: the helper's endpoint (base_url, api_key, effort), as the API helper gets them."""
