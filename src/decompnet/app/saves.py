@@ -287,6 +287,28 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
     return True
 
 
+def _unstamped(text: str) -> tuple[str, str] | None:
+    """A rendered manifest without its "saved_at" and "revision" lines (the first keys after "format", as _manifest
+    writes them); None when they aren't there."""
+    start = text.find('\n "saved_at": ', 0, 200)
+    if start < 0:
+        return None
+    revision = text.find('\n', start + 1)
+    if not text.startswith('\n "revision": ', revision):
+        return None
+    end = text.find('\n', revision + 1)
+    return (text[:start], text[end:]) if end >= 0 else None
+
+
+def only_stamp_differs(new: str | None, old: str | None) -> bool:
+    """Two manifests that say the same but when they were written and their revision: publishing the new one would
+    rewrite the whole file (27 MB on a 2,000-function game) to say nothing new, and bump the revision for nothing."""
+    if not new or not old or new == old:
+        return False
+    unstamped = _unstamped(new)
+    return unstamped is not None and unstamped == _unstamped(old)
+
+
 def _manifest_revision(manifest: dict) -> int:
     """A manifest's revision; 0 for saves written before manifests had one."""
     value = manifest.get("revision")

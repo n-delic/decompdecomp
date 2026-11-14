@@ -1755,6 +1755,14 @@ class Progress:
                 possible |= {name for name in baseline.projected.files if name.startswith("include/")}
             removed = {name: None for name in possible
                        if name in baseline.disk.files and name not in files}
+        if (set(changes) == {saves.MANIFEST} and not removed
+                and saves.only_stamp_differs(files[saves.MANIFEST], baseline.projected.manifest)):
+            # Nothing in the save changed but the manifest's stamp: keep the published manifest (and its revision).
+            # A database write the render doesn't read made a v-rally save rewrite 27 MB to say nothing new. When a
+            # file does change, the new stamp is kept: a first sync (_database_newer) trusts saved_at to say how
+            # recent the folder's files are.
+            files = {**files, saves.MANIFEST: baseline.projected.manifest}
+            changes = {}
         expected = {}
         for name in set(changes) | set(removed):
             path = folder / name

@@ -281,6 +281,12 @@ BEGIN UPDATE functions SET {MARKS} WHERE id=NEW.id; END;
 
 # Created after the migrations above: they name columns older databases get from MIGRATIONS. A trigger only marks what
 # a progress folder's render actually reads (saves._render), so work that stays in the database costs nothing.
+# The update triggers also check the value changed: `UPDATE OF col` fires on any write to col, so a write of the same
+# value, or of a functions.meta key the render doesn't read (only saves.SET_ASIDE_META's), re-rendered and rewrote a
+# 27 MB manifest identical but for its stamp. DIRTY_UPDATE_TRIGGERS older databases have are replaced (_initialize).
+DIRTY_META_KEYS = ("asm_code", "not_c", "asm_twin", "verified_assembly")  # = saves.SET_ASIDE_META (a test checks)
+DIRTY_UPDATE_TRIGGERS = ("progress_dirty_functions_update", "progress_dirty_notes_update",
+                         "progress_dirty_headers_update", "progress_dirty_symbols_update", "progress_dirty_agent_rename")
 DIRTY_TRIGGERS = """
 CREATE TRIGGER IF NOT EXISTS progress_dirty_functions_insert AFTER INSERT ON functions
 WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
@@ -293,7 +299,17 @@ END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_functions_update
 AFTER UPDATE OF name,vram,size,status,matched_source,matched_agent_id,best_source,best_score,best_agent_id,readable,meta
 ON functions
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN (OLD.name IS NOT NEW.name OR OLD.vram IS NOT NEW.vram OR OLD.size IS NOT NEW.size OR OLD.status IS NOT NEW.status
+      OR OLD.matched_source IS NOT NEW.matched_source OR OLD.matched_agent_id IS NOT NEW.matched_agent_id
+      OR OLD.best_source IS NOT NEW.best_source OR OLD.best_score IS NOT NEW.best_score
+      OR OLD.best_agent_id IS NOT NEW.best_agent_id OR OLD.readable IS NOT NEW.readable
+      OR (OLD.meta IS NOT NEW.meta AND CASE WHEN json_valid(COALESCE(OLD.meta,'{}')) AND json_valid(COALESCE(NEW.meta,'{}'))
+          THEN json_extract(COALESCE(OLD.meta,'{}'),'$.asm_code') IS NOT json_extract(COALESCE(NEW.meta,'{}'),'$.asm_code')
+            OR json_extract(COALESCE(OLD.meta,'{}'),'$.not_c') IS NOT json_extract(COALESCE(NEW.meta,'{}'),'$.not_c')
+            OR json_extract(COALESCE(OLD.meta,'{}'),'$.asm_twin') IS NOT json_extract(COALESCE(NEW.meta,'{}'),'$.asm_twin')
+            OR json_extract(COALESCE(OLD.meta,'{}'),'$.verified_assembly') IS NOT json_extract(COALESCE(NEW.meta,'{}'),'$.verified_assembly')
+          ELSE 1 END))
+ AND EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), functions=1 WHERE project_id=NEW.project_id;
@@ -317,7 +333,9 @@ BEGIN
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_notes_update AFTER UPDATE OF project_id,function_id,agent_id,text ON notes
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN (OLD.project_id IS NOT NEW.project_id OR OLD.function_id IS NOT NEW.function_id OR OLD.agent_id IS NOT NEW.agent_id
+      OR OLD.text IS NOT NEW.text)
+ AND EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
@@ -335,7 +353,8 @@ BEGIN
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), headers=1 WHERE project_id=NEW.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_headers_update AFTER UPDATE OF project_id,header,unit ON context_versions
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN (OLD.project_id IS NOT NEW.project_id OR OLD.header IS NOT NEW.header OR OLD.unit IS NOT NEW.unit)
+ AND EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), headers=1 WHERE project_id=NEW.project_id;
@@ -353,7 +372,9 @@ BEGIN
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_symbols_update AFTER UPDATE OF project_id,name,address,size,kind ON symbols
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN (OLD.project_id IS NOT NEW.project_id OR OLD.name IS NOT NEW.name OR OLD.address IS NOT NEW.address
+      OR OLD.size IS NOT NEW.size OR OLD.kind IS NOT NEW.kind)
+ AND EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
@@ -365,7 +386,8 @@ BEGIN
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=OLD.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_agent_rename AFTER UPDATE OF name ON agents
-WHEN EXISTS (SELECT 1 FROM projects WHERE CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN OLD.name IS NOT NEW.name
+ AND EXISTS (SELECT 1 FROM projects WHERE CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id)
     SELECT id FROM projects WHERE CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom';
@@ -545,7 +567,17 @@ class Store:
                 FROM measured GROUP BY function_id
             ) UPDATE functions SET last_checked=recency.checked,last_improved=recency.improved
               FROM recency WHERE functions.id=recency.function_id""")
-        self.conn.executescript(DIRTY_TRIGGERS.replace("ON context_versions", "ON context_history").replace("project_id,header,unit", "project_id,header_hash,unit"))
+        dirty = (DIRTY_TRIGGERS.replace("ON context_versions", "ON context_history")
+                 .replace("project_id,header,unit", "project_id,header_hash,unit")
+                 .replace("OLD.header IS NOT NEW.header", "OLD.header_hash IS NOT NEW.header_hash"))
+        # An older database's update triggers fire on writes of the same value: replace them in one transaction, so
+        # no write between the drop and the create goes unmarked.
+        stale = [row[0] for row in sqlite3.Connection.execute(self.conn,
+                 "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN (%s)" % ",".join("?" * len(DIRTY_UPDATE_TRIGGERS)),
+                 DIRTY_UPDATE_TRIGGERS).fetchall() if "IS NOT NEW." not in (row[1] or "")]
+        if stale:
+            dirty = ("BEGIN IMMEDIATE;" + "".join(f"DROP TRIGGER IF EXISTS {name};" for name in stale) + dirty + "COMMIT;")
+        self.conn.executescript(dirty)
         self.conn.executescript(MARK_TRIGGERS)
         if "aside_mark" in added:  # once: the marks of every function there is
             self.conn.execute(f"UPDATE functions SET {MARKS.replace('NEW.', '')} WHERE meta IS NOT NULL")
