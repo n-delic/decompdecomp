@@ -908,9 +908,13 @@ class Network:
         cfg = json.loads(proj["config"])
         if fn is not None and (cfg.get("compiler_ranges") or cfg.get('function_compilers')):
             cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"], fn)}
-        from . import compile_configuration, compile_timing
-        with compile_timing.phase('configuration'):
-            invocation = compile_configuration.resolve(Path(proj['root']),cfg,compiler_config)
+        from . import compile_configuration, compile_timing, toolchains
+        try:
+            with compile_timing.phase('configuration'):
+                invocation = compile_configuration.resolve(Path(proj['root']),cfg,compiler_config)
+        except toolchains.ToolchainError as error:
+            # Setup failures are actionable tool responses, never failed candidate C or a verdict.
+            raise NetworkError(str(error)) from error
         identity = dict(fn) if fn is not None else {}
         c = cfg['compiler']
         if 'toolchain' in c and not c.get('ro_paths') and not any(
