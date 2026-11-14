@@ -702,7 +702,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
-| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, named four-block banks, embedded ZIP packs, textures loaded by uncompressed display lists, I64 images in a chunked-RNC filesystem, model textures in a deflated asset table, UVTX files in a UV FORM filesystem, a texture table of back-reference-packed textures with inferred widths, display-list textures and sprites in a table of relocatable VPK0 files, image packs and model bitmaps in a party-game series' main filesystem; a fork's own splat image segments and JSON asset lists) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | ✓ forks with the game file (N64 checked) |
+| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, named four-block banks, embedded ZIP packs, textures loaded by uncompressed display lists, I64 images in a chunked-RNC filesystem, model textures in a deflated asset table, UVTX files in a UV FORM filesystem, a texture table of back-reference-packed textures with inferred widths, display-list textures and sprites in a table of relocatable VPK0 files, image packs and model bitmaps in a party-game series' main filesystem, FLA2-packed texture banks; a fork's own splat image segments and JSON asset lists) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | ✓ forks with the game file (N64 checked) |
 | Audio browser, filters, sortable samples and explicit WAV preparation | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | ✓ forks with the game file (N64 checked) |
 | Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / linked records | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -1951,6 +1951,12 @@ Phases:
   0.7.0: a fighting game's relocatable file table (VPK0, pointer chains, display lists and sprites). Done in 0.8.0:
   a party-game series' main filesystem (three packings, image packs, FORM model bitmaps).
 - That series' HVQ-compressed backgrounds are not decoded yet.
+- Done in 0.9.0: a glove platformer's FLA2-packed texture banks.
+- A monster-battle game builds its display lists in code from its own tables, and keeps raw texels in Yay0 blocks
+  with no format or size: its textures need those tables read.
+- A squirrel platformer keeps 7,762 deflated files with no headers (texels, then a 16- or 256-colour palette);
+  their formats and sizes are in the models that use them, which aren't read yet. Guessing them from the bytes
+  shows about half as noise, so none are shown.
 - That fighting game's material textures (MObjSub, sized by the code that draws them) are not shown yet.
 - That demolition game's widths could come from the code that draws each texture instead of being inferred.
 - UVTX files whose palette is another texture file (which one comes from the level) are not shown yet.
