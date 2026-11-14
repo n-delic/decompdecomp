@@ -78,15 +78,10 @@ def _stop_all() -> None:
         stop(slug)
 
 
-def play(net, slug: str, log=print) -> dict:
-    """Build the project's game for the PC if anything changed, start it with its live view, and return its address
-    once it answers: {"url": ...}."""
+def game(net, slug: str) -> tuple[Path, dict, Path]:
+    """The project's save repository, its config and its ROM, for Play and Export."""
     from ...app import saves
-    from . import build
 
-    if (url := running(slug)):
-        log(f"already running at {url}")
-        return {"url": url}
     # Without synchronizing the save folder: the build reads the save as it is on disk, and a sync waits behind the
     # helpers' upkeep (minutes while they work, with nothing in Play's log)
     with net.progress.view():
@@ -97,7 +92,18 @@ def play(net, slug: str, log=print) -> dict:
     rom = Path(proj["root"]) / cfg["rom"]["file"]
     if not rom.is_file():
         raise NetworkError(f"the game's ROM isn't at {rom} any more: import it again to play")
-    repo = save_repository(saves.default_folder(net, slug))
+    return save_repository(saves.default_folder(net, slug)), cfg, rom
+
+
+def play(net, slug: str, log=print) -> dict:
+    """Build the project's game for the PC if anything changed, start it with its live view, and return its address
+    once it answers: {"url": ...}."""
+    from . import build
+
+    if (url := running(slug)):
+        log(f"already running at {url}")
+        return {"url": url}
+    repo, cfg, rom = game(net, slug)
     steps = (*build.STEPS, STARTING)
     program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps)
     build.Progress(log, steps).start(STARTING)

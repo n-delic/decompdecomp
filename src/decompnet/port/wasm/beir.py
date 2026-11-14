@@ -353,9 +353,12 @@ def volatile(lines):
 def main():
     src, dst, *opts = sys.argv[1:]
     absolute, aliases, functions, signatures, fixed, renames = {}, [], set(), {}, {}, {}
+    web = False
     it = iter(opts)
     for o in it:
-        if o == "--absolute":
+        if o == "--web":  # the browser build's IR (webir.py)
+            web = True
+        elif o == "--absolute":
             k, v = next(it).split("=")
             absolute[k] = int(v, 0)
         elif o == "--alias":
@@ -421,7 +424,11 @@ def main():
     report = []
     byval = {n: {i: int(m.group(1)) for i, p in enumerate(ps.split(", ")) if (m := re.search(r"#byval(\d+)", p))}
              for n, (r, ps) in signatures.items() if "#byval" in ps}
-    open(dst, "w").write(adapt("\n".join(out), report, types, byval))
+    result = adapt("\n".join(out), report, types, byval)
+    if web:
+        from webir import rewrite
+        result = rewrite(result, fixed, re.sub(r"\W", "_", os.path.basename(dst)))
+    open(dst, "w").write(result)
     if report:
         open(dst + ".calls", "w").write("\n".join(report) + "\n")
 

@@ -5,12 +5,13 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const source=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/port.js'),'utf8');
 const base=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/base.js'),'utf8');
 function element(){return {open:false,disabled:false,hidden:false,textContent:'',dataset:{},children:[],style:{},className:'',
+  focused:0,focus(){this.focused++;},querySelector(){return this._summary||(this._summary=element());},contains(t){return t===this||t===this._summary;},
   listeners:{},addEventListener(k,f){this.listeners[k]=f;},append(...c){this.children.push(...c);},before(){},remove(){},
   setAttribute(){},replaceChildren(...c){this.children=c;}};}
 function setup(){
   const nodes=new Map(),calls=[],bodies=[];
   const c=vm.createContext({console,Map,Promise,Error,Number,encodeURIComponent,S:{slug:'a'},
-    $:id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);},document:{createElement:element},
+    $:id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);},document:{createElement:element,addEventListener(k,f){c.docListeners[k]=f;}},docListeners:{},
     api(url,opts){calls.push(url);bodies.push(opts&&opts.body);return c.reply(url,opts);},reply:async()=>({})});
   vm.runInContext(base.slice(base.indexOf('function beginWork('),base.indexOf('function updateWorkProgress(')),c);
   vm.runInContext(base.slice(base.indexOf('function showJobError('),base.indexOf('/*',base.indexOf('function showJobError('))),c);
@@ -137,6 +138,29 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    t.c.reply=async()=>({...report,play:{job:null,url:'http://127.0.0.1:6/'}});
    await t.run('loadPortReadiness()');assert.equal(t.c.$('portStop').hidden,false,'a running game can be stopped');
    assert.equal(t.c.$('portStop').textContent,'Stop the game');}
+  {// Export: either kind is a job with the build's bar; the menu closes; Show the folder opens what was made
+   const t=setup(),follow=deferred(),bodies=[];t.c.S.tab='porting';t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
+   t.c.reply=async(url,opts)=>{if(url==='/api/play-export'){bodies.push(opts.body);return opts.body.show?{ok:true}:{job:'e1'};}return report;};
+   t.c.$('portExportMenu').open=true;
+   const exporting=t.run('exportGame("web")');for(let i=0;i<5;i++)await Promise.resolve();
+   assert.equal(t.c.$('portExportMenu').open,false,'choosing closes the menu');
+   assert.equal(t.c.$('portExportWeb').disabled,true,'no second export while one runs');
+   assert.equal(t.c.$('portExportStop').hidden,false);
+   await t.run('exportGame("app")');assert.equal(bodies.length,1,'a second choice starts nothing');
+   follow.resolve({kind:'web',path:'/save/port/wasm/export/web/index.html',folder:'/save/port/wasm/export/web'});await exporting;
+   assert.equal(t.c.$('portExportShow').hidden,false);assert.equal(t.c.$('portExportStop').hidden,true);
+   assert.equal(t.c.$('portExportWeb').disabled,false);
+   assert.ok(t.c.$('portExportLog').children.some(x=>String(x).includes('index.html')),'the log says where it went');
+   await t.run('showExport()');assert.equal(JSON.stringify(bodies[1]),JSON.stringify({slug:'a',kind:'web',show:true}));
+   t.c.$('portExportMenu').open=true;t.c.docListeners.click({target:{}});assert.equal(t.c.$('portExportMenu').open,false,'a click elsewhere closes it');}
+  {// an export running when the panel is drawn again is followed, and its Stop cancels it
+   const t=setup(),follow=deferred(),cancels=[];t.c.S.tab='porting';t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
+   t.c.reply=async(url,opts)=>{if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return {...report,play:{job:null,url:null,export_job:{id:'e2',progress:{phase:'Linking',step:5,steps:11}}}};};
+   await t.run('loadPortReadiness()');for(let i=0;i<5;i++)await Promise.resolve();
+   assert.ok(!t.calls.includes('/api/play-export'),'not started again');
+   await t.run('stopExport()');assert.deepEqual(cancels,['e2']);
+   follow.reject(new Error('Cancelled.'));await Promise.resolve();await Promise.resolve();await Promise.resolve();
+   assert.match(t.c.$('portExportLog')._errorBox.textContent,/Cancelled/);}
   {const t=setup();t.c.S.tab='porting';t.c.followJob=async()=>({url:'http://127.0.0.1:5/',window:true});
    const runtimes=[{id:'wasm',name:'WebAssembly',summary:'Plays now.',built:true,missing:[],playable:true},
      {id:'libultraship',name:'libultraship',summary:'Native.',built:false,missing:['Compiles for a PC','Assets extracted'],playable:false},
@@ -154,5 +178,5 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.match(options[2].status,/steps it needs are done; .*isn't in decompdecomp yet/);
    await t.run('playGame()');
    assert.equal(t.bodies[t.calls.indexOf('/api/play')].runtime,'wasm','Play asks for the chosen runtime');}
-  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, renamed calls, play, runtimes, the build bar, Stop and reattaching passed');
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

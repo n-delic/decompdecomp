@@ -309,7 +309,7 @@ def host_compiler(zig: Path) -> list:
         if shutil.which("xcrun") is None:
             raise NetworkError("building the host needs Xcode's Command Line Tools on macOS: install them with "
                                "`xcode-select --install`, then build again")
-        return ["xcrun", "clang"]
+        return ["xcrun", "clang", "-mmacosx-version-min=11.0"]  # an exported app runs on Macs older than this one
     return [zig, "cc"]
 
 
@@ -438,6 +438,35 @@ def function_table(header: str, fixed: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, step=None, *, web: bool = False):
+    """Every function's IR placed at its console address and compiled (beir.py): into out/o, or out/o-web for the
+    browser build (`web`: webir.py too). Each is placed again only when its own rows in the tables change, or the
+    tools do. The files that failed, with their first error line."""
+    py, files = sys.executable, _Files()
+    tables = (_rows(out / "sigs.txt", "\t"), _rows(out / "fixed.txt"), functions, _rows(out / "renames.txt"))
+    tools = tuple(files(HERE / n) for n in ("beir.py", "adapt.py", *(("webir.py",) if web else ())))
+    folder = out / ("o-web" if web else "o")
+    folder.mkdir(exist_ok=True)
+
+    def place(ll: Path) -> str | None | bool:
+        be, obj = folder / (ll.stem + ".be.ll"), folder / (ll.stem + ".o")
+        text = ll.read_text(encoding="utf-8")
+        key = _digest(zig, *(("web",) if web else ()), *tools, text, *table_rows(text, *tables))
+        if _fresh(obj, key):
+            return False
+        _unstamp(obj)
+        done = _run([py, HERE / "beir.py", ll, be, "--functions", out / "functions.txt", "--renames", out / "renames.txt",
+                     "--signatures", out / "sigs.txt", "--fixed", out / "fixed.txt", *(["--web"] if web else [])], log)
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["beir failed"])[-1]
+        done = _run([zig, "cc", "-target", "wasm32-freestanding", "-O0", "-c", be, "-o", obj], log, env=env)
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["failed"])[0]
+        _stamp(obj, key)
+        return None
+    return _parallel(lls, place, log, "functions", step)
+
+
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
@@ -504,27 +533,7 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS) -> Path:
     _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renames(lls, fixed).items())))
     progress.start(STEPS[3])
     log("placing every symbol at its console address, data big-endian")
-    # Each function's IR is placed again only when its own rows in these tables change, or the tools do
-    tables = (_rows(out / "sigs.txt", "\t"), _rows(out / "fixed.txt"), set(functions), _rows(out / "renames.txt"))
-    tools = tuple(files(HERE / n) for n in ("beir.py", "adapt.py"))
-
-    def place(ll: Path) -> str | None | bool:
-        be, obj = out / "o" / (ll.stem + ".be.ll"), out / "o" / (ll.stem + ".o")
-        text = ll.read_text(encoding="utf-8")
-        key = _digest(zig, *tools, text, *table_rows(text, *tables))
-        if _fresh(obj, key):
-            return False
-        _unstamp(obj)
-        done = _run([py, HERE / "beir.py", ll, be, "--functions", out / "functions.txt", "--renames", out / "renames.txt",
-                     "--signatures", out / "sigs.txt", "--fixed", out / "fixed.txt"], log)
-        if done.returncode:
-            return (done.stderr.strip().splitlines() or ["beir failed"])[-1]
-        done = _run([zig, "cc", "-target", "wasm32-freestanding", "-O0", "-c", be, "-o", obj], log, env=env)
-        if done.returncode:
-            return (done.stderr.strip().splitlines() or ["failed"])[0]
-        _stamp(obj, key)
-        return None
-    if failed := _parallel(lls, place, log, "functions", progress.files):
+    if failed := place_all(out, lls, set(functions), zig, env, log, progress.files):
         raise NetworkError(f"{len(failed)} functions couldn't be placed at their addresses: " + "; ".join(failed[:3]))
     objects = linked(out / "o", sources)
     _write(out / "objects.txt", "\n".join(str(p) for p in objects) + "\n")

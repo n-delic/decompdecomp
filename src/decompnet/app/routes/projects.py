@@ -286,6 +286,26 @@ def register(app: App) -> None:
             return {"job": building["id"]}
         return {"job": jobs.start("play", lambda log: play.play(net, slug, log), project=slug)}
 
+    def p_play_export(slug, request, data):
+        """Export the game (port/wasm/export.py): a standalone app for this computer ("app") or a browser build
+        ("web"), in the background; `show` opens the last export's folder."""
+        from ...port.wasm import export, play
+        kind = str(data.get("kind") or "")
+        if kind not in export.KINDS:
+            raise ValueError("Choose what to export: a standalone app or a browser build.")
+        if data.get("show"):
+            repo, _, _ = play.game(net, slug)
+            folder = repo / "port" / "wasm" / "export" / kind
+            if not folder.is_dir():
+                raise ValueError("Nothing is exported there yet: export it first.")
+            if app.web_login and not secrets.compare_digest(window.request_token(request), app.secret):
+                return {"ok": False, "message": f"The export is on the server, in {folder}"}
+            why = hostenv.open_folder(folder)
+            return {"ok": why is None, "message": why}
+        if (running := jobs.active(("play-export",), project=slug)):  # another click, or another window
+            return {"job": running["id"]}
+        return {"job": jobs.start("play-export", lambda log: export.export(net, slug, kind, log), project=slug)}
+
     def p_asset_map(slug, request, data):
         """Write the ROM's data as the kit's extractor config into the project's folder (port/asset_map.py)."""
         from ...port import asset_map
@@ -304,7 +324,8 @@ def register(app: App) -> None:
         from ...port.readiness import readiness
         from ...port.wasm import play
         report = readiness(net, slug)
-        report["play"] = {"job": jobs.active(("play",), project=slug), "url": play.running(slug)}
+        report["play"] = {"job": jobs.active(("play",), project=slug), "url": play.running(slug),
+                          "export_job": jobs.active(("play-export",), project=slug)}
         return report
 
     def p_rom_explorer(slug, request, data):
@@ -1161,6 +1182,7 @@ def register(app: App) -> None:
         "/api/pc-compile": (p_pc_compile, ["POST"]),
         "/api/asset-map": (p_asset_map, ["POST"]),
         "/api/play": (p_play, ["POST"]),
+        "/api/play-export": (p_play_export, ["POST"]),
         "/api/rename-calls": (p_rename_calls, ["POST"]),
         "/api/port-identity": (p_port_identity, ["POST"]),
         "/api/asset-extract": (p_asset_extract, ["POST"]),
