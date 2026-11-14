@@ -2901,6 +2901,77 @@ def test_a_file_check_that_fails_to_weigh_waits_with_a_reason(tmp_path, monkeypa
     assert check["status"] == "waiting" and check["said"].startswith("waiting: weighing it failed")
 
 
+def test_project_mode_messages_name_check_again_and_try_compiler_not_a_match(tmp_path, monkeypatch):
+    """#260 review: no match rechecks a file check in project mode. Only the panel's Check again now and an agent's
+    try_compiler do, so a failed or restarted check must say so."""
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, _only_with("00401020"))
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    net.suggest(agent, "p", "7.1 built these", compiler="MSVC/7.1", ranges="0x401020-0x401030")
+
+    def fail(*args):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(net.filecompilers, "_weigh", fail)
+    net.filecompilers.recheck("p")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "waiting" and "next match" not in check["said"]
+    assert "Check again now" in check["said"] and "try_compiler" in check["said"]
+
+    stale = dict(check, id=2, status="checking", t=0)
+    net._update_cfg("p", lambda cfg: cfg["file_checks"].append(stale))
+    net.filecompilers.normalise("p")
+    restarted = next(c for c in net.cfg(net.project_row("p"))["file_checks"] if c["id"] == 2)
+    assert "restarted" in restarted["said"] and "next match" not in restarted["said"]
+    assert "Check again now" in restarted["said"] and "try_compiler" in restarted["said"]
+
+
+def test_a_file_check_that_fails_keeps_evidence_an_agent_added_while_it_ran(tmp_path, monkeypatch):
+    """#260 review: a file check run that fails used to save its early copy over evidence try_compiler added while the
+    run was waiting. Only the stored check's status and reason change now."""
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, _only_with("00401020"))
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    net.suggest(agent, "p", "7.1 built these", compiler="MSVC/7.1", ranges="0x401020-0x401030")
+
+    def fail_after_a_try(slug, c):
+        with monkeypatch.context() as patch:
+            patch.setattr(net.filecompilers, "recheck", lambda *a, **k: None)  # (would wait on this run's own lock)
+            net.filecompilers.tried("p", "src/auto/text_00401030.cpp", "MSVC/7.1")
+        raise RuntimeError("boom")
+    monkeypatch.setattr(net.filecompilers, "_weigh", fail_after_a_try)
+    net.filecompilers.recheck("p")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["evidence"]["src/auto/text_00401030.cpp"] == "confirmed"
+    assert check["status"] == "waiting" and check["said"].startswith("waiting: weighing it failed")
+
+
+def test_a_new_file_check_is_not_said_to_have_restarted_before_its_recheck(tmp_path, monkeypatch):
+    """#260 review: propose() saves a check as "checking" a moment before recheck() marks the project running. A
+    normalise() between the two must not call the brand-new check a restart."""
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, _only_with("00401020"))
+    monkeypatch.setattr(net.filecompilers, "recheck", lambda *a, **k: None)  # (the panel asks before the recheck starts)
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    net.suggest(agent, "p", "7.1 built these", compiler="MSVC/7.1", ranges="0x401020-0x401030")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "checking"
+    assert net.filecompilers.normalise("p") == 0
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "checking" and "restarted" not in check.get("said", "")
+
+
+def test_a_file_check_with_nothing_left_to_test_names_try_compiler_not_a_match(tmp_path, monkeypatch):
+    """#260 review: in project mode no match rechecks a file check, so an unsettled one with no task left says what
+    really moves it."""
+    scores = {}
+    for start in (0x401000, 0x401010, 0x401020, 0x401030, 0x401040):
+        source, name = f"{start:08X}", f"_func_{start:08X}"
+        scores[(source, "MSVC/7.1")] = ({name: 100.0}, {name: 100.0})  # matches with both: neutral
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, scores)
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    net.suggest(agent, "p", "7.1 built these", compiler="MSVC/7.1", ranges="0x401020-0x401030")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "waiting" and "try_compiler" in check["said"]
+    assert "next matches" not in check["said"]
+
+
 @needs_tools
 def test_a_file_built_with_another_visual_cpp_keeps_its_own_and_says_which_matches_need_it(pc):
     """The survey's and range checks' evidence, built for real: the file holding player_take_damage (matched with

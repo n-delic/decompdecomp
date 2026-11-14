@@ -30,7 +30,7 @@ import time
 from .. import compilermap, consoles
 from ..network import NetworkError
 from .engine.common import parse_ranges
-from .rangecheck import MAX_TASKS, REACH, Step, evaluate
+from .rangecheck import MAX_TASKS, PROCESS_STARTED, REACH, Step, evaluate
 
 log = logging.getLogger("decompdecomp")
 SURVEY_FILES = 60  # files a survey run builds (each once per compiler it tries)
@@ -372,15 +372,18 @@ class FileCompilers:
             proj = self.net._project(slug)
         except NetworkError:
             return 0
-        stale = [c for c in self.net.cfg(proj).get("file_checks", []) if c["status"] == "checking"]
+        stale = [c for c in self.net.cfg(proj).get("file_checks", [])
+                 if c["status"] == "checking" and (c.get("t") or 0) < PROCESS_STARTED]
         if not stale:
             return 0
 
         def change(cfg):
             for c in cfg.get("file_checks", []):
-                if c["status"] == "checking":
+                if c["status"] == "checking" and (c.get("t") or 0) < PROCESS_STARTED:
                     c["status"] = "waiting"
-                    c["said"] = "waiting: the app restarted before it finished; the next match weighs it again"
+                    # #260 review: in project mode a match doesn't recheck a file check; these do
+                    c["said"] = ("waiting: the app restarted before it finished; press Check again now, or have an "
+                                 "agent try the compiler with try_compiler, to try again")
         self.net._update_cfg(slug, change)
         return len(stale)
 
@@ -398,7 +401,10 @@ class FileCompilers:
                         except Exception:  # noqa: BLE001  #260: a check that failed waits, it doesn't say "checking"
                             log.exception("file range check #%s failed", c["id"])
                             try:
-                                self._wait(slug, c, "waiting: weighing it failed; the next match tries again")
+                                # #260 review: no match rechecks a file check: say what does
+                                self._wait_stored(slug, c["id"], "waiting: weighing it failed; press Check again now, "
+                                                                "or have an agent try the compiler with try_compiler, "
+                                                                "to try again")
                             except Exception:  # noqa: BLE001  the run's own failure is the one to report
                                 log.exception("file range check #%s could not be marked waiting", c["id"])
             finally:
@@ -478,8 +484,8 @@ class FileCompilers:
                                   fn["name"])
                 return self._wait(slug, c, f"waiting: {fn['name']} in {source} is next (first in line for an agent)")
         c["status"] = "waiting"
-        self._save(slug, c, "waiting: no neighbouring file settled it yet; the user decides, or agents' next "
-                            "matches do")
+        self._save(slug, c, "waiting: no neighbouring file settled it yet; the user decides, or an agent's "
+                            "try_compiler does")
 
     def task_text(self, c: dict, name: str, source: str) -> str:
         compiler = consoles.compiler_name(c["toolchain"])
@@ -524,6 +530,17 @@ class FileCompilers:
         """Save a check waiting, so the panel doesn't read it as work still running (#260)."""
         c["status"] = "waiting"
         self._save(slug, c, said)
+
+    def _wait_stored(self, slug: str, cid: int, said: str) -> None:
+        """A weigh that failed waits with its reason, on the check as it is stored now: evidence an agent's tried()
+        added while this run waited for the lock stays (#260 review)."""
+        stored = next((old for old in (self.net.cfg(self.net.project_row(slug)).get("file_checks") or [])
+                       if old["id"] == cid), None)
+        if stored is None or stored["status"] not in OPEN:
+            return
+        stored = copy.deepcopy(stored)
+        stored["status"] = "waiting"
+        self._save(slug, stored, said)
 
     def _save(self, slug: str, c: dict, said: str, resolve: str | None = None) -> None:
         c["said"] = said

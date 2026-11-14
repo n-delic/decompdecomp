@@ -47,6 +47,9 @@ OPEN = ("checking", "waiting")  # a check's states while it can still change
 # (92 rechecks queued at once). Now a project's rechecks wait this long after the last request and run as one.
 RECHECK_DEBOUNCE_SECONDS = 2.0
 VERDICTS_KEPT = 4096  # judge verdicts remembered: the same C with the same compiler gives the same answer
+# #260 review: only a check saved before this process started can say the app restarted. propose() saves a new check
+# as "checking" a moment before recheck() marks its project working, and normalise() must not catch it in between.
+PROCESS_STARTED = time.time()
 # What a check reads of every function, once per run. Never the assembly: GTA San Andreas's is 73 MB, and reading
 # every column (`SELECT *`) for each of the 62 checks was 14 of the 17 seconds.
 ROW_COLUMNS = "id, name, vram, size, n_insns, status"
@@ -159,13 +162,14 @@ class RangeChecks:
             proj = self.net._project(slug)
         except NetworkError:
             return 0
-        stale = [c for c in self.net.cfg(proj).get("range_checks", []) if c["status"] == "checking"]
+        stale = [c for c in self.net.cfg(proj).get("range_checks", [])
+                 if c["status"] == "checking" and (c.get("t") or 0) < PROCESS_STARTED]
         if not stale:
             return 0
 
         def change(cfg):
             for c in cfg.get("range_checks", []):
-                if c["status"] == "checking":
+                if c["status"] == "checking" and (c.get("t") or 0) < PROCESS_STARTED:
                     c["status"] = "waiting"
                     c["said"] = "waiting: the app restarted before it finished; the next match weighs it again"
         self.net._update_cfg(slug, change)
@@ -263,12 +267,12 @@ class RangeChecks:
                         self._weigh(proj, c, rows, at, cmap)
                     except Exception:  # noqa: BLE001  #260: a check that failed waits, it doesn't say "checking"
                         log.exception("range check #%s failed", c["id"])
-                        self._wait(proj, c, "waiting: weighing it failed; the next match tries again")
+                        self._wait_stored(proj, c["id"], "waiting: weighing it failed; the next match tries again")
             except Exception:  # noqa: BLE001  a check never stands between an agent and its work: it waits
                 log.exception("range check failed")
                 for c in checks:  # (#260: no check this run was to weigh stays "checking" with no work behind it)
                     try:
-                        self._wait(proj, c, "waiting: weighing it failed; the next match tries again")
+                        self._wait_stored(proj, c["id"], "waiting: weighing it failed; the next match tries again")
                     except Exception:  # noqa: BLE001  the run's own failure is the one to report
                         log.exception("range check #%s could not be marked waiting", c["id"])
 
@@ -409,6 +413,19 @@ class RangeChecks:
         """Save a check waiting, so the panel doesn't read it as work still running (#260)."""
         c["status"] = "waiting"
         self._save(proj, c, said)
+
+    def _wait_stored(self, proj, cid: int, said: str) -> None:
+        """A weigh that failed waits with its reason, on the check as it is stored now: evidence an agent's tried()
+        added while this run waited for the lock stays (#260 review)."""
+        if proj is None:
+            return
+        stored = next((old for old in self.net.cfg(self.net._project(proj["slug"])).get("range_checks", [])
+                       if old["id"] == cid), None)
+        if stored is None or stored["status"] not in OPEN:
+            return
+        stored = copy.deepcopy(stored)
+        stored["status"] = "waiting"
+        self._save(proj, stored, said)
 
     def _save(self, proj, c: dict, said: str, resolve: str | None = None) -> None:
         c["said"] = said

@@ -287,6 +287,38 @@ def test_a_rom_check_that_fails_to_weigh_waits_with_a_reason(monkeypatch):
     net.rangechecks.recheck("game", background=False)
     check = net.cfg(net.proj)["range_checks"][-1]
     assert check["status"] == "waiting" and check["said"].startswith("waiting: weighing it failed")
+    assert "next match" in check["said"]  # true in ROM mode: a match rechecks the open checks (autopilot.on_match)
+
+
+def test_a_rom_check_that_fails_keeps_evidence_an_agent_added_while_it_ran(monkeypatch):
+    """#260 review: a run that fails used to save its early copy of the check over evidence try_compiler added while
+    the run was waiting. Only the stored check's status and reason change now."""
+    net = FakeNet(functions(9), {"f4": {CW[0]}})
+    start(net)
+
+    def fail_after_a_try(proj, c, *args):
+        with monkeypatch.context() as patch:
+            patch.setattr(net.rangechecks, "recheck", lambda *a, **k: None)  # (would wait on this run's own lock)
+            net.rangechecks.tried(proj, net._function("f5", "game"), CW[0], CW[1], "f5", True)
+        raise RuntimeError("boom")
+    monkeypatch.setattr(net.rangechecks, "_weigh", fail_after_a_try)
+    net.rangechecks.recheck("game", background=False)
+    check = net.cfg(net.proj)["range_checks"][-1]
+    assert check["evidence"][str(net._function("f5", "game")["vram"])] == "confirmed"
+    assert check["status"] == "waiting" and check["said"].startswith("waiting: weighing it failed")
+
+
+def test_a_new_rom_check_is_not_said_to_have_restarted_before_its_recheck(monkeypatch):
+    """#260 review: propose() saves a check as "checking" a moment before recheck() marks the project working. A
+    normalise() between the two must not call the brand-new check a restart."""
+    net = FakeNet(functions(9), {"f4": {CW[0]}})
+    monkeypatch.setattr(net.rangechecks, "recheck", lambda *a, **k: None)  # (the panel asks before the recheck starts)
+    start(net)
+    check = net.cfg(net.proj)["range_checks"][-1]
+    assert check["status"] == "checking"
+    assert net.rangechecks.normalise("game") == 0
+    check = net.cfg(net.proj)["range_checks"][-1]
+    assert check["status"] == "checking" and "restarted" not in check.get("said", "")
 
 
 def test_a_recheck_reads_the_functions_once_and_never_their_assembly():
