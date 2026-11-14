@@ -5,16 +5,24 @@ with the reason it starts where it does. The ROM database stays the truth and it
 each function at its real address: the folder is regenerated from it (rom/export.py), never edited into it.
 A unit becomes confirmed once every function in it matches.
 
-Agents still work through ROM mode. Making these units editable in project mode (edits judged back through
-rom/match.py, units regrouped by joins and splits) is a ROADMAP item: "ROM projects as project folders".
+The folder's C can be edited (one file per function, `src/<segment>/<function>.c`, as the export writes them):
+each file changed or added since the folder was written is judged through the same judge as the function page's Try
+before the folder is regenerated (`edits`, then the engine's `judge_folder_edits`), and an edit that didn't become
+the project's C is written back beside it, never lost (`keep`). Agents still work through ROM mode; units regrouped
+by joins and splits are a ROADMAP item: "ROM projects as project folders".
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 from pathlib import Path
 
 UNITS_FILE = "units.json"
+SOURCES_FILE = "sources.json"  # what the folder's C files held when it was written: edits are files that differ
+KEPT = ".kept"  # an edit the project didn't take, written back beside the function's file as <function>.c.kept
+_EXPORT_INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"common(?:_\w+)?\.h"[ \t]*$', re.M)
 FILE_ALIGN = 16  # MIPS GCC and its assemblers start each object's .text on a 16-byte boundary
 MIN_SAMPLE = 16  # functions needed before their common alignment means the compiler's padding
 
@@ -123,3 +131,82 @@ def build_targets(folder: Path, log=print) -> bool:
 def summary(units: list[dict], folder: Path) -> dict:
     return {"t": time.time(), "path": str(folder), "units": len(units),
             "confirmed": sum(not u["provisional"] for u in units)}
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _c_files(folder: Path) -> list[Path]:
+    src = folder / "src"
+    return sorted(p for p in src.glob("*/*") if p.suffix in (".c", ".cpp") and p.is_file()) if src.is_dir() else []
+
+
+def _prefix(text: str) -> str:
+    """What the export put before a function's C: its compiler's prelude and the header's #include."""
+    m = _EXPORT_INCLUDE.search(text)
+    return text[:m.end()] + "\n\n" if m and text[m.end():m.end() + 2] == "\n\n" else ""
+
+
+def record_sources(folder: Path, judged: dict | None = None, retry: set | None = None) -> Path:
+    """sources.json: each C file's digest as the folder now has it, so a later refresh judges only what changed.
+    `judged`: files written back after judging ({relative path: what the judge said}), not judged again until they
+    change. `retry`: files left out, so the next refresh judges them (the function was busy this time)."""
+    judged, retry = judged or {}, retry or set()
+    files = {}
+    for path in _c_files(folder):
+        rel = path.relative_to(folder).as_posix()
+        if rel in retry:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        files[rel] = {"sha256": _digest(text), "prefix": _prefix(text)} | (
+            {"judged": judged[rel]} if rel in judged else {})
+    path = folder / SOURCES_FILE
+    path.write_text(json.dumps({"about": "What this folder's C files held when decompdecomp last wrote or judged "
+                                         "them. Edit or add src/<segment>/<function>.c; Refresh project folder "
+                                         "judges what changed.", "files": files}, indent=1) + "\n", encoding="utf-8")
+    return path
+
+
+def as_submitted(text: str, prefix: str = "") -> str:
+    """A folder file as the judge takes it: without the export's prelude, and naming the header context.h (the
+    reverse of rom/export.exported_source, so an untouched file is exactly the C that matched)."""
+    if prefix and text.startswith(prefix):
+        return _EXPORT_INCLUDE.sub('#include "context.h"', text[len(prefix):]).strip() + "\n"
+    # a file you wrote: the judge puts the header first itself, and a second copy of it doesn't compile (its
+    # typedefs again), so the #include "common.h" that lets an editor read the file goes
+    return _EXPORT_INCLUDE.sub("", text).strip() + "\n"
+
+
+def edits(folder: Path) -> list[dict]:
+    """The C files changed or added since the folder was written: [{function, segment, path, source}], each source
+    as the judge takes it. Nothing when the folder has no sources.json (it was never laid out, nothing to compare)."""
+    record = folder / SOURCES_FILE
+    if not record.is_file():
+        return []
+    known = json.loads(record.read_text(encoding="utf-8")).get("files", {})
+    found = []
+    for path in _c_files(folder):
+        rel = path.relative_to(folder).as_posix()
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if (before := known.get(rel)) and before["sha256"] == _digest(text):
+            continue
+        found.append({"function": path.stem, "segment": path.parent.name, "path": rel,
+                      "source": as_submitted(text, (before or {}).get("prefix", "")), "text": text})
+    return found
+
+
+def keep(folder: Path, edit: dict, taken_as_is: bool) -> str:
+    """Write an edit back after the folder was regenerated, so it's never lost. Where the export now writes the
+    function's own C (it was matched) the edit goes beside it as <file>.kept; elsewhere back in its place, where
+    nothing builds it (the function is still its assembly) and the next refresh sees it unchanged."""
+    path = folder / edit["path"]
+    if path.exists() and path.read_text(encoding="utf-8", errors="replace") == edit["text"]:
+        return edit["path"]  # still there as written (the export stopped before emptying the folder)
+    if path.exists() and not taken_as_is:
+        path = path.with_name(path.name + KEPT)
+    elif path.exists():
+        return edit["path"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(edit["text"], encoding="utf-8")
+    return path.relative_to(folder).as_posix()

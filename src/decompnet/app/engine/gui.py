@@ -42,6 +42,10 @@ class GuiMixin:
             return {"path": self._project(slug)["root"], "identical": None}
 
         proj = self._project(slug)
+        laid_out = self.cfg(proj).get("project_layout") or {}
+        # the folder's own edits first: the export below regenerates the folder from the project's work
+        edits = self._judge_folder_edits(proj, Path(laid_out["path"]), log) \
+            if laid_out.get("path") and layout is not False else []
         from .. import variants
         group = variants.game(self, slug)
         export_root = Path(self._project(group['primary_project'])['root'] if group else proj['root'])
@@ -54,11 +58,18 @@ class GuiMixin:
             out = export_root / "source-export"
             if protected(out):
                 raise NetworkError("The export destination is a saved repository. Use Update build files to update it safely.")
-        if group:
-            from ...rom.export_variants import export_game
-            res = export_game(self, slug, out, log=log)
-        else:
-            res = self.console(proj).export_project(self, slug, out, log=log)
+        try:
+            if group:
+                from ...rom.export_variants import export_game
+                res = export_game(self, slug, out, log=log)
+            else:
+                res = self.console(proj).export_project(self, slug, out, log=log)
+        except BaseException:  # the export empties its folder first: what was edited there goes back, whatever failed
+            from ...rom import project_layout
+            for edit in edits:
+                if not edit.get("taken"):
+                    project_layout.keep(Path(laid_out["path"]), edit, False)
+            raise
         with self.project_store(proj['id']).tx() as db:  # shown on the project page: what's in the tree and whether it rebuilds
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             cfg["export"] = {"t": time.time(), "path": str(res["path"]), "identical": res.get("identical"),
@@ -66,8 +77,56 @@ class GuiMixin:
                              "fallback": len(res.get("fallback") or [])}
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
         if layout or (layout is None and cfg.get("project_layout")):
-            res["project_layout"] = self._lay_out(proj, Path(res["path"]), res.get("identical"), log)
+            res["project_layout"] = self._lay_out(proj, Path(res["path"]), res.get("identical"), log, edits)
         return res
+
+    def _judge_folder_edits(self, proj, folder: Path, log) -> list[dict]:
+        """Each C file changed or added in a project folder (rom/project_layout.edits), judged like the function
+        page's Try and credited to you. A judging identity of its own holds each claim only while it compiles, so
+        a function open in the C editor doesn't stop it. A function an agent holds waits for the next refresh."""
+        from ...rom import project_layout
+        found = project_layout.edits(folder)
+        if not found:
+            return []
+        pid, slug = proj["id"], proj["slug"]
+        store = self.project_store(pid)
+        judge, credit = self.attribution_agent("project-folder"), self.attribution_agent("you")
+        log(f"judging {len(found)} edited file{'s' * (len(found) != 1)} in the project folder")
+        for index, edit in enumerate(found):
+            if hasattr(log, "check_cancel"):
+                log.check_cancel()
+            if hasattr(log, "progress"):
+                log.progress({"phase": "Judging the folder's edits", "done": index, "total": len(found),
+                              "function": edit["function"]})
+            row = store.one("SELECT status FROM functions WHERE project_id=? AND name=?", pid, edit["function"])
+            edit["taken"] = False
+            if row is None:
+                edit["said"] = f"no function is named {edit['function']}: name the file after the function it holds"
+                log(f"{edit['path']}: {edit['said']}")
+                continue
+            try:
+                res = self.attempt(judge, edit["function"], edit["source"], slug)
+            except (NetworkError, toolchains.ToolchainError) as error:
+                edit |= {"said": str(error), "retry": True}
+                log(f"{edit['path']}: not judged this time: {error}")
+                continue
+            finally:  # a judged edit leaves no claim behind
+                with store.tx() as db:
+                    db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN (SELECT id FROM functions "
+                               "WHERE project_id=? AND name=?)", (judge.id, pid, edit["function"]))
+            with store.tx() as db:
+                for column in ("matched_agent_id", "best_agent_id"):
+                    db.execute(f"UPDATE functions SET {column}=? WHERE project_id=? AND name=? AND {column}=?",
+                               (credit.id, pid, edit["function"], judge.id))
+            edit["taken"] = bool(res.get("new_match"))
+            if row["status"] == "matched":
+                edit["said"] = ("still matches; the project keeps the C it matched with" if res.get("exact") else
+                                f"no longer matches (score {res['score']}); the project keeps the C it matched with")
+            else:
+                edit["said"] = ("matched" if res["matched"] else "doesn't compile" if res["score"] is None
+                                else f"score {res['score']}" + (", the best so far" if res.get("adopted") else ""))
+            log(f"{edit['path']}: {edit['said']}")
+        return found
 
     def setup_project_layout(self, slug: str, log=print) -> dict:
         """Lay a ROM project out as a project folder: the rebuildable export plus guessed source files
@@ -80,8 +139,9 @@ class GuiMixin:
                                f"{console.name or 'this console'} doesn't have yet")
         return self.export_rom(slug, log=log, layout=True)["project_layout"]
 
-    def _lay_out(self, proj, folder: Path, identical, log) -> dict:
-        """Guess the source files and write them into an exported folder: units.json and objdiff's categories."""
+    def _lay_out(self, proj, folder: Path, identical, log, edits=()) -> dict:
+        """Guess the source files and write them into an exported folder: units.json and objdiff's categories, and
+        the folder's judged edits written back (rom/project_layout.keep) with a record of what each file holds."""
         from ...rom import project_layout
         rows = self.project_store(proj['id']).all(
             "SELECT name, vram, size, unit, status FROM functions WHERE project_id=?", proj["id"])
@@ -90,8 +150,19 @@ class GuiMixin:
               "status": r["status"]} for r in rows], self.cfg(proj).get("compiler_ranges"))
         project_layout.write_units(folder, units)
         grouped = project_layout.group_objdiff(folder, units)
-        done = project_layout.summary(units, folder) | {"identical": identical, "objdiff_units": grouped,
-                                                        "objdiff_ready": project_layout.build_targets(folder, log)}
+        kept, judged, retry = [], {}, set()
+        for edit in edits:
+            where = project_layout.keep(folder, edit, edit.get("taken", False))
+            if edit.get("retry"):
+                retry.add(where)
+            elif not edit.get("taken"):
+                judged[where] = edit.get("said", "")
+                kept.append({"path": where, "function": edit["function"], "said": edit.get("said", "")})
+        project_layout.record_sources(folder, judged, retry)
+        done = project_layout.summary(units, folder) | {
+            "identical": identical, "objdiff_units": grouped, "objdiff_ready": project_layout.build_targets(folder, log),
+            "edits": {"judged": sum(not e.get("retry") for e in edits), "matched": sum(bool(e.get("taken")) for e in edits),
+                      "kept": kept, "waiting": len(retry)}}
         with self.project_store(proj['id']).tx() as db:
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             cfg["project_layout"] = done

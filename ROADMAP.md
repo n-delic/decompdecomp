@@ -789,7 +789,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
-| Set up as a project folder (import checkbox or Export panel; guessed `units.json`, read-only) | ✓ demo: 14 of 16 files found | ✓ demo: 1 of 18 files found (no padding between objects) | ✓ demo: 1 of 18 files found (functions padded like files) | — offered; demo not run (no PSP compiler build for Apple Silicon) | the project | the project | the project | the project |
+| Set up as a project folder (import checkbox or Export panel; guessed `units.json`; edits to `src/<segment>/<function>.c` judged by the ROM judge on Refresh) | ✓ demo: 14 of 16 files found | ✓ demo: 1 of 18 files found (no padding between objects) | ✓ demo: 1 of 18 files found (functions padded like files) | — offered; demo not run (no PSP compiler build for Apple Silicon) | the project | the project | the project | the project |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
@@ -1836,11 +1836,15 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 Importing a ROM can now also lay it out as a project folder (`rom/project_layout.py`): the rebuildable export plus
 guessed source files in `units.json`, each provisional until all its functions match. Its `objdiff.json` groups the
 export's per-function units into one progress category per guessed file, and their targets are built, so the folder
-opens in objdiff as it is. Every later export refreshes both. Agents still work through ROM mode, and the folder is
-regenerated from the database. Next:
+opens in objdiff as it is. Every later export refreshes both. People (and any tool) can edit the folder's C, one
+file per function as the export writes it: Refresh project folder judges each file changed or added since the last
+write (`sources.json`) like the function page's Try, at the function's real address, credited to "you", then
+regenerates the folder; an edit the project didn't take is written back in place or beside its function as
+`.kept`, never lost (N64, PS1 and PS2 demos: `tests/test_project_layout.py`). Agents still work through ROM mode. Next:
 - the project page measuring the folder with objdiff as it does a fork's (today it shows ROM mode's own counts);
-- an adapter that judges an edit to `src/<unit>.c` back through `rom/match.py` at the real address, so agents,
-  autopilot, the permuter and polishing can work in the folder (this clears linked-image exports' "—");
+- editing a whole guessed file (`src/<unit>.c` with several functions, judged with `attempt_many`), and agents,
+  autopilot, the permuter and polishing working in the folder through that adapter (this clears linked-image
+  exports' "—");
 - regenerating the affected units after joins, splits, function-end reports and compiler-range changes, keeping
   confirmed units frozen;
 - better file seams where padding says nothing: on the PS1 and PS2 demos no padding separates objects (or every

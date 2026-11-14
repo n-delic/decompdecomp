@@ -188,3 +188,85 @@ def test_every_guessed_file_starts_where_a_real_one_does(tmp_path, console):
     units = project_layout.guess_units([{"name": r["name"], "vram": r["vram"], "size": r["size"] or 0,
                                          "segment": r["unit"] or "main", "status": r["status"]} for r in rows])
     assert {u["start"] for u in units} <= real
+
+
+def test_project_layout_reads_back_an_untouched_file_as_the_c_that_matched(tmp_path):
+    """An exported file without edits is exactly the C the judge took (the reverse of export.exported_source)."""
+    from decompnet.rom.export import exported_source
+    source = '#include "context.h"\n\nvoid f(void) {\n}\n'
+    text = exported_source("/* prelude */\n", "common_ovl.h", source)
+    assert project_layout.as_submitted(text, project_layout._prefix(text)) == source
+    (tmp_path / "src" / "main").mkdir(parents=True)
+    (tmp_path / "src" / "main" / "f.c").write_text(text)
+    project_layout.record_sources(tmp_path)
+    assert project_layout.edits(tmp_path) == []
+    (tmp_path / "src" / "main" / "f.c").write_text(text.replace("{\n}", "{ return; }"))
+    (tmp_path / "src" / "main" / "g.c").write_text('#include "common.h"\nint g(void) { return 1; }\n')
+    found = {e["function"]: e for e in project_layout.edits(tmp_path)}
+    assert found["f"]["source"] == '#include "context.h"\n\nvoid f(void) { return; }\n'
+    assert found["g"]["source"] == "int g(void) { return 1; }\n"  # the judge puts the header first itself
+    assert found["g"]["segment"] == "main" and found["g"]["path"] == "src/main/g.c"
+
+
+def test_an_edit_the_project_did_not_take_is_written_back_never_lost(tmp_path):
+    edit = {"path": "src/main/f.c", "text": "void f(void) { for (;;); }\n"}
+    assert project_layout.keep(tmp_path, edit, False) == "src/main/f.c"  # the function is still assembly
+    (tmp_path / "src/main/f.c").write_text("void f(void) {}\n")  # the export wrote its matched C there
+    assert project_layout.keep(tmp_path, edit, False) == "src/main/f.c.kept"
+    assert (tmp_path / "src/main/f.c.kept").read_text() == edit["text"]
+    assert project_layout.keep(tmp_path, {"path": "src/main/f.c", "text": "void f(void) {}\n"}, True) == "src/main/f.c"
+
+
+@pytest.mark.parametrize("console", sorted(DEMOS))
+def test_edits_in_the_project_folder_are_judged_by_the_rom_judge(tmp_path, console):
+    """You edit the folder's C (a new file for an unmatched function, a wrong one, a misnamed one) and refresh:
+    each is judged like the function page's Try, credited to you, and the folder is regenerated without losing any."""
+    game, compiler, _ = DEMOS[console]
+    if toolchains.installed(compiler) is None or toolchains.installed("binutils-mips") is None \
+            or shutil.which("ld.lld") is None or not game.exists():
+        pytest.skip(f"the {console} demo, its compiler or linker isn't here")
+    net = _net(tmp_path)
+    slug = net.import_rom(game, confirmed=True, log=lambda *_: None, project_layout=True)
+    folder = Path(net.overview(slug)["project_layout"]["path"])
+    pid = net.project_row(slug)["id"]
+    rows = net.project_store(pid).all("SELECT name, size FROM functions WHERE project_id=? AND status='open' "
+                                      "ORDER BY vram", pid)
+    empty = next((r["name"] for r in rows if r["size"] == 8), None)  # jr ra; nop
+    if empty is None:
+        pytest.skip(f"the {console} demo has no empty function to match")
+    wrong = next(r["name"] for r in rows if r["size"] > 16)
+
+    def where(name):
+        return next((folder / "asm" / "nonmatchings").glob(f"*/{name}.s")).parent.name
+    (folder / "src" / where(empty)).mkdir(parents=True, exist_ok=True)
+    (folder / "src" / where(empty) / f"{empty}.c").write_text(f'#include "common.h"\n\nvoid {empty}(void) {{\n}}\n')
+    (folder / "src" / where(wrong)).mkdir(parents=True, exist_ok=True)
+    wrong_text = f"int {wrong}(void) {{ return 12345; }}\n"
+    (folder / "src" / where(wrong) / f"{wrong}.c").write_text(wrong_text)
+    (folder / "src" / where(wrong) / "no_such_function.c").write_text("void no_such_function(void) {}\n")
+
+    layout = net.setup_project_layout(slug, log=lambda *_: None)
+    assert layout["edits"]["judged"] == 3 and layout["edits"]["matched"] == 1, layout["edits"]
+    status = {r["name"]: r for r in net.project_store(pid).all(
+        "SELECT f.name, f.status, a.name AS who FROM functions f LEFT JOIN agents a ON a.id=f.matched_agent_id "
+        "WHERE f.project_id=?", pid)}
+    assert status[empty]["status"] == "matched" and status[empty]["who"] == "you"
+    assert status[wrong]["status"] == "open"
+    assert not net.project_store(pid).one("SELECT 1 FROM claims WHERE agent_id=?",
+                                          net.attribution_agent("project-folder").id)
+    # the match is now built from the export's own copy; the others are back as written
+    assert f"void {empty}(void)" in (folder / "src" / where(empty) / f"{empty}.c").read_text()
+    assert (folder / "src" / where(wrong) / f"{wrong}.c").read_text() == wrong_text
+    assert (folder / "src" / where(wrong) / "no_such_function.c").is_file()
+    assert {k["function"] for k in layout["edits"]["kept"]} == {wrong, "no_such_function"}
+    assert layout["identical"] is True
+    # nothing changed since: the next refresh judges nothing
+    assert net.setup_project_layout(slug, log=lambda *_: None)["edits"]["judged"] == 0
+    # an edit of a matched function that no longer matches stays beside it; the project keeps its C
+    path = folder / "src" / where(empty) / f"{empty}.c"
+    path.write_text(f"void {empty}(void) {{ for (;;); }}\n")
+    layout = net.setup_project_layout(slug, log=lambda *_: None)
+    assert "keeps the C it matched with" in layout["edits"]["kept"][0]["said"]
+    assert path.with_name(path.name + ".kept").read_text() == f"void {empty}(void) {{ for (;;); }}\n"
+    assert net.project_store(pid).one("SELECT status FROM functions WHERE project_id=? AND name=?", pid,
+                                      empty)["status"] == "matched"

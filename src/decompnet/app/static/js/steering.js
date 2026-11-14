@@ -920,9 +920,11 @@ function renderSource(ov) {
 function renderProjectLayout(ov) {
   const pl = ov.project_layout, state = $("srcState");
   if (!state || state._working) return;
+  const ed = pl && pl.edits, kept = ed ? ed.kept || [] : [];
+  const edits = !ed || !(ed.judged || ed.waiting) ? "" : `<p class="small">Your edits, last refresh: ${ed.judged.toLocaleString()} judged, ${ed.matched.toLocaleString()} matched${ed.waiting ? `, ${ed.waiting.toLocaleString()} waiting (an agent held the function)` : ""}.</p>${kept.length ? `<details class="small"><summary>${kept.length.toLocaleString()} not taken, kept in the folder</summary><ul>${kept.map(k => `<li><code>${esc(k.path)}</code>: ${esc(k.said)}</li>`).join("")}</ul></details>` : ""}`;
   state.insertAdjacentHTML("beforeend", `<div class="src-layout"><p class="small">${pl
-      ? `Project folder: <b>${pl.units.toLocaleString()}</b> guessed source files, ${pl.confirmed.toLocaleString()} fully matched (<code>units.json</code>), set up ${since(pl.t)}.`
-      : "Also lay this game out as a project folder: the export plus a guess at its source files, refined as functions match. Agents keep working as they do now."}</p>
+      ? `Project folder: <b>${pl.units.toLocaleString()}</b> guessed source files, ${pl.confirmed.toLocaleString()} fully matched (<code>units.json</code>), set up ${since(pl.t)}. Edit or add <code>src/&lt;segment&gt;/&lt;function&gt;.c</code> there; Refresh judges each changed file like Try.`
+      : "Also lay this game out as a project folder: the export plus a guess at its source files, refined as functions match. Agents keep working as they do now."}</p>${edits}
     <button class="ghost small-btn" id="srcLayout" type="button">${pl ? "Refresh project folder" : "Set up as a project folder"}</button></div>`);
   $("srcLayout").onclick = layoutNow;
 }
