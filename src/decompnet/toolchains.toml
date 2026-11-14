@@ -1135,6 +1135,51 @@ subdir = "zlib-51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf"
 into = "source/deps/zlib"
 platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
 
+[mupenre]
+name = "mupenRE, the N64 reversing emulator"
+kind = "tool"
+license = "GPL-2.0"
+source = "RetroReversing/mupen64plus-core 90a2722 with libRetroReversing 4b7fe0d, mupen64plus-rsp-hle 2.6.0, SDL2 2.32.10, libpng 1.6.50"
+description = "Runs your own N64 ROM headless, as the console would, to compare with a port or a decompiled function: memory at a chosen moment, which code writes an address, what a function is called with. Built here from its source with the pinned CMake and this computer's C/C++ compiler (consoles/n64/emulator)."
+binary_name = "mupenre-frontend"
+build = "mupenre"
+requires = ["cmake"]
+[[mupenre.parts]]
+url = "https://codeload.github.com/RetroReversing/mupen64plus-core/tar.gz/90a27223dccedf54cc11ddb6d6071a6eaf04dbdb"
+sha256 = "49e15d3128563551b4cef911f9d48bee7977133dcce58c96922ae129b5143221"
+file = "mupenre-core-90a27223dccedf54cc11ddb6d6071a6eaf04dbdb.tar.gz"
+subdir = "mupen64plus-core-90a27223dccedf54cc11ddb6d6071a6eaf04dbdb"
+into = "source/core"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[mupenre.parts]]
+url = "https://codeload.github.com/RetroReversing/libRetroReversing/tar.gz/4b7fe0df6a5a1b7ca8952175365e16477e2e9289"
+sha256 = "4c46cc1f9062e5a5d84cf6f0ac656968ac9c2fd75fbd3df90bb42faf99104d6e"
+file = "mupenre-libRetroReversing-4b7fe0df6a5a1b7ca8952175365e16477e2e9289.tar.gz"
+subdir = "libRetroReversing-4b7fe0df6a5a1b7ca8952175365e16477e2e9289"
+into = "source/core/libRetroReversing"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[mupenre.parts]]
+url = "https://github.com/mupen64plus/mupen64plus-rsp-hle/archive/refs/tags/2.6.0.tar.gz"
+sha256 = "55099a5089b1dd841080d4dcb8be367c65559c1ce3d29bef34682a0a5d0f80e5"
+file = "mupenre-rsp-hle-2.6.0.tar.gz"
+subdir = "mupen64plus-rsp-hle-2.6.0"
+into = "source/rsp-hle"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[mupenre.parts]]
+url = "https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.tar.gz"
+sha256 = "5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165"
+file = "mupenre-SDL2-2.32.10.tar.gz"
+subdir = "SDL2-2.32.10"
+into = "source/sdl2"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[mupenre.parts]]
+url = "https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.50.tar.gz"
+sha256 = "71158e53cfdf2877bc99bcab33641d78df3f48e6e0daad030afe9cb8c031aa46"
+file = "mupenre-libpng-1.6.50.tar.gz"
+subdir = "libpng-1.6.50"
+into = "source/libpng"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+
 [binutils-mips]
 name = "GNU binutils for MIPS (decompals)"
 kind = "tool"

@@ -977,6 +977,21 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### Your N64 ROM runs in the reversing emulator
+
+**mupenRE** (Compilers & tools → Tools) is RetroReversing's mupen64plus core with libRetroReversing, pinned by
+commit with the HLE RSP, SDL2 and libpng and built here from source like Torch (`consoles/n64/emulator`). It runs your
+own ROM headless, as fast as the computer allows and the same way every run:
+- scripted input, timed in vertical interrupts (the port's input format);
+- RDRAM written at an exact VI, big-endian like the WebAssembly port's dumps, so the two compare word by word
+  (`differences`);
+- write breakpoints report the code that writes an address;
+- execution breakpoints report a function's arguments.
+
+From the command line: `python -m decompnet.consoles.n64.emulator ROM --vis N --dump VI:FILE --watch ADDR --break ADDR`.
+It found why a racing game's port started every car facing backwards: the port lost the `$v0` a void wrapper left
+for its caller.
+
 ### A finished game exports as an app or a browser build
 
 Play it's **Export…** (Porting) makes the game something to keep and share, from the last save, without
@@ -1829,6 +1844,18 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### The reversing emulator for agents, ports and other platforms
+
+- An agent tool: watch an address or stop at a function in the user's ROM, with the project's names for each
+  address, so a helper can see what the console does where its C or the port differs.
+- Compare with the emulator in Play: the port's memory at a frame against the console's at the same moment, the
+  first differing range named by symbol (the port's frames and the emulator's VIs line up through the input script).
+- libRetroReversing's function-call log (which functions ran, with what) read back, for a call-by-call comparison
+  with the port's own trace.
+- N64Recomp's output as a third reference, beside the emulator and the decompiled C.
+- Windows: "—" for now (the frontend loads the core with `dlopen`); a ROM that never starts its video interface
+  counts no VIs, so only breakpoints and the timeout end its run.
 
 ### decomprepair: its own repository, a C parser, and other processors
 
