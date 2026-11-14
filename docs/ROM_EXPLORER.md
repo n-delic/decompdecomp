@@ -92,6 +92,10 @@ recorded (a renamed or changed copy is refused, with what to put back). Its spla
 code segments are used when that config splits exactly that file; a config that splits a
 derived image (decompressed code, say) is ignored rather than mapped onto the wrong offsets.
 Its functions have no ROM offsets yet, so regions show no function references there.
+The images that config declares are shown as textures too, as the project worked them out:
+splat's image segments (`rgba16`, `ci4` with its `palette`, `i8`...) and a project's own segment
+types whose arguments are a format and a size (`[0x1BB280, yay0_image, Font/000, i4, 24, 24]`),
+unpacked first when a Yay0, MIO0 or Yaz0 block starts there (`rom/config_images.py`).
 Object-build projects whose original is a disc or a folder still need original-image adapters. Processor adapters plug into
 `Arch.asset_flow`; console-specific call contracts and argument counts belong to `Console`.
 The preview decoders and local UI/API are shared by every ROM console.

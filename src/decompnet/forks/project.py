@@ -374,33 +374,40 @@ class ForkProject:
                 return real
         return None
 
-    def segments_for(self, image: Path, version: str | None) -> tuple[list[dict], int]:
-        """The code segments (and $gp) of the splat config that splits exactly `image`, else none.
+    def splat_config_for(self, image: Path, version: str | None) -> dict | None:
+        """The splat config that splits exactly `image`, read, or None.
 
         A config that splits another image (a decompressed one built from the cartridge, say) describes other
-        offsets, so its segments are not used for this one."""
+        offsets, so it is not used for this one."""
         import yaml
-
-        from ..rom.split import segments_from_config_data
 
         configs = self._splat_version_configs()
         path = configs.get(version or "") or (next(iter(configs.values())) if len(configs) == 1 else self._splat_yaml())
         try:
             config = yaml.safe_load(path.read_text(encoding="utf-8")) if path else None
         except (OSError, ValueError, yaml.YAMLError):
-            return [], 0
+            return None
         options = config.get("options") if isinstance(config, dict) else None
         if not isinstance(options, dict) or not isinstance(options.get("target_path"), str):
-            return [], 0
+            return None
         target = (path.parent / str(options.get("base_path", ".")) / options["target_path"]).resolve()
-        if target != image.resolve():
+        return config if target == image.resolve() else None
+
+    def segments_for(self, image: Path, version: str | None, config: dict | None = None) -> tuple[list[dict], int]:
+        """The code segments (and $gp) of the splat config that splits exactly `image`, else none.
+
+        `config` is that config when the caller has already read it (`splat_config_for`)."""
+        from ..rom.split import segments_from_config_data
+
+        config = config if config is not None else self.splat_config_for(image, version)
+        if config is None:
             return [], 0
         try:
             segments = [dict(name=s.name, rom_start=s.rom_start, rom_end=s.rom_end, vram=s.vram)
                         for s in segments_from_config_data(config)]
         except (TypeError, ValueError, KeyError):
             return [], 0
-        gp = options.get("gp_value")
+        gp = config["options"].get("gp_value")
         return segments, gp if isinstance(gp, int) else 0
 
     def splat_default_version(self) -> str | None:
