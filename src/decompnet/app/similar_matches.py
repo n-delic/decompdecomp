@@ -393,7 +393,7 @@ def run(twins, slug: str, job) -> int:
         rows = donors.candidates(pb.size, max(MIN_BYTES, int(pb.size * .9)), min(MAX_BYTES, int(pb.size / .9)),
                                  pb.key, twins._compiler_key(compiler_for(cfg, b['vram'], b)), MAX_POOL, near=b['vram'])
         layout = [(o, t) for o, t, _ in relocations(b)]
-        rows = [a for a in rows if a['project_id'] in others and a['matched_source']
+        rows = [a for a in rows if a['project_id'] in others and a['has_matched']
                 and ([(o, t) for o, t, _ in relocations(a)] == layout or maps[a['project_id']])
                 and json.loads(a['compiler']).get('toolchain') == compiler_for(cfg, b['vram'], b).get('toolchain')]
         own_key = twins._compiler_key(compiler_for(cfg, b['vram'], b))
