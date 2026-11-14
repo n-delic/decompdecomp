@@ -155,6 +155,9 @@ def _hash_mismatch(tail: str) -> str | None:
             "from). Or start the game from your own copy instead: choose New project → Open a game file.")
 
 
+# How many YAML files are read looking for the config that splits the game file.
+MAX_SPLAT_CANDIDATES = 400
+
 class ForkProject:
     def __init__(self, root: Path, *, create_state: bool = True):
         self.root = Path(root)
@@ -377,20 +380,40 @@ class ForkProject:
     def splat_config_for(self, image: Path, version: str | None) -> dict | None:
         """The splat config that splits exactly `image`, read, or None.
 
-        A config that splits another image (a decompressed one built from the cartridge, say) describes other
-        offsets, so it is not used for this one."""
+        A config that splits another image (a decompressed one built from the cartridge, another release) describes
+        other offsets, so it is not used for this one. The config the build names comes first; when it splits
+        another file, the project's other splat configs are looked through for the one whose target is `image`
+        (projects with one config per release under config/<release>/)."""
+        configs = self._splat_version_configs()
+        chosen = configs.get(version or "") or (next(iter(configs.values())) if len(configs) == 1 else self._splat_yaml())
+        found = self._config_splitting(chosen, image) if chosen else None
+        if found is not None:
+            return found
+        candidates = sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/**/*.yaml"))
+        for path in candidates[:MAX_SPLAT_CANDIDATES]:
+            if path != chosen and (found := self._config_splitting(path, image)) is not None:
+                return found
+        return None
+
+    @staticmethod
+    def _config_splitting(path: Path, image: Path) -> dict | None:
+        """The splat config at `path` when its target is `image`, else None."""
         import yaml
 
-        configs = self._splat_version_configs()
-        path = configs.get(version or "") or (next(iter(configs.values())) if len(configs) == 1 else self._splat_yaml())
         try:
-            config = yaml.safe_load(path.read_text(encoding="utf-8")) if path else None
+            text = path.read_text(encoding="utf-8")
+            if "segments:" not in text or "target_path" not in text:
+                return None
+            config = yaml.safe_load(text)
         except (OSError, ValueError, yaml.YAMLError):
             return None
         options = config.get("options") if isinstance(config, dict) else None
         if not isinstance(options, dict) or not isinstance(options.get("target_path"), str):
             return None
-        target = (path.parent / str(options.get("base_path", ".")) / options["target_path"]).resolve()
+        try:
+            target = (path.parent / str(options.get("base_path", ".")) / options["target_path"]).resolve()
+        except OSError:
+            return None
         return config if target == image.resolve() else None
 
     def segments_for(self, image: Path, version: str | None, config: dict | None = None) -> tuple[list[dict], int]:
