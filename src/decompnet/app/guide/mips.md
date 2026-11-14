@@ -42,3 +42,8 @@ Types from instructions
 Stack frame
 - `addiu $sp, $sp, -N` / `addiu $sp, $sp, N`: frame size. On N64, GCC and IDO both reserve 0x10 bytes
   for the argument area of calls. Locals whose address is taken live on the stack (`addiu $a1, $sp, 0x10` = `&local`).
+
+- A function with no prologue that uses `$s0-$s7`/`$a0-$a3` set by the code before it, one that is only an
+  epilogue (restore + `jr $ra`), or one that doesn't end in `jr $ra` and runs straight into the next symbol,
+  is a piece the analysis cut off — not its own function. `join_functions(the one before, this one, why)` so
+  it becomes part of the whole again, instead of giving the fragment a body of its own.

@@ -465,9 +465,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                          "its functions use elsewhere, a HarnessEntry calling each function as the original's call sites "
                          "do, declarations), to write into harness/ with edit_file.",
                          s(what=st("unit, source file or function", True))),
-        "join_functions": ("Forks: two functions are one the game's analysis cut (a piece with no prologue using registers "
+        "join_functions": ("Two functions are one the game's analysis cut (a piece with no prologue using registers "
                            "the code before set, an epilogue alone, a switch's cases in the next symbol); joined once "
-                           "agents of two models agree and the game still builds byte for byte.",
+                           "three agents of two models agree. Works in ROM and fork projects alike.",
                            s(function=st("function", True), with_function=st("the other part", True),
                              reason=st("what in the code shows it", True))),
         "split_file": ("Divide a source file at a function: it and the rest of the file's code (and data from the given "

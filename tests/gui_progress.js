@@ -235,5 +235,48 @@ async function main() {
   await runningJoin;
   assert.equal(replacement.disabled, false);
   assert.equal(test.log.bar.removed, true);
+  // A merge event (a host's or agents' join reaching the page) refreshes the map, like split and match do.
+  {
+    const mt = setup(...cases[0]);
+    const src = read("project");
+    const from = src.indexOf("let pollingGen = -1;");
+    vm.runInContext(src.slice(from, src.indexOf("\nlet statsLoading", from)), mt.ctx);
+    let dirty = null;
+    Object.assign(mt.ctx, {
+      MAP_EVERY_MS: 20000, performance: { now: () => 0 },
+      applyAttempts() {}, addActivity() {}, renderNow() {}, renderStats() {}, applyClaims() {}, renderList() {},
+      refreshFn() {}, fnBadge() {}, renderSessions() {}, addThoughts() {},
+      refreshMap: async (d) => { dirty = d; },
+      api: async () => ({ overview: {}, events: [{ id: 1, kind: "merge", detail: "a + b" }],
+        attempts: [], claims: [], sessions: [], cut: false }),
+    });
+    mt.ctx.S = { slug: "t", gen: 0, lastEvent: 0, lastAttempt: 0, seq: {}, scores: new Map(), flash: { set() {} },
+      claims: [], sessions: [], primed: true, tab: "", fn: null, claimSig: "", lastMapFetch: Date.now(), openedAt: 0 };
+    mt.get("drawer").hidden = true;
+    await mt.ctx.poll();
+    assert.equal(dirty, true, "a merge event must refresh the map");
+  }
+  // eventHtml renders a ROM split as two function links and a merge as its surviving head, linked (agents.js).
+  {
+    const ctx = vm.createContext({
+      whoHtml: (a) => `<who>${a}</who>`, fnLink: (n) => `<a>${n}</a>`, esc: (s) => s, POLISH_TAG: "",
+    });
+    const src = read("agents");
+    const from = src.indexOf("function eventHtml(ev) {");
+    vm.runInContext(src.slice(from, src.indexOf("/* One line per agent", from)), ctx);
+    const render = (ev) => vm.runInContext("eventHtml(" + JSON.stringify(ev) + ")", ctx);
+    // A ROM split names two functions ("<prev> / <new>"); both exist after the split, so both are links.
+    const split = render({ kind: "split", agent: "claude-1", detail: "func_800007C4 / func_800007D0" });
+    assert.ok(split.includes("<a>func_800007C4</a>") && split.includes("<a>func_800007D0</a>"),
+      "a ROM split links both functions: " + split);
+    // A fork splits a source file ("<rel> → <new file>"): plain text, not a broken function link.
+    const fileSplit = render({ kind: "split", agent: "claude-1", detail: "a.c → b.c" });
+    assert.ok(fileSplit.includes("split a.c → b.c") && !fileSplit.includes("<a>"),
+      "a file split is plain text: " + fileSplit);
+    // A merge ("<head> + <tail>: joined") links only the surviving head and shows the rest as text.
+    const merge = render({ kind: "merge", agent: "claude-1", detail: "func_800007C4 + func_800007D0: joined" });
+    assert.ok(merge.includes("<a>func_800007C4</a>") && merge.includes(" + func_800007D0: joined")
+      && !merge.includes("<a>func_800007D0</a>"), "a merge links only the head: " + merge);
+  }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
