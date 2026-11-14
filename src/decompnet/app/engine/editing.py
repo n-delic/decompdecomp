@@ -148,6 +148,24 @@ class EditMixin:
         self._xrefs.pop(proj["id"], None)
         return head, tail
 
+    def _bare_return(self, proj, fn) -> bool:
+        """Whether matched `fn` is only a return and its delay slot that nothing calls or points at: the end of the
+        function before it, cut off and matched as an empty function. An N64 game had two getters cut before their
+        `jr $ra` this way; a person's join may take such a piece back, giving up a match that was never a function
+        (its attempts, with that C, move to the joined entry like every piece's)."""
+        facts = arch.get(proj["arch"]).boundary_instruction
+        code = fn["target"] or b""
+        if facts is None or len(code) != 8 or code[4:] != bytes(4):
+            return False
+        order = "big" if proj["big_endian"] else "little"
+        if not facts(int.from_bytes(code[:4], order), fn["vram"])["return"]:
+            return False
+        if self.xrefs(proj)["called_by"].get(fn["vram"]):
+            return False
+        image, _ = self._rom(proj)
+        word = fn["vram"].to_bytes(4, order)
+        return not any(at % 4 == 0 for at in _find_all(image, word))
+
     def join_rom_functions(self, slug: str, names: list[str], reason: str) -> str:
         """An explicit operator correction: join consecutive, unmatched pieces of one ROM segment.
 
@@ -162,7 +180,8 @@ class EditMixin:
         proj = self._project(slug)
         pieces = sorted((self._function(name, slug) for name in names), key=lambda f: f["rom_offset"])
         head = pieces[0]
-        if any(f["status"] == "matched" for f in pieces):
+        if head["status"] == "matched" or any(f["status"] == "matched" and not self._bare_return(proj, f)
+                                              for f in pieces[1:]):
             raise NetworkError("a matched function cannot be joined")
         if any(f["unit"] != head["unit"] for f in pieces):
             raise NetworkError("the pieces must belong to the same source unit")
@@ -191,7 +210,7 @@ class EditMixin:
         relocs = sorted(relocations)
         meta = {k: v for k, v in json.loads(head["meta"] or "{}").items()
                 if k not in ("asm_code", "asm_twin", "not_c", "set_aside")}
-        meta["joined_from"] = [{k: f[k] for k in ("name", "size", "vram", "rom_offset", "meta")} for f in pieces]
+        meta["joined_from"] = [{k: f[k] for k in ("name", "size", "vram", "rom_offset", "meta", "status")} for f in pieces]
         meta["reopened"] = True
         lines, labels = {}, {}
         for f in pieces:
@@ -526,3 +545,11 @@ class EditMixin:
             cfg = self._update_cfg(slug, change, synchronize=False)
             self.progress.foreground_changed(slug)
             return cfg["priority"]
+
+
+def _find_all(data: bytes, needle: bytes):
+    """Every offset of `needle` in `data`."""
+    at = data.find(needle)
+    while at >= 0:
+        yield at
+        at = data.find(needle, at + 1)

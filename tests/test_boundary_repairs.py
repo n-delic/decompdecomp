@@ -417,3 +417,18 @@ def test_safe_fixes_never_join_a_piece_that_holds_another_function(tmp_path,monk
     result=repair.apply_safe(net,'game')
     assert ('head','join_previous','head') not in [(f['flagged'],f['action'],f['function']) for f in result['fixed']]
     assert net._function('piece','game')['gone_mark'] is None and net._function('head','game')['size']==8
+
+
+@pytest.mark.parametrize('case',['bare return','called','real code'])
+def test_your_join_may_take_back_a_return_matched_as_an_empty_function(tmp_path,monkeypatch,case):
+    tail=[JR_RA,NOP] if case!='real code' else [LOAD,JR_RA]
+    pieces=[('getter',[0x3c02800b,0x8c423630],'open'),('tail',tail,'matched'),('after',[JR_RA,NOP],'open')]
+    if case=='called':pieces.append(('caller',[jal(BASE+8),NOP,JR_RA,NOP],'open'))
+    net,_=layout(tmp_path,monkeypatch,pieces)
+    if case=='called':
+        with net.store.tx() as db:db.execute("UPDATE functions SET relocs=? WHERE name='caller'",(json.dumps([[0,4,BASE+8]]),))
+    if case=='bare return':
+        assert net.join_rom_functions('game',['getter','tail'],'cut before its return').startswith('Joined')
+        assert net._function('getter','game')['size']==16 and repair.audit(net,'game')['findings']==[]
+    else:
+        with pytest.raises(NetworkError,match='matched'):net.join_rom_functions('game',['getter','tail'],'cut before its return')
