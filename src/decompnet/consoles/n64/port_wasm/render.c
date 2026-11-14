@@ -1,9 +1,11 @@
 /*
  * The RSP and RDP, in software: each graphics task's display list drawn into the game's own frame buffer, as the
- * N64 does (port/wasm). A first renderer, to see the game: Nintendo's F3DEX2 (3D) and S2DEX (2D backgrounds and
- * sprites) microcodes, chosen per task by the microcode it loads, and the RDP commands both send. Textures filtered
- * as the RDP filters them (point, its three-texel bilinear, or average), one or two combiner cycles, the blender
- * with fog, a depth buffer, anti-aliasing (the RDP's coverage and the VI's filter), no dithering.
+ * N64 does (port/wasm). Nintendo's microcodes of both GBI generations: Fast3D, F3DEX 1.x and F3DEX2 (3D), S2DEX
+ * 1.x and S2DEX2 (2D backgrounds and sprites), told apart by the signature in the microcode's data, per task and at
+ * each G_LOAD_UCODE; the RDP commands they all send. Textures filtered as the RDP filters them (point, its
+ * three-texel bilinear, or average), two tiles and mip levels, one or two combiner cycles, the blender with fog,
+ * depth in the game's z image, anti-aliasing (the RDP's coverage and the VI's filter), the RDP's dither, and the
+ * VI's mode (size, gamma, its filters). Arithmetic in floats, where the RDP's is fixed point.
  *
  * Addresses in a display list are segmented (segment << 24 | offset) or physical; the segment table is the list's
  * own (G_MOVEWORD). The game's memory is big-endian at the console's addresses: physical p is 0x80000000 | p here.
