@@ -95,6 +95,40 @@ def game(net, slug: str) -> tuple[Path, dict, Path]:
     return save_repository(saves.default_folder(net, slug)), cfg, rom
 
 
+def library(net, slug: str, log=print) -> set[str]:
+    """The save's files of library code the host provides, proven by the project's library detection (the SDK
+    folders the user indexed, the console's built-in signatures, identities the user confirmed): the files the
+    build leaves out besides the save's own exclude.txt.
+
+    A save made on another computer had no exclude.txt and named libultra func_<address>, so its WebAssembly
+    build compiled the Controller Pak's internals (`OSPifRam` undeclared) and failed. What the port kit says the
+    host or the port's glue replaces goes (`sdk_group`: "replaced", "glue"); what runs as the game's own C stays
+    (the matrix helpers, the synthesizer: "native")."""
+    from ...app.saves import _source_file
+    from ...app.sdk_identity import display_name, identify
+    from ..identities import confirmed
+
+    with net.progress.view():
+        proj = net._project(slug)
+    kit = net.console(proj).port_kit
+    if kit is None:
+        return set()
+    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
+    if not sdk:
+        return set()
+    rows = net.project_store(proj["id"]).all("SELECT id, name FROM functions WHERE project_id=? AND status='matched'",
+                                             proj["id"])
+    out = set()
+    for r in rows:
+        hint = sdk.get(r["id"])
+        if hint and {"replaced", "glue"} & {kit.sdk_group(n) for n in hint.get("names")
+                                             or [display_name(hint, r["name"])]}:
+            out.add(_source_file(r["name"]))
+    if out:
+        log(f"leaving out {len(out)} functions of libultra the host provides (found by library detection)")
+    return out
+
+
 def play(net, slug: str, log=print) -> dict:
     """Build the project's game for the PC if anything changed, start it with its live view, and return its address
     once it answers: {"url": ...}."""
@@ -105,7 +139,8 @@ def play(net, slug: str, log=print) -> dict:
         return {"url": url}
     repo, cfg, rom = game(net, slug)
     steps = (*build.STEPS, STARTING)
-    program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps)
+    program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps,
+                          leave_out=library(net, slug, log))
     build.Progress(log, steps).start(STARTING)
     port = _free_port()
     out = program.parent

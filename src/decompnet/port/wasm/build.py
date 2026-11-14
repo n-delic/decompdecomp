@@ -4,7 +4,8 @@ Inputs, all from the game's save repository (the folder Save writes, under git) 
 - progress/src/*.c and progress/include/*.h: the game's matched C and its shared header, as the decomp has them;
 - progress/decompdecomp.json: where every function and named datum lives (the layout and the symbols);
 - port/wasm/exclude.txt: matched C the build leaves out, one file name a line (# comments): library code the host
-  provides, or code the port doesn't run;
+  provides, or code the port doesn't run. Play and Export add the library code the project proves (`leave_out`:
+  play.library), so a save that never wrote this list still leaves libultra to the host;
 - port/wasm/src/*.c: C only the port has, for functions with no matched C yet (it needn't match, only behave);
 - port/wasm/overrides/*.c: the port's version of a matched file, until the fix is in the matched C behind
   `#ifdef PORT` (Fix C for the PC);
@@ -242,14 +243,15 @@ def big_endian_bitfields(text: str) -> str:
     return "\n".join(result)
 
 
-def gather(repo: Path, out: Path) -> dict[str, Path]:
+def gather(repo: Path, out: Path, leave_out=()) -> dict[str, Path]:
     """The C the build compiles, in out/src (one file per function, the shared header included) and out/include.
-    Returns {file name: where it came from}."""
+    `leave_out`: more matched files to leave out than exclude.txt names (play.library). Returns {file name: where it
+    came from}."""
     progress, port = repo / "progress", repo / "port" / "wasm"
     if not (progress / "src").is_dir() or not (progress / "decompdecomp.json").is_file():
         raise NetworkError(f"{repo} has no progress/src and progress/decompdecomp.json: choose the game's save "
                            "repository (the folder Save writes)")
-    exclude = _names(port / "exclude.txt")
+    exclude = _names(port / "exclude.txt") | set(leave_out)
     chosen = {p.name: p for p in sorted((progress / "src").glob("*.c")) if p.name not in exclude}
     for folder in (port / "src", port / "overrides"):
         chosen.update({p.name: p for p in sorted(folder.glob("*.c"))})
@@ -467,10 +469,10 @@ def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, s
     return _parallel(lls, place, log, "functions", step)
 
 
-def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS) -> Path:
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=()) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
-    caller adds its own after these (play.py)."""
+    caller adds its own after these (play.py); `leave_out`, library files the host provides (gather)."""
     repo = Path(repo).expanduser().resolve()
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
@@ -490,7 +492,7 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS) -> Path:
     files = _Files()
 
     log("gathering the game's C from its save")
-    sources = gather(repo, out)
+    sources = gather(repo, out, leave_out)
     manifest = json.loads((repo / "progress" / "decompdecomp.json").read_text(encoding="utf-8"))
     fixed, functions = addresses(manifest)
     _write(out / "fixed.txt", "\n".join(fixed) + "\n")

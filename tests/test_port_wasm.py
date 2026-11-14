@@ -307,3 +307,9 @@ def test_the_build_reports_its_steps_and_each_steps_files(tmp_path):
     assert seen[-1] == {"phase": STEPS[1], "step": 2, "steps": len(STEPS) + 1, "done": 3, "total": 3}
     assert "2 files redone, 1 unchanged" in lines
     Progress(print).start(STEPS[0])  # a log without a bar (the command line) builds the same
+
+
+def test_the_build_leaves_out_the_library_files_play_proves_besides_exclude_txt(tmp_path):
+    repo, _ = save(tmp_path)
+    chosen = gather(repo, tmp_path / "build", {"race_update.c"})
+    assert sorted(chosen) == ["func_8001E640.c", "tokenize.c"]

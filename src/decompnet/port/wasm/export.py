@@ -159,6 +159,7 @@ def export(net, slug: str, kind: str, log=print) -> dict:
     if kind not in KINDS:
         raise NetworkError(f"export as one of: {', '.join(KINDS)}")
     repo, cfg, _rom = play.game(net, slug)
+    leave_out = play.library(net, slug, log)
     console = cfg.get("platform", "n64")
     title = cfg.get("rom", {}).get("title") or slug
     out = repo / "port" / "wasm" / "export"
@@ -166,14 +167,14 @@ def export(net, slug: str, kind: str, log=print) -> dict:
     build._write(out / ".gitignore", "*\n")  # built from the game: never committed
     if kind == "app":
         steps = (*build.STEPS, PACKING)
-        program = build.build(repo, console=console, log=log, steps=steps)
+        program = build.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
         build.Progress(log, steps).start(PACKING)
         log(f"packing {title} as an app for this computer")
         path = package_app(program, out / "app", title)
         folder = out / "app"
     else:
         steps = (*web.STEPS, PACKING)
-        folder = web.build(repo, console=console, log=log, steps=steps)
+        folder = web.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
         build.Progress(log, steps).start(PACKING)
         log("copying the browser build")
         folder = web.export(folder, out / "web")
