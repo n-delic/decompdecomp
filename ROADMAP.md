@@ -1989,6 +1989,9 @@ Phases:
   their decompilations (only its setup is C), and the SDK's source can't be used. It needs that decoder decompiled
   or its routines reverse-engineered.
 - A snowboarding sequel's tiled backgrounds (3 segments) use another layout than its texture sheets.
+- A puzzle game's fork declares ~3,900 images, but in a config that splits a decompressed copy its build makes;
+  ROM Explorer reads only the game file whose hash the import recorded. Reading a derived image a project verifies
+  (its checksum file matching the copy on disk) would show them.
 - Done in 0.9.0: a glove platformer's FLA2-packed texture banks.
 - A monster-battle game builds its display lists in code from its own tables, and keeps raw texels in Yay0 blocks
   with no format or size: its textures need those tables read.

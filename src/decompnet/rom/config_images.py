@@ -36,20 +36,43 @@ MAX_LIST = 32 * 1024 * 1024
 LISTED = re.compile(r'\.(rgba16|rgba32|ci4|ci8|i4|i8|ia4|ia8|ia16)\.png$')
 
 
-def _entries(segments, end=None):
-    """Each segment in a list, flattened through `subsegments`: (start, end, type, name, arguments, item)."""
-    items = []
+def _declared_size(kind, args, item):
+    """The bytes a segment takes when its type and arguments say so (an image), else None."""
+    found = _image(kind, None, args, item)
+    if not found or not all(isinstance(v, int) and v > 0 for v in found[1:]):return None
+    fmt, width, height = found
+    return (width*FORMATS[fmt][1] + 7)//8*height
+
+
+def _entries(segments, end=None, begin=None):
+    """Each segment in a list, flattened through `subsegments`: (start, end, type, name, arguments, item).
+
+    A `start: auto` piece starts where the one before it ends (when that one's size is known: an image), or at
+    its group's start when it comes first."""
+    items, previous = [], None
     for item in segments if isinstance(segments, list) else []:
-        if isinstance(item, list) and item and isinstance(item[0], int):
-            items.append((item[0], item[1] if len(item) > 1 else None, item[2] if len(item) > 2 else None, item[3:], item))
-        elif isinstance(item, dict) and isinstance(item.get('start'), int):
-            items.append((item['start'], item.get('type'), item.get('name'), [], item))
+        listed = isinstance(item, list) and item and (isinstance(item[0], int) or item[0] == 'auto')
+        if listed or isinstance(item, dict) and (isinstance(item.get('start'), int) or item.get('start') == 'auto'):
+            start = item[0] if listed else item['start']
+            if start == 'auto':
+                if previous is None:start = begin
+                else:
+                    size = _declared_size(previous[1], previous[3], previous[4])
+                    start = previous[0] + size if size is not None else None
+            if not isinstance(start, int):
+                previous = None
+                continue
+            entry = ((start, item[1] if len(item) > 1 else None, item[2] if len(item) > 2 else None, item[3:], item) if listed
+                     else (start, item.get('type'), item.get('name'), [], item))
+        else:
+            continue
+        items.append(entry);previous = entry
     out = []
     for index, (start, kind, name, args, item) in enumerate(items):
         stop = next((s for s, *_ in items[index+1:] if s > start), end)
         out.append((start, stop, kind, name, args, item))
         if isinstance(item, dict) and 'subsegments' in item:
-            out += _entries(item['subsegments'], stop)
+            out += _entries(item['subsegments'], stop, start)
     return out
 
 

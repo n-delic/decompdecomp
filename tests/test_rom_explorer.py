@@ -415,3 +415,21 @@ def test_a_fork_shows_the_sno_texture_sheets_its_splat_config_declares():
     assert [a['resource_path'] for a in assets]==['menu']                 # zeros don't unpack to a sheet
     shown=config_images.preview(bytes(image),assets[0],{})
     assert shown['decoded']['codec']=='sno' and (shown['details']['width'],shown['details']['height'])==(4,2)
+
+
+def test_a_fork_with_one_config_per_release_reads_the_one_that_splits_its_game(tmp_path):
+    """config/<release>/ layouts: another release's config comes first, the game's own is the one read."""
+    from decompnet.forks.project import ForkProject
+    from decompnet.rom import config_images
+    root=tmp_path/'decomp';(root/'config'/'eur').mkdir(parents=True);(root/'config'/'aaa').mkdir()
+    image=bytearray(0x400);image[0x210:0x220]=bytes.fromhex('f801')*8
+    (root/'config'/'eur'/'baserom.eur.z64').write_bytes(bytes(image))
+    (root/'config'/'aaa'/'game.aaa.yaml').write_text('options:\n  target_path: config/aaa/baserom.aaa.z64\n  base_path: ../../\nsegments:\n  - [0x0]\n')
+    (root/'config'/'eur'/'game.eur.yaml').write_text(
+        'options:\n  target_path: config/eur/baserom.eur.z64\n  base_path: ../../\nsegments:\n'
+        '  - type: group\n    name: art\n    start: 0x200\n    subsegments:\n'
+        '      - [auto, rgba16, first, 4, 2]\n      - { start: auto, type: rgba16, name: second, width: 4, height: 2 }\n'
+        '  - [0x400]\n')
+    config=ForkProject(root,create_state=False).splat_config_for(root/'config'/'eur'/'baserom.eur.z64',None)
+    assert config and config['options']['target_path']=='config/eur/baserom.eur.z64'
+    assert [(i['name'],i['offset']) for i in config_images.images(config)]==[('first',0x200),('second',0x210)]
