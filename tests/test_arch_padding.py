@@ -77,3 +77,15 @@ def test_gba_reads_an_old_arm_rows_mode_from_its_macro_not_defaulting_to_thumb()
     assert GBA.target_arch(arm_row) == "arm" and GBA.target_arch(thumb_row) == "thumb"
     assert GBA.is_padding(b"\x00\x00\xa0\xe1", arm_row)        # ARM nop (0xE1A00000) under an ARM row: padding
     assert not GBA.is_padding(b"\x00\x00\xa0\xe1", thumb_row)  # same bytes under a Thumb row are not padding
+
+
+def test_gba_scores_an_old_arm_row_as_arm_not_thumb():
+    """target_from_row builds the target that scoring and autopilot use. A meta-less ARM row must come back ARM:
+    target_arch alone only steers the padding reader, while target_from_row/target_object drive disassembly and
+    scoring, so without reading the stored mode here an old ARM function is scored (and autopiloted) as Thumb."""
+    from decompnet.arch.arm import canonical_target
+    from decompnet.consoles.gba import GBA
+    arm_row = {"name": "sub", "vram": 0x08000100, "target": b"\x00\x00\xa0\xe1", "relocs": "[]",
+               "asm": "arm_func_start sub\n", "meta": "{}"}
+    assert GBA.target_from_row(arm_row, {}).thumb is False
+    assert canonical_target(GBA.target_from_row(arm_row, {})).arch == "arm"

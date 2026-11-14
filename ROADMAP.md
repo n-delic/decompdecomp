@@ -901,7 +901,7 @@ The answer goes here: build it, build part of it, or not, and why.
 
 - **Padding by processor (x86).** Retiring a pure-padding split head (editing.py `_cut`) asks the processor
   (`arch/`) for its own filler: MIPS zero, ARM/Thumb and PPC nops are now recognised and those padding heads
-  retired. x86's reader exists (`arch/x86.py` — `0xCC`/`0x90`) but isn't wired into a split path yet: `_cut` is
+  retired. x86's reader exists (`arch/x86.py` — `0xCC`/`0x90` and the standard multi-byte nops) but isn't wired into a split path yet: `_cut` is
   ROM-only and PC/Xbox are project mode, so x86 padding heads aren't retired.
 - **Better look-alikes.** A second measure (edit distance over opcodes) next to today's, and shared runs of
   instructions, which find inlined helpers and macros. Needs PowerPC and x86 opcode readers.
