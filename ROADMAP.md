@@ -789,6 +789,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
+| Set up as a project folder (import checkbox or Export panel; guessed `units.json`; edits to `src/<segment>/<function>.c` judged by the ROM judge on Refresh) | ✓ demo: 14 of 16 files found | ✓ demo: 1 of 18 files found (no padding between objects) | ✓ demo: 1 of 18 files found (functions padded like files) | — offered; demo not run (no PSP compiler build for Apple Silicon) | the project | the project | the project | the project |
 | The reversing emulator for agents (`watch_in_emulator`: which code writes an address, what a function is called with, on the user's ROM) | ✓ mupenRE (Linux, macOS) | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no ROM to run |
 | Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS) | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no ROM to recompile |
 | Behaviour checked against the original (`compare_behaviour`, docs/N64RECOMP.md phase 1) | ✓ (recorded in mupenRE, run through N64Recomp's C and the WebAssembly port's) | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no ROM to run |
@@ -1909,6 +1910,30 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### ROM projects as project folders: editable units
+
+Importing a ROM can now also lay it out as a project folder (`rom/project_layout.py`): the rebuildable export plus
+guessed source files in `units.json`, each provisional until all its functions match. Its `objdiff.json` groups the
+export's per-function units into one progress category per guessed file, and their targets are built, so the folder
+opens in objdiff as it is. Every later export refreshes both. People (and any tool) can edit the folder's C, one
+file per function as the export writes it: Refresh project folder judges each file changed or added since the last
+write (`sources.json`) like the function page's Try, at the function's real address, credited to "you", then
+regenerates the folder; an edit the project didn't take is written back in place or beside its function as
+`.kept`, never lost (N64, PS1 and PS2 demos: `tests/test_project_layout.py`). A file may also hold several
+functions (named after its guessed unit, or anything else): each is judged with the others' definitions taken out,
+and a matched one is then built from a file of its own. A save records that the project is a project folder, and
+Open a saved project sets the folder up again from the restored work; reimport keeps it (its next refresh regroups
+the units). Agents still work through ROM mode. Next:
+- the project page measuring the folder with objdiff as it does a fork's (today it shows ROM mode's own counts);
+- agents, autopilot, the permuter and polishing working in the folder through that adapter (this clears
+  linked-image exports' "—"), and a matched unit exported as one file once all its functions match;
+- regrouping the units on their own after joins, splits, function-end reports and compiler-range changes, keeping
+  confirmed units frozen (today Refresh project folder regroups them, from the project as it is then);
+- better file seams where padding says nothing: on the PS1 and PS2 demos no padding separates objects (or every
+  function is padded alike), so only 1 of 18 files is found. Candidates: each object's `.rodata`/`.data` block
+  following the code's order, library signatures, and the boundaries agents confirm by matching;
+- the folder's edits not yet taken (written back, `.kept`) in saves too; the PSP demo run with the checkbox.
 
 ### N64Recomp: a playable game from day one, and a reference for every function
 

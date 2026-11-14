@@ -914,6 +914,32 @@ function renderSource(ov) {
        <div class="src-line">${ex.matched != null ? `${ex.matched.toLocaleString()} of ${ex.functions.toLocaleString()} functions in C` : ""}${stale ? ` · <b>${ov.matched - ex.matched} new matches since</b>` : ""}</div>
        ${ex.path ? `<div class="src-line">${esc(ex.path)}</div>` : ""}`;
   $("srcExport").textContent = ex ? "Export again" : "Export project";
+  renderProjectLayout(ov);
+}
+/* A ROM project laid out as a project folder: the export plus guessed source files (rom/project_layout.py). */
+function renderProjectLayout(ov) {
+  const pl = ov.project_layout, state = $("srcState");
+  if (!state || state._working) return;
+  const ed = pl && pl.edits, kept = ed ? ed.kept || [] : [];
+  const edits = !ed || !(ed.judged || ed.waiting) ? "" : `<p class="small">Your edits, last refresh: ${ed.judged.toLocaleString()} files judged, ${ed.matched.toLocaleString()} functions matched${ed.waiting ? `, ${ed.waiting.toLocaleString()} files waiting (an agent held a function)` : ""}.</p>${kept.length ? `<details class="small"><summary>${kept.length.toLocaleString()} not taken, kept in the folder</summary><ul>${kept.map(k => `<li><code>${esc(k.path)}</code>: ${esc(k.said)}</li>`).join("")}</ul></details>` : ""}`;
+  state.insertAdjacentHTML("beforeend", `<div class="src-layout"><p class="small">${pl
+      ? `Project folder: <b>${pl.units.toLocaleString()}</b> guessed source files, ${pl.confirmed.toLocaleString()} fully matched (<code>units.json</code>), set up ${since(pl.t)}. Edit or add <code>src/&lt;segment&gt;/&lt;function&gt;.c</code> there; Refresh judges each changed file like Try.`
+      : "Also lay this game out as a project folder: the export plus a guess at its source files, refined as functions match. Agents keep working as they do now."}</p>${edits}
+    <button class="ghost small-btn" id="srcLayout" type="button">${pl ? "Refresh project folder" : "Set up as a project folder"}</button></div>`);
+  $("srcLayout").onclick = layoutNow;
+}
+async function layoutNow() {
+  const log = $("expLog"), state = $("srcState");
+  state._working = true;
+  const finish = beginWork(log, "Setting up project folder", [$("srcExport"), $("srcLayout")], "Project folder ready.");
+  showJobError(log, "");
+  try {
+    const { job } = await api("/api/project-layout", { method: "POST", body: { slug: S.slug } });
+    const r = await followJob(job, log);
+    toast(`Project folder ready: ${r.units} guessed source files.`, "match");
+    S.ov = await api(`/api/project?slug=${S.slug}`);
+  } catch (e) { showJobError(log, e.message); if (!exportOpen()) toast(esc(e.message), "err"); }
+  finally { finish(); state._working = false; if (exportOpen()) renderSource(S.ov); }
 }
 async function exportNow() {
   const log = $("expLog");

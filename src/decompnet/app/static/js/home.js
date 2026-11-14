@@ -392,6 +392,8 @@ function setupCompilers(info) {
   $("allCompilers").hidden = true;
   // where the import recognises library code: the project covers the game's own code, or the whole program
   $("scopeRow").hidden = !con.sets_aside; $("scopePick").value = "game";
+  // a ROM-mode game can also be laid out as a project folder where its console exports a rebuildable tree
+  $("layoutRow").hidden = !(con.mode === "rom" && (con.features || []).includes("export")); $("layoutPick").checked = false;
   // the console's own import questions (Console.import_options: Xbox asks about link-time code generation)
   $("importOptions").innerHTML = (con.import_options || []).map((o) => `<div class="row"><label class="field grow"><span>${esc(o.label)}</span><select data-option="${esc(o.id)}">${o.choices.map((c) => `<option value="${esc(c.value)}">${esc(c.text)}</option>`).join("")}</select></label></div>`).join("");
   if (con.mode === "rom" || p === "playstation") {
@@ -554,7 +556,8 @@ $("analyse").onclick = async () => {
   const extras = picked.extras.length ? `&extras=${encodeURIComponent(JSON.stringify(picked.extras.map((f) => [f.name, f.size])))}` : "";
   const chosen = Object.fromEntries([...$("importOptions").querySelectorAll("select[data-option]")].map((s) => [s.dataset.option, s.value]));
   const options = Object.keys(chosen).length ? `&options=${encodeURIComponent(JSON.stringify(chosen))}` : "";
-  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${options}${all}${extras}`, body, title, picked.name);
+  const layout = !$("layoutRow").hidden && $("layoutPick").checked ? "&layout=project" : "";
+  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${options}${layout}${all}${extras}`, body, title, picked.name);
 };
 $("pathPick").onclick = (e) => { e.stopPropagation(); askPath(); };
 function askPath(why = "") {

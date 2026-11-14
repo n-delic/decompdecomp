@@ -543,6 +543,7 @@ a.ghost, a.primary { text-decoration: none; }
 #srcText code, .pad code { font-size: 12px; background: var(--bg-alt); padding: 1px 5px; border-radius: var(--r-sm); }
 .src-state { display: grid; gap: 4px; }
 .src-state:empty { display: none; }
+.src-layout { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
 .src-line { font: 12px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .src-line.ok { color: var(--match); }
 .src-line.bad { color: var(--miss); }
