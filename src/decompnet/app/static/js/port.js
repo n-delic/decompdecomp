@@ -425,7 +425,7 @@ async function stopGame() {
 /* Export (port/wasm/export.py): the game as a standalone app for this computer, or a browser build (a folder with
    index.html), from the last save. Its bar counts the build's steps; Stop cancels it; Show the folder opens it. */
 let exportJob = null;
-const EXPORTS = { app: "a standalone app", web: "a browser build" };
+const EXPORTS = { app: "a standalone app", web: "a browser build", miyoo: "a Miyoo Mini SD card folder" };
 
 function closeExportMenu(focus = true) {
   const menu = $("portExportMenu");
@@ -441,7 +441,7 @@ async function exportGame(kind, existing = null) {
   showJobError(log, "");
   $("portExportActions").hidden = false; show.hidden = true; stop.hidden = false; stop.disabled = false;
   stop.textContent = "Stop the export";
-  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWeb")],
+  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWeb"), $("portExportMiyoo")],
     "Exported.");
   if (existing?.progress) updateWorkProgress(log, existing.progress);
   try {
@@ -452,6 +452,8 @@ async function exportGame(kind, existing = null) {
       show.hidden = false;
       log.append(`\nExported ${EXPORTS[result.kind]} to ${result.path}. `
         + (result.kind === "web" ? "Serve that folder over http to play it (its README.txt says how)."
+          : result.kind === "miyoo" ? "Copy its App and Tools folders to your Miyoo's SD card and put your ROM in "
+            + "App/<game>/ as rom.z64 (its README.txt says how)."
           : "Open it to play: it asks for your ROM the first time."));
     }
   } catch (error) {
@@ -496,6 +498,7 @@ if ($("portPanel")) {
   $("portStop").onclick = stopGame;
   $("portExportApp").onclick = () => exportGame("app");
   $("portExportWeb").onclick = () => exportGame("web");
+  if ($("portExportMiyoo")) $("portExportMiyoo").onclick = () => exportGame("miyoo");
   $("portExportStop").onclick = stopExport;
   $("portExportShow").onclick = showExport;
   $("portExportMenu").addEventListener("keydown", (e) => { if (e.key === "Escape") closeExportMenu(); });

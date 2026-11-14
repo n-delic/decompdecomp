@@ -361,19 +361,28 @@ enum { EV_SP = 4, EV_SI = 5, EV_AI = 6, EV_VI = 7, EV_PI = 8, EV_DP = 9 };
 /* ---------------------------------------------------------------- the console's uncached addresses */
 
 #define IO_SCRATCH 0x000A0000u /* a word for reads the host answers and writes it drops (below the game's data) */
+#ifdef PORT_MEM32
+/* A 32-bit computer maps only the registers' window (miyoo/mem32.c): the rest of the console's I/O space the game
+   touches (the PIF's RAM at 0xBFC007C0, the cartridge's domain at 0xB0000000) is beyond what a 32-bit program may
+   map, so it lands in the 1 MB after the window, by its low 20 bits. As in the 4 GB build, it's memory no one else
+   reads. */
+#define IO_FAR(addr) ((addr) >= 0xA4900000u ? 0xA4900000u + ((uint32_t)(addr) & 0xFFFFFu) : (addr))
+#else
+#define IO_FAR(addr) (addr)
+#endif
 int port_ai_register(uint32_t addr, int write, uint32_t value, uint32_t *read); /* audio.c */
 uint64_t port_io_load(uint64_t addr) {
     if (addr < 0xA0800000u) return addr - 0x20000000u; /* RAM, uncached: the same RAM */
     if (addr == SP_STATUS) { wbe32(IO_SCRATCH, 1); return IO_SCRATCH; } /* halted: a task finishes at once */
     uint32_t v;
     if (port_ai_register((uint32_t)addr, 0, 0, &v)) { wbe32(IO_SCRATCH, v); return IO_SCRATCH; }
-    return addr;
+    return IO_FAR(addr);
 }
 uint64_t port_io_store(uint64_t addr, uint64_t value) {
     if (addr < 0xA0800000u) return addr - 0x20000000u;
     if (addr == SP_STATUS) return IO_SCRATCH + 4; /* a command (clear halt, set a signal): nothing to keep */
     if (port_ai_register((uint32_t)addr, 1, (uint32_t)value, NULL)) return IO_SCRATCH + 4;
-    return addr;
+    return IO_FAR(addr);
 }
 
 /* ---------------------------------------------------------------- VI */
@@ -715,6 +724,17 @@ static uint8_t *read_file(const char *path, size_t *size) {
     fclose(f);
     return b;
 }
+/* A ROM in another dump's byte order (.v64: 16-bit words swapped, .n64: 32-bit words little-endian), turned into the
+   cartridge's own (.z64), told by its first word: a Miyoo's card can hold any of them. */
+static void rom_byte_order(uint8_t *b, size_t n) {
+    if (n < 4) return;
+    if (b[0] == 0x37 && b[1] == 0x80)
+        for (size_t i = 0; i + 1 < n; i += 2) { uint8_t t = b[i]; b[i] = b[i + 1]; b[i + 1] = t; }
+    else if (b[0] == 0x40 && b[1] == 0x12)
+        for (size_t i = 0; i + 3 < n; i += 4) {
+            uint8_t t = b[i]; b[i] = b[i + 3]; b[i + 3] = t; t = b[i + 1]; b[i + 1] = b[i + 2]; b[i + 2] = t;
+        }
+}
 
 #include <signal.h>
 #ifndef SIGUSR1 /* Windows: no signal to interrupt a thread with, so no backtraces from PORT_SAMPLE there */
@@ -811,6 +831,7 @@ int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s rom.z64 [seconds, 0: until stopped]\n", argv[0]); return 2; }
     rom = read_file(argv[1], &rom_size);
     if (!rom) { fprintf(stderr, "can't read %s\n", argv[1]); return 2; }
+    rom_byte_order(rom, rom_size);
     double seconds = argc > 2 ? atof(argv[2]) : getenv("PORT_LIVE") ? 0 : 5; /* 0: until it's stopped */
     port_live_start();
     if (getenv("PORT_VERBOSE")) verbose = atoi(getenv("PORT_VERBOSE"));
