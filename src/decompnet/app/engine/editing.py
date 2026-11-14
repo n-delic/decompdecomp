@@ -17,7 +17,8 @@ from .common import _ADDRESS
 
 
 class EditMixin:
-    def split_function(self, agent: Agent, project: str | None, function: str, at: str, new_name: str = "") -> str:
+    def split_function(self, agent: Agent, project: str | None, function: str, at: str, new_name: str = "", *,
+                       by_you: bool = False) -> str:
         self._rom_only(project, "split_function")
         link = self._link(project)
         if link is not None:
@@ -50,7 +51,7 @@ class EditMixin:
             new = console.function_at(rom, addr, limit, new_name)
             if new is not None:
                 return self._add_function(proj, fn, new, syms, agent.id, new_name)
-        if inside and (why := self._split_runs_on(proj, fn, addr)):
+        if inside and not by_you and (why := self._split_runs_on(proj, fn, addr)):
             raise NetworkError(why)
         head, tail = self._cut(proj, fn, addr, new_name, syms, agent.id, "split", f"{fn['name']} / {new_name}")
         return (f"✅ split: {fn['name']} is now {console.function_insns(head)} instructions; {new_name} at "
@@ -115,7 +116,7 @@ class EditMixin:
         if image[fn["rom_offset"]:fn["rom_offset"] + fn["size"]] != fn["target"]:
             raise NetworkError("the function differs from the original image")
         agent, _ = self.local_agent("you")
-        return self.split_function(agent, slug, function, at, new_name)
+        return self.split_function(agent, slug, function, at, new_name, by_you=True)
 
     def _cut(self, proj, fn, addr: int, new_name: str, syms: SymbolTable, agent_id: int | None, kind: str, detail: str,
              tail_meta: dict | None = None):
