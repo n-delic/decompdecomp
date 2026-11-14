@@ -71,7 +71,11 @@ def handoff(net, slug, fn):
                 log.parallel_claims=False  # Background handoffs never search alongside a newly acquired paid claim.
                 from ..network import NetworkError
                 try:
-                    result=deep_permuter.run(net,slug,current['name'],1,6,log)
+                    from . import maintenance_tasks
+                    try:  # in the permuter worker's process, away from the app's interpreter lock
+                        result=maintenance_tasks.deep_run(net,slug,current['name'],1,6,log,maximum_seconds=8,parallel_claims=False)
+                    except maintenance_tasks.Unavailable:
+                        result=deep_permuter.run(net,slug,current['name'],1,6,log)
                 except NetworkError:
                     if net.project_store(fn['project_id']).one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?',fn['id'],time.time()):
                         return {'skipped':'Another worker claimed this function; its lease is unchanged.'}

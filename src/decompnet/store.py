@@ -511,6 +511,9 @@ class Store:
         tune(self.conn, READER_CACHE_KIB)
         self.read_cache = ReadCache(lambda: getattr(getattr(self, '_local', None), 'in_tx', False))
         self._slow_queries = {}
+        self._last_writer = None  # (where, when) the last write transaction ended: named by a writer that waited
+        self._wal_watch = None  # a reader process never checkpoints (ATTACH_ONLY)
+        self.project_rows_tracked = False  # (a database an older app made may lack the revision's triggers)
         self.lock = threading.RLock()
         self._local = threading.local()
 
@@ -737,6 +740,8 @@ class Store:
                               "BEGIN INSERT INTO read_revisions VALUES('lease_identities',1) "
                               "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
         self._track_reads('projects', 'project_list', 'slug,name,root,config,arch,big_endian')
+        self._track_reads('projects', 'project_rows')  # any column: Network._project caches whole rows
+        self.project_rows_tracked = True
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_baseline ON attempts(function_id,score,id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_context ON attempts(context_version,function_id)")
         from .history_changes import install as install_history_changes
@@ -751,6 +756,9 @@ class Store:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_origin_owner ON agents(origin,owner)")
         self._track_reads('functions', 'audit_layout', 'name,vram,rom_offset,size,project_id')
         self._slow_queries = {}
+        self._last_writer = None  # (where, when) the last write transaction ended: named by a writer that waited
+        from .db_diagnostics import WalWatch
+        self._wal_watch = None if self.path == IN_MEMORY else WalWatch(self.path)
         from .large_text_storage import install as install_large_text
         install_large_text(self.conn)
         from .shard_ids import remember
@@ -839,13 +847,16 @@ class Store:
         configured busy timeout; transaction bodies and commits are never replayed.
         """
         callbacks=[]
+        from .db_diagnostics import caller
+        queued=(time.monotonic(),caller(1))
         with self.writer_gate.hold(wait=wait):
-            with self._transaction(callbacks,wait=wait) as db:
+            with self._transaction(callbacks,wait=wait,queued=queued) as db:
                 yield db
         for callback in callbacks:callback()
 
     @contextmanager
-    def _transaction(self,callbacks,*,wait=None):
+    def _transaction(self,callbacks,*,wait=None,queued=None):
+        from . import db_diagnostics
         from .request_timing import timed_lock
         deadline = None
         while True:
@@ -873,6 +884,12 @@ class Store:
                 finally:
                     self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
                 if not busy:
+                    began = time.monotonic()
+                    where = queued[1] if queued else db_diagnostics.caller(1)
+                    if queued:
+                        last = self._last_writer
+                        db_diagnostics.write_waited(began-queued[0], where,
+                                                    last[0] if last and last[1] >= queued[0] else None)
                     self._local.in_tx = True
                     self._local.after_commit = []
                     _transactions.depth = getattr(_transactions, 'depth', 0) + 1
@@ -886,8 +903,13 @@ class Store:
                     finally:
                         self._local.in_tx = False
                         _transactions.depth -= 1
+                        ended = time.monotonic()
+                        self._last_writer = (where, ended)
+                        db_diagnostics.long_write(ended-began, where)
                     callbacks.extend(self._local.after_commit)
                     self._local.after_commit = []
+                    if self._wal_watch is not None:
+                        callbacks.append(lambda: self._wal_watch.check(self.conn, self.lock))
             if not busy:break
             # No transaction or process-local writer lock is held while reporting/cancelling.
             if wait is not None:
@@ -947,7 +969,8 @@ class Store:
 
     def _read(self, sql: str, args: tuple, single: bool):
         started = time.monotonic()
-        self._local.read_phases = {}
+        self._local.read_phases = {}  # durations only: request_timing.sql_read adds them up
+        self._local.read_via = 'reader'
         try:
             return self._read_rows(sql, args, single)
         finally:
@@ -964,9 +987,10 @@ class Store:
                     self._slow_queries[key] = started
                     caller = sys._getframe(2)
                     logging.getLogger('decompdecomp').warning(
-                        'Slow database read %.3fs [%s] at %s:%s (%s) connection=%.3fs lock_wait=%.3fs execute=%.3fs fetch=%.3fs', elapsed, key,
+                        'Slow database read %.3fs [%s] at %s:%s (%s) connection=%.3fs lock_wait=%.3fs execute=%.3fs fetch=%.3fs via=%s %s', elapsed, key,
                         Path(caller.f_code.co_filename).name, caller.f_lineno, caller.f_code.co_name,
-                        *(phases.get(k, 0) for k in ('connection', 'lock_wait', 'execute', 'fetch')))
+                        *(phases.get(k, 0) for k in ('connection', 'lock_wait', 'execute', 'fetch')),
+                        self._local.read_via, self._plan_shape(sql, args))
 
     def _read_rows(self, sql: str, args: tuple, single: bool):
         started = time.perf_counter()
@@ -998,11 +1022,25 @@ class Store:
                 cur.close()
                 phases['fetch'] = time.perf_counter() - fetching
         if conn is None:
+            # Reads inside a transaction (or of an in-memory database) share the writer's connection and its lock.
+            self._local.read_via = 'writer-transaction' if getattr(self._local, 'in_tx', False) else 'writer'
             waiting = time.perf_counter()
             with self.lock:
                 phases['lock_wait'] = time.perf_counter() - waiting
                 return query(self.conn)
         return query(conn)
+
+    def _plan_shape(self, sql, args):
+        """The slow read's query plan as counts (db_diagnostics.plan_shape), read on a reading connection."""
+        from .db_diagnostics import plan_shape
+        if self.path == IN_MEMORY or getattr(self._local, 'in_tx', False):
+            with self.lock:
+                return plan_shape(self.conn, sql, args)
+        conn = self._reader()
+        try:
+            return plan_shape(conn, sql, args)
+        finally:
+            self._release_reader()
 
     def one(self, sql: str, *args) -> sqlite3.Row | None:
         return self._read(sql, args, single=True)

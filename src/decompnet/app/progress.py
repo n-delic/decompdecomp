@@ -1143,7 +1143,11 @@ class Progress:
         if self.applying:
             yield
             return
-        if synchronize:
+        # Inside a tool call that reads the folder fully just before and after its work (checked_around), the
+        # judge's own pair repeated those checks milliseconds apart: four full reads of a 9,900-file save per compile.
+        around = getattr(self.local, "checked_around", None)
+        covered = around is not None and around[0] == slug
+        if synchronize and not covered:
             self.sync(slug, force=True)
         previous = getattr(self.local, "judging", None)
         self.local.judging = (slug, self.revisions.get(slug, 0))
@@ -1151,8 +1155,19 @@ class Progress:
             yield
         finally:
             self.local.judging = previous
-        if synchronize:
+        if synchronize and not (covered and around[1]):
             self.sync(slug, force=True)
+
+    @contextmanager
+    def checked_around(self, slug: str, *, after: bool):
+        """A tool call's work, between its own forced checks of the project: one already made before it, and one
+        after it when `after`. A judge inside reads the folder through them instead of again (judging)."""
+        previous = getattr(self.local, "checked_around", None)
+        self.local.checked_around = (slug, after)
+        try:
+            yield
+        finally:
+            self.local.checked_around = previous
 
     def check_result(self) -> None:
         pending = getattr(self.local, "judging", None)

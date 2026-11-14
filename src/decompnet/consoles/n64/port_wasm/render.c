@@ -3,7 +3,7 @@
  * N64 does (port/wasm). A first renderer, to see the game: Nintendo's F3DEX2 (3D) and S2DEX (2D backgrounds and
  * sprites) microcodes, chosen per task by the microcode it loads, and the RDP commands both send. Textures filtered
  * as the RDP filters them (point, its three-texel bilinear, or average), one or two combiner cycles, the blender
- * with fog, a depth buffer, no anti-aliasing or dithering.
+ * with fog, a depth buffer, anti-aliasing (the RDP's coverage and the VI's filter), no dithering.
  *
  * Addresses in a display list are segmented (segment << 24 | offset) or physical; the segment table is the list's
  * own (G_MOVEWORD). The game's memory is big-endian at the console's addresses: physical p is 0x80000000 | p here.
@@ -49,6 +49,12 @@ static int scissor[4] = {0, 0, 320, 240};
 #define MAXW 640
 #define MAXH 480
 static float zbuf[MAXW * MAXH];
+/* Each pixel's coverage, as the RDP keeps it in the frame buffer's hidden bits: how many of a pixel's 8 sample
+   points are covered, kept as 8 minus that so that memory starts fully covered. By the pixel's address in RDRAM. */
+static uint8_t cvg_hole[4u << 20];
+static int cvg_get(uint32_t a) { return 8 - cvg_hole[(a & 0x7FFFFF) >> 1]; }
+static void cvg_set(uint32_t a, int c) { cvg_hole[(a & 0x7FFFFF) >> 1] = (uint8_t)(8 - (c < 0 ? 0 : c > 8 ? 8 : c)); }
+static void put(uint32_t a, uint16_t v) { wr16(a, v); cvg_set(a, 8); } /* a pixel written whole */
 static uint32_t images[8][2]; /* colour images drawn to: address, width */
 static int frame_height(void) { return cimg_width > 320 ? 480 : 240; } /* 640 wide: the high-resolution mode */
 
@@ -217,18 +223,48 @@ static Color blender(Color in, Color mem, Color shade) {
     return passed;
 }
 
-/* One pixel through the combiner and blender: shade and texel colours in, the frame buffer written. */
-static void plot(int x, int y, float z, Color shade, Color t0, int depth) {
+/* One pixel through the combiner and blender: shade and texel colours in, the frame buffer written. `cvg`: how
+   many of its 8 sample points the primitive covers (8 but at a triangle's edge, with anti-aliasing on); `dz`: how
+   far its depth may be from what's there and still count as the same surface (a mesh's neighbouring triangle).
+
+   With anti-aliasing (AA_EN), as the RDP does: a partly covered pixel at the same depth as what's there (a mesh's
+   internal edge) blends with it by the two coverages, which add up, so the mesh's edges join without a seam; one in
+   front is written as it is with its partial coverage, a silhouette edge, which the VI's filter later blends with
+   the background around it (port_frame_shown). Under force blend (translucent surfaces) the coverage scales the
+   alpha instead. Without anti-aliasing every pixel is written whole. */
+static void plot(int x, int y, float z, Color shade, Color t0, int depth, int cvg, float dz) {
     if (!in_frame(x, y)) return;
     int zcmp = (mode_l & 0x10) != 0, zupd = (mode_l & 0x20) != 0, zi = y * MAXW + x;
-    if (depth && zcmp && z > zbuf[zi]) return;
+    int aa = (mode_l & 0x8) != 0, force = (mode_l & 0x4000) != 0, same_surface = !(depth && zcmp);
+    if (depth && zcmp) {
+        if (z > zbuf[zi] + dz) return;
+        same_surface = fabsf(z - zbuf[zi]) <= dz;
+    }
     Color c = combine(0, (Color){0, 0, 0, 0}, t0, shade);
     if (cycle_type() == 1) c = combine(1, c, t0, shade);
     if ((mode_l & 3) == 1 && c.a <= blend.a) return; /* alpha compare: above the blend colour's alpha */
     if ((mode_l & 0x2000) && c.a <= 0.0f) return; /* coverage times alpha: nothing covered */
     uint32_t a = pixel_addr(x, y);
-    c = blender(c, unpack5551(rd16(a)), shade);
+    Color mem = unpack5551(rd16(a));
+    int mem_cvg = cvg_get(a), stored = 8;
+    if (aa && force) {
+        c.a *= cvg / 8.0f;
+        stored = mem_cvg;
+    } else if (aa && cvg < 8 && same_surface && mem_cvg + cvg <= 8 && depth) {
+        Color in = blender(c, mem, shade);
+        float wi = (float)cvg, wm = (float)mem_cvg;
+        c = (Color){(in.r * wi + mem.r * wm) / (wi + wm), (in.g * wi + mem.g * wm) / (wi + wm),
+                    (in.b * wi + mem.b * wm) / (wi + wm), c.a};
+        wr16(a, pack5551(c));
+        cvg_set(a, mem_cvg + cvg);
+        if (zupd && z < zbuf[zi]) zbuf[zi] = z;
+        return;
+    } else if (aa) {
+        stored = cvg;
+    }
+    c = blender(c, mem, shade);
     wr16(a, pack5551(c));
+    cvg_set(a, stored);
     if (depth && zupd) zbuf[zi] = z;
 }
 
@@ -238,13 +274,13 @@ static void fill_rect(int x0, int y0, int x1, int y1) {
         for (int y = y0; y <= y1; y++)
             for (int x = x0; x <= x1; x++) {
                 if (!in_frame(x, y)) continue;
-                wr16(pixel_addr(x, y), (uint16_t)((x & 1) ? fill_color : fill_color >> 16));
+                put(pixel_addr(x, y), (uint16_t)((x & 1) ? fill_color : fill_color >> 16));
                 if (zclear) zbuf[y * MAXW + x] = 1e30f;
             }
         return;
     }
     for (int y = y0; y < y1; y++)
-        for (int x = x0; x < x1; x++) plot(x, y, 0, prim, (Color){0, 0, 0, 0}, 0);
+        for (int x = x0; x < x1; x++) plot(x, y, 0, prim, (Color){0, 0, 0, 0}, 0, 8, 0);
 }
 
 /* A textured rectangle from (x0, y0) to (x1, y1) in pixels, texture coordinates s, t at its corner and their steps
@@ -259,8 +295,8 @@ static void tex_rect(int tile, float x0, float y0, float x1, float y1, float s, 
             Color c = copy ? texel(&tiles[tile], (int)floorf(ss), (int)floorf(tt)) : sample(&tiles[tile], ss, tt);
             if (copy) {
                 if ((mode_l & 3) == 1 && c.a <= blend.a) continue;
-                if (in_frame(x, y)) wr16(pixel_addr(x, y), pack5551(c));
-            } else plot(x, y, 0, (Color){1, 1, 1, 1}, c, 0);
+                if (in_frame(x, y)) put(pixel_addr(x, y), pack5551(c));
+            } else plot(x, y, 0, (Color){1, 1, 1, 1}, c, 0, 8, 0);
         }
 }
 
@@ -433,13 +469,26 @@ static void project(Vtx *v) {
 static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
     float area = (b->sx - a->sx) * (c->sy - a->sy) - (c->sx - a->sx) * (b->sy - a->sy);
     if (area == 0) return;
+    int aa = (mode_l & 0x8) != 0 && cycle_type() < 2; /* anti-aliased: edge pixels by their coverage */
     int minx = (int)floorf(fminf(a->sx, fminf(b->sx, c->sx))), maxx = (int)ceilf(fmaxf(a->sx, fmaxf(b->sx, c->sx)));
     int miny = (int)floorf(fminf(a->sy, fminf(b->sy, c->sy))), maxy = (int)ceilf(fmaxf(a->sy, fmaxf(b->sy, c->sy)));
+    if (aa) { minx--; miny--; maxx++; maxy++; }
     if (minx < scissor[0]) minx = scissor[0];
     if (miny < scissor[1]) miny = scissor[1];
     if (maxx > scissor[2]) maxx = scissor[2];
     if (maxy > scissor[3]) maxy = scissor[3];
     float wa = 1 / a->w, wb = 1 / b->w, wc = 1 / c->w, inv = 1 / area;
+    /* the barycentric weights' steps per pixel, for the coverage samples, and the depth's, for "the same surface" */
+    float d0x = -(c->sy - b->sy) * inv, d0y = (c->sx - b->sx) * inv, d1x = -(a->sy - c->sy) * inv, d1y = (a->sx - c->sx) * inv;
+    float dzx = d0x * a->sz + d1x * b->sz - (d0x + d1x) * c->sz, dzy = d0y * a->sz + d1y * b->sz - (d0y + d1y) * c->sz;
+    float dz = fmaxf(fabsf(dzx), fabsf(dzy)) + 1e-6f;
+    /* the RDP's 8 sample points in a pixel: four sub-scanlines, two staggered points each */
+    static const float sx8[8] = {0.25f, 0.75f, 0.0f, 0.5f, 0.25f, 0.75f, 0.0f, 0.5f};
+    static const float sy8[8] = {0.125f, 0.125f, 0.375f, 0.375f, 0.625f, 0.625f, 0.875f, 0.875f};
+    /* how far each barycentric weight moves across half a pixel: a pixel at least that far inside every edge is
+       covered whole, one that far outside any edge not at all; only the pixels between count their samples */
+    float e0 = 0.5f * (fabsf(d0x) + fabsf(d0y)), e1 = 0.5f * (fabsf(d1x) + fabsf(d1y));
+    float e2 = 0.5f * (fabsf(d0x + d1x) + fabsf(d0y + d1y));
     int smooth = (geometry & 0x200000) != 0, persp = (mode_h & 0x80000) != 0; /* G_TP_PERSP */
     Tile *tl = &tiles[tex_tile];
     for (int y = miny; y < maxy; y++)
@@ -448,7 +497,21 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
             float l0 = ((b->sx - px) * (c->sy - py) - (c->sx - px) * (b->sy - py)) * inv;
             float l1 = ((c->sx - px) * (a->sy - py) - (a->sx - px) * (c->sy - py)) * inv;
             float l2 = 1 - l0 - l1;
-            if (l0 < 0 || l1 < 0 || l2 < 0) continue;
+            int cvg = 8;
+            if (!aa) {
+                if (l0 < 0 || l1 < 0 || l2 < 0) continue;
+            } else {
+                if (l0 < -e0 || l1 < -e1 || l2 < -e2) continue; /* well outside */
+                if (l0 < e0 || l1 < e1 || l2 < e2) { /* near an edge: count the samples */
+                    cvg = 0;
+                    for (int k = 0; k < 8; k++) {
+                        float ox = sx8[k] - 0.5f, oy = sy8[k] - 0.5f;
+                        float m0 = l0 + d0x * ox + d0y * oy, m1 = l1 + d1x * ox + d1y * oy;
+                        cvg += m0 >= 0 && m1 >= 0 && 1 - m0 - m1 >= 0;
+                    }
+                    if (!cvg) continue;
+                }
+            }
             float z = l0 * a->sz + l1 * b->sz + l2 * c->sz;
             Color sh = smooth ? (Color){l0 * a->shade.r + l1 * b->shade.r + l2 * c->shade.r,
                                         l0 * a->shade.g + l1 * b->shade.g + l2 * c->shade.g,
@@ -475,7 +538,7 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
                 if (!persp) { s *= 0.5f; t *= 0.5f; }
                 t0 = sample(tl, s, t);
             }
-            plot(x, y, z, sh, t0, (geometry & 1) != 0);
+            plot(x, y, z, sh, t0, (geometry & 1) != 0, cvg, dz);
         }
 }
 
@@ -611,16 +674,51 @@ static void s2d_load(uint32_t txtr) { /* uObjTxtr: a block, a tile or a palette 
                 tmem_word((uint32_t)(tm + l * words + i) * 8, src + (uint32_t)(l * words + i) * 8, l & 1);
     }
 }
-static void s2d_sprite(uint32_t sp) { /* uObjSprite: an unrotated rectangle from TMEM */
-    float x = (int16_t)rd16(sp) / 4.0f, y = (int16_t)rd16(sp + 8) / 4.0f;
-    float sw = rd16(sp + 2) / 1024.0f, sh = rd16(sp + 10) / 1024.0f;
-    int iw = rd16(sp + 4) >> 5, ih = rd16(sp + 12) >> 5;
+/* A uObjSprite's place (objX, objY, s10.2), scale (u5.10) and image size in texels, its image set up as tile 7. */
+typedef struct { float x, y, sw, sh; int iw, ih; } Sprite;
+static Sprite s2d_sprite_tile(uint32_t sp) {
+    Sprite o = {(int16_t)rd16(sp) / 4.0f, (int16_t)rd16(sp + 8) / 4.0f, rd16(sp + 2) / 1024.0f, rd16(sp + 10) / 1024.0f,
+                rd16(sp + 4) >> 5, rd16(sp + 12) >> 5};
     Tile t = {.fmt = R[sp + 20], .siz = R[sp + 21], .line = rd16(sp + 16), .tmem = rd16(sp + 18), .palette = R[sp + 22],
-              .cms = 2, .cmt = 2, .lrs = (float)(iw - 1), .lrt = (float)(ih - 1)};
-    if (sw == 0) sw = 1;
-    if (sh == 0) sh = 1;
+              .cms = 2, .cmt = 2, .lrs = (float)(o.iw - 1), .lrt = (float)(o.ih - 1)};
+    if (o.sw == 0) o.sw = 1;
+    if (o.sh == 0) o.sh = 1;
     tiles[7] = t;
-    tex_rect(7, x, y, x + iw / sw, y + ih / sh, 0, 0, 1.0f / sw, 1.0f / sh, 0);
+    return o;
+}
+static void s2d_sprite(uint32_t sp) { /* an unrotated rectangle from TMEM */
+    Sprite o = s2d_sprite_tile(sp);
+    tex_rect(7, o.x, o.y, o.x + o.iw / o.sw, o.y + o.ih / o.sh, 0, 0, 1.0f / o.sw, 1.0f / o.sh, 0);
+}
+/* The 2D matrix (uObjMtx, G_OBJ_MOVEMEM at index 0, 24 bytes): A, B, C, D (s15.16) and X, Y (s10.2). */
+static float obj_mtx[6] = {1, 0, 0, 1, 0, 0};
+static void s2d_matrix(uint32_t w0, uint32_t a) {
+    if ((w0 & 0xFF) != 0 || ((w0 >> 19) & 0x1F) != 2) return; /* another load (the viewport, at index 8) */
+    for (int i = 0; i < 4; i++) obj_mtx[i] = (float)(int32_t)rd32(a + (uint32_t)i * 4) / 65536.0f;
+    obj_mtx[4] = (int16_t)rd16(a + 16) / 4.0f;
+    obj_mtx[5] = (int16_t)rd16(a + 18) / 4.0f;
+}
+/* G_OBJ_SPRITE: the sprite through the 2D matrix, rotated and scaled: its corners in object space are mapped to
+   the screen as (A x + B y + X, C x + D y + Y), and each pixel they cover back to the texel it shows. A racing
+   game's rev counter needle turns this way; drawn unrotated, it was a grey streak above the gauge. */
+static void s2d_sprite_rotated(uint32_t sp) {
+    Sprite o = s2d_sprite_tile(sp);
+    float A = obj_mtx[0], B = obj_mtx[1], C = obj_mtx[2], D = obj_mtx[3], X = obj_mtx[4], Y = obj_mtx[5];
+    float det = A * D - B * C, w = o.iw / o.sw, h = o.ih / o.sh;
+    if (fabsf(det) < 1e-6f || w <= 0 || h <= 0) return;
+    float cx[4] = {o.x, o.x + w, o.x, o.x + w}, cy[4] = {o.y, o.y, o.y + h, o.y + h};
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    for (int i = 0; i < 4; i++) {
+        float sx = A * cx[i] + B * cy[i] + X, sy = C * cx[i] + D * cy[i] + Y;
+        x0 = fminf(x0, sx); x1 = fmaxf(x1, sx); y0 = fminf(y0, sy); y1 = fmaxf(y1, sy);
+    }
+    for (int py = (int)floorf(y0); py < (int)ceilf(y1); py++)
+        for (int px = (int)floorf(x0); px < (int)ceilf(x1); px++) {
+            float dx = px + 0.5f - X, dy = py + 0.5f - Y;
+            float ox = (D * dx - B * dy) / det, oy = (-C * dx + A * dy) / det;
+            if (ox < o.x || oy < o.y || ox >= o.x + w || oy >= o.y + h) continue;
+            plot(px, py, 0, (Color){1, 1, 1, 1}, sample(&tiles[7], (ox - o.x) * o.sw, (oy - o.y) * o.sh), 0, 8, 0);
+        }
 }
 static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight from memory */
     float ix = rd16(bg) / 32.0f, iw = rd16(bg + 2) / 4.0f, fx = (int16_t)rd16(bg + 4) / 4.0f, fw = rd16(bg + 6) / 4.0f;
@@ -645,18 +743,21 @@ static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight f
                 c = (Color){R[a] / 255.0f, R[a + 1] / 255.0f, R[a + 2] / 255.0f, R[a + 3] / 255.0f}; }
             }
             int px = (int)fx + x, py = (int)fy + y;
-            if (cycle_type() == 2) { if (in_frame(px, py) && c.a > 0) wr16(pixel_addr(px, py), pack5551(c)); }
-            else plot(px, py, 0, (Color){1, 1, 1, 1}, c, 0);
+            if (cycle_type() == 2) { if (in_frame(px, py) && c.a > 0) put(pixel_addr(px, py), pack5551(c)); }
+            else plot(px, py, 0, (Color){1, 1, 1, 1}, c, 0, 8, 0);
         }
 }
 static void s2dex(uint8_t op, uint32_t w0, uint32_t w1) {
     switch (op) {
-    case 0x01: case 0x02: case 0xDA: s2d_sprite(phys(w1)); break; /* rotated sprites drawn unrotated for now */
+    case 0x02: s2d_sprite_rotated(phys(w1)); break;
+    case 0x01: case 0xDA: s2d_sprite(phys(w1)); break; /* the rectangles: no rotation (their scale is the sprite's) */
     case 0x05: s2d_load(phys(w1)); break;
-    case 0x06: case 0x07: case 0x08: s2d_load(phys(w1)); s2d_sprite(phys(w1) + 24); break;
+    case 0x06: s2d_load(phys(w1)); s2d_sprite_rotated(phys(w1) + 24); break;
+    case 0x07: case 0x08: s2d_load(phys(w1)); s2d_sprite(phys(w1) + 24); break;
+    case 0xDC: s2d_matrix(w0, phys(w1)); break;
     case 0x09: s2d_bg(phys(w1), 1); break;
     case 0x0A: s2d_bg(phys(w1), 0); break;
-    case 0x0B: case 0x04: case 0xDC: case 0xD7: case 0xD9: break;
+    case 0x0B: case 0x04: case 0xD7: case 0xD9: break;
     default: rdp(op, w0, w1);
     }
 }
@@ -767,6 +868,36 @@ static void save_png(const char *path, const uint8_t *rgb, int w, int h) { /* un
     fclose(f); free(z); free(line);
 }
 
+/* The VI's anti-aliasing filter, as the frame is shown (never written back): a pixel the RDP left partly covered,
+   a silhouette's edge, is blended toward the background behind it, estimated from its fully covered neighbours
+   as each channel's second-largest plus second-smallest minus the pixel's own, by how much of it is uncovered. */
+static void vi_filter(uint8_t *rgb, int w, int h, uint32_t base) {
+    uint8_t *src = malloc((size_t)w * h * 3);
+    memcpy(src, rgb, (size_t)w * h * 3);
+    for (int y = 1; y < h - 1; y++)
+        for (int x = 1; x < w - 1; x++) {
+            int cvg = cvg_get(base + (uint32_t)(y * w + x) * 2);
+            if (cvg >= 8) continue;
+            for (int ch = 0; ch < 3; ch++) {
+                int v[9], n = 0, centre = src[(y * w + x) * 3 + ch];
+                v[n++] = centre;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int i = (y + dy) * w + x + dx;
+                        if ((dx || dy) && cvg_get(base + (uint32_t)i * 2) >= 8) v[n++] = src[i * 3 + ch];
+                    }
+                if (n < 3) break; /* nothing around it to go by */
+                for (int i = 1; i < n; i++) /* sorted, for the second-largest and second-smallest */
+                    for (int j = i; j > 0 && v[j] < v[j - 1]; j--) { int t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
+                int bg = v[n - 2] + v[1] - centre;
+                bg = bg < 0 ? 0 : bg > 255 ? 255 : bg;
+                int out = centre + (bg - centre) * (8 - cvg) / 8;
+                rgb[(y * w + x) * 3 + ch] = (uint8_t)out;
+            }
+        }
+    free(src);
+}
+
 int port_live_active(void); /* live.c */
 void port_live_frame(const uint8_t *rgb, int w, int h);
 /* The frame the VI shows next (osViSwapBuffer): saved when PORT_FRAMES names a folder, and shown live (PORT_LIVE). */
@@ -791,6 +922,7 @@ void port_frame_shown(uint32_t fb, unsigned long n) {
         Color c = unpack5551(rd16(base + (uint32_t)i * 2));
         rgb[i * 3] = (uint8_t)(c.r * 255); rgb[i * 3 + 1] = (uint8_t)(c.g * 255); rgb[i * 3 + 2] = (uint8_t)(c.b * 255);
     }
+    vi_filter(rgb, w, h, base);
     port_live_frame(rgb, w, h);
     if (save) {
         char path[1024];

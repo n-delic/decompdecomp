@@ -615,7 +615,12 @@ class Twins:
                 job.state = "done"
                 job.ordered.set()
                 return job
-            return self._execute_full_pass(slug, job)
+            from . import maintenance_tasks
+            try:
+                # In the permuter worker's process: these passes were half of the app's own CPU time
+                return maintenance_tasks.full_pass(self, slug, job)
+            except maintenance_tasks.Unavailable:
+                return self._execute_full_pass(slug, job)
 
     def _checked(self, slug: str) -> bool:
         """This version of decompdecomp has rechecked the project already (Network.recheck, only_if_updated)."""

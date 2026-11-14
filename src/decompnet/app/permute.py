@@ -168,7 +168,7 @@ class Generator:
                     failed = self.failed = True
                     log.info("permuter: the generator could not read %s", job['function'])
                 elif not failed and isinstance(out.get('variant'), str):
-                    from .permuter_initialization import unsafe_temporary
+                    from decomprepair.permuter_initialization import unsafe_temporary
                     if unsafe_temporary(job['source'], out['variant'], job['function'], job.get('header', '')):continue
                     compile_timing.add('generated', 1)
                     chunk.append(TracedVariant(out['variant'], out['lineage'])
@@ -218,7 +218,7 @@ class Generator:
                 log.info("permuter: decomp-permuter can't read %s: %s", job["function"], str(out["error"])[:300])
                 variants = None
             elif variants is not None and isinstance(out.get("variant"), str):
-                from .permuter_initialization import unsafe_temporary
+                from decomprepair.permuter_initialization import unsafe_temporary
                 if not unsafe_temporary(job["source"], out["variant"], job["function"], job.get("header", "")):
                     compile_timing.add('generated', 1)
                     variants.append(TracedVariant(out["variant"], out["lineage"]) if isinstance(out.get("lineage"), list) else out["variant"])

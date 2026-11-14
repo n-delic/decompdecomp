@@ -3359,3 +3359,35 @@ def test_a_tool_call_reads_the_folder_once_per_project(project, monkeypatch):
     net.progress.sync("game")
     net.progress.sync("game")
     assert len(runs) >= 5  # (outside a tool call every sync runs, and its own lookup syncs again)
+
+
+@pytest.mark.parametrize('tool,expected', [('compile_and_diff', 2), ('get_function', 2)])
+def test_a_judge_inside_a_tool_call_reads_the_folder_through_the_calls_own_checks(project, monkeypatch, tool, expected):
+    """A compile read a 9,900-file save fully four times: the tool call before and after its work, and its judge
+    before and after again, milliseconds apart. The judge now relies on the call's checks; a read-only tool makes
+    none after its work, so a judge inside one still checks after."""
+    from decompnet.app import tools
+    net, _, _ = project
+    worker = net.progress
+    agent, _ = net.local_agent('you')
+    forced = []
+    real = worker.sync
+
+    def counted(slug, **kw):
+        if kw.get('force'):
+            forced.append(slug)
+        return real(slug, **kw)
+    monkeypatch.setattr(worker, 'sync', counted)
+
+    def dispatch(*_):
+        with worker.judging('game'):
+            pass
+        return 'judged'
+    monkeypatch.setattr(tools, '_dispatch', dispatch)
+    assert tools._invoke(net, agent, 'game', tool, {'function': 'f'}) == 'judged'
+    assert len(forced) == expected
+    forced.clear()
+    with worker.judging('game'):  # outside a tool call (autopilot, the editor) the judge still checks both sides
+        pass
+    assert len(forced) == 2
+    assert getattr(worker.local, 'checked_around', None) is None

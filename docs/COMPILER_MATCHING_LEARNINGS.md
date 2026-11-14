@@ -611,6 +611,69 @@ refuses a build whose float constants differ from the release's, whose listing c
 file, or that crashes on a compile error; `recipe = 2` in `toolchains.toml` makes installs built before this out of
 date, so they are rebuilt. Build time about 20 seconds.
 
+### Native KMC GCC 2.7.2 + binutils 2.6 on Apple Silicon: same output as the Intel build (14 November 2026)
+
+**Controlled comparison** of host builds, not a new match. `gcc-2.7.2-kmc` on macos-arm64 is now built
+from the commits that upstream's Mac releases were built from: decompals/mips-gcc-2.7.2 v0.1 (e6271f1)
+and mips-binutils-2.6 v0.3 (54514de) (`toolchains._build_gcc_kmc`, `_build_binutils_kmc`). It was
+compared with the released Intel `gcc-2.7.2-mac.tar.gz`/`binutils-2.6-mac.tar.gz` under Rosetta.
+Intel Macs keep the release (their install fingerprint is unchanged). The same recipe built for
+`-arch x86_64` reproduces the Intel release's behaviour exactly, including its crashes, so the recipe is
+the release's build.
+
+- **Compilable corpus, `cc1` then each build's own `as`**: 1,599 files (libultra from
+  decompals/ultralib 445, GCC's c-torture from 3.0 1,104, a KMC-built game decomp 51). Each ran at
+  five flag sets: `-G0 -mips3 -mgp32 -mfp32 -O2`, the same with `-g3`, `-O1 -g`, `-mips2 -O0`, and
+  `-O3 -funroll-loops -fomit-frame-pointer`. Assembly, exit codes, diagnostics, `as` diagnostics and
+  objects agree on 1,591 files. The other 8 are the Intel build's crashes (below). A 4,096-branch
+  stress file, too slow for the loop, was checked separately at `-O2` and gave the same assembly.
+- **The real driver path** (`gcc -B{tc}/ -c`, i.e. `cccp`, `cc1` and `as`): 445/445 libultra sources
+  agree at `-O2`, `-O2 -g3` and `-mips2 -O3 -funsigned-char`, 1,335 objects. `-g3` objects record cpp's
+  `__TIME__`, so compare them with the timestamp masked.
+- **cpp**: identical output, diagnostics and exit codes on all 1,770 sources (182 of them errors).
+- **Error paths**: a quarter of the public papermario sources (1,080 files; it is GCC 2.8 code) at
+  `-O2` and `-O2 -g3`. All agree. 779 are rejected with identical diagnostics and exit codes, and 301
+  compile to identical assembly and objects.
+- **Determinism**: two native runs of every file at all five flag sets, with different environment
+  sizes, gave one output.
+
+Cost per compile through the driver at `-O2`, measured on a loaded machine: a one-line file 175 →
+18 ms CPU, a 63 KB libultra file 151 → 26 ms, a 122 KB game file 193 → 59 ms. The build takes about
+30 seconds.
+
+What the arm64 build needed, on top of the GCC 2.8.1 lessons above (unoptimised, variadic prototypes,
+shipped parsers kept, PATH limited to the system's tools):
+
+- **More old-style declarations** of the diagnostics to remove (`cp/call.c`, `cp/sig.c`, `cp/typeck.c`,
+  `cp/typeck2.c`). C++ calls them through an unprototyped `errorfn` pointer in `cp_thing`; those calls
+  are cast to the variadic type, except for `compiler_error`, which isn't variadic.
+- **Diagnostics with a `%s` and no argument** (`c-decl.c`'s "cannot make `%s' a transparent union",
+  plus three more). Intel read whatever was in a register (it printed "(null)"). arm64 read the stack
+  and crashed (exit 138). Passing a null pointer reproduces Intel's message. Found by compiling GCC once
+  with `format(printf)` attributes on the prototypes.
+- **The generators and the `g++` driver** define their own static `fatal()`/`error()`. The forced
+  prototypes go only into GCC's own files (`CFLAGS`, not `HOST_CFLAGS`), and `g++` is built in a
+  second `make` without them.
+- **binutils' configure probes** failed under a newer clang's errors (implicit `int`). gas then
+  decided `inline` didn't exist, and macOS's `ctype.h` defined its functions in every object (31
+  duplicate symbols). The warnings-off flags must reach `configure` too, not only `make`.
+
+Where the builds differ, the Intel build is the odd one out:
+
+- **Variable-length arrays crash the Intel Mac build** (exit 139; 8 c-torture files). `stor-layout.c`
+  calls `expand_expr` with no declaration in scope, so its pointer result is an implicit `int`. x86_64
+  passes it on with `movl` (truncated) and dereferences garbage. arm64 passes the register on whole
+  (`mov x1, x0`) and compiles the file, as a 32-bit host (the Linux release) does. The only other such
+  call on the MIPS path is `reorg.c`'s `negate_rtx` (branch-likely compensation), where Intel would
+  crash the same way. No case was found where both builds compile and the output differs.
+- **`-funroll-loops` can leave an unused constant-pool word holding freed memory.** A `REG_EQUIV`
+  `-0.0` from the unroller is forced into the pool by reload, and its `CONST_DOUBLE` is reused
+  obstack memory by the time the pool is written. In 40 runs of one game file at `-O3 -funroll-loops`,
+  the Intel build printed different garbage in the `.word`'s comment from run to run, and once a NaN
+  word (`0xffffffff`). The native build gave the `0x00000000` word every time. Without
+  `-funroll-loops` it never appeared.
+- **C++**: both builds hit the same internal compiler error on the C++ errors tried.
+
 ## CodeWarrior, MSVC, ARM compilers and other installed profiles
 
 No new per-compiler match evidence was collected in this investigation. Existing console guides remain

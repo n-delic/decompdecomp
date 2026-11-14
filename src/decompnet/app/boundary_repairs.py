@@ -365,6 +365,13 @@ def _epilogue(code, frame, order):
     return moves==[frame] and any(w&0xFFFF0000==LW_RA for w in words[:-2])
 
 
+def _inner_entry(code, order):
+    """Whether `code` holds the start of another function after its first word: `jr $ra`, its delay slot, then
+    `addiu $sp,$sp,-N`. GCC opens a function's frame once, so a frame opened after a return is a new function."""
+    words=[int.from_bytes(code[i:i+4],order) for i in range(0,len(code)-len(code)%4,4)]
+    return any(words[i]&0xFFFF8000==0x27BD8000 and words[i-2]==0x03E00008 for i in range(2,len(words)))
+
+
 def _safe(net, proj, console, plan, calls, context=None):
     """The evidence for applying `plan` (a preview) without review, or None.
     `context`: (image, flow targets, flagged names) for the checks that read beyond the pieces."""
@@ -377,6 +384,9 @@ def _safe(net, proj, console, plan, calls, context=None):
     head=plan['pieces'][0];order='big' if proj['big_endian'] else 'little'
     # A person's decision (kept as separate, set aside by you) or verified assembly is never reopened by a rule.
     if any(_decided(json.loads(p['meta'] or '{}')) for p in plan['pieces']):return None
+    # A return, its delay slot and then a new stack frame start another function, wherever it sits in the extent:
+    # checking only each piece's first word let 16 joins on an N64 game absorb a whole function each.
+    if plan['action']!='delay_slot' and _inner_entry(plan['raw'],order):return None
     if context and _starts_in_delay_slot(net,proj,plan,context[0]):return None
     first=int.from_bytes(plan['raw'][:4],order);frame=0x10000-(first&0xFFFF) if first&0xFFFF8000==0x27BD8000 else None
     note=SAFE_NOTE[plan['action']] if plan['action'] in SAFE_NOTE else None

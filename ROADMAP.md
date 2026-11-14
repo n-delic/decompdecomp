@@ -702,7 +702,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
-| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, embedded ZIP packs) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
+| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, named four-block banks, embedded ZIP packs, textures loaded by uncompressed display lists) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | — image adapter |
 | Audio browser, filters, sortable samples and explicit WAV preparation | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / linked records | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -1020,8 +1020,11 @@ Left:
   RDP filters them (its three-texel bilinear filter, or the four-texel average), as the game asks for its 3D and
   text, at no cost in speed natively or in the browser. The blender follows its selectors in both cycles, with
   fog: the RSP's fog alpha per vertex (G_FOG, G_MW_FOG) and the fog colour, which the game's races use for most of
-  what they draw (measured: the RDP states it draws with, by pixels). Not drawn: anti-aliasing and dithering; no
-  state the game uses needs TEXEL1, mipmaps, IA16 palettes or decal depth. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
+  what they draw (measured: the RDP states it draws with, by pixels). Anti-aliasing as the console does it: the
+  RDP's coverage per pixel (8 samples), a mesh's shared edges blended by their coverages, and the VI's filter softening
+  silhouettes as the frame is shown (about 10% slower). Not drawn: dithering; no
+  state the game uses needs TEXEL1, mipmaps, IA16 palettes or decal depth. S2DEX sprites (G_OBJ_SPRITE) turn and scale
+  with the 2D matrix (its rev counter needle); its rectangles (G_OBJ_RECTANGLE, _R) are drawn as before. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
   saves other games use, the
@@ -1835,6 +1838,13 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   the regular expressions for code tree-sitter can't parse (macros, old dialects).
 - Readers for PowerPC, x86 and ARM (today the evidence is MIPS).
 - Publish it on PyPI, so other projects can depend on it by version.
+- N64 display-list textures (0.3.0) read only uncompressed lists. Next: lists inside compressed blocks (a
+  Turok-engine shooter's RNC-packed models), textures loaded as a sub-rectangle of a wider image, multi-tile and
+  mipmapped tiles, and a file's displacement from the code that loads it where the file itself can't decide.
+- N64 games whose lists are compressed or built at run time (a Ridge-style racer, a survival horror port) still
+  need a recogniser for their own texture containers.
+- A Turok-engine shooter's front-end images (a small header with a type, dimensions, then RGBA16 pixels, RNC-packed)
+  are not recognised yet.
 - Move the tests here that only need a compiler to decomp-repair, with the compilers as an optional part.
 
 ### decomp-assets: other consoles, and other projects using it
