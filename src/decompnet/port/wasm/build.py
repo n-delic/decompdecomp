@@ -458,7 +458,8 @@ def function_table(header: str, fixed: list[str]) -> str:
 def invoker(c: str, ret: str, params: list[str]) -> tuple[str, str]:
     """(name, C) of a function that calls `c` as MIPS o32 passed its arguments: `w` the argument words ($a0-$a3, then
     the stack's), `f` the float registers as single words (FR=0: a double in an even and odd pair, low word first);
-    leading float arguments in $f12 and $f14. `out`: $v0, $v1, $f0, $f1 afterwards."""
+    leading float arguments in $f12 and $f14. `out`: $v0, $v1, $f0, $f1 afterwards, and what the function returns
+    (0 nothing, 1 a word, 2 64 bits, 3 a float, 4 a double): only those registers mean anything after it."""
     args, slot, fpr, floats = [], 0, 12, True
     for i, t in enumerate(params):
         if t in ("f32", "f64") and floats and i < 2:
@@ -480,11 +481,12 @@ def invoker(c: str, ret: str, params: list[str]) -> tuple[str, str]:
             args.append(f"w[{slot}]" if t == "u32" else f"port_f32(w[{slot}])")
             slot += 1
     call = f"{c}(g" + "".join(f", {a}" for a in args) + ")"
-    body = {"void": f"{call}; out[0] = port_v0(g);",
-            "u32": f"out[0] = {call};",
-            "u64": f"u64 r = {call}; out[0] = (u32)(r >> 32); out[1] = (u32)r;",
-            "f32": f"out[2] = port_b32({call});",
-            "f64": f"u64 r = port_b64({call}); out[2] = (u32)r; out[3] = (u32)(r >> 32);"}.get(ret, f"{call};")
+    body = {"void": f"{call}; out[0] = port_v0(g); out[4] = 0;",
+            "u32": f"out[0] = {call}; out[4] = 1;",
+            "u64": f"u64 r = {call}; out[0] = (u32)(r >> 32); out[1] = (u32)r; out[4] = 2;",
+            "f32": f"out[2] = port_b32({call}); out[4] = 3;",
+            "f64": f"u64 r = port_b64({call}); out[2] = (u32)r; out[3] = (u32)(r >> 32); out[4] = 4;"
+            }.get(ret, f"{call};")
     name = f"port_i_{c}"
     return name, (f"static void {name}(w2c_game* g, const u32 *w, const u32 *f, u32 *out) {{ (void)w; (void)f; "
                   f"{body} }}")

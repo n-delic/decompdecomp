@@ -75,4 +75,5 @@ where. Without input the game sits at its title; a controller script ("vi:A,vi:S
 `compare_behaviour(function)` checks a matched function for exactly this: its first real calls, recorded on the
 console, run through its recompiled C (the original's instructions) and its decompiled C as the port builds it, with
 what differs ($v0, memory by symbol). A difference is the C doing something the original doesn't once another
-compiler builds it: put its declarations, types or return right while it still matches, then ask again.
+compiler builds it: put its declarations, types or return right while it still matches, then ask again. Port
+readiness lists the functions the user's last Check behaviour found differing: start with those.

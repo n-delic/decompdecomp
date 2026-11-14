@@ -87,6 +87,17 @@ function renderPortReadiness(report) {
     for (const k of calls.kinds) facts.append(portRow(`  ${k.about}`, `${k.calls} calls in ${k.functions} functions: `
       + `${k.why}. ` + k.examples.join(", ") + (k.calls > k.examples.length ? ", ..." : "")));
   }
+  const behaviour = report.behaviour;
+  if (behaviour) {
+    facts.append(portRow("Behaves like the original", `${behaviour.same.toLocaleString()} the same`
+      + (behaviour.return_addresses ? ` (${behaviour.return_addresses} storing a return address C doesn't have)` : "")
+      + ", "
+      + `${behaviour.differs} differ, ${behaviour.not_reached.toLocaleString()} not reached, ${behaviour.errors} couldn't `
+      + `run (each matched function's first call in ${behaviour.settings.vis} VIs; `
+      + `${new Date(behaviour.at * 1000).toLocaleString()})`));
+    if (behaviour.examples.length) facts.append(portRow("  differ", behaviour.examples.join("; ")
+      + (behaviour.differs > behaviour.examples.length ? "; ..." : "")));
+  }
   const recomp = report.recomp;
   if (recomp) {
     facts.append(portRow("Recompiled (N64Recomp)", `${recomp.functions.toLocaleString()} of the split's functions and `
@@ -123,6 +134,7 @@ const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, Math.round(1
    panel's own elements, moved into the step)}. */
 function portSteps(report) {
   const code = report.code, pc = report.pc, link = report.link, assets = report.assets, calls = report.calls;
+  const behaviour = report.behaviour, compared = behaviour ? behaviour.same + behaviour.differs : 0;
   const library = code.replaced + code.native + (code.glue || 0);
   const steps = [
     { title: "The game's code in C", pct: pct(code.c, code.total),
@@ -146,6 +158,14 @@ function portSteps(report) {
       detail: calls ? (calls.calls ? `${calls.calls.toLocaleString()} calls in ${calls.functions.toLocaleString()} `
         + "functions match but disagree with the function they call: a port can behave differently there"
         : "every call agrees with the function it calls") : "after Play builds the game" },
+    { title: "Behaves like the original", pct: compared ? pct(behaviour.same, compared) : null,
+      detail: !report.behaviour_available ? "needs a reversing emulator and a static recompiler for this console"
+        : !behaviour ? "not checked yet: Check behaviour runs each matched function's first call both ways"
+        : `${behaviour.same.toLocaleString()} of ${compared.toLocaleString()} functions the game reached behave the same`
+          + (behaviour.differs ? `, ${behaviour.differs} differ` : "")
+          + `; ${behaviour.not_reached.toLocaleString()} not reached in ${behaviour.settings.vis} VIs`,
+      buttons: report.behaviour_available ? ["portBehaviour", "portBehaviourStop", "portBehaviourSettings"] : [],
+      logs: ["portBehaviourLog"] },
     { title: "Assets extracted", pct: assets ? (assets.extracted && assets.extracted.current ? pct(assets.extracted.mapped, assets.extracted.total)
         : assets.written ? 50 : 0) : 0,
       detail: assets ? `${assets.resources} resources mapped` + (assets.extracted && assets.extracted.current
@@ -166,11 +186,11 @@ function renderPortSteps(report) {
   if (!list) return;
   const steps = portSteps(report), parked = $("portParked");
   for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portAssets", "portExtract", "portPlay", "portStop",
-    "portExportMenu", "portRecompile"]) {
+    "portExportMenu", "portRecompile", "portBehaviour", "portBehaviourStop", "portBehaviourSettings"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
   for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portAssetsLog", "portExtractLog", "portPlayLog",
-    "portExportLog", "portExportActions", "portRecompLog"]) {
+    "portExportLog", "portExportActions", "portRecompLog", "portBehaviourLog"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
@@ -292,6 +312,43 @@ async function recompileGame() {
     showJobError(log, error.message);
   } finally { finish(); }
   if (S.slug === slug) loadPortReadiness();
+}
+
+/* Check behaviour (app/behaviour.py): every matched function's first call through its recompiled and decompiled C.
+   Long: its bar counts functions; Stop keeps what was checked; a check running when the panel is drawn again is
+   followed, not started again (report.play.behaviour_job). */
+let behaviourJob = null;
+
+async function checkBehaviour(existing = null) {
+  if (behaviourJob) return;
+  const slug = S.slug, log = $("portBehaviourLog"), stop = $("portBehaviourStop");
+  behaviourJob = existing ? existing.id : "starting";
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  stop.hidden = false; stop.disabled = false; stop.textContent = "Stop checking";
+  const finish = beginWork(log, "Checking each matched function against the original", [$("portBehaviour")],
+                           "Checked.");
+  if (existing?.progress) updateWorkProgress(log, existing.progress);
+  try {
+    const vis = Number($("portBehaviourVis").value) || 3600, input = $("portBehaviourInput").value || "";
+    let result = existing ? { job: existing.id }
+      : await api("/api/behaviour-check", { method: "POST", body: { slug, vis, input } });
+    if (result.job) { behaviourJob = result.job; await followJob(result.job, log, null, () => S.slug === slug); }
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally {
+    behaviourJob = null; finish();
+    stop.hidden = true;
+  }
+  if (S.slug === slug) loadPortReadiness();
+}
+
+async function stopBehaviour() {
+  const stop = $("portBehaviourStop");
+  if (!behaviourJob || behaviourJob === "starting") return;
+  stop.disabled = true; stop.textContent = "Stopping…";
+  try { await api("/api/job/cancel", { method: "POST", body: { id: behaviourJob } }); }
+  catch (error) { showJobError($("portBehaviourLog"), error.message); stop.disabled = false; stop.textContent = "Stop checking"; }
 }
 
 async function fixRenamedCalls() {
@@ -428,6 +485,7 @@ async function showExport() {
 function attachPlay(play) {
   if (!play) return;
   if (play.export_job && !exportJob) exportGame(null, play.export_job);
+  if (play.behaviour_job && !behaviourJob) checkBehaviour(play.behaviour_job);
   if (playJob) return;
   if (play.job) { playGame(play.job); return; }
   $("portStop").hidden = !play.url; playStopLabel();
@@ -448,6 +506,8 @@ if ($("portPanel")) {
   $("portRenameCalls").onclick = fixRenamedCalls;
   $("portExtract").onclick = extractAssets;
   if ($("portRecompile")) $("portRecompile").onclick = recompileGame;
+  if ($("portBehaviour")) $("portBehaviour").onclick = () => checkBehaviour();
+  if ($("portBehaviourStop")) $("portBehaviourStop").onclick = stopBehaviour;
   $("portAssets").onclick = writeAssetMap;
   $("portDrafts").onclick = draftPortData;
   $("portCompile").onclick = compileForPc;

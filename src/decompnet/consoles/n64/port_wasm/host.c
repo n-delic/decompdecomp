@@ -757,7 +757,7 @@ static void sample(void) {
 /* PORT_CALL=vram: one call of the game's function at vram, from a state the reversing emulator recorded
    (app/behaviour.py), instead of the game: PORT_CALL_STATE (its registers, one line as emulator/frontend.c writes
    it), PORT_CALL_RDRAM (memory, big-endian, loaded at 0x80000000), PORT_CALL_OUT (where to write <out>.rdram, the
-   memory after the call, and <out>.result, "v0 v1 f0 f1"). Arguments are taken as MIPS passed them: $a0-$a3, the
+   memory after the call, and <out>.result, "v0 v1 f0 f1 kind": what the function returns, as the invoker says). Arguments are taken as MIPS passed them: $a0-$a3, the
    stack's words after them, $f12 and $f14 (funcs.c's port_calls, port/wasm/build.py's invoker). */
 typedef void (*PortInvoke)(w2c_game *, const u32 *, const u32 *, u32 *);
 typedef struct { unsigned address; PortInvoke invoke; } PortCall;
@@ -779,7 +779,7 @@ static int port_call(uint32_t vram) {
     uint8_t *bytes = read_file(in, &size);
     if (!bytes || size > 0x800000u) { fprintf(stderr, "can't read %s\n", in); return 2; }
     memcpy(M + 0x80000000u, bytes, size);
-    u32 w[32], regs[32], result[4] = {0, 0, 0, 0};
+    u32 w[32], regs[32], result[5] = {0, 0, 0, 0, 0};
     for (int i = 0; i < 4; i++) w[i] = (u32)g[4 + i];
     for (int i = 4; i < 32; i++) w[i] = be32((u32)g[29] + 4u * (unsigned)i);
     for (int i = 0; i < 32; i++) regs[i] = fr[i];
@@ -796,7 +796,7 @@ static int port_call(uint32_t vram) {
     snprintf(path, sizeof path, "%s.result", out);
     f = fopen(path, "w");
     if (!f) { perror(path); return 2; }
-    fprintf(f, "%08X %08X %08X %08X\n", result[0], result[1], result[2], result[3]);
+    fprintf(f, "%08X %08X %08X %08X %u\n", result[0], result[1], result[2], result[3], result[4]);
     fclose(f);
     snprintf(path, sizeof path, "%s.rdram", out);
     f = fopen(path, "wb");

@@ -330,6 +330,20 @@ def register(app: App) -> None:
         from .. import recompile
         return {"job": jobs.start("recompile", lambda log: recompile.run(net, slug, log), project=slug)}
 
+    def p_behaviour_check(slug, request, data):
+        """Check behaviour: every matched function's first call through its recompiled and decompiled C
+        (app/behaviour.py), in the background; Stop keeps what was checked."""
+        from .. import behaviour
+        try:
+            vis = int(data.get("vis") or 3600)
+        except (TypeError, ValueError):
+            raise NetworkError("How far to run is a number of VIs (60 a second)") from None
+        if not 60 <= vis <= 60 * 60 * 5:
+            raise NetworkError("Run the game for 60 to 18,000 VIs (one second to five minutes)")
+        text = str(data.get("input") or "")[:20000]
+        return {"job": jobs.start("behaviour-check", lambda log: behaviour.batch(net, slug, vis, text, log=log),
+                                  project=slug)}
+
     def g_port_readiness(slug, request, data):
         """What stands between the game and a port, and its Play build: still building (the job, for the panel to
         follow again after navigating away) or running (its address)."""
@@ -337,7 +351,8 @@ def register(app: App) -> None:
         from ...port.wasm import play
         report = readiness(net, slug)
         report["play"] = {"job": jobs.active(("play",), project=slug), "url": play.running(slug),
-                          "export_job": jobs.active(("play-export",), project=slug)}
+                          "export_job": jobs.active(("play-export",), project=slug),
+                          "behaviour_job": jobs.active(("behaviour-check",), project=slug)}
         return report
 
     def p_rom_explorer(slug, request, data):
@@ -1198,6 +1213,7 @@ def register(app: App) -> None:
         "/api/port-identity": (p_port_identity, ["POST"]),
         "/api/asset-extract": (p_asset_extract, ["POST"]),
         "/api/recompile": (p_recompile, ["POST"]),
+        "/api/behaviour-check": (p_behaviour_check, ["POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
     }

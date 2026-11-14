@@ -149,3 +149,25 @@ def test_one_recorded_call_runs_through_the_recompiled_c(project, tmp_path):
     assert result["ok"] and result["v0"] == 7 and result["runtime"] == [], result
     assert (tmp_path / "out.rdram").stat().st_size == 4 << 20
     assert recomp.run_one(program, 0x80000999, tmp_path / "in.state", rdram, tmp_path / "x")["ok"] is False
+
+
+@pytest.mark.skipif(toolchains.installed("n64recomp") is None, reason="needs the n64recomp tool")
+def test_a_call_looping_on_a_runtime_stub_ends_with_a_reason_not_a_flood(tmp_path):
+    """A function that waits for a message in a loop (osRecvMesg: a stub in the harness, which never gives one) once
+    wrote its "runtime" line until it had filled 12 GB; it's said once and the call gives up."""
+    rom = bytearray(homemade_rom())
+    for i, w in enumerate([jal(0x80000480), NOP, j(0x80000460), NOP, JR_RA, NOP]):  # waits: forever
+        rom[0x1060 + 4 * i:0x1064 + 4 * i] = w.to_bytes(4, "big")
+    for i, w in enumerate([JR_RA, NOP]):  # osRecvMesg, which N64Recomp leaves to its runtime
+        rom[0x1080 + 4 * i:0x1084 + 4 * i] = w.to_bytes(4, "big")
+    (tmp_path / "game.z64").write_bytes(bytes(rom))
+    split = SPLIT + [{"name": "waits", "vram": 0x80000460, "rom": 0x1060, "size": 0x18},
+                     {"name": "osRecvMesg", "vram": 0x80000480, "rom": 0x1080, "size": 0x8}]
+    out = tmp_path / "recomp"
+    recomp.recompile(toolchains.binary("n64recomp"), tmp_path / "game.z64", SEGMENTS, split, out, log=lambda *a: None)
+    program = recomp.harness(out, 0x80000400, log=lambda *a: None)
+    rdram = tmp_path / "in.rdram"
+    rdram.write_bytes(bytes(4 << 20))
+    result = recomp.run_one(program, 0x80000460, _state(tmp_path / "in.state"), rdram, tmp_path / "out", timeout=60)
+    assert not result["ok"] and "kept calling the runtime's osRecvMesg" in result["error"], result
+    assert (tmp_path / "out.result").stat().st_size < 1000

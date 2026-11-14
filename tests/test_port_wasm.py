@@ -384,13 +384,13 @@ def test_a_function_is_called_from_a_recorded_state_as_mips_passed_its_arguments
     PORT_CALL): each function's invoker reads o32's argument words, leading floats from $f12/$f14, a 64-bit value
     from an even pair of words, and gives back $v0 (a void function's: the $v0 word), $v1 or $f0."""
     from decompnet.port.wasm.build import function_table, invoker
-    assert invoker("w2c_game_f", "u32", ["u32", "u32"])[1].endswith("out[0] = w2c_game_f(g, w[0], w[1]); }")
+    assert invoker("w2c_game_f", "u32", ["u32", "u32"])[1].endswith("out[0] = w2c_game_f(g, w[0], w[1]); out[4] = 1; }")
     assert "w2c_game_f(g, port_f32(f[12]), port_f32(f[14]), w[2])" in invoker("w2c_game_f", "f32", ["f32", "f32", "u32"])[1]
     assert "out[2] = port_b32(" in invoker("w2c_game_f", "f32", ["f32"])[1]
     # a double first: $f12/$f13, low word first; an int then a 64-bit: words 2 and 3 (the even pair)
     assert "port_f64((u64)f[13] << 32 | f[12])" in invoker("w2c_game_f", "void", ["f64"])[1]
     assert "w2c_game_f(g, w[0], port_w64(w, 2))" in invoker("w2c_game_f", "u64", ["u32", "u64"])[1]
-    assert "out[0] = port_v0(g);" in invoker("w2c_game_f", "void", [])[1]
+    assert "out[0] = port_v0(g); out[4] = 0;" in invoker("w2c_game_f", "void", [])[1], "says it returns nothing"
     header = ("/* export: 'start_yaw' */\nvoid w2c_game_start_yaw(w2c_game*, u32, u32);\n"
               "/* export: 'func_80001000' */\nu32 w2c_game_func_80001000(w2c_game*);\n")
     table = function_table(header, ["start_yaw 0x80002000 func"])

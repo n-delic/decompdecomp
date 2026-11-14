@@ -986,9 +986,10 @@ A helper asks `compare_behaviour(function)`. The user's ROM runs in the reversin
 calls, each call's registers and memory are recorded, and each runs through the function's recompiled C (the
 original's instructions, N64Recomp) and through its decompiled C as the WebAssembly port builds it. What differs comes
 back: $v0, $v1, $f0, and the memory each left, by symbol, outside the call's stack (`app/behaviour.py`). On a racing
-game it finds the backwards race start in one line (`$v0: recompiled 00000800, decompiled 00000000`). Left: a
-batch over every matched function the game reaches (a Port readiness row), and calls that wait on another thread,
-which time out today.
+game it finds the backwards race start in one line (`$v0: recompiled 00000800, decompiled 00000000`). Porting's **Check
+behaviour** runs it over every matched function the game reaches in one run of the game (Port readiness: "Behaves
+like the original", the counts and the functions that differ), saved per function and redone only where the C
+changed. Left: calls that wait on another thread, which time out today, and calls past the first.
 
 ### The game as C before the decomp is done: Recompile with N64Recomp
 

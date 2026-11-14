@@ -372,7 +372,11 @@ def run_one(program: Path, vram: int, state: Path, rdram: Path, out_prefix: Path
         return {"ok": False, "error": f"didn't return within {timeout:.0f} s"}
     if done.returncode or not result.is_file():
         return {"ok": False, "error": (done.stderr.strip().splitlines() or [f"stopped ({done.returncode})"])[-1]}
-    first, *rest = result.read_text().splitlines()
-    v0, v1, f0, f1 = (int(x, 16) for x in first.split())
+    lines = result.read_text().splitlines()  # "runtime <name>" as the call reached each, then the registers
+    rest = [line for line in lines if line.startswith("runtime ")]
+    last = next((line for line in reversed(lines) if line and not line.startswith("runtime ")), None)
+    if last is None:
+        return {"ok": False, "error": "the harness wrote no result"}
+    v0, v1, f0, f1 = (int(x, 16) for x in last.split())
     return {"ok": True, "v0": v0, "v1": v1, "f0": f0, "f1": f1, "rdram": after,
             "runtime": sorted({line.split()[1] for line in rest if line.startswith("runtime ")})}
