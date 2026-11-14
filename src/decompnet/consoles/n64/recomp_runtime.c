@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include "recomp.h"
 
 typedef struct { uint32_t vram; recomp_func_t *func; } HarnessFunction;
@@ -20,8 +21,18 @@ int32_t *section_addresses;
 static int32_t no_sections[1];
 static FILE *result;
 
+/* Each runtime function reached is said once (a call that loops waiting on one, an osRecvMesg that never gets its
+   message here, would otherwise write without end); one that keeps calling them gives up. */
 void harness_runtime(const char *name) {
-    if (result) fprintf(result, "runtime %s\n", name);
+    static const char *seen[64];
+    static unsigned count, calls;
+    if (++calls > 100000) {
+        fprintf(stderr, "kept calling the runtime's %s (a loop waiting on what the runtime's stubs never give)\n", name);
+        exit(9);
+    }
+    for (unsigned i = 0; i < count; i++) if (seen[i] == name) return;
+    if (count < 64) seen[count++] = name;
+    if (result) { fprintf(result, "runtime %s\n", name); fflush(result); }
 }
 
 recomp_func_t *get_function(int32_t vram) {
@@ -55,9 +66,12 @@ static uint8_t *read_rdram(const char *path, size_t *size) {
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
     fseek(f, 0, SEEK_SET);
-    size_t room = 8u << 20; /* the Expansion Pak's 8 MB, whatever was recorded */
-    uint8_t *bytes = calloc(1, room > (size_t)n ? room : (size_t)n);
-    if (!bytes || fread(bytes, 1, (size_t)n, f) != (size_t)n) { fprintf(stderr, "can't read %s\n", path); exit(2); }
+    /* RDRAM at 0x80000000, and room up to 0xBFFFFFFF behind it (KSEG1, the hardware's registers): the recompiled
+       C reaches those as rdram + (address - 0x80000000), and they read as zeros here rather than crash it */
+    size_t room = 0x40000000u;
+    uint8_t *bytes = mmap(NULL, room, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (bytes == MAP_FAILED) bytes = NULL;
+    if (!bytes || (size_t)n > room || fread(bytes, 1, (size_t)n, f) != (size_t)n) { fprintf(stderr, "can't read %s\n", path); exit(2); }
     fclose(f);
     for (long i = 0; i + 3 < n; i += 4) { /* N64Recomp keeps RDRAM as host-order words */
         uint32_t w = (uint32_t)bytes[i] << 24 | (uint32_t)bytes[i + 1] << 16 | (uint32_t)bytes[i + 2] << 8 | bytes[i + 3];

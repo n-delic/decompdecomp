@@ -1139,16 +1139,16 @@ platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
 name = "mupenRE, the N64 reversing emulator"
 kind = "tool"
 license = "GPL-2.0"
-source = "RetroReversing/mupen64plus-core 4a69be3 with libRetroReversing b68d811, mupen64plus-rsp-hle 2.6.0, SDL2 2.32.10, libpng 1.6.50"
+source = "RetroReversing/mupen64plus-core d3231ae with libRetroReversing b68d811, mupen64plus-rsp-hle 2.6.0, SDL2 2.32.10, libpng 1.6.50"
 description = "Runs your own N64 ROM headless, as the console would, to compare with a port or a decompiled function: memory at a chosen moment, which code writes an address, what a function is called with. Built here from its source with the pinned CMake and this computer's C/C++ compiler (consoles/n64/emulator)."
 binary_name = "mupenre-frontend"
 build = "mupenre"
 requires = ["cmake"]
 [[mupenre.parts]]
-url = "https://codeload.github.com/RetroReversing/mupen64plus-core/tar.gz/4a69be3194b63fe5a3cb1f059124123361f513a4"
-sha256 = "b35fcd305df056afb266195975780d1a84ec99542ec961226610ba9962a21ca7"
-file = "mupenre-core-4a69be3194b63fe5a3cb1f059124123361f513a4.tar.gz"
-subdir = "mupen64plus-core-4a69be3194b63fe5a3cb1f059124123361f513a4"
+url = "https://codeload.github.com/RetroReversing/mupen64plus-core/tar.gz/d3231ae452d00f609be06890ea8ed7e50f116c5e"
+sha256 = "27aebea5da2d2d5cd3319469cb6fd93a553c860db5d9ced99fa223f8ae28b50b"
+file = "mupenre-core-d3231ae452d00f609be06890ea8ed7e50f116c5e.tar.gz"
+subdir = "mupen64plus-core-d3231ae452d00f609be06890ea8ed7e50f116c5e"
 into = "source/core"
 platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
 [[mupenre.parts]]

@@ -93,6 +93,15 @@ def _recomp(net, proj) -> dict | None:
             "found_examples": [f"{f['name']} ({f['why']})" for f in s["found"][:8]]}
 
 
+def _behaviour(net, proj) -> dict | None:
+    """The last Check behaviour (app/behaviour.py): matched functions run both ways, counted. Never run here."""
+    from ..app.behaviour import summary
+    s = summary(Path(proj["root"]))
+    if s is not None:
+        s = {k: v for k, v in s.items() if k != "functions_differing"}
+    return s
+
+
 def _assets(net, slug: str) -> dict | None:
     """The asset map as it would be written now (port/asset_map.py), and whether the project's folder has it."""
     from .asset_map import current
@@ -197,6 +206,8 @@ def readiness(net, slug: str) -> dict:
         "calls": _calls(net, slug),
         "recomp": _recomp(net, proj),
         "recomp_available": console.recompiler is not None,
+        "behaviour": _behaviour(net, proj),
+        "behaviour_available": console.recompiler is not None and console.emulator is not None,
     }
     report["blockers"] = blockers(report)
     report["ready"] = not report["blockers"]
@@ -263,6 +274,11 @@ def blockers(report: dict) -> list[str]:
     if report["addresses"]["literals"]:
         out.append(f"{report['addresses']['functions']} functions write {report['addresses']['literals']} addresses "
                    "as numbers: each needs to be a symbol so the port (and mods) can move it.")
+    behaviour = report.get("behaviour")
+    if behaviour and behaviour["differs"]:
+        out.append(f"{behaviour['differs']} matched functions behave differently from the original once built for "
+                   "the port (Check behaviour): each matches, but its C means something else to another compiler. "
+                   "compare_behaviour shows one in full.")
     calls = report.get("calls")
     if calls and calls["calls"]:
         worst = calls["kinds"][0]
@@ -361,6 +377,15 @@ def describe(report: dict) -> str:
         if link["duplicates"]:
             lines.append("- defined twice: " + ", ".join(f"{d['name']} ({', '.join(d['in'])})"
                                                         for d in link["duplicates"][:12]))
+    behaviour = report.get("behaviour")
+    if behaviour:
+        lines.append(f"Behaviour against the original (Check behaviour, each matched function's first call in "
+                     f"{behaviour['settings']['vis']} VIs): {behaviour['same']} the same ("
+                     f"{behaviour.get('return_addresses', 0)} of them storing a return address C doesn't have), "
+                     f"{behaviour['differs']} differ, "
+                     f"{behaviour['not_reached']} not reached, {behaviour['errors']} couldn't run. compare_behaviour "
+                     "shows one in full.")
+        lines += [f"- {e}" for e in behaviour["examples"]]
     recomp = report.get("recomp")
     if recomp:
         lines.append(f"Recompiled (static recompiler, last run): {recomp['functions']} of the split's functions and "

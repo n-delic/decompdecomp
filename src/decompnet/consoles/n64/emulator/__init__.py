@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import os
 import platform
+import queue
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,6 +34,7 @@ from .... import limits
 
 HERE = Path(__file__).resolve().parent
 TOOL = "mupenre"
+MAX_BREAKS = 16384  # execution breakpoints one run takes (the pinned core's, checked in constant time)
 SO = "dylib" if sys.platform == "darwin" else "so"  # (not on Windows: the frontend uses dlopen)
 
 class EmulatorError(RuntimeError):
@@ -189,7 +193,7 @@ def installed() -> Path | None:
 def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None = None,
         watches: list[tuple[int, int]] | tuple = (), breaks: list[int] | tuple = (), report_from: int = 0,
         max_hits: int = 200, expansion_pak: bool = False, timeout: float = 1800,
-        record: tuple[Path, int] | None = None) -> Run:
+        record: tuple[Path, int] | None = None, stop=lambda: False, on_record=None, pending: int = 0) -> Run:
     """Run the user's ROM in the reversing emulator for `vis` vertical interrupts. `inputs`: the input script
     (input.c); `dumps`: {vi: file}; `watches`: (physical address, length) write breakpoints; `breaks`: virtual
     addresses to stop at (breakpoints need the slower pure interpreter)."""
@@ -212,22 +216,56 @@ def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None 
     if record is not None:  # (folder, calls): the state at each of the first calls to the breaks
         env["EMU_RECORD"] = f"{Path(record[0]).resolve()}:{int(record[1])}"
         env.pop("EMU_MAX", None)
+        if pending:  # the frontend waits while this many recordings are left: on_record takes (and deletes) them
+            env["EMU_RECORD_PENDING"] = str(int(pending))
     folder = current(folder)
     with tempfile.TemporaryDirectory(prefix="decomp-emulator-") as tmp:  # its configuration and anything it writes
         env["EMU_CONFIG"] = tmp
         argv = [folder / "mupenre-frontend", folder / f"libmupen64plus.{SO}", folder / f"rsp-hle.{SO}",
                 folder / f"input.{SO}", folder / f"video.{SO}", Path(rom).resolve()]
-        try:
-            done = subprocess.run(limits.capped([str(a) for a in argv]), cwd=tmp, env=env, capture_output=True,
-                                  text=True, encoding="utf-8", errors="replace", timeout=timeout)
-        except subprocess.TimeoutExpired as error:  # what it reported until then still counts
-            text = error.stderr.decode("utf-8", "replace") if isinstance(error.stderr, bytes) else error.stderr or ""
-            result = parse(text)
-            result.timed_out = True
-            return result
-    result = parse(done.stderr)
-    if done.returncode and not result.vis:
-        raise EmulatorError("The emulator stopped: " + ("; ".join(result.errors) or done.stderr[-400:]))
+        proc = subprocess.Popen(limits.capped([str(a) for a in argv]), cwd=tmp, env=env, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        started, chunks, cut = time.monotonic(), [], False
+        # line by line: a run cut short keeps what it reported (a killed run's child can hold the pipe open)
+        lines: queue.Queue = queue.Queue()
+
+        def read():
+            for line in proc.stderr:
+                lines.put(line)
+            lines.put(None)
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        ended = False
+        while not ended:  # the run, ended early by `stop` (a user's Stop) or the timeout
+            if stop() or time.monotonic() - started > timeout:
+                cut = True
+                proc.kill()
+                break
+            try:
+                line = lines.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if line is None:
+                ended = True
+                continue
+            chunks.append(line)
+            if on_record is not None and line.startswith("recorded "):
+                on_record(Path(line.rstrip("\n").split(None, 3)[3]))  # (meanwhile the emulation goes on, or waits)
+        proc.wait()
+        reader.join(2)
+        while not lines.empty():
+            line = lines.get()
+            if line is not None:
+                chunks.append(line)
+        text = "".join(list(chunks))
+    result = parse(text)
+    if cut:
+        result.timed_out = True
+        if stop():
+            raise EmulatorError("Stopped.")
+        return result
+    if proc.returncode and not result.vis:
+        raise EmulatorError("The emulator stopped: " + ("; ".join(result.errors) or text[-400:]))
     return result
 
 

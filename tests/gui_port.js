@@ -31,9 +31,9 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.deepEqual(t.calls,['/api/port-readiness?slug=a']);
    assert.equal(t.c.$('portBlockers').children.length,2);
    const steps=t.c.$('portSteps').children;
-   assert.equal(steps.length,9,'nine steps');
+   assert.equal(steps.length,10,'ten steps');
    assert.match(steps[0].className,/part/);assert.equal(steps[0].children[1].children[0].children[1].textContent,'57%');
-   assert.ok(steps[8].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),'Play sits in its step');
+   assert.ok(steps[9].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),'Play sits in its step');
    assert.equal(steps[6].children[1].children[0].children[1].textContent,'to do','calls: not built yet');
    assert.match(t.c.$('portOverall').textContent,/^\d+%$/);
    assert.match(t.c.$('portKit').textContent,/libultraship and Torch/);
@@ -105,6 +105,31 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    const step=t.c.$('portSteps').children[6];
    assert.equal(step.children[1].children[0].children[0].textContent,'Calls agree with what they call');
    assert.equal(step.children[1].children[0].children[1].textContent,'71%','5 of 7 functions without a disagreeing call');}
+  {const t=setup();t.c.S.tab='porting';const follow=deferred(),cancels=[];t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
+   const checked={...report,behaviour_available:true,behaviour:{same:1200,differs:3,not_reached:800,errors:2,checked:2005,
+     at:1,settings:{vis:2700,input:''},examples:['func_8001C444: $v0: recompiled 00000800, decompiled 00000000']}};
+   t.c.reply=async(url,opts)=>{if(url==='/api/behaviour-check')return {job:'b1'};if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return checked;};
+   await t.run('loadPortReadiness()');
+   const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
+   assert.ok(rows.some(r=>r.startsWith('Behaves like the original: 1,200 the same, 3 differ, 800 not reached, 2 couldn')),rows.join('\n'));
+   assert.ok(rows.some(r=>r.includes('func_8001C444: $v0: recompiled 00000800, decompiled 00000000; ...')));
+   const step=t.c.$('portSteps').children[7].children[1];
+   assert.equal(step.children[0].children[0].textContent,'Behaves like the original');
+   assert.equal(step.children[0].children[1].textContent,'100%','1,200 of 1,203 compared');
+   assert.ok(step.children.some(c=>c.children&&c.children.includes(t.c.$('portBehaviour'))),'Check behaviour sits in its step');
+   t.c.$('portBehaviourVis').value='2700';t.c.$('portBehaviourInput').value='20:A';
+   const checking=t.run('checkBehaviour()');for(let i=0;i<6;i++)await Promise.resolve();
+   assert.equal(JSON.stringify(t.bodies[t.calls.indexOf('/api/behaviour-check')]),'{"slug":"a","vis":2700,"input":"20:A"}');
+   assert.equal(t.c.$('portBehaviour').disabled,true,'one check at a time');assert.equal(t.c.$('portBehaviourStop').hidden,false);
+   await t.run('stopBehaviour()');assert.deepEqual(cancels,['b1'],'Stop cancels the check');
+   follow.resolve({});await checking;
+   assert.equal(t.c.$('portBehaviourStop').hidden,true);assert.equal(t.c.$('portBehaviour').disabled,false);}
+  {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};t.c.updateWorkProgress=()=>{};
+   let running=true;  // (a server lists only running jobs: once followed to its end, it's gone)
+   t.c.reply=async()=>{const play=running?{behaviour_job:{id:'b9',progress:{done:3,total:10}}}:{};running=false;return {...report,behaviour_available:true,play};};
+   await t.run('loadPortReadiness()');await Promise.resolve();await Promise.resolve();
+   assert.deepEqual(followed,['b9'],'a check running elsewhere is followed, not started again');
+   assert.ok(!t.calls.includes('/api/behaviour-check'));}
   {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
    t.c.reply=async url=>url==='/api/recompile'?{job:'rc1'}:({...report,recomp_available:true,recomp:{functions:2125,found:12,
      stubs:14,runtime:4,errors:0,files:42,at:1,folder:'/p/build/recomp',stub_examples:['func_8008AE70 (cop0)'],
@@ -113,13 +138,13 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
    assert.ok(rows.some(r=>r.startsWith('Recompiled (N64Recomp): 2,125 of the split\'s functions and 12 it doesn\'t list, as C in 42 files: 14 set aside as stubs, 4 for the runtime to provide, the C compiles')),rows.join('\n'));
    assert.ok(rows.some(r=>r.includes('set aside')&&r.includes('func_8008AE70 (cop0), ...')));
-   const play=t.c.$('portSteps').children[8].children[1];
+   const play=t.c.$('portSteps').children[9].children[1];
    assert.ok(play.children.some(c=>c.children&&c.children.includes(t.c.$('portRecompile'))),'Recompile sits in the Play step');
    t.calls.length=0;await t.run('recompileGame()');
    assert.deepEqual(t.calls,['/api/recompile','/api/port-readiness?slug=a']);assert.deepEqual(followed,['rc1']);
    assert.equal(t.c.$('portRecompile').disabled,false,'the button comes back');}
   {const t=setup();t.c.S.tab='porting';t.c.reply=async()=>report;await t.run('loadPortReadiness()');
-   const play=t.c.$('portSteps').children[8].children[1];
+   const play=t.c.$('portSteps').children[9].children[1];
    assert.ok(!play.children.some(c=>c.children&&c.children.includes(t.c.$('portRecompile'))),'no recompiler: no button');}
   {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
    t.c.reply=async url=>url==='/api/rename-calls'?{job:'r1'}:report;
@@ -149,7 +174,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.equal(t.c.$('portStop').hidden,false);assert.equal(t.c.$('portStop').textContent,'Stop the build');
    await t.run('playGame()');assert.deepEqual(t.calls.filter(u=>u==='/api/play'),['/api/play'],'a second click starts nothing');
    await t.run('loadPortReadiness()');
-   const body=t.c.$('portSteps').children[8].children[1].children;
+   const body=t.c.$('portSteps').children[9].children[1].children;
    assert.ok(body.includes(log._workStatus)&&body.includes(log._workBar)&&body.includes(log),'status, bar and log move together');
    assert.ok(body.indexOf(log._workBar)<body.indexOf(log));
    await t.run('stopGame()');assert.deepEqual(cancels,['p3'],'Stop cancels the build');
@@ -196,7 +221,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
      {id:'n64modernruntime',name:'N64ModernRuntime',summary:'Native.',built:false,missing:[],playable:false}];
    t.c.reply=async url=>url==='/api/play'?{job:'p3'}:{...report,runtimes};
    await t.run('loadPortReadiness()');
-   const play=t.c.$('portSteps').children[8].children[1];
+   const play=t.c.$('portSteps').children[9].children[1];
    const choice=play.children.find(c=>c.className==='port-runtimes');
    assert.ok(choice,'the Play step offers its runtimes');
    const options=choice.children.slice(1).map(l=>({radio:l.children[0],status:l.children[1].children[2].textContent}));
@@ -207,5 +232,5 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.match(options[2].status,/steps it needs are done; .*isn't in decompdecomp yet/);
    await t.run('playGame()');
    assert.equal(t.bodies[t.calls.indexOf('/api/play')].runtime,'wasm','Play asks for the chosen runtime');}
-  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, recompile, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, check behaviour, recompile, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

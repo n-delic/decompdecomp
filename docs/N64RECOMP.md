@@ -93,6 +93,20 @@ On a racing game, with the backwards race start's `$v0` bug put back in the port
 start-heading helper report `$v0: recompiled 00000800, decompiled 00000000`. With the fix, they're the same. A first
 run takes about a minute and a half (recording, Recompile, the port's build); later ones only record and run.
 
+**Check behaviour** (Porting) does the same for every matched function at once (`behaviour.batch`):
+- **One run:** the game runs once with a breakpoint on each function. RetroReversing/mupen64plus-core#3 takes
+  16,384 execution breakpoints and checks them in constant time; each is removed once its first call is recorded.
+- **As they come:** each call is compared as it arrives, several at once, and its 4 MB recording deleted. The
+  frontend waits while too many are waiting (`EMU_RECORD_PENDING`), so disk use stays around 100 MB.
+- **Fair comparisons:** only the registers that hold what a function returns are compared (the port's invoker says
+  which), and a void function's $v0 only when a caller takes it (the suspicious calls' void-result). A word where
+  the recompiled C stored a return address and the port 0 is a note, not a difference, since C has no $ra. The
+  harness reserves address space up to KSEG1, and a call that keeps calling a runtime stub (waiting for a message
+  that never comes) gives up instead of writing without end.
+- **Saved:** results go in build/behaviour/batch.json with each function's matched C. Stop keeps them, and a later
+  check redoes only what's new or changed.
+- **Shown:** Port readiness has a step ("Behaves like the original"), the counts, and the functions that differ.
+
 
 - Take a function's entry state from the reversing emulator: an execution breakpoint at its address gives the
   registers and RDRAM at that moment.
