@@ -28,6 +28,7 @@ from pathlib import Path
 
 from .. import toolchains
 from ..network import NetworkError
+from ..rom.symbols import AUTO_NAME
 from . import saves
 
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
@@ -120,6 +121,18 @@ def _read(folder: Path) -> dict[str, str]:
                 raise NetworkError("Resolve the git conflicts in progress before continuing this project.")
             files[path.relative_to(folder).as_posix()] = text
     return files
+
+
+def _saved_layout_names(folder: Path) -> set[str]:
+    """The names in a folder's saved layout, read from the manifest alone. A database-driven sync checks these against
+    the database before the full folder read, so the costly `_read`/`_manifest` (1.1 s on an 18k-function folder) run
+    only when a saved name is missing -- the precondition for adoption to do anything (#174 review 3)."""
+    try:
+        manifest = json.loads((folder / saves.MANIFEST).read_text(encoding="utf-8"))
+        layout = manifest.get("layout") if isinstance(manifest, dict) else None
+        return {entry.get("name") for entry in (layout or []) if isinstance(entry, dict)}
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
+        return set()
 
 
 def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[str, str]:
@@ -261,7 +274,9 @@ def _merge_manifest(old, new, current, key: str = ""):
             if key == "notes" and isinstance(item, dict):
                 return (item.get("function"), item.get("text"), item.get("by", ""))
             if isinstance(item, dict):
-                return item.get("vram") if key == "set_aside" else item.get("name")
+                if key == "set_aside":
+                    return (item.get("name"), item.get("vram"))
+                return item.get("name")
             return None
 
         old_items = {identity(item): item for item in old if identity(item) is not None}
@@ -284,8 +299,12 @@ def _merge_manifest(old, new, current, key: str = ""):
     return new
 
 
-def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, str]) -> tuple[dict, dict[str, str]]:
-    """A first sync has no deletion history, so keep database work while adding saved contributions."""
+def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, str],
+                   auto_only: bool) -> tuple[dict, dict[str, str], set[str]]:
+    """A first sync has no deletion history, so keep database work while adding saved contributions.
+
+    `auto_only` applies the adoption rule the later sync already follows (#174 review 2): a deliberate database
+    rename wins, and the folder's older name is reclaimed only when the database still holds an auto name there."""
     local = json.loads(projected[saves.MANIFEST])
     for key in ("title", "compiler", "compiler_ranges", "instructions", "claim_order", "priority", "auto_compiler",
                 "knowledge_auto"):
@@ -293,16 +312,55 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
 
     identities = {"layout": lambda item: item.get("name"), "symbols": lambda item: item.get("name"),
                   "notes": lambda item: (item.get("function"), item.get("text"), item.get("by", "")),
-                  "knowledge": lambda item: item, "set_aside": lambda item: item.get("vram")}
+                  "knowledge": lambda item: item,
+                  "set_aside": lambda item: (item.get("name"), item.get("vram"))}
+    # A database function at a saved function's address is that saved function renamed only when a saved layout entry
+    # there, of its size or unit, carries a name the database no longer has: then the saved (old) name stays and the
+    # database name isn't added back. Other database functions new at that shared address still join -- overlays load
+    # different functions at one address (a PS2 game's ovl_* units).
+    local_names = {item.get("name") for item in local.get("layout") or []}
+    saved_layout = list(manifest.get("layout") or [])
+    saved_names = {entry.get("name") for entry in saved_layout}
+
+    def _renamed_from(saved, dbfn):   # does database function `dbfn` look like the saved entry `saved` renamed?
+        return (saved.get("vram") == dbfn.get("vram") and saved.get("name") not in local_names
+                and (saved.get("unit") == dbfn.get("unit")
+                     if saved.get("unit") is not None and dbfn.get("unit") is not None
+                     else dbfn.get("size") is not None and saved.get("size") == dbfn.get("size")))
+
+    # A database function is a saved function renamed only when it is the one database function matching a saved
+    # entry. Same-size siblings in different overlays with no unit to tell them apart match the same saved entry, so
+    # that entry consumes neither: both join as new functions at the shared address.
+    renamed_db: set[str] = set()  # database names that are a saved (now-unknown) name renamed: their src/best files
+    superseded: set[str] = set()  # saved (old) names a deliberate database rename replaces: they give way to it
+    for saved in saved_layout:                                 # are the saved ones, not new, so they aren't queued
+        matching = [d for d in (local.get("layout") or []) if d.get("name") not in saved_names and _renamed_from(saved, d)]
+        if len(matching) != 1:
+            continue
+        dbname = matching[0].get("name")
+        if auto_only and not AUTO_NAME.match(dbname or ""):
+            # A deliberate database rename wins; adoption only reclaims an auto name (#174 review 2). The stale
+            # saved entry gives way to the deliberate database name instead of keeping the old name in the layout.
+            superseded.add(saved.get("name"))
+        else:
+            renamed_db.add(dbname)  # the saved (old) name keeps its place; the database name is not added back
+
     for key, identity in identities.items():
         current = manifest.get(key) or []
         known = {identity(item) for item in current}
         for item in local.get(key) or []:
             ident = identity(item)
-            if ident not in known and (key != "layout" or not any(row.get("vram") == item.get("vram") for row in current)):
-                current.append(item)
-                known.add(ident)
+            if ident in known:
+                continue
+            if key == "layout" and item.get("name") in renamed_db:
+                continue  # this database function is a saved entry renamed: the saved (old) name keeps its place
+            current.append(item)
+            known.add(ident)
         manifest[key] = current
+
+    if superseded:  # drop the stale saved entries that a deliberate database rename replaced (#174 review 2)
+        manifest["layout"] = [entry for entry in manifest.get("layout") or []
+                              if entry.get("name") not in superseded]
 
     headers = manifest.get("headers") or {}
     pending = {}
@@ -313,10 +371,15 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
             if name in projected:
                 pending[name] = projected[name]
     manifest["headers"] = headers
+    renamed_files = {f"{d}/{saves._source_file(n)}" for n in renamed_db for d in ("src", "best")}
     for name, text in projected.items():
-        if name.startswith(("src/", "best/")) and name not in disk:
+        if name.startswith(("src/", "best/")) and name not in disk and name not in renamed_files:
             pending[name] = text
-    return manifest, pending
+    # A saved entry a deliberate database rename superseded is gone from the layout, so its own src/best file in the
+    # folder would make `_manifest` refuse the save ("Add <old name> to the function layout"). Remove it with the
+    # entry; the database's source under the new name is published in its place (#174 review 1).
+    superseded_files = {f"{d}/{saves._source_file(n)}" for n in superseded for d in ("src", "best")} & set(disk)
+    return manifest, pending, superseded_files
 
 
 def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]:
@@ -336,6 +399,76 @@ def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]
         return {row["name"] for row in rows
                 if isinstance(row["matched_at"], (int, float)) and row["matched_at"] > saved_at}
     return {row["name"] for row in rows}
+
+
+def _adopt_check(saved_manifest, cfg=None) -> list:
+    """Validate a saved folder enough to adopt names from it, and return its layout. A `[]` where an object is
+    expected, or a manifest for another game, raises the folder's own NetworkError (never a bare AttributeError)
+    before any row is renamed, so a refused folder leaves the database unchanged (#174 review 1)."""
+    try:
+        if not isinstance(saved_manifest, dict):
+            raise ValueError("progress/decompdecomp.json must be an object")
+        if cfg is not None and (saved_manifest.get("format") != saves.FORMAT
+                                or saved_manifest.get("game", {}).get("sha1") != cfg["rom"]["sha1"]):
+            raise ValueError("it is another game, or not format %d" % saves.FORMAT)
+        layout = saved_manifest.get("layout") or []
+        if not isinstance(layout, list):
+            raise ValueError("layout must be a list")
+        for entry in layout:
+            if (not isinstance(entry, dict) or not NAME.fullmatch(entry.get("name", ""))
+                    or not isinstance(entry.get("vram"), int)
+                    or not isinstance(entry.get("size"), int) or entry["size"] <= 0):
+                raise ValueError("a layout entry needs a name, an integer vram and a size above 0")
+        return layout
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
+        why = e.args[0] if isinstance(e, ValueError) and e.args else f"{type(e).__name__} {e}"
+        raise NetworkError(f"Fix progress/decompdecomp.json: it must describe this game and reference existing "
+                           f"headers ({why}).") from None
+
+
+def _adopt_saved_names(net, pid: int, saved_manifest: dict, auto_only: bool = False, cfg=None) -> None:
+    """Before a first sync renders, give a database function the saved (older) name the folder still uses for it:
+    when exactly one database function at a saved entry's address matches it (by unit, or by size when no unit can
+    tell siblings apart) and that saved name is gone from the database, rename the row to the saved name. Then the
+    render, the merge and later publishes all agree on the name, instead of the database's new name being republished
+    or quietly replacing the saved one on the next change (#174)."""
+    saved_layout = _adopt_check(saved_manifest, cfg)
+    saved_names = {entry.get("name") for entry in saved_layout}
+    by_vram: dict[int, list[dict]] = {}
+    db_names = set()
+    for r in net.store.all("SELECT id, name, vram, size, unit FROM functions WHERE project_id=?", pid):
+        by_vram.setdefault(r["vram"], []).append(dict(r))
+        db_names.add(r["name"])
+    renames = []  # decided without touching the database, so a refused entry leaves every row unchanged
+    for saved in saved_layout:
+        new = saved.get("name")
+        if new in db_names:
+            continue  # the saved name is still a database function: nothing was renamed
+        matching = [r for r in by_vram.get(saved.get("vram"), []) if r["name"] not in saved_names
+                    and (r["unit"] == saved.get("unit")
+                         if saved.get("unit") is not None and r["unit"] is not None
+                         else saved.get("size") is not None and r["size"] == saved.get("size"))]
+        if len(matching) != 1:
+            continue  # same-size siblings with no unit to separate them, or no match: leave the database names
+        row = matching[0]
+        if auto_only and not AUTO_NAME.match(row["name"]):
+            continue  # later syncs adopt only over an auto name (a re-analysis reset), never a deliberate rename
+        renames.append((row["id"], row["vram"], row["size"], row["name"], new))
+        db_names.discard(row["name"]); db_names.add(new)
+        row["name"] = new  # a later saved entry sees the new name, so this row is not matched a second time
+    if not renames:
+        return
+    with net.store.tx() as db:  # one transaction for every rename: each row and its own symbol, never a sibling's
+        for rid, vram, size, old, new in renames:
+            db.execute("UPDATE functions SET name=? WHERE id=?", (new, rid))
+            if db.execute("UPDATE symbols SET name=? WHERE project_id=? AND address=? AND name=?",
+                          (new, pid, vram, old)).rowcount == 0:
+                # the symbol row at this address carries a sibling's name, so the rename hit nothing; add the saved
+                # name as its own symbol, as rename_symbols does, or symbols.resolve(new) stays None (review 3)
+                db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                           (pid, new, vram, size, "func"))
+    net._rename_in_code(pid, {old: new for _, _, _, old, new in renames})  # callers and headers follow (review 2)
+    net._syms.pop(pid, None)  # the symbol rows changed; drop the cached table so symbols.resolve() rebuilds (review 2)
 
 
 class Progress:
@@ -850,6 +983,30 @@ class Progress:
         config_changed = state is not None and (state.config_key is None or config_key != state.config_key)
         baseline = self._baseline(pid)
         signature = self._signature(folder)
+        if baseline is not None and slug not in self.adopting:
+            # Not only on a first sync: before a later publish renders the database's name, keep a database function at
+            # the saved name the folder still uses for it (#174 review 1). Adoption does something only when a saved
+            # name is missing from the database and one row matches, so read the manifest alone and skip the full
+            # folder read on the common path -- every agent compile, where the names already agree (#174 review 3).
+            saved_names = _saved_layout_names(folder)
+            if saved_names:
+                db_names = {row["name"] for row in net.store.all(
+                    "SELECT name FROM functions WHERE project_id=?", pid)}
+                if saved_names - db_names:
+                    # Validate the whole folder as the sync will accept it -- after `_repair` rebuilds a missing
+                    # header or sets aside a stale source (#174 review 2) -- because `_read` and `_manifest` also
+                    # refuse git conflicts and malformed metadata, and adopting renames rows and rewrites their
+                    # matched source and header, so a folder those checks reject must change nothing here (#174
+                    # review 3). A failure is swallowed; the same `_read`/`_repair`/`_manifest` below raises it.
+                    report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
+                    try:
+                        preview = _read(folder)
+                        if saves.MANIFEST in preview:
+                            preview = _repair(net, pid, folder, preview, report)
+                            _manifest(preview, cfg, db_names)
+                            _adopt_saved_names(net, pid, json.loads(preview[saves.MANIFEST]), auto_only=True, cfg=cfg)
+                    except (OSError, UnicodeError, ValueError, NetworkError):
+                        pass  # a foreign, conflicted or malformed folder is left for _read/_manifest below to reject
         if baseline is not None and self.signatures.get(slug) == signature:
             if not db_changed and not config_changed:
                 return False
@@ -879,6 +1036,11 @@ class Progress:
             getattr(report, "check_cancel", lambda: None)()
             # Captured before any render: the folder's revision is compared with what the database wrote last.
             stored_revision = saves._stored_revision(cfg)
+            if before is None and slug not in self.adopting and saves.MANIFEST in disk:
+                # Give a database function the saved (older) name the folder still uses, before anything renders,
+                # so the render, the merge and later publishes agree on the name (#174). A deliberate database rename
+                # wins, exactly as the later sync does: adoption reclaims only an auto name here too (review 2).
+                _adopt_saved_names(net, pid, json.loads(disk[saves.MANIFEST]), auto_only=True, cfg=cfg)
             # Preserve work on unrelated functions even if a helper finished while a contribution was pulled.
             comparison = None if before is not None else saves._render(net, slug)[0]
             comparison_manifest = before.manifest if before is not None else comparison[saves.MANIFEST]
@@ -888,9 +1050,10 @@ class Progress:
                 changed = {name for name in set(disk) | set(before.files)
                            if _hash(disk.get(name)) != before.files.get(name)}
             initial_pending = {}
+            initial_removed: set[str] = set()
             if before is None and slug not in self.adopting:
                 changed = {name for name in changed if name in disk}
-                manifest, initial_pending = _initial_merge(manifest, comparison, disk)
+                manifest, initial_pending, initial_removed = _initial_merge(manifest, comparison, disk, auto_only=True)
             legacy_newer = set()
             if before is None and slug not in self.adopting:
                 # A database match newer than the folder's snapshot wins even when the folder has an older file of
@@ -926,6 +1089,7 @@ class Progress:
                                         json.loads(disk[saves.MANIFEST])), indent=1) + "\n"
                 removed = {name: None for name in previous.files
                            if name not in changed and name not in rendered}
+                removed.update({name: None for name in initial_removed})  # stale sources of superseded entries (#174)
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, cfg, known_names)
                 all_code = any(name.startswith("include/") for name in changed)
