@@ -1,8 +1,9 @@
 /*
  * The RSP and RDP, in software: each graphics task's display list drawn into the game's own frame buffer, as the
  * N64 does (port/wasm). A first renderer, to see the game: Nintendo's F3DEX2 (3D) and S2DEX (2D backgrounds and
- * sprites) microcodes, chosen per task by the microcode it loads, and the RDP commands both send. Point sampling,
- * one or two combiner cycles, a depth buffer, no anti-aliasing or dithering.
+ * sprites) microcodes, chosen per task by the microcode it loads, and the RDP commands both send. Textures filtered
+ * as the RDP filters them (point, its three-texel bilinear, or average), one or two combiner cycles, a depth
+ * buffer, no anti-aliasing or dithering.
  *
  * Addresses in a display list are segmented (segment << 24 | offset) or physical; the segment table is the list's
  * own (G_MOVEWORD). The game's memory is big-endian at the console's addresses: physical p is 0x80000000 | p here.
@@ -103,6 +104,27 @@ static Color texel(const Tile *tile, int s, int t) {
         return (Color){tmem[a] / 255.0f, tmem[a + 1] / 255.0f, tmem[a + 2048] / 255.0f, tmem[a + 2049] / 255.0f};
     }
     }
+}
+
+/* A texel of a tile at (s, t) in texels, filtered as other mode H asks (G_TF_POINT, G_TF_BILERP, G_TF_AVERAGE).
+   The RDP's bilinear filter reads three texels, not four: the corner nearest the point and its two neighbours, from
+   whichever triangle of the 2x2 square the point falls in. Copy mode never filters. A racing game asks for bilerp
+   on its 3D and its menu text; drawn by point, its trees and roads were blocks of texels. */
+static Color mix(Color a, Color b, Color c, float fb, float fc) { /* a + fb (b - a) + fc (c - a) */
+    return (Color){a.r + fb * (b.r - a.r) + fc * (c.r - a.r), a.g + fb * (b.g - a.g) + fc * (c.g - a.g),
+                   a.b + fb * (b.b - a.b) + fc * (c.b - a.b), a.a + fb * (b.a - a.a) + fc * (c.a - a.a)};
+}
+static Color sample(const Tile *tile, float s, float t) {
+    int filter = (int)((mode_h >> 12) & 3), s0 = (int)floorf(s), t0 = (int)floorf(t);
+    if (filter == 0 || cycle_type() >= 2) return texel(tile, s0, t0);
+    float fs = s - (float)s0, ft = t - (float)t0;
+    Color c00 = texel(tile, s0, t0), c10 = texel(tile, s0 + 1, t0), c01 = texel(tile, s0, t0 + 1);
+    Color c11 = texel(tile, s0 + 1, t0 + 1);
+    if (filter == 3) /* average: the four texels' mean */
+        return (Color){(c00.r + c10.r + c01.r + c11.r) / 4, (c00.g + c10.g + c01.g + c11.g) / 4,
+                       (c00.b + c10.b + c01.b + c11.b) / 4, (c00.a + c10.a + c01.a + c11.a) / 4};
+    if (fs + ft < 1.0f) return mix(c00, c10, c01, fs, ft);
+    return mix(c11, c01, c10, 1.0f - fs, 1.0f - ft);
 }
 
 /* The colour combiner, (a - b) * c + d per channel, for one cycle. */
@@ -207,7 +229,7 @@ static void tex_rect(int tile, float x0, float y0, float x1, float y1, float s, 
         for (int x = (int)x0; x < (int)x1; x++) {
             float dx = x - x0, dy = y - y0;
             float ss = s + (flip ? dy : dx) * dsdx, tt = t + (flip ? dx : dy) * dtdy;
-            Color c = texel(&tiles[tile], (int)floorf(ss), (int)floorf(tt));
+            Color c = copy ? texel(&tiles[tile], (int)floorf(ss), (int)floorf(tt)) : sample(&tiles[tile], ss, tt);
             if (copy) {
                 if ((mode_l & 3) == 1 && c.a <= blend.a) continue;
                 if (in_frame(x, y)) wr16(pixel_addr(x, y), pack5551(c));
@@ -419,7 +441,7 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
                    also halved the cars' 4-bit skins (perspective on): each car showed the top-left quarter of its
                    skin, stretched over the body. */
                 if (!persp) { s *= 0.5f; t *= 0.5f; }
-                t0 = texel(tl, (int)floorf(s), (int)floorf(t));
+                t0 = sample(tl, s, t);
             }
             plot(x, y, z, sh, t0, (geometry & 1) != 0);
         }
