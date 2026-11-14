@@ -349,10 +349,10 @@ def join_manifest(manifest: str, side: dict[str, str | None]) -> str:
 
     A format 1 manifest is its own text. A format 2 one with a side file missing is refused: read as "no notes", a
     partial copy or an old .gitignore would make a sync delete the project's notes."""
-    key = (manifest, *(side.get(name) for name in SIDE_FILES.values()))
+    cache_key = (manifest, *(side.get(name) for name in SIDE_FILES.values()))
     with _joined_lock:
-        if key in _joined:
-            return _joined[key]
+        if cache_key in _joined:
+            return _joined[cache_key]
     try:
         parsed = json.loads(manifest)
     except ValueError:
@@ -379,7 +379,7 @@ def join_manifest(manifest: str, side: dict[str, str | None]) -> str:
     with _joined_lock:
         # Every sync that reads the folder joins it again; unchanged files come back as the same cached strings,
         # whose hashes Python keeps, so a repeat costs a lookup instead of parsing and encoding 25 MB.
-        _joined[key] = joined
+        _joined[cache_key] = joined
         while len(_joined) > JOINED_KEPT:
             _joined.pop(next(iter(_joined)))
     return joined
