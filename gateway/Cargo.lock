@@ -191,6 +191,8 @@ dependencies = [
  "fancy-regex",
  "flate2",
  "getrandom",
+ "http-body-util",
+ "hyper-util",
  "reqwest",
  "rusqlite",
  "serde_json",

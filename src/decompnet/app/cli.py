@@ -235,8 +235,13 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         return 1
     from . import mcp_gateway, tool_reader
     # Read-only tools in a process of their own, behind the gateway (it sends them there first).
-    reader = tool_reader.start(net, internal) if mcp_gateway.program() else None
-    gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port", reader=reader)
+    # The window's pages go through the gateway too, a few read-only ones answered by the reader (window_reads.py);
+    # the reader checks the window's secret as the app does.
+    window_reads = not headless and mcp_gateway.window_wanted()
+    reader = tool_reader.start(net, internal, {"secret": secret, "port": port} if window_reads else None) \
+        if mcp_gateway.program() else None
+    gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port", reader=reader,
+                                window=window_reads)
     if gateway is None and reader is not None:
         reader.stop()
         reader = None

@@ -92,6 +92,54 @@ from the reader and 357 ms in the app, and its answers to 155 real calls were id
 - Its log is `.decomp/logs/tool-reader.log`. It starts in the background with the app and again if it ends.
   `DECOMP_TOOL_READER=0` turns it off; it never runs without the gateway.
 
+## The window's pages
+
+The app's own window loads its pages through the gateway too, on a second listener (`--window-listen`,
+`gateway/src/window.rs`). A per-thread CPU report of an app at work put the window's request threads at about 14% of
+its CPU, all of it under the interpreter lock the background work holds, so busy work made the pages slow.
+
+- **Everything goes to the app unchanged**: method, path, query, headers (the user agent with the window's secret,
+  cookies) and bodies, streamed both ways, so a whole game disc uploads and `/api/stream`'s server-sent events arrive
+  as they're sent. The app has no websockets. Only connection-level headers are dropped.
+- **Host and origin.** The listener answers only requests naming it (`127.0.0.1` or `localhost`, its port), as the app
+  does against DNS rebinding, and names the app's address to the app, so the app's own host check passes. An `Origin`
+  naming the listener becomes the app's; any other goes on as it came, for the app to refuse. A redirect to the app's
+  address comes back naming the listener, so the window stays on its page.
+- **A few reads go to the reader first** (`--window-reads`, from `app/window_reads.py`): GETs only, and the reader
+  answers with the app's own handlers, so the answers are the app's by construction
+  (`tests/test_window_reads.py` compares them byte for byte). When it declines (any status but 200 with
+  `x-decomp-reader`), isn't running, fails or takes over 10 s (`--window-reader-limit`), the app answers. Nothing
+  else ever goes to the reader, and nothing goes to the app twice.
+- **The routes.** Each answers from the databases alone, nothing the app keeps in memory or writes:
+  - `/api/stats`: the overview's leaderboard, every few seconds while a project is open;
+  - `/api/knowledge` (GET): what agents learned;
+  - `/api/attempt-history`: the function drawer's candidates;
+  - `/api/projects?brief=1`: project names for the pickers.
+
+  Left with the app, and why: `/api/map` (rooms' remote claims and running searches, a per-process delta cache,
+  snapshots it writes), `/api/mapcolumns` (builds the compiler map), `/api/live` (helper sessions), `/api/stream`
+  (a live stream), `/api/state` and the full `/api/projects` (jobs, helpers, saved-progress errors), `/api/project`
+  (saves the last open project, warms briefs), `/api/function` (running searches), `/api/port-readiness` (the Play
+  build's job). ROADMAP.md, "The window's pages answered outside the app's process", has what's next.
+- **The reader checks what the app's guard checks**, and declines whatever it can't check the same way: the host,
+  the window's per-launch secret in the user agent (given to the reader in its environment, never on its command
+  line), no `Origin`, no runtime update being prepared (the app refuses every page then), and a project the app isn't
+  rechecking or sharing. A browser signed in to `decomp serve` carries a session cookie only the app knows, so it
+  goes to the app. Routes older than 5 s, a missing project or any error: declined. For a project's page it tells
+  the app the project was viewed, as the app's own route would (`project_activity`).
+- **The window's address.** The window uses the listener while the gateway says it runs there
+  (`Gateway.window_url`, asked when the window opens), else the app's own address: a missing gateway, one that
+  failed, `DECOMP_WINDOW_GATEWAY=0`, or a downloaded gateway too old for `--window-listen` (it exits 2 on the option;
+  the app starts it again without the window's options, for the helpers). The listener's port is kept in
+  `.decomp/window-gateway.port`: the page's origin, and what it keeps in the browser's storage, stays the same.
+  `decomp serve` has no window and no window listener.
+- **Deadlines.** The reader's whole answer within `--window-reader-limit`; the app's response head within
+  `--upstream-limit` (an hour: uploads are read whole before the app answers). A body then streams for as long as
+  the app sends it and ends when either side closes. A down app is a 502 with a sentence the page shows.
+- `GET /health` on the MCP port reports the window listener's port and counters (`window`).
+  `tests/test_window_gateway.py` drives the built gateway: forwarding, host checks, bodies only to the app, the
+  reader first and the fallbacks, streaming, redirects, restarts on the same ports.
+
 ## How it fits
 
 - The app picks the gateway's port once and keeps it in `.decomp/mcp-gateway.port`, so helpers connected by hand
@@ -108,7 +156,8 @@ from the reader and 357 ms in the app, and its answers to 155 real calls were id
 
 ```sh
 cd gateway && cargo build --release   # a checkout finds gateway/target/release/decomp-mcp-gateway
-uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tests/test_tool_reader.py tests/test_gateway_native.py && (cd gateway && cargo test)
+uv run pytest -q tests/test_mcp_gateway.py tests/test_mcp_gateway_install.py tests/test_tool_reader.py tests/test_gateway_native.py \
+  tests/test_window_gateway.py tests/test_window_reads.py && (cd gateway && cargo test)
 ```
 
 - Build it only when you change `gateway/`. A checkout or worktree that hasn't built it uses the copy `decomp setup`

@@ -14,6 +14,11 @@ release's copy from `decomp setup` (install below). Without it (a checkout that 
 DECOMP_MCP_GATEWAY=<path> names the program. The app holds the gateway's standard input open: when the app ends,
 for any reason, the gateway sees end-of-file and ends too. If the gateway ends while the app runs, it's started
 again on the same port, so the helpers' MCP settings stay right.
+
+It is the app window's address too (gateway/src/window.rs): a second listener that forwards every request to the
+app unchanged, except a few read-only pages the reader process answers first (app/window_reads.py). The window uses
+it while it answers (window_url) and the app's own address otherwise, so a gateway that's missing, failed or too old
+to have the listener never breaks the window. DECOMP_WINDOW_GATEWAY=0 turns it off.
 """
 from __future__ import annotations
 
@@ -35,6 +40,18 @@ META_DEADLINE = 15.0
 MAX_BODY = 16 * 1024 * 1024
 START_SECONDS = 10.0
 ROUTES_SECONDS = 1.0
+OLD_GATEWAY_EXIT = 2  # what a gateway without the window's options says to one (an older downloaded build)
+WINDOW_CHECK_SECONDS = 2.0
+
+
+def window_wanted() -> bool:
+    return os.environ.get("DECOMP_WINDOW_GATEWAY", "").strip().lower() not in ("0", "off", "false", "no")
+
+
+class StartError(RuntimeError):
+    def __init__(self, message: str, code: int | None):
+        super().__init__(message)
+        self.code = code
 
 
 def program() -> Path | None:
@@ -139,8 +156,12 @@ class Gateway:
 
     def __init__(self, exe: Path, upstream: str, log_path: Path | None = None, *,
                  call_deadline: float = CALL_DEADLINE, meta_deadline: float = META_DEADLINE,
-                 reader: str | None = None, read_tools=(), state: Path | None = None):
+                 reader: str | None = None, read_tools=(), state: Path | None = None, window: dict | None = None):
         self.exe, self.upstream, self.log_path = exe, upstream, log_path
+        # The window's listener: {"upstream": the app's address, "reader": the reader's or None, "reads": paths}
+        # (gateway/src/window.rs). None when there's no window, or the program is too old to have it.
+        self.window = window
+        self.window_port: int | None = None
         # The tool lists the gateway gave, kept across restarts: a helper connecting while the app is busy or
         # starting gets its project's tools from there instead of "busy or starting" (gateway/src/main.rs).
         self.state = state
@@ -163,18 +184,30 @@ class Gateway:
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}/mcp"
 
-    def _command(self, port: int) -> list[str]:
+    @property
+    def window_address(self) -> str | None:
+        return f"http://127.0.0.1:{self.window_port}/" if self.window_port else None
+
+    def _command(self, port: int, window_port: int = 0) -> list[str]:
+        window = self.window
         return [str(self.exe), "--listen", f"127.0.0.1:{port}", "--upstream", self.upstream,
                 "--call-deadline", str(self.call_deadline), "--meta-deadline", str(self.meta_deadline),
                 "--max-body", str(MAX_BODY)] + (
                     ["--reader", self.reader, "--read-tools", ",".join(self.read_tools)] if self.reader else []) + (
-                    ["--state", str(self.state)] if self.state else [])
+                    ["--state", str(self.state)] if self.state else []) + (
+                    ["--window-listen", f"127.0.0.1:{window_port}", "--window-upstream", window["upstream"]]
+                    + (["--window-reader", window["reader"], "--window-reads", ",".join(window["reads"])]
+                       if window.get("reader") else [])
+                    + (["--window-reader-limit", str(window["reader_limit"])] if window.get("reader_limit") else [])
+                    if window else [])
 
-    def _launch(self, port: int) -> int:
-        """Start the program and return the port it listens on (it prints `LISTENING <port>` first)."""
+    def _launch(self, port: int, window_port: int | None = None) -> int:
+        """Start the program and return the port it listens on (it prints `LISTENING <port>` first, and
+        `WINDOW <port>` after it with a window listener)."""
+        window_port = (self.window_port or 0) if window_port is None else window_port
         errors = open(self.log_path, "ab") if self.log_path else subprocess.DEVNULL  # noqa: SIM115 (kept by the child)
         try:
-            process = subprocess.Popen(self._command(port), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            process = subprocess.Popen(self._command(port, window_port), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=errors, close_fds=True,
                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         finally:
@@ -189,7 +222,9 @@ class Gateway:
         if not line.startswith("LISTENING "):
             process.kill()
             process.wait(timeout=5)
-            raise RuntimeError(f"the MCP gateway didn't start (exit {process.poll()}, said {line!r})")
+            raise StartError(f"the MCP gateway didn't start (exit {process.poll()}, said {line!r})", process.poll())
+        words = line.split()
+        self.window_port = int(words[3]) if self.window and len(words) >= 4 and words[2] == "WINDOW" else None
         self.process = process
         self.guided = set()  # (a new process has none)
         threading.Thread(target=self._reports, args=(process,), daemon=True, name="gateway-reports").start()
@@ -242,14 +277,26 @@ class Gateway:
             except Exception:
                 log.exception("MCP gateway report failed")
 
-    def start(self, preferred: int = 0) -> str:
+    def _first(self, preferred: int, window_preferred: int) -> int:
+        try:
+            return self._launch(preferred, window_preferred)
+        except StartError as error:
+            if not self.window or error.code != OLD_GATEWAY_EXIT:
+                raise
+            # A gateway from before the window's listener (a downloaded release older than this app): it still
+            # serves the helpers, and the window uses the app's own address.
+            log.info("This MCP gateway has no window listener; the window uses the app's address")
+            self.window = None
+            return self._launch(preferred, 0)
+
+    def start(self, preferred: int = 0, window_preferred: int = 0) -> str:
         with self.lock:
             try:
-                self.port = self._launch(preferred)
+                self.port = self._first(preferred, window_preferred)
             except RuntimeError:
-                if not preferred:
+                if not preferred and not window_preferred:
                     raise
-                self.port = self._launch(0)  # the last port is taken now
+                self.port = self._first(0, 0)  # the last ports are taken now
         threading.Thread(target=self._watch, daemon=True, name="gateway-watch").start()
         log.info("MCP gateway listening on %s (app endpoint %s)", self.url, self.upstream)
         return self.url
@@ -270,13 +317,29 @@ class Gateway:
                     with self.lock:
                         if self.stopping.is_set():
                             return
-                        self._launch(self.port)
+                        self._launch(self.port)  # (and the window's listener on its port)
                     self.restarts += 1
                     pause = 0.5
                     break
                 except (OSError, RuntimeError, ValueError) as error:
                     log.warning("MCP gateway restart failed: %s", error)
                     pause = min(pause * 2, 10.0)
+
+    def window_url(self) -> str | None:
+        """The window's address through the gateway while it answers there, else None (the app's own address).
+        Asked when the window opens: the gateway's own health says its window listener is the one we started (asked
+        of the gateway, not through it: a busy app is no reason to leave the gateway)."""
+        address = self.window_address
+        process = self.process
+        if not address or process is None or process.poll() is not None:
+            return None
+        import httpx
+        try:
+            reply = httpx.get(f"http://127.0.0.1:{self.port}/health", timeout=WINDOW_CHECK_SECONDS, trust_env=False)
+            window = reply.json().get("window") if reply.status_code == 200 else None
+            return address if isinstance(window, dict) and window.get("port") == self.window_port else None
+        except (httpx.HTTPError, ValueError, AttributeError):
+            return None
 
     def stop(self) -> None:
         self.stopping.set()
@@ -292,26 +355,41 @@ class Gateway:
             process.kill()
 
 
-def start(app_port: int, log_path: Path | None = None, port_file: Path | None = None, reader=None) -> Gateway | None:
+def _saved_port(path: Path | None, *taken: int) -> int:
+    try:
+        port = int(path.read_text().strip()) if path and path.is_file() else 0
+    except (OSError, ValueError):
+        return 0
+    return port if 0 < port < 65536 and port not in taken else 0
+
+
+def start(app_port: int, log_path: Path | None = None, port_file: Path | None = None, reader=None,
+          window: bool = False) -> Gateway | None:
     """Start the gateway in front of the app's /mcp, or None when the helpers should connect to the app itself.
 
     `port_file` keeps the gateway's port across app starts: helpers connected by hand keep a working address.
-    `reader` (app/tool_reader.py) answers the read-only tools it can before the app is asked."""
+    `reader` (app/tool_reader.py) answers the read-only tools it can before the app is asked. `window`: listen for
+    the app's window too (its port kept beside `port_file`, so the page's origin, and what it keeps in the browser's
+    storage, stays the same across starts)."""
     exe = program()
     if exe is None:
         return None
     from .tool_reader import READER_TOOLS
+    from .window_reads import GATEWAY_READS
+    window_reader = getattr(reader, "window_url", None) if reader is not None else None
+    window_spec = ({"upstream": f"http://127.0.0.1:{app_port}", "reader": window_reader, "reads": list(GATEWAY_READS)}
+                   if window and window_wanted() else None)
     gateway = Gateway(exe, f"http://127.0.0.1:{app_port}/mcp", log_path,
                       reader=reader.url if reader is not None else None, read_tools=READER_TOOLS,
-                      state=port_file.with_name("mcp-gateway-answers.json") if port_file else None)
+                      state=port_file.with_name("mcp-gateway-answers.json") if port_file else None, window=window_spec)
+    window_file = port_file.with_name("window-gateway.port") if port_file else None
+    preferred = _saved_port(port_file, app_port)
     try:
-        preferred = int(port_file.read_text().strip()) if port_file and port_file.is_file() else 0
-    except (OSError, ValueError):
-        preferred = 0
-    try:
-        gateway.start(preferred if 0 < preferred < 65536 and preferred != app_port else 0)
+        gateway.start(preferred, _saved_port(window_file, app_port, preferred) if window_spec else 0)
         if port_file:
             port_file.write_text(str(gateway.port), encoding="utf-8")
+        if window_file and gateway.window_port:
+            window_file.write_text(str(gateway.window_port), encoding="utf-8")
     except (OSError, RuntimeError, ValueError) as error:
         log.warning("MCP gateway unavailable, helpers use the app's own endpoint: %s", error)
         print(f"MCP gateway unavailable: {error}", file=sys.stderr)

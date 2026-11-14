@@ -16,6 +16,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 getrandom = "0.2"
 fancy-regex = "0.14"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# The window's reverse proxy (window.rs): bodies stream both ways. Both already come with reqwest.
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
 
 [profile.release]
 opt-level = 3

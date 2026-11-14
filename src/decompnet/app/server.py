@@ -126,6 +126,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
             status.note('Could not flush project progress; see the app log for details.')
             jobs.logger.exception('could not flush progress before exit')
     window.WINDOW = window.Window(home, f"http://127.0.0.1:{port}/", secret, window_ended)
+    if gateway is not None and not headless:
+        window.WINDOW.through = gateway.window_url  # (its window listener: mcp_gateway.py)
     settings = Settings(home / "settings.json")
     maintenance.configure_cpu(settings.data.get("maintenance_cpu_percent", 0))
     if hostenv.in_old_windows_install() and (settings.data.get("auto_update") or settings.data.get("check_updates", True)):
@@ -251,7 +253,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         from . import tool_reader
         tool_reader.watch(net, lambda: [side.changed() for side in served_elsewhere])
         for side in served_elsewhere:
-            side.attach(lambda: tool_reader.routes(net, manager, settings),
+            side.attach(lambda: tool_reader.routes(net, manager, settings, jobs),
                         lambda message: tool_reader.apply_report(net, manager, message))
         if gateway is not None:
             gateway.guides = tool_reader.guides

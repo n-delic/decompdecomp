@@ -2170,6 +2170,26 @@ Before building it, find out:
 
 The answer goes here: build it, build part of it, or not, and why.
 
+### The window's pages answered outside the app's process
+
+The app's window now loads its pages through the MCP gateway (docs/MCP_GATEWAY.md, "The window's pages"): every
+request goes on to the app unchanged, and four read-only ones (`/api/stats`, `/api/knowledge`, `/api/attempt-history`,
+`/api/projects?brief=1`, app/window_reads.py) are answered by the reader process with the app's own handlers, away
+from the interpreter lock the app's background work holds. Next:
+- **Native answers for the hottest pages (phase 2).** As `gateway/src/native.rs` does for `get_assembly`: answer the
+  most asked pages straight from SQLite in Rust, compared byte for byte with the app's handlers (like
+  `tests/test_gateway_native*.py`). Start with `/api/stats` and `/api/attempt-history`, then the map.
+- **The map.** `/api/map` is the window's heaviest read but needs what only the app has: rooms' remote claims and
+  running function searches (send them with the reader's routes), its delta cache (the reader could keep its own
+  and answer only full maps or deltas against its own signatures), and the derived snapshots it writes (the reader
+  would read them only). `/api/mapcolumns` builds the compiler map.
+- **More pages through the reader.** `/api/live` without its `sessions` section, `/api/state`'s parts that come from
+  the databases, once the app sends the rest with the routes.
+- **Browser sign-ins.** The reader answers only the window's secret; a browser signed in to `decomp serve` goes to
+  the app, which keeps the sessions. And `decomp serve` has no window listener yet.
+- The window's page moves to the gateway's port, so what it keeps in the browser's storage (the theme, a skipped
+  update) starts afresh once; the port is kept in `.decomp/window-gateway.port` so it stays after that.
+
 ### Per-agent work selection (done)
 
 The launcher and each worker card offer independent queue strategies, a best-match percentage ceiling and per-worker candidate-attempt limits.

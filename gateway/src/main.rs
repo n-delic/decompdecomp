@@ -20,6 +20,7 @@
 mod hosted;
 mod native;
 mod verifier;
+mod window;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -64,6 +65,13 @@ struct Config {
     reader_limit: Duration,
     /// A file that keeps each project's last `initialize` / `tools/list` answers across restarts.
     state: Option<String>,
+    /// The app window's address (window.rs): `--window-listen`, the app's base address, the reader's, the GETs the
+    /// reader may answer, and how long it may take.
+    window_listen: Option<String>,
+    window_upstream: Option<String>,
+    window_reader: Option<String>,
+    window_reads: Vec<window::Read>,
+    window_reader_limit: Duration,
 }
 
 impl Config {
@@ -82,6 +90,11 @@ impl Config {
             read_tools: HashSet::new(),
             reader_limit: Duration::from_secs(20),
             state: None,
+            window_listen: None,
+            window_upstream: None,
+            window_reader: None,
+            window_reads: Vec::new(),
+            window_reader_limit: Duration::from_secs(10),
         };
         let mut args = std::env::args().skip(1);
         while let Some(flag) = args.next() {
@@ -112,11 +125,26 @@ impl Config {
                 }
                 "--reader-limit" => config.reader_limit = seconds(value()?)?,
                 "--state" => config.state = Some(value()?),
+                "--window-listen" => config.window_listen = Some(value()?),
+                "--window-upstream" => config.window_upstream = Some(value()?),
+                "--window-reader" => config.window_reader = Some(value()?),
+                "--window-reads" => {
+                    config.window_reads = value()?
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| window::Read::parse(s).ok_or_else(|| format!("not a path: {s}")))
+                        .collect::<Result<_, _>>()?
+                }
+                "--window-reader-limit" => config.window_reader_limit = seconds(value()?)?,
                 _ => return Err(format!("unknown option {flag}")),
             }
         }
         if config.upstream.is_empty() {
             return Err("--upstream is required (the app's MCP address)".into());
+        }
+        if config.window_listen.is_some() && config.window_upstream.is_none() {
+            return Err("--window-listen needs --window-upstream (the app's address)".into());
         }
         Ok(config)
     }
@@ -149,6 +177,8 @@ struct Gateway {
     native: Arc<native::Native>,
     answered: AtomicU64,
     reports: AtomicU64,
+    /// The app window's proxy, when it listens (window.rs).
+    window: std::sync::OnceLock<Arc<window::Window>>,
 }
 
 /// Answers kept for new connections: per (project, method), and the latest per method. Saved to `--state`.
@@ -649,6 +679,7 @@ async fn health(State(gateway): State<Arc<Gateway>>) -> Response {
         "read_by_reader": gateway.read.load(Ordering::Relaxed),
         "passed_to_app": gateway.declined.load(Ordering::Relaxed),
         "answered_by_gateway": gateway.answered.load(Ordering::Relaxed),
+        "window": gateway.window.get().map(|w| w.health()),
     }))
 }
 
@@ -721,6 +752,7 @@ async fn main() {
         native: Arc::new(native::Native::new()),
         answered: AtomicU64::new(0),
         reports: AtomicU64::new(0),
+        window: std::sync::OnceLock::new(),
     });
     let app = Router::new()
         .route("/mcp", post(mcp_post).get(mcp_other).delete(mcp_other))
@@ -736,8 +768,45 @@ async fn main() {
         }
     };
     let address = listener.local_addr().expect("bound address");
-    // The app reads this line to learn the port.
-    println!("LISTENING {}", address.port());
+    // The window's listener, bound before the app hears the ports: the app's window loads its pages there.
+    let mut window_port = None;
+    if let (Some(listen), Some(upstream)) = (config.window_listen.clone(), config.window_upstream.clone()) {
+        let bound = match tokio::net::TcpListener::bind(&listen).await {
+            Ok(bound) => bound,
+            Err(error) => {
+                log(format!("can't listen on {listen} for the window: {error}"));
+                std::process::exit(3);
+            }
+        };
+        let port = bound.local_addr().expect("bound address").port();
+        let config = window::Config {
+            upstream: upstream.trim_end_matches('/').to_string(),
+            reader: config.window_reader.clone().map(|r| r.trim_end_matches('/').to_string()),
+            reads: config.window_reads.clone(),
+            reader_limit: config.window_reader_limit,
+            head_limit: config.upstream_limit,
+        };
+        let proxy = match window::Window::new(config, port) {
+            Ok(proxy) => Arc::new(proxy),
+            Err(problem) => {
+                log(problem);
+                std::process::exit(2);
+            }
+        };
+        let _ = gateway.window.set(proxy.clone());
+        let routes = Router::new().fallback(window::handle).with_state(proxy);
+        tokio::spawn(async move {
+            if let Err(error) = axum::serve(bound, routes).await {
+                log(format!("the window's listener stopped: {error}"));
+            }
+        });
+        window_port = Some(port);
+    }
+    // The app reads this line to learn the ports.
+    match window_port {
+        Some(port) => println!("LISTENING {} WINDOW {port}", address.port()),
+        None => println!("LISTENING {}", address.port()),
+    }
     let native = gateway.native.clone();
     tokio::spawn(sweep(gateway));
     let server = axum::serve(listener, app).with_graceful_shutdown(async {

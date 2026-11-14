@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from ... import consoles, hostenv, toolchains
 from ...forks.project import SCOPES
 from ...network import NetworkError
-from .. import compiler_cleanup, saves, window
+from .. import compiler_cleanup, saves, window, window_reads
 from ..engine import parse_ranges
 from ..live_sections import changed, message
 from . import App
@@ -874,9 +874,8 @@ def register(app: App) -> None:
     draft_jobs = {}
 
     def p_attempt_history(slug, request, data):
-        from ..database_storage import history
-        q=request.query_params
-        return history(net,slug,q.get('function',''),int(q.get('before',0)),int(q['attempt']) if q.get('attempt') else None)
+        # (shared with the reader process, which may answer it for the window: window_reads.py)
+        return window_reads.attempt_history(net,slug,request.query_params)
     mcp.custom_route('/api/attempt-history',methods=['GET'])(with_project(p_attempt_history))
 
     def p_machine_drafts(slug, request, data):
@@ -1104,7 +1103,7 @@ def register(app: App) -> None:
                 net.knowledge.set_auto(slug, bool(data["auto"]))
             else:
                 net.knowledge.decide(slug, int(data.get("id") or 0), bool(data.get("accept")))
-        return net.knowledge.listing(slug)
+        return window_reads.knowledge(net, slug, request.query_params)  # (the reader's too: window_reads.py)
 
     def p_split_rom(slug, request, data):
         return {"message": net.split_rom_by_you(slug, str(data.get("name", "")), str(data.get("at", "")),
@@ -1181,7 +1180,7 @@ def register(app: App) -> None:
         "/api/unanalysed": (p_unanalysed, ["POST"]),
         "/api/suggestion": (p_suggestion, ["POST"]), "/api/boundary": (p_boundary, ["POST"]),
         "/api/agent-results": (lambda s,r,d: net.agent_results(s,r.query_params.get('agent',''),r.query_params.get('kind','matched'),int(r.query_params.get('before',0)),int(r.query_params.get('after',0))), ["GET"]),
-        "/api/stats": (lambda s, r, d: net.stats(s), ["GET"]),
+        "/api/stats": (lambda s, r, d: window_reads.stats(net, s, r.query_params), ["GET"]),  # (window_reads.py)
         "/api/port-readiness": (g_port_readiness, ["GET"]),
         "/api/data-unit": (p_data_unit, ["GET", "POST"]),
         "/api/data-drafts": (p_data_drafts, ["POST"]),

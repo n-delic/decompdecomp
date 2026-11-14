@@ -15,6 +15,12 @@ It answers only what it can answer exactly as the app would:
 - never the saved progress folders: it reads what the app has synchronized into the database (ReaderProgress).
 Anything else, and any unexpected error, is DECLINED and the gateway asks the app. What the app keeps for each
 call (the transcript, the session budget, tool usage, project activity) it learns from a report on standard output.
+
+It answers a few of the app window's read-only pages too (app/window_reads.py), which the gateway's window listener
+sends here first (gateway/src/window.rs). It checks each request as the app's guard does, with the window's
+per-launch secret (given in its environment, never on its command line), and declines whatever it can't: a request
+without the secret (a browser signed in to `decomp serve` included), with an Origin, while the app prepares a
+runtime update, or for a project the app is rechecking or sharing.
 """
 from __future__ import annotations
 
@@ -49,6 +55,9 @@ STALE_SECONDS = 5.0  # routes older than this: the app may have stalled with a c
 START_SECONDS = 60.0
 # The revisions (store.read_version) the engine's own per-project caches (_syms, _xrefs, _roms) are built from.
 CACHE_REVISIONS = ("scope_symbols", "naming", "fingerprints", "targets")
+WINDOW_ENV = "DECOMP_READER_WINDOW"  # the window's secret and the app's port, for the child
+WINDOW_ANSWERED = "x-decomp-reader"  # on a window read the reader answered (gateway/src/window.rs ANSWERED)
+WINDOW_THREADS = 4
 
 
 def enabled() -> bool:
@@ -70,8 +79,10 @@ def allowed(name: str, args: dict) -> bool:
 class Reader:
     """The running reader process, restarted on the same port if it ends while the app runs."""
 
-    def __init__(self, net, internal: Path):
+    def __init__(self, net, internal: Path, window: dict | None = None):
         self.net, self.internal = net, Path(internal)
+        # The window's secret and the app's port, to answer the window's reads (None: tools only).
+        self.window = window
         self.port: int | None = None
         self.process: subprocess.Popen | None = None
         self.stopping = threading.Event()
@@ -86,14 +97,24 @@ class Reader:
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}/mcp"
 
+    @property
+    def window_url(self) -> str | None:
+        """Where the gateway sends the window's reads (window_reads.py), or None when this reader doesn't answer them."""
+        return f"http://127.0.0.1:{self.port}" if self.window else None
+
     def _launch(self, port: int) -> None:
         log_path = self.internal / "logs" / "tool-reader.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ)
+        env.pop(WINDOW_ENV, None)
+        if self.window:  # (the environment, not the command line, which other users' `ps` shows)
+            env[WINDOW_ENV] = json.dumps(self.window)
         with log_path.open("ab") as errors:
             process = subprocess.Popen(
                 [sys.executable, "-m", "decompnet.app.tool_reader", "--child", str(self.net.store.path),
                  str(self.net.workspace), str(port)],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors, bufsize=0, creationflags=NO_WINDOW)
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors, bufsize=0, creationflags=NO_WINDOW,
+                env=env)
         found: list[bytes] = []
         reader = threading.Thread(target=lambda: found.append(process.stdout.readline()), daemon=True,
                                   name="tool-reader-start")
@@ -203,11 +224,12 @@ class Reader:
             process.kill()
 
 
-def start(net, internal: Path) -> Reader | None:
-    """The reader in front of nothing yet (the gateway learns its address), or None when it shouldn't run."""
+def start(net, internal: Path, window: dict | None = None) -> Reader | None:
+    """The reader in front of nothing yet (the gateway learns its address), or None when it shouldn't run.
+    `window` ({"secret", "port"}: the app window's) lets it answer the window's reads too."""
     if not enabled():
         return None
-    reader = Reader(net, internal)
+    reader = Reader(net, internal, window)
     try:
         reader.start()
     except (OSError, RuntimeError, ValueError) as error:
@@ -216,7 +238,7 @@ def start(net, internal: Path) -> Reader | None:
     return reader
 
 
-def routes(net, manager, settings) -> dict:
+def routes(net, manager, settings, jobs=None) -> dict:
     """What the reader needs from the app's memory to answer as the app would (see the module docstring)."""
     from . import manual_mcp
     from .session_budget import Budget
@@ -248,6 +270,8 @@ def routes(net, manager, settings) -> dict:
         # (agent, function) with a kept compile diff: get_assembly's default view starts at its first mismatch, which
         # only the app knows.
         "diffs": sorted({(agent, function) for agent, function in list(getattr(net, "_last_diffs", {}))}),
+        # The app's guard refuses every page while it prepares a runtime update (server.build guard).
+        "preparing": bool(getattr(jobs, "source_update_preparing", False)),
     }
 
 
@@ -370,6 +394,14 @@ def _projects(net, slugs) -> dict:
 
 def apply_report(net, manager, message: dict) -> None:
     """Keep what the app keeps for a call the reader served: transcript, session budget, tool usage, activity."""
+    if isinstance(message.get("viewed"), str):
+        # A project page the reader answered for the window: the project was viewed, as the app's with_project
+        # notes (project_activity.py).
+        try:
+            net.project_activity.touch(message["viewed"])
+        except Exception:
+            pass
+        return
     call = message.get("call")
     if not isinstance(call, dict):
         return
@@ -414,6 +446,7 @@ class Service:
     def __init__(self, net, emit):
         self.net, self.emit = net, emit
         self.routes: dict = {}
+        self.window_auth: dict | None = None  # {"secret", "port"}: the app window's (Reader.window)
         self.revisions: dict[int, tuple] = {}
         self.revisions_lock = threading.Lock()
 
@@ -434,6 +467,48 @@ class Service:
 
     def fresh(self, slug: str) -> None:
         drop_stale_caches(self.net, slug, self.revisions, self.revisions_lock)
+
+    def window(self, method: str, path: str, query, headers) -> object:
+        """The app's answer to one of the window's reads (window_reads.py), or Declined. The checks are the app's
+        guard (server.build) for a GET: the host, the window's secret, and nothing it would refuse."""
+        import secrets as secrets_module
+
+        from . import window as app_window
+        from . import window_reads
+        given = self.window_auth
+        if not given:
+            raise Declined("not answering the window")
+        if method != "GET":
+            raise Declined("only reads")
+        routes = self.routes
+        if not routes or time.time() - float(routes.get("at", 0)) > STALE_SECONDS:
+            raise Declined("no current routes from the app")
+        port = int(given["port"])
+        if headers.get("host") not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+            raise Declined("not the app's host: the app refuses it")
+        token = app_window.token_of(headers.get("user-agent", ""))
+        if not token or not secrets_module.compare_digest(token, str(given["secret"])):
+            raise Declined("not the window: the app checks browser sign-ins")
+        if headers.get("origin"):
+            raise Declined("an Origin: the app checks it")
+        if routes.get("preparing"):
+            raise Declined("the app is preparing an update")
+        if path == "/api/projects":
+            if query.get("brief") != "1":
+                raise Declined("the full project list is the app's")
+            with self.net.progress.view():
+                return window_reads.projects_brief(self.net)
+        fn = window_reads.PROJECT_ROUTES.get(path)
+        if fn is None:
+            raise Declined(f"{path} is answered by the app")
+        slug = query.get("slug", "")
+        if not slug or slug in set(routes.get("busy", ())):
+            raise Declined("the app is rechecking, importing or sharing this project")
+        self.fresh(slug)
+        with self.net.progress.view():
+            result = fn(self.net, slug, query)
+        self.emit({"viewed": slug})
+        return result
 
     def call(self, headers: dict, name: str, args: dict) -> str:
         from ..network import NetworkError
@@ -506,6 +581,31 @@ def reader_progress(net):
     net.progress.__class__ = ReaderProgress
 
 
+def window_routes(mcp, service: Service) -> None:
+    """The window's reads (window_reads.py) at their own paths, encoded as the app encodes them (JSONResponse).
+    Anything this process doesn't answer is a 421 without WINDOW_ANSWERED, and the gateway asks the app."""
+    import anyio
+    from starlette.responses import JSONResponse, Response
+
+    from . import window_reads
+    limiter = anyio.CapacityLimiter(WINDOW_THREADS)
+
+    async def read(request):
+        def answer():
+            return service.window(request.method, request.url.path, request.query_params, request.headers)
+        try:
+            result = await anyio.to_thread.run_sync(answer, limiter=limiter)
+            return JSONResponse(result, headers={WINDOW_ANSWERED: "answered"})
+        except Declined as why:
+            log.info("declined %s: %s", request.url.path, why)
+        except Exception:  # the app answers, with its own error if it has one
+            log.exception("declined %s after an error", request.url.path)
+        return Response(status_code=421)
+
+    for path in {*window_reads.PROJECT_ROUTES, "/api/projects"}:
+        mcp.custom_route(path, methods=["GET"])(read)
+
+
 def child(db_path: str, workspace: str, port: int) -> None:
     import uvicorn
 
@@ -532,6 +632,8 @@ def child(db_path: str, workspace: str, port: int) -> None:
             sys.stdout.flush()
 
     service = Service(net, emit)
+    window_auth = os.environ.pop(WINDOW_ENV, "")
+    service.window_auth = json.loads(window_auth) if window_auth else None
 
     def listen():
         for line in sys.stdin:
@@ -565,6 +667,8 @@ def child(db_path: str, workspace: str, port: int) -> None:
         raise ToolError(DECLINED)  # (unused: `reader` answers every call)
 
     mcp = tools.build_mcp(net, no_agent, reader=run)
+    if service.window_auth:
+        window_routes(mcp, service)
     from mcp.server.transport_security import TransportSecuritySettings
     security = TransportSecuritySettings(enable_dns_rebinding_protection=True,
                                          allowed_hosts=[f"127.0.0.1:{port}", f"localhost:{port}"],

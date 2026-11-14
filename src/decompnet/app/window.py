@@ -6,6 +6,10 @@ the app asking (it crashed, or the page couldn't answer a close), the app quits,
 working; then they carry on in the background, the tray icon or `decomp` opens the window again.
 
 No browser is involved: the page is served only to a window whose user agent carries the per-launch secret.
+
+The window loads the page through the MCP gateway's window listener when it answers (mcp_gateway.Gateway.window_url):
+the gateway forwards every request to the app and has a few read-only pages answered by the reader process, outside
+this process's interpreter lock (docs/MCP_GATEWAY.md). Otherwise it loads the app's own address.
 """
 
 from __future__ import annotations
@@ -152,11 +156,24 @@ class Window:
 
     def __init__(self, internal: Path, url: str, secret: str, on_close: Callable[[], None]):
         self.internal, self.url, self.secret, self.on_close = internal, url, secret, on_close
+        # () -> the gateway's address for the window while it answers, else None (server.build sets it)
+        self.through: Callable[[], str | None] | None = None
         self.proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
     def is_open(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
+
+    def page_url(self) -> str:
+        """The gateway's window address when it answers, else the app's own: a missing or failed gateway never
+        keeps the window from opening."""
+        if self.through is not None:
+            try:
+                if (address := self.through()):
+                    return address
+            except Exception:
+                log.exception("the gateway's window address failed; using the app's")
+        return self.url
 
     def open(self) -> bool:
         """True when the window is open (just opened, or already open and now in front)."""
@@ -169,15 +186,17 @@ class Window:
             icon = self.internal / "window-icon.svg"
             icon.write_text(edition.icon_svg(), encoding="utf-8")
             win_icon = Path(__file__).with_name("static") / ("favicon-dev.ico" if edition.DEV else "favicon.ico")
+            page = self.page_url()
+            log.info("window: loading %s", page)
             if IS_WINDOWS or IS_MACOS:
-                url = self.url
+                url = page
                 if os.environ.get("DECOMP_THEME") in ("light", "dark"):
                     url += ("&" if "?" in url else "?") + "system-theme=" + os.environ["DECOMP_THEME"]
                 program = WIN_WINDOW_PROGRAM if IS_WINDOWS else MAC_WINDOW_PROGRAM
                 argv = [sys.executable, "-I", str(program), "--url", url, "--title", edition.NAME,
                         "--window-class", edition.WINDOW_CLASS, "--icon", str(win_icon)] + (["--dev"] if edition.DEV else [])
             else:
-                url = self.url
+                url = page
                 if os.environ.get("DECOMP_THEME") in ("light", "dark"):
                     url += ("&" if "?" in url else "?") + "system-theme=" + os.environ["DECOMP_THEME"]
                 argv = [SYSTEM_PYTHON, "-I", str(WINDOW_PROGRAM), "--url", url, "--title", edition.NAME,

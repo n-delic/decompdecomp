@@ -193,7 +193,8 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         if request.query_params.get('brief') == '1':
-            projects, = await app.imports('decompnet.app.project_labels', ('projects',))
+            # (the reader process may answer it for the window with the same function: window_reads.py)
+            projects, = await app.imports('decompnet.app.window_reads', ('projects_brief',))
             return JSONResponse(await (app.ui_call or call)(projects,net))
         projects = await (app.fast_call or app.ui_call or call)(project_list)
         if 'since' not in request.query_params:  # (older pages, and every other caller: the plain list)
