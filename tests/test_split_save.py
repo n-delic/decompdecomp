@@ -144,3 +144,50 @@ def test_a_commit_holds_the_split_files_and_reads_back_joined(tmp_path):
     assert json.loads(text)["notes"][0]["text"] == "in git"
     assert repository_progress.owned({**manifest, "headers": {}}) >= {saves.NOTES_FILE, saves.VERIFICATION_FILE}
     assert saves.NOTES_FILE not in repository_progress.owned({"format": 1, "functions": {}, "headers": {}})
+
+
+def test_unchanged_split_save_reuses_join_without_json_work(monkeypatch):
+    monkeypatch.setattr(saves, "_joined", {})
+    files = saves.split_manifest(saves.manifest_text({"title": "synthetic", "notes": [{"text": "kept"}]}))
+    joined = saves.join_manifest(files[saves.MANIFEST], files)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("An unchanged split save must not be decoded or serialized again")
+
+    monkeypatch.setattr(saves.json, "loads", unexpected)
+    monkeypatch.setattr(saves.json, "dumps", unexpected)
+    for _ in range(10):
+        assert saves.join_manifest(files[saves.MANIFEST], dict(files)) is joined
+
+
+@pytest.mark.parametrize("changed", [saves.MANIFEST, saves.NOTES_FILE, saves.VERIFICATION_FILE])
+def test_join_cache_observes_each_changed_save_file(monkeypatch, changed):
+    monkeypatch.setattr(saves, "_joined", {})
+    files = saves.split_manifest(saves.manifest_text({"title": "synthetic", "notes": [{"text": "kept"}]}))
+    original = saves.join_manifest(files[saves.MANIFEST], files)
+    value = json.loads(files[changed])
+    if changed == saves.MANIFEST:value["title"] = "edited"
+    elif changed == saves.NOTES_FILE:value.append({"text": "edited"})
+    else:value["matches"] = {"f": {"source_sha256": "a" * 64}}
+    files[changed] = json.dumps(value)
+    edited = saves.join_manifest(files[saves.MANIFEST], files)
+    assert edited != original
+    parsed = json.loads(edited)
+    if changed == saves.MANIFEST:
+        assert {k: v for k, v in parsed.items() if k not in saves.SIDE_FILES} == value
+    else:
+        assert parsed["notes" if changed == saves.NOTES_FILE else "verification"] == value
+    # Returning to the old version must return its own bytes, not the last edit's.
+    files[changed] = saves.split_manifest(original)[changed]
+    assert saves.join_manifest(files[saves.MANIFEST], files) == original
+
+
+def test_join_cache_is_bounded_and_missing_notes_still_refused(monkeypatch):
+    monkeypatch.setattr(saves, "_joined", {})
+    for i in range(saves.JOINED_KEPT + 2):
+        files = saves.split_manifest(saves.manifest_text({"title": str(i), "notes": [{"text": "kept"}]}))
+        saves.join_manifest(files[saves.MANIFEST], files)
+        assert len(saves._joined) <= saves.JOINED_KEPT
+    files.pop(saves.NOTES_FILE)
+    with pytest.raises(NetworkError, match="notes.json is missing"):
+        saves.join_manifest(files[saves.MANIFEST], files)
