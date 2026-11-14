@@ -1,6 +1,6 @@
 # N64Recomp in decompdecomp: a port before the decomp is done, and a reference for every function
 
-Status: phase 0 is built (Porting → Recompile with N64Recomp; `consoles/n64/recomp.py`, `app/recompile.py`); the rest is a plan. ROADMAP.md, "N64Recomp: a playable game from day one", tracks it.
+Status: phases 0 and 1 are built (Porting → Recompile with N64Recomp, and the `compare_behaviour` tool; `consoles/n64/recomp.py`, `app/recompile.py`, `app/behaviour.py`); the rest is a plan. ROADMAP.md, "N64Recomp: a playable game from day one", tracks it.
 
 ## Why
 
@@ -78,7 +78,21 @@ What was built, beyond the plan below:
 - Check: every function the split knows comes out as C that compiles. Report the ones N64Recomp refuses (jump
   tables it can't bound, hand-written assembly, code that modifies itself) as findings on those functions.
 
-### 1. A reference for each function (differential tests)
+### 1. A reference for each function (differential tests) (built)
+
+`compare_behaviour(function)` (`app/behaviour.py`):
+- **Record:** the reversing emulator stops at the function's first calls in your ROM and records each (`EMU_RECORD`:
+  the GPRs, the FPRs and RDRAM).
+- **Recompiled side:** a harness runs each call through the recompiled C (`recomp.harness`, with decompdecomp's
+  runtime `recomp_runtime.c`, whose libultra stubs say when they're reached).
+- **Decompiled side:** the port's host runs it through the decompiled C (`PORT_CALL`; `funcs.c`'s invokers take each
+  function's arguments as o32 passed them).
+- **Compare:** $v0, $v1, $f0 and the memory each leaves outside the call's stack, named by symbol.
+
+On a racing game, with the backwards race start's `$v0` bug put back in the port, both recorded calls of the
+start-heading helper report `$v0: recompiled 00000800, decompiled 00000000`. With the fix, they're the same. A first
+run takes about a minute and a half (recording, Recompile, the port's build); later ones only record and run.
+
 
 - Take a function's entry state from the reversing emulator: an execution breakpoint at its address gives the
   registers and RDRAM at that moment.

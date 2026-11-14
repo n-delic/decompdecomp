@@ -754,6 +754,58 @@ static void sample(void) {
     }
 }
 
+/* PORT_CALL=vram: one call of the game's function at vram, from a state the reversing emulator recorded
+   (app/behaviour.py), instead of the game: PORT_CALL_STATE (its registers, one line as emulator/frontend.c writes
+   it), PORT_CALL_RDRAM (memory, big-endian, loaded at 0x80000000), PORT_CALL_OUT (where to write <out>.rdram, the
+   memory after the call, and <out>.result, "v0 v1 f0 f1"). Arguments are taken as MIPS passed them: $a0-$a3, the
+   stack's words after them, $f12 and $f14 (funcs.c's port_calls, port/wasm/build.py's invoker). */
+typedef void (*PortInvoke)(w2c_game *, const u32 *, const u32 *, u32 *);
+typedef struct { unsigned address; PortInvoke invoke; } PortCall;
+extern const PortCall port_calls[];
+extern const unsigned port_call_count;
+static int port_call(uint32_t vram) {
+    const char *state = getenv("PORT_CALL_STATE"), *in = getenv("PORT_CALL_RDRAM"), *out = getenv("PORT_CALL_OUT");
+    if (!state || !in || !out) { fprintf(stderr, "PORT_CALL needs PORT_CALL_STATE, PORT_CALL_RDRAM and PORT_CALL_OUT\n"); return 2; }
+    FILE *f = fopen(state, "r");
+    if (!f) { perror(state); return 2; }
+    unsigned pc;
+    unsigned long long g[34];
+    unsigned fr[32];
+    if (fscanf(f, "%x", &pc) != 1) return 2;
+    for (int i = 0; i < 34; i++) if (fscanf(f, "%llx", &g[i]) != 1) return 2;
+    for (int i = 0; i < 32; i++) if (fscanf(f, "%x", &fr[i]) != 1) return 2;
+    fclose(f);
+    size_t size;
+    uint8_t *bytes = read_file(in, &size);
+    if (!bytes || size > 0x800000u) { fprintf(stderr, "can't read %s\n", in); return 2; }
+    memcpy(M + 0x80000000u, bytes, size);
+    u32 w[32], regs[32], result[4] = {0, 0, 0, 0};
+    for (int i = 0; i < 4; i++) w[i] = (u32)g[4 + i];
+    for (int i = 4; i < 32; i++) w[i] = be32((u32)g[29] + 4u * (unsigned)i);
+    for (int i = 0; i < 32; i++) regs[i] = fr[i];
+    unsigned lo = 0, hi = port_call_count;
+    while (lo < hi) { unsigned mid = (lo + hi) / 2; if (port_calls[mid].address < vram) lo = mid + 1; else hi = mid; }
+    if (lo >= port_call_count || port_calls[lo].address != vram) {
+        fprintf(stderr, "no function of the game's C at %08X\n", vram);
+        return 4;
+    }
+    wasm_rt_trap_t trap = wasm_rt_impl_try();
+    if (trap) { fprintf(stderr, "the call stopped: %s\n", wasm_rt_strerror(trap)); return 3; }
+    port_calls[lo].invoke(&game, w, regs, result);
+    char path[4096];
+    snprintf(path, sizeof path, "%s.result", out);
+    f = fopen(path, "w");
+    if (!f) { perror(path); return 2; }
+    fprintf(f, "%08X %08X %08X %08X\n", result[0], result[1], result[2], result[3]);
+    fclose(f);
+    snprintf(path, sizeof path, "%s.rdram", out);
+    f = fopen(path, "wb");
+    if (!f) { perror(path); return 2; }
+    fwrite(M + 0x80000000u, 1, size, f);
+    fclose(f);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (SIGUSR1) signal(SIGUSR1, sample_handler);
     if (argc < 2) { fprintf(stderr, "usage: %s rom.z64 [seconds, 0: until stopped]\n", argv[0]); return 2; }
@@ -775,6 +827,7 @@ int main(int argc, char **argv) {
     wbe32(0x80000308, 0xB0000000); /* osRomBase */
     wbe32(0x8000030C, 0);          /* osResetType: cold */
     wbe32(0x80000318, 0x400000);   /* osMemSize */
+    if (getenv("PORT_CALL")) return port_call((uint32_t)strtoul(getenv("PORT_CALL"), NULL, 16));
     wasm_rt_trap_t trap = wasm_rt_impl_try();
     if (trap) { fprintf(stderr, "boot stopped: %s\n", wasm_rt_strerror(trap)); return 3; }
     LOG("boot_start");

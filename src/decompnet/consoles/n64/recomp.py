@@ -284,3 +284,95 @@ def load(root: Path) -> dict | None:
         return json.loads(f.read_text(encoding="utf-8")) if f.is_file() else None
     except ValueError:
         return None
+
+
+DEFINED = re.compile(r"^RECOMP_FUNC void (\w+)\(", re.M)
+SYMBOL = re.compile(r'\{ name = ("(?:[^"\\]|\\.)*"), vram = 0x([0-9A-Fa-f]+), size = 0x[0-9A-Fa-f]+ \}')
+
+
+def harness(out: Path, entry: int, log=print, stop=lambda: False) -> Path:
+    """A program that runs one recompiled function from a recorded state (recomp_runtime.c), built from the last
+    Recompile's output in `out` (objects kept: only what changed is built again). Returns its path."""
+    import concurrent.futures
+    import hashlib
+    out = Path(out)
+    summary = json.loads((out / "recomp.json").read_text(encoding="utf-8"))
+    funcs = sorted((out / "funcs").glob("funcs_*.c"))
+    defined = set()
+    for f in funcs:
+        defined.update(DEFINED.findall(f.read_text(encoding="utf-8", errors="replace")))
+    table = {}
+    for m in SYMBOL.finditer((out / "syms.toml").read_text(encoding="utf-8")):
+        name, vram = json.loads(m.group(1)), int(m.group(2), 16)
+        c = next((n for n in (name, f"{name}_recomp", "recomp_entrypoint" if vram == entry else None)
+                  if n and n in defined), None)
+        if c and vram not in table:
+            table[vram] = c
+    declared = set(re.findall(r"void (\w+)\(", (out / "funcs" / "funcs.h").read_text(encoding="utf-8")))
+    # what N64Recomp leaves to its runtime (the libultra it reimplements, declared but never defined): stubs that
+    # only say they were reached
+    stubs = sorted((set(summary.get("runtime") or []) | declared) - defined)
+    lines = ['#include "runtime.h"', '#include "funcs.h"', "void harness_runtime(const char *name);",
+             "typedef struct { uint32_t vram; recomp_func_t *func; } HarnessFunction;"]
+    lines += [f'void {n}(uint8_t* rdram, recomp_context* ctx) {{ (void)rdram; (void)ctx; harness_runtime("{n}"); }}'
+              for n in stubs]
+    lines += [f"void {c}(uint8_t* rdram, recomp_context* ctx);" for c in sorted(set(table.values()) - declared)]
+    lines.append("const HarnessFunction harness_functions[] = {")
+    lines += [f"    {{0x{v:08X}u, {c}}}," for v, c in sorted(table.items())]
+    lines += ["};", f"const unsigned harness_function_count = {len(table)};"]
+    build = out / "harness"
+    build.mkdir(exist_ok=True)
+    (build / "harness_table.c").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    include = Path(toolchain_folder()) / "include"
+    flags = ["-O1", "-w", "-I", str(include), "-I", str(out / "funcs"), "-include", str(out / "funcs" / "runtime.h")]
+    header = (include / "recomp.h").read_bytes() + (out / "funcs" / "runtime.h").read_bytes() + \
+        ((out / "funcs" / "funcs.h").read_bytes() if (out / "funcs" / "funcs.h").is_file() else b"")
+    units = [*funcs, build / "harness_table.c", Path(__file__).with_name("recomp_runtime.c")]
+
+    def compile_one(unit: Path) -> str | None:
+        obj = build / (unit.stem + ".o")
+        key = hashlib.sha256(unit.read_bytes() + header + " ".join(flags).encode()).hexdigest()
+        stamp = obj.with_suffix(".key")
+        if obj.is_file() and stamp.is_file() and stamp.read_text() == key:
+            return None
+        if stop():
+            return "stopped"
+        done = subprocess.run(limits.capped(["cc", *flags, "-c", str(unit), "-o", str(obj)]), capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=1800)
+        if done.returncode:
+            return f"{unit.name}: " + (done.stderr.strip().splitlines() or ["failed"])[0]
+        stamp.write_text(key)
+        return None
+    log(f"building the harness that runs one recompiled function ({len(units)} files, only what changed)")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 1)) as pool:
+        failed = [e for e in pool.map(compile_one, units) if e]
+    if failed:
+        raise RecompError("Building the recompiled functions' harness failed: " + "; ".join(failed[:3]))
+    program = build / "run-one"
+    done = subprocess.run(limits.capped(["cc", "-o", str(program), *(str(build / (u.stem + ".o")) for u in units)]),
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+    if done.returncode:
+        raise RecompError("Linking the recompiled functions' harness failed: " + done.stderr.strip()[-800:])
+    return program
+
+
+def toolchain_folder() -> Path:
+    from ... import toolchains
+    return toolchains.path(TOOL)
+
+
+def run_one(program: Path, vram: int, state: Path, rdram: Path, out_prefix: Path, timeout: float = 60) -> dict:
+    """One recorded call through the recompiled function: {"ok", "v0", "v1", "f0", "f1", "runtime", "error",
+    "rdram"} (rdram: the memory after it, big-endian)."""
+    after, result = Path(f"{out_prefix}.rdram"), Path(f"{out_prefix}.result")
+    try:
+        done = subprocess.run([str(program), f"{vram:08X}", str(state), str(rdram), str(after), str(result)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"didn't return within {timeout:.0f} s"}
+    if done.returncode or not result.is_file():
+        return {"ok": False, "error": (done.stderr.strip().splitlines() or [f"stopped ({done.returncode})"])[-1]}
+    first, *rest = result.read_text().splitlines()
+    v0, v1, f0, f1 = (int(x, 16) for x in first.split())
+    return {"ok": True, "v0": v0, "v1": v1, "f0": f0, "f1": f1, "rdram": after,
+            "runtime": sorted({line.split()[1] for line in rest if line.startswith("runtime ")})}

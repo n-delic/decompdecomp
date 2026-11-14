@@ -791,6 +791,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | The reversing emulator for agents (`watch_in_emulator`: which code writes an address, what a function is called with, on the user's ROM) | ✓ mupenRE (Linux, macOS) | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no ROM to run |
 | Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS) | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no ROM to recompile |
+| Behaviour checked against the original (`compare_behaviour`, docs/N64RECOMP.md phase 1) | ✓ (recorded in mupenRE, run through N64Recomp's C and the WebAssembly port's) | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no ROM to run |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
@@ -978,6 +979,16 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### Does a function behave like the original? compare_behaviour
+
+A helper asks `compare_behaviour(function)`. The user's ROM runs in the reversing emulator to the function's first
+calls, each call's registers and memory are recorded, and each runs through the function's recompiled C (the
+original's instructions, N64Recomp) and through its decompiled C as the WebAssembly port builds it. What differs comes
+back: $v0, $v1, $f0, and the memory each left, by symbol, outside the call's stack (`app/behaviour.py`). On a racing
+game it finds the backwards race start in one line (`$v0: recompiled 00000800, decompiled 00000000`). Left: a
+batch over every matched function the game reaches (a Port readiness row), and calls that wait on another thread,
+which time out today.
 
 ### The game as C before the decomp is done: Recompile with N64Recomp
 

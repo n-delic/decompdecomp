@@ -37,6 +37,45 @@ class EmulatorError(RuntimeError):
     pass
 
 
+OWN = ("frontend.c", "input.c", "video.c")  # decompdecomp's own programs, built beside the pinned core
+
+
+def _stamp() -> str:
+    import hashlib
+    return hashlib.sha256(b"".join((HERE / n).read_bytes() for n in OWN)).hexdigest()
+
+
+def _programs(dest: Path, run=None) -> None:
+    """Build the frontend and plugins (this folder's C) into an installed emulator, against its core's API headers."""
+    def plain(argv, cwd, what):
+        done = subprocess.run([str(a) for a in argv], cwd=cwd, capture_output=True, text=True, timeout=600)
+        if done.returncode:
+            raise EmulatorError(f"Building the reversing emulator's {what} failed: " + done.stderr[-1500:])
+    run = run or plain
+    api = dest / "include"
+    plugin = ["cc", "-O2", "-fPIC", "-shared", "-I", api]
+    run([*plugin, "-o", dest / f"input.{SO}", HERE / "input.c"], dest, "input plugin")
+    run([*plugin, "-o", dest / f"video.{SO}", HERE / "video.c"], dest, "video plugin")
+    run(["cc", "-O2", "-I", api, "-o", dest / "mupenre-frontend", HERE / "frontend.c",
+         *([] if sys.platform == "darwin" else ["-ldl"])], dest, "frontend")
+    (dest / "programs.sha256").write_text(_stamp())
+
+
+def current(folder: Path, log=print) -> Path:
+    """The installed emulator, its frontend and plugins built again if this version's source differs from what built
+    them (an install older than that, without the headers to build them, is installed again)."""
+    stamp = folder / "programs.sha256"
+    if stamp.is_file() and stamp.read_text().strip() == _stamp():
+        return folder
+    if (folder / "include" / "m64p_types.h").is_file():
+        log("building the reversing emulator's frontend again (its source changed)")
+        _programs(folder)
+        return folder
+    from .... import toolchains
+    log("installing the reversing emulator again (its frontend changed)")
+    return toolchains.install(TOOL, force=True, log=log)
+
+
 def _host_cpu() -> str:
     machine = platform.machine().lower()
     return {"arm64": "aarch64", "amd64": "x86_64"}.get(machine, machine)
@@ -88,12 +127,9 @@ def build(dest: Path, cmake: Path, log=print) -> None:
             raise EmulatorError(f"The reversing emulator's core built, but its library isn't in {unix}.")
         rsp = source / "rsp-hle" / "projects" / "unix"
         run(["make", "all", f"-j{jobs}", f"HOST_CPU={_host_cpu()}", f"APIDIR={core / 'src' / 'api'}"], rsp, "the RSP")
-        api = core / "src" / "api"
-        plugin = ["cc", "-O2", "-fPIC", "-shared", "-I", api]
-        run([*plugin, "-o", dest / f"input.{SO}", HERE / "input.c"], tmp, "the input plugin")
-        run([*plugin, "-o", dest / f"video.{SO}", HERE / "video.c"], tmp, "the video plugin")
-        run(["cc", "-O2", "-I", api, "-o", dest / "mupenre-frontend", HERE / "frontend.c",
-             *([] if mac else ["-ldl"])], tmp, "the frontend")
+        api = dest / "include"  # kept: the frontend and plugins are built again from them when their source changes
+        shutil.copytree(core / "src" / "api", api, dirs_exist_ok=True)
+        _programs(dest, run)
         shutil.copyfile(built, dest / f"libmupen64plus.{SO}")
         shutil.copyfile(rsp / f"mupen64plus-rsp-hle.{SO}", dest / f"rsp-hle.{SO}")
     shutil.rmtree(source, ignore_errors=True)  # what runs is kept; the pinned archives stay in .downloads
@@ -119,6 +155,7 @@ class Run:
     dumps: dict[int, Path] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
     timed_out: bool = False  # stopped by the timeout before its last VI (a game that never starts its video counts none)
+    recorded: list[Path] = field(default_factory=list)  # EMU_RECORD: each call's <path>.state and <path>.rdram
 
 
 def parse(log: str) -> Run:
@@ -134,6 +171,8 @@ def parse(log: str) -> Run:
                                 tuple(numbers[7:])))
         elif parts[0] == "dumped" and len(parts) >= 3:
             out.dumps[int(parts[1])] = Path(line.split(None, 2)[2])
+        elif parts[0] == "recorded" and len(parts) >= 4:
+            out.recorded.append(Path(line.split(None, 3)[3]))
         elif parts[0] == "stopped" and len(parts) == 2:
             out.vis = int(parts[1])
         elif parts[0] in ("error", "core:"):
@@ -149,7 +188,8 @@ def installed() -> Path | None:
 
 def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None = None,
         watches: list[tuple[int, int]] | tuple = (), breaks: list[int] | tuple = (), report_from: int = 0,
-        max_hits: int = 200, expansion_pak: bool = False, timeout: float = 1800) -> Run:
+        max_hits: int = 200, expansion_pak: bool = False, timeout: float = 1800,
+        record: tuple[Path, int] | None = None) -> Run:
     """Run the user's ROM in the reversing emulator for `vis` vertical interrupts. `inputs`: the input script
     (input.c); `dumps`: {vi: file}; `watches`: (physical address, length) write breakpoints; `breaks`: virtual
     addresses to stop at (breakpoints need the slower pure interpreter)."""
@@ -169,6 +209,10 @@ def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None 
         env["EMU_BREAK"] = ",".join(f"{a & 0xFFFFFFFF:X}" for a in breaks)
     if expansion_pak:
         env["EMU_8MB"] = "1"
+    if record is not None:  # (folder, calls): the state at each of the first calls to the breaks
+        env["EMU_RECORD"] = f"{Path(record[0]).resolve()}:{int(record[1])}"
+        env.pop("EMU_MAX", None)
+    folder = current(folder)
     with tempfile.TemporaryDirectory(prefix="decomp-emulator-") as tmp:  # its configuration and anything it writes
         env["EMU_CONFIG"] = tmp
         argv = [folder / "mupenre-frontend", folder / f"libmupen64plus.{SO}", folder / f"rsp-hle.{SO}",
