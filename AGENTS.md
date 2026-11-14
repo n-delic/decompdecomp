@@ -170,6 +170,10 @@ Since 0.3.0 the permuter's rewrites are there: `permuter.py`, `app/permuter_loca
 the library's `permuter_gen.py` by path, its helpers beside it. Don't add code to those alias files: change the
 library. The worker's restart check (`permuter_worker.WATCHED`) and `claim_stalls._repair_rules` read a name from
 the library when it lives there, so a moved module needs no new entry.
+Since 0.4.0 `switch_constant_dispatch`, `initializer_clusters`, `callee_contracts`, `loop_storage_shapes`,
+`repair_tokens` (in `app/`) and `consoles/ps1/gte.py` are aliases too. `app/switch_tables.py`,
+`app/layout_frontiers.py` and `app/expression_recipes.py` import their rewrites from the library and keep only what
+reads the project database (`read`, `saved`, storing recipes): split a module that way when only part of it is pure.
 
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
