@@ -666,13 +666,48 @@ Where the builds differ, the Intel build is the odd one out:
   (`mov x1, x0`) and compiles the file, as a 32-bit host (the Linux release) does. The only other such
   call on the MIPS path is `reorg.c`'s `negate_rtx` (branch-likely compensation), where Intel would
   crash the same way. No case was found where both builds compile and the output differs.
-- **`-funroll-loops` can leave an unused constant-pool word holding freed memory.** A `REG_EQUIV`
-  `-0.0` from the unroller is forced into the pool by reload, and its `CONST_DOUBLE` is reused
-  obstack memory by the time the pool is written. In 40 runs of one game file at `-O3 -funroll-loops`,
-  the Intel build printed different garbage in the `.word`'s comment from run to run, and once a NaN
-  word (`0xffffffff`). The native build gave the `0x00000000` word every time. Without
-  `-funroll-loops` it never appeared.
+- **`-funroll-loops` pooled a `-0.0` with a wrong word**, garbage that changed from run to run in the
+  Intel build (once a NaN word, `0xffffffff`). This was first put down to freed obstack memory. It is
+  the 64-bit host bug in the next section: the Intel build and the first native build both read the
+  constant's high word from memory that was never written.
 - **C++**: both builds hit the same internal compiler error on the C++ errors tried.
+
+
+### Pooled doubles on 64-bit Macs: KMC GCC 2.7.2 and GCC 2.8.1 (PM matching) (14 November 2026)
+
+**Controlled host-build bug**, not a new match. It affected the native arm64 builds and the released
+Intel Mac builds alike. Both sources are configured for a 32-bit host (`config/i386/xm-i386.h`), so a
+`HOST_WIDE_INT` is 4 bytes, but on a 64-bit Mac each rtx operand slot is 8. Upstream already copies a
+`CONST_DOUBLE` by halves in `real.h` and `emit-rtl.c`. `varasm.c`'s `decode_rtx_const` and
+`output_constant_pool` still `bcopy` 8 bytes from `CONST_DOUBLE_LOW`'s slot: the low word, then the
+slot's never-written upper half where the high word belongs. This is the same bug as SN64's
+(previous sections), in two places instead of seven.
+
+It only shows in constants that go to the constant pool: values `mips_const_double_ok` refuses for
+`li.d`/`li.s` (above about 1e308 or below about 1e-308 in magnitude, infinity, NaN, and `-0.0` from
+the unroller). A typical `li.d $f0,2.5` is unaffected, which is why comparing against the Intel build
+(the same bug) and the papermario corpus never showed it. With `-G0 -mips3 -O2 -meb`, 1e300 printed
+`.word 0x00000000` `.word 0x8800759c`; it should be `0x7e37e43c 0x8800759c`, and infinity came out
+as 0. The 32-bit Linux releases print the right words.
+
+**Fix** (`toolchains._CONST_DOUBLE_EDITS`, `recipe = 2` for both native recipes): the two copies use
+SN64's word-per-slot helpers. The shared install check (`_check_native_gcc`) now also requires
+1e300's two words. It refuses the earlier native builds and passes the fixed ones.
+
+**Comparison, earlier native build vs fixed** (`cc1` only, 1,599 libultra / c-torture / KMC-game
+files from the KMC comparison above, plus 4,317 preprocessed papermario files):
+- KMC at `-G0 -mips3 -O2 -mgas -meb`: 1,546 the same, 52 rejected by both, 1 different
+  (c-torture `981007-1`: 1e-300's high word, `0x00000000` → `0x01a56e1f`).
+- KMC at `-O3 -funroll-loops -fomit-frame-pointer`: 1,546 the same, 52 rejected by both, 1 different
+  (the KMC game file's pooled `-0.0f`, `0x00000000` → `0x80000000`).
+- PM at `-G0 -mips3 -O2`: on the 1,599 files, 1,552 the same, 46 rejected by both, 1 different
+  (the same 1e-300). Papermario: 1,531 the same, 2,786 rejected by both (generated asset headers
+  missing from this preprocessed set).
+- Every differing word is now the IEEE encoding Python gives. Three runs of the probe gave one output.
+
+**Who it affects:** matching code with such a constant on an Apple Silicon (native) install. Intel
+Macs still run the released build and keep the bug (pinned as released, fingerprint unchanged). Linux
+uses the 32-bit releases, which are right.
 
 ## CodeWarrior, MSVC, ARM compilers and other installed profiles
 

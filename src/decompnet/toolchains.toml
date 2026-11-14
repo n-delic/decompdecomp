@@ -69,6 +69,8 @@ sha256 = "5406c1e8bf88da5aef37050a360577fd80569a022cb86622135da2190efd188d"
 file = "mips-gcc-2.7.2-e6271f14b095d7d8b2638c2b5e07d0d5cd05bc14.tar.gz"
 subdir = "mips-gcc-2.7.2-e6271f14b095d7d8b2638c2b5e07d0d5cd05bc14"
 build = "gcc-2.7.2-kmc"
+# 2: CONST_DOUBLE copies as the 32-bit release lays them out (pooled doubles): installs built before are rebuilt
+recipe = 2
 platforms = ["macos-arm64"]
 [["gcc-2.7.2-kmc".parts]]
 url = "https://codeload.github.com/decompals/mips-binutils-2.6/tar.gz/54514ded39ceb32165a125ddba04ca5b551773a2"
@@ -1593,6 +1595,8 @@ sha256 = "9d8ce88450d2df774f28931b7dfa84588cfe50419753887d6130efe75260b2f3"
 file = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404.tar.gz"
 subdir = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404"
 build = "gcc-papermario"
+# 2: CONST_DOUBLE copies as the 32-bit release lays them out (pooled doubles): installs built before are rebuilt
+recipe = 2
 platforms = ["macos-arm64"]
 [["gcc-2.8.1-pm".parts]]
 url = "https://github.com/pmret/binutils-papermario/releases/download/master/mac.tar.gz"
@@ -1944,6 +1948,8 @@ sha256 = "9d8ce88450d2df774f28931b7dfa84588cfe50419753887d6130efe75260b2f3"
 file = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404.tar.gz"
 subdir = "gcc-papermario-d97824ffc7517675646960442b3f512a473e4404"
 build = "gcc-papermario"
+# 2: CONST_DOUBLE copies as the 32-bit release lays them out (pooled doubles): installs built before are rebuilt
+recipe = 2
 platforms = ["macos-arm64"]
 
 [playstation-titles]

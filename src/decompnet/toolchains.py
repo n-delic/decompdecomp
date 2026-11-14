@@ -965,14 +965,7 @@ def _build_gcc_papermario(archive: Path, dest: Path, subdir: str | None, log) ->
         source = Path(tmp) / "source"
         source.mkdir()
         _extract(archive, source, subdir)
-        for name, lines in _GCC_PM_DECLARATIONS.items():
-            file = source / name
-            text = file.read_text(encoding="latin-1") if file.is_file() else ""
-            for line in lines:
-                if text.count(line) != 1:
-                    raise ToolchainError(f"The pinned gcc-papermario {name} no longer matches its arm64 fix.")
-                text = text.replace(line, "", 1)
-            file.write_text(text, encoding="latin-1")
+        _edit_exactly(source, _GCC_PM_DECLARATIONS, _CONST_DOUBLE_EDITS, "gcc-papermario")
         header = source / "decomp-arm64-varargs.h"
         header.write_text(_GCC_PM_VARARGS, encoding="latin-1")
         # An archive gives every file one time, and make would then regenerate the shipped parsers with whatever
@@ -1028,7 +1021,8 @@ def _check_gcc_papermario(build: Path, tmp: Path) -> None:
 def _check_native_gcc(build: Path, tmp: Path, name: str) -> None:
     """(_check_gcc_papermario, for any old GCC built natively for Apple Silicon.)"""
     floats, broken = tmp / "floats.c", tmp / "broken.c"
-    floats.write_text("double f(unsigned int x) { return x; }\n", encoding="utf-8")
+    floats.write_text("double f(unsigned int x) { return x; }\ndouble g(double x) { return x * 1e300; }\n",
+                      encoding="utf-8")
     broken.write_text("int f(void) { return undeclared; }\n", encoding="utf-8")
     runs = {}
     for src in (floats, broken):
@@ -1039,7 +1033,8 @@ def _check_native_gcc(build: Path, tmp: Path, name: str) -> None:
         except (OSError, subprocess.TimeoutExpired) as error:
             raise ToolchainError(f"The native {name} failed its check: {error}") from error
     asm = floats.with_suffix(".s").read_text(errors="replace") if floats.with_suffix(".s").is_file() else ""
-    if runs[floats].returncode or not re.search(r"li\.d\s+\$f\d+,4\.29496729600000000000e9", asm):
+    if runs[floats].returncode or not re.search(r"li\.d\s+\$f\d+,4\.29496729600000000000e9", asm) or not all(
+            re.search(rf"\.word\s+{word}\b", asm) for word in ("0x7e37e43c", "0x8800759c")):
         raise ToolchainError(f"The native {name} folds float constants wrongly; not installing it.\n"
                              + runs[floats].stderr[-2000:] + asm[-2000:])
     if runs[broken].returncode != 33 or "undeclared" not in runs[broken].stderr:
@@ -1099,6 +1094,17 @@ _SN64_EDITS = (
      "extern void bc_emit_instruction (enum bytecode_opcode, ...);\n"),
 )
 
+
+# GCC 2.7.2 (KMC) and 2.8.1 (PM matching) have SN64's 64-bit host bug in two of these copies (upstream fixed the
+# others by halves): decode_rtx_const and output_constant_pool read a double from CONST_DOUBLE_LOW's slot whole, so
+# a constant MIPS can't `li.d` (1e300, infinity, a denormal) went to .rodata with its high word taken from the
+# slot's never-written half: 1e300 as 0x00000000 0x8800759c, not 0x7e37e43c 0x8800759c. The released Intel Mac
+# builds print the same wrong words; the 32-bit Linux releases print the right ones.
+_CONST_DOUBLE_EDITS = {
+    "rtl.h": tuple((old, new) for file, old, new in _SN64_EDITS if file == "rtl.h"),
+    "varasm.c": tuple((old, new) for file, old, new in _SN64_EDITS
+                      if file == "varasm.c" and "CONST_DOUBLE_LOW (x)" in old),
+}
 
 def _build_sn64_gcc(archive: Path, dest: Path, subdir: str | None, log) -> None:
     """Build the checksum-pinned reconstructed SN compiler (GCC 2.7.2) natively on macOS.
@@ -1214,6 +1220,7 @@ _GCC_KMC_DECLARATIONS = {
     "cp/errfn.c": _GCC_PM_DECLARATIONS["cp/errfn.c"],
 }
 _GCC_KMC_EDITS = {
+    **_CONST_DOUBLE_EDITS,
     "cp/errfn.c": (
         ("static void\ncp_thing (", "extern errorfn compiler_error;\n\nstatic void\ncp_thing ("),
         ("      (*errfn) (file, line, fmt, ARGSLIST);\n",

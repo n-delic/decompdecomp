@@ -193,6 +193,8 @@ def _pm_source(source):
     for name, lines in toolchains._GCC_PM_DECLARATIONS.items():
         (source / name).parent.mkdir(parents=True, exist_ok=True)
         (source / name).write_text('/* upstream */\n' + ''.join(lines) + 'int keep;\n', encoding='latin-1')
+    for name, edits in toolchains._CONST_DOUBLE_EDITS.items():
+        (source / name).write_text(''.join(old for old, _ in edits), encoding='latin-1')
     for name in ['c-parse.c', 'c-parse.h', 'cexp.c', 'cp/parse.c', 'cp/parse.h']:
         (source / name).write_text('/* bison output */')
 
@@ -218,11 +220,13 @@ def test_pm_gcc_native_build_declares_varargs_and_does_not_optimise_gcc(tmp_path
     def check(source, tmp):  # (the build's folder is gone once it returns)
         checked.append({name: (source / name).read_text(encoding='latin-1') for name in toolchains._GCC_PM_DECLARATIONS})
         checked.append((source / 'decomp-arm64-varargs.h', (source / 'decomp-arm64-varargs.h').read_text()))
+        checked.append((source / 'varasm.c').read_text(encoding='latin-1') + (source / 'rtl.h').read_text())
         assert (source / 'cp/parse.c').stat().st_mtime > (source / 'cp/errfn.c').stat().st_mtime
     monkeypatch.setattr(toolchains, '_check_gcc_papermario', check)
     toolchains._build_gcc_papermario(tmp_path / 'src.tar.gz', dest, 'pinned', lambda *_: None)
-    edited, (header, prototypes) = checked
+    edited, (header, prototypes), copies = checked
     assert set(edited.values()) == {'/* upstream */\nint keep;\n'}
+    assert 'CONST_DOUBLE_LOW' not in copies and 'decomp_cd_get (x, (char *) &u, sizeof u);' in copies
     assert 'extern void error (char *, ...);' in prototypes
     configure, make = runs
     assert '--target=mips-nintendo-nu64' in configure[0]
@@ -243,9 +247,15 @@ def test_pm_gcc_native_build_fails_closed_when_the_source_moves(tmp_path, monkey
         toolchains._build_gcc_papermario(tmp_path / 'src.tar.gz', tmp_path, 'pinned', lambda *_: None)
 
 
+_POOLED_1E300 = '\t.word\t0x7e37e43c\t\t# 1.0000000000000000525e+300\n\t.word\t0x8800759c\n'
+
+
 @pytest.mark.parametrize('asm, broken_exit, why', [
-    ('\tl.d\t$f0,.LC0\n', 33, 'folds float constants wrongly'),          # clang -O2 built
-    ('\tli.d\t$f0,4.29496729600000000000e9\n', -11, "doesn't report compile errors"),  # no varargs prototypes
+    ('\tl.d\t$f0,.LC0\n' + _POOLED_1E300, 33, 'folds float constants wrongly'),          # clang -O2 built
+    ('\tli.d\t$f0,4.29496729600000000000e9\n' + _POOLED_1E300, -11, "doesn't report compile errors"),  # no varargs
+    # A 64-bit host's CONST_DOUBLE copy: 1e300's high word from the slot's unwritten half (the Intel Mac release too)
+    ('\tli.d\t$f0,4.29496729600000000000e9\n\t.word\t0x00000000\n\t.word\t0x8800759c\n', 33,
+     'folds float constants wrongly'),
 ])
 def test_pm_gcc_check_refuses_the_broken_builds_seen(tmp_path, monkeypatch, asm, broken_exit, why):
     def run(argv, **kwargs):
@@ -257,6 +267,23 @@ def test_pm_gcc_check_refuses_the_broken_builds_seen(tmp_path, monkeypatch, asm,
     monkeypatch.setattr(toolchains.subprocess, 'run', run)
     with pytest.raises(toolchains.ToolchainError, match=why):
         toolchains._check_gcc_papermario(tmp_path, tmp_path)
+
+
+def test_pm_gcc_check_accepts_the_linux_release_output(tmp_path, monkeypatch):
+    def run(argv, **kwargs):
+        if Path(argv[argv.index('-o') - 1]).name == 'floats.c':
+            Path(argv[argv.index('-o') + 1]).write_text('\tli.d\t$f0,4.29496729600000000000e9\n' + _POOLED_1E300)
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+        return SimpleNamespace(returncode=33, stdout='', stderr="`undeclared' undeclared")
+    monkeypatch.setattr(toolchains.subprocess, 'run', run)
+    toolchains._check_gcc_papermario(tmp_path, tmp_path)
+
+
+@pytest.mark.parametrize('tid', [*PM_GCC, 'gcc-2.7.2-kmc'])
+def test_native_gcc_installs_built_before_the_pooled_constant_fix_are_rebuilt(tid):
+    """An install's fingerprint covers its parts, so the recipe number makes the earlier native builds out of date."""
+    arm = [p for p in toolchains.get(tid).parts_for('macos-arm64') if p.get('build', '').startswith('gcc-')]
+    assert [p.get('recipe') for p in arm] == [2]
 
 
 @pytest.mark.parametrize('tid', PM_GCC)
@@ -393,6 +420,7 @@ def test_kmc_gcc_native_build_declares_varargs_and_does_not_optimise_gcc(tmp_pat
     assert '(*(void (*) (char *, ...)) errfn) (fmt, ARGSLIST);' in edited['cp/errfn.c']
     assert 'errfn == compiler_error' in edited['cp/errfn.c']  # (compiler_error isn't variadic)
     assert 'a transparent union", (char *) 0);' in edited['c-decl.c']
+    assert 'CONST_DOUBLE_LOW' not in edited['varasm.c'] and 'static void decomp_cd_get' in edited['rtl.h']
     configure, make, gxx = runs
     assert '--target=mips-mips-gnu' in configure[0] and '--host=i386-apple-darwin' in configure[0]
     flags = ' '.join(a for a in make[0] + gxx[0] if a.startswith(('CFLAGS=', 'HOST_CFLAGS='))) + configure[1]['CFLAGS']
