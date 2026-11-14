@@ -131,6 +131,8 @@ def reg(i):
 # result there, and a caller that takes a value from it (decompiled C that matches can) finds it here.
 V0 = reg(4)
 RESULT = re.compile(r"^\s*(%[\w.$]+) = .*?\bcall\b(?:\s+\w+)*?\s+(ptr|i8|i16|i32)\s+[@%(]")
+# a call that returns nothing, to a game function or through a pointer (not an LLVM intrinsic, which no callee runs)
+VOID_CALL = re.compile(r"^\s*(?:(?:tail|musttail|notail)\s+)?call\b(?:\s+\w+)*?\s+void\s+(?:%|@(?!llvm\.))")
 
 
 def void_result(body, cret):
@@ -247,7 +249,12 @@ def adapt(text, report=None, types=None, byval=None):
     void_function = False
     for line in text.split("\n"):
         stripped = line.lstrip()
-        if void_function and stripped == "ret void":
+        if void_function and stripped == "ret void" and out_lines and VOID_CALL.match(out_lines[-1]):
+            # a void function that ends with a call to another void function: $v0 is what that callee left there
+            # (a racing game's start-yaw helper ended with a void atan2 wrapper whose angle its caller took; storing
+            # 0 here turned every car round at the start). The callee has already stored it.
+            pass
+        elif void_function and stripped == "ret void":
             # a void function that ends with a call: on MIPS that call's result is still in $v0 when it returns.
             # Any other leaves 0 there, what a caller taking a value from a void function got before.
             w = "0"

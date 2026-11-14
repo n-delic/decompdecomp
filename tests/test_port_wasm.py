@@ -190,6 +190,28 @@ def test_a_void_function_leaves_its_last_calls_result_for_a_caller_that_takes_on
     assert f"load i32, ptr {V0}" in thunk and "ret ptr null" not in thunk
 
 
+def test_a_void_function_ending_with_a_void_call_keeps_what_that_callee_left():
+    """A racing game's start-yaw helper was declared void and ended with a void atan2 wrapper, which itself ended
+    with the atan2 call: on the console the angle went through both in $v0 to the caller. The port stored 0 after the
+    wrapper and every car started facing backwards."""
+    from decompnet.port.wasm.adapt import V0, adapt
+    from decompnet.port.wasm.beir import Types
+    ir = ("declare i32 @atan2(i32, i32)\n"
+          "define void @wrapper(i32 %x, i32 %z) {\n  %1 = call i32 @atan2(i32 noundef %x, i32 noundef %z) #2\n"
+          "  ret void\n}\n"
+          "define void @start_yaw(i32 %x, i32 %z) {\n  call void @wrapper(i32 noundef %x, i32 noundef %z) #2\n"
+          "  ret void\n}\n"
+          "define void @tidy(ptr %p) {\n  call void @llvm.memset.p0.i32(ptr %p, i8 0, i32 4, i1 false)\n"
+          "  ret void\n}\n"
+          "define void @caller() {\n  %y = call i32 @start_yaw(i32 noundef 1, i32 noundef 2)\n  ret void\n}\n")
+    out = adapt(ir, [], Types(ir), {})
+    body = lambda name: out.split(f"define void @{name}")[1].split("}")[0]  # noqa: E731
+    assert "%1" in body("wrapper") and f"ptr {V0}" in body("wrapper")
+    assert V0 not in body("start_yaw"), "the wrapper's angle stays in $v0"
+    assert f"store i32 0, ptr {V0}" in body("tidy"), "an intrinsic runs no callee: 0 as before"
+    assert f"load i32, ptr {V0}" in out.split("define internal i32 @start_yaw.port_thunk")[1]
+
+
 def test_bitfields_get_the_consoles_bits():
     """A big-endian MIPS compiler gives a unit's first bitfield its top bits; wasm32 its bottom ones. A racing
     game's track setup read `b0 : 1` from the wrong bit, ran off the end of its segment table and corrupted the
