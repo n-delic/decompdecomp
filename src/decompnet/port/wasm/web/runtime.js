@@ -11,6 +11,73 @@ export function supported() {
   return typeof WebAssembly.Suspending === "function" && typeof WebAssembly.promising === "function";
 }
 
+/* Every data segment here lives above 2 GB (the game's RAM from 0x80000000, the host's data from 0xB0000000), and
+   Safari places a segment at such an address as if it were negative (its offset sign-extended to 64 bits), so it
+   refuses the module: "segment writes outside of memory". So each active segment whose offset is a constant becomes
+   passive (the browser places nothing, and nothing else refers to it) and the page copies it into memory itself, at
+   its address read as unsigned, once the module is instantiated. Other segments are left as they are. */
+function readLeb(b, at, signed = false) {
+  let result = 0n, shift = 0n, byte;
+  do { byte = b[at++]; result |= BigInt(byte & 0x7f) << shift; shift += 7n; } while (byte & 0x80);
+  if (signed && (byte & 0x40)) result -= 1n << shift;
+  return [result, at];
+}
+function leb(n) {
+  const out = [];
+  do { let byte = n & 0x7f; n >>>= 7; if (n) byte |= 0x80; out.push(byte); } while (n);
+  return Uint8Array.from(out);
+}
+export function placeDataOurselves(code) {
+  const b = new Uint8Array(code), parts = [b.subarray(0, 8)], segments = [];
+  let at = 8;
+  while (at < b.length) {
+    const id = b[at];
+    const [size, body] = readLeb(b, at + 1);
+    const end = body + Number(size);
+    if (id !== 11) { parts.push(b.subarray(at, end)); at = end; continue; } /* only the data section changes */
+    let [count, p] = readLeb(b, body);
+    const out = [leb(Number(count))];
+    for (let i = 0; i < Number(count); i++) {
+      const start = p;
+      let flags;
+      [flags, p] = readLeb(b, p);
+      let q = p;
+      if (flags === 2n) [, q] = readLeb(b, q); /* an explicit memory index */
+      if ((flags === 0n || flags === 2n) && b[q] === 0x41) { /* i32.const <offset> end */
+        let offset;
+        [offset, q] = readLeb(b, q + 1, true);
+        if (b[q] === 0x0b) {
+          let length;
+          [length, q] = readLeb(b, q + 1);
+          const data = b.subarray(q, q + Number(length));
+          segments.push({ address: Number(BigInt.asUintN(32, offset)), data });
+          out.push(Uint8Array.of(1), leb(data.length), data);
+          p = q + Number(length);
+          continue;
+        }
+      }
+      if (flags === 0n || flags === 2n) { while (b[q] !== 0x0b) q++; q++; } /* another offset expression */
+      let length;
+      [length, q] = readLeb(b, q);
+      p = q + Number(length);
+      out.push(b.subarray(start, p));
+    }
+    parts.push(Uint8Array.of(11), leb(out.reduce((n, x) => n + x.length, 0)), ...out);
+    at = end;
+  }
+  const module = new Uint8Array(parts.reduce((n, x) => n + x.length, 0));
+  let o = 0;
+  for (const x of parts) { module.set(x, o); o += x.length; }
+  return {
+    module,
+    segments,
+    place(memory) {
+      const bytes = new Uint8Array(memory.buffer);
+      for (const s of segments) bytes.set(s.data, s.address);
+    },
+  };
+}
+
 /* The few WASI calls the host's C library makes: its stdout and stderr to the console, the clock, its environment
    (the PORT_* options, from the page). No files: the ROM and the save come through the page. */
 function wasi(memory, environment, log) {
@@ -73,7 +140,7 @@ function wasi(memory, environment, log) {
 export async function start({ base = "", rom, io, env = {} }) {
   if (!supported()) {
     throw new Error("This browser can't run the game: it needs WebAssembly JavaScript Promise Integration "
-      + "(Chrome or Edge 137 or later).");
+      + "(Chrome or Edge 137 or later, or Safari 27).");
   }
   const memory = new WebAssembly.Memory({ initial: 65536, maximum: 65536 });
   const bytes = () => new Uint8Array(memory.buffer);
@@ -112,15 +179,18 @@ export async function start({ base = "", rom, io, env = {} }) {
     audio: (ptr, frames, hz) => io.audio(new Int16Array(memory.buffer, ptr >>> 0, frames * 2), frames, hz),
     input: () => io.input(),
   };
-  const hostModule = await WebAssembly.instantiate(hostCode, {
+  const hostCodePlaced = placeDataOurselves(hostCode), gameCodePlaced = placeDataOurselves(gameCode);
+  const hostModule = await WebAssembly.instantiate(hostCodePlaced.module, {
     env: { memory }, wasi_snapshot_preview1: wasi(memory, env, io.log), port_web: portWeb,
   });
   host = hostModule.instance.exports;
+  hostCodePlaced.place(memory);
   host._initialize();
   const gameImports = { memory };
   for (const [name, value] of Object.entries(host)) if (typeof value === "function") gameImports[name] = value;
-  const gameModule = await WebAssembly.instantiate(gameCode, { env: gameImports });
+  const gameModule = await WebAssembly.instantiate(gameCodePlaced.module, { env: gameImports });
   const game = gameModule.instance.exports;
+  gameCodePlaced.place(memory);
   game.__wasm_call_ctors(); // each file registers its functions, for calls through pointers (web/be.c)
   build.slots.forEach((name, i) => {
     if (!game[name]) throw new Error(`the game's module has no ${name}, which the host calls`);

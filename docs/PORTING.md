@@ -272,8 +272,10 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     function's universal entry (no wasm type check, as the N64 had none). The kit's host (`host.c`, `render.c`,
     `audio.c`, with `PORT_WEB`) is compiled to WebAssembly beside it, sharing its 4 GB memory (its own data from
     0xB0000000). The host's threads are coroutines switched with JavaScript Promise Integration (`web/co.c`,
-    `web/runtime.js`: Chrome and Edge 137 and later); a thread spinning on memory gives the page a turn every
-    10 ms for the retrace, as the native host's main thread runs beside it. The page (the kit's `web/`) shows the
+    `web/runtime.js`: Chrome and Edge 137 and later, Safari 27); a thread spinning on memory gives the page a turn
+    every 10 ms for the retrace, as the native host's main thread runs beside it. Every data segment is above 2 GB,
+    which Safari places as if negative and refuses, so the page places them itself (`placeDataOurselves`: each
+    becomes passive and is copied in after instantiation). The page (the kit's `web/`) shows the
     frames, plays the sound, reads the keyboard and gamepads, and keeps the ROM and the saves in the browser. The
     racing game's frames are byte for byte the native build's (its opening, menus and a race);
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
