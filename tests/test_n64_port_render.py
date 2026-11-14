@@ -35,17 +35,21 @@ static void gfx(uint32_t w0, uint32_t w1) { w32(dl, w0); w32(dl + 4, w1); dl += 
 enum { TASK = 0x100, UCODE = 0x200, TLUT = 0x400, MTX = 0x600, VTX = 0x700, IMAGE = 0x2000, FB = 0x10000 };
 
 /* argv[1]: 1 with perspective correction, 0 without; argv[2]: ci4 (LoadTile), rgba32block or rgba32tile;
-   argv[3], if any: "bilerp", the RDP's bilinear filter (G_TF_BILERP) */
+   argv[3], if any: "bilerp", the RDP's bilinear filter (G_TF_BILERP); or "fog": two cycles, the blender's first
+   fogging (fog colour * shade alpha + in * (1 - shade alpha)), G_FOG on, the fog colour blue, the RSP's fog alpha 128;
+   or "pass": force blend with the blender's selectors IN * 0 + IN * 1 (G_RM_PASS), and half-transparent 32-bit texels */
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
     int persp = argv[1][0] == '1', scale = persp ? 1 : 2; /* without perspective, coordinates twice as large */
     const char *kind = argv[2];
-    int bilerp = argc > 3 && !strcmp(argv[3], "bilerp");
+    int bilerp = argc > 3 && !strcmp(argv[3], "bilerp"), fog = argc > 3 && !strcmp(argv[3], "fog");
+    int pass = argc > 3 && !strcmp(argv[3], "pass");
     memcpy(ram + UCODE, "RSP Gfx ucode F3DEX2", 20);
     w32(TASK + 24, 0x80000000u | UCODE);
     w32(TASK + 48, 0x80000000u | dl);
     uint16_t colours[5] = {0, 0xF801 /* red */, 0x07C1 /* green */, 0x003F /* blue */, 0xFFFF /* white */};
     uint32_t colours32[5] = {0, 0xFF0000FF, 0x00FF00FF, 0x0000FFFF, 0xFFFFFFFF};
+    if (pass) for (int i = 1; i < 5; i++) colours32[i] = (colours32[i] & ~0xFFu) | 0x80; /* half transparent */
     for (int i = 0; i < 16; i++) w16(TLUT + i * 2, i < 5 ? colours[i] : 0);
     for (int t = 0; t < 8; t++) /* the quadrants are colours 1 to 4 */
         for (int s = 0; s < 8; s++) {
@@ -62,8 +66,16 @@ int main(int argc, char **argv) {
         w32(v + 12, 0xFFFFFFFFu);
     }
     gfx(0xFF100000u | 319, 0x80000000u | FB);                               /* G_SETCIMG: 320 wide */
-    gfx(0xEF000000u | (persp ? 0x80000 : 0) | (bilerp ? 0x2000 : 0), 0);  /* one cycle, perspective, filter */
-    gfx(0xFC000000u | 1 << 20 | 6 << 15 | 1 << 12 | 6 << 9, 15u << 28 | 7 << 15 | 7 << 12 | 7 << 9); /* TEXEL0 */
+    gfx(0xEF000000u | (persp ? 0x80000 : 0) | (bilerp ? 0x2000 : 0) | (fog ? 1 << 20 : 0),
+        fog ? 3u << 30 | 2u << 26 | 1u << 20 | 1u << 16                 /* cycles, perspective, filter, blender */
+            : pass ? 0x4000u | 3u << 26 | 2u << 18 | 3u << 24 | 2u << 16 : 0);
+    gfx(0xFC000000u | 1 << 20 | 6 << 15 | 1 << 12 | 6 << 9 | 15 << 5 | 31,  /* TEXEL0, then the combined colour */
+        15u << 28 | 7 << 15 | 7 << 12 | 7 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 7 << 3);
+    if (fog) {
+        gfx(0xF8000000u, 0x0000FFFFu);                                      /* G_SETFOGCOLOR: blue */
+        gfx(0xDB080000u, 0x00000080u);                                      /* G_MW_FOG: multiplier 0, offset 128 */
+        gfx(0xD9FFFFFFu, 0x00010000u);                                      /* G_FOG */
+    }
     if (kind[0] == 'c') {
         gfx(0xFD100000u, 0x80000000u | TLUT);                               /* the palette */
         gfx(0xF5000100u, 7u << 24);
@@ -149,3 +161,20 @@ def test_the_rdps_bilinear_filter_blends_neighbouring_texels(renderer, kind):
     assert drawn(renderer, True, kind)[8] == 0xF801  # point sampling: the red texel
     red, green, blue = pixels[8] >> 11 & 31, pixels[8] >> 6 & 31, pixels[8] >> 1 & 31
     assert 10 <= red <= 21 and 10 <= green <= 21 and blue == 0, hex(pixels[8])
+
+
+def test_fog_blends_the_fog_colour_by_the_rsps_fog_alpha(renderer):
+    """A racing game fogs most of its races: G_FOG makes each vertex's shade alpha the fog's, from its depth and
+    G_MW_FOG (here 128 everywhere), and the blender's first cycle mixes the fog colour in by it. The red quadrant comes
+    out half red, half the blue fog; without fog it would be red."""
+    pixels = drawn(renderer, True, "ci4", "fog")
+    red, green, blue = pixels[0] >> 11 & 31, pixels[0] >> 6 & 31, pixels[0] >> 1 & 31
+    assert 13 <= red <= 18 and green == 0 and 13 <= blue <= 18, hex(pixels[0])
+    assert drawn(renderer, True, "ci4")[0] == 0xF801
+
+
+def test_a_force_blend_that_passes_its_input_draws_it_opaque(renderer):
+    """The blender does what its selectors say: IN * 0 + IN * 1 is the incoming colour, opaque, even under force
+    blend and with half-transparent texels (a racing game's menu layers, dimmed by their primitive colour, not their
+    alpha). The renderer once blended every force-blend draw by alpha whatever its selectors."""
+    assert drawn(renderer, True, "rgba32tile", "pass")[0] == 0xF801
