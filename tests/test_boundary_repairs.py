@@ -297,3 +297,25 @@ def test_safe_fixes_respect_rooms_and_reviewed_entries(game):
     assert repair.apply_safe(net,'game')['fixed']==[]  # a kept entry was a person's decision
     net.rooms['game']=object()
     with pytest.raises(NetworkError,match='room'):repair.apply_safe(net,'game')
+
+
+FILL=0x331f630f  # leftover bytes an assembler wrote as 8-byte alignment (decodes as andi $ra, ...)
+LOAD=0x8c820000
+
+
+@pytest.mark.parametrize('case',['filler','pointed at','8-aligned','no entry after','set aside by you'])
+def test_safe_fixes_archive_one_alignment_word_between_a_return_and_the_next_entry(tmp_path,monkeypatch,case):
+    before=[LOAD,LOAD,JR_RA,NOP] if case=='8-aligned' else [LOAD,JR_RA,NOP]
+    after=[LOAD,JR_RA,NOP] if case=='no entry after' else [FRAME,JR_RA,UNFRAME]
+    pieces=[('returns',before,'open'),('filler',[FILL],'open'),('entry',after,'open')]
+    if case=='pointed at':pieces.append(('table',[BASE+4*len(before),JR_RA,NOP],'open'))
+    net,_=layout(tmp_path,monkeypatch,pieces)
+    if case=='set aside by you':net.set_aside_by_you('filler','game','hand-written')
+    result=repair.apply_safe(net,'game')
+    fixed=[(f['flagged'],f['action']) for f in result['fixed']]
+    if case=='filler':
+        assert fixed==[('filler','padding')] and result['remaining']==0
+        assert net._function('filler','game')['gone_mark'] is not None
+        assert [net._function(n,'game')['size'] for n in ('returns','entry')]==[12,12]  # neighbours untouched
+    else:
+        assert ('filler','padding') not in fixed

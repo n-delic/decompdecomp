@@ -139,4 +139,34 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             rewritten.append(replace(fn,lines=body))
         result=rewritten
     if changed:log(f'Automatically repaired {changed} proven function boundaries; original instruction bytes retained. Uncertain entries still need review.')
+    entered=explicit|pointers|set(destinations)
+    def referenced(fn):
+        return (fn.vram in explicit or fn.vram in pointers or any(offset!=fn.rom for offset,_ in references.get(fn.vram,()))
+                or any(d.rom is not None and d.rom<fn.rom+fn.size and fn.rom<d.rom+d.size for d in data))
+    kept=[];dropped=0;ordered=sorted(result,key=lambda f:(f.segment,f.rom))
+    for i,fn in enumerate(ordered):
+        previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
+        if (fn.size==4 and previous is not None and following is not None
+                and previous.segment==fn.segment==following.segment
+                and previous.rom+previous.size==fn.rom and following.rom==fn.rom+4 and following.vram==fn.vram+4
+                and alignment_fill(fn.vram,previous.size>=8 and previous.lines[-2].word==JR_RA,
+                                   following.vram in entered or is_frame(following.lines[0].word),referenced(fn))):
+            dropped+=1;continue
+        kept.append(fn)
+    if dropped:
+        log(f'Left {dropped} alignment words out of the functions: filler between a return and the next entry, kept in the image.')
+        return kept
     return result
+
+
+def alignment_fill(address, returned, entry_follows, referenced):
+    """One word between two functions that is filler, not code: the 8-byte alignment some assemblers (the SN
+    assembler of N64 kits) fill with whatever bytes were left over instead of zeros.
+
+    spimdisasm makes it a 4-byte function of its own, which can't be complete (a return needs a delay slot) and
+    runs on into the next one, so it was flagged for boundary review: an N64 game had 16 of them, another 73, one
+    worked on by an agent as if it were assembly. The word sits at an address ending in 4 or C, right after a
+    function that returned (`jr $ra` and its delay slot) and right before an 8-aligned entry something calls or
+    that opens its own stack frame, and nothing branches to it, calls it or points at it. Zero alignment is
+    trimmed earlier (split._trim_padding); export rebuilds either kind from the image (export_build.fill_gaps)."""
+    return address%8==4 and returned and entry_follows and not referenced

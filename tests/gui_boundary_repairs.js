@@ -83,15 +83,16 @@ async function main(){
     const log=s.get('[data-boundary-safe-log]'),stop=s.get('[data-boundary-safe-stop]'),button=s.get('[data-boundary-safe]');
     s.get('[data-boundary-safe]').onclick();await tick();
     assert(log._workBar&&!log._workBar.removed&&button.disabled&&!stop.hidden&&stop.disabled);
+    const bar=log._workBar;  // beginWork forgets a finished bar, so keep it to check it went away
     s.get('[data-boundary-safe]').onclick();await tick();  // a second click while starting starts nothing more
     if(outcome==='start-error'){start.reject(new Error('Leave the room first'));await tick();
-      assert(log._workBar.removed&&log._errorBox.textContent.includes('room')&&!button.disabled&&stop.hidden);continue;}
+      assert(bar.removed&&log._errorBox.textContent.includes('room')&&!button.disabled&&stop.hidden);continue;}
     start.resolve({job:'safe-1'});await tick();
     assert.equal(stop.disabled,false);
     if(outcome==='cancelled'){await stop.onclick();assert.deepEqual(cancels,['safe-1']);poll.resolve({state:'cancelled',error:'Safe boundary fixes stopped.',log:[]});}
     else poll.resolve({state:'done',log:['done'],result:{fixed:[{function:'head'}],remaining:3}});
     await tick();await tick();
-    assert(log._workBar.removed&&stop.hidden&&!button.disabled);
+    assert(bar.removed&&stop.hidden&&!button.disabled);
     if(outcome==='done')assert.equal(log._workStatus.textContent,'Applied 1 safe fix; 3 entries need review.');
     else assert.equal(log._workStatus.dataset.state,'error');
   }
@@ -101,7 +102,8 @@ async function main(){
   await back.ctx.openBoundaryReview();await tick();
   const backLog=back.get('[data-boundary-safe-log]');
   assert(backLog._workBar&&!backLog._workBar.removed&&back.get('[data-boundary-safe]').disabled&&!back.get('[data-boundary-safe-stop]').disabled);
+  const backBar=backLog._workBar;
   pending.resolve({state:'done',log:[],result:{fixed:[],remaining:0}});await tick();await tick();
-  assert(backLog._workBar.removed&&!back.get('[data-boundary-safe]').disabled);
+  assert(backBar.removed&&!back.get('[data-boundary-safe]').disabled);
 }
 main().catch(error=>{console.error(error);process.exit(1);});

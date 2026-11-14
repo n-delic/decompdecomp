@@ -147,3 +147,23 @@ def test_leaf_repair_is_shared_and_idempotent(platform):
     result=repair(functions,[],image,console,segments)
     assert [(f.rom,f.size) for f in result]==[(0,8),(20,20)]
     assert repair(result,[],image,console,segments)==result
+
+
+FILL=0x331f630f  # leftover bytes an assembler wrote as 8-byte alignment (decodes as andi $ra, ...)
+
+
+@pytest.mark.parametrize('case',['filler','symbol','pointer','8-aligned','no return before','no entry after'])
+def test_one_alignment_word_between_a_return_and_the_next_entry_is_left_out(case):
+    before=[0x8c820000,0x8c820000,0x03e00008,0] if case=='8-aligned' else [0x8c820000,0x8c820000,0x8c820000] if case=='no return before' else [0x8c820000,0x03e00008,0]
+    after=[0x8c820000,0x03e00008,0,0] if case=='no entry after' else BODY
+    words=before+[FILL]+after;cut=4*len(before)
+    if case=='pointer':words+=[BASE+cut]
+    image,functions,segments=fixture(words,cuts=(0,cut,cut+4,cut+4+4*len(after))+((len(words)*4,) if case=='pointer' else ()))
+    symbols=[f'func_{BASE+cut:08X} = 0x{BASE+cut:08X};'] if case=='symbol' else ()
+    result=repair(functions,[],image,consoles.get('n64'),segments,symbols=symbols)
+    if case=='filler':
+        assert [(f.rom,f.size) for f in result]==[(0,12),(16,32)]
+        assert image[12:16]==FILL.to_bytes(4,'big')  # the word stays in the image, outside any function
+        assert repair(result,[],image,consoles.get('n64'),segments)==result
+    else:
+        assert any(f.rom==cut for f in result)
