@@ -101,9 +101,10 @@ class Jobs:
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
-    def start(self, kind: str, fn) -> str:
+    def start(self, kind: str, fn, *, cancellable: bool = True) -> str:
         jid = uuid.uuid4().hex[:JOB_ID_CHARS]
-        job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
+        job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time(),
+               "cancellable": cancellable}
         cancel = self.cancel_events[jid] = threading.Event()
         self.jobs[jid] = job
         logger = self.logger
@@ -149,7 +150,9 @@ class Jobs:
     def cancel(self, jid: str) -> bool:
         with self._lock:
             job = self.jobs.get(jid)
-            if not job or job["state"] != "running":
+            # Reference batches stop between native trials through their own
+            # durable flag; generic cancellation must not hide a committed match.
+            if not job or job["state"] != "running" or not job.get("cancellable", True):
                 return False
             self.cancel_events[jid].set()
             return True

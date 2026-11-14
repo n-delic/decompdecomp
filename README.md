@@ -145,6 +145,9 @@ The owner can prepare a source-only preview against a selected function, review 
 **Try and accept if verified**. A trial uses the game's normal judge; high similarity is not a match. You must confirm that
 submitted code may enter normal attempts, best/matched code, progress and exports. This action is separate from agent source
 access and does not grant it.
+You can also review and approve a bounded batch of prior reviewed trials or applied metadata mappings. The default is ten
+trials within a fifteen-minute admission window. **Stop after current trial** preserves the current judge's outcome.
+Changes to the reviewed source, target or build context require a new review; batches never guess correspondence or call a model.
 See [Reference sources](docs/REFERENCE-SOURCES.md) for the schema, examples, and manual Ghidra export helper.
 
 Removing a source never deletes its original files. Attaching, importing, or searching references never changes project source

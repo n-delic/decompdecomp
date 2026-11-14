@@ -61,13 +61,14 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Verified objdiff references for public Splat projects | — | — | — | — | — | — | — | — | — | — | — | ✓ N64 and PS1 simple code splits; — overlays and nested builds |
 | Find a game in a local library by declared SHA-1 | — | — | — | — | — | — | — | — | — | — | — | ✓ N64, including supported original ROM versions and byte orders; exact-file splat; — dtk, configure and whole-disc PS |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Private reference text search and explicit judged trials¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ |
+| Private reference search, judged trials and reviewed batches¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ | shared¹ |
 
 Reference search uses the shared project UI/database; explicit trials use the existing console judge.
 The `shared¹` entries mean synthetic ROM-mode and project-mode service, core, HTTP and GUI coverage only;
 no per-console real-compiler/game checks have been run. Agent retrieval requires per-source opt-in. Versioned metadata supports
-explicit mapping and individually reviewed names; types remain reference text. Owner-approved trials are local-project-only.
-Automatic candidate compilation and matching remain planned.
+explicit mapping and individually reviewed names; types remain reference text. Owner-approved trials and bounded reviewed
+batches are local-project-only. Batch evidence is previous owner-reviewed code or an applied current metadata mapping, not
+inferred correspondence. New binary-object reference ingestion, persistent autopilot scheduling and cross-version discovery remain planned.
 
 Where to start on a gap:
 - **PS4**: Linux x86-64 imports decrypted ELF and judges with strict objdiff. Synthetic tests cover leaf functions and same-file, cross-file and import calls, including rejection of incorrect callees and code. The checked rows are covered by the demo conformance tests. Other rows stay “—” until exercised through the real PS4 engine: twins, permuting, polishing, saves/README cards, rooms, shared knowledge, Check again and verdicts need console-specific validation. Autopilot, header-aware drafts, compiler switching/surveys, source splitting, piece joining, class/structure recovery, reimport and whole-game export remain implementation gaps. Encrypted SELF/PKG and PRX modules are unsupported.
@@ -857,8 +858,12 @@ tests cover the feature. The Ghidra helper has a Java stub-harness check; real G
 Windows/macOS checks remain to be run.
 
 The owner trial panel supports explicit target/source selection, source-only preview, reviewed edits and consent before a
-normal judged run. Similarity is never treated as identity. Automatic exact-reference trials and evidence-ranked cross-version
-suggestions remain future work. Near-matches will remain attempts, never accepted matches without the existing judge's verdict. Git URL
+normal judged run. Similarity is never treated as identity. Owners can review and approve bounded batches of prior reviewed
+trial recipes and applied current metadata mappings. Each batch has admission/time budgets, a stop-after-current control,
+private durable outcomes and a full-context scored-miss cache. Changed source/target/context needs fresh review; an earlier
+accepted project-source edit can invalidate the remaining batch. No name-only guesses, new object importer, persistent
+autopilot option or model call is included. Evidence-ranked cross-version suggestions remain future work.
+Near-matches remain attempts, never accepted matches without the existing judge's verdict. Git URL
 acquisition and arbitrary Ghidra project formats are not included in the local text release.
 
 ### Library decomps built locally

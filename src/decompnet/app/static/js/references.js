@@ -38,6 +38,7 @@ function releaseReferenceControls(controls, operation) {
 function resetReferences() {
   referenceGeneration++; referenceSearchGeneration++;
   if (typeof window.resetReferenceTrials === "function") window.resetReferenceTrials();
+  if (typeof window.resetReferenceBatches === "function") window.resetReferenceBatches();
   $("referenceList").replaceChildren(); $("referenceResults").replaceChildren(); $("referenceLog").replaceChildren();
   $("referenceQuery").value = "";
   for (const operation of referenceOperations) {
@@ -91,13 +92,15 @@ async function loadReferences(existingLog = null) {
     if (referenceOwns(slug, gen, pane) && request === referenceGeneration) {
       await loadReferenceMetadata(slug, gen);
       if (typeof window.loadReferenceTrials === "function") await window.loadReferenceTrials();
+      if (typeof window.loadReferenceBatches === "function") await window.loadReferenceBatches();
     }
   } catch (error) { if (referenceOwns(slug, gen, pane) && request === referenceGeneration) showJobError(log, error.message); }
   finally { if (finish) finish(); }
 }
 async function changeReference(route, body, label, owner = { slug: S.slug, gen: S.gen }) {
   const { slug, gen } = owner, pane = $("referencesPane");
-  if (slug !== S.slug || gen !== S.gen || body.slug !== slug || !referenceOwns(slug, gen, pane) || activeReferenceOperation(slug, gen) || metadataExclusiveOperation) return;
+  if (slug !== S.slug || gen !== S.gen || body.slug !== slug || !referenceOwns(slug, gen, pane) || activeReferenceOperation(slug, gen) || metadataExclusiveOperation ||
+      (typeof window.referenceBatchBusy === "function" && window.referenceBatchBusy())) return;
   const { root, log } = referenceOperationLog(), controls = referenceControls(pane);
   const operation = { slug, gen, pane, root, log, job: null, cancelRequested: false, controls, controlsReleased: false };
   referenceOperations.add(operation); referencePending = operation;
@@ -137,7 +140,8 @@ function metadataImportListOwns(slug, gen, pane, request) { return metadataOwns(
 function metadataRecordsOwns(slug, gen, pane, view, request) { return metadataOwns(slug, gen, pane) && metadataView === view && request === metadataRecordsRequest; }
 function metadataCanStart(slug = S.slug, gen = S.gen) {
   return slug === S.slug && gen === S.gen && referenceOwns(slug, gen, $("referencesPane")) && !activeReferenceOperation(slug, gen) &&
-    !metadataExclusiveOperation && !metadataMutationBusy && !metadataImportBusy;
+    !metadataExclusiveOperation && !metadataMutationBusy && !metadataImportBusy &&
+    !(typeof window.referenceBatchBusy === "function" && window.referenceBatchBusy());
 }
 function metadataViewCurrent(slug, gen, view, article) {
   return metadataOwns(slug, gen, $("referencesPane")) && metadataView === view && article.isConnected;
@@ -176,9 +180,10 @@ function referenceControls(root) {
   return [...new Set(["button", "input", "select"].flatMap((selector) => [...root.querySelectorAll(selector)]))];
 }
 function registerMetadataControls(root, slug = S.slug, gen = S.gen) {
-  const owner = activeReferenceOperation(slug, gen);
-  if (owner) registerReferenceControls(owner, referenceControls(root));
-  if (metadataExclusiveOperation) registerReferenceControls(metadataExclusiveOperation, referenceControls(root));
+  const controls = referenceControls(root), owner = activeReferenceOperation(slug, gen);
+  if (owner) registerReferenceControls(owner, controls);
+  if (metadataExclusiveOperation) registerReferenceControls(metadataExclusiveOperation, controls);
+  if (typeof window.registerReferenceBatchControls === "function") window.registerReferenceBatchControls(controls, slug, gen);
 }
 function beginMetadataExclusive() {
   const operation = { controls: [], controlsReleased: false };
@@ -363,7 +368,7 @@ $("referenceAddFile").onclick = () => chooseReference("file");
 $("referenceAddFolder").onclick = () => chooseReference("folder");
 $("referenceSearch").onsubmit = async (event) => {
   event.preventDefault(); const slug = S.slug, gen = S.gen, pane = $("referencesPane");
-  if (activeReferenceOperation(slug, gen)) return;
+  if (activeReferenceOperation(slug, gen) || (typeof window.referenceBatchBusy === "function" && window.referenceBatchBusy())) return;
   const request = ++referenceSearchGeneration;
   const query = $("referenceQuery").value.slice(0, REFERENCE_QUERY_LIMIT), output = $("referenceResults"),
     { log } = referenceOperationLog(), submit = $("referenceSearchButton");

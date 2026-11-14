@@ -26,6 +26,19 @@ CREATE TABLE IF NOT EXISTS reference_trials(
   context_hash TEXT NOT NULL, status TEXT NOT NULL, created_at REAL NOT NULL,
   result TEXT NOT NULL DEFAULT '{}', UNIQUE(project_id, nonce));
 CREATE INDEX IF NOT EXISTS idx_reference_trials_project_time ON reference_trials(project_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS reference_batches(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  nonce TEXT NOT NULL, request_hash TEXT NOT NULL, owner TEXT NOT NULL, job_id TEXT,
+  state TEXT NOT NULL, stop_requested INTEGER NOT NULL DEFAULT 0,
+  max_trials INTEGER NOT NULL, max_seconds INTEGER NOT NULL,
+  created_at REAL NOT NULL, updated_at REAL NOT NULL,
+  items TEXT NOT NULL, warnings TEXT NOT NULL DEFAULT '[]', UNIQUE(project_id,nonce));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reference_batch_active ON reference_batches(project_id)
+  WHERE state IN ('queued','running','stopping');
+CREATE TABLE IF NOT EXISTS reference_batch_misses(
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  cache_key TEXT NOT NULL, created_at REAL NOT NULL, PRIMARY KEY(project_id,cache_key));
 CREATE TABLE IF NOT EXISTS reference_sources(
   id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL, root TEXT NOT NULL, kind TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,

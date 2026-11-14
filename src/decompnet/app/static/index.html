@@ -417,6 +417,22 @@
             <div id="trialHistory"></div>
           </div>
         </section>
+        <section class="panel" id="referenceBatches" aria-labelledby="referenceBatchesHeading">
+          <header class="panel-head"><h3 id="referenceBatchesHeading">Approved reference batches</h3></header>
+          <div class="pad">
+            <p class="muted">Reviewed correspondence is candidate evidence, not proven identity. Only the normal judge accepts matches. Source-only previews do not compile. Changed project context requires review again, even after an earlier candidate matched. Submitted attempts, best code and matches can become visible in progress/exports and to agents; model access remains separately opt-in.</p>
+            <label>Maximum trials <input id="referenceBatchTrials" type="number" min="1" max="20" value="10"></label>
+            <label>Admission deadline (minutes) <input id="referenceBatchMinutes" type="number" min="1" max="60" value="15"></label>
+            <button id="referenceBatchPreview" type="button">Preview candidates</button>
+            <div id="referenceBatchCandidates"></div>
+            <label><input id="referenceBatchVerified" type="checkbox"> I reviewed the selected candidates and approve trying them</label>
+            <label><input id="referenceBatchProgress" type="checkbox"> I understand submitted attempts, best code and matches may be visible</label>
+            <button id="referenceBatchStart" type="button" disabled>Start approved batch</button>
+            <button id="referenceBatchStop" type="button" hidden>Stop after current trial</button>
+            <div id="referenceBatchLog" class="job-log" aria-live="polite"></div>
+            <div id="referenceBatchHistory"></div>
+          </div>
+        </section>
       </div>
     </section>
   </section>
@@ -607,6 +623,7 @@
 <script src="/assets/js/project.js"></script>
 <script src="/assets/js/references.js"></script>
 <script src="/assets/js/reference_trials.js"></script>
+<script src="/assets/js/reference_batches.js"></script>
 <script src="/assets/js/map.js"></script>
 <script src="/assets/js/agents.js"></script>
 <script src="/assets/js/function.js"></script>
