@@ -1,6 +1,7 @@
 """Project autosave controls cancel background work without disabling explicit verification."""
 import threading
 import time
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 from decompnet.app import saves
@@ -39,7 +40,7 @@ def test_project_workers_pause_resume_persist_and_share_one_slot(tmp_path):
         return True
     settings = Settings(tmp_path / 'settings.json')
     auto = saves.Autosave(SimpleNamespace(store=SimpleNamespace(all=lambda *_:rows),
-                                         progress=SimpleNamespace(sync=sync)), settings)
+                                         progress=SimpleNamespace(sync=sync, deferring=nullcontext)), settings)
     auto.net.project_store = lambda _: auto.net.store
     second = rows.pop(1)
     auto._reconcile()
@@ -72,7 +73,7 @@ def test_project_workers_pause_resume_persist_and_share_one_slot(tmp_path):
 def test_project_removal_retires_worker_and_start_is_idempotent(tmp_path):
     rows = [{'slug':'game', 'root':str(tmp_path), 'config':'{"kind":"rom","rom":{"sha1":"abc"}}'}]
     net = SimpleNamespace(store=SimpleNamespace(all=lambda *_:list(rows)),
-                          progress=SimpleNamespace(sync=lambda *args, **kw:False))
+                          progress=SimpleNamespace(sync=lambda *args, **kw:False, deferring=nullcontext))
     net.project_store = lambda _: net.store
     auto = saves.Autosave(net)
     auto.start()
@@ -97,7 +98,7 @@ def test_commit_workers_are_independent_per_project_and_pause_cooperatively(tmp_
     rows = [{'slug':slug,'root':str(tmp_path),'config':json.dumps(
         {'kind':'rom','rom':{'sha1':'abc'},'auto_commit_matches':True})} for slug in ('a','b')]
     net = SimpleNamespace(store=SimpleNamespace(all=lambda *_: rows),
-                          progress=SimpleNamespace(sync=lambda *args, **kwargs: False))
+                          progress=SimpleNamespace(sync=lambda *args, **kwargs: False, deferring=nullcontext))
     net.project_store = lambda _: net.store
     auto = saves.Autosave(net)
     entered = {slug:threading.Event() for slug in ('a','b')}
