@@ -28,18 +28,34 @@ def wait_for(check, seconds=10):
 
 
 def test_formatting_code_update_changes_worker_revision(tmp_path, monkeypatch):
+    """permuter_formatting.py moved to decomprepair (0.3.0): the worker watches the library's file."""
+    (tmp_path/'lib').mkdir()
+    (tmp_path/'lib'/'permuter_formatting.py').write_text('formatting code')
     monkeypatch.setattr(permuter_worker, '__file__', str(tmp_path/'app'/'permuter_worker.py'))
+    monkeypatch.setattr(permuter_worker, '_library', lambda: tmp_path/'lib')
     before = permuter_worker.revision()
-    (tmp_path/'permuter_formatting.py').write_text('updated formatting code')
+    (tmp_path/'lib'/'permuter_formatting.py').write_text('updated formatting code, longer')
     assert permuter_worker.revision() != before
 
 
 @pytest.mark.parametrize('module', ['argument_mask_repairs.py', 'inline_scheduling_repairs.py', 'loop_weight_repairs.py'])
 def test_argument_capture_update_changes_worker_revision(tmp_path, monkeypatch, module):
+    """These families live in decomprepair: an update to the library's file restarts the worker."""
+    (tmp_path/'lib').mkdir()
+    (tmp_path/'lib'/module).write_text('argument capture')
+    monkeypatch.setattr(permuter_worker, '__file__', str(tmp_path/'app'/'permuter_worker.py'))
+    monkeypatch.setattr(permuter_worker, '_library', lambda: tmp_path/'lib')
+    before = permuter_worker.revision()
+    (tmp_path/'lib'/module).write_text('updated argument capture')
+    assert permuter_worker.revision() != before
+
+
+def test_app_owned_code_update_changes_worker_revision(tmp_path, monkeypatch):
     (tmp_path/'app').mkdir()
     monkeypatch.setattr(permuter_worker, '__file__', str(tmp_path/'app'/'permuter_worker.py'))
+    monkeypatch.setattr(permuter_worker, '_library', lambda: tmp_path/'lib')
     before = permuter_worker.revision()
-    (tmp_path/'app'/module).write_text('updated argument capture')
+    (tmp_path/'app'/'permute.py').write_text('updated permuter')
     assert permuter_worker.revision() != before
 
 

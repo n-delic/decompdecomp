@@ -14,7 +14,7 @@ def test_shortlist_keeps_order_limits_and_reloads_on_a_new_pass(pair, monkeypatc
     original = pair.store.one
     reads = []
     def one(sql, *args):
-        if sql.startswith('SELECT * FROM functions WHERE id='):
+        if 'FROM main.functions WHERE id=' in sql:
             reads.append(args)
         return original(sql, *args)
     monkeypatch.setattr(pair.store, 'one', one)

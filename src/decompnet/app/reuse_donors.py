@@ -10,6 +10,19 @@ from ..metadata_rows import rows as metadata_rows
 
 MAX_BODIES = 1024
 NEARBY_SLOTS = 32
+# What ranking a donor needs (its code, relocations, place and size, and whether it has matched C), read from the
+# physical row. `SELECT *` went through the detail view, which decompresses every packed text column (assembly, seed,
+# best, matched and unpolished C) in a Python callback inside SQLite: the live app's top CPU use, 365 s of 397 s in
+# an hour on the matched-source reuse thread, for up to 400 candidates per target of which 3 are tried. Those three
+# are read whole again before use (similar_matches: `fresh`), so a polished donor's current C is still what's tried.
+LIGHT_COLUMNS = ('id,project_id,name,size,n_insns,target,relocs,status,unit,vram,rom_offset,meta,fingerprint,'
+                 'matched_agent_id,matched_at,readable')
+# A donor whose matched C is missing from storage still fails here, as reading it whole did (payload_read raises),
+# without decompressing the ones that are there.
+HAS_MATCHED = ("CASE WHEN typeof(matched_source)='blob' THEN CASE WHEN EXISTS(SELECT 1 FROM text_payloads "
+               "WHERE hash=lower(hex(matched_source))) THEN 1 ELSE payload_read(lower(hex(matched_source)),NULL) END "
+               "ELSE matched_source IS NOT NULL AND matched_source != '' END AS has_matched")
+PLAIN_HAS_MATCHED = "matched_source IS NOT NULL AND matched_source != '' AS has_matched"  # (no packed text yet)
 
 
 class Donors:
@@ -31,6 +44,15 @@ class Donors:
         self.rows.sort(key=lambda row:(row['size'], row['function_id']))
         self.sizes = [row['size'] for row in self.rows]
         self.bodies = OrderedDict()
+        self.queries = {}  # project id -> its light row query (whether its database has packed text)
+
+    def _light(self, project_id, fid):
+        store = self.net.project_store(project_id)
+        if project_id not in self.queries:
+            packed = store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='text_payloads'")
+            self.queries[project_id] = (f"SELECT {LIGHT_COLUMNS},{HAS_MATCHED if packed else PLAIN_HAS_MATCHED} "
+                                        "FROM main.functions WHERE id=? AND status='matched'")
+        return store.one(self.queries[project_id], fid)
 
     def candidates(self, size, low, high, fingerprint, compiler, limit, *, near=None):
         """Preserve the previous size/distance/id ordering and limit, without reloading cached source blobs."""
@@ -47,7 +69,7 @@ class Donors:
         for row in rows[:limit]:
             fid = row['function_id']
             if fid not in self.bodies:
-                body = self.net.project_store(row['project_id']).one("SELECT * FROM functions WHERE id=? AND status='matched'", fid)
+                body = self._light(row['project_id'], fid)
                 self.bodies[fid] = dict(body) if body else None
             self.bodies.move_to_end(fid)
             body = self.bodies[fid]

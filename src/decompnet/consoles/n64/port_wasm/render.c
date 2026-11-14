@@ -75,7 +75,7 @@ static Color texel(const Tile *tile, int s, int t) {
     if (s < 0) s = 0;
     if (t < 0) t = 0;
     uint32_t row = (uint32_t)(tile->tmem * 8 + t * tile->line * 8);
-    uint32_t odd = (t & 1) && tile->siz < 3 ? 4 : 0; /* TMEM keeps odd rows' 32-bit halves swapped: read them back */
+    uint32_t odd = (t & 1) ? 4 : 0; /* TMEM keeps odd rows' 32-bit halves swapped: read them back */
     switch (tile->siz) {
     case 0: { /* 4-bit */
         uint8_t b = tmem[((row + s / 2) ^ odd) & 4095];
@@ -98,9 +98,9 @@ static Color texel(const Tile *tile, int s, int t) {
         if (tile->fmt == 3) { float i = (v >> 8) / 255.0f; return (Color){i, i, i, (v & 255) / 255.0f}; }
         return unpack5551(v);
     }
-    default: { /* 32-bit: split across TMEM's halves on the console; kept whole here */
-        uint32_t a = (row + s * 4) & 4092;
-        return (Color){tmem[a] / 255.0f, tmem[a + 1] / 255.0f, tmem[a + 2] / 255.0f, tmem[a + 3] / 255.0f};
+    default: { /* 32-bit: red and green in TMEM's low half, blue and alpha at the same place in its high half */
+        uint32_t a = ((row + s * 2) ^ odd) & 2046;
+        return (Color){tmem[a] / 255.0f, tmem[a + 1] / 255.0f, tmem[a + 2048] / 255.0f, tmem[a + 2049] / 255.0f};
     }
     }
 }
@@ -221,25 +221,49 @@ static void tex_rect(int tile, float x0, float y0, float x1, float y1, float s, 
 static void tmem_word(uint32_t at, uint32_t src, int odd) {
     for (int k = 0; k < 8; k++) tmem[(at + (uint32_t)(odd ? k ^ 4 : k)) & 4095] = R[src + k];
 }
+/* A 32-bit texel into TMEM as the RDP keeps it: red and green at `at` in the low half, blue and alpha at the same
+   place in the high half. A 32-bit tile's line and TMEM address therefore count two bytes a texel: each row read at
+   its line's pitch is half a row of whole texels, which once made a racing game's soft car shadows (a 16x16 RGBA32
+   texture) come out as dark stripes. */
+static void tmem_texel32(uint32_t at, uint32_t src, int odd) {
+    uint32_t a = (at ^ (odd ? 4u : 0u)) & 2046;
+    tmem[a] = R[src]; tmem[a + 1] = R[src + 1]; tmem[a + 2048] = R[src + 2]; tmem[a + 2049] = R[src + 3];
+}
 static void load_block(int tile, int uls, int ult, int lrs, int dxt) {
     Tile *tl = &tiles[tile];
+    if (timg_siz == 3) { /* each 64-bit word two texels; the line counter as below */
+        uint32_t src = phys(timg_addr) + (uint32_t)((ult * timg_width + uls) * 4), line = 0;
+        uint32_t words = (uint32_t)(lrs - uls + 2) / 2;
+        for (uint32_t i = 0; i < words && tl->tmem * 8 + i * 4 < 2048; i++) {
+            for (uint32_t k = 0; k < 2; k++) tmem_texel32(tl->tmem * 8 + i * 4 + k * 2, src + i * 8 + k * 4, (line >> 11) & 1);
+            line += (uint32_t)dxt;
+        }
+        return;
+    }
     int bytes = timg_siz == 0 ? 1 : 1 << (timg_siz - 1); /* 4-bit loads are made as 8 or 16-bit ones */
     uint32_t src = phys(timg_addr) + (uint32_t)((ult * timg_width + uls) * bytes);
     uint32_t words = ((uint32_t)(lrs - uls + 1) * bytes + 7) / 8;
     uint32_t line = 0; /* the line counter: dxt per word, the line is odd when bit 11 is set */
     for (uint32_t i = 0; i < words && tl->tmem * 8 + i * 8 < 4096; i++) {
-        tmem_word(tl->tmem * 8 + i * 8, src + i * 8, timg_siz < 3 && ((line >> 11) & 1));
+        tmem_word(tl->tmem * 8 + i * 8, src + i * 8, (line >> 11) & 1);
         line += (uint32_t)dxt;
     }
 }
 static void load_tile(int tile, int uls, int ult, int lrs, int lrt) {
     Tile *tl = &tiles[tile];
     int bpp4 = timg_siz == 0, bytes = bpp4 ? 1 : 1 << (timg_siz - 1);
+    if (timg_siz == 3) {
+        for (int t = ult; t <= lrt; t++)
+            for (int x = uls; x <= lrs; x++)
+                tmem_texel32((uint32_t)(tl->tmem * 8 + (t - ult) * tl->line * 8 + (x - uls) * 2),
+                             phys(timg_addr) + (uint32_t)((t * timg_width + x) * 4), (t - ult) & 1);
+        return;
+    }
     for (int t = ult; t <= lrt; t++) {
         uint32_t src = phys(timg_addr) + (uint32_t)(bpp4 ? (t * timg_width + uls) / 2 : (t * timg_width + uls) * bytes);
         uint32_t dst = (uint32_t)(tl->tmem * 8 + (t - ult) * tl->line * 8);
         int n = bpp4 ? (lrs - uls + 2) / 2 : (lrs - uls + 1) * bytes;
-        for (int i = 0; i < n; i += 8) tmem_word(dst + (uint32_t)i, src + (uint32_t)i, ((t - ult) & 1) && timg_siz < 3);
+        for (int i = 0; i < n; i += 8) tmem_word(dst + (uint32_t)i, src + (uint32_t)i, (t - ult) & 1);
     }
 }
 static void load_tlut(int tile, int count) {
@@ -362,7 +386,7 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
     if (maxx > scissor[2]) maxx = scissor[2];
     if (maxy > scissor[3]) maxy = scissor[3];
     float wa = 1 / a->w, wb = 1 / b->w, wc = 1 / c->w, inv = 1 / area;
-    int smooth = (geometry & 0x200000) != 0;
+    int smooth = (geometry & 0x200000) != 0, persp = (mode_h & 0x80000) != 0; /* G_TP_PERSP */
     Tile *tl = &tiles[tex_tile];
     for (int y = miny; y < maxy; y++)
         for (int x = minx; x < maxx; x++) {
@@ -378,15 +402,23 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
                                         l0 * a->shade.a + l1 * b->shade.a + l2 * c->shade.a} : c->shade;
             Color t0 = {1, 1, 1, 1};
             if (tex_on) {
-                float q = l0 * wa + l1 * wb + l2 * wc;
-                float s = (l0 * a->s * wa + l1 * b->s * wb + l2 * c->s * wc) / q;
-                float t = (l0 * a->t * wa + l1 * b->t * wb + l2 * c->t * wc) / q;
+                float s, t;
+                if (persp) {
+                    float q = l0 * wa + l1 * wb + l2 * wc;
+                    s = (l0 * a->s * wa + l1 * b->s * wb + l2 * c->s * wc) / q;
+                    t = (l0 * a->t * wa + l1 * b->t * wb + l2 * c->t * wc) / q;
+                } else { /* no perspective correction: interpolated as they are, at half scale (below) */
+                    s = l0 * a->s + l1 * b->s + l2 * c->s;
+                    t = l0 * a->t + l1 * b->t + l2 * c->t;
+                }
                 if (tl->shifts) s = tl->shifts > 10 ? s * (float)(1 << (16 - tl->shifts)) : s / (float)(1 << tl->shifts);
                 if (tl->shiftt) t = tl->shiftt > 10 ? t * (float)(1 << (16 - tl->shiftt)) : t / (float)(1 << tl->shiftt);
-                /* 4-bit textures: a racing game's menu text gives each glyph twice the texel coordinates of its
-                   place in a 128-texel font page (the matched C doubles its table's values); halved, the text reads
-                   as on the console. Found by trying it: the RDP rule behind it is still to be confirmed. */
-                if (tl->siz == 0) { s *= 0.5f; t *= 0.5f; }
+                /* Without perspective correction the RDP takes texture coordinates at half the scale it takes
+                   them with it: a racing game's menu text (perspective off) gives each glyph twice the texel
+                   coordinates of its place in its font page. This was once done for every 4-bit texture, which
+                   also halved the cars' 4-bit skins (perspective on): each car showed the top-left quarter of its
+                   skin, stretched over the body. */
+                if (!persp) { s *= 0.5f; t *= 0.5f; }
                 t0 = texel(tl, (int)floorf(s), (int)floorf(t));
             }
             plot(x, y, z, sh, t0, (geometry & 1) != 0);

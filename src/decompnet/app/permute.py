@@ -34,6 +34,8 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import decomprepair
+
 from .. import compile_timing, consoles, m2cfix, permuter_claims, scoring, seeds, toolchains
 from ..candidate_work import trial
 from ..compile_sessions import batched
@@ -52,7 +54,7 @@ SECONDS = 60  # per function per turn
 MAX_TURNS = 4  # turns per function before it's left to agents (counted in the database: functions.permuted)
 CANDIDATES = 20  # near misses looked up at a time, for the workers to share
 TOOL = "decomp-permuter"
-GENERATOR = Path(__file__).resolve().parent.parent / "permuter_gen.py"
+GENERATOR = Path(decomprepair.__file__).resolve().parent / "permuter_gen.py"  # with its sibling modules
 BATCH = 64  # variants per run of the generator: about 0.15 s to write, a few seconds to judge
 GENERATOR_SECONDS = 30  # a batch that takes longer is stuck: its randomizer retries until a rewrite applies
 READ_BYTES = 1 << 16
@@ -235,8 +237,14 @@ class Generator:
         self.proc.wait()
         self._reader.join(timeout=0.5)
         if not self._reader.is_alive():
-            self.proc.stdin.close()
-            self.proc.stdout.close()
+            try:
+                self.proc.stdin.close()
+            except BrokenPipeError:
+                # BufferedWriter.close retries a failed request's flush after the child has
+                # exited. Disposal must not replace its failed-job fallback or cancellation.
+                pass
+            finally:
+                self.proc.stdout.close()
 
 
 @dataclass

@@ -8,14 +8,14 @@ function element(){return {open:false,disabled:false,hidden:false,textContent:''
   listeners:{},addEventListener(k,f){this.listeners[k]=f;},append(...c){this.children.push(...c);},before(){},remove(){},
   setAttribute(){},replaceChildren(...c){this.children=c;}};}
 function setup(){
-  const nodes=new Map(),calls=[];
+  const nodes=new Map(),calls=[],bodies=[];
   const c=vm.createContext({console,Map,Promise,Error,Number,encodeURIComponent,S:{slug:'a'},
     $:id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);},document:{createElement:element},
-    api(url){calls.push(url);return c.reply(url);},reply:async()=>({})});
+    api(url,opts){calls.push(url);bodies.push(opts&&opts.body);return c.reply(url);},reply:async()=>({})});
   vm.runInContext(base.slice(base.indexOf('function beginWork('),base.indexOf('function updateWorkProgress(')),c);
   vm.runInContext(base.slice(base.indexOf('function showJobError('),base.indexOf('/*',base.indexOf('function showJobError('))),c);
   vm.runInContext(source,c);
-  return {c,calls,run:s=>vm.runInContext(s,c)};
+  return {c,calls,bodies,run:s=>vm.runInContext(s,c)};
 }
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'A kit.'},ready:false,
@@ -110,5 +110,22 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    await t.run('playGame()');
    assert.deepEqual(opened,[],'a game in its own window opens no browser tab');
    assert.equal(t.c.$('portStop').hidden,false);}
-  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, renamed calls and play passed');
+  {const t=setup();t.c.S.tab='porting';t.c.followJob=async()=>({url:'http://127.0.0.1:5/',window:true});
+   const runtimes=[{id:'wasm',name:'WebAssembly',summary:'Plays now.',built:true,missing:[],playable:true},
+     {id:'libultraship',name:'libultraship',summary:'Native.',built:false,missing:['Compiles for a PC','Assets extracted'],playable:false},
+     {id:'n64modernruntime',name:'N64ModernRuntime',summary:'Native.',built:false,missing:[],playable:false}];
+   t.c.reply=async url=>url==='/api/play'?{job:'p3'}:{...report,runtimes};
+   await t.run('loadPortReadiness()');
+   const play=t.c.$('portSteps').children[7].children[1];
+   const choice=play.children.find(c=>c.className==='port-runtimes');
+   assert.ok(choice,'the Play step offers its runtimes');
+   const options=choice.children.slice(1).map(l=>({radio:l.children[0],status:l.children[1].children[2].textContent}));
+   assert.deepEqual(options.map(o=>[o.radio.value,o.radio.checked,o.radio.disabled]),
+     [['wasm',true,false],['libultraship',false,true],['n64modernruntime',false,true]],'only a playable runtime can be chosen');
+   assert.match(options[0].status,/^Ready/);
+   assert.match(options[1].status,/Needs: Compiles for a PC, Assets extracted\. Then .*planned/);
+   assert.match(options[2].status,/steps it needs are done; .*isn't in decompdecomp yet/);
+   await t.run('playGame()');
+   assert.equal(t.bodies[t.calls.indexOf('/api/play')].runtime,'wasm','Play asks for the chosen runtime');}
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, renamed calls, play and runtimes passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

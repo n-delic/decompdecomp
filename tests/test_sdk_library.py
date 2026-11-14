@@ -14,6 +14,13 @@ from .test_similar_matches import pair as pair_fixture
 pair = pair_fixture
 
 
+@pytest.fixture(autouse=True)
+def _only_indexed_libraries(monkeypatch):
+    """These tests are about the libraries the user indexes; the N64's built-in table (test_sdk_builtin.py) stays out."""
+    from decompnet import consoles
+    monkeypatch.setattr(consoles.get("n64"), "sdk_table", "")
+
+
 def signature(net, corpus, fingerprint='exact'):
     with net.store.tx() as db:
         db.execute('INSERT INTO sdk_signatures(corpus,arch,big_endian,name,fingerprint,size) VALUES(?,?,?,?,?,?)',

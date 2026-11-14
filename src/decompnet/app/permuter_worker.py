@@ -40,11 +40,19 @@ def empty_status(state):
             "current": "", "started_at": time.time(), "repairs": 0, "threads": max(1, workers.WORKERS - 1)}
 
 
+def _library() -> Path:
+    import decomprepair
+
+    return Path(decomprepair.__file__).resolve().parent
+
+
 def revision() -> tuple:
     root = Path(__file__).resolve().parents[1]
+    library = _library()
     result = []
-    for path in sorted(root / name for name in WATCHED):
-        name = path.relative_to(root).as_posix()
+    for name in sorted(WATCHED):
+        # the permuter's rewrites live in decomprepair now: their names here are aliases, so watch the library's file
+        path = library / Path(name).name if (library / Path(name).name).exists() else root / name
         try:
             stat = path.stat()
             result.append((name, stat.st_mtime_ns, stat.st_size))

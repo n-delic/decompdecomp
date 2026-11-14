@@ -776,7 +776,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | ✓ symbol table, DWARF 1 | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
-| Grouped ROM variants: selector, identities, checked shared C and single-repository export | ✓ demo verified | — adapter validation pending | — adapter validation pending | — adapter validation pending | — object adapter planned | — object adapter planned | — object adapter planned | — object adapter planned |
+| Grouped ROM variants: selector, identities, checked shared C and single-repository export | ✓ demo + two real releases verified | — adapter validation pending | — adapter validation pending | — adapter validation pending | — object adapter planned | — object adapter planned | — object adapter planned | — object adapter planned |
 | Other releases of a game: found, paired, names, header types and code brought over | ✓ | — not yet run | — not yet run | — not yet run | — object pairing planned | — object pairing planned | — object pairing planned | — object pairing planned |
 | Automatic attempts from similar verified C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | — | — |
 | Bounded automatic reuse, tiny templates and local SDK C | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | ✓ (ROM) | — | — | — | — |
@@ -998,8 +998,8 @@ has, and the port's version of a matched file. The build goes to `port/wasm/buil
 Left:
 - the renderer (`consoles/n64/port_wasm/render.c`, a software RSP and RDP into the game's own frame buffer) draws
   the racing game's opening and title screens, its language menu (3D flags, menu text) and the Rumble Pak prompt,
-  reached with scripted input (`PORT_INPUT`). Why its 4-bit text needs its texture coordinates halved is still to
-  be confirmed. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
+  reached with scripted input (`PORT_INPUT`). Texture coordinates drawn without perspective correction are taken at
+  half scale (its menu text); its cars' 4-bit skins, drawn with it, are sampled whole. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
   saves other games use, the
@@ -2084,6 +2084,9 @@ Line Tools; queues that never wait, so decompdecomp's thread glue) or N64ModernR
 queues and timers; the RT64 renderer, complete S2DEX; reads the ROM at run time, so no extraction; RT64 needs full
 Xcode on macOS for its Metal shaders). The kit becomes a list per console (`Console.port_kits`), the readiness report
 and link check read the chosen one, and Port readiness shows the choice with what each needs on this computer.
+Started: the Porting tab's Play step lists the kit's runtimes (`PortKit.runtimes`), WebAssembly (playable now) and
+both native ones, each with the checklist steps it still waits for; the native ones can't be chosen until
+decompdecomp builds on them.
 Tried on a Mac: libultraship and its libraries built from source; N64ModernRuntime built; RT64 stopped for want of
 Xcode's `metal`.
 
@@ -3883,7 +3886,10 @@ recipes; structural checks, independent critique and human acceptance guard loca
 Initial local ROM grouping, independent target state, many-to-many logical function
 identities, checked shared C/header revisions, conditional defines and separate
 implementations, durable job results/Stop/reattachment, and multi-variant repository
-builds are implemented. See [ROM variants](docs/ROM_VARIANTS.md).
+builds are implemented. Two distinct N64 regional releases rebuild byte for byte
+from isolated project copies, preserving their saved work and history. Export reports
+per-function progress and retains assembly when a saved optional compiler is unavailable.
+See [ROM variants](docs/ROM_VARIANTS.md).
 
 Planned adapters: PROJECT-mode object identity and objdiff/build/export; team rooms;
 overlapping overlay-bank export; grouped portable Save/Open manifests; automatic

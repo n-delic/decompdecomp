@@ -86,3 +86,29 @@ def test_shared_match_archive_waits_for_owning_project_commit(scoped):
         library.capture(net._project('second'), 20)
         assert written == []
     assert written == [{'function':20}]
+
+
+def test_the_donor_shortlist_decompresses_no_text(scoped):
+    """Shortlisting read each candidate with SELECT *, decompressing its assembly and every C column in a callback
+    inside SQLite: the live app's top CPU use (365 s an hour). Ranking needs none of it; the few donors tried are
+    read whole later. A donor whose C is missing from storage still fails the shortlist (the test above)."""
+    from decompnet import payload_storage
+    net, stores = scoped
+    twins = setup(net, stores)
+    store = stores[1]
+    source = 'int same_name(void){return 1;}\n' * 500  # (packed: large text)
+    with store.tx() as db:
+        db.execute("UPDATE functions SET matched_source=?,best_source=?,asm=?", (source, source + '/**/', source + ';'))
+    assert store.one("SELECT typeof(matched_source) t FROM main.functions")['t'] == 'blob'
+    assert twins.index_project(net._project('first')) == 1
+    decoded = []
+    original = payload_storage.unpack
+    reader = store._reader() or store.conn
+    reader.create_function('payload_read', 2, lambda *args: decoded.append(args[0]) or original(*args), deterministic=True)
+    try:
+        donors = Donors(net, net._project('second')).candidates(64, 32, 128, '', '', 5)
+    finally:
+        reader.create_function('payload_read', 2, original, deterministic=True)
+    assert len(donors) == 1 and donors[0]['has_matched'] and donors[0]['target'] is not None
+    assert 'matched_source' not in donors[0] and 'asm' not in donors[0]
+    assert decoded == []

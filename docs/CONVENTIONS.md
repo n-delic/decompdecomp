@@ -119,6 +119,13 @@ and returns a cleanup function. `followJob(id, log)` follows the server's job an
 loop for a new foreground job. These helpers are already shared; extend them when another flow needs the same
 behaviour.
 
+A log box is a `<pre class="joblog">`, nothing more: `base.js` wraps every one that reaches the page (from
+`index.html`, `innerHTML` or `createElement`) in a `.joblog-frame` with a Copy button in its top-right corner, and
+hides the frame while the log is hidden or empty. Don't add a separate copy button or toolbar to a log. To put
+something beside a log, insert it next to `log._frame || log`, not `log` itself, so it lands outside the frame. Logs are
+coloured like a terminal from their text (errors, warnings, notes, file:line:col, tracebacks, success lines): keep
+writing plain text to them, never HTML. `data-plain` on a log turns the colouring off.
+
 ```javascript
 const log = $("taskLog"), button = $("taskGo");
 const finish = beginWork(log, "Measuring project", [button], "Project measurement finished.");

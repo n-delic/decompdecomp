@@ -189,4 +189,4 @@ def test_automatic_cleanup_rechecks_the_rolling_age(data,monkeypatch):
     assert not started
     now+=timedelta(days=2)
     retention.tick(301)
-    assert started==[{'foreground':False}]
+    assert len(started)==1 and started[0]['foreground'] is False

@@ -44,6 +44,7 @@ log = logging.getLogger("decompdecomp")
 # spimdisasm can name a function piece by the numeric label at its first instruction.
 LOCAL_PIECE = re.compile(r"\.L[0-9A-F]+")
 from . import saves
+from .project_lock import ProjectLock
 
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
 # A sync that failed (its game file gone) is tried again by reads and the autosave only when what it reads changed, or
@@ -562,7 +563,7 @@ class Progress:
         self.checked: dict[str, float] = {}
         self.results: dict[str, dict] = {}
         self.revisions: dict[str, int] = {}
-        self.project_locks: dict[str, threading.RLock] = {}
+        self.project_locks: dict[str, ProjectLock] = {}
         self.rechecking: dict[str, _Recheck] = {}
         self.last_write: dict[str, float] = {}  # slug -> when a database-only change was last published
         self.publish_tried: dict[str, float] = {}  # slug -> when a tool call last tried to publish one
@@ -699,7 +700,8 @@ class Progress:
 
     def _project_lock(self, slug: str):
         with self.lock:
-            return self.project_locks.setdefault(slug, threading.RLock())
+            if slug not in self.project_locks:self.project_locks[slug] = ProjectLock()
+            return self.project_locks[slug]
 
     def _baseline(self, project_id: int) -> _Baseline | None:
         store = self.net.project_store(project_id)
@@ -1188,6 +1190,8 @@ class Progress:
             self.local.viewing = previous
 
     def _activity(self, slug: str, **fields):
+        lock = getattr(self, 'project_locks', {}).get(slug)
+        if lock is not None:lock.set_phase(fields.get('phase'))
         with self.activity_lock:
             now = time.monotonic()
             current = self.activity.setdefault(slug, {"started": now})
@@ -1374,6 +1378,31 @@ class Progress:
         if force:
             self.local.began = None
 
+    @contextmanager
+    def _sync_lock(self, slug: str, force: bool):
+        """The project's lock for one check; yields False when a tool call's ordinary check need not wait for it.
+
+        An agent's claim waited almost five minutes behind the progress-commit job's sync, which held the lock while
+        parsing the save manifest on a busy machine: every tool call's first engine lookup makes an ordinary
+        (non-forced) check, and it queued for the lock even though such a check skips the folder anyway when one ran
+        under CHECK_SECONDS ago. While another thread holds the lock, that thread's check is the recent one. Forced
+        checks still wait: the judge's (judging) and the saves', whose verdicts depend on the folder being read, and
+        a recheck in progress still holds tool calls back until its inputs are ready."""
+        from ..request_timing import timed_lock
+        lock = self._project_lock(slug)
+        if (not force and slug not in self.rechecking
+                and (getattr(self.local, 'deferring', False) or getattr(self.local, 'foreground', False))):
+            if not lock.acquire(blocking=False):
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                lock.release()
+            return
+        with timed_lock(lock, 'progress_project_lock_wait'):
+            yield True
+
     def _sync_checked(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None,
                       asked: int | None = None) -> bool:
         """Read contributions first, then publish only work changed locally since the last synchronization.
@@ -1389,9 +1418,10 @@ class Progress:
             return False
         if logger is not None:getattr(logger, "check_cancel", lambda: None)()
         self._check_paused(slug)
-        from ..request_timing import span, timed_lock
-        with (span('progress_sync'),
-              timed_lock(self._project_lock(slug), 'progress_project_lock_wait')):
+        from ..request_timing import span
+        with span('progress_sync'), self._sync_lock(slug, force) as held:
+            if not held:
+                return False  # the check holding the lock reads the folder for this call too (_sync_lock)
             if asked is not None and self._checked_since.get(slug, -1) > asked and slug not in self.rechecking:
                 return False  # a full check that took the lock after this was asked has just finished
             while slug in self.rechecking:

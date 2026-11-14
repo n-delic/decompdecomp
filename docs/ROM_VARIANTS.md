@@ -53,9 +53,14 @@ python3 build.py --variant pal targets
 `variants.json` selects independent `variants/<id>/` trees. Each owns its source
 wrappers, headers, compiler ranges/function settings, symbols, layout, private
 assets, expected image hashes, and build output. Identical implementation text is
-stored once under `shared/`. Each build stages its shared includes inside that
+stored once under `shared/`. Function metadata retains the C symbol separately
+from old splitter filenames; `check` accepts either name. Each build stages its shared includes inside that
 variant's ignored include cache so sandboxed and Windows compilers can read them.
 Original assembly remains the fallback for unmatched or no-longer-exact C.
+If a saved function's compiler or optional runner is unavailable, its assembly is
+retained and its export README lists the setup reason. Its saved C, compiler profile
+and match history remain in the project. Prepare that compiler and export again to
+include its independently checked C.
 
 Export rechecks shared C against current target inputs and verifies every complete
 image after producing the final shared wrappers. A saved proof never overrides the
@@ -64,8 +69,10 @@ editing shared source or headers outside the app. Original game inputs and gener
 assembly/assets remain private and ignored by Git.
 
 Verification and export have server-owned job IDs, Stop, measured instance/variant
-progress, and saved progress/results/errors. Returning to Variants or opening a new
-window discovers running work before loading target statistics. After the app exits,
+progress, and saved progress/results/errors. Function checks show the selected
+variant, current function and completed/total count. Image rebuilds use an
+indeterminate bar until their byte comparison finishes. Returning to Variants or
+opening a new window discovers running work before loading target statistics. After the app exits,
 an incomplete job is shown as interrupted and can be safely rerun; it does not claim
 completion or publish partial source.
 
@@ -87,4 +94,13 @@ first version requires explicit logical identity bindings.
 
 Validation: the homemade N64 demo has been independently judged, grouped, exported,
 rebuilt for both targets, rebuilt after deleting generated files, and checked through
-`--variant`. Other ROM export adapters still need their own real-game validation.
+`--variant`. Scratch copies of two existing N64 regional releases (12 MiB and
+8 MiB, with different expected hashes) also rebuild independently and through the
+final shared repository’s `--all-variants` command, byte for byte. Six selected
+instance checks also pass through `--variant`, including renamed C symbols.
+Attaching preserves their function/source fingerprints and attempt, note, event and
+header histories. Six independently judged instances exercise shared C at different
+addresses, conditional differences and separate implementations; invalid shared
+header edits leave the saved revisions intact. Selected maps, explicit agent scope,
+conflicting edit exclusion, job reattachment and Stop are checked in the scratch home.
+Other ROM export adapters still need their own real-game validation.

@@ -182,6 +182,8 @@ class Nintendo64(Console):
         return True
 
     sdk_assembly_sizes = (160,272)
+    # libultra 2.0I-2.0L as decompals/ultralib rebuilds it, so a user without the SDK still has its library found
+    sdk_table = str(Path(__file__).with_name("ultralib_signatures.tsv"))
 
     def sdk_assembly_identity(self, code, big_endian=True):
         from .sdk_assembly import identify

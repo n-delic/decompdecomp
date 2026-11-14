@@ -18,7 +18,7 @@ dependencies = [
     "spimdisasm>=1.42.4",
     "rabbitizer>=1.16.2",
     # the repair families, RetroReversing/decomp-repair: a tagged archive, so installing needs no git
-    "decomprepair @ https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.2.1.tar.gz",
+    "decomprepair @ https://github.com/RetroReversing/decomp-repair/archive/refs/tags/v0.3.0.tar.gz",
     # the asset recognisers (N64 textures, sound banks, models, fonts; RNC), RetroReversing/decomp-assets
     "decompassets @ https://github.com/RetroReversing/decomp-assets/archive/refs/tags/v0.1.0.tar.gz",
     "httpx>=0.28",

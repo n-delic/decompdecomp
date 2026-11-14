@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from decompnet import toolchains
 from decompnet.app import variants
 from decompnet.forks import csource
 
@@ -14,7 +15,7 @@ from .test_export import GAME, _decompile, _ready
 from .test_twins_across_games import copy_project
 
 
-def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tmp_path):
+def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tmp_path, monkeypatch):
     if not _ready('n64'):
         pytest.skip('needs the pinned N64 compiler, binutils and ld.lld')
     net, slug = _decompile(tmp_path, 'n64')
@@ -31,7 +32,26 @@ def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tm
     logical = variants.bind(net, slug, 'clamp', instances)
     source = csource.get((GAME / 'game.c').read_text(), 'clamp_s32')
     variants.publish(net, slug, logical, '#if REGION == 1\n' + source + '\n#else\n' + source + '\n#endif')
-    result = net.export_rom(slug, log=lambda *_: None)
+    # Legacy splitter files can use automatic names while the verified C keeps
+    # its current project symbol. Keep that mismatch through clean regeneration.
+    from decompnet.rom import export as rom_export
+    symbol_lines = rom_export._symbol_lines
+    monkeypatch.setattr(rom_export, '_symbol_lines',
+                        lambda *args:[line for line in symbol_lines(*args) if not line.startswith('clamp_s32 =')])
+    class Log:
+        def __init__(self):self.progress_events = []
+        def __call__(self, _):pass
+        def progress(self, value):self.progress_events.append(dict(value))
+    log = Log()
+    result = net.export_rom(slug, log=log)
+    checks = [event for event in log.progress_events if event['phase'].endswith('Checking exported functions')]
+    assert {event['variant'] for event in checks} == {'pal','us'}
+    for variant in ('pal','us'):
+        events = [event for event in checks if event['variant'] == variant]
+        assert [event['done'] for event in events] == list(range(events[0]['total']))
+        assert all(event['variants_total'] == 2 for event in events)
+    rebuilds = [event for event in log.progress_events if event['phase'].endswith('Rebuilding exported image')]
+    assert len(rebuilds) == 2 and all('total' not in event for event in rebuilds)
     assert result['identical'], result['log']
     root = Path(result['path'])
     assert len(result['variants']) == 2
@@ -39,7 +59,8 @@ def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tm
     wrappers = []
     for variant in ('pal','us'):
         build = json.loads((root/'variants'/variant/'build.json').read_text())
-        fn = next(f for f in build['functions'] if f['name'] == 'clamp_s32')
+        fn = next(f for f in build['functions'] if f.get('symbol') == 'clamp_s32')
+        assert fn['name'] != 'clamp_s32'
         wrappers.append((root/'variants'/variant/fn['c']).read_text())
     import re
     assert re.findall(r'#include "shared/[^\"]+"', wrappers[0]) == re.findall(r'#include "shared/[^\"]+"', wrappers[1])
@@ -53,8 +74,29 @@ def test_multi_variant_export_rebuilds_shared_c_and_keeps_independent_targets(tm
     assert proc.returncode == 0, proc.stdout + proc.stderr
     proc = subprocess.run([sys.executable,'build.py','--variant','us','check','clamp_s32'], cwd=root, capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = subprocess.run([sys.executable,'build.py','--variant','us','check',fn['name']], cwd=root, capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
     subprocess.run(['git','init','-q'], cwd=root, check=True)
     subprocess.run(['git','add','-A'], cwd=root, check=True)
     tracked = subprocess.run(['git','ls-files','--cached'], cwd=root, capture_output=True, text=True, check=True).stdout.splitlines()
     assert 'variants/pal/build.json' in tracked and any(p.startswith('shared/') for p in tracked)
     assert not any('/baserom' in p or any(f'/{part}/' in p for part in ('asm','assets','build')) or '/include/shared/' in p for p in tracked)
+
+
+def test_an_unavailable_function_compiler_keeps_assembly_without_losing_the_saved_match(tmp_path, monkeypatch):
+    if not _ready('n64'):
+        pytest.skip('needs the pinned N64 compiler, binutils and ld.lld')
+    net, slug = _decompile(tmp_path, 'n64')
+    before = dict(net._function('clamp_s32', slug))
+    compile_function = net._compile
+    def compile_available(proj, header, source, fn=None):
+        if fn is not None and fn['name'] == 'clamp_s32':
+            raise toolchains.ToolchainError('The optional compiler runner is unavailable. Prepare it in Compilers & tools.')
+        return compile_function(proj, header, source, fn)
+    monkeypatch.setattr(net, '_compile', compile_available)
+    result = net.export_rom(slug, log=lambda *_: None)
+    assert result['identical'], result['log']
+    assert any(name == 'clamp_s32' and 'compiler unavailable' in why for name, why in result['fallback'])
+    assert dict(net._function('clamp_s32', slug)) == before
+    manifest = json.loads((Path(result['path'])/'build.json').read_text())
+    assert 'c' not in next(fn for fn in manifest['functions'] if fn['name'] == 'clamp_s32')
