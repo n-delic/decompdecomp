@@ -1,8 +1,8 @@
-"""Lossless C tokens for bounded edit experiments; strings and comments remain indivisible."""
-import re
+"""Moved to `decomprepair.repair_tokens`, the standalone repair library; this name stays for the rest of the app
+(both names are one module, so a patch through either is seen by both)."""
 
-TOKEN = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[A-Za-z_]\w*|0[xX][0-9a-fA-F]+[uUlL]*|\d+[uUlL]*|>>=|<<=|->|\+\+|--|&&|\|\||==|!=|<=|>=|<<|>>|\s+|.', re.S)
+import sys
 
+from decomprepair import repair_tokens
 
-def tokens(source):
-    return TOKEN.findall(source)
+sys.modules[__name__] = repair_tokens

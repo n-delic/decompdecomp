@@ -47,3 +47,22 @@ def test_the_permuter_runs_the_library_generator():
 
     assert permute.GENERATOR.parent == __import__("pathlib").Path(decomprepair.__file__).resolve().parent
     assert (permute.GENERATOR.parent / "permuter_capture.py").is_file()
+
+
+def test_rewrites_moved_in_040_keep_their_app_names():
+    """decomprepair 0.4.0: five rewrite modules and the PS1 GTE header are aliases; three keep their database part here."""
+    import importlib
+
+    for app, library in (("app.switch_constant_dispatch", "switch_constant_dispatch"),
+                         ("app.initializer_clusters", "initializer_clusters"),
+                         ("app.callee_contracts", "callee_contracts"),
+                         ("app.loop_storage_shapes", "loop_storage_shapes"),
+                         ("app.repair_tokens", "repair_tokens"), ("consoles.ps1.gte", "ps1_gte")):
+        assert importlib.import_module(f"decompnet.{app}") is importlib.import_module(f"decomprepair.{library}")
+    from decompnet.app import expression_recipes, layout_frontiers, switch_tables
+    from decomprepair import expression_recipes as er
+    from decomprepair import layout_frontiers as lf
+    from decomprepair import switch_tables as st
+    assert switch_tables.variants is st.variants and switch_tables.read.__module__ == "decompnet.app.switch_tables"
+    assert layout_frontiers.offer is lf.offer and layout_frontiers.saved.__module__ == "decompnet.app.layout_frontiers"
+    assert expression_recipes.apply is er.apply and expression_recipes.learn.__module__ == "decompnet.app.expression_recipes"
