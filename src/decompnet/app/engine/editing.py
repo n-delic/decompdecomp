@@ -50,10 +50,39 @@ class EditMixin:
             new = console.function_at(rom, addr, limit, new_name)
             if new is not None:
                 return self._add_function(proj, fn, new, syms, agent.id, new_name)
+        if inside and (why := self._split_runs_on(proj, fn, addr)):
+            raise NetworkError(why)
         head, tail = self._cut(proj, fn, addr, new_name, syms, agent.id, "split", f"{fn['name']} / {new_name}")
         return (f"✅ split: {fn['name']} is now {console.function_insns(head)} instructions; {new_name} at "
                 f"0x{addr:08X} has {console.function_insns(tail)}. Continue with {fn['name']} "
                 "(get_function shows its new assembly).")
+
+    def _split_runs_on(self, proj, fn, addr: int) -> str | None:
+        """Why an agent's cut at `addr` would leave the first part running on into the second, or None.
+
+        Agents cut 16-byte getters before their `jr $ra` and took a function's delay slot (an N64 game had six such
+        entries); each then needed a person to revoke a match of the empty tail and join it back. A cut is refused
+        when the first part's last instruction needs the next word as its delay slot, or when the first part falls
+        through its end without a transfer just before it (after a call that never returns, the next function may
+        really start there). A person can still split anything (split_rom_by_you)."""
+        facts = arch.get(proj["arch"]).boundary_instruction
+        console = self.console(proj)
+        width = console.instruction_size(fn)
+        code = (fn["target"] or b"")[:addr - fn["vram"]]
+        if facts is None or width != 4 or len(code) < 4:
+            return None
+        order = "big" if proj["big_endian"] else "little"
+        last = facts(int.from_bytes(code[-4:], order), addr - 4)
+        where = f"0x{addr:08X}"
+        if last["delay_slot"]:
+            return (f"{where} is the delay slot of `{last['instruction']}`, which belongs to {fn['name']}: split after "
+                    "it. If the code really starts there, report it with report_boundary so a person can decide.")
+        before = facts(int.from_bytes(code[-8:-4], order), addr - 8) if len(code) >= 8 else None
+        if console.boundary_reason(code) and not (before and (before["terminal"] or before["call"])):
+            return (f"Cut at {where}, {fn['name']} would run on into the new function: nothing before {where} returns "
+                    "or jumps away (a call that never returns is fine). Split after the function's return and its delay slot, or report the entry with "
+                    "report_boundary so a person can decide.")
+        return None
 
     def _add_function(self, proj, prev, new, syms: SymbolTable, agent_id: int | None, new_name: str) -> str:
         """Add a function the splitter missed after `prev`; it starts at its own address and mode."""

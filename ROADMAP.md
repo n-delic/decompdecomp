@@ -2827,6 +2827,9 @@ adapter; these source families do not change that limitation or any match verdic
 - Planned: non-MIPS boundary readers and object-project segment adapters for gap audits;
   EE-specific instruction decoding, function-pointer-only entry evidence and code/data
   subsegment audits. Existing MIPS diagnostics remain advisory when a decoder cannot close flow.
+- Planned: the agents' `split_function` refuses, on MIPS ROM projects, a cut that leaves the first part running on
+  into the second or starts the second on a delay slot (`EditMixin._split_runs_on`, through the processor's
+  `boundary_instruction`); GBA (ARM/Thumb) and PS3 (PPC64) ROM splits need those instruction facts before they get it.
 
 ### Finish near matches
 

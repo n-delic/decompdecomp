@@ -167,3 +167,20 @@ def test_one_alignment_word_between_a_return_and_the_next_entry_is_left_out(case
         assert repair(result,[],image,consoles.get('n64'),segments)==result
     else:
         assert any(f.rom==cut for f in result)
+
+
+@pytest.mark.parametrize('filler',[0x0ed4f03f,0x100ceedd])  # decodes as jal / beq: the next entry's first word became its delay slot
+def test_alignment_filler_that_decodes_as_a_jump_is_left_out_with_its_borrowed_delay_slot(filler):
+    before=[0x8c820000,0x03e00008,0];words=before+[filler]+BODY;cut=4*len(before)
+    image,functions,segments=fixture(words,cuts=(0,cut,cut+4,len(words)*4))
+    functions[1].lines.append(functions[2].lines[0])  # spimdisasm's 8-byte entry, overlapping the next one
+    result=repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(f.rom,f.size) for f in result]==[(0,12),(16,32)]
+    assert repair(result,[],image,consoles.get('n64'),segments)==result
+
+
+def test_an_eight_byte_entry_is_kept_when_its_first_word_needs_no_delay_slot():
+    before=[0x8c820000,0x03e00008,0];words=before+[FILL]+BODY;cut=4*len(before)
+    image,functions,segments=fixture(words,cuts=(0,cut,cut+4,len(words)*4))
+    functions[1].lines.append(functions[2].lines[0])
+    assert any(f.rom==cut for f in repair(functions,[],image,consoles.get('n64'),segments))
