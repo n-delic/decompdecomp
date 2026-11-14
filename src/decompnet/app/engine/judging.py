@@ -66,6 +66,8 @@ class JudgeMixin:
         if count == 1 or self._link(project) is not None:
             return self.claim(agent, project, None, strategy)
         proj = self._project(project)
+        with self.store.tx() as db:  # #283: a claim on a function set aside while held isn't a hold
+            self._drop_dead_claims(db, agent.id)
         held = self.store.all("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=? "
                               "AND f.project_id=? ORDER BY f.vram, f.id", agent.id, proj["id"])
         if not held:
@@ -362,7 +364,8 @@ class JudgeMixin:
             proj = self._project(project)
             for name in self.cfg(proj).get("priority", []):
                 row = self.store.one("SELECT f.id, f.status FROM functions f WHERE f.project_id=? AND f.name=?", proj["id"], name)
-                held = self.store.one("SELECT 1 FROM claims WHERE agent_id=?", agent.id)
+                held = self.store.one("SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id "
+                                      "WHERE c.agent_id=? AND f.status='open'", agent.id)  # #283: dead claims don't count
                 if row and row["status"] == "open" and not held and not self.store.one(
                         "SELECT 1 FROM claims WHERE function_id=?", row["id"]):
                     function = name
