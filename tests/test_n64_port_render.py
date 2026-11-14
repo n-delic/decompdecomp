@@ -34,7 +34,8 @@ static void gfx(uint32_t w0, uint32_t w1) { w32(dl, w0); w32(dl + 4, w1); dl += 
 
 enum { TASK = 0x100, UCODE = 0x200, TLUT = 0x400, MTX = 0x600, VTX = 0x700, IMAGE = 0x2000, FB = 0x10000 };
 
-/* argv[1]: 1 with perspective correction, 0 without; argv[2]: ci4 (LoadTile), rgba32block or rgba32tile;
+/* argv[1]: 1 with perspective correction, 0 without; argv[2]: ci4 (LoadTile), rgba32block, rgba32tile, or sprite
+   (S2DEX: the CI4 image drawn by G_OBJ_SPRITE through a 2D matrix);
    argv[3], if any: "bilerp", the RDP's bilinear filter (G_TF_BILERP); or "fog": two cycles, the blender's first
    fogging (fog colour * shade alpha + in * (1 - shade alpha)), G_FOG on, the fog colour blue, the RSP's fog alpha 128;
    or "pass": force blend with the blender's selectors IN * 0 + IN * 1 (G_RM_PASS), and half-transparent 32-bit texels */
@@ -44,7 +45,8 @@ int main(int argc, char **argv) {
     const char *kind = argv[2];
     int bilerp = argc > 3 && !strcmp(argv[3], "bilerp"), fog = argc > 3 && !strcmp(argv[3], "fog");
     int pass = argc > 3 && !strcmp(argv[3], "pass");
-    memcpy(ram + UCODE, "RSP Gfx ucode F3DEX2", 20);
+    int sprite = !strcmp(kind, "sprite"); /* S2DEX: G_OBJ_SPRITE through a 2D matrix */
+    memcpy(ram + UCODE, sprite ? "RSP Gfx ucode S2DEX " : "RSP Gfx ucode F3DEX2", 20);
     w32(TASK + 24, 0x80000000u | UCODE);
     w32(TASK + 48, 0x80000000u | dl);
     uint16_t colours[5] = {0, 0xF801 /* red */, 0x07C1 /* green */, 0x003F /* blue */, 0xFFFF /* white */};
@@ -54,9 +56,38 @@ int main(int argc, char **argv) {
     for (int t = 0; t < 8; t++) /* the quadrants are colours 1 to 4 */
         for (int s = 0; s < 8; s++) {
             int v = 1 + (s >= 4) + 2 * (t >= 4);
-            if (kind[0] == 'c') ram[IMAGE + t * 4 + s / 2] |= (uint8_t)(s & 1 ? v : v << 4);
+            if (kind[0] == 'c' || sprite) ram[IMAGE + t * 4 + s / 2] |= (uint8_t)(s & 1 ? v : v << 4);
             else w32(IMAGE + (t * 8 + s) * 4, colours32[v]);
         }
+    if (sprite) { /* the CI4 image into TMEM; a uObjMtx turning it 90 degrees, ten times larger; G_OBJ_SPRITE */
+        enum { OBJMTX = 0x800, SPRITE = 0x900 };
+        w32(OBJMTX, 0); w32(OBJMTX + 4, (uint32_t)(-10 * 65536)); w32(OBJMTX + 8, 10 * 65536); w32(OBJMTX + 12, 0);
+        w16(OBJMTX + 16, 100 * 4); w16(OBJMTX + 18, 50 * 4); w16(OBJMTX + 20, 1024); w16(OBJMTX + 22, 1024);
+        w16(SPRITE, 0); w16(SPRITE + 2, 1024); w16(SPRITE + 4, 8 << 5); w16(SPRITE + 8, 0); w16(SPRITE + 10, 1024);
+        w16(SPRITE + 12, 8 << 5); w16(SPRITE + 16, 1); w16(SPRITE + 18, 0);
+        ram[SPRITE + 20] = 2; ram[SPRITE + 21] = 0; ram[SPRITE + 22] = 0; /* CI4, palette 0 */
+        gfx(0xFF100000u | 319, 0x80000000u | FB);
+        gfx(0xEF000000u, 0);
+        gfx(0xFC000000u | 1 << 20 | 6 << 15 | 1 << 12 | 6 << 9 | 15 << 5 | 31,
+            15u << 28 | 7 << 15 | 7 << 12 | 7 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 7 << 3);
+        gfx(0xFD100000u, 0x80000000u | TLUT);
+        gfx(0xF5000100u, 7u << 24);
+        gfx(0xF0000000u, 7u << 24 | 15u << 14);
+        gfx(0xFD000000u | 2 << 21 | 7, 0x80000000u | IMAGE);
+        gfx(0xF5000000u | 2 << 21 | 1 << 9, 0);
+        gfx(0xF4000000u, (7 << 2) << 12 | 7 << 2);
+        gfx(0xDC170000u, 0x80000000u | OBJMTX);                              /* G_OBJ_MOVEMEM: the uObjMtx */
+        gfx(0x02000000u, 0x80000000u | SPRITE);                              /* G_OBJ_SPRITE */
+        gfx(0xDF000000u, 0);
+        port_render_task(0x80000000u | TASK);
+        /* texel (s, t) lands at (100 - 10 t, 50 + 10 s): each quadrant at its own corner */
+        int at[4][2] = {{95, 55}, {95, 115}, {25, 55}, {25, 115}};
+        for (int i = 0; i < 4; i++) {
+            uint32_t a = FB + (uint32_t)(at[i][1] * 320 + at[i][0]) * 2;
+            printf("%04X\n", (unsigned)(ram[a] << 8 | ram[a + 1]));
+        }
+        return 0;
+    }
     for (int i = 0; i < 4; i++) w16(MTX + i * 10, 1); /* identity: the diagonal's integer parts, no fractions */
     int16_t quad[4][4] = {{-1, 1, 0, 0}, {1, 1, 8, 0}, {1, -1, 8, 8}, {-1, -1, 0, 8}}; /* x, y, s, t */
     for (int i = 0; i < 4; i++) {
@@ -178,3 +209,10 @@ def test_a_force_blend_that_passes_its_input_draws_it_opaque(renderer):
     blend and with half-transparent texels (a racing game's menu layers, dimmed by their primitive colour, not their
     alpha). The renderer once blended every force-blend draw by alpha whatever its selectors."""
     assert drawn(renderer, True, "rgba32tile", "pass")[0] == 0xF801
+
+
+def test_a_sprite_turns_and_scales_with_the_2d_matrix(renderer):
+    """G_OBJ_SPRITE draws through the 2D matrix (G_OBJ_MOVEMEM's uObjMtx): here turned 90 degrees and ten times
+    larger, each quadrant of the image lands at its own corner. A racing game's rev counter needle turns this way;
+    the renderer once drew every sprite unrotated, a small square at its own place."""
+    assert drawn(renderer, True, "sprite") == [0xF801, 0x07C1, 0x003F, 0xFFFF]
