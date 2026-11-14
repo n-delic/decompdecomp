@@ -2110,10 +2110,11 @@ class Progress:
                                                          files=applied_files, restore_notes=restore_notes, agents=agents)
                     report.check_cancel()
                     if not saves._publish(folder, pending, removed, expected=disk,
-                                          chosen=bool(cfg.get("progress_folder"))):
+                                          chosen=bool(cfg.get("progress_folder")), guarded=disk.keys() | applied_changed):
                         raise _FolderChanged
             except _FolderChanged:
-                return self._refused(slug, folder, set(pending) | set(removed), disk, dirty.token, config_key)
+                return self._refused(slug, folder, set(pending) | set(removed) | disk.keys() | applied_changed,
+                                     disk, dirty.token, config_key)
             # Notes/instructions do not change the bytes being judged. Invalidating on every
             # metadata import discarded concurrent compiles even though their inputs survived.
             if judging_change:
