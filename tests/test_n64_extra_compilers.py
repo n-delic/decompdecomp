@@ -235,3 +235,165 @@ def test_installed_pair_supports_export_style_relative_builds(tmp_path):
     assert result.returncode == 0, result.stderr
     fn = extract_function((tmp_path / 'source.o').read_bytes(), 'probe')
     assert fn.code == bytes.fromhex('03e0000800851021')
+
+
+KMC = 'gcc-2.7.2-kmc'
+
+
+def test_kmc_gcc_is_native_on_apple_silicon_and_unchanged_on_intel_macs(monkeypatch):
+    """Under Rosetta every KMC compile cost about 150-190 ms of CPU, against 18-60 ms native."""
+    tc = toolchains.get(KMC)
+    arm = tc.parts_for('macos-arm64')
+    assert [p.get('build') for p in arm] == ['gcc-2.7.2-kmc', 'binutils-2.6-kmc']
+    assert not any(p.get('rosetta') for p in arm)
+    for part in arm:  # the commits upstream's v0.1 and v0.3 Mac releases were built from
+        assert part['url'].endswith('/' + part['subdir'].split('-')[-1]) and len(part['sha256']) == 64
+    intel = tc.parts_for('macos-x86_64')
+    assert [Path(p['url']).name for p in intel] == ['gcc-2.7.2-mac.tar.gz', 'binutils-2.6-mac.tar.gz']
+    assert all(p['rosetta'] for p in intel)
+    monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-x86_64')
+    assert toolchains.fingerprint(tc) == '0a47cc5b7413a94e'  # Intel Macs' installs don't reinstall
+
+
+def _kmc_source(source):
+    for name, lines in toolchains._GCC_KMC_DECLARATIONS.items():
+        (source / name).parent.mkdir(parents=True, exist_ok=True)
+        (source / name).write_text('/* upstream */\n' + ''.join(lines), encoding='latin-1')
+    for name, edits in toolchains._GCC_KMC_EDITS.items():
+        (source / name).parent.mkdir(parents=True, exist_ok=True)
+        with open(source / name, 'a', encoding='latin-1') as f:
+            f.write(''.join(old for old, _ in edits))
+    for name in ['c-parse.c', 'c-parse.h', 'cexp.c', 'cp/parse.c', 'cp/parse.h', 'bi-parser.c', 'bi-parser.h']:
+        (source / name).write_text('/* bison output */')
+
+
+def _mock_build(monkeypatch, extract, outputs):
+    runs = []
+    def build(argv, **kwargs):
+        runs.append((argv, kwargs['env']))
+        assert kwargs['timeout'] == 900 and kwargs['env']['CC'] == '/usr/bin/clang'
+        assert kwargs['env']['PATH'] == '/usr/bin:/bin:/usr/sbin:/sbin'  # not a computer's newer bison
+        if argv[0] == '/usr/bin/make':
+            for name in outputs:
+                (kwargs['cwd'] / name).parent.mkdir(parents=True, exist_ok=True)
+                (kwargs['cwd'] / name).write_text('native ' + name)
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+    monkeypatch.setattr(toolchains, '_extract', lambda archive, source, subdir: extract(source))
+    monkeypatch.setattr(toolchains.shutil, 'which', lambda x: x)
+    monkeypatch.setattr(toolchains.limits, 'capped', lambda x: x)
+    monkeypatch.setattr(toolchains.subprocess, 'run', build)
+    return runs
+
+
+def test_kmc_gcc_native_build_declares_varargs_and_does_not_optimise_gcc(tmp_path, monkeypatch):
+    dest = tmp_path / 'out'
+    dest.mkdir()
+    runs = _mock_build(monkeypatch, _kmc_source, ['xgcc', 'cc1', 'cc1plus', 'cpp', 'cccp', 'g++'])
+    checked = []
+    def check(source, tmp, name):  # (the build's folder is gone once it returns)
+        files = dict.fromkeys([*toolchains._GCC_KMC_DECLARATIONS, *toolchains._GCC_KMC_EDITS])
+        checked.append({f: (source / f).read_text(encoding='latin-1') for f in files})
+        checked.append((source / 'decomp-arm64-varargs.h').read_text())
+        assert (source / 'cp/parse.c').stat().st_mtime > (source / 'cp/errfn.c').stat().st_mtime
+    monkeypatch.setattr(toolchains, '_check_native_gcc', check)
+    toolchains._build_gcc_kmc(tmp_path / 'src.tar.gz', dest, 'pinned', lambda *_: None)
+    edited, prototypes = checked
+    assert 'extern void error (char *, ...);' in prototypes
+    assert 'extern void   error ();' not in edited['config/mips/mips.c']
+    assert '(*(void (*) (char *, ...)) errfn) (fmt, ARGSLIST);' in edited['cp/errfn.c']
+    assert 'errfn == compiler_error' in edited['cp/errfn.c']  # (compiler_error isn't variadic)
+    assert 'a transparent union", (char *) 0);' in edited['c-decl.c']
+    configure, make, gxx = runs
+    assert '--target=mips-mips-gnu' in configure[0] and '--host=i386-apple-darwin' in configure[0]
+    flags = ' '.join(a for a in make[0] + gxx[0] if a.startswith(('CFLAGS=', 'HOST_CFLAGS='))) + configure[1]['CFLAGS']
+    assert not any(f.startswith('-O') for f in flags.split()) and '-DDARWIN' in flags
+    cflags, host = (next(a for a in make[0] if a.startswith(k)) for k in ('CFLAGS=', 'HOST_CFLAGS='))
+    assert '-include ' in cflags and '-include' not in host  # the generators define their own static fatal()
+    assert gxx[0][1] == 'g++' and not any('-include' in a for a in gxx[0])
+    assert (dest / 'gcc').read_text() == 'native xgcc'
+    assert {p.name for p in dest.iterdir()} == {'gcc', 'cc1', 'cc1plus', 'cpp', 'cccp', 'g++'}
+
+
+def test_kmc_gcc_native_build_fails_closed_when_the_source_moves(tmp_path, monkeypatch):
+    def extract(source):
+        _kmc_source(source)
+        (source / 'cp/typeck2.c').write_text('/* a newer typeck2.c */')
+    monkeypatch.setattr(toolchains, '_extract', lambda archive, source, subdir: extract(source))
+    monkeypatch.setattr(toolchains.shutil, 'which', lambda x: x)
+    monkeypatch.setattr(toolchains.subprocess, 'run', lambda *a, **k: pytest.fail('built an unpatched GCC'))
+    with pytest.raises(toolchains.ToolchainError, match='cp/typeck2.c no longer matches'):
+        toolchains._build_gcc_kmc(tmp_path / 'src.tar.gz', tmp_path, 'pinned', lambda *_: None)
+
+
+def test_kmc_binutils_native_build_runs_configure_probes_with_the_quiet_flags(tmp_path, monkeypatch):
+    dest = tmp_path / 'out'
+    dest.mkdir()
+    def extract(source):
+        for name in ['binutils/arparse.c', 'binutils/arparse.h', 'binutils/arlex.c']:
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_text('/* generated */')
+    runs = _mock_build(monkeypatch, extract, ['gas/as.new', 'binutils/ar', 'binutils/strip.new',
+                                              'binutils/objcopy', 'binutils/c++filt'])
+    checked = []
+    monkeypatch.setattr(toolchains, '_check_kmc_as', lambda assembler, tmp: checked.append(assembler.read_text()))
+    toolchains._build_binutils_kmc(tmp_path / 'src.tar.gz', dest, 'pinned', lambda *_: None)
+    configure, *makes = runs
+    assert '--target=mips-kmc-elf' in configure[0]
+    # A newer clang's errors made configure's probes fail: gas then defined `inline` away and broke the link.
+    assert '-Wno-implicit-int' in configure[1]['CFLAGS'] and '-Wno-implicit-function-declaration' in configure[1]['CFLAGS']
+    assert [m[0][2] for m in makes] == ['bfd', 'opcodes', 'libiberty', 'gas', 'binutils']
+    assert not any(f.startswith('-O') for m in makes for a in m[0] if a.startswith('CFLAGS=') for f in a.split())
+    assert checked == ['native gas/as.new']
+    assert {p.name for p in dest.iterdir()} == {'as', 'ar', 'strip', 'objcopy', 'c++filt'}
+
+
+@pytest.mark.parametrize('returncode, obj, bad_exit, why', [
+    (0, b'\x7fELF' + bytes(60) + bytes.fromhex('0085102d03e00008'), -11, "doesn't report errors"),
+    (0, b'\x7fELF' + bytes(64), 1, "doesn't assemble MIPS correctly"),
+    (-11, b'', 1, "doesn't assemble MIPS correctly"),
+])
+def test_kmc_as_check_refuses_broken_assemblers(tmp_path, monkeypatch, returncode, obj, bad_exit, why):
+    def run(argv, **kwargs):
+        if Path(argv[-1]).name == 'good.s':
+            Path(argv[argv.index('-o') + 1]).write_bytes(obj)
+            return SimpleNamespace(returncode=returncode, stdout='', stderr='')
+        return SimpleNamespace(returncode=bad_exit, stdout='', stderr="Error: unrecognized opcode `notanopcode'")
+    monkeypatch.setattr(toolchains.subprocess, 'run', run)
+    with pytest.raises(toolchains.ToolchainError, match=why):
+        toolchains._check_kmc_as(tmp_path / 'as', tmp_path)
+
+
+def _installed_kmc():
+    if toolchains.installed(KMC) is None:
+        pytest.skip('requires the installed compiler')
+    return toolchains.path(KMC)
+
+
+def test_installed_kmc_gcc_passes_the_native_build_checks(tmp_path):
+    folder = _installed_kmc()
+    toolchains._check_native_gcc(folder, tmp_path, 'GCC 2.7.2 (KMC)')
+    toolchains._check_kmc_as(folder / 'as', tmp_path)
+
+
+def test_installed_kmc_gcc_reports_diagnostics_missing_their_argument_like_the_intel_build(tmp_path):
+    """The arm64 build crashed (exit 138) on a transparent union, where the Intel build warned."""
+    folder = _installed_kmc()
+    src = tmp_path / 'union.c'
+    src.write_text('union u { char a; int x[2]; } __attribute__ ((transparent_union));\nint keep;\n')
+    import subprocess
+    run = subprocess.run([str(folder / 'cc1'), '-quiet', '-O2', str(src), '-o', str(tmp_path / 'union.s')],
+                         capture_output=True, text=True, errors='replace', timeout=30)
+    assert run.returncode == 0 and "cannot make `(null)' a transparent union" in run.stderr
+
+
+def test_installed_kmc_gcc_builds_matching_objects_through_the_profile(tmp_path):
+    _installed_kmc()
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': KMC, 'flags': ['-G0', '-mips3', '-mgp32', '-mfp32',
+                                                                              '-O2', '-g3']}})
+    result = compile_source(cfg, '', 'int probe(int a,int b){return a+b;}\n'
+                                     'double widen(unsigned int x){return x;}\n')
+    assert result.ok, result.log
+    fn = extract_function(result.obj, 'probe')
+    assert fn.code == bytes.fromhex('03e0000800851021')
+    verdict = link(result.obj, 'probe', RomTarget('probe', 0x80001000, fn.code, []), SymbolTable(), lambda *_: None)
+    assert verdict.exact, verdict.problems
