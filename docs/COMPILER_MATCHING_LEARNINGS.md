@@ -534,6 +534,41 @@ No new controlled successful case for these versions was established in this inv
 transfer the KMC score improvements or whitespace effects to them as measured facts. Record each
 profile independently, including debug/assembler options and endianness.
 
+### Native GCC 2.8.1 (PM matching) on Apple Silicon: same output as the Intel build (14 November 2026)
+
+**Controlled comparison** of host builds, not a new match: `gcc-2.8.1-pm` and `gcc-2.8.1-pm-sn-as` built
+from pmret/gcc-papermario d97824f with Xcode clang for arm64 (`toolchains._build_gcc_papermario`)
+against the released Intel `mac.tar.gz` under Rosetta. Input: the public papermario C sources (4,343
+files), preprocessed once, through both `cc1`s at `-O2 -G0 -mips3 -mgp32 -mfp32`, `-O2 -G0 -gdwarf-2`,
+`-O1 -G0` and `-O0 -G0`. Result: 4,309 files agree under all four flag sets: the assembly and exit
+codes match, including the files both reject and the 4 inputs both crash on. 33 couldn't be
+preprocessed. The only difference was the decimal in a `# ...` comment after an identical `.word`,
+garbage in both builds. `cpp` output is identical on the 255 files the old `cpp` can read. Through
+`sn64.py` (`-DPERMUTER`, both compilers in one folder, since objects embed the source path), 73/73
+objects were byte-identical; the rest failed at ASN64 for both. Five repeated runs gave one output.
+The copy the recipe itself installs gave the same result again: 74/74 objects through `sn64.py`.
+
+Two host-build mistakes looked like compiler behaviour and would have corrupted matching:
+
+- **Building GCC with clang `-O2`** folded a `double` constant wrongly: `(double)unsigned` emitted
+  `l.d` from a `.word 0x00000000,0x000041f0` pool instead of `li.d $f0,4.294967296e9`. Building without
+  optimisation (as upstream's CI does) fixes it. The recipe refuses a build that fails this check.
+- **Unprototyped variadic diagnostics.** Apple arm64 passes variadic arguments on the stack, so
+  `error()`/`pedwarn()` called without a prototype crashed (exit 139) where the Intel build reports
+  the error (exit 33). A forced-include header of variadic prototypes, plus removing the conflicting
+  K&R declarations in `config/mips/mips.c` and `cp/errfn.c`, fixes C. `cc1plus` still calls them
+  through a non-variadic `errorfn` pointer, so its *error* path can still crash on arm64. Successful
+  C++ compiles are not affected.
+
+Cost: one `gcc -S` 230 ms → 13 ms. A whole `sn64.py` single-function compile 416 → 159 ms CPU (ASN64
+under wibo is still x86). The build itself takes about 20 seconds.
+
+Not fixed, separate: the reconstructed SN64 2.7.2 (`sn-n64-272-970404`, `_build_sn64_gcc`) built
+for arm64 is **nondeterministic**: three runs of one file gave three outputs, with garbage float
+`.word`s and different registers. It also crashes on 7 of 120 sample files that its `-O0` build
+rejects normally. Building without `-O2` does not cure it. Don't trust its scores on Apple Silicon
+until that is fixed.
+
 ## CodeWarrior, MSVC, ARM compilers and other installed profiles
 
 No new per-compiler match evidence was collected in this investigation. Existing console guides remain

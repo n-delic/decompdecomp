@@ -704,6 +704,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 _build_mips_binutils(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "sn64-gcc":
                 _build_sn64_gcc(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "gcc-papermario":
+                _build_gcc_papermario(archive, dest, part.get("subdir"), log)
             elif part.get("build") in ("psx-gcc-2.6.3", "psx-gcc"):
                 _build_psx_gcc(archive, dest, part, log)
                 for url_key, hash_key, _ in (
@@ -933,6 +935,137 @@ def _build_sn64_gcc(archive: Path, dest: Path, subdir: str | None, log) -> None:
                 raise ToolchainError(f"The reconstructed SN64 GCC build did not produce {name}.")
             shutil.copyfile(source / name, dest / name)
             (dest / name).chmod(0o755)
+
+
+# Apple arm64 passes variadic arguments on the stack but fixed ones in registers, so a variadic function called
+# with no prototype in scope reads garbage: GCC 2.8 calls its diagnostics that way in about 40 files, and every
+# compile error crashed (a segfault in strlen) where the Intel build exits 33. Forced into each host file, these
+# prototypes give every call the variadic convention. The drivers (gcc.c, g++.c, built with STANDARD_EXEC_PREFIX)
+# and cccp.c (GCC_INCLUDE_DIR) define their own static versions, so they are left alone.
+_GCC_PM_VARARGS = """\
+#ifndef DECOMP_ARM64_VARARGS_H
+#define DECOMP_ARM64_VARARGS_H
+#if !defined (STANDARD_EXEC_PREFIX) && !defined (GCC_INCLUDE_DIR)
+union tree_node; struct rtx_def;
+extern void error (char *, ...);
+extern void warning (char *, ...);
+extern void pedwarn (char *, ...);
+extern void fatal (char *, ...);
+extern void sorry (char *, ...);
+extern void really_sorry (char *, ...);
+extern void error_with_decl (union tree_node *, char *, ...);
+extern void warning_with_decl (union tree_node *, char *, ...);
+extern void pedwarn_with_decl (union tree_node *, char *, ...);
+extern void error_with_file_and_line (char *, int, char *, ...);
+extern void warning_with_file_and_line (char *, int, char *, ...);
+extern void pedwarn_with_file_and_line (char *, int, char *, ...);
+extern void error_for_asm (struct rtx_def *, char *, ...);
+extern void warning_for_asm (struct rtx_def *, char *, ...);
+#endif
+#endif
+"""
+
+# Old-style declarations that conflict with the prototypes above, removed exactly (the build fails closed when
+# the pinned source no longer has them).
+_GCC_PM_DECLARATIONS = {
+    "config/mips/mips.c": ("extern void   error ();\n", "extern void   fatal ();\n", "extern void   warning ();\n"),
+    "cp/errfn.c": ("  extern errorfn error;\n", "  extern errorfn warning;\n", "  extern errorfn pedwarn;\n",
+                   "  extern errorfn error_with_file_and_line;\n", "  extern errorfn warning_with_file_and_line;\n",
+                   "  extern errorfn pedwarn_with_file_and_line;\n"),
+}
+
+
+def _build_gcc_papermario(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """Build the checksum-pinned gcc-papermario (GCC 2.8.1) natively for Apple Silicon.
+
+    Its released Mac build is an Intel program: under Rosetta each launch costs 30-40 ms and one `gcc -S` about
+    230 ms, against 13 ms native, and the permuter and drafts start it thousands of times. Two things make the
+    native build produce the Intel build's bytes (docs/COMPILER_MATCHING_LEARNINGS.md has the comparison):
+    no optimisation of GCC itself, as upstream's CI builds it (clang -O2 miscompiles its float constant folding:
+    a 4294967296.0 came out as the wrong words), and the variadic prototypes above.
+    """
+    if not shutil.which("/usr/bin/clang") or not shutil.which("/usr/bin/make"):
+        raise ToolchainError("Building GCC 2.8.1 (PM matching) needs Xcode Command Line Tools: "
+                             "run `xcode-select --install`, then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-gcc-pm-") as tmp:
+        source = Path(tmp) / "source"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        for name, lines in _GCC_PM_DECLARATIONS.items():
+            file = source / name
+            text = file.read_text(encoding="latin-1") if file.is_file() else ""
+            for line in lines:
+                if text.count(line) != 1:
+                    raise ToolchainError(f"The pinned gcc-papermario {name} no longer matches its arm64 fix.")
+                text = text.replace(line, "", 1)
+            file.write_text(text, encoding="latin-1")
+        header = source / "decomp-arm64-varargs.h"
+        header.write_text(_GCC_PM_VARARGS, encoding="latin-1")
+        # An archive gives every file one time, and make would then regenerate the shipped parsers with whatever
+        # bison the computer has (a modern one makes a different parser, which doesn't build). Sources older,
+        # the shipped generated files newer.
+        now = time.time()
+        for file in source.rglob("*"):
+            if file.is_file():
+                os.utime(file, (now - 60, now - 60))
+        for name in ("c-parse.c", "c-parse.h", "cexp.c", "cp/parse.c", "cp/parse.h"):
+            if not (source / name).is_file():
+                raise ToolchainError(f"The pinned gcc-papermario source has no generated {name}.")
+            os.utime(source / name, (now, now))
+
+        quiet = ("-std=gnu89 -Wno-return-type -Wno-error -Wno-error=implicit-function-declaration "
+                 "-Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion "
+                 "-Wno-incompatible-pointer-types -Wno-deprecated-non-prototype")
+        env = {k: v for k, v in os.environ.items() if k not in ("CC", "CXX", "CFLAGS", "CPPFLAGS", "LDFLAGS")}
+        env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        commands = [
+            ["./configure", "--target=mips-nintendo-nu64", "--prefix=/opt/cross", "--with-gnu-as",
+             "--disable-gprof", "--disable-gdb", "--disable-werror",
+             "--host=i386-apple-darwin", "--build=i386-apple-darwin"],
+            ["/usr/bin/make", "-j" + str(min(6, os.cpu_count() or 1)), "cpp", "cc1", "xgcc", "cc1plus", "g++",
+             f"CFLAGS={quiet} -include {header}", f"HOST_CFLAGS={quiet} -DHAVE_CONFIG_H -DNU64"],
+        ]
+        for argv in commands:
+            log("  building native GCC 2.8.1 (PM matching) for Apple Silicon (first install only): "
+                + Path(argv[0]).name)
+            try:
+                res = subprocess.run(limits.capped(argv), cwd=source, capture_output=True, text=True,
+                                     errors="replace", timeout=900, env=dict(env, CC="/usr/bin/clang", CFLAGS=quiet))
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ToolchainError(f"Couldn't build GCC 2.8.1 (PM matching): {error}. "
+                                     "Check Xcode Command Line Tools and try again.") from error
+            if res.returncode:
+                raise ToolchainError("Couldn't build GCC 2.8.1 (PM matching). Check Xcode Command Line Tools "
+                                     "and try again.\n" + (res.stdout + res.stderr)[-4000:])
+        _check_gcc_papermario(source, Path(tmp))
+        for name, binary in {"cpp": "cpp", "cc1": "cc1", "gcc": "xgcc", "cc1plus": "cc1plus", "g++": "g++"}.items():
+            if not (source / binary).is_file():
+                raise ToolchainError(f"The GCC 2.8.1 (PM matching) build did not produce {name} ({binary}).")
+            shutil.copy2(source / binary, dest / name)
+            (dest / name).chmod(0o755)
+
+
+def _check_gcc_papermario(build: Path, tmp: Path) -> None:
+    """The two ways a native build went wrong, checked before it is installed: a float constant folded to the
+    wrong words, and a compile error that crashes instead of being reported."""
+    floats, broken = tmp / "floats.c", tmp / "broken.c"
+    floats.write_text("double f(unsigned int x) { return x; }\n", encoding="utf-8")
+    broken.write_text("int f(void) { return undeclared; }\n", encoding="utf-8")
+    runs = {}
+    for src in (floats, broken):
+        try:
+            runs[src] = subprocess.run([str(build / "cc1"), "-quiet", "-O2", "-G0", "-mips3", str(src),
+                                        "-o", str(src.with_suffix(".s"))],
+                                       capture_output=True, text=True, errors="replace", timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"The native GCC 2.8.1 (PM matching) failed its check: {error}") from error
+    asm = floats.with_suffix(".s").read_text(errors="replace") if floats.with_suffix(".s").is_file() else ""
+    if runs[floats].returncode or not re.search(r"li\.d\s+\$f\d+,4\.29496729600000000000e9", asm):
+        raise ToolchainError("The native GCC 2.8.1 (PM matching) folds float constants wrongly; not installing it.\n"
+                             + runs[floats].stderr[-2000:] + asm[-2000:])
+    if runs[broken].returncode != 33 or "undeclared" not in runs[broken].stderr:
+        raise ToolchainError("The native GCC 2.8.1 (PM matching) doesn't report compile errors (exit "
+                             f"{runs[broken].returncode}); not installing it.\n" + runs[broken].stderr[-2000:])
 
 
 def _build_psx_gcc(archive: Path, dest: Path, part: dict, log) -> None:

@@ -83,6 +83,99 @@ def test_reconstructed_sn_native_build_supplies_only_host_assertion_helper(tmp_p
     assert (dest / 'cpp').read_text() == 'native'
 
 
+PM_GCC = ['gcc-2.8.1-pm', 'gcc-2.8.1-pm-sn-as']
+
+
+@pytest.mark.parametrize('tid', PM_GCC)
+def test_pm_gcc_is_native_on_apple_silicon_and_unchanged_on_intel_macs(tid):
+    """Under Rosetta each launch of the Intel build cost 30-40 ms and a `gcc -S` 230 ms (13 ms native)."""
+    tc = toolchains.get(tid)
+    arm = [p for p in tc.parts_for('macos-arm64') if 'gcc-papermario' in p['url']]
+    assert [p.get('build') for p in arm] == ['gcc-papermario'] and not arm[0].get('rosetta')
+    assert arm[0]['url'].endswith('/' + arm[0]['subdir'].removeprefix('gcc-papermario-'))
+    intel = [p for p in tc.parts_for('macos-x86_64') if 'gcc-papermario' in p['url']]
+    assert [p['file'] for p in intel] == ['pm-gcc-mac.tar.gz'] and intel[0]['rosetta']
+    if tid == 'gcc-2.8.1-pm-sn-as':  # its assembler runs under wibo: nothing left for Rosetta
+        assert not any(p.get('rosetta') for p in tc.parts_for('macos-arm64'))
+
+
+def _pm_source(source):
+    for name, lines in toolchains._GCC_PM_DECLARATIONS.items():
+        (source / name).parent.mkdir(parents=True, exist_ok=True)
+        (source / name).write_text('/* upstream */\n' + ''.join(lines) + 'int keep;\n', encoding='latin-1')
+    for name in ['c-parse.c', 'c-parse.h', 'cexp.c', 'cp/parse.c', 'cp/parse.h']:
+        (source / name).write_text('/* bison output */')
+
+
+def test_pm_gcc_native_build_declares_varargs_and_does_not_optimise_gcc(tmp_path, monkeypatch):
+    dest = tmp_path / 'out'
+    dest.mkdir()
+    runs = []
+    def build(argv, **kwargs):
+        source = kwargs['cwd']
+        runs.append((argv, kwargs['env']))
+        assert kwargs['timeout'] == 900 and kwargs['env']['CC'] == '/usr/bin/clang'
+        assert kwargs['env']['PATH'] == '/usr/bin:/bin:/usr/sbin:/sbin'  # not a computer's newer bison
+        if argv[0] == '/usr/bin/make':
+            for name in ['cpp', 'cc1', 'xgcc', 'cc1plus', 'g++']:
+                (source / name).write_text('native ' + name)
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+    checked = []
+    monkeypatch.setattr(toolchains, '_extract', lambda archive, source, subdir: _pm_source(source))
+    monkeypatch.setattr(toolchains.shutil, 'which', lambda x: x)
+    monkeypatch.setattr(toolchains.limits, 'capped', lambda x: x)
+    monkeypatch.setattr(toolchains.subprocess, 'run', build)
+    def check(source, tmp):  # (the build's folder is gone once it returns)
+        checked.append({name: (source / name).read_text(encoding='latin-1') for name in toolchains._GCC_PM_DECLARATIONS})
+        checked.append((source / 'decomp-arm64-varargs.h', (source / 'decomp-arm64-varargs.h').read_text()))
+        assert (source / 'cp/parse.c').stat().st_mtime > (source / 'cp/errfn.c').stat().st_mtime
+    monkeypatch.setattr(toolchains, '_check_gcc_papermario', check)
+    toolchains._build_gcc_papermario(tmp_path / 'src.tar.gz', dest, 'pinned', lambda *_: None)
+    edited, (header, prototypes) = checked
+    assert set(edited.values()) == {'/* upstream */\nint keep;\n'}
+    assert 'extern void error (char *, ...);' in prototypes
+    configure, make = runs
+    assert '--target=mips-nintendo-nu64' in configure[0]
+    flags = ' '.join(a for a in make[0] if a.startswith(('CFLAGS=', 'HOST_CFLAGS='))) + ' ' + configure[1]['CFLAGS']
+    assert f'-include {header}' in flags and not any(f.startswith('-O') for f in flags.split())
+    assert (dest / 'gcc').read_text() == 'native xgcc'
+    assert {p.name for p in dest.iterdir()} == {'cpp', 'cc1', 'gcc', 'cc1plus', 'g++'}
+
+
+def test_pm_gcc_native_build_fails_closed_when_the_source_moves(tmp_path, monkeypatch):
+    def extract(archive, source, subdir):
+        _pm_source(source)
+        (source / 'cp/errfn.c').write_text('/* a newer errfn.c */')
+    monkeypatch.setattr(toolchains, '_extract', extract)
+    monkeypatch.setattr(toolchains.shutil, 'which', lambda x: x)
+    monkeypatch.setattr(toolchains.subprocess, 'run', lambda *a, **k: pytest.fail('built an unpatched GCC'))
+    with pytest.raises(toolchains.ToolchainError, match='cp/errfn.c no longer matches'):
+        toolchains._build_gcc_papermario(tmp_path / 'src.tar.gz', tmp_path, 'pinned', lambda *_: None)
+
+
+@pytest.mark.parametrize('asm, broken_exit, why', [
+    ('\tl.d\t$f0,.LC0\n', 33, 'folds float constants wrongly'),          # clang -O2 built
+    ('\tli.d\t$f0,4.29496729600000000000e9\n', -11, "doesn't report compile errors"),  # no varargs prototypes
+])
+def test_pm_gcc_check_refuses_the_broken_builds_seen(tmp_path, monkeypatch, asm, broken_exit, why):
+    def run(argv, **kwargs):
+        src = Path(argv[argv.index('-o') - 1])
+        if src.name == 'floats.c':
+            Path(argv[argv.index('-o') + 1]).write_text(asm)
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+        return SimpleNamespace(returncode=broken_exit, stdout='', stderr="`undeclared' undeclared")
+    monkeypatch.setattr(toolchains.subprocess, 'run', run)
+    with pytest.raises(toolchains.ToolchainError, match=why):
+        toolchains._check_gcc_papermario(tmp_path, tmp_path)
+
+
+@pytest.mark.parametrize('tid', PM_GCC)
+def test_installed_pm_gcc_passes_the_native_build_check(tmp_path, tid):
+    if toolchains.installed(tid) is None:
+        pytest.skip('requires the installed compiler')
+    toolchains._check_gcc_papermario(toolchains.path(tid), tmp_path)
+
+
 def test_native_sn_driver_keeps_preprocessor_defines_and_small_data_consistent(tmp_path, monkeypatch):
     from decompnet.consoles.n64.sn64 import compile_native_source
     tools = {key: tmp_path / key for key in ['cc', 'cpp', 'assembler', 'wrapper']}
