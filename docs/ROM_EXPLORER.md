@@ -87,7 +87,12 @@ code. Its offsets are not necessarily physical cartridge/disc offsets. Header-de
 container boundaries and loader source groups are distinguished from arbitrary display
 pages. Classification totals remain separate from exact code-matching progress.
 
-Object-build projects still need original-image adapters. Processor adapters plug into
+A forked decomp is explored on your own game file in it, the one whose SHA-1 the import
+recorded (a renamed or changed copy is refused, with what to put back). Its splat config's
+code segments are used when that config splits exactly that file; a config that splits a
+derived image (decompressed code, say) is ignored rather than mapped onto the wrong offsets.
+Its functions have no ROM offsets yet, so regions show no function references there.
+Object-build projects whose original is a disc or a folder still need original-image adapters. Processor adapters plug into
 `Arch.asset_flow`; console-specific call contracts and argument counts belong to `Console`.
 The preview decoders and local UI/API are shared by every ROM console.
 
