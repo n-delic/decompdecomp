@@ -403,9 +403,11 @@ class ForkProject:
         if config is None:
             return [], 0
         try:
+            size = image.stat().st_size
+            # A config may name an empty overlay (its next segment starts where it does): it maps nothing.
             segments = [dict(name=s.name, rom_start=s.rom_start, rom_end=s.rom_end, vram=s.vram)
-                        for s in segments_from_config_data(config)]
-        except (TypeError, ValueError, KeyError):
+                        for s in segments_from_config_data(config) if 0 <= s.rom_start < s.rom_end <= size]
+        except (OSError, TypeError, ValueError, KeyError):
             return [], 0
         gp = config["options"].get("gp_value")
         return segments, gp if isinstance(gp, int) else 0
