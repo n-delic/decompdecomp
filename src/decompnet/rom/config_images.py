@@ -12,6 +12,9 @@ Projects in the style of the first 3D platformer's decompilation list their asse
 (`assets.json`, `assets_image.json`): a path ending in the format (`bank_0/2.ci4.png`), `meta.dims` and, for
 colour-indexed images, `meta.pal` naming the palette's entry, and `offsets` per release: the ROM offset and the
 offset inside the block there, which is packed when a Yay0, MIO0 or Yaz0 block starts at it (`asset_list_images`).
+
+A project's own segment types for sno-packed texture sheets (`sprite_sheet`, `course_texture_table`, with a
+`decompressed_size`) are read too (`sheets`): sno has no header, so the project's start and size are what find it.
 """
 from __future__ import annotations
 
@@ -83,6 +86,47 @@ def images(config):
         out.append(dict(offset=start, end=stop, format=preview, bits=bits, shown=shown, width=width, height=height,
                         name=name, palette=palette, declared=kind))
         if len(out) >= MAX_IMAGES:break
+    return out
+
+
+# A project's segment types that are sno-packed texture sheets, and whether every entry is CI4.
+SHEETS = {'sprite_sheet': False, 'course_texture_table': True}
+
+
+def sheets(config):
+    """The sno texture sheets a splat config declares: offset, end, unpacked size, name, CI4-only."""
+    out = []
+    for start, stop, kind, name, _args, item in _entries(config.get('segments') if isinstance(config, dict) else None):
+        size = item.get('decompressed_size') if isinstance(item, dict) else None
+        if kind in SHEETS and isinstance(size, int) and 0 < size <= asset_formats.MAX_BYTES:
+            out.append(dict(offset=start, end=stop, size=size, name=name if isinstance(name, str) else f'{start:X}',
+                            indexed=SHEETS[kind], declared=kind))
+    return out
+
+
+def _sheet(image, item):
+    from decompassets.n64 import sno
+    end = item['end'] if item['end'] and item['end'] > item['offset'] else item['offset'] + 2*item['size'] + 2
+    data = sno.unpack(bytes(image[item['offset']:end]), item['size'])
+    return data, sno.sheet(data, indexed_only=item['indexed'])
+
+
+def sheet_regions(image, declared, source):
+    """ROM Explorer assets for the declared sno texture sheets that unpack and read whole."""
+    out = []
+    for item in declared:
+        try:_data, textures = _sheet(image, item)
+        except AssetError:continue
+        if not textures:continue
+        first = textures[0]['preview_settings']
+        span = (item['end'] or item['offset'] + 1) - item['offset']
+        out.append(dict(offset=item['offset'], size=max(1, min(span, len(image) - item['offset'])), kind='image',
+                        provider='splat-config', layout='sno-sheet', label=f"{item['name']} · {len(textures)} texture(s)",
+                        confidence='declared', resource_path=item['name'], sheet=item, textures=textures,
+                        **{k: v for k, v in textures[0].items() if k != 'preview_settings'},
+                        preview_settings={**first, 'source': 'rom', 'offset': item['offset']},
+                        reason=f"The project's splat config ({source}) declares a {item['declared']} here, sno-packed to "
+                               f"{item['size']:,} bytes; its entries and palettes fit them. Shown as the project declares it."))
     return out
 
 
@@ -165,6 +209,15 @@ def regions(image, declared, source):
 
 def preview(image, asset, selection):
     """The declared image, unpacked first when its bytes are a packed block, with its palette."""
+    if asset.get('layout') == 'sno-sheet':
+        data, textures = _sheet(image, asset['sheet'])
+        if not textures:raise AssetError('The texture sheet changed. Check the project\'s splat config, then rescan.')
+        texture = asset_formats.integer(selection.get('texture', 0), 'Texture', 0, len(textures)-1)
+        result = asset_formats.preview(data, textures[texture]['preview_settings'])
+        result['details'].update(texture=texture, frame=0, palette=0, note=asset['reason'])
+        result['decoded'] = dict(codec='sno', bytes=len(data), block_offset=asset['offset'], member=asset['sheet']['name'])
+        result['settings'] = dict(source='rom', format='auto', offset=asset['offset'], texture=texture, frame=0, palette=0, mip=0)
+        return result
     item = asset['declared']
     texels, codec = _bytes(image, item['offset'], _pixels(item), item.get('inner', 0))
     if len(texels) < _pixels(item):raise AssetError('The declared image is shorter than its size. Check the project\'s splat config, then rescan.')
