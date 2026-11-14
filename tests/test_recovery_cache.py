@@ -1,6 +1,8 @@
 """The engine caches each function's classes/structs extraction keyed by a content token, so a layout change
 (which drops the memoized result in _xrefs) only re-extracts the functions whose bytes actually changed.
 """
+import threading
+
 from decompnet import classes, structs
 from decompnet.app.engine import RomNetwork
 
@@ -9,6 +11,8 @@ def _engine():
     eng = RomNetwork.__new__(RomNetwork)
     eng._scan_cache = {}
     eng._facts_cache = {}
+    eng._layout_gen = {}
+    eng._layout_lock = threading.Lock()
     return eng
 
 
@@ -50,3 +54,17 @@ def test_facts_reextracts_only_changed_and_merges_cache(monkeypatch):
     out1 = eng._facts(99, corpus1, read_facts=None, datum=None)
     assert calls[1] == {2}                        # only the changed function re-extracted
     assert out1[1] is out0[1]                      # unchanged function's facts reused from cache
+
+
+def test_facts_from_a_stale_generation_do_not_repopulate_the_cache(monkeypatch):
+    """A rename between the caller capturing syms and _facts's write-back bumps the layout generation. Facts built
+    with the old syms must not be cached under the new generation, or a later structs() reuses them because the
+    content tokens still match (the identity check alone only catches a pop after setdefault)."""
+    eng = _engine()
+    pid = 7
+    eng._layout_gen[pid] = 5  # an edit has since bumped the generation past the one the caller captured
+    monkeypatch.setattr(structs, "extract",
+                        lambda corpus, read, datum, only: {v: ("facts", v) for v, _c, _r in corpus})
+    out = eng._facts(pid, [(1, b"aa", [], b"t1")], lambda *a, **k: None, lambda a: a, gen=4)
+    assert out == {1: ("facts", 1)}       # the caller still gets correct facts for its request
+    assert eng._facts_cache.get(pid) == {}  # but the stale-generation facts are NOT written back

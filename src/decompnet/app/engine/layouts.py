@@ -105,14 +105,15 @@ class LayoutMixin:
             return None
         x = self.xrefs(proj)
         if "structs" not in x:
-            syms = self.symbols(proj["id"])
+            gen = self._layout_gen.get(proj["id"], 0)  # before syms: a rename after this bumps it, so facts built
+            syms = self.symbols(proj["id"])            # with these syms are not written back over the new cache
             read = functools.partial(arch.get(self.console(proj).arch).field_accesses,
                                      big_endian=bool(self.cfg(proj).get("big_endian", True)))
-            facts = self._facts(proj["id"], self._corpus(proj["id"]), read, lambda a: a - syms.name_at(a)[1])
+            facts = self._facts(proj["id"], self._corpus(proj["id"]), read, lambda a: a - syms.name_at(a)[1], gen)
             x["structs"] = structs.recover_from(facts)
         return x["structs"]
 
-    def _facts(self, pid: int, corpus: list, read_facts, datum) -> dict:
+    def _facts(self, pid: int, corpus: list, read_facts, datum, gen: int = 0) -> dict:
         """Each function's structs.Facts, keyed by vram; cached facts are reused for every function whose content
         token is unchanged. extract() still sees the whole corpus (data_start needs every function's extent); `only`
         just limits which functions are re-read. Splits/cuts/merges preserve byte coverage, so an unchanged
@@ -125,8 +126,8 @@ class LayoutMixin:
             facts = fresh[vram] if vram in fresh else cache[vram][1]
             out[vram] = facts
             kept[vram] = (token, facts)
-        with self._layout_lock:  # store only if no edit dropped/replaced the cache while we computed (above, unlocked)
-            if self._facts_cache.get(pid) is cache:
+        with self._layout_lock:  # store only if no edit dropped/replaced the cache or bumped the generation while
+            if self._facts_cache.get(pid) is cache and self._layout_gen.get(pid, 0) == gen:  # we computed (unlocked)
                 self._facts_cache[pid] = kept
         return out
 

@@ -72,7 +72,7 @@ def test_read_asm_pages_target_assembly():
     fn = {"name": "big", "project_id": 1, "best_source": None, "seed": None}
     net = _net(fn, [f"insn{i}" for i in range(10)])
     out = net.read_asm("big", start=0, count=4, part="asm")
-    assert "lines 0" in out and "of 10" in out
+    assert "lines 0\u20133 of 10" in out  # 4 lines (0-3) shown: inclusive last line, not the next start
     assert "insn0" in out and "insn3" in out and "insn4" not in out
     assert 'read_asm("big", start=4)' in out
 

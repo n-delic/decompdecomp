@@ -69,6 +69,7 @@ class _CacheEng(LayoutMixin):
     """Just enough of the engine to exercise LayoutMixin._facts and its cache."""
     def __init__(self):
         self._facts_cache: dict = {}
+        self._layout_gen: dict = {}
         self._layout_lock = threading.Lock()
 
 

@@ -1044,7 +1044,7 @@ class Network:
             label, fence, part_arg = "assembly", "asm", ""
         page, total, nxt = scoring.asm_page(text, int(start), int(count))
         lo = min(max(0, int(start)), total)  # don't print a start past the end (e.g. "lines 99-99 of 3")
-        hi = lo + len(page.splitlines()) if page else lo
+        hi = lo + len(page.splitlines()) - 1 if page else lo  # inclusive last line shown (0-indexed), not next start
         tail = (f'Next page: read_asm("{fn["name"]}"{part_arg}, start={nxt})' if nxt is not None
                 else f"(end of {label})")
         return f"## {proj['slug']}/{fn['name']} {label} \u2014 lines {lo}\u2013{hi} of {total}\n```{fence}\n{page}\n```\n{tail}"

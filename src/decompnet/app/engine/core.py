@@ -28,6 +28,8 @@ class Core(Network):
         self._xrefs: dict[int, dict] = {}
         self._scan_cache: dict[int, dict] = {}  # project id -> {vram: (content token, classes scan)}; survives edits
         self._facts_cache: dict[int, dict] = {}  # project id -> {vram: (content token, structs Facts)}; survives edits
+        self._layout_gen: dict[int, int] = {}  # project id -> edit generation; a facts compute that captured a lower
+        #                                        gen before an edit is not written back (layouts._facts)
         self._layout_lock = threading.Lock()  # guards the check-and-swap of the two caches above against an edit
         #                                       that drops them mid-compute, so a stale compute can't repopulate them
         self._draft_locks: dict[int, threading.Lock] = {}  # function id -> held while its machine draft is made
