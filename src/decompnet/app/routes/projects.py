@@ -121,8 +121,14 @@ def register(app: App) -> None:
 
     def p_boundary_repairs(slug, request, data):
         from .. import boundary_repairs as repairs
-        if request.method == 'GET':return repairs.audit(net,slug)
+        if request.method == 'GET':return {**repairs.audit(net,slug),'safe_job':jobs.active((repairs.safe_job_kind(slug),))}
         action=data.get('action')
+        if action=='apply_safe':
+            # One run per project: a second click follows the running one instead of starting another.
+            with jobs._lock:
+                running=jobs.active((repairs.safe_job_kind(slug),))
+                return {'job':running['id'] if running else jobs.start(repairs.safe_job_kind(slug),lambda log:repairs.apply_safe(net,slug,log),project=slug,
+                                                                         cancel_message='Safe boundary fixes stopped. Fixes already applied are kept and can be undone.')}
         if action=='preview':return repairs.public(repairs.preview(net,slug,data.get('function'),data.get('repair'),data.get('end')))
         if action=='undo':return {'job':jobs.start('Undo boundary decision',lambda log:repairs.undo(net,slug,data.get('key'),log))}
         return {'job':jobs.start('Verify boundary repair',lambda log:repairs.apply(net,slug,data.get('function'),data.get('repair'),data.get('revision'),data.get('image'),data.get('end'),data.get('note',''),log))}

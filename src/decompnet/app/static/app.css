@@ -1892,6 +1892,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 @media(max-width:600px) { .blocker-review-card { padding:14px; } }
 
 .boundary-findings { max-height:320px; overflow:auto; padding:12px; display:grid; gap:8px; }
+.boundary-safe { margin:4px 0 16px; padding-bottom:12px; border-bottom:1px solid var(--line-soft); }
 .boundary-finding { display:grid; gap:4px; text-align:left; padding:10px 12px; border:1px solid var(--line); background:var(--paper); border-radius:var(--r); }
 .boundary-finding:hover { border-color:var(--muted); }
 .boundary-finding span { line-height:1.5; }

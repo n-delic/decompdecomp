@@ -75,5 +75,33 @@ async function main(){
   const late=deferred();t.ctx.api=url=>url.startsWith('/api/boundary-evidence')?late.promise:api(url);
   const reading=t.click('[data-boundary-read]');await tick();t.get('[data-boundary-name]').value='other';t.get('[data-boundary-name]').oninput();late.resolve(packet);await reading;
   assert.equal(t.get('[data-boundary-evidence]').innerHTML,'');assert.equal(t.get('[data-boundary-apply]').disabled,true);
+  // Apply safe fixes: progress before the first request, Stop once the job exists, a cancelled run restores controls.
+  for(const outcome of ['cancelled','done','start-error']){
+    const s=setup();await s.ctx.openBoundaryReview();
+    const start=deferred(),poll=deferred(),cancels=[],api=s.ctx.api;
+    s.ctx.api=(url,opts)=>opts?.body?.action==='apply_safe'?start.promise:url.startsWith('/api/job?')?poll.promise:url==='/api/job/cancel'?(cancels.push(opts.body.id),Promise.resolve({})):url.startsWith('/api/project?')?Promise.resolve({}):api(url,opts);
+    const log=s.get('[data-boundary-safe-log]'),stop=s.get('[data-boundary-safe-stop]'),button=s.get('[data-boundary-safe]');
+    s.get('[data-boundary-safe]').onclick();await tick();
+    assert(log._workBar&&!log._workBar.removed&&button.disabled&&!stop.hidden&&stop.disabled);
+    s.get('[data-boundary-safe]').onclick();await tick();  // a second click while starting starts nothing more
+    if(outcome==='start-error'){start.reject(new Error('Leave the room first'));await tick();
+      assert(log._workBar.removed&&log._errorBox.textContent.includes('room')&&!button.disabled&&stop.hidden);continue;}
+    start.resolve({job:'safe-1'});await tick();
+    assert.equal(stop.disabled,false);
+    if(outcome==='cancelled'){await stop.onclick();assert.deepEqual(cancels,['safe-1']);poll.resolve({state:'cancelled',error:'Safe boundary fixes stopped.',log:[]});}
+    else poll.resolve({state:'done',log:['done'],result:{fixed:[{function:'head'}],remaining:3}});
+    await tick();await tick();
+    assert(log._workBar.removed&&stop.hidden&&!button.disabled);
+    if(outcome==='done')assert.equal(log._workStatus.textContent,'Applied 1 safe fix; 3 entries need review.');
+    else assert.equal(log._workStatus.dataset.state,'error');
+  }
+  // Reopening the dialog while a run continues follows it instead of offering a second start.
+  const back=setup(),api2=back.ctx.api,pending=deferred();
+  back.ctx.api=(url,opts)=>url.startsWith('/api/boundary-repairs?')?Promise.resolve({findings:[],history:[],safe_job:{id:'safe-2'}}):url.startsWith('/api/job?')?pending.promise:api2(url,opts);
+  await back.ctx.openBoundaryReview();await tick();
+  const backLog=back.get('[data-boundary-safe-log]');
+  assert(backLog._workBar&&!backLog._workBar.removed&&back.get('[data-boundary-safe]').disabled&&!back.get('[data-boundary-safe-stop]').disabled);
+  pending.resolve({state:'done',log:[],result:{fixed:[],remaining:0}});await tick();await tick();
+  assert(backLog._workBar.removed&&!back.get('[data-boundary-safe]').disabled);
 }
 main().catch(error=>{console.error(error);process.exit(1);});

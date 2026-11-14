@@ -50,6 +50,9 @@ function boundarySuggestionsHTML(packet) {
 async function openBoundaryReview(initial='') {
   const slug=S.slug;
   const body=dialog('Review function boundaries',`<p>Inspect the original instructions, compare possible repairs, then review the exact change. An agent can investigate and explain a recommendation.</p>
+    <section class="boundary-safe"><p class="small">Apply safe fixes repairs every entry whose original bytes settle its boundary: a jump missing its delay slot, or code that runs on into the next piece without returning. Existing matches are checked first, each fix can be undone from Repair history, and the rest stay here for review.</p>
+      <div class="row"><button class="primary" type="button" data-boundary-safe>Apply safe fixes</button><button class="ghost" type="button" data-boundary-safe-stop hidden>Stop</button></div>
+      <details class="more" data-boundary-safe-frame><summary>Safe fix log</summary><pre class="joblog" data-boundary-safe-log></pre></details></section>
     <div data-boundary-audit-work></div><div data-boundary-audit></div><div class="row"><label class="field grow"><span>Selected function</span><input class="mono" data-boundary-name value="${esc(initial)}" placeholder="Choose an entry or enter its name"></label><button class="ghost" data-boundary-read>Read evidence</button></div>
     <div data-boundary-evidence-work></div><div data-boundary-evidence></div>
     <details class="panel" data-boundary-agent><summary>Ask an agent to investigate · uses AI tokens</summary><p class="small">Investigates this entry for up to 10 minutes, then stops after submitting advice. You review and apply any layout change.</p>
@@ -86,8 +89,34 @@ async function openBoundaryReview(initial='') {
     try{const data=await api(`/api/boundary-evidence?slug=${encodeURIComponent(slug)}&function=${encodeURIComponent(name)}`);if(!active()||seq!==reading)return;packet=data;get('[data-boundary-evidence]').innerHTML=boundaryEvidenceHTML(data);get('[data-boundary-suggestions]').innerHTML=boundarySuggestionsHTML(data);}
     catch(error){if(active()&&seq===reading)showJobError(evidenceWork,error.message);}finally{done();}
   };
+  const safeLog=get('[data-boundary-safe-log]'),safeStop=get('[data-boundary-safe-stop]');
+  safeLog._frame=get('[data-boundary-safe-frame]');safeLog._showJobProgress=true;
+  let safeJob=null;const safeFollowed=new Set();
+  // Follows a run started here, or found running when the dialog opens: one follower per run. `start` is the id of
+  // a running job, or a function that starts one, so the click shows progress before its first request.
+  const followSafe=async(start)=>{
+    if(safeJob)return;safeJob=start;busy=true;showJobError(safeLog,'');
+    const controls=[...body.querySelectorAll('button,input,select,textarea')].filter(c=>c!==safeStop);
+    const finish=beginWork(safeLog,typeof start==='function'?'Starting safe boundary fixes…':'Applying safe boundary fixes…',controls,'Safe fixes finished.');
+    let id=null;
+    safeStop.hidden=false;safeStop.disabled=typeof start==='function';
+    safeStop.onclick=async()=>{if(!id)return;safeStop.disabled=true;safeLog._workStatus.textContent='Stopping after the current fix…';
+      try{await api('/api/job/cancel',{method:'POST',body:{id}});}catch(error){safeStop.disabled=false;if(active())showJobError(safeLog,error.message);}};
+    try{
+      id=typeof start==='function'?(await start()).job:start;if(!active())return;
+      safeJob=id;safeFollowed.add(id);safeStop.disabled=false;
+      const result=await followJob(id,safeLog,undefined,active);
+      if(active()&&result){safeLog._workStatus.textContent=`Applied ${result.fixed.length} safe ${result.fixed.length===1?'fix':'fixes'}; ${result.remaining} ${result.remaining===1?'entry needs':'entries need'} review.`;safeLog._workStatus.dataset.state='done';}
+    }catch(error){if(active())showJobError(safeLog,error.message);}
+    finally{finish();safeStop.hidden=true;busy=false;safeJob=null;
+      if(active()){get('[data-boundary-apply]').disabled=!plan;invalidate();
+        try{await load();S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);if(active()){renderStats(S.ov);renderProjectSettings();}}
+        catch(error){if(active())showJobError(get('[data-boundary-audit-work]'),error.message);}}}
+  };
+  get('[data-boundary-safe]').onclick=()=>{if(!busy)void followSafe(()=>api('/api/boundary-repairs',{method:'POST',body:{slug,action:'apply_safe'}}));};
   const load=async()=>{
     const data=await api(`/api/boundary-repairs?slug=${encodeURIComponent(slug)}`);if(!active())return;
+    if(data.safe_job&&!safeJob&&!safeFollowed.has(data.safe_job.id))void followSafe(data.safe_job.id);
     get('[data-boundary-audit]').innerHTML=`<details class="panel settings-disclosure" ${initial?'':'open'}><summary class="panel-head"><h3>Entries to inspect <span class="disclosure-context">— ${data.findings.length}</span></h3></summary><div class="boundary-findings">${data.findings.map(f=>`<button type="button" class="boundary-finding" data-boundary-pick="${esc(f.function)}"><b class="mono">${esc(f.function)}</b><span class="small muted">${f.suggested_action==='delay_slot'?'Final instruction may be missing its delay slot.':'Inspect the entry and surrounding control flow.'}${f.override?' · reviewed; agents allowed':' · automatic work paused'}</span></button>`).join('')||'<p>No incomplete entries detected. Enter a function name to review another extent.</p>'}</div></details>`;
     get('[data-boundary-history]').innerHTML=`<details class="panel settings-disclosure"><summary class="panel-head"><h3>Repair history <span class="disclosure-context">— ${data.history.length} recent decisions</span></h3></summary><div class="boundary-findings">${data.history.map(h=>`<div class="boundary-history-row"><span><b class="mono">${esc(h.function)}</b><br><span class="small muted">${esc(h.action.replaceAll('_',' '))} · ${esc(new Date(h.time*1000).toLocaleString())}</span><br><span class="small muted">${esc(h.evidence)}</span></span><button type="button" class="ghost small-btn" data-boundary-undo="${esc(h.key)}">Check &amp; undo</button></div>`).join('')||'<p>No decisions yet.</p>'}</div></details>`;
   };
