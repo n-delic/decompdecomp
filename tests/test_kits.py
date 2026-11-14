@@ -542,3 +542,32 @@ def test_duplicate_x64_hosts_provide_one_target_and_old_x64_tools_use_wine(tmp_p
     make_vc(tmp_path, "15.0.30729.1", "VC/bin/x86_amd64")
     [own] = kits.get("visualcpp").compilers(copy)
     assert own.version == "own-15.0.30729-x64" and own.runner == "wine"
+
+
+def test_the_2017_cross_finds_mspdbcore_when_only_the_pdb_server_is_beside_cl(tmp_path):
+    """Review of #236: mspdbsrv.exe is the server cl spawns, not the DLL it loads, so a Hostx86/x64 folder holding
+    only the server (2017's risner copy) must still send the search on to the sibling Hostx86/x86's mspdbcore.dll."""
+    mod = _pc_compile_module()
+    host = tmp_path / "bin" / "Hostx86"
+    (host / "x64").mkdir(parents=True)
+    (host / "x86").mkdir()
+    (host / "x64" / "cl.exe").write_bytes(b"")
+    (host / "x64" / "mspdbsrv.exe").write_bytes(b"")
+    (host / "x86" / "mspdbcore.dll").write_bytes(b"")
+    assert str(host / "x86") in mod._dll_dirs(str(host / "x64" / "cl.exe"))
+
+
+def test_a_kit_that_cant_be_read_does_not_abort_the_pc_build_environment(tmp_path, monkeypatch):
+    """Review of #236: wine.build_env scans every registered kit on every build; a copy whose file can no longer be
+    read (PermissionError out of xdk/ps3sdk/owncompiler) must count as "needs no wine", not abort the build."""
+    from decompnet import wine
+
+    monkeypatch.setattr(wine, "needed", lambda: True)
+    monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
+    monkeypatch.setattr(toolchains, "registry", lambda: {})
+
+    def broken(ids):
+        raise PermissionError(13, "Permission denied", "lib/xapilib.lib")
+
+    monkeypatch.setattr(kits, "compilers", broken)
+    assert wine.build_env() == {}

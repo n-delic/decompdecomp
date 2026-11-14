@@ -56,7 +56,7 @@ def wine_setup() -> tuple[str, dict]:
     return wine, {**os.environ, **WINE_QUIET, "WINEPREFIX": prefix}
 
 
-_MSPDB = ("mspdb80.dll", "mspdb100.dll", "mspdb110.dll", "mspdb120.dll", "mspdbcore.dll", "mspdbsrv.exe")
+_MSPDB = ("mspdb80.dll", "mspdb100.dll", "mspdb110.dll", "mspdb120.dll", "mspdbcore.dll")  # (not mspdbsrv.exe: the server cl spawns, not a DLL it loads)
 
 
 def _has_mspdb(folder: Path) -> bool:

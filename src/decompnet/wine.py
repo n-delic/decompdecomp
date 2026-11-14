@@ -23,6 +23,7 @@ cl.exe as Z:\\...: cl.exe reads /Users/... as a switch. Windows runs the compile
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -129,7 +130,12 @@ def build_env(always: bool = False) -> dict[str, str]:
 
     packs = [toolchains.path(tid) for tid, tc in toolchains.registry().items()
              if tc.wine and toolchains.installed(tid) is not None]
-    own = not (packs or always) and any(c.runner == "wine" for c in kits.compilers(k.id for k in kits.KITS))
+    own = False
+    if not (packs or always):
+        try:
+            own = any(c.runner == "wine" for c in kits.compilers(k.id for k in kits.KITS))
+        except OSError as e:  # a registered copy with a file that can't be read: it needs no wine from us, the build goes on
+            logging.getLogger(__name__).warning("a kit copy can't be read, so wine isn't set up for it: %s", e)
     wine = find() if packs or always or own else None
     if not wine:
         return {}

@@ -81,8 +81,8 @@ Where to start on a gap:
   Ghidra drafts a delinked object without its callees' prototypes, so a method call loses `this` and a callee's
   arguments are guessed (a draft fed the project's headers, through a Ghidra script that applies them, is the next
   step). Games built with Visual C++ 6.0 to 2010 and 2017 can match; 2015's and 2019 and newer's build with 2017's,
-  2012-2013's with 2010's, every 64-bit game with 2017's 64-bit compiler: Newer Windows games, below, is the plan for
-  their own compilers. A class’s constructors are one real name (`CFoo::CFoo`), so of two at two addresses (a copy
+  2012-2013's with 2010's, a 64-bit game with 2017's 64-bit compiler or, for any other build, your own x64 copy: Newer
+  Windows games, below, is the plan for the packs' own compilers. A class’s constructors are one real name (`CFoo::CFoo`), so of two at two addresses (a copy
   constructor) only one can be written as a constructor: names.py would need the mangled signature in "names". A
   game's own DLLs come along when its folder or .exe is given by path; a dropped .exe comes alone (a browser doesn't
   hand over the folder), a project made before can't take its DLLs in yet (Reimport analyses the programs
