@@ -702,7 +702,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
-| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, named four-block banks, embedded ZIP packs, textures loaded by uncompressed display lists, I64 images in a chunked-RNC filesystem, model textures in a deflated asset table, UVTX files in a UV FORM filesystem, a texture table of back-reference-packed textures with inferred widths; a fork's own splat image segments) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | ✓ forks with the game file (N64 checked) |
+| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, named four-block banks, embedded ZIP packs, textures loaded by uncompressed display lists, I64 images in a chunked-RNC filesystem, model textures in a deflated asset table, UVTX files in a UV FORM filesystem, a texture table of back-reference-packed textures with inferred widths, display-list textures and sprites in a table of relocatable VPK0 files; a fork's own splat image segments) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | ✓ forks with the game file (N64 checked) |
 | Audio browser, filters, sortable samples and explicit WAV preparation | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | ✓ forks with the game file (N64 checked) |
 | Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / linked records | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -1946,7 +1946,9 @@ Phases:
   a monster-battle game), Rare's other packers, and a survival horror port. Done in 0.4.0: an off-road RC racer's
   chunked-RNC filesystem (I64 images) and a platformer sequel's deflated model table. Done in 0.5.0: the UV FORM
   filesystem of a flight game and a beetle racer (UVTX files drawn by their own display lists). Done in 0.6.0: a
-  demolition game's texture table and its six codecs (widths inferred, 96% agree with its decompilation).
+  demolition game's texture table and its six codecs (widths inferred, 96% agree with its decompilation). Done in
+  0.7.0: a fighting game's relocatable file table (VPK0, pointer chains, display lists and sprites).
+- That fighting game's material textures (MObjSub, sized by the code that draws them) are not shown yet.
 - That demolition game's widths could come from the code that draws each texture instead of being inferred.
 - UVTX files whose palette is another texture file (which one comes from the level) are not shown yet.
 - That platformer sequel's ~2,000 sprite assets (`0103…`) and its models' smaller mip levels.
