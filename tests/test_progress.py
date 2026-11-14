@@ -275,7 +275,7 @@ def test_cleared_settings_and_deleted_notes_are_authoritative(project):
     agent, _ = net.local_agent("helper")
     net.add_note(agent, "game", "old project note")
     net.progress.sync("game", force=True)
-    assert len(json.loads((folder / saves.MANIFEST).read_text())["notes"]) == 1
+    assert len(saves.read_manifest(folder)["notes"]) == 1
     manifest(folder, instructions="", notes=[], compiler_ranges=[])
     net.progress.sync("game", force=True)
     assert net.instructions("game") == ""
@@ -1800,7 +1800,7 @@ def test_local_publication_does_not_wait_for_unrelated_verification(project, for
     assert result is True and not judged
     assert 'game' not in worker.blocked and 'game' not in worker.errors
     if change == 'metadata':
-        assert json.loads((folder/saves.MANIFEST).read_text())['notes'][0]['text'] == 'new note'
+        assert saves.read_manifest(folder)['notes'][0]['text'] == 'new note'
     else:
         assert (folder/('src' if change=='match' else 'best')/'f.c').read_text() == 'good new source\n'
     assert not worker.sync('game', force=True)  # publication acknowledged the actual files and dirty tokens
@@ -2170,7 +2170,7 @@ def test_notes_written_during_recheck_are_published_even_without_source_changes(
         finally:
             compilation.set_result(None)
         assert background.result(timeout=5)
-    saved = json.loads((folder/saves.MANIFEST).read_text())
+    saved = saves.read_manifest(folder)
     assert any(note['text'] == 'Fresh foreground notes' for note in saved['notes'])
     assert any('foreground context' in path.read_text() for path in (folder/'include').glob('*.h'))
     assert not net.progress.sync('game', force=True)
@@ -2542,7 +2542,7 @@ def test_tool_entry_uses_foreground_lane_during_saved_verification(project,monke
         assert background.result(timeout=5)
     assert not getattr(net.progress.local,'foreground',False)
     if tool in {'add_note','release_function'}:
-        saved=json.loads((folder/saves.MANIFEST).read_text())
+        saved=saves.read_manifest(folder)
         assert any(n['text']=='fresh foreground findings' for n in saved['notes'])
     else:
         assert judged==[('f','good foreground')]

@@ -100,7 +100,7 @@ def scoped_snapshot(net, proj, root, rows, output):
     prefix = '' if prefix == '.' else prefix + '/'
     manifest_path = prefix+saves.MANIFEST
     head = repository_git.git(root, 'rev-parse', 'HEAD')
-    base = json.loads(repository_git.git(root, 'show', head+':'+manifest_path))
+    base = json.loads(repository_progress.committed_manifest_text(root, manifest_path, head))
     if match_commits.layout_shape(base) != match_commits.layout_shape(current) or base['game']['sha1'] != current['game']['sha1']:
         raise NetworkError('Commit a manual progress checkpoint after game or function-layout changes, then retry improvement commits.')
     # Synchronization may have judged contributions; select only still-improved open functions.
@@ -143,7 +143,7 @@ def scoped_snapshot(net, proj, root, rows, output):
             base.setdefault('headers', {})[context_unit] = header
     base['notes'] = [note for note in base.get('notes', []) if note.get('function') not in names] + [note for note in current.get('notes', []) if note.get('function') in names]
     base['saved_at'], base['revision'] = current['saved_at'], current.get('revision')
-    chosen[manifest_path] = (json.dumps(base, indent=1)+'\n').encode()
+    chosen.update(repository_progress.manifest_blobs(prefix, base))  # (a format 2 save's notes beside it)
     return chosen, rows, head
 
 

@@ -164,7 +164,7 @@ def test_nested_progress_excludes_other_repository_files(progress):
     repository_sync.run(net, 'game', root, commit_push=True)
     folder = root/'progress'
     folder.mkdir()
-    for name in ('README.md', 'decompdecomp.json', 'decompdecomp-progress.svg', 'src', 'best', 'include'):
+    for name in ('README.md', *saves.TOP_FILES, 'decompdecomp-progress.svg', 'src', 'best', 'include'):
         if (root/name).exists():shutil.move(root/name, folder/name)
     (root/'README.md').write_text('Repository guide\n')
     git(root, 'add', '-A')

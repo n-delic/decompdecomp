@@ -400,7 +400,7 @@ def test_automatic_match_in_build_progress_child_never_changes_build_sources(aut
     net, root, _, _ = automatic
     child = root / 'progress'
     child.mkdir()
-    for name in ('src', 'best', 'include', 'decompdecomp.json', 'README.md', 'decompdecomp-progress.svg'):
+    for name in ('src', 'best', 'include', *saves.TOP_FILES, 'README.md', 'decompdecomp-progress.svg'):
         path = root / name
         if path.exists():path.rename(child / name)
     (root / 'src').mkdir()

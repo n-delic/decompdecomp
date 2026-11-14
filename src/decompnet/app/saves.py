@@ -43,8 +43,19 @@ from .restore_effects import batched as restore_batch
 # lost the second, and three of an N64 game's matches stopped compiling against the shared header.
 PRIVATE_HEADERS = ("exact_match_", "local_source_")
 
-FORMAT = 1
+# Format 2 keeps a manifest's agents' notes and its verification records in files of their own (SIDE_FILES): on a
+# 2,000-function game they were 25 MB of a 27 MB decompdecomp.json, rewritten whole for every new best score. The app
+# works with one joined manifest text (manifest_text); only the folder and git hold it split (split_manifest,
+# join_manifest). A format 1 save keeps them inside and is read as it is; its next write is format 2, which an older
+# app refuses ("not format 1") rather than read as a save without notes.
+FORMAT = 2
+FORMATS = (1, 2)  # what a save may be: an older one is read, the next write converts it
 MANIFEST = "decompdecomp.json"
+NOTES_FILE = "notes.json"
+VERIFICATION_FILE = "verification.json"
+SIDE_FILES = {"notes": NOTES_FILE, "verification": VERIFICATION_FILE}  # manifest key -> its file, in joined order
+SIDE_DEFAULTS = {"notes": list, "verification": dict}
+TOP_FILES = (MANIFEST, NOTES_FILE, VERIFICATION_FILE)  # the save's own top-level files a sync reads
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
 SET_ASIDE_META = ("asm_code", "not_c", "asm_twin", "verified_assembly")  # why an agent or user set a function aside
 SOURCE_COMPONENT_BYTES = 249  # leaves room for the publisher's .c.tmp suffix under common 255-byte limits
@@ -180,12 +191,13 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
             net.progress.sync(slug, force=True)
             net.progress.prune_matched_drafts(slug)
             manifest_path = target / MANIFEST
-            manifest_before = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
+            # (joined: a contributor's edit to the notes beside it is an edit to the manifest too)
+            manifest_before = read_manifest_text(target) if manifest_path.exists() else None
             files, result = _render(net, slug, target)
             net.progress.sync(slug, force=True)
             # A sync writes the manifest only when the database changed. A save also records when it was saved, so a
             # first sync after a database backup can tell this snapshot's age (#101 review).
-            current = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
+            current = read_manifest_text(target) if manifest_path.exists() else None
             if current == manifest_before:
                 if not _publish(target, {MANIFEST: files[MANIFEST]}, expected={MANIFEST: manifest_before},
                                chosen=bool(net.cfg(proj).get("progress_folder"))):
@@ -224,10 +236,16 @@ def unexpected_files(folder: Path, names, expected: dict[str, str], *, first: bo
     the first. `_publish` refuses to write over them, and a sync that keeps being refused names them."""
     found = []
     for name in sorted(names):
-        if name == "README.md":
-            continue
+        if name == "README.md" or name in SIDE_FILES.values():
+            continue  # (the side files are compared as part of the joined manifest)
         path = folder / name
-        current = path.read_text(encoding="utf-8", errors="replace") if path.exists() else None
+        if name == MANIFEST and path.exists():
+            try:
+                current = read_manifest_text(folder)
+            except (NetworkError, OSError, UnicodeError):
+                current = None if not path.exists() else path.read_text(encoding="utf-8", errors="replace")
+        else:
+            current = path.read_text(encoding="utf-8", errors="replace") if path.exists() else None
         if current != expected.get(name):
             found.append(name)
             if first:
@@ -240,13 +258,22 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
     """Only change owned files whose contents changed; keep git and contributors' other files intact.
 
     `chosen`: the progress folder is the one the user saved to or configured, so a link at its own path is theirs to
-    keep; links inside it are still refused."""
+    keep; links inside it are still refused.
+
+    `files`, `previous` and `expected` hold the joined manifest (manifest_text); it's written as the files a format
+    2 save keeps (split_manifest), each only when it changed: a new best score rewrites decompdecomp.json, not the
+    notes beside it."""
+    logical = files.keys() | (previous or {}).keys()
+    files = split_files(files)
+    if previous is not None:
+        # Only its names are used (what to remove; some callers pass hashes): a manifest owns its side files.
+        previous = dict.fromkeys(previous.keys() | (set(SIDE_FILES.values()) if MANIFEST in previous else set()))
     names = files.keys() | (previous or {}).keys()
     for name in names:
         path = Path(name)
         if path.is_absolute() or ".." in path.parts or path.as_posix() != name:
             raise NetworkError("Progress contains an unsafe file path. Fix its manifest before saving again.")
-        if name not in (MANIFEST, "README.md", "data.json") and not name.startswith(("src/", "best/", "include/", "data/")):
+        if name not in (*TOP_FILES, "README.md", "data.json") and not name.startswith(("src/", "best/", "include/", "data/")):
             raise NetworkError("Progress contains an unsupported file path. Fix its manifest before saving again.")
         target = folder / path
         for parent in (target, *target.parents):
@@ -258,7 +285,7 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
                 raise NetworkError("Progress paths cannot use symbolic links. Replace the link and try again.")
         if target.exists() and not target.is_file():
             raise NetworkError("Progress files must be regular files. Replace the conflicting path and try again.")
-    if expected is not None and unexpected_files(folder, names, expected, first=True):
+    if expected is not None and unexpected_files(folder, logical, expected, first=True):
         return False  # git or an editor wrote while the database was being rendered: read it next time
     receipts = []
     written = {}
@@ -285,6 +312,114 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
         for watcher, receipt in receipts:
             watcher.publish_end(folder, receipt, written, removed, complete=complete)
     return True
+
+
+def manifest_text(manifest: dict) -> str:
+    """The joined manifest text the app renders, compares and merges: format 2, with every side key present and
+    last, so that splitting it and joining the files again gives back these exact bytes (a sync compares hashes)."""
+    body = {key: value for key, value in manifest.items() if key not in SIDE_FILES}
+    body["format"] = FORMAT
+    for key in SIDE_FILES:
+        value = manifest.get(key)
+        body[key] = SIDE_DEFAULTS[key]() if value is None else value
+    return json.dumps(body, indent=1) + "\n"
+
+
+def split_manifest(text: str) -> dict[str, str]:
+    """A joined manifest as the files a format 2 save holds: decompdecomp.json without the side keys, and one file
+    for each. An older (format 1) text is written as it is."""
+    manifest = json.loads(text)
+    if not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
+        return {MANIFEST: text}
+    files = {MANIFEST: json.dumps({k: v for k, v in manifest.items() if k not in SIDE_FILES}, indent=1) + "\n"}
+    for key, name in SIDE_FILES.items():
+        value = manifest.get(key)
+        files[name] = json.dumps(SIDE_DEFAULTS[key]() if value is None else value, indent=1) + "\n"
+    return files
+
+
+JOINED_KEPT = 3  # joined manifests kept, one per project a sync is reading (each the size of the save's manifest)
+_joined: dict[tuple, str] = {}
+_joined_lock = threading.Lock()
+
+
+def join_manifest(manifest: str, side: dict[str, str | None]) -> str:
+    """The joined text of a save's decompdecomp.json and its side files (file name -> text, None when absent).
+
+    A format 1 manifest is its own text. A format 2 one with a side file missing is refused: read as "no notes", a
+    partial copy or an old .gitignore would make a sync delete the project's notes."""
+    key = (manifest, *(side.get(name) for name in SIDE_FILES.values()))
+    with _joined_lock:
+        if key in _joined:
+            return _joined[key]
+    try:
+        parsed = json.loads(manifest)
+    except ValueError:
+        return manifest  # (the caller says what's wrong with it, as for any unreadable manifest)
+    if not isinstance(parsed, dict) or parsed.get("format") != FORMAT:
+        return manifest
+    # A side key written into the manifest itself (an edit by hand, another tool) is the save's: it wins, and the
+    # next write moves it to its file. Only a key that is in neither is a missing file.
+    wanted = {key: name for key, name in SIDE_FILES.items() if key not in parsed}
+    if "notes" in wanted and side.get(NOTES_FILE) is None:
+        raise NetworkError(f"The save's {NOTES_FILE} is missing beside {MANIFEST}. Restore it from Git or a backup of "
+                           "the progress folder before continuing: read without it, the save would delete the "
+                           "project's agents' notes.")
+    for key, name in wanted.items():
+        if side.get(name) is None:
+            # Missing match records only cost their file: the database's are written again with the next save.
+            parsed[key] = SIDE_DEFAULTS[key]()
+            continue
+        try:
+            parsed[key] = json.loads(side[name])
+        except ValueError:
+            raise NetworkError(f"The save's {name} isn't valid JSON. Restore it from Git or fix it, then try again.") from None
+    joined = json.dumps(parsed, indent=1) + "\n"
+    with _joined_lock:
+        # Every sync that reads the folder joins it again; unchanged files come back as the same cached strings,
+        # whose hashes Python keeps, so a repeat costs a lookup instead of parsing and encoding 25 MB.
+        _joined[key] = joined
+        while len(_joined) > JOINED_KEPT:
+            _joined.pop(next(iter(_joined)))
+    return joined
+
+
+def join_files(files: dict[str, str]) -> dict[str, str]:
+    """A folder's or a commit's files with decompdecomp.json joined and its side files folded into it."""
+    if MANIFEST not in files:
+        return {name: text for name, text in files.items() if name not in SIDE_FILES.values()}
+    joined = {name: text for name, text in files.items() if name not in SIDE_FILES.values()}
+    joined[MANIFEST] = join_manifest(files[MANIFEST], {name: files.get(name) for name in SIDE_FILES.values()})
+    return joined
+
+
+def split_files(files: dict[str, str]) -> dict[str, str]:
+    """Logical files (one joined manifest) as the files written to a folder or a commit."""
+    if MANIFEST not in files:
+        return dict(files)
+    split = {name: text for name, text in files.items() if name != MANIFEST}
+    split.update(split_manifest(files[MANIFEST]))
+    return split
+
+
+def read_manifest_text(folder: Path) -> str:
+    """A folder's joined manifest text."""
+    text = (folder / MANIFEST).read_text(encoding="utf-8")
+    side = {name: (folder / name).read_text(encoding="utf-8") if (folder / name).is_file() else None
+            for name in SIDE_FILES.values()}
+    return join_manifest(text, side)
+
+
+def read_saved(folder: Path, name: str) -> str | None:
+    """A save file's text as the app compares it (the manifest joined with its side files); None when absent."""
+    path = folder / name
+    if not path.exists():
+        return None
+    return read_manifest_text(folder) if name == MANIFEST else path.read_text(encoding="utf-8")
+
+
+def read_manifest(folder: Path) -> dict:
+    return json.loads(read_manifest_text(folder))
 
 
 def _unstamped(text: str) -> tuple[str, str] | None:
@@ -688,8 +823,10 @@ src/<function>.c      each matched function's C, byte for byte
 best/<function>.c     the closest attempt so far at each function that doesn't match yet
 include/common.h      the shared header every function is compiled with (common_<part>.h: a part's own)
 {MANIFEST}     the game's fingerprint (its SHA-1, never the game), the compiler and its flags, the
-                      functions' layout and names, notes, instructions, which functions helpers take first, what agents
+                      functions' layout and names, instructions, which functions helpers take first, what agents
                       learned, who matched what
+{NOTES_FILE}            the agents' notes on each function
+{VERIFICATION_FILE}     how each match was verified: its compiler, its inputs' checksums and their text
 README.md             this file
 ```
 
@@ -736,7 +873,7 @@ def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None =
     contexts = net._contexts(pid, units)
     for unit in sorted(units):
         files["include/" + _header_file(unit)] = (contexts[unit] or {"header": ""})["header"]
-    files[MANIFEST] = json.dumps(manifest, indent=1) + "\n"
+    files[MANIFEST] = manifest_text(manifest)
     if write_readme and (readme_key is None or _readme_key(manifest) != readme_key):
         _write_readme(net, proj, readme_folder, manifest, functions)
     matched = sum(1 for f in functions.values() if "matched_by" in f)
@@ -755,7 +892,7 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
     pid = proj["id"]
     rows = _function_rows(net, pid, sources=False)
     manifest, functions, units = _manifest_from_rows(net, proj, cfg, rows, folder)
-    files = {MANIFEST: json.dumps(manifest, indent=1) + "\n"}
+    files = {MANIFEST: manifest_text(manifest)}
     if headers:
         contexts = net._contexts(pid, units)
         for unit in sorted(units):
@@ -902,10 +1039,10 @@ def restore(net, source: str, game: Path | None = None, log=print) -> dict:
         if not (folder / MANIFEST).exists() and (saved := ForkProject(folder).progress_save()):
             folder = saved[0]
         try:
-            manifest = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
+            manifest = read_manifest(folder)
         except (OSError, ValueError):
             raise NetworkError(f"{folder} isn't a decompdecomp save (no {MANIFEST} in it)") from None
-        if manifest.get("format") != FORMAT:
+        if manifest.get("format") not in FORMATS:
             raise NetworkError("this save was written by another version of decompdecomp: update it, then try again")
         if game is None:
             game = find_local_game(net, source, folder, manifest, log)

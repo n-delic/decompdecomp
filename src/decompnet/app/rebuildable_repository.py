@@ -26,7 +26,7 @@ def public(name):
     if path.parts[0] == 'progress':
         rest = path.relative_to('progress')
         # data.json and data/: the game's data in C (app/data_saves.py)
-        return (str(rest) in (saves.MANIFEST, 'README.md', 'decompdecomp-progress.svg', 'data.json') or
+        return (str(rest) in (*saves.TOP_FILES, 'README.md', 'decompdecomp-progress.svg', 'data.json') or
                 len(rest.parts) == 2 and rest.parts[0] in ('src', 'best', 'include', 'data')
                 and rest.suffix == ('.h' if rest.parts[0] == 'include' else '.c'))
     return False
@@ -38,7 +38,7 @@ def ignore():
     return ('# Full decompilation repository: game images and extracted data stay local.\n/*\n!/.gitignore\n'+root+
             '\n!/src/\n/src/**\n!/src/**/\n!/src/**/*.c\n!/src/**/*.cpp\n!/src/**/*.h\n'
             '!/include/\n/include/**\n!/include/**/\n!/include/**/*.h\n!/include/**/*.inc\n'
-            '!/progress/\n/progress/*\n!/progress/decompdecomp.json\n!/progress/README.md\n'
+            '!/progress/\n/progress/*\n!/progress/decompdecomp.json\n!/progress/notes.json\n!/progress/verification.json\n!/progress/README.md\n'
             '!/progress/decompdecomp-progress.svg\n!/progress/src/\n/progress/src/*\n!/progress/src/*.c\n'
             '!/progress/best/\n/progress/best/*\n!/progress/best/*.c\n!/progress/include/\n'
             '/progress/include/*\n!/progress/include/*.h\n!/progress/data.json\n!/progress/data/\n'
@@ -100,7 +100,7 @@ def prepare(net, slug, path, root, log):
     net.progress.sync(slug, force=True, logger=log)
     if net.progress.errors.get(slug):raise NetworkError(net.progress.errors[slug])
     destination.parent.mkdir(parents=True, exist_ok=True)
-    old = saves._read_owned(destination) if (destination/saves.MANIFEST).is_file() else {}
+    old = saves.split_files(saves._read_owned(destination)) if (destination/saves.MANIFEST).is_file() else {}
     if old:
         for name in ('README.md', 'decompdecomp-progress.svg'):
             if (destination/name).is_file():old[name] = (destination/name).read_text(encoding='utf-8')
@@ -124,8 +124,9 @@ def prepare(net, slug, path, root, log):
                           'Build files and sources live at the repository root; ROMs and extracted files are excluded by `.gitignore`.\n', encoding='utf-8')
         ignore_path = repository_sync.inside(destination, '.gitignore')
         previous_ignore = ignore_path.read_text(encoding='utf-8') if ignore_path.is_file() else ''
-        from .repository_setup import IGNORE
-        if previous_ignore.startswith(IGNORE):previous_ignore = previous_ignore[len(IGNORE):]
+        from .repository_setup import IGNORE, IGNORE_BEFORE_SPLIT
+        for block in (IGNORE, IGNORE_BEFORE_SPLIT):
+            if previous_ignore.startswith(block):previous_ignore = previous_ignore[len(block):]
         exclusions = '\n'.join(line for line in previous_ignore.splitlines() if not line.startswith('!') and line not in ('/*', '/src/*', '/best/*', '/include/*'))
         (stage/'.gitignore').write_text(ignore()+exclusions+'\n', encoding='utf-8')
         names = sorted(str(p.relative_to(stage)) for p in stage.rglob('*') if p.is_file() and public(str(p.relative_to(stage))))

@@ -7,7 +7,9 @@ from . import repository_git, repository_operations, repository_progress, reposi
 
 git = repository_git.git
 # An allowlist also protects game images with unfamiliar extensions or names.
-IGNORE = '\n# decompdecomp portable progress: never add the game or local app state\n/*\n!/.gitignore\n!/decompdecomp.json\n!/README.md\n!/decompdecomp-progress.svg\n!/src/\n/src/*\n!/src/*.c\n!/best/\n/best/*\n!/best/*.c\n!/include/\n/include/*\n!/include/*.h\n'
+IGNORE_BEFORE_SPLIT = '\n# decompdecomp portable progress: never add the game or local app state\n/*\n!/.gitignore\n!/decompdecomp.json\n!/README.md\n!/decompdecomp-progress.svg\n!/src/\n/src/*\n!/src/*.c\n!/best/\n/best/*\n!/best/*.c\n!/include/\n/include/*\n!/include/*.h\n'
+# (format 2 saves keep their notes and verification records beside the manifest: saves.SIDE_FILES)
+IGNORE = '\n# decompdecomp portable progress: never add the game or local app state\n/*\n!/.gitignore\n!/decompdecomp.json\n!/notes.json\n!/verification.json\n!/README.md\n!/decompdecomp-progress.svg\n!/src/\n/src/*\n!/src/*.c\n!/best/\n/best/*\n!/best/*.c\n!/include/\n/include/*\n!/include/*.h\n'
 
 
 def folder(net, slug):

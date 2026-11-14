@@ -418,7 +418,8 @@ class ForkProject:
                 raise ForkError("Saved progress must be a regular folder and manifest, not symbolic links.")
             try:
                 data = json.loads(manifest.read_text(encoding="utf-8"))
-                if data.get("format") != 1 or not re.fullmatch(r"[0-9a-fA-F]{40}", data["game"]["sha1"]):
+                # (app/saves.FORMATS: format 2 keeps its notes and verification records in files beside this one)
+                if data.get("format") not in (1, 2) or not re.fullmatch(r"[0-9a-fA-F]{40}", data["game"]["sha1"]):
                     raise ValueError("unsupported progress manifest")
             except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
                 raise ForkError(f"Fix the saved progress manifest at {manifest}: {e}") from None

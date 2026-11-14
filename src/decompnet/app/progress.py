@@ -192,7 +192,7 @@ def _read_once(folder: Path, *, cache=None) -> dict[str, str]:
         path = folder / directory
         if path.is_symlink():
             raise NetworkError(f"Progress folder {directory!r} is a symbolic link. Replace it with a regular directory and try again.")
-    for pattern in (saves.MANIFEST, "src/*.c", "best/*.c", "include/*.h"):
+    for pattern in (*saves.TOP_FILES, "src/*.c", "best/*.c", "include/*.h"):
         for path in folder.glob(pattern):
             relative = path.relative_to(folder).as_posix()
             info = path.lstat()
@@ -208,7 +208,9 @@ def _read_once(folder: Path, *, cache=None) -> dict[str, str]:
                     raise NetworkError("Resolve the git conflicts in progress before continuing this project.")
                 if cache is not None and info == path.lstat():cache.put(path,info,text)
             files[path.relative_to(folder).as_posix()] = text
-    return files
+    # A format 2 save's notes and verification records are their own files: everything after this reads the one
+    # joined manifest, as it did before (saves.join_files).
+    return saves.join_files(files)
 
 
 def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[str, str]:
@@ -300,8 +302,9 @@ NAME = re.compile(r"[A-Za-z_]\w*|\.L[0-9A-F]+")
 def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
     try:
         manifest = json.loads(files[saves.MANIFEST])
-        if manifest["format"] != saves.FORMAT or manifest["game"]["sha1"] != cfg["rom"]["sha1"]:
-            raise ValueError("it is another game, or not format %d" % saves.FORMAT)
+        if manifest["format"] not in saves.FORMATS or manifest["game"]["sha1"] != cfg["rom"]["sha1"]:
+            raise ValueError("it is another game, or not a format this version reads (%s)"
+                             % ", ".join(map(str, saves.FORMATS)))
         for file in (manifest.get("headers") or {}).values():
             if Path(file).name != file or "include/" + file not in files:
                 raise ValueError(f"header {file!r} is not a file in include/")
@@ -598,7 +601,7 @@ class Progress:
         in place, so a forced sync uses the deep form (`deep=True`, the default) and sees that edit. A non-forced
         check only needs to know there is something to read."""
         items = []
-        for name in (saves.MANIFEST, "src", "best", "include"):
+        for name in (*saves.TOP_FILES, "src", "best", "include"):  # (a format 2 save's notes are files of their own)
             path = folder / name
             try:
                 info = os.stat(path, follow_symlinks=False)
@@ -629,25 +632,28 @@ class Progress:
         None, so the cache stays cold and the next sync reads the folder: an edit is never acknowledged unseen."""
         entries = {item[0]: item for item in cached}
         items = []
-        for name in (saves.MANIFEST, "src", "best", "include"):
+        # The joined manifest's side files are written with it (saves._publish), so writing the manifest touches them:
+        # the sync names the manifest it published, the publish watchers each file it wrote.
+        manifest_touched = saves.MANIFEST in touched or bool(touched & set(saves.SIDE_FILES.values()))
+        for name in (*saves.TOP_FILES, "src", "best", "include"):
             path = folder / name
             old = entries.get(name, (name, None))
-            if name == saves.MANIFEST and name not in touched:
+            if name in saves.TOP_FILES and not manifest_touched:
                 items.append(old)
                 continue
             try:
                 info = os.stat(path, follow_symlinks=False)
             except OSError:
-                if name != saves.MANIFEST and old[1] is not None:return None
+                if name not in saves.TOP_FILES and old[1] is not None:return None
                 items.append((name, None))
                 continue
-            if name != saves.MANIFEST:
+            if name not in saves.TOP_FILES:
                 if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):return None
                 if old[1] is None:
                     if not any(key.startswith(name+'/') for key in touched):return None
                 elif (info.st_mode, info.st_ino) != (old[3], old[5]):return None
             items.append((name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
-            if name == saves.MANIFEST or not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+            if name in saves.TOP_FILES or not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
                 continue
             with os.scandir(path) as entries_in_dir:
                 children = sorted(entries_in_dir, key=lambda entry: entry.name)
@@ -673,10 +679,9 @@ class Progress:
         if baseline is None:
             return False
         for name in touched:
-            path = folder / name
             try:
-                text = path.read_text(encoding="utf-8") if path.exists() else None
-            except (OSError, UnicodeError):
+                text = saves.read_saved(folder, name)
+            except (OSError, UnicodeError, NetworkError):
                 return False
             if _hash(text) != baseline.disk.files.get(name):
                 return False
@@ -1772,10 +1777,9 @@ class Progress:
             changes = {}
         expected = {}
         for name in set(changes) | set(removed):
-            path = folder / name
             try:
-                current = path.read_text(encoding="utf-8") if path.exists() else None
-            except (OSError, UnicodeError):
+                current = saves.read_saved(folder, name)  # (the manifest joined, as the baseline holds it)
+            except (OSError, UnicodeError, NetworkError):
                 return None
             if _hash(current) != baseline.disk.files.get(name):
                 return None  # a pull or an editor wrote while this was rendering: read it next pass
@@ -1919,16 +1923,16 @@ class Progress:
                     # work, and the new revision/saved_at make later first syncs safe (#101 review).
                     manifest["saved_at"] = time.time()
                     manifest["revision"] = saves._next_revision(net, proj, folder)
-                    pending[saves.MANIFEST] = json.dumps(manifest, indent=1) + "\n"
+                    pending[saves.MANIFEST] = saves.manifest_text(manifest)
                 for name in legacy_newer:
                     source = f"src/{saves._source_file(name)}"
                     if source in rendered:
                         pending[source] = rendered[source]
                 if (before is not None and saves.MANIFEST in rendered and previous.manifest is not None
                         and saves.MANIFEST in disk and previous.manifest != rendered[saves.MANIFEST]):
-                    pending[saves.MANIFEST] = json.dumps(
+                    pending[saves.MANIFEST] = saves.manifest_text(
                         _merge_manifest(json.loads(previous.manifest), json.loads(rendered[saves.MANIFEST]),
-                                        json.loads(disk[saves.MANIFEST])), indent=1) + "\n"
+                                        json.loads(disk[saves.MANIFEST])))
                 removed = {name: None for name in previous.files
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
@@ -1978,7 +1982,7 @@ class Progress:
                         merged_manifest["compiler"] = local
                         merged_manifest["saved_at"] = time.time()
                         merged_manifest["revision"] = saves._next_revision(net, proj, folder)
-                        pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
+                        pending[saves.MANIFEST] = saves.manifest_text(merged_manifest)
                         toolchain = local_toolchain
                 code_files = any(name.startswith(("src/", "best/")) for name in candidate)
                 database_code = not code_files and store.one(
@@ -2010,7 +2014,7 @@ class Progress:
                 if legacy_newer or stale_revision:
                     merged_manifest["saved_at"] = time.time()
                     merged_manifest["revision"] = saves._next_revision(net, proj, folder)
-                    pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
+                    pending[saves.MANIFEST] = saves.manifest_text(merged_manifest)
                 applied_files = candidate
                 applied_manifest = merged_manifest
             layout_by_name = {f["name"]: f for f in applied_manifest.get("layout", [])}

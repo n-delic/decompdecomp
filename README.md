@@ -1038,7 +1038,9 @@ game's code is its rights holder's: keep it to yourself.
 │   ├── src/              each matched function's C
 │   ├── best/             the closest attempt at each function that doesn't match yet
 │   ├── include/          the shared headers every function is compiled with
-│   ├── decompdecomp.json the game's fingerprint (never the game), compiler, layout, names, notes, settings
+│   ├── decompdecomp.json the game's fingerprint (never the game), compiler, layout, names, settings
+│   ├── notes.json        the agents' notes on each function
+│   ├── verification.json how each match was verified
 │   └── README.md         what this is and how to continue
 ├── rom.z64           your copy of the game: never share it
 ├── asm/  assets/     taken out of the game: never share them

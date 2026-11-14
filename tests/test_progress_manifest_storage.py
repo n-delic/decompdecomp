@@ -73,14 +73,14 @@ def test_repeated_syncs_keep_one_manifest_and_add_no_shared_payloads(project):
     assert row["disk_manifest"] is None and row["projected_manifest"] is None
     assert net.store.one("SELECT count(*) AS n FROM progress_manifests")["n"] == 1
     # The merge base is exactly what was published.
-    assert stored_manifest(net, pid) == (folder / saves.MANIFEST).read_text(encoding="utf-8")
+    assert stored_manifest(net, pid) == saves.read_manifest_text(folder)
     net.progress.baselines.clear()
-    assert net.progress._baseline(pid).projected.manifest == (folder / saves.MANIFEST).read_text(encoding="utf-8")
+    assert net.progress._baseline(pid).projected.manifest == saves.read_manifest_text(folder)
 
 
 def test_an_older_versions_manifest_is_the_merge_base_and_its_payload_is_released(project):
     net, pid, folder = project
-    published = (folder / saves.MANIFEST).read_text(encoding="utf-8")
+    published = saves.read_manifest_text(folder)
     # The format older versions wrote: both manifests in the compressed columns, one shared payload.
     with net.store.tx() as db:
         db.execute("DELETE FROM progress_manifests")
@@ -96,7 +96,7 @@ def test_an_older_versions_manifest_is_the_merge_base_and_its_payload_is_release
     note(net, pid, "a new note " + "y" * 40)
     assert net.progress.sync("game", force=True)
     assert net.store.one("SELECT 1 FROM text_payloads WHERE hash=?", legacy) is None
-    assert stored_manifest(net, pid) == (folder / saves.MANIFEST).read_text(encoding="utf-8")
+    assert stored_manifest(net, pid) == saves.read_manifest_text(folder)
 
 
 def test_release_keeps_payloads_until_the_index_is_complete_and_while_referenced(project):

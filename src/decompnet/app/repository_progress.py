@@ -36,6 +36,8 @@ def owned(manifest, folder=None):
             or any(not isinstance(name, str) for name in manifest['headers'].values())):
         raise NetworkError('Fix the saved progress manifest before committing its files.')
     paths = {saves.MANIFEST, 'README.md', 'decompdecomp-progress.svg'}
+    if manifest.get('format') == saves.FORMAT:  # (an older save holds them inside its manifest)
+        paths.update(saves.SIDE_FILES.values())
     paths.update(('src/' if 'matched_by' in value else 'best/') + name + '.c'
                  for name, value in manifest['functions'].items())
     paths.update('include/' + name for name in manifest['headers'].values())
@@ -43,6 +45,28 @@ def owned(manifest, folder=None):
         from . import data_saves
         paths |= data_saves.owned(Path(folder))
     return paths
+
+
+def committed_manifest_text(root, manifest_path, rev='HEAD'):
+    """A commit's joined progress manifest: a format 2 save's notes and verification records are files beside it."""
+    text = repository_git.git(root, 'show', f'{rev}:{manifest_path}')
+    try:
+        split = json.loads(text).get('format') == saves.FORMAT
+    except (ValueError, AttributeError):
+        split = False
+    if not split:
+        return text
+    prefix = manifest_path[:-len(saves.MANIFEST)]
+    present = set(filter(None, repository_git.git(
+        root, 'ls-tree', '--name-only', rev, '--', *(prefix + name for name in saves.SIDE_FILES.values())).splitlines()))
+    side = {name: repository_git.git(root, 'show', f'{rev}:{prefix}{name}') if prefix + name in present else None
+            for name in saves.SIDE_FILES.values()}
+    return saves.join_manifest(text, side)
+
+
+def manifest_blobs(prefix, manifest):
+    """A manifest as the files a commit holds (split as the folder keeps it), by path in the repository."""
+    return {prefix + name: text.encode() for name, text in saves.split_manifest(saves.manifest_text(manifest)).items()}
 
 
 def data_saves_owned(folder):
@@ -120,6 +144,8 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
         manifest = json.loads(files[saves.MANIFEST])
         if manifest.get('game', {}).get('sha1') != net.cfg(proj).get('rom', {}).get('sha1'):
             raise NetworkError('The saved progress belongs to another game. Choose this project’s progress checkout.')
+        # The commit holds the folder's own files: a format 2 save's notes and verification records apart.
+        files = saves.split_files(files)
         for name in ('README.md', 'decompdecomp-progress.svg'):
             if (folder/name).is_file():
                 files[name] = (folder/name).read_bytes().decode('utf-8')
@@ -139,7 +165,7 @@ def snapshot(net, slug, root, log, *, recover=True, allow_unrelated_edits=False)
         paths = {prefix + name for name in owned(manifest, folder)}
         tracked = repository_sync.git(root, 'ls-files', '-z').decode().split('\0')
         if prefix + saves.MANIFEST in tracked:
-            previous = json.loads(repository_sync.git(root, 'show', 'HEAD:' + prefix + saves.MANIFEST))
+            previous = json.loads(committed_manifest_text(root, prefix + saves.MANIFEST))
             paths.update(prefix + name for name in owned(previous))
         for name in paths:
             repository_sync.inside(root, name)

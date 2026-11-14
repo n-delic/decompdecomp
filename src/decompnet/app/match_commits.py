@@ -161,7 +161,7 @@ def committed_manifest(root, manifest_path, cache):
     """HEAD and its progress manifest, read once per commit: a game's manifest is megabytes of JSON."""
     head = repository_git.git(root, 'rev-parse', 'HEAD')
     if cache.get('head') != head:
-        cache['head'], cache['manifest'] = head, json.loads(repository_git.git(root, 'show', 'HEAD:' + manifest_path))
+        cache['head'], cache['manifest'] = head, json.loads(repository_progress.committed_manifest_text(root, manifest_path))
     return head, cache['manifest']
 
 
@@ -233,7 +233,7 @@ def scoped_snapshot(net, proj, root, job, output, cache=None):
         raise NetworkError('The queued function no longer matches. Review it before retrying automatic commits.')
     if fn['name'] != name:
         raise NetworkError('The queued function was renamed while its saved progress was read. Automatic commits retry it.')
-    base = json.loads(repository_git.git(root, 'show', 'HEAD:' + manifest_path))
+    base = json.loads(repository_progress.committed_manifest_text(root, manifest_path))
     if base.get('game', {}).get('sha1') != current.get('game', {}).get('sha1'):
         raise NetworkError('The last progress checkpoint is of another game. Commit saved progress once, and queued commits continue.')
     if layout_shape(base) != layout_shape(current):
@@ -271,7 +271,7 @@ def scoped_snapshot(net, proj, root, job, output, cache=None):
             continue
         chosen[path] = files[path]
         needed.extend(prefix + 'include/' + item.decode() for item in include.findall(files[path]))
-    chosen[manifest_path] = (json.dumps(base, indent=1)+'\n').encode()
+    chosen.update(repository_progress.manifest_blobs(prefix, base))  # (a format 2 save's notes beside it)
     paths = set(chosen) | {prefix + f'best/{name}.c'}
     return chosen, paths, head
 

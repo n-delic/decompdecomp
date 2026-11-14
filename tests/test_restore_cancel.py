@@ -43,7 +43,7 @@ def test_restore_import_uses_the_same_cancellation_scope_as_judging(tmp_path, mo
     (tmp_path / "include/common.h").write_text("/* shared header */\n")
     (tmp_path / saves.MANIFEST).write_text(json.dumps({
         "format": saves.FORMAT, "game": {"sha1": "same"}, "headers": {"": "common.h"},
-        "layout": [], "functions": {},
+        "layout": [], "functions": {}, "notes": [],
     }))
     monkeypatch.setattr(saves.consoles, "identify", lambda _: SimpleNamespace(
         read_game=lambda *_: SimpleNamespace(info={"sha1": "same"})))

@@ -344,8 +344,6 @@ def _saved_projects(net, stores, tmp_path):
 
 
 def test_progress_sync_and_manual_save_only_publish_the_selected_project(scoped, tmp_path, monkeypatch):
-    import json
-
     from decompnet.app import saves
 
     net, stores = scoped
@@ -369,8 +367,8 @@ def test_progress_sync_and_manual_save_only_publish_the_selected_project(scoped,
     one, two = saves.default_folder(net, 'first'), saves.default_folder(net, 'second')
     assert (one/'best/same_name.c').read_text() == 'int first_draft;\n'
     assert (two/'best/same_name.c').read_text() == 'int second_draft;\n'
-    first = json.loads((one/saves.MANIFEST).read_text())
-    second = json.loads((two/saves.MANIFEST).read_text())
+    first = saves.read_manifest(one)
+    second = saves.read_manifest(two)
     assert first['notes'][0]['by'] == 'worker'
     assert first['notes'][0]['text'] == 'first note' and second['notes'] == []
     assert first['functions']['same_name']['best_by'] == 'worker'
@@ -609,7 +607,7 @@ def test_saved_authors_are_resolved_before_project_write_transactions(scoped, tm
         saves._context_agents(net, stores[1], manifest)
     net.progress.sync('first', force=True)
     path = saves.default_folder(net, 'first') / saves.MANIFEST
-    disk = json.loads(path.read_text())
+    disk = saves.read_manifest(path.parent)  # (an edit by hand: the notes written into the manifest itself)
     disk['notes'].append({'by': 'another-author', 'function': 'same_name', 'text': 'new disk note'})
     path.write_text(json.dumps(disk))
     assert net.progress.sync('first', force=True)
