@@ -756,7 +756,9 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "claim_order": cfg.get("claim_order") or "",
         "priority": cfg.get("priority") or [],
         "auto_compiler": cfg.get("auto_compiler"),
-        "knowledge_auto": bool(cfg.get("knowledge_auto")), "headers": {u: _header_file(u) for u in sorted(units)},
+        "knowledge_auto": bool(cfg.get("knowledge_auto")),
+        "project_folder": bool(cfg.get("project_layout")),  # set up again by Open a saved project (restore)
+        "headers": {u: _header_file(u) for u in sorted(units)},
         "functions": functions,
         "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith(PRIVATE_HEADERS)},
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
@@ -1032,7 +1034,21 @@ def find_local_game(net, source, folder, manifest, log):
 def restore(net, source: str, game: Path | None = None, log=print) -> dict:
     """Rebuild a project from a save (a folder or a git repository) and the user's own copy of the game: import it
     (or find it already imported), check it's the same game, then put back the layout, names, headers, settings and
-    notes, and judge every saved function again. Returns the project and what came back."""
+    notes, and judge every saved function again. Returns the project and what came back. A project saved as a
+    project folder (rom/project_layout.py) is set up as one again, from the work just restored; if that fails the
+    restore still stands, and the log says how to retry."""
+    result = _restore(net, source, game, log)
+    if result.pop("project_folder", False) and not net.cfg(net._project(result["slug"])).get("project_layout"):
+        from ..rom.export import ExportError
+        try:
+            result["project_layout"] = net.setup_project_layout(result["slug"], log=log)
+        except (NetworkError, ExportError, OSError) as error:
+            log(f"The project is restored, but its project folder couldn't be set up again: {error} "
+                "Set it up from the project page's Export panel.")
+    return result
+
+
+def _restore(net, source: str, game: Path | None, log) -> dict:
     from .progress import _manifest, _read
 
     log("checking the saved project and your game copy")
@@ -1139,7 +1155,7 @@ def restore(net, source: str, game: Path | None = None, log=print) -> dict:
                     result = progress.results.pop(slug, None) or _restore_counts(net, slug)
                     from .data_saves import restore as restore_data  # the data's C, judged again
                     data_result = restore_data(net, slug, live, log)
-                    return result | {"slug": slug} | ({"data": data_result} if data_result["saved"] else {})
+                    return result | {"slug": slug, "project_folder": bool(manifest.get("project_folder"))} | ({"data": data_result} if data_result["saved"] else {})
             except Exception:
                 # #101 review: importing and splitting happened before the save could be applied. A restore that
                 # fails (a missing compiler, a cancelled judge) leaves no half-open project, as a failed room join

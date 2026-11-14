@@ -1911,16 +1911,18 @@ write (`sources.json`) like the function page's Try, at the function's real addr
 regenerates the folder; an edit the project didn't take is written back in place or beside its function as
 `.kept`, never lost (N64, PS1 and PS2 demos: `tests/test_project_layout.py`). A file may also hold several
 functions (named after its guessed unit, or anything else): each is judged with the others' definitions taken out,
-and a matched one is then built from a file of its own. Agents still work through ROM mode. Next:
+and a matched one is then built from a file of its own. A save records that the project is a project folder, and
+Open a saved project sets the folder up again from the restored work; reimport keeps it (its next refresh regroups
+the units). Agents still work through ROM mode. Next:
 - the project page measuring the folder with objdiff as it does a fork's (today it shows ROM mode's own counts);
 - agents, autopilot, the permuter and polishing working in the folder through that adapter (this clears
   linked-image exports' "—"), and a matched unit exported as one file once all its functions match;
-- regenerating the affected units after joins, splits, function-end reports and compiler-range changes, keeping
-  confirmed units frozen;
+- regrouping the units on their own after joins, splits, function-end reports and compiler-range changes, keeping
+  confirmed units frozen (today Refresh project folder regroups them, from the project as it is then);
 - better file seams where padding says nothing: on the PS1 and PS2 demos no padding separates objects (or every
   function is padded alike), so only 1 of 18 files is found. Candidates: each object's `.rodata`/`.data` block
   following the code's order, library signatures, and the boundaries agents confirm by matching;
-- the folder in saves, reimport and Open a saved project; the PSP demo run with the checkbox.
+- the folder's edits not yet taken (written back, `.kept`) in saves too; the PSP demo run with the checkbox.
 
 ### N64Recomp: a playable game from day one, and a reference for every function
 

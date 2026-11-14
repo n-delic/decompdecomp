@@ -326,3 +326,52 @@ def test_a_guessed_file_edited_whole_matches_function_by_function(tmp_path, cons
     own = next((folder / "src").glob(f"*/{empty}.c"))
     assert f"void {empty}(void)" in own.read_text() and wrong not in own.read_text()
     assert layout["identical"] is True
+
+
+def _saved_project_folder(tmp_path, monkeypatch, setup):
+    """Open a saved project whose save says it was a project folder (tests/test_saves.py's restore, stubbed)."""
+    from types import SimpleNamespace
+
+    from decompnet.app import saves
+    net = _net(tmp_path)
+    root = tmp_path / "home" / "game"
+    root.mkdir(parents=True)
+    save = tmp_path / "save"
+    (save / "include").mkdir(parents=True)
+    (save / saves.MANIFEST).write_text(json.dumps({
+        "format": saves.FORMAT, "title": "Game", "platform": "n64", "game": {"sha1": "demo"},
+        "headers": {"": "common.h"}, "layout": [{"name": "f", "vram": 4096, "size": 4}],
+        "functions": {}, "knowledge": [], "notes": [], "project_folder": True}), encoding="utf-8")
+    (save / "include/common.h").write_text("/* saved header */\n", encoding="utf-8")
+    monkeypatch.setattr(saves.consoles, "identify", lambda _: SimpleNamespace(
+        read_game=lambda *_: SimpleNamespace(info={"sha1": "demo"})))
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+
+    def import_game(*_args, **_kwargs):
+        with net.store.tx() as db:
+            pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                             (str(root), json.dumps({"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"}}))).lastrowid
+            db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,1,'',0,'')",
+                       (pid,))
+            db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                       "VALUES(?,'f',4096,4,1,'open','')", (pid,))
+        return "game"
+    monkeypatch.setattr(net, "import_rom", import_game)
+    monkeypatch.setattr(net, "setup_project_layout", setup)
+    said = []
+    return saves.restore(net, str(save), tmp_path / "own-game.bin", log=said.append), said
+
+
+def test_opening_a_saved_project_folder_sets_the_folder_up_again(tmp_path, monkeypatch):
+    asked = []
+    result, _ = _saved_project_folder(tmp_path, monkeypatch, lambda slug, log=print: asked.append(slug) or {"units": 2})
+    assert asked == ["game"] and result["project_layout"] == {"units": 2}
+    assert "project_folder" not in result
+
+
+def test_a_project_folder_that_cannot_come_back_never_fails_the_restore(tmp_path, monkeypatch):
+    def broken(slug, log=print):
+        raise NetworkError("no room on the disk")
+    result, said = _saved_project_folder(tmp_path, monkeypatch, broken)
+    assert result["slug"] == "game" and "project_layout" not in result
+    assert any("couldn't be set up again" in line for line in said)
