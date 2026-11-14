@@ -48,10 +48,20 @@ class EditMixin:
             new = console.function_at(rom, addr, limit, new_name)
             if new is not None:
                 return self._add_function(proj, fn, new, syms, agent.id, new_name)
-        head, tail = self._cut(proj, fn, addr, new_name, syms, agent.id, "split", f"{fn['name']} / {new_name}")
+        head, tail, head_padding, tail_padding = self._cut(proj, fn, addr, new_name, syms, agent.id, "split",
+                                                            f"{fn['name']} / {new_name}")
+        if head_padding and tail_padding:
+            cont = "Both halves were pure alignment padding and are set aside; there is nothing to continue with."
+        elif head_padding:
+            cont = (f"The head was pure alignment padding and is set aside; continue with {new_name} "
+                    "(get_function shows its assembly).")
+        elif tail_padding:
+            cont = (f"The tail was pure alignment padding and is set aside; continue with {fn['name']} "
+                    "(get_function shows its new assembly).")
+        else:
+            cont = f"Continue with {fn['name']} (get_function shows its new assembly)."
         return (f"✅ split: {fn['name']} is now {console.function_insns(head)} instructions; {new_name} at "
-                f"0x{addr:08X} has {console.function_insns(tail)}. Continue with {fn['name']} "
-                "(get_function shows its new assembly).")
+                f"0x{addr:08X} has {console.function_insns(tail)}. {cont}")
 
     def _add_function(self, proj, prev, new, syms: SymbolTable, agent_id: int | None, new_name: str) -> str:
         """Add a function the splitter missed after `prev`; it starts at its own address and mode."""
@@ -75,7 +85,9 @@ class EditMixin:
     def _cut(self, proj, fn, addr: int, new_name: str, syms: SymbolTable, agent_id: int | None, kind: str, detail: str,
              tail_meta: dict | None = None):
         """Cut a MIPS function in two at `addr`: the head keeps its row, the tail becomes `new_name` (status 'asm'
-        with `tail_meta` when it isn't code agents should work on). Returns (head, tail)."""
+        with `tail_meta` when it isn't code agents should work on). Returns (head, tail, head_padding, tail_padding),
+        where each `*_padding` flag says whether that side trimmed down to pure alignment padding and was retired
+        ('asm') rather than left open."""
         console = self.console(proj)
         try:
             head, tail = console.split_function(fn, addr, new_name)
@@ -87,23 +99,46 @@ class EditMixin:
             old.size = head.size
         th, tt = self._make_target(proj, head, syms), self._make_target(proj, tail, syms)
         with self.store.tx() as db:
+            # The head's extent changed, so its old best attempt no longer describes it (reset seed/best, not just
+            # the score). A side trimmed down to pure 0x00 padding (all nops) is not a function to match — mark it
+            # done ('asm'), with an alignment-padding reason for its page, so it leaves the open pool instead of
+            # lingering as an open sliver. Both halves are checked: splitting leading alignment nops off a function
+            # can leave a padding head, and splitting at a point that lands in trailing padding leaves a padding tail.
+            # This recognises MIPS zero padding (nop = 0x00000000); x86 (0xCC/0x90) and ARM/PPC nops aren't caught,
+            # so their padding slivers stay 'open' — harmless, a missed cleanup (ROADMAP).
+            head_padding = bool(head.size) and not any(th.code)
+            tail_padding = bool(tail.size) and not any(tt.code)
             meta = console.function_meta(tail)
             if tail_meta:
                 meta.update(tail_meta)
-            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL "
-                       "WHERE id=?", (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
-                                      console.function_asm(head), fn["id"]))
+            if tail_padding and not (tail_meta and tail_meta.get("asm_code")):
+                # a caller (resolve_boundary) that already gave a reason keeps it; only unexplained
+                # zero fill gets the generic alignment-padding label.
+                meta["asm_code"] = "alignment padding (all nops)"
+            head_meta = json.loads(fn["meta"] or "{}")
+            if head_padding:
+                head_meta["asm_code"] = "alignment padding (all nops)"
+            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, "
+                       "best_source=NULL, status=?, meta=? WHERE id=?",
+                       (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
+                        console.function_asm(head), "asm" if head_padding else fn["status"],
+                        json.dumps(head_meta) if head_meta else None, fn["id"]))
+            if head_padding:
+                # the head is retired (set aside as padding); an agent must not keep holding a dead
+                # sliver and get it handed back on the next claim (as set_aside_by_you also deletes it).
+                db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
                        "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (proj["id"], new_name, tail.size, console.function_insns(tail), tt.code, json.dumps(tt.to_json()),
                         console.function_asm(tail), None, fn["unit"], addr, tail.rom,
-                        "asm" if tail_meta else console.function_status(tail), json.dumps(meta) if meta else None))
+                        "asm" if (tail_meta or tail_padding) else console.function_status(tail),
+                        json.dumps(meta) if meta else None))
             db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=?", (head.size, proj["id"], fn["name"]))
             db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                        (proj["id"], new_name, addr, tail.size, "func"))
             self._event(db, proj["id"], agent_id, kind, detail)
         self._xrefs.pop(proj["id"], None)
-        return head, tail
+        return head, tail, head_padding, tail_padding
 
     def request_boundary(self, agent: Agent, slug: str, function: str, end: str, reason: str) -> str:
         """An agent's report that a function really ends earlier: what follows is alignment padding, linker leftovers
