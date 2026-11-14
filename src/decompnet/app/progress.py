@@ -581,6 +581,11 @@ class Progress:
         saves.publish_watchers.add(self)
         self.errors: dict[str, str] = {}
         self.signatures: dict[str, tuple] = {}  # slug -> every file's stat after the last acknowledged sync
+        # slug -> the folder's change watch (folder_watch), and the watch's mark from just before the stat that gave
+        # (or last confirmed) the acknowledged signature: no change since, and that signature is still the folder's
+        self.watches: dict = {}
+        self.signature_marks: dict[str, int] = {}
+        self.unwatchable: dict[str, Path] = {}  # slug -> a folder no watch could be opened for (not tried again)
         self.stamps: dict[str, tuple] = {}  # slug -> the cheap directory/manifest stat a non-forced check compares
         self.published: dict[str, set[str]] = {}  # slug -> the files a sync just wrote or removed
         self.baselines: dict[int, _Baseline | None] = {}
@@ -619,6 +624,39 @@ class Progress:
             except OSError:
                 items.append((name, None))
         return tuple(items)
+
+    def _watch(self, slug: str, folder: Path, files: int):
+        """The folder's change watch, when asking it is quicker than statting `files` files (folder_watch.worth)."""
+        from . import folder_watch
+        watch = self.watches.get(slug)
+        if watch is not None and (watch.folder != folder or watch.broken or not folder_watch.worth(files)):
+            self.watches.pop(slug, None)
+            self.signature_marks.pop(slug, None)
+            watch.close()
+            watch = None
+        if watch is None and folder_watch.worth(files) and self.unwatchable.get(slug) != folder:
+            store = getattr(self.net.store, 'path', '')
+            fences = [Path(store).parent / 'folder-watch'] if store and store != ':memory:' else []
+            watch = folder_watch.open_watch(folder, fences)
+            if watch is None:
+                self.unwatchable[slug] = folder
+            else:
+                self.unwatchable.pop(slug, None)
+                self.watches[slug] = watch
+        return watch
+
+    def _folder_signature(self, slug: str, folder: Path) -> tuple:
+        """Every saved file's stat, for a forced check: the acknowledged signature while the folder's watch saw no
+        change since the reading that gave it, else a full reading (450 ms on a 9,900-file save, twice a compile)."""
+        cached = self.signatures.get(slug)
+        watch = self._watch(slug, folder, len(cached) if cached else 0)
+        if watch is not None and cached is not None and watch.unchanged_since(self.signature_marks.get(slug)):
+            return cached
+        mark = watch.mark() if watch is not None else None
+        signature = self._signature(folder)
+        if mark is not None and cached is not None and signature == cached:
+            self.signature_marks[slug] = mark  # still what was acknowledged, now vouched for from this reading
+        return signature
 
     def _stamp(self, folder: Path) -> tuple:
         """The cheap check's signature; kept separate so a test or caller can observe the deep one."""
@@ -929,8 +967,10 @@ class Progress:
             self.states.pop(project_id, None)
             for cache in (self.disk, self.projected, self.checked, self.results, self.revisions,
                           self.signatures, self.stamps, self.published, self.sync_changes, self.errors, self.blocked,
-                          self.failed, self.case_checked, self.refusals):
+                          self.failed, self.case_checked, self.refusals, self.signature_marks, self.unwatchable):
                 cache.pop(slug, None)
+            if (watch := self.watches.pop(slug, None)) is not None:
+                watch.close()
 
     @contextmanager
     def rebuilding(self, slug: str):
@@ -1524,7 +1564,7 @@ class Progress:
                             self.checked[slug] = time.monotonic()
                             return False
                         if force:
-                            signature = self._signature(folder)
+                            signature = self._folder_signature(slug, folder)
                             if signature == self.signatures.get(slug):
                                 self.checked[slug] = time.monotonic()
                                 self.stamps[slug] = self._stamp(folder)
@@ -1539,7 +1579,7 @@ class Progress:
                         # A restart has no in-memory signature. Compare all saved bytes
                         # with the durable baseline before queueing behind another game's
                         # bulk verification. Changed files still need the import lane.
-                        signature = self._signature(folder)
+                        signature = self._folder_signature(slug, folder)
                         unchanged = cached_signature is not None and signature == cached_signature
                         if not unchanged:
                             unchanged = (_Snapshot.of(_read(folder, cache=self.file_cache)).files == baseline.disk.files
@@ -1601,6 +1641,8 @@ class Progress:
                     folder = saves.default_folder(self.net, slug)
                     # After a real write, make sure the folder is exactly what this sync rendered and wrote. An edit
                     # that arrived meanwhile must not be acknowledged (and so missed forever) by the cache.
+                    watch = self._watch(slug, folder, len(self.signatures.get(slug) or ()))
+                    mark = watch.mark() if watch is not None else None  # (before the reading it vouches for)
                     signature = self._signature(folder)
                     touched = self.published.pop(slug, None)
                     acknowledged = verified_signature is None or signature == verified_signature
@@ -1617,9 +1659,14 @@ class Progress:
                     if acknowledged and stable:
                         self.signatures[slug] = signature
                         self.stamps[slug] = self._stamp(folder)
+                        if mark is not None:
+                            self.signature_marks[slug] = mark
+                        else:
+                            self.signature_marks.pop(slug, None)
                     else:
                         self.signatures.pop(slug, None)
                         self.stamps.pop(slug, None)
+                        self.signature_marks.pop(slug, None)
                 if not self.blocked.get(slug):
                     self.errors.pop(slug, None)
                 self.failed.pop(slug, None)
@@ -1850,7 +1897,7 @@ class Progress:
         db_changed = (dirty.token != stored_token or dirty.functions or dirty.headers or dirty.metadata)
         config_changed = state is not None and (state.config_key is None or config_key != state.config_key)
         baseline = self._baseline(pid)
-        signature = self._signature(folder)
+        signature = self._folder_signature(slug, folder)
         if baseline is not None and self.signatures.get(slug) == signature:
             if not db_changed and not config_changed:
                 return False
