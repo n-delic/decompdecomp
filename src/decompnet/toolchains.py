@@ -911,36 +911,6 @@ def _build_mips_binutils(archive: Path, dest: Path, subdir: str | None, log) -> 
             target.chmod(0o755)
 
 
-def _build_sn64_gcc(archive: Path, dest: Path, subdir: str | None, log) -> None:
-    """Build the checksum-pinned reconstructed SN compiler natively on macOS."""
-    if not shutil.which("clang") or not shutil.which("make"):
-        raise ToolchainError("Building reconstructed SN64 GCC needs Xcode Command Line Tools: run `xcode-select --install`, then try again.")
-    with tempfile.TemporaryDirectory(prefix="decomp-sn64-gcc-") as tmp:
-        source = Path(tmp)
-        _extract(archive, source, subdir)
-        # Old GCC's bundled assert.h expects a libgcc host helper absent from Apple's
-        # runtime. Supply that diagnostic routine only; target codegen is untouched.
-        host = source / "getpwd.c"
-        host.write_text(host.read_text(encoding="latin-1") +
-                        '\n#include <stdio.h>\nvoid __eprintf(const char *fmt, const char *expr, unsigned int line, '
-                        'const char *file) { fprintf(stderr, fmt, expr, line, file); abort(); }\n', encoding="latin-1")
-        flags = "-DDARWIN -std=gnu89 -O2 -DHAVE_VPRINTF -Wno-return-type -Wno-error -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types"
-        argv = ["make", "-j" + str(min(4, os.cpu_count() or 1)), "cpp", "cc1", "CC=/usr/bin/clang", "CFLAGS=" + flags]
-        log("  building pinned reconstructed SN64 GCC (first install only)")
-        try:
-            result = subprocess.run(limits.capped(argv), cwd=source, capture_output=True, text=True,
-                                    errors="replace", timeout=900)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            raise ToolchainError(f"Couldn't build reconstructed SN64 GCC: {e}. Check Xcode Command Line Tools and try again.") from e
-        if result.returncode:
-            raise ToolchainError("Couldn't build reconstructed SN64 GCC.\n" + (result.stdout + result.stderr)[-4000:])
-        for name in ("cpp", "cc1"):
-            if not (source / name).is_file():
-                raise ToolchainError(f"The reconstructed SN64 GCC build did not produce {name}.")
-            shutil.copyfile(source / name, dest / name)
-            (dest / name).chmod(0o755)
-
-
 # Apple arm64 passes variadic arguments on the stack but fixed ones in registers, so a variadic function called
 # with no prototype in scope reads garbage: GCC 2.8 calls its diagnostics that way in about 40 files, and every
 # compile error crashed (a segfault in strlen) where the Intel build exits 33. Forced into each host file, these
@@ -1074,6 +1044,159 @@ def _check_native_gcc(build: Path, tmp: Path, name: str) -> None:
                              + runs[floats].stderr[-2000:] + asm[-2000:])
     if runs[broken].returncode != 33 or "undeclared" not in runs[broken].stderr:
         raise ToolchainError(f"The native {name} doesn't report compile errors (exit "
+                             f"{runs[broken].returncode}); not installing it.\n" + runs[broken].stderr[-2000:])
+
+
+# GCC 2.7.2 keeps a CONST_DOUBLE's value as consecutive HOST_WIDE_INTs from CONST_DOUBLE_LOW and copies it with
+# bcopy. The pinned source is configured for a 32-bit host (config/i386/xm-gnu.h), so a HOST_WIDE_INT is 32 bits, but
+# on a 64-bit Mac each rtx operand slot is 8: a double went into LOW's slot whole and CONST_DOUBLE_HIGH was never
+# written. rtx_alloc doesn't clear operands, so whatever the obstack held there decided whether a float constant is
+# `li.s` or a load from .rodata, and it changed from run to run. These helpers copy word by word, laid out as the
+# 32-bit Linux release has them; each bcopy below is replaced exactly, or the build fails closed.
+_SN64_CONST_DOUBLE = """
+/* decompdecomp: copy a CONST_DOUBLE's value one HOST_WIDE_INT per operand slot, as a 32-bit host lays it out.  */
+static void decomp_cd_get (struct rtx_def *x, char *to, int size) __attribute__ ((unused));
+static void decomp_cd_put (struct rtx_def *x, char *from, int size) __attribute__ ((unused));
+static int decomp_cd_cmp (struct rtx_def *x, char *with, int size) __attribute__ ((unused));
+static void decomp_cd_get (struct rtx_def *x, char *to, int size)
+{ int i; for (i = 0; i * (int) sizeof (HOST_WIDE_INT) < size; i++)
+    bcopy ((char *) &XWINT (x, 2 + i), to + i * sizeof (HOST_WIDE_INT), sizeof (HOST_WIDE_INT)); }
+static void decomp_cd_put (struct rtx_def *x, char *from, int size)
+{ int i; for (i = 0; i * (int) sizeof (HOST_WIDE_INT) < size; i++)
+    bcopy (from + i * sizeof (HOST_WIDE_INT), (char *) &XWINT (x, 2 + i), sizeof (HOST_WIDE_INT)); }
+static int decomp_cd_cmp (struct rtx_def *x, char *with, int size)
+{ int i; for (i = 0; i * (int) sizeof (HOST_WIDE_INT) < size; i++)
+    if (bcmp ((char *) &XWINT (x, 2 + i), with + i * sizeof (HOST_WIDE_INT), sizeof (HOST_WIDE_INT))) return 1;
+  return 0; }
+"""
+
+# (file, exact text, replacement): the CONST_DOUBLE copies above, the old-style declarations that conflict with the
+# variadic prototypes (_GCC_PM_VARARGS), and prototypes for the two other variadic functions called without one.
+_SN64_EDITS = (
+    ("rtl.h", "extern int rtx_to_tree_code\tPROTO((enum rtx_code));\n",
+     "extern int rtx_to_tree_code\tPROTO((enum rtx_code));\n" + _SN64_CONST_DOUBLE),
+    ("real.h", "bcopy ((char *) &CONST_DOUBLE_LOW ((from)), (char *) &u, sizeof u);",
+     "decomp_cd_get ((from), (char *) &u, sizeof u);"),
+    ("emit-rtl.c", "bcopy ((char *) &u, (char *) &CONST_DOUBLE_LOW (tem), sizeof u);",
+     "decomp_cd_put (tem, (char *) &u, sizeof u);"),
+    ("dwarf2out.c", "bcopy ((char *) &CONST_DOUBLE_LOW (rtl), (char *) &u, sizeof u);",
+     "decomp_cd_get (rtl, (char *) &u, sizeof u);"),
+    ("varasm.c", "! bcmp ((char *) &CONST_DOUBLE_LOW (r), (char *) &u, sizeof u)",
+     "! decomp_cd_cmp (r, (char *) &u, sizeof u)"),
+    ("varasm.c", "bcopy ((char *) &u, (char *) &CONST_DOUBLE_LOW (r), sizeof u);",
+     "decomp_cd_put (r, (char *) &u, sizeof u);"),
+    ("varasm.c", "bcopy ((char *) &CONST_DOUBLE_LOW (x),\n\t\t (char *) &value->un.du, sizeof value->un.du);",
+     "decomp_cd_get (x, (char *) &value->un.du, sizeof value->un.du);"),
+    ("varasm.c", "bcopy ((char *) &CONST_DOUBLE_LOW (x), (char *) &u, sizeof u);\n\t  assemble_real",
+     "decomp_cd_get (x, (char *) &u, sizeof u);\n\t  assemble_real"),
+    ("config/mips/mips.c", "extern void   error ();\n", ""),
+    ("config/mips/mips.c", "extern void   fatal ();\n", ""),
+    ("config/mips/mips.c", "extern void   warning ();\n", ""),
+    ("profile.c", '#include "gcov-io.h"\n',
+     '#include "gcov-io.h"\nextern void emit_library_call (struct rtx_def *, int, enum machine_mode, int, ...);\n'),
+    ("bc-optab.h", "extern struct increment_operator optab_postincrement_expr[];\n",
+     "extern struct increment_operator optab_postincrement_expr[];\n"
+     "extern void bc_emit_instruction (enum bytecode_opcode, ...);\n"),
+)
+
+
+def _build_sn64_gcc(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """Build the checksum-pinned reconstructed SN compiler (GCC 2.7.2) natively on macOS.
+
+    Upstream's release is a 32-bit Linux program; built as it comes for a 64-bit Mac it crashed on most compile
+    errors and printed different code for one input from run to run. The variadic prototypes (Apple arm64) and the
+    CONST_DOUBLE copies (any 64-bit host) above make it print the Linux release's code:
+    docs/COMPILER_MATCHING_LEARNINGS.md, "Reconstructed SN64 GCC 2.7.2 on 64-bit Macs", has the comparison.
+    """
+    if not shutil.which("/usr/bin/clang") or not shutil.which("/usr/bin/make"):
+        raise ToolchainError("Building reconstructed SN64 GCC needs Xcode Command Line Tools: "
+                             "run `xcode-select --install`, then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-sn64-gcc-") as tmp:
+        source = Path(tmp) / "source"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        texts: dict[str, str] = {}
+        for name, old, new in _SN64_EDITS:
+            if name not in texts:
+                file = source / name
+                texts[name] = file.read_text(encoding="latin-1") if file.is_file() else ""
+            if texts[name].count(old) != 1:
+                raise ToolchainError(f"The pinned reconstructed SN64 GCC {name} no longer matches its 64-bit fix.")
+            texts[name] = texts[name].replace(old, new, 1)
+        # Old GCC's bundled assert.h expects a libgcc host helper absent from Apple's
+        # runtime. Supply that diagnostic routine only; target codegen is untouched.
+        host = source / "getpwd.c"
+        texts["getpwd.c"] = host.read_text(encoding="latin-1") + (
+            '\n#include <stdio.h>\nvoid __eprintf(const char *fmt, const char *expr, unsigned int line, '
+            'const char *file) { fprintf(stderr, fmt, expr, line, file); abort(); }\n')
+        for name, text in texts.items():
+            (source / name).write_text(text, encoding="latin-1")
+        header = source / "decomp-arm64-varargs.h"
+        header.write_text(_GCC_PM_VARARGS, encoding="latin-1")
+        quiet = ("-DDARWIN -std=gnu89 -DHAVE_VPRINTF -Wno-return-type -Wno-error -Wno-implicit-function-declaration "
+                 "-Wno-int-conversion -Wno-incompatible-pointer-types -Wno-deprecated-non-prototype")
+        env = {k: v for k, v in os.environ.items() if k not in ("CC", "CXX", "CFLAGS", "CPPFLAGS", "LDFLAGS")}
+        env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"  # the shipped parsers, never a computer's newer bison
+        # The generators (gen*.c) declare their own non-variadic fatal(), so the prototypes go to cc1 and cpp only.
+        argv = ["/usr/bin/make", "-j" + str(min(6, os.cpu_count() or 1)), "cpp", "cc1", "CC=/usr/bin/clang",
+                f"CFLAGS={quiet} {SN64_GCC_OPT} -include {header}", f"HOST_CFLAGS={quiet} {SN64_GCC_OPT}"]
+        log("  building pinned reconstructed SN64 GCC (first install only)")
+        try:
+            result = subprocess.run(limits.capped(argv), cwd=source, capture_output=True, text=True,
+                                    errors="replace", timeout=900, env=env)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise ToolchainError(f"Couldn't build reconstructed SN64 GCC: {e}. Check Xcode Command Line Tools and try again.") from e
+        if result.returncode:
+            raise ToolchainError("Couldn't build reconstructed SN64 GCC.\n" + (result.stdout + result.stderr)[-4000:])
+        for name in ("cpp", "cc1"):
+            if not (source / name).is_file():
+                raise ToolchainError(f"The reconstructed SN64 GCC build did not produce {name}.")
+        _check_sn64_gcc(source, Path(tmp))
+        for name in ("cpp", "cc1"):
+            shutil.copyfile(source / name, dest / name)
+            (dest / name).chmod(0o755)
+
+
+# clang -O2 miscompiles real.c's type punning (4294967296.0 came out as the words 0, 0x41f0), likely what broke GCC
+# 2.8.1 (PM matching) at -O2 too. With strict aliasing off it prints the Linux release's code on the whole corpus, as
+# an unoptimised build does, and spends about a third less CPU a compile.
+SN64_GCC_OPT = "-O2 -fno-strict-aliasing"
+# What the Linux release prints for _SN64_FLOATS at the profile's flags (run under qemu-i386): a broken 64-bit build
+# loaded these constants from .rodata instead, or printed a different listing on the next run.
+_SN64_FLOATS = ("float g(float x) { return x * 1.5f + 0.1f; }\n"
+                "double f(unsigned int x) { return x; }\n"
+                "float t[] = { -1000.0f, 0.5f };\n")
+_SN64_EXPECTED = (r"li\.s\s+\$f0,1\.50000000000000000000e0\n", r"li\.s\s+\$f0,1\.00000001490116119385e-1\n",
+                  r"li\.d\s+\$f0,4\.29496729600000000000e9\n", r"\.word\s+0xc47a0000\t\t# -1000 \(float\)\n",
+                  r"\.word\s+0x3f000000\t\t# 0\.5 \(float\)\n")
+
+
+def _check_sn64_gcc(build: Path, tmp: Path) -> None:
+    """The ways a native build went wrong, checked before it is installed: float constants that aren't the Linux
+    release's, a listing that changes from run to run, and a compile error that crashes instead of being reported."""
+    floats, broken = tmp / "floats.c", tmp / "broken.c"
+    floats.write_text(_SN64_FLOATS, encoding="utf-8")
+    broken.write_text("int f(void) { return undeclared; }\n", encoding="utf-8")
+    flags = ["-quiet", "-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float", "-fno-exceptions"]
+    listings, runs = [], {}
+    for src, out in ((floats, "a.s"), (floats, "b.s"), (floats, "c.s"), (broken, "broken.s")):
+        try:
+            runs[src] = subprocess.run([str(build / "cc1"), *flags, str(src), "-o", str(tmp / out)],
+                                       capture_output=True, text=True, errors="replace", timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"The native reconstructed SN64 GCC failed its check: {error}") from error
+        if src == floats:
+            listings.append((tmp / out).read_text(errors="replace") if not runs[src].returncode and
+                            (tmp / out).is_file() else "")
+    asm = listings[0]
+    if not asm or not all(re.search(pattern, asm) for pattern in _SN64_EXPECTED):
+        raise ToolchainError("The native reconstructed SN64 GCC prints float constants wrongly; not installing it.\n"
+                             + runs[floats].stderr[-2000:] + asm[-2000:])
+    if len(set(listings)) != 1:
+        raise ToolchainError("The native reconstructed SN64 GCC prints different code for the same file from run "
+                             "to run; not installing it.")
+    if runs[broken].returncode != 33 or "undeclared" not in runs[broken].stderr:
+        raise ToolchainError("The native reconstructed SN64 GCC doesn't report compile errors (exit "
                              f"{runs[broken].returncode}); not installing it.\n" + runs[broken].stderr[-2000:])
 
 

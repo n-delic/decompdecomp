@@ -563,11 +563,53 @@ Two host-build mistakes looked like compiler behaviour and would have corrupted 
 Cost: one `gcc -S` 230 ms → 13 ms. A whole `sn64.py` single-function compile 416 → 159 ms CPU (ASN64
 under wibo is still x86). The build itself takes about 20 seconds.
 
-Not fixed, separate: the reconstructed SN64 2.7.2 (`sn-n64-272-970404`, `_build_sn64_gcc`) built
-for arm64 is **nondeterministic**: three runs of one file gave three outputs, with garbage float
-`.word`s and different registers. It also crashes on 7 of 120 sample files that its `-O0` build
-rejects normally. Building without `-O2` does not cure it. Don't trust its scores on Apple Silicon
-until that is fixed.
+The reconstructed SN64 2.7.2 had the same variadic problem and a worse one of its own: next section.
+
+### Reconstructed SN64 GCC 2.7.2 on 64-bit Macs: same output as the Linux release (14 November 2026)
+
+**Controlled comparison** of host builds, not a new match: `sn-n64-272-970404` built from decompals/SN64-gcc
+2c037f3 (`2.7.2-970404`) with Xcode clang for arm64 (`toolchains._build_sn64_gcc`) against the pinned Linux
+release (`SN64-gcc-2.7.2-970404-linux.tar.gz`, a static 32-bit i386 program), run unchanged under qemu-i386 in a
+throwaway Colima VM. Rosetta can't run 32-bit x86 code, and an x86-64 Mac build is no reference: it is a 64-bit host
+with the same CONST_DOUBLE bug. Input: 1,432 public papermario C files (every third file), preprocessed once with
+clang, through both `cc1`s at the profile's `-G0 -mips3 -O2 -mgas -meb -mhard-float -fno-exceptions`, at `-O1 ... -g`
+and at `-mips2 -O2 ... -funsigned-char`. Assembly compared after dropping only `\t\t# <integer>` comments (float
+constant comments kept).
+
+| Build of cc1 | Exit codes as reference | Assembly as reference (430 compiled, x3 flag sets) | Same output on rerun |
+|---|---|---|---|
+| Before (installed copy's recipe, clang `-O2`) | 1,650/4,296: crashes (139) on 882 files a set that the release rejects | 1,209/1,290 | no |
+| Variadic prototypes only (`-O0` or `-O2`) | 4,296/4,296 | 1,209/1,290 | no: 9-11 files changed run to run |
+| + CONST_DOUBLE copies, no `-O` | 4,296/4,296 | 1,290/1,290 | yes, 3 runs |
+| + CONST_DOUBLE copies, `-O2 -fno-strict-aliasing` (shipped) | 4,296/4,296 | 1,290/1,290 | yes, 3 runs |
+
+The reference rejects 989 files at each flag set (exit 33: the corpus's stub headers) and crashes on 13 (a designated
+initialiser on an array in `set_init_label`); the fixed builds do exactly the same. Through the real
+`sn64.py --native` path (the release's `cpp` and `cc1` in the VM at the same paths, then the same modern-asn64 and
+GNU assembler; `-DPERMUTER` sources without `INCLUDE_ASM`), the copy `toolchains.install` built gave 384/384 objects
+byte-identical to the release's; the copy installed before the fix differed on 27 of them.
+
+Three host-build bugs, each of which looked like compiler behaviour:
+
+- **CONST_DOUBLE on a 64-bit host.** The source is configured for an i386 host, so `HOST_WIDE_INT` is 32 bits, and
+  GCC copies a `double` into `&CONST_DOUBLE_LOW` with `bcopy`, as an array of `HOST_WIDE_INT`s. On a 64-bit host
+  each rtx operand slot is 8 bytes: the whole double landed in LOW's slot and `CONST_DOUBLE_HIGH` was never written,
+  and `rtx_alloc` doesn't clear operands. Whatever the obstack held there decided whether a float constant became
+  `li.s $f0,1.5` or a load from `.rodata` (with a garbage `# 2.48e-312 (float)` comment), and changed with each run
+  (heap addresses). Seven `bcopy`/`bcmp`s through `&CONST_DOUBLE_LOW` now copy word by word into consecutive slots,
+  the 32-bit layout. This affects Intel Macs too.
+- **Unprototyped variadic calls (Apple arm64).** As for GCC 2.8.1: `error()`/`pedwarn()` etc. read garbage, so most
+  compile errors crashed (exit 139, 251 of a 300-file sample). The same forced-include header, applied to cc1/cpp
+  objects only (the `gen*.c` generators define their own non-variadic `fatal()`), the three K&R declarations in
+  `config/mips/mips.c` removed, and prototypes for `emit_library_call` (`profile.c`) and `bc_emit_instruction`.
+- **clang `-O2` with strict aliasing** miscompiles `real.c`'s type punning: `(double)unsigned` loaded
+  `.word 0x00000000, 0x000041f0` instead of `li.d $f0,4.294967296e9`. `-fno-strict-aliasing` fixes it; the 2.8.1
+  build's `-O2` failure was probably the same.
+
+Pointer-to-`int` casts flagged by `-Wpointer-to-int-cast` are hash keys and alignment tests, harmless. The recipe
+refuses a build whose float constants differ from the release's, whose listing changes between three runs of one
+file, or that crashes on a compile error; `recipe = 2` in `toolchains.toml` makes installs built before this out of
+date, so they are rebuilt. Build time about 20 seconds.
 
 ### Native KMC GCC 2.7.2 + binutils 2.6 on Apple Silicon: same output as the Intel build (14 November 2026)
 
