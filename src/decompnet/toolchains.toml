@@ -1656,6 +1656,8 @@ sha256 = "51ddf17004bd74e738941c71fe6532e0dfe2d02822e0029c3624620a02da3eb7"
 file = "sn64-gcc-2c037f330a99b514e5b53c66f1c63f90d8a15302.tar.gz"
 subdir = "SN64-gcc-2c037f330a99b514e5b53c66f1c63f90d8a15302/2.7.2-970404"
 build = "sn64-gcc"
+# 2: the 64-bit host fixes (variadic prototypes, CONST_DOUBLE copies): installs built before them are rebuilt
+recipe = 2
 platforms = ["macos-x86_64", "macos-arm64"]
 
 ["sn-n64-272-0004"]

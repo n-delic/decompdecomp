@@ -60,27 +60,117 @@ def test_extra_compilers_generate_real_elf_and_external_relocations(tmp_path, ti
             assert verdict.exact, verdict.problems
 
 
-def test_reconstructed_sn_native_build_supplies_only_host_assertion_helper(tmp_path, monkeypatch):
-    archive = tmp_path / 'source.tar.gz'
+def _sn64_source(source):
+    """A stand-in for the pinned SN64 source: each file holds the exact text the 64-bit fixes replace."""
+    for name, old, _ in toolchains._SN64_EDITS:
+        file = source / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text((file.read_text(encoding='latin-1') if file.is_file() else '/* upstream */\n') + old + '\n',
+                        encoding='latin-1')
+    (source / 'getpwd.c').write_text('/* upstream host source */')
+
+
+def test_reconstructed_sn_native_build_fixes_the_64_bit_host_and_checks_itself(tmp_path, monkeypatch):
     dest = tmp_path / 'out'
     dest.mkdir()
-    def extract(archive, source, subdir):
-        (source / 'getpwd.c').write_text('/* upstream host source */')
+    seen = {}
     def build(argv, **kwargs):
         source = kwargs['cwd']
-        assert '__eprintf' in (source / 'getpwd.c').read_text()
-        assert 'cpp' in argv and 'cc1' in argv and 'CC=/usr/bin/clang' in argv
+        seen['argv'], seen['env'] = argv, kwargs['env']
+        seen['files'] = {name: (source / name).read_text(encoding='latin-1')
+                         for name in {name for name, _, _ in toolchains._SN64_EDITS} | {'getpwd.c'}}
         assert kwargs['timeout'] == 900
         for name in ['cpp', 'cc1']:
             (source / name).write_text('native')
         return SimpleNamespace(returncode=0, stdout='', stderr='')
-    monkeypatch.setattr(toolchains, '_extract', extract)
+    checked = []
+    monkeypatch.setattr(toolchains, '_extract', lambda archive, source, subdir: _sn64_source(source))
     monkeypatch.setattr(toolchains.shutil, 'which', lambda x: x)
     monkeypatch.setattr(toolchains.limits, 'capped', lambda x: x)
     monkeypatch.setattr(toolchains.subprocess, 'run', build)
-    toolchains._build_sn64_gcc(archive, dest, 'pinned/source', lambda *_: None)
-    assert (dest / 'cc1').read_text() == 'native'
-    assert (dest / 'cpp').read_text() == 'native'
+    monkeypatch.setattr(toolchains, '_check_sn64_gcc', lambda build, tmp: checked.append((build / 'cc1').read_text()))
+    toolchains._build_sn64_gcc(tmp_path / 'source.tar.gz', dest, 'pinned/source', lambda *_: None)
+    files = seen['files']
+    assert '__eprintf' in files['getpwd.c']
+    for name, old, new in toolchains._SN64_EDITS:
+        assert new in files[name]
+    assert 'bcopy ((char *) &CONST_DOUBLE_LOW' not in files['varasm.c'] + files['real.h'] + files['emit-rtl.c']
+    assert 'extern void   error ();' not in files['config/mips/mips.c']
+    assert 'static void decomp_cd_put' in files['rtl.h']
+    argv = seen['argv']
+    assert argv[0] == '/usr/bin/make' and 'cpp' in argv and 'cc1' in argv and 'CC=/usr/bin/clang' in argv
+    cflags = next(a for a in argv if a.startswith('CFLAGS='))
+    host = next(a for a in argv if a.startswith('HOST_CFLAGS='))
+    assert '-include ' in cflags and 'decomp-arm64-varargs.h' in cflags
+    assert '-include' not in host  # the generators define their own fatal()
+    assert '-fno-strict-aliasing' in cflags and '-fno-strict-aliasing' in host  # clang -O2 broke real.c otherwise
+    assert seen['env']['PATH'] == '/usr/bin:/bin:/usr/sbin:/sbin' and 'CFLAGS' not in seen['env']
+    assert checked == ['native']
+    assert {p.name: p.read_text() for p in dest.iterdir()} == {'cpp': 'native', 'cc1': 'native'}
+
+
+def test_reconstructed_sn_native_build_fails_closed_when_the_source_moves(tmp_path, monkeypatch):
+    def extract(archive, source, subdir):
+        _sn64_source(source)
+        (source / 'varasm.c').write_text('/* a newer varasm.c */')
+    monkeypatch.setattr(toolchains, '_extract', extract)
+    monkeypatch.setattr(toolchains.shutil, 'which', lambda x: x)
+    monkeypatch.setattr(toolchains.subprocess, 'run', lambda *a, **k: pytest.fail('built an unpatched GCC'))
+    with pytest.raises(toolchains.ToolchainError, match='varasm.c no longer matches'):
+        toolchains._build_sn64_gcc(tmp_path / 'source.tar.gz', tmp_path, 'pinned', lambda *_: None)
+
+
+def test_reconstructed_sn_installs_built_before_the_fixes_are_rebuilt():
+    """An install's fingerprint covers its parts, so the recipe number makes the broken builds out of date."""
+    tc = toolchains.get('sn-n64-272-970404')
+    for plat in ['macos-arm64', 'macos-x86_64']:
+        assert [(p.get('build'), p.get('recipe')) for p in tc.parts_for(plat)] == [('sn64-gcc', 2)]
+
+
+# What the Linux release prints for the check's file (under qemu-i386), and what the broken builds printed.
+_SN64_GOOD = ('\tli.s\t$f0,1.50000000000000000000e0\n\tli.s\t$f0,1.00000001490116119385e-1\n'
+              '\tli.d\t$f0,4.29496729600000000000e9\n\t.word\t0xc47a0000\t\t# -1000 (float)\n'
+              '\t.word\t0x3f000000\t\t# 0.5 (float)\n')
+
+
+@pytest.mark.parametrize('listings, broken_exit, why', [
+    ([_SN64_GOOD.replace('\tli.s\t$f0,1.5', '\tl.s\t$f0,%lo(.LC0)($2)  # 1.5')] * 3, 33,
+     'prints float constants wrongly'),                                    # CONST_DOUBLE_HIGH never written
+    ([_SN64_GOOD.replace('li.d\t$f0,4.29', 'l.d\t$f0,.LC0  # 4.29')] * 3, 33,
+     'prints float constants wrongly'),                                    # clang -O2 with strict aliasing
+    ([_SN64_GOOD, _SN64_GOOD + '\t.word\t0x00000000\t\t# 2.48e-312 (float)\n', _SN64_GOOD], 33,
+     'from run to run'),
+    ([_SN64_GOOD] * 3, -11, "doesn't report compile errors"),             # no variadic prototypes (arm64)
+])
+def test_reconstructed_sn_check_refuses_the_broken_builds_seen(tmp_path, monkeypatch, listings, broken_exit, why):
+    floats = iter(listings)
+    def run(argv, **kwargs):
+        src = Path(argv[argv.index('-o') - 1])
+        if src.name == 'floats.c':
+            Path(argv[argv.index('-o') + 1]).write_text(next(floats))
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+        return SimpleNamespace(returncode=broken_exit, stdout='', stderr="`undeclared' undeclared")
+    monkeypatch.setattr(toolchains.subprocess, 'run', run)
+    with pytest.raises(toolchains.ToolchainError, match=why):
+        toolchains._check_sn64_gcc(tmp_path, tmp_path)
+
+
+def test_reconstructed_sn_check_accepts_the_linux_release_output(tmp_path, monkeypatch):
+    def run(argv, **kwargs):
+        src = Path(argv[argv.index('-o') - 1])
+        if src.name == 'floats.c':
+            Path(argv[argv.index('-o') + 1]).write_text(_SN64_GOOD)
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+        return SimpleNamespace(returncode=33, stdout='', stderr="`undeclared' undeclared")
+    monkeypatch.setattr(toolchains.subprocess, 'run', run)
+    toolchains._check_sn64_gcc(tmp_path, tmp_path)
+
+
+def test_installed_reconstructed_sn_passes_the_native_build_check(tmp_path):
+    """The same check holds for the Linux release, so it runs wherever the compiler is installed."""
+    if toolchains.installed('sn-n64-272-970404') is None:
+        pytest.skip('requires the installed compiler')
+    toolchains._check_sn64_gcc(toolchains.path('sn-n64-272-970404'), tmp_path)
 
 
 PM_GCC = ['gcc-2.8.1-pm', 'gcc-2.8.1-pm-sn-as']
