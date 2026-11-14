@@ -88,45 +88,53 @@ class GuiMixin:
         found = project_layout.edits(folder)
         if not found:
             return []
-        pid, slug = proj["id"], proj["slug"]
-        store = self.project_store(pid)
         judge, credit = self.attribution_agent("project-folder"), self.attribution_agent("you")
+        total = sum(len(e["functions"]) for e in found)
         log(f"judging {len(found)} edited file{'s' * (len(found) != 1)} in the project folder")
-        for index, edit in enumerate(found):
-            if hasattr(log, "check_cancel"):
-                log.check_cancel()
-            if hasattr(log, "progress"):
-                log.progress({"phase": "Judging the folder's edits", "done": index, "total": len(found),
-                              "function": edit["function"]})
-            row = store.one("SELECT status FROM functions WHERE project_id=? AND name=?", pid, edit["function"])
-            edit["taken"] = False
-            if row is None:
-                edit["said"] = f"no function is named {edit['function']}: name the file after the function it holds"
-                log(f"{edit['path']}: {edit['said']}")
-                continue
-            try:
-                res = self.attempt(judge, edit["function"], edit["source"], slug)
-            except (NetworkError, toolchains.ToolchainError) as error:
-                edit |= {"said": str(error), "retry": True}
-                log(f"{edit['path']}: not judged this time: {error}")
-                continue
-            finally:  # a judged edit leaves no claim behind
-                with store.tx() as db:
-                    db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN (SELECT id FROM functions "
-                               "WHERE project_id=? AND name=?)", (judge.id, pid, edit["function"]))
-            with store.tx() as db:
-                for column in ("matched_agent_id", "best_agent_id"):
-                    db.execute(f"UPDATE functions SET {column}=? WHERE project_id=? AND name=? AND {column}=?",
-                               (credit.id, pid, edit["function"], judge.id))
-            edit["taken"] = bool(res.get("new_match"))
-            if row["status"] == "matched":
-                edit["said"] = ("still matches; the project keeps the C it matched with" if res.get("exact") else
-                                f"no longer matches (score {res['score']}); the project keeps the C it matched with")
-            else:
-                edit["said"] = ("matched" if res["matched"] else "doesn't compile" if res["score"] is None
-                                else f"score {res['score']}" + (", the best so far" if res.get("adopted") else ""))
+        done = 0
+        for edit in found:
+            verdicts, taken, retry = [], [], False
+            for name in edit["functions"]:
+                if hasattr(log, "check_cancel"):
+                    log.check_cancel()
+                if hasattr(log, "progress"):
+                    log.progress({"phase": "Judging the folder's edits", "done": done, "total": total, "function": name})
+                done += 1
+                said, new, busy = self._judge_folder_function(proj, judge, credit, name, edit["sources"][name])
+                verdicts.append(said if len(edit["functions"]) == 1 else f"{name}: {said}")
+                taken.append(new)
+                retry |= busy
+            # taken: the project's C for each function is now this file's, so the export writes it from there
+            edit |= {"taken": all(taken), "matched": sum(taken), "said": "; ".join(verdicts)} | (
+                {"retry": True} if retry else {})
             log(f"{edit['path']}: {edit['said']}")
         return found
+
+    def _judge_folder_function(self, proj, judge, credit, name: str, source: str) -> tuple[str, bool, bool]:
+        """One function of an edited file, judged: (what the judge said, whether it's a new match, whether it has
+        to wait for the next refresh because someone holds it)."""
+        pid, store = proj["id"], self.project_store(proj["id"])
+        row = store.one("SELECT status FROM functions WHERE project_id=? AND name=?", pid, name)
+        if row is None:
+            return f"no function is named {name}: name the file after the function or guessed unit it holds", False, False
+        try:
+            res = self.attempt(judge, name, source, proj["slug"])
+        except (NetworkError, toolchains.ToolchainError) as error:
+            return f"not judged this time: {error}", False, True
+        finally:  # a judged edit leaves no claim behind
+            with store.tx() as db:
+                db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN (SELECT id FROM functions "
+                           "WHERE project_id=? AND name=?)", (judge.id, pid, name))
+        with store.tx() as db:
+            for column in ("matched_agent_id", "best_agent_id"):
+                db.execute(f"UPDATE functions SET {column}=? WHERE project_id=? AND name=? AND {column}=?",
+                           (credit.id, pid, name, judge.id))
+        if row["status"] == "matched":
+            return ("still matches; the project keeps the C it matched with" if res.get("exact") else
+                    f"no longer matches (score {res['score']}); the project keeps the C it matched with"), False, False
+        return ("matched" if res["matched"] else "doesn't compile" if res["score"] is None
+                else f"score {res['score']}" + (", the best so far" if res.get("adopted") else "")), \
+            bool(res.get("new_match")), False
 
     def setup_project_layout(self, slug: str, log=print) -> dict:
         """Lay a ROM project out as a project folder: the rebuildable export plus guessed source files
@@ -161,7 +169,7 @@ class GuiMixin:
         project_layout.record_sources(folder, judged, retry)
         done = project_layout.summary(units, folder) | {
             "identical": identical, "objdiff_units": grouped, "objdiff_ready": project_layout.build_targets(folder, log),
-            "edits": {"judged": sum(not e.get("retry") for e in edits), "matched": sum(bool(e.get("taken")) for e in edits),
+            "edits": {"judged": sum(not e.get("retry") for e in edits), "matched": sum(e.get("matched", 0) for e in edits),
                       "kept": kept, "waiting": len(retry)}}
         with self.project_store(proj['id']).tx() as db:
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])

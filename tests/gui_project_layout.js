@@ -30,7 +30,7 @@ vm.runInContext(source.slice(source.indexOf('/* A ROM project laid out as a proj
   $('srcState').innerHTML='';
   ctx.renderProjectLayout({project_layout:{units:2,confirmed:0,t:0,edits:{judged:3,matched:1,waiting:1,
     kept:[{path:'src/main/f.c.kept',function:'f',said:'no longer matches <score 9>'}]}}});
-  assert.match($('srcState').innerHTML,/3 judged, 1 matched, 1 waiting/);
+  assert.match($('srcState').innerHTML,/3 files judged, 1 functions matched, 1 files waiting/);
   assert.match($('srcState').innerHTML,/1 not taken, kept in the folder/);
   assert.match($('srcState').innerHTML,/<code>src\/main\/f.c.kept<\/code>: no longer matches/);
   // a refresh while the panel is working leaves the running job's controls alone

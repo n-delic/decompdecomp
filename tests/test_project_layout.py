@@ -203,8 +203,8 @@ def test_project_layout_reads_back_an_untouched_file_as_the_c_that_matched(tmp_p
     (tmp_path / "src" / "main" / "f.c").write_text(text.replace("{\n}", "{ return; }"))
     (tmp_path / "src" / "main" / "g.c").write_text('#include "common.h"\nint g(void) { return 1; }\n')
     found = {e["function"]: e for e in project_layout.edits(tmp_path)}
-    assert found["f"]["source"] == '#include "context.h"\n\nvoid f(void) { return; }\n'
-    assert found["g"]["source"] == "int g(void) { return 1; }\n"  # the judge puts the header first itself
+    assert found["f"]["sources"]["f"] == '#include "context.h"\n\nvoid f(void) { return; }\n'
+    assert found["g"]["sources"]["g"] == "int g(void) { return 1; }\n"  # the judge puts the header first itself
     assert found["g"]["segment"] == "main" and found["g"]["path"] == "src/main/g.c"
 
 
@@ -270,3 +270,59 @@ def test_edits_in_the_project_folder_are_judged_by_the_rom_judge(tmp_path, conso
     assert path.with_name(path.name + ".kept").read_text() == f"void {empty}(void) {{ for (;;); }}\n"
     assert net.project_store(pid).one("SELECT status FROM functions WHERE project_id=? AND name=?", pid,
                                       empty)["status"] == "matched"
+
+
+def test_a_file_with_several_functions_judges_each_alone():
+    source = ("int shared;\n\n/* adds */\nint a(void) { return shared + 1; }\n\n"
+              "int b(void) {\n    return a() * 2;\n}\n\nvoid c(void) {}\n")
+    assert project_layout.one_definition(source, "b", ["a", "c"]) == \
+        "int shared;\n\nint b(void) {\n    return a() * 2;\n}\n\n"
+    assert "adds" in project_layout.one_definition(source, "a", ["b", "c"])
+
+
+def test_a_guessed_units_file_holds_the_functions_it_defines(tmp_path):
+    project_layout.write_units(tmp_path, project_layout.guess_units([fn("a", 0x80000400, 0x10),
+                                                                     fn("b", 0x80000410, 0x10)]))
+    project_layout.record_sources(tmp_path)
+    (tmp_path / "src" / "main").mkdir(parents=True)
+    (tmp_path / "src" / "main" / "main_80000400.c").write_text("void a(void) {}\nvoid b(void) { a(); }\n")
+    (tmp_path / "src" / "main" / "anything.c").write_text("void b(void) {}\n")
+    found = {e["function"]: e for e in project_layout.edits(tmp_path)}
+    assert found["main_80000400"]["functions"] == ["a", "b"]
+    assert found["main_80000400"]["sources"]["b"] == "void b(void) { a(); }\n"
+    assert found["anything"]["functions"] == ["b"]  # any other name: the game's functions it defines
+
+
+@pytest.mark.parametrize("console", sorted(DEMOS))
+def test_a_guessed_file_edited_whole_matches_function_by_function(tmp_path, console):
+    """You write a guessed unit's file with two of its functions, one right and one not yet: the right one matches
+    and the export builds it from a file of its own; the unit's file comes back for the other."""
+    game, compiler, _ = DEMOS[console]
+    if toolchains.installed(compiler) is None or toolchains.installed("binutils-mips") is None \
+            or shutil.which("ld.lld") is None or not game.exists():
+        pytest.skip(f"the {console} demo, its compiler or linker isn't here")
+    net = _net(tmp_path)
+    slug = net.import_rom(game, confirmed=True, log=lambda *_: None, project_layout=True)
+    folder = Path(net.overview(slug)["project_layout"]["path"])
+    pid = net.project_row(slug)["id"]
+    size = {r["name"]: r["size"] for r in net.project_store(pid).all(
+        "SELECT name, size FROM functions WHERE project_id=?", pid)}
+    units = json.loads((folder / "units.json").read_text())["units"]
+    unit = next((u for u in units if any(size[n] == 8 for n in u["functions"])
+                 and any(size[n] > 16 for n in u["functions"])), None)
+    if unit is None:
+        pytest.skip(f"no {console} demo unit has an empty function and a longer one")
+    empty = next(n for n in unit["functions"] if size[n] == 8)
+    wrong = next(n for n in unit["functions"] if size[n] > 16)
+    text = f'#include "common.h"\n\nvoid {empty}(void) {{\n}}\n\nint {wrong}(void) {{ return 12345; }}\n'
+    path = folder / "src" / unit["segment"] / f"{unit['name']}.c"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+    layout = net.setup_project_layout(slug, log=lambda *_: None)
+    assert layout["edits"] | {"kept": None} == {"judged": 1, "matched": 1, "kept": None, "waiting": 0}
+    assert f"{empty}: matched" in layout["edits"]["kept"][0]["said"]
+    assert path.read_text() == text  # back for the function still to do
+    own = next((folder / "src").glob(f"*/{empty}.c"))
+    assert f"void {empty}(void)" in own.read_text() and wrong not in own.read_text()
+    assert layout["identical"] is True

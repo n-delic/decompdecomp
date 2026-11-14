@@ -178,21 +178,54 @@ def as_submitted(text: str, prefix: str = "") -> str:
     return _EXPORT_INCLUDE.sub("", text).strip() + "\n"
 
 
+def one_definition(source: str, name: str, others: list[str]) -> str:
+    """A file holding several functions, with the definitions of `others` (and the comment right above each) taken
+    out: what `name` is judged with, and what the export then builds it from, a file of its own (the export keeps a
+    function's C only when it defines that function alone)."""
+    from ..forks import csource
+    for other in others:
+        if other in source and (span := csource.find(source, other)):
+            lo = csource.comment_above(source, source.rfind("\n", 0, span[0]) + 1)
+            source = source[:lo] + source[span[1]:].lstrip("\n")
+    return source
+
+
+def _defined(source: str, names) -> list[str]:
+    from ..forks import csource
+    return [n for n in names if n in source and csource.find(source, n)]
+
+
 def edits(folder: Path) -> list[dict]:
-    """The C files changed or added since the folder was written: [{function, segment, path, source}], each source
-    as the judge takes it. Nothing when the folder has no sources.json (it was never laid out, nothing to compare)."""
+    """The C files changed or added since the folder was written: [{function, functions, sources, segment, path,
+    text}], each source as the judge takes it. A file named after a function holds that function. A file named after
+    a guessed unit (units.json) holds whichever of the unit's functions it defines, and any other file whichever of
+    the game's: each is judged with the others' definitions taken out. Nothing when the folder has no sources.json
+    (it was never laid out, so there's nothing to compare with)."""
     record = folder / SOURCES_FILE
     if not record.is_file():
         return []
     known = json.loads(record.read_text(encoding="utf-8")).get("files", {})
+    listed = json.loads((folder / UNITS_FILE).read_text(encoding="utf-8")).get("units", []) \
+        if (folder / UNITS_FILE).is_file() else []
+    by_unit = {u["name"]: u["functions"] for u in listed}
+    every = sorted({n for u in listed for n in u["functions"]})
     found = []
     for path in _c_files(folder):
         rel = path.relative_to(folder).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
         if (before := known.get(rel)) and before["sha256"] == _digest(text):
             continue
-        found.append({"function": path.stem, "segment": path.parent.name, "path": rel,
-                      "source": as_submitted(text, (before or {}).get("prefix", "")), "text": text})
+        source = as_submitted(text, (before or {}).get("prefix", ""))
+        stem = path.stem
+        if stem in by_unit:
+            names = _defined(source, by_unit[stem])
+        elif stem in every or not every:
+            names = [stem]
+        else:
+            names = _defined(source, every)
+        names = names or [stem]  # judged as named, so the verdict says no function has that name
+        found.append({"function": stem, "functions": names, "segment": path.parent.name, "path": rel, "text": text,
+                      "sources": {n: one_definition(source, n, [o for o in names if o != n]) for n in names}})
     return found
 
 

@@ -1909,11 +1909,12 @@ opens in objdiff as it is. Every later export refreshes both. People (and any to
 file per function as the export writes it: Refresh project folder judges each file changed or added since the last
 write (`sources.json`) like the function page's Try, at the function's real address, credited to "you", then
 regenerates the folder; an edit the project didn't take is written back in place or beside its function as
-`.kept`, never lost (N64, PS1 and PS2 demos: `tests/test_project_layout.py`). Agents still work through ROM mode. Next:
+`.kept`, never lost (N64, PS1 and PS2 demos: `tests/test_project_layout.py`). A file may also hold several
+functions (named after its guessed unit, or anything else): each is judged with the others' definitions taken out,
+and a matched one is then built from a file of its own. Agents still work through ROM mode. Next:
 - the project page measuring the folder with objdiff as it does a fork's (today it shows ROM mode's own counts);
-- editing a whole guessed file (`src/<unit>.c` with several functions, judged with `attempt_many`), and agents,
-  autopilot, the permuter and polishing working in the folder through that adapter (this clears linked-image
-  exports' "—");
+- agents, autopilot, the permuter and polishing working in the folder through that adapter (this clears
+  linked-image exports' "—"), and a matched unit exported as one file once all its functions match;
 - regenerating the affected units after joins, splits, function-end reports and compiler-range changes, keeping
   confirmed units frozen;
 - better file seams where padding says nothing: on the PS1 and PS2 demos no padding separates objects (or every
