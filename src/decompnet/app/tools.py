@@ -735,6 +735,7 @@ def _tool_foreground(net, agent, slug, name, args):
         name == 'release_function' and not args.get('needs','').strip() and not args.get('not_c',False))
     notes = allowed and name in {'add_note','release_function'}
     progress = getattr(net, 'progress', None)
+    from ..request_timing import timed_lock
     with progress.foreground() if allowed and progress is not None else nullcontext():
         attempt = nullcontext()
         if notes and name == 'release_function':
@@ -744,11 +745,10 @@ def _tool_foreground(net, agent, slug, name, args):
             store = net.project_store(fn['project_id'])
             with store.lock:
                 lock = net._attempt_locks.setdefault((agent.id,fn['id']),threading.RLock())
-            from ..request_timing import timed_lock
             attempt = timed_lock(lock,'candidate_lock_wait')
         # Keep note writes and their publication marker together so a finishing
         # saved worker cannot acknowledge them before they are published.
-        with attempt, progress._project_lock(slug) if notes and progress is not None else nullcontext():
+        with attempt, timed_lock(progress._project_lock(slug), 'progress_project_lock_wait') if notes and progress is not None else nullcontext():
             if notes and name == 'release_function' and net._function(args['function'],slug)['id'] != fn['id']:
                 raise NetworkError('The function changed while this release waited. Read its current claim before releasing.')
             yield
