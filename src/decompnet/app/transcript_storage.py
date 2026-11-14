@@ -35,3 +35,8 @@ class TranscriptStore(Store):
         self._local = threading.local()
         self._slow_queries = {}
         self.read_cache = ReadCache(lambda: getattr(self._local,'in_tx',False))
+        # Store's write path reads these (db_diagnostics): who wrote last, for a writer that waited, and the
+        # write-ahead log's size check after each commit. Without them every write here failed.
+        self._last_writer = None
+        from ..db_diagnostics import WalWatch
+        self._wal_watch = WalWatch(self.path)
