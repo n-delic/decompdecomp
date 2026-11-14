@@ -97,7 +97,9 @@ splat's image segments (`rgba16`, `ci4` with its `palette`, `i8`...) and a proje
 types whose arguments are a format and a size (`[0x1BB280, yay0_image, Font/000, i4, 24, 24]`),
 unpacked first when a Yay0, MIO0 or Yaz0 block starts there (`rom/config_images.py`), and the images a
 JSON asset list in the project's root declares (`assets*.json` in the style of the first 3D platformer's
-decompilation: the format in the path, `meta.dims`, `meta.pal`, and `offsets` for the project's release).
+decompilation: the format in the path, `meta.dims`, `meta.pal`, and `offsets` for the project's release),
+and a project's sno-packed texture sheets (`sprite_sheet`, `course_texture_table` segments with their
+`decompressed_size`: sno has no header, so the config's start and size are what find them).
 Object-build projects whose original is a disc or a folder still need original-image adapters. Processor adapters plug into
 `Arch.asset_flow`; console-specific call contracts and argument counts belong to `Console`.
 The preview decoders and local UI/API are shared by every ROM console.

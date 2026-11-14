@@ -395,3 +395,23 @@ def test_a_fork_shows_the_images_its_json_asset_list_declares(tmp_path):
     red=next(a for a in assets if a['resource_path']=='textures/red.rgba16.png')
     shown=config_images.preview(bytes(image),red,{})
     assert (shown['details']['width'],shown['details']['height'])==(4,2) and 'asset list' in red['reason']
+
+
+def test_a_fork_shows_the_sno_texture_sheets_its_splat_config_declares():
+    """A project's own sprite_sheet segment: sno-packed, found only by the start and size the config gives."""
+    import struct
+
+    from decompnet.rom import config_images
+    palette=bytes.fromhex('f801')+bytes.fromhex('07c1')*15
+    base=8+16+len(palette)
+    sheet=struct.pack('>II',0,1)+struct.pack('>I6H',base,0,4,2,0,0,0)+palette+bytes([0x01,0x10]*2)
+    packed=b''.join(bytes([0,value]) for value in sheet)
+    image=bytearray(0x400);image[0x100:0x100+len(packed)]=packed
+    config={'segments':[{'name':'menu','type':'sprite_sheet','start':0x100,'decompressed_size':len(sheet)},
+                        {'name':'broken','type':'sprite_sheet','start':0x300,'decompressed_size':len(sheet)},[0x380]]}
+    declared=config_images.sheets(config)
+    assert [s['name'] for s in declared]==['menu','broken']
+    assets=config_images.sheet_regions(bytes(image),declared,'x')
+    assert [a['resource_path'] for a in assets]==['menu']                 # zeros don't unpack to a sheet
+    shown=config_images.preview(bytes(image),assets[0],{})
+    assert shown['decoded']['codec']=='sno' and (shown['details']['width'],shown['details']['height'])==(4,2)

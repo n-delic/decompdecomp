@@ -47,7 +47,8 @@ def _source(net, proj):
     from ..rom import config_images
     # The images the project's own config declares (its textures, where it has worked them out).
     images=(config_images.images(config) if config else [])+config_images.asset_list_images(fp.root,cfg.get('version'))
-    return dict(path=image,segments=segments,gp=gp,arch=console.arch,big_endian=console.big_endian,fork=True,images=images)
+    return dict(path=image,segments=segments,gp=gp,arch=console.arch,big_endian=console.big_endian,fork=True,images=images,
+                sheets=config_images.sheets(config) if config else [])
 
 
 def _project(net, slug):
@@ -72,7 +73,7 @@ def _revision(net, proj):
     cfg=net.cfg(proj)
     stat=source['path'].stat()
     layout={key:cfg.get(key) for key in ('rom','segments','platform','big_endian','gp')}
-    if source['fork']:layout['source']=[str(source['path']),source['segments'],source['gp'],source['images']]
+    if source['fork']:layout['source']=[str(source['path']),source['segments'],source['gp'],source['images'],source['sheets']]
     return hashlib.sha256(json.dumps([ANALYSIS_REVISION,layout,proj['big_endian'],(stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns),[tuple(r) for r in rows],[tuple(r) for r in syms],_contracts(net,proj)],sort_keys=True).encode()).hexdigest()
 
 
@@ -162,7 +163,8 @@ def _run(net, slug, log):
         report = analyse(image,segments,functions,symbols,big_endian=source['big_endian'],
                          progress=log.progress,check=log.check_cancel,ranges=[c['source'] for c in flow['chains']],
                          assets=resource_catalog.regions(image,check=log.check_cancel)+
-                                config_images.regions(image,source.get('images',[]),'splat config')+console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=segments,gp=gp),check=log.check_cancel,progress=log.progress))
+                                config_images.regions(image,source.get('images',[]),'splat config')+
+                                config_images.sheet_regions(image,source.get('sheets',[]),'splat config')+console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=segments,gp=gp),check=log.check_cancel,progress=log.progress))
         resource_catalog.attach(report)
         asset_flow.attach(report,flow)
     log.check_cancel()
