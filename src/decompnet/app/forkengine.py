@@ -4209,6 +4209,7 @@ class ForkEngine:
     def compiler_answer(self, slug: str) -> dict:
         """The Settings panel's answer (engine.compiler_answer's form): the project's compiler and the files built
         with another, each kept because its matched functions match with it."""
+        self.net.filecompilers.normalise(slug)  # (#260: a saved "checking" with no run behind it never spins the panel)
         _, fp, cfg = self.get(slug)
         found = self._file_parts(fp, cfg)
         if found is None:
@@ -4224,7 +4225,8 @@ class ForkEngine:
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": consoles.compiler_name(r.label[0]),
                                "functions": r.functions, "confirmed": r.confirmed} for r in elsewhere[:12]],
                 "elsewhere_count": len(elsewhere),
-                "checking": state.get("state") == "running" or any(c["status"] == "checking" for c in checks),
+                "checking": (state.get("state") == "running" or files.working(slug)
+                             or any(c["status"] == "checking" for c in checks)),
                 "survey": {"state": state.get("state"), "tried": len(survey.get("tried", {})),
                            "confirmed": len(survey.get("confirmed", {})), "running_tried": state.get("tried", 0),
                            "t": survey.get("t")},

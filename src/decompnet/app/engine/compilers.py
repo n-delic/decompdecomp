@@ -363,6 +363,7 @@ class CompilerMixin:
                     files.recheck(slug)
             return self.forks.compiler_answer(slug)
         self._rom_only(slug, "the compiler answer")
+        self.rangechecks.normalise(slug)  # (#260: a saved "checking" with no run behind it never spins the panel)
         proj = self._project(slug)
         cfg = self.cfg(proj)
         main = (cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))
@@ -395,7 +396,8 @@ class CompilerMixin:
                 "elsewhere": [{"start": r.start, "end": r.end, "compiler": self._short(r.label), "functions": r.functions,
                                "confirmed": r.confirmed} for r in elsewhere[:self.ANSWER_STRETCHES]],
                 "elsewhere_count": len(elsewhere),
-                "checking": state.get("state") == "running" or any(c["status"] == "checking" for c in checks),
+                "checking": (state.get("state") == "running" or self.rangechecks.working(slug)
+                             or any(c["status"] == "checking" for c in checks)),
                 "survey": {"state": state.get("state"), "tried": len((cfg.get("compiler_survey") or {}).get("tried", {})),
                            "confirmed": len((cfg.get("compiler_survey") or {}).get("confirmed", {})),
                            "running_tried": state.get("tried", 0), "t": (cfg.get("compiler_survey") or {}).get("t")},
