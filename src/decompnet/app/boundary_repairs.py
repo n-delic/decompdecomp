@@ -256,10 +256,12 @@ def _commit(net, proj, plan, name, action, revision, image_hash, note):
 # on into the next one is the same flow. Each is applied only when the repaired extent ends on a complete path, and
 # nothing absorbed is a direct call target or makes its own stack frame (a separate function after a call that
 # never returns). Everything else stays for review. An N64 game had 90 flagged entries, 56 of these shapes, which
-# took a preview and a full match re-verification each by hand.
+# took a preview and a full match re-verification each by hand. A single word of alignment filler between a return
+# and the next entry is archived as padding (automatic_boundaries.alignment_fill, which new imports apply).
 SAFE_ROUNDS = 8
 SAFE_NOTE = {'delay_slot':'Automatic safe fix: the final instruction required its delay slot; the extended extent ends on a complete path.',
-             'join_previous':'Automatic safe fix: the preceding code runs on into this piece without a return; the joined extent ends on a complete path.'}
+             'join_previous':'Automatic safe fix: the preceding code runs on into this piece without a return; the joined extent ends on a complete path.',
+             'padding':'Automatic safe fix: one word of 8-byte alignment filler between a function that returned and the next entry; nothing references it. It stays in the image, outside any function.'}
 
 
 def safe_job_kind(slug):
@@ -281,8 +283,51 @@ def _decided(meta):
                 any(meta.get(k) for k in ('set_aside','asm_twin','verified_assembly')))
 
 
-def _safe(net, proj, console, plan, calls):
-    """Why `plan` (a preview) can be applied without review, or None."""
+def _flow_targets(image, segments, big_endian):
+    """Every direct branch and jump destination in the mapped image (data read as code only adds more)."""
+    out=set();fmt='>I' if big_endian else '<I'
+    for s in segments:
+        end=min(s.rom_end,len(image));start=s.rom_start+(-s.rom_start%4)
+        for (w,),at in zip(struct.iter_unpack(fmt,image[start:end-(end-start)%4]),range(start,end,4)):
+            op=w>>26;pc=s.vram+at-s.rom_start+4
+            if op in (2,3):out.add((pc&0xF0000000)|((w&0x3FFFFFF)<<2))
+            elif op in (1,4,5,6,7,20,21,22,23) or op==17 and (w>>21)&31==8:
+                delta=w&0xffff;out.add(pc+(delta-0x10000 if delta&0x8000 else delta)*4)
+    return out
+
+
+def _pointed_at(image, big_endian, address):
+    word=address.to_bytes(4,'big' if big_endian else 'little');at=image.find(word)
+    while at>=0:
+        if at%4==0:return True
+        at=image.find(word,at+1)
+    return False
+
+
+def _fill(net, proj, plan, calls, image, flow):
+    """Whether the previewed entry is one alignment word between a returned function and the next entry
+    (automatic_boundaries.alignment_fill, the rule the importer now applies)."""
+    from ..arch.mips import JR_RA, is_frame
+    from ..rom.automatic_boundaries import alignment_fill
+    fn=plan['pieces'][0];order='big' if proj['big_endian'] else 'little'
+    if plan['action']!='padding' or len(plan['pieces'])!=1 or fn['size']!=4 or _decided(json.loads(fn['meta'] or '{}')):return False
+    near={r['vram']:r for r in net.project_store(proj['id']).all(
+        'SELECT name,vram,rom_offset,size,target FROM functions WHERE project_id=? AND gone_mark IS NULL AND vram BETWEEN ? AND ?',
+        proj['id'],fn['vram']-65536,fn['vram']+4)}
+    previous=next((r for r in near.values() if r['vram']+r['size']==fn['vram'] and r['rom_offset'] is not None
+                   and r['rom_offset']+r['size']==fn['rom_offset']),None)
+    following=near.get(fn['vram']+4)
+    if previous is None or following is None or following['rom_offset']!=fn['rom_offset']+4:return False
+    tail=previous['target'] or b'';head=following['target'] or b''
+    return alignment_fill(fn['vram'],len(tail)>=8 and int.from_bytes(tail[-8:-4],order)==JR_RA,
+                          len(head)>=4 and (following['vram'] in calls or is_frame(int.from_bytes(head[:4],order))),
+                          fn['vram'] in flow or _pointed_at(image,proj['big_endian'],fn['vram']))
+
+
+def _safe(net, proj, console, plan, calls, fill=None):
+    """Why `plan` (a preview) can be applied without review, or None. `fill`: (image, flow targets) for padding."""
+    if plan['action']=='padding':
+        return plan if fill and _fill(net,proj,plan,calls,*fill) else None
     if reason(console,{'status':'open','target':plan['raw'],'meta':'{}'}):return None
     head=plan['pieces'][0];order='big' if proj['big_endian'] else 'little'
     # A person's decision (kept as separate, set aside by you) or verified assembly is never reopened by a rule.
@@ -302,7 +347,7 @@ def _safe(net, proj, console, plan, calls):
     return plan
 
 
-def _safe_plans(net, slug, proj, console, calls, skip, tick=lambda done,total:None):
+def _safe_plans(net, slug, proj, console, calls, skip, tick=lambda done,total:None, fill=None):
     from .code_coverage import boundaries
     found=[]
     rows={r['vram']:r for r in _rows(net,proj) if r['gone_mark'] is None and r['vram'] is not None}
@@ -312,12 +357,13 @@ def _safe_plans(net, slug, proj, console, calls, skip, tick=lambda done,total:No
         if finding['override'] or finding['function'] in skip:continue
         fn=net._function(finding['function'],slug)
         following=rows.get(fn['vram']+fn['size']) if fn['vram'] is not None else None
-        tries=[(finding['function'],'delay_slot'),(finding['function'],'join_previous')]
+        tries=[(finding['function'],'padding')] if fn['size']==4 else []
+        tries+=[(finding['function'],'delay_slot'),(finding['function'],'join_previous')]
         if following and following['unit']==fn['unit']:tries.append((following['name'],'join_previous'))
         for name,action in tries:
             try:plan=preview(net,slug,name,action)
             except NetworkError:continue
-            if _safe(net,proj,console,plan,calls):
+            if _safe(net,proj,console,plan,calls,fill):
                 found.append((finding['function'],name,action));break
     return found
 
@@ -332,7 +378,7 @@ def apply_safe(net, slug, log=print):
     if not total:
         log('No incomplete entries need review.');return {'fixed':[],'remaining':0}
     image,segments=_image(net,proj)
-    calls=_call_targets(image,segments,proj['big_endian'])
+    calls=_call_targets(image,segments,proj['big_endian']);fill=(image,_flow_targets(image,segments,proj['big_endian']))
     log(f'Checking {total} flagged entries for repairs the original bytes settle…')
     log('Reverifying existing matches before any boundary decision…')
     broken=_verify_matches(net,proj,log)
@@ -340,14 +386,14 @@ def apply_safe(net, slug, log=print):
     console=net.console(proj);fixed=[];failed=set()
     for _ in range(SAFE_ROUNDS):
         cancel()
-        found=_safe_plans(net,slug,proj,console,calls,failed,lambda done,count:progress({'phase':'Checking flagged entries','done':done,'total':count}))
+        found=_safe_plans(net,slug,proj,console,calls,failed,lambda done,count:progress({'phase':'Checking flagged entries','done':done,'total':count}),fill)
         if not found:break
         for flagged,name,action in found:
             cancel()
             if any(net._function(n,slug)['gone_mark'] is not None for n in {flagged,name}):continue  # absorbed this round
             try:
                 plan=preview(net,slug,name,action)
-                if not _safe(net,proj,console,plan,calls):continue
+                if not _safe(net,proj,console,plan,calls,fill):continue
                 result=_commit(net,proj,plan,name,action,plan['revision'],plan['image'],SAFE_NOTE[action])
             except NetworkError as error:
                 # A worker claimed a piece or the layout moved under it: leave it for review rather than retry.
