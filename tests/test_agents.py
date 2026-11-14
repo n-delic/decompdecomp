@@ -2224,3 +2224,27 @@ def test_persistent_provider_overload_leaves_open_stream_for_normal_backoff(tmp_
     if not progressing:
         assert 'No capacity available' in session.error
         assert any(kind=='error' and 'repeated inference service overload' in text for kind,text in saved)
+
+
+@pytest.mark.parametrize('channel', ['stdout', 'stderr'])
+@pytest.mark.parametrize('exit_code', [0, 1])
+def test_opencode_unavailable_route_pauses_before_handshake_retry(tmp_path, monkeypatch, channel, exit_code):
+    manager=agents.Manager(RomNetwork(tmp_path/'app.db',tmp_path),tmp_path,URL)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *a,**kw:True)
+    monkeypatch.setattr(manager.net,'selection_counts',lambda *a,**kw:{'available':1})
+    _,token=manager.net.local_agent('synthetic-unavailable')
+    message='Model unavailable: opencode/removed-example'
+    if channel == 'stdout':
+        text=json.dumps({'type':'error','error':{'name':'provider.no-route','data':{'message':message}}})
+    else:
+        text='SessionRunnerModel.ModelUnavailableError: '+message
+    output='sys.stdout' if channel == 'stdout' else 'sys.stderr'
+    code=f'import sys; print({text!r},file={output},flush=True); raise SystemExit({exit_code})'
+    monkeypatch.setattr(manager,'_command',lambda *a:([sys.executable,'-c',code],dict(os.environ),''))
+    session=agents.Session('synthetic-unavailable','opencode','synthetic','game','synthetic-unavailable',
+                           {'model':'opencode/removed-example'})
+    with pytest.raises(agents.Fatal,match='Model unavailable: opencode/removed-example'):
+        manager._run_cli(session,token,tmp_path)
+    assert session.tool_handshake_failures==0
+    assert not session.throttled and not session.limited and not session.auth_failed
+    assert not any('handshake was not completed' in item.get('text','') for item in session.feed)

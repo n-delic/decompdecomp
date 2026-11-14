@@ -100,7 +100,10 @@ class Opencode(Agent):
         # A provider privacy-policy refusal needs an account/model decision.
         # Repeating the same paid request cannot change that policy. An exhausted
         # free allowance needs a different model, not a wait on the account.
-        return bool(re.search(r'ProviderModelNotFoundError|\bModel not found\b|opencode model needs a provider/model ID'
+        # OpenCode 2 reports a removed route with these typed errors, sometimes
+        # exiting successfully before the first tool handshake.
+        return bool(re.search(r'ProviderModelNotFoundError|\bModelUnavailableError\b|\bprovider\.no-route:'
+                              r'|\bModel not found\b|opencode model needs a provider/model ID'
                               r'|This Go model trains on request data|Allow paid endpoints that train on request data'
                               r'|\bModel [^\n]{1,120} has been deprecated\b|' + re.escape(FREE_ALLOWANCE),error,re.I))
 
