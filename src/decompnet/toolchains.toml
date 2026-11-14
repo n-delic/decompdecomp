@@ -1180,6 +1180,58 @@ subdir = "libpng-1.6.50"
 into = "source/libpng"
 platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
 
+[n64recomp]
+name = "N64Recomp, the N64 static recompiler"
+kind = "tool"
+license = "MIT"
+source = "N64Recomp/N64Recomp ffb39cd and the libraries it uses as submodules, each pinned by commit"
+description = "Turns the game's own instructions into C, one function each, from the project's split and your own ROM: for a port that plays before the decomp is done, and a reference for every function. Built here from its source with the pinned CMake and this computer's C++ compiler (consoles/n64/recomp.py)."
+binary_name = "N64Recomp"
+build = "n64recomp"
+requires = ["cmake"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/N64Recomp/N64Recomp/tar.gz/ffb39cdad1da5de07eaaa48bd1db4a89a7986771"
+sha256 = "f58d8f178d39e4a95db0ba29691206adeb2492df945d40e1d6f53347ffcb9c77"
+file = "n64recomp-N64Recomp-ffb39cdad1da5de07eaaa48bd1db4a89a7986771.tar.gz"
+subdir = "N64Recomp-ffb39cdad1da5de07eaaa48bd1db4a89a7986771"
+into = "source"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/Decompollaborate/rabbitizer/tar.gz/e0d8003047938e2ec3697eaf8d61a84d11d17b43"
+sha256 = "088635b06542c6b0a237c85dadb53444aa4269b350e637cddaf86dee83d6a9e0"
+file = "n64recomp-rabbitizer-e0d8003047938e2ec3697eaf8d61a84d11d17b43.tar.gz"
+subdir = "rabbitizer-e0d8003047938e2ec3697eaf8d61a84d11d17b43"
+into = "source/lib/rabbitizer"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/serge1/ELFIO/tar.gz/ad8b641f9682b6091ba8b9f7c8152255c1a2c803"
+sha256 = "7ac1348e9bc9fc2c983c6ce318ee0398626f2dbdafe3a3382f7cd56a3caa09b4"
+file = "n64recomp-ELFIO-ad8b641f9682b6091ba8b9f7c8152255c1a2c803.tar.gz"
+subdir = "ELFIO-ad8b641f9682b6091ba8b9f7c8152255c1a2c803"
+into = "source/lib/ELFIO"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/fmtlib/fmt/tar.gz/407c905e45ad75fc29bf0f9bb7c5c2fd3475976f"
+sha256 = "2bc1fe4a5b6d5d6a614239b4ca1d520e66e152a02d3d262684d26dfd6ab3438a"
+file = "n64recomp-fmt-407c905e45ad75fc29bf0f9bb7c5c2fd3475976f.tar.gz"
+subdir = "fmt-407c905e45ad75fc29bf0f9bb7c5c2fd3475976f"
+into = "source/lib/fmt"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/marzer/tomlplusplus/tar.gz/1f7884e59165e517462f922e7b6de131bd9844f3"
+sha256 = "e2af055f0ababf8ed4d6294df1f2616494f5f01d8f3df5100400597672841c4c"
+file = "n64recomp-tomlplusplus-1f7884e59165e517462f922e7b6de131bd9844f3.tar.gz"
+subdir = "tomlplusplus-1f7884e59165e517462f922e7b6de131bd9844f3"
+into = "source/lib/tomlplusplus"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/zherczeg/sljit/tar.gz/f6326087b3404efb07c6d3deed97b3c3b8098c0c"
+sha256 = "3a8752f14e4c1c347a95155cc9f879e58be495a41e196e4e655f76c8cd1714ea"
+file = "n64recomp-sljit-f6326087b3404efb07c6d3deed97b3c3b8098c0c.tar.gz"
+subdir = "sljit-f6326087b3404efb07c6d3deed97b3c3b8098c0c"
+into = "source/lib/sljit"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+
 [binutils-mips]
 name = "GNU binutils for MIPS (decompals)"
 kind = "tool"

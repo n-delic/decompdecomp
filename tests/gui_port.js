@@ -106,6 +106,22 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.equal(step.children[1].children[0].children[0].textContent,'Calls agree with what they call');
    assert.equal(step.children[1].children[0].children[1].textContent,'71%','5 of 7 functions without a disagreeing call');}
   {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
+   t.c.reply=async url=>url==='/api/recompile'?{job:'rc1'}:({...report,recomp_available:true,recomp:{functions:2125,found:12,
+     stubs:14,runtime:4,errors:0,files:42,at:1,folder:'/p/build/recomp',stub_examples:['func_8008AE70 (cop0)'],
+     found_examples:['func_80000400 (the ROM\'s entry point)']}});
+   await t.run('loadPortReadiness()');
+   const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
+   assert.ok(rows.some(r=>r.startsWith('Recompiled (N64Recomp): 2,125 of the split\'s functions and 12 it doesn\'t list, as C in 42 files: 14 set aside as stubs, 4 for the runtime to provide, the C compiles')),rows.join('\n'));
+   assert.ok(rows.some(r=>r.includes('set aside')&&r.includes('func_8008AE70 (cop0), ...')));
+   const play=t.c.$('portSteps').children[8].children[1];
+   assert.ok(play.children.some(c=>c.children&&c.children.includes(t.c.$('portRecompile'))),'Recompile sits in the Play step');
+   t.calls.length=0;await t.run('recompileGame()');
+   assert.deepEqual(t.calls,['/api/recompile','/api/port-readiness?slug=a']);assert.deepEqual(followed,['rc1']);
+   assert.equal(t.c.$('portRecompile').disabled,false,'the button comes back');}
+  {const t=setup();t.c.S.tab='porting';t.c.reply=async()=>report;await t.run('loadPortReadiness()');
+   const play=t.c.$('portSteps').children[8].children[1];
+   assert.ok(!play.children.some(c=>c.children&&c.children.includes(t.c.$('portRecompile'))),'no recompiler: no button');}
+  {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
    t.c.reply=async url=>url==='/api/rename-calls'?{job:'r1'}:report;
    await t.run('fixRenamedCalls()');
    assert.deepEqual(t.calls,['/api/rename-calls','/api/port-readiness?slug=a'],'the report is read again after');
@@ -191,5 +207,5 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.match(options[2].status,/steps it needs are done; .*isn't in decompdecomp yet/);
    await t.run('playGame()');
    assert.equal(t.bodies[t.calls.indexOf('/api/play')].runtime,'wasm','Play asks for the chosen runtime');}
-  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, recompile, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

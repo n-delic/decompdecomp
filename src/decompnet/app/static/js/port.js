@@ -87,6 +87,18 @@ function renderPortReadiness(report) {
     for (const k of calls.kinds) facts.append(portRow(`  ${k.about}`, `${k.calls} calls in ${k.functions} functions: `
       + `${k.why}. ` + k.examples.join(", ") + (k.calls > k.examples.length ? ", ..." : "")));
   }
+  const recomp = report.recomp;
+  if (recomp) {
+    facts.append(portRow("Recompiled (N64Recomp)", `${recomp.functions.toLocaleString()} of the split's functions and `
+      + `${recomp.found} it doesn't list, as C in ${recomp.files} files: ${recomp.stubs} set aside as stubs, `
+      + `${recomp.runtime} for the runtime to provide, `
+      + (recomp.errors ? `${recomp.errors} compile errors` : "the C compiles")
+      + ` (${new Date(recomp.at * 1000).toLocaleString()})`));
+    if (recomp.stub_examples.length) facts.append(portRow("  set aside", recomp.stub_examples.join(", ")
+      + (recomp.stubs > recomp.stub_examples.length ? ", ..." : "")));
+    if (recomp.found_examples.length) facts.append(portRow("  not in the split", recomp.found_examples.join(", ")
+      + (recomp.found > recomp.found_examples.length ? ", ..." : "")));
+  }
   const assets = report.assets;
   if (assets) facts.append(portRow("Asset map", `${assets.resources} resources, `
     + Object.entries(assets.groups).map(([g, b]) => `${g} ${b.toLocaleString()} bytes`).join(", ")
@@ -143,7 +155,8 @@ function portSteps(report) {
       detail: (report.runtimes || []).length > 1
         ? "Your last save, played on the runtime you choose: WebAssembly now, the native runtimes once the steps they need are done"
         : "The WebAssembly build of your last save, in the browser: no native port needed",
-      buttons: ["portPlay", "portStop", "portExportMenu"], logs: ["portPlayLog", "portExportLog", "portExportActions"] },
+      buttons: ["portPlay", "portStop", "portExportMenu", ...(report.recomp_available ? ["portRecompile"] : [])],
+      logs: ["portPlayLog", "portExportLog", "portExportActions", "portRecompLog"] },
   ];
   return steps;
 }
@@ -153,11 +166,11 @@ function renderPortSteps(report) {
   if (!list) return;
   const steps = portSteps(report), parked = $("portParked");
   for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portAssets", "portExtract", "portPlay", "portStop",
-    "portExportMenu"]) {
+    "portExportMenu", "portRecompile"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
   for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portAssetsLog", "portExtractLog", "portPlayLog",
-    "portExportLog", "portExportActions"]) {
+    "portExportLog", "portExportActions", "portRecompLog"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
@@ -259,6 +272,21 @@ async function extractAssets() {
                            "Extracted.");
   try {
     const { job } = await api("/api/asset-extract", { method: "POST", body: { slug } });
+    await followJob(job, log, null, () => S.slug === slug);
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally { finish(); }
+  if (S.slug === slug) loadPortReadiness();
+}
+
+async function recompileGame() {
+  const slug = S.slug, log = $("portRecompLog");
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, "Recompiling the game with N64Recomp", [$("portRecompile"), $("portReload")],
+                           "Recompiled.");
+  try {
+    const { job } = await api("/api/recompile", { method: "POST", body: { slug } });
     await followJob(job, log, null, () => S.slug === slug);
   } catch (error) {
     showJobError(log, error.message);
@@ -419,6 +447,7 @@ if ($("portPanel")) {
   });
   $("portRenameCalls").onclick = fixRenamedCalls;
   $("portExtract").onclick = extractAssets;
+  if ($("portRecompile")) $("portRecompile").onclick = recompileGame;
   $("portAssets").onclick = writeAssetMap;
   $("portDrafts").onclick = draftPortData;
   $("portCompile").onclick = compileForPc;
