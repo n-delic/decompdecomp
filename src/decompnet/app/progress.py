@@ -406,7 +406,14 @@ def _merge_manifest(old, new, current, key: str = ""):
             else:
                 current_items[name] = new_items[name]
         order = [identity(item) for item in current if identity(item) is not None]
-        order.extend(identity(item) for item in new if identity(item) is not None and identity(item) not in order)
+        # Large symbol/layout lists otherwise search the growing order for every
+        # entry while holding the project lock. Keep current duplicates and order.
+        seen = set(order)
+        for item in new:
+            name = identity(item)
+            if name is not None and name not in seen:
+                order.append(name)
+                seen.add(name)
         ordered = [item for item in current if identity(item) is None]
         ordered.extend(current_items[name] for name in order if name in current_items)
         return ordered
