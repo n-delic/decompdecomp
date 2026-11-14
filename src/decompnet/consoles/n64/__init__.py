@@ -10,6 +10,8 @@
 - boot_mapping.py: returning TLB boot stubs separated from code with a strongly supported later load mapping.
 - sdk_assembly.py: exact self-contained libultra body fingerprints, classified before C claims.
 - port.py: its port kit, libultraship and Torch: what they replace and which graphics microcode they render.
+- emulator/: the reversing emulator (mupenRE, built from source), its `Console.emulator` part: the user's ROM run
+  headless with memory dumps and breakpoints (watch_in_emulator).
 - guides/: what agents read about the N64 (n64.md) and its compilers (gcc-kmc.md, ido.md, sn64.md).
 
 Its demo game is projects/demo-rom (the Demo Quest game in projects/demo-n64/original, built with KMC GCC).
@@ -22,6 +24,7 @@ from pathlib import Path
 
 from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
+from . import emulator
 from .port import KIT as PORT_KIT
 
 
@@ -69,6 +72,7 @@ class Nintendo64(Console):
     demo_tools = ("gcc-2.7.2-kmc", "binutils-mips", "ld.lld", "llvm-objcopy")
     own_features = frozenset({EXPORT})
     port_kit = PORT_KIT
+    emulator = emulator
     as_flags = ("-EB", "-march=vr4300", "-mabi=32")
     reference_tools = ("binutils-mips", "mips-ps2-decompals-as", "mips-ps2-decompals-ld")
     image_ext = ".z64"

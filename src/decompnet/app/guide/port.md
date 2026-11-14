@@ -59,3 +59,15 @@ Patterns that span functions
 
 When it won't pass after a few tries, `release_port_fix(function, note)` with what you found (which line, what
 you tried, why the console bytes changed), so the next try starts from there.
+
+Matched but different
+Port readiness lists calls whose matched C disagrees with the function it calls (a result taken from a function
+declared void, a variadic one called through a fixed prototype, a u8 passed where the callee takes an s32): right
+on the console, where arguments and results are just registers, and a place a port can go wrong. Put each right
+while the function still matches: declare the callee's real return type and return the value, make the prototype
+agree with the definition, pass the arguments it really takes.
+
+To see what the real game does there, `watch_in_emulator` runs the user's ROM in the console's reversing emulator
+(N64): kind="write" names the code that writes an address, kind="call" what a function is called with and from
+where. Without input the game sits at its title; a controller script ("vi:A,vi:START,...", 2 VIs a frame for a
+30 fps game) takes it further. A run that takes long answers "still running": ask again with the same arguments.

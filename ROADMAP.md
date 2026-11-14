@@ -789,6 +789,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
+| The reversing emulator for agents (`watch_in_emulator`: which code writes an address, what a function is called with, on the user's ROM) | ✓ mupenRE (Linux, macOS) | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no ROM to run |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
@@ -976,6 +977,15 @@ Project-mode similar-transfer support is planned: align target-object relocation
 similar C through objdiff. Other processors need an instruction reader for this search.
 
 ## Recently done
+
+### Agents watch the real game: watch_in_emulator
+
+Helpers run the user's own ROM in the reversing emulator (`app/emulator_watch.py`, through the console's part
+`Console.emulator`; N64: mupenRE). kind=write lists the code that writes an address with its caller, kind=call each
+call of a function with its arguments, each named by the project's symbols, from a VI on and with a controller
+script. A run that outlasts the gateway's deadline says "still running" and the same call collects it. On a racing
+game it repeats the backwards start's investigation: the code writing a car's matrix, and the angles its setup
+gets, about 40 s each.
 
 ### Matched but suspicious: calls that disagree with what they call
 
@@ -1876,8 +1886,10 @@ Phases:
 
 ### The reversing emulator for agents, ports and other platforms
 
-- An agent tool: watch an address or stop at a function in the user's ROM, with the project's names for each
-  address, so a helper can see what the console does where its C or the port differs.
+- Other consoles: a pinned emulator each with write and execution breakpoints (`Console.emulator`, whose N64
+  part is `consoles/n64/emulator`), PS1 and PS2 first.
+- A breakpoint run starts in the slower interpreter from boot: a savestate taken at `from_vi` by the fast one would
+  bring a late watch from about 40 s to a few.
 - Compare with the emulator in Play: the port's memory at a frame against the console's at the same moment, the
   first differing range named by symbol (the port's frames and the emulator's VIs line up through the input script).
 - libRetroReversing's function-call log (which functions ran, with what) read back, for a call-by-call comparison
