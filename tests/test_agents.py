@@ -2248,3 +2248,28 @@ def test_opencode_unavailable_route_pauses_before_handshake_retry(tmp_path, monk
     assert session.tool_handshake_failures==0
     assert not session.throttled and not session.limited and not session.auth_failed
     assert not any('handshake was not completed' in item.get('text','') for item in session.feed)
+
+
+@pytest.mark.parametrize('exit_code', [0, 1])
+def test_opencode_typed_free_limit_pauses_without_handshake_or_account_retry(tmp_path, monkeypatch, exit_code):
+    manager=agents.Manager(RomNetwork(tmp_path/'app.db',tmp_path),tmp_path,URL)
+    monkeypatch.setattr(manager,'_preflight_tools',lambda *a,**kw:True)
+    monkeypatch.setattr(manager.net,'selection_counts',lambda *a,**kw:{'available':1})
+    _,token=manager.net.local_agent('synthetic-free-limit')
+    message='Free usage limit reached. Connect a provider or switch models.'
+    event=json.dumps({'type':'error','error':{'name':'provider.free-limit','data':{'message':message}}})
+    code=f'import sys; print({event!r},flush=True); raise SystemExit({exit_code})'
+    monkeypatch.setattr(manager,'_command',lambda *a:([sys.executable,'-c',code],dict(os.environ),''))
+    session=agents.Session('synthetic-free-limit','opencode','synthetic','game','synthetic-free-limit',
+                           {'model':'opencode/example-free'})
+    with pytest.raises(agents.Fatal,match='Free usage limit reached'):
+        manager._run_cli(session,token,tmp_path)
+    assert session.tool_handshake_failures==0
+    assert not session.limited and not session.throttled and not session.auth_failed
+    assert not any('handshake was not completed' in item.get('text','') for item in session.feed)
+
+
+def test_opencode_free_limit_marker_in_other_request_diagnostics_is_not_terminal():
+    from decompnet.agents.opencode import OPENCODE
+    assert not OPENCODE.fatal('Title request failed: provider.free-limit: Free usage limit reached.')
+    assert not OPENCODE.fatal('Upstream request failed: Model is unavailable.')
