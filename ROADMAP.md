@@ -980,6 +980,16 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### Save folders watched instead of read file by file
+
+Before and after every tool call that touches a project, the app checked whether its save folder changed by
+statting every file in it (36 ms for a save of 9,850 files with a warm cache, far more when the disk is busy or
+the cache cold). A watch now vouches for a quiet folder (`app/folder_watch.py`): inotify on Linux (the kernel
+queues the event before the write returns, so a check costs microseconds), FSEvents on macOS with a fence file
+in the app's own `.decomp` folder (the check waits for the fence's event, which comes after every earlier change;
+about 11 ms, so it is used from 1,000 files). Any doubt (a broken or overflowed watch, a lost fence) falls back to
+the full read. `DECOMP_FOLDER_WATCH=0` turns it off.
+
 ### Does a function behave like the original? compare_behaviour
 
 A helper asks `compare_behaviour(function)`. The user's ROM runs in the reversing emulator to the function's first
@@ -2305,6 +2315,12 @@ Before building it, find out:
   IP, so only tunnelled rooms could be listed; room names need limits, and a host or the directory can delist one.
 
 The answer goes here: build it, build part of it, or not, and why.
+
+### Save folders watched on Windows
+
+`app/folder_watch.py` watches save folders on Linux and macOS; Windows still stats every file of a save before and
+after each tool call. `ReadDirectoryChangesW` with a fence like the macOS one (its notifications are asynchronous
+too) would spare large saves that reading.
 
 ### The window's pages answered outside the app's process
 
