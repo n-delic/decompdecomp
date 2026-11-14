@@ -266,6 +266,7 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
   controls.forEach((control) => { control.disabled = true; });
   return () => {
     bar.remove();
+    if (log._workBar === bar) log._workBar = null;  // a panel moving the log along doesn't bring a finished bar back
     if (status.dataset.state === "running") {
       status.textContent = completed;
       status.dataset.state = "done";
@@ -274,22 +275,32 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
   };
 }
 
+/* A job's progress snapshot: {phase, done, total} counts one pass; with {step, steps} too it's one of several steps
+   (a build: compile, link...), and the bar shows the whole job, each step an equal share, its files filling it. */
 function updateWorkProgress(log, progress) {
   if (!progress || !log._workStatus || !log._workBar) return;
   const bar = log._workBar, phase = progress.phase || "Working";
   const total = Number(progress.total), done = Number(progress.finished ?? progress.done);
   const counted = Number.isFinite(total) && total > 0 && Number.isFinite(done) && done >= 0;
   const finished = counted ? Math.min(done, total) : 0;
-  const percent = counted ? Math.floor(100 * finished / total) : 0;
-  log._workStatus.textContent = phase + (counted ? ` · ${finished.toLocaleString()} / ${total.toLocaleString()} processed (${percent}%)` : "")
+  const steps = Number(progress.steps), step = Number(progress.step);
+  const stepped = Number.isFinite(steps) && steps > 0 && Number.isFinite(step) && step >= 1;
+  const percent = stepped ? Math.floor(100 * (Math.min(step, steps) - 1 + (counted ? finished / total : 0)) / steps)
+    : counted ? Math.floor(100 * finished / total) : 0;
+  log._workStatus.textContent = stepped
+    ? `Step ${Math.min(step, steps)} of ${steps}: ${phase}` + (counted ? ` · ${finished.toLocaleString()} / ${total.toLocaleString()}` : "")
+      + ` (${percent}% overall)`
+    : phase + (counted ? ` · ${finished.toLocaleString()} / ${total.toLocaleString()} processed (${percent}%)` : "")
     + (progress.game ? ` · ${progress.game}` : "")
     + (progress.function ? ` · ${progress.donor ? `${progress.donor} → ` : ""}${progress.function}` : "")
     + (progress.confirmed != null ? ` · ${progress.confirmed} matches confirmed` : "")
     + (progress.submitted != null ? ` · ${progress.submitted} better attempts submitted` : "");
   bar.setAttribute("aria-label", phase);
-  bar.className = counted ? "workbar counted" : "workbar";
-  if (counted) {
-    bar.setAttribute("aria-valuemin", "0"); bar.setAttribute("aria-valuemax", String(total)); bar.setAttribute("aria-valuenow", String(finished));
+  const measured = counted || stepped;
+  bar.className = measured ? "workbar counted" : "workbar";
+  if (measured) {
+    bar.setAttribute("aria-valuemin", "0"); bar.setAttribute("aria-valuemax", "100"); bar.setAttribute("aria-valuenow", String(percent));
+    if (counted && !stepped) { bar.setAttribute("aria-valuemax", String(total)); bar.setAttribute("aria-valuenow", String(finished)); }
     bar.style.setProperty("--work-progress", `${percent}%`);
   } else {
     bar.removeAttribute("aria-valuemin"); bar.removeAttribute("aria-valuemax"); bar.removeAttribute("aria-valuenow");

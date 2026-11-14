@@ -21,6 +21,7 @@ from pathlib import Path
 
 from ...network import NetworkError
 
+STARTING = "Starting the game"  # the progress bar's last step, after the build's
 _running: dict[str, tuple[subprocess.Popen, str]] = {}
 _windows: dict[str, subprocess.Popen] = {}  # each game's own window, closed when the game stops
 _lock = threading.Lock()
@@ -97,7 +98,9 @@ def play(net, slug: str, log=print) -> dict:
     if not rom.is_file():
         raise NetworkError(f"the game's ROM isn't at {rom} any more: import it again to play")
     repo = save_repository(saves.default_folder(net, slug))
-    program = build.build(repo, console=cfg.get("platform", "n64"), log=log)
+    steps = (*build.STEPS, STARTING)
+    program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps)
+    build.Progress(log, steps).start(STARTING)
     port = _free_port()
     out = program.parent
     env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(out / "game.eep")}

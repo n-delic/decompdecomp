@@ -11,7 +11,7 @@ function setup(){
   const nodes=new Map(),calls=[],bodies=[];
   const c=vm.createContext({console,Map,Promise,Error,Number,encodeURIComponent,S:{slug:'a'},
     $:id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);},document:{createElement:element},
-    api(url,opts){calls.push(url);bodies.push(opts&&opts.body);return c.reply(url);},reply:async()=>({})});
+    api(url,opts){calls.push(url);bodies.push(opts&&opts.body);return c.reply(url,opts);},reply:async()=>({})});
   vm.runInContext(base.slice(base.indexOf('function beginWork('),base.indexOf('function updateWorkProgress(')),c);
   vm.runInContext(base.slice(base.indexOf('function showJobError('),base.indexOf('/*',base.indexOf('function showJobError('))),c);
   vm.runInContext(source,c);
@@ -110,6 +110,33 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    await t.run('playGame()');
    assert.deepEqual(opened,[],'a game in its own window opens no browser tab');
    assert.equal(t.c.$('portStop').hidden,false);}
+  {// A refresh while the build runs moves its status line and bar into the new step list with the log
+   const t=setup(),follow=deferred(),cancels=[];t.c.S.tab='porting';t.c.followJob=()=>follow.promise;
+   t.c.updateWorkProgress=()=>{};
+   t.c.reply=async(url,opts)=>{if(url==='/api/play')return {job:'p3'};if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return report;};
+   const playing=t.run('playGame()');await Promise.resolve();await Promise.resolve();
+   const log=t.c.$('portPlayLog');assert.ok(log._workBar,'the build has its bar');
+   assert.equal(t.c.$('portStop').hidden,false);assert.equal(t.c.$('portStop').textContent,'Stop the build');
+   await t.run('playGame()');assert.deepEqual(t.calls.filter(u=>u==='/api/play'),['/api/play'],'a second click starts nothing');
+   await t.run('loadPortReadiness()');
+   const body=t.c.$('portSteps').children[7].children[1].children;
+   assert.ok(body.includes(log._workStatus)&&body.includes(log._workBar)&&body.includes(log),'status, bar and log move together');
+   assert.ok(body.indexOf(log._workBar)<body.indexOf(log));
+   await t.run('stopGame()');assert.deepEqual(cancels,['p3'],'Stop cancels the build');
+   assert.equal(t.c.$('portStop').textContent,'Stopping the build…');
+   follow.reject(new Error('Cancelled.'));await playing;
+   assert.equal(t.c.$('portPlay').disabled,false);assert.equal(t.c.$('portStop').hidden,true,'nothing runs any more');
+   assert.equal(log._workBar,null,'a finished bar is not moved back in');}
+  {// A build started elsewhere (another window, before navigating away) is followed, not started again
+   const t=setup(),followed=[];t.c.S.tab='porting';t.c.updateWorkProgress=(log,p)=>{log.seen=p;};
+   t.c.followJob=async job=>{followed.push(job);return null;};
+   t.c.reply=async()=>({...report,play:{job:{id:'p4',progress:{phase:'Linking',step:5,steps:8}},url:null}});
+   await t.run('loadPortReadiness()');for(let i=0;i<10;i++)await Promise.resolve();
+   assert.deepEqual(followed,['p4']);assert.ok(!t.calls.includes('/api/play'));
+   assert.equal(t.c.$('portPlayLog').seen.phase,'Linking','its progress shows at once');
+   t.c.reply=async()=>({...report,play:{job:null,url:'http://127.0.0.1:6/'}});
+   await t.run('loadPortReadiness()');assert.equal(t.c.$('portStop').hidden,false,'a running game can be stopped');
+   assert.equal(t.c.$('portStop').textContent,'Stop the game');}
   {const t=setup();t.c.S.tab='porting';t.c.followJob=async()=>({url:'http://127.0.0.1:5/',window:true});
    const runtimes=[{id:'wasm',name:'WebAssembly',summary:'Plays now.',built:true,missing:[],playable:true},
      {id:'libultraship',name:'libultraship',summary:'Native.',built:false,missing:['Compiles for a PC','Assets extracted'],playable:false},
@@ -127,5 +154,5 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.match(options[2].status,/steps it needs are done; .*isn't in decompdecomp yet/);
    await t.run('playGame()');
    assert.equal(t.bodies[t.calls.indexOf('/api/play')].runtime,'wasm','Play asks for the chosen runtime');}
-  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, renamed calls, play and runtimes passed');
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, renamed calls, play, runtimes, the build bar, Stop and reattaching passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

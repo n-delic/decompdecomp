@@ -115,11 +115,13 @@ class Jobs:
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
-    def active(self, kinds):
-        """Small server-owned snapshot for a returning panel; never include large logs/results."""
+    def active(self, kinds, project=None):
+        """Small server-owned snapshot for a returning panel; never include large logs/results. With `project`, only
+        that project's job (one started for it, `start(project=...)`)."""
         with self._lock:
             job=next((j for j in reversed(self.jobs.values())
-                      if j['kind'] in kinds and j['state']=='running'),None)
+                      if j['kind'] in kinds and j['state']=='running'
+                      and (project is None or j.get('activity_project')==project)),None)
             if job is None:return None
             return {key:job[key] for key in ('id','kind','state','progress') if key in job}
 

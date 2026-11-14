@@ -282,6 +282,8 @@ def register(app: App) -> None:
                                "(ROADMAP.md, Ports): choose WebAssembly")
         if (url := play.running(slug)):
             return {"url": url}
+        if (building := jobs.active(("play",), project=slug)):  # a second click, or another window: the same build
+            return {"job": building["id"]}
         return {"job": jobs.start("play", lambda log: play.play(net, slug, log), project=slug)}
 
     def p_asset_map(slug, request, data):
@@ -297,8 +299,13 @@ def register(app: App) -> None:
         return {"job": jobs.start("asset-extract", lambda log: asset_map.extract(net, slug, log), project=slug)}
 
     def g_port_readiness(slug, request, data):
+        """What stands between the game and a port, and its Play build: still building (the job, for the panel to
+        follow again after navigating away) or running (its address)."""
         from ...port.readiness import readiness
-        return readiness(net, slug)
+        from ...port.wasm import play
+        report = readiness(net, slug)
+        report["play"] = {"job": jobs.active(("play",), project=slug), "url": play.running(slug)}
+        return report
 
     def p_rom_explorer(slug, request, data):
         with net.progress.view():
