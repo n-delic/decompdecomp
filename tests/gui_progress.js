@@ -300,6 +300,16 @@ async function main() {
     await copyTest.ctx.copyJoblog(pre, button);
     assert.equal(copied, "build output");
   }
+  // The Porting tab moves each log into its step on every refresh: the frame moves, so the Copy button goes with it.
+  {
+    const source = fs.readFileSync(path.join(__dirname, "../src/decompnet/app/static/js/port.js"), "utf8");
+    const line = source.split("\n").find((l) => l.startsWith("const withWork"));
+    const ctx = {}; vm.createContext(ctx); vm.runInContext(line.replace("const withWork", "this.withWork"), ctx);
+    const pre = element(), frame = element(), bar = element(); pre._frame = frame; pre._workBar = bar;
+    const moved = ctx.withWork(pre);
+    assert.equal(moved.length, 2); assert.equal(moved[0], bar); assert.equal(moved[1], frame);
+    assert.equal(ctx.withWork(element()).length, 1);
+  }
   // Deep-search scores remain visible independently of the collapsed technical log.
   {
     const test = setup(...cases[cases.length - 1]);
