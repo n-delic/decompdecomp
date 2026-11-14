@@ -358,7 +358,7 @@ class JudgeMixin:
         return fn["best_source"] or (row["source"] if row else None)
 
     def claim_row(self, agent: Agent, project: str | None = None, function: str | None = None, strategy: str = "easiest"):
-        if function is None and project and not self.fork_slug(project):
+        if function is None and project:  # a starred function goes first on ROM and fork projects alike
             proj = self._project(project)
             for name in self.cfg(proj).get("priority", []):
                 row = self.store.one("SELECT f.id, f.status FROM functions f WHERE f.project_id=? AND f.name=?", proj["id"], name)
