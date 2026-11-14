@@ -122,7 +122,7 @@ async function play(bytes) {
     for (const b of document.querySelectorAll("#start button, #start label")) b.removeAttribute("aria-disabled");
   }
 }
-if (!supported()) fail("This browser can't run the game yet: it needs WebAssembly JavaScript Promise Integration (Chrome or Edge 137 or later, or Safari 27).");
+if (!supported()) fail("This browser can't run the game: it has no WebAssembly.");
 if (location.protocol === "file:") fail("Open this page from a web server, not as a file: browsers only load WebAssembly over http. For example, run `python3 -m http.server` in this folder and open http://localhost:8000/.");
 $("rom").onchange = async (e) => {
   const file = e.target.files[0];

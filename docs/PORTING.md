@@ -273,7 +273,12 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     `audio.c`, with `PORT_WEB`) is compiled to WebAssembly beside it, sharing its 4 GB memory (its own data from
     0xB0000000). The host's threads are coroutines switched with JavaScript Promise Integration (`web/co.c`,
     `web/runtime.js`: Chrome and Edge 137 and later, Safari 27); a thread spinning on memory gives the page a turn
-    every 10 ms for the retrace, as the native host's main thread runs beside it. Every data segment is above 2 GB,
+    every 10 ms for the retrace, as the native host's main thread runs beside it. A browser without JavaScript
+    Promise Integration plays `app-asyncify.wasm` instead: the host and the game merged into one module (Binaryen's
+    `wasm-merge`; the host exports the memory it imports, under its own import name, so the game's import finds it)
+    and rewritten with Asyncify (`wasm-opt`, with `port_web.suspend` as the one import that pauses), so a waiting
+    thread unwinds its stack into a buffer of its own and is rewound through `co_main` (`?asyncify` in the page's
+    address chooses it anywhere). Binaryen is pinned in toolchains.toml. Every data segment is above 2 GB,
     which Safari places as if negative and refuses, so the page places them itself (`placeDataOurselves`: each
     becomes passive and is copied in after instantiation). The page (the kit's `web/`) shows the
     frames, plays the sound, reads the keyboard and gamepads, and keeps the ROM and the saves in the browser. The

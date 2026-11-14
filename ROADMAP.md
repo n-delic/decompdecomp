@@ -988,14 +988,9 @@ are byte for byte the native build's frames, at the native build's speed. Play s
 and only what changed is built again.
 
 Left:
-- the browser build in Firefox (untried): it needs JavaScript Promise Integration (Chrome and Edge 137 and later,
-  Safari 27, where a racing game runs to a race once the page places the data segments itself), or an Asyncify
-  build where it's missing. Tried by hand on that game: the game and host modules merged into one (Binaryen
-  `wasm-merge`, the host exporting the memory it imports), then `wasm-opt --asyncify` with `port_web.suspend` as
-  the one import that pauses, about 8 MB and 25 s to build; driven from runtime.js by unwinding each thread into a
-  buffer of its own and rewinding it through `co_main`, it ran the game to a race in Chrome as fast as the JSPI
-  build, and in Safari more slowly (4 to 9 frames a second while stages load, against 12 to 17). Shipping it needs
-  Binaryen pinned in toolchains.toml and the merge in web.py;
+- the browser build in Firefox, untried. Browsers without JavaScript Promise Integration play its Asyncify
+  module (`app-asyncify.wasm`): a racing game runs to a race on it in Chrome as fast as with JSPI, and in Safari
+  more slowly (4 to 9 frames a second while stages load, against 12 to 17), so JSPI stays the first choice;
 - the Linux and Windows apps run untried (the macOS app is tried end to end), and signing the macOS app;
 - the browser build for consoles other than the N64: "—" until their kits have a host.
 
