@@ -102,3 +102,14 @@ def test_emptied_log_is_quiet(caplog):
         db_diagnostics.report_wal('x', 0, 100_000, 100_000, 4096)  # large but fully copied
         db_diagnostics.report_wal('x', 0, 10, 0, 4096)  # small
     assert not caplog.records
+
+
+def test_timed_requests_add_up_read_phases_inside_transactions(tmp_path):
+    """#1177 put the connection's name among the read's durations, and a timed request (DECOMP_PERF) failed adding it."""
+    from decompnet import request_timing
+    store = store_with_rows(tmp_path)
+    with request_timing.capture() as metrics:
+        store.one('SELECT slug FROM projects WHERE id=1')
+        with store.tx():
+            store.one('SELECT slug FROM projects WHERE id=1')
+    assert metrics['queries'] == 2 and all(isinstance(v, (int, float)) for v in metrics.values())

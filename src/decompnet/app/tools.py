@@ -800,8 +800,10 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
     with _tool_foreground(net, agent, slug, name, args):
         progress = getattr(net, 'progress', None)
         if progress is not None:progress.sync(slug, force=True)
-        result = _dispatch(net,agent,slug,name,args)
-        if progress is not None and name not in READ_ONLY:
+        after = name not in READ_ONLY
+        with progress.checked_around(slug, after=after) if progress is not None else nullcontext():
+            result = _dispatch(net,agent,slug,name,args)
+        if progress is not None and after:
             progress.sync(slug, force=True)
         return result
 

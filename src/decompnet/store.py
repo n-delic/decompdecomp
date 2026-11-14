@@ -513,6 +513,7 @@ class Store:
         self._slow_queries = {}
         self._last_writer = None  # (where, when) the last write transaction ended: named by a writer that waited
         self._wal_watch = None  # a reader process never checkpoints (ATTACH_ONLY)
+        self.project_rows_tracked = False  # (a database an older app made may lack the revision's triggers)
         self.lock = threading.RLock()
         self._local = threading.local()
 
@@ -739,6 +740,8 @@ class Store:
                               "BEGIN INSERT INTO read_revisions VALUES('lease_identities',1) "
                               "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
         self._track_reads('projects', 'project_list', 'slug,name,root,config,arch,big_endian')
+        self._track_reads('projects', 'project_rows')  # any column: Network._project caches whole rows
+        self.project_rows_tracked = True
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_baseline ON attempts(function_id,score,id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_context ON attempts(context_version,function_id)")
         from .history_changes import install as install_history_changes
@@ -966,7 +969,8 @@ class Store:
 
     def _read(self, sql: str, args: tuple, single: bool):
         started = time.monotonic()
-        self._local.read_phases = {}
+        self._local.read_phases = {}  # durations only: request_timing.sql_read adds them up
+        self._local.read_via = 'reader'
         try:
             return self._read_rows(sql, args, single)
         finally:
@@ -986,7 +990,7 @@ class Store:
                         'Slow database read %.3fs [%s] at %s:%s (%s) connection=%.3fs lock_wait=%.3fs execute=%.3fs fetch=%.3fs via=%s %s', elapsed, key,
                         Path(caller.f_code.co_filename).name, caller.f_lineno, caller.f_code.co_name,
                         *(phases.get(k, 0) for k in ('connection', 'lock_wait', 'execute', 'fetch')),
-                        phases.get('via', 'reader'), self._plan_shape(sql, args))
+                        self._local.read_via, self._plan_shape(sql, args))
 
     def _read_rows(self, sql: str, args: tuple, single: bool):
         started = time.perf_counter()
@@ -1019,7 +1023,7 @@ class Store:
                 phases['fetch'] = time.perf_counter() - fetching
         if conn is None:
             # Reads inside a transaction (or of an in-memory database) share the writer's connection and its lock.
-            phases['via'] = 'writer-transaction' if getattr(self._local, 'in_tx', False) else 'writer'
+            self._local.read_via = 'writer-transaction' if getattr(self._local, 'in_tx', False) else 'writer'
             waiting = time.perf_counter()
             with self.lock:
                 phases['lock_wait'] = time.perf_counter() - waiting

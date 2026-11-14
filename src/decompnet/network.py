@@ -660,7 +660,14 @@ class Network:
 
     def _project(self, slug: str | None):
         if slug:
-            row = self.project_store(slug).one("SELECT * FROM projects WHERE slug=?", slug)
+            store = self.project_store(slug)
+            if getattr(store, 'project_rows_tracked', False):
+                # One compile looked its project up 53 times, each copying the settings (half a megabyte on a big
+                # game); the row is read again only after a write to it (the project_rows revision, store.py).
+                row = store.read_cache.get(('project-row', slug), store.read_version('project_rows'),
+                                           lambda: store.one("SELECT * FROM projects WHERE slug=?", slug))
+            else:
+                row = store.one("SELECT * FROM projects WHERE slug=?", slug)
             if row is None:
                 raise NetworkError(f"no project {slug!r} here: check its name, or whether it was removed")
             return row
