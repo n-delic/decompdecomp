@@ -1089,10 +1089,10 @@ Left:
   late); a shared edge's pixels drawn once; TEXEL1, mip levels by the level of detail, detail and sharpen, every
   combiner input; mirroring inside a clamp; depth in the game's own z image in the RDP's format (games draw into
   it and read it), primitive depth and decal mode; G_TEXTURE_GEN; IA16 palettes; alpha as coverage; dithering;
-  8- and 32-bit colour images; the VI's mode (the frame at its size, gamma, the dedither and divot filters). Not
-  yet: Diddy Kong Racing's F3DDKR (its signature isn't known here, so it can't be recognised), lines (G_LINE3D),
-  the RDP's fixed-point arithmetic (floats here: compare with angrylion's renderer frame by frame), which
-  cycle's combiner one-cycle mode reads (the first, here). S2DEX sprites (G_OBJ_SPRITE) turn and scale
+  8- and 32-bit colour images; the VI's mode (the frame at its size, gamma, the dedither and divot filters); lines
+  (G_LINE3D from L3DEX, L3DEX2 and Fast3D); one-cycle mode running the combiner's second cycle, as angrylion's
+  renderer does. Not yet: Diddy Kong Racing's F3DDKR (its microcode carries no signature, so it can't be
+  recognised), the RDP's fixed-point arithmetic (floats here: compare with angrylion's renderer frame by frame). S2DEX sprites (G_OBJ_SPRITE) turn and scale
   with the 2D matrix (its rev counter needle); its rectangles (G_OBJ_RECTANGLE, _R) are drawn as before. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash

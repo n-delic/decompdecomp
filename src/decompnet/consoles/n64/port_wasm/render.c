@@ -208,8 +208,9 @@ static void combiner_uses(void) {
         }
         sel_rgb[cycle][0] = a; sel_rgb[cycle][1] = b; sel_rgb[cycle][2] = c; sel_rgb[cycle][3] = d;
         sel_alpha[cycle][0] = aa; sel_alpha[cycle][1] = ab; sel_alpha[cycle][2] = ac; sel_alpha[cycle][3] = ad;
-        int t0_in_second = cycle == 1 && (a == 1 || b == 1 || c == 1 || c == 8 || d == 1 || aa == 1 || ab == 1 || ac == 1 || ad == 1);
-        if (cycle == 1 && cyc != 1) break; /* one cycle: the second cycle's settings aren't run */
+        /* one cycle runs only the second cycle's settings, two cycles both, the second with the texels swapped */
+        if (cyc == 0 ? cycle == 0 : cyc != 1) continue;
+        int t0_in_second = cyc == 1 && cycle == 1 && (a == 1 || b == 1 || c == 1 || c == 8 || d == 1 || aa == 1 || ab == 1 || ac == 1 || ad == 1);
         if (a == 2 || b == 2 || c == 2 || c == 9 || d == 2 || aa == 2 || ab == 2 || ac == 2 || ad == 2 || t0_in_second)
             uses_t1 = 1;
         if (a == 7) uses_noise = 1;
@@ -251,13 +252,14 @@ static Color combine(int cycle, const CombIn *in) {
     float or_ = (A.r - B.r) * C.r + D.r, og = (A.g - B.g) * C.g + D.g, ob = (A.b - B.b) * C.b + D.b, oa = (aa - ab) * ac + ad;
     return (Color){clamp01(or_), clamp01(og), clamp01(ob), clamp01(oa)};
 }
-/* Both cycles as the RDP runs them. One cycle runs the first cycle's settings (libultra's one-cycle modes set both
-   alike; which one the hardware reads is unsettled here, and the first is what the games tried so far draw with). In
-   two cycles the second sees the texels swapped: its TEXEL0 is the first cycle's TEXEL1 (and its TEXEL1 the next
+/* Both cycles as the RDP runs them. One cycle runs the second cycle's settings, as angrylion's renderer (built from
+   the hardware) does: libultra's one-cycle modes set both alike, but a list that leaves the second cycle as another
+   mode drew with the wrong one when the first was read here. (The blender's one cycle is its first.) In two cycles
+   the second sees the texels swapped: its TEXEL0 is the first cycle's TEXEL1 (and its TEXEL1 the next
    pixel's TEXEL0, taken here as this one's). */
 static Color combiner(const Texels *tx, Color shade) {
     CombIn in = {{0, 0, 0, 0}, tx->t0, tx->t1, shade, tx->lod, uses_noise ? noise() : 0.0f};
-    if (cycle_type() != 1) return combine(0, &in);
+    if (cycle_type() != 1) return combine(cycle_type() == 0, &in);
     in.comb = combine(0, &in);
     in.t0 = tx->t1; in.t1 = tx->t0;
     return combine(1, &in);
@@ -892,22 +894,45 @@ static void triangle(int i0, int i1, int i2) {
     for (int i = 1; i + 1 < n; i++) raster(&poly[0], &poly[i], &poly[i + 1]);
 }
 
+/* A line (G_LINE3D, gSPLineW3D): the line microcodes (L3DEX, L3DEX2, and Fast3D's) draw it as a thin
+   parallelogram, (3 + wd) / 2 pixels thick across its minor axis, as GLideN64 takes it. Clipped against the near
+   plane like a triangle's edge. F3DEX2's 0x08 once went to the RDP as an unshaded triangle command. */
+static void line3d(int i0, int i1, int wd) {
+    Vtx a = vtx[i0 & 63], b = vtx[i1 & 63];
+    float da = a.z + a.w, db = b.z + b.w;
+    if (da < 0 && db < 0) return;
+    if (da < 0) a = lerp(&a, &b, da / (da - db));
+    else if (db < 0) b = lerp(&b, &a, db / (db - da));
+    if (a.w < 1e-4f) a.w = 1e-4f;
+    if (b.w < 1e-4f) b.w = 1e-4f;
+    project(&a); project(&b);
+    float half = (1.5f + (float)(wd & 0xFF) * 0.5f) / 2, dx = b.sx - a.sx, dy = b.sy - a.sy;
+    float ox = fabsf(dx) >= fabsf(dy) ? 0 : half, oy = fabsf(dx) >= fabsf(dy) ? half : 0;
+    Vtx q[4] = {a, a, b, b};
+    q[0].sx -= ox; q[0].sy -= oy; q[1].sx += ox; q[1].sy += oy;
+    q[2].sx += ox; q[2].sy += oy; q[3].sx -= ox; q[3].sy -= oy;
+    raster(&q[0], &q[1], &q[2]);
+    raster(&q[0], &q[2], &q[3]);
+}
+
 /* ---------------------------------------------------------------- what every microcode shares */
 
 /* The microcode a task (or G_LOAD_UCODE) runs, from the signature in its data: "RSP Gfx ucode F3DEX  fifo 2.05" is
    GBI 2 (F3DEX2, F3DZEX, F3DLX2...), a 1.x version is GBI 1 (F3DEX, F3DLX, F3DLP); "S2DEX" the 2D microcode of
    either generation; "RSP SW Version" is Fast3D. Without a signature: F3DEX2, as before microcodes were told apart. */
 enum { UC_F3DEX2, UC_S2DEX2, UC_F3D, UC_F3DEX, UC_S2DEX };
-static int ucode;
+static int ucode, line_ucode; /* line_ucode: L3DEX or L3DEX2, whose G_LINE3D shares F3DEX's G_QUAD opcode */
 static const char *const ucode_names[] = {"F3DEX2", "S2DEX2", "Fast3D", "F3DEX", "S2DEX"};
 static uint32_t half1; /* G_RDPHALF_1's word: G_BRANCH_Z's list, G_LOAD_UCODE's data */
 static int identify_ucode(uint32_t data) { /* data: a physical address */
+    line_ucode = 0;
     const uint8_t *d = R + 0x80000000u + (data & 0x1FFFFFFF);
     if ((data & 0x1FFFFFFF) + 0x800 > 0x800000) return UC_F3DEX2;
     for (int i = 0; i + 40 < 0x800; i++) {
         if (d[i] == 'R' && !memcmp(d + i, "RSP SW Version", 14)) return UC_F3D;
         if (d[i] != 'R' || memcmp(d + i, "RSP Gfx ucode ", 14)) continue;
         const uint8_t *p = d + i + 14;
+        line_ucode = !memcmp(p, "L3DEX", 5);
         int two_d = !memcmp(p, "S2DEX", 5);
         while (*p && !(p[0] >= '0' && p[0] <= '9' && p[1] == '.')) p++; /* the version: after the name and "fifo" */
         if (*p != '1') return two_d ? UC_S2DEX2 : UC_F3DEX2;
@@ -987,6 +1012,7 @@ static void f3dex2(uint8_t op, uint32_t w0, uint32_t w1) {
     case 0x01: { int n = (w0 >> 12) & 0xFF, end = (w0 >> 1) & 0x7F; load_vertices(phys(w1), n, end - n); break; }
     case 0x05: triangle(((w0 >> 16) & 0xFF) / 2, ((w0 >> 8) & 0xFF) / 2, (w0 & 0xFF) / 2); break;
     case 0x02: modify_vertex((int)(w0 & 0xFFFF) / 2, (int)(w0 >> 16) & 0xFF, w1); break; /* G_MODIFYVTX */
+    case 0x08: line3d(((w0 >> 16) & 0xFF) / 2, ((w0 >> 8) & 0xFF) / 2, (int)(w0 & 0xFF)); break; /* G_LINE3D */
     case 0x06: case 0x07:
         triangle(((w0 >> 16) & 0xFF) / 2, ((w0 >> 8) & 0xFF) / 2, (w0 & 0xFF) / 2);
         triangle(((w1 >> 16) & 0xFF) / 2, ((w1 >> 8) & 0xFF) / 2, (w1 & 0xFF) / 2); break;
@@ -1060,7 +1086,9 @@ static void gbi1(uint8_t op, uint32_t w0, uint32_t w1) {
             triangle((int)((w0 >> 16) & 0xFF) / 2, (int)((w0 >> 8) & 0xFF) / 2, (int)(w0 & 0xFF) / 2);
             triangle((int)((w1 >> 16) & 0xFF) / 2, (int)((w1 >> 8) & 0xFF) / 2, (int)(w1 & 0xFF) / 2);
         } break;
-    case 0xB5: if (!fast3d) { /* F3DEX's G_QUAD (Fast3D's G_LINE3D: lines aren't drawn) */
+    case 0xB5: if (fast3d || line_ucode) /* G_LINE3D: Fast3D's indices by ten (its flag in the top byte), L3DEX's by two */
+            line3d((int)((w1 >> 16) & 0xFF) / scale, (int)((w1 >> 8) & 0xFF) / scale, (int)(w1 & 0xFF));
+        else { /* F3DEX's G_QUAD */
             int v0 = (int)(w1 >> 24) / 2, v1 = (int)((w1 >> 16) & 0xFF) / 2, v2 = (int)((w1 >> 8) & 0xFF) / 2, v3 = (int)(w1 & 0xFF) / 2;
             triangle(v0, v1, v2); triangle(v0, v2, v3);
         } break;

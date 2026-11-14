@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
         gfx(0xFF100000u | 319, 0x80000000u | FB);
         gfx(0xEF000000u, 0);
         gfx(0xFC000000u | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,
-            15u << 28 | 1 << 15 | 7 << 12 | 1 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 7 << 3);
+            15u << 28 | 1 << 15 | 7 << 12 | 1 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 1 << 6 | 7 << 3 | 1);
         gfx(0xFD100000u, 0x80000000u | TLUT);
         gfx(0xF5000100u, 7u << 24);
         gfx(0xF0000000u, 7u << 24 | 15u << 14);
@@ -105,7 +105,7 @@ int main(int argc, char **argv) {
     if (aa) { /* AA_EN, the depth buffer, the shade's colour: two triangles' shared edge, or one's silhouette */
         gfx(0xEF000000u, 0x8 | 0x10 | 0x20);
         gfx(0xFC000000u | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,
-            15u << 28 | 4 << 15 | 7 << 12 | 4 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 7 << 3);
+            15u << 28 | 4 << 15 | 7 << 12 | 4 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 4 << 6 | 7 << 3 | 4);
         gfx(0xD7000000u, 0);
         gfx(0xD9FFFFFFu, 0x00000001u);                                       /* G_ZBUFFER */
         gfx(0xDA380007u, 0x80000000u | MTX);
@@ -127,8 +127,9 @@ int main(int argc, char **argv) {
     gfx(0xEF000000u | (persp ? 0x80000 : 0) | (bilerp ? 0x2000 : 0) | (fog ? 1 << 20 : 0),
         fog ? 3u << 30 | 2u << 26 | 1u << 20 | 1u << 16                 /* cycles, perspective, filter, blender */
             : pass ? 0x4000u | 3u << 26 | 2u << 18 | 3u << 24 | 2u << 16 : 0);
-    gfx(0xFC000000u | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,  /* D = TEXEL0, then the combined colour */
-        15u << 28 | 1 << 15 | 7 << 12 | 1 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 7 << 3);
+    gfx(0xFC000000u | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,  /* D = TEXEL0; its second cycle the */
+        15u << 28 | 1 << 15 | 7 << 12 | 1 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | /* combined colour (two cycles) */
+        (fog ? 0 : 1 << 6 | 1));                                           /* or TEXEL0 again (one cycle runs it) */
     if (fog) {
         gfx(0xF8000000u, 0x0000FFFFu);                                      /* G_SETFOGCOLOR: blue */
         gfx(0xDB080000u, 0x00000080u);                                      /* G_MW_FOG: multiplier 0, offset 128 */
