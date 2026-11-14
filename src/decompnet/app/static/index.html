@@ -176,6 +176,12 @@
     <p class="muted">Paste a community decomp's repository and add your own copy of its game. Before anything is cloned, decompdecomp shows what the project says about AI and contributions: every project decides that for itself. Your fork stays on this computer until you push it or enable automatic pushing in Settings. decompdecomp does not open pull requests.</p>
     <div class="row repo-row"><input id="repoUrl" class="mono" placeholder="https://github.com/owner/repo" aria-label="Repository address"><button class="primary" id="repoFork" type="button" disabled>Look at it</button></div>
     <p class="muted small" id="repoWhy" role="status"></p>
+    <details class="panel settings-disclosure" id="decompDirectory"><summary class="panel-head"><h2>Community decomps</h2><span class="disclosure-context muted small" id="decompDirectoryCount">Nintendo 64, from RetroReversing's directory</span></summary><div class="pad">
+      <p class="muted small">Pick a decompilation to import it: you'll see its AI policy before anything is cloned.</p>
+      <div class="workbar" id="decompDirectoryWork" role="progressbar" aria-label="Loading the directory" hidden><i></i></div>
+      <p class="small" id="decompDirectoryStatus" role="status"></p>
+      <div id="decompDirectoryList"></div>
+    </div></details>
     <h2>Import checked-out projects</h2>
     <p class="muted">Choose a folder of repositories, including collections arranged by platform. Review the projects before adding them. Importing runs no builds or agents.</p>
     <div class="pick-row"><input id="localFolder" class="mono" placeholder="/Volumes/Data/Decomps" aria-label="Folder of checked-out projects"><button class="ghost small-btn" type="button" data-pick="folder" data-for="localFolder" data-title="Folder of checked-out projects">Choose…</button><button class="primary" id="localScan" type="button">Scan folder</button></div>
