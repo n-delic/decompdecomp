@@ -321,3 +321,43 @@ def test_a_fork_without_the_recorded_game_is_explained(fork):
     with net.progress.view():
         assert not rom_explorer.status(net,'game',Jobs())['supported']
         with pytest.raises(NetworkError,match='SHA-1 recorded'):rom_explorer.run(net,'game',Log())
+
+
+def test_a_fork_shows_the_images_its_splat_config_declares(tmp_path):
+    """Image segments of the config that splits the game become texture assets: raw, packed and with a palette."""
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    root=tmp_path/'decomp';root.mkdir()
+    texels=bytes(range(16))
+    packed=b'MIO0'+(16).to_bytes(4,'big')+(20).to_bytes(4,'big')+(20).to_bytes(4,'big')+b'\xff\xff\x00\x00'+texels
+    image=bytearray(0x800)
+    image[0x200:0x210]=bytes.fromhex('f801')*8                     # RGBA16 4×2, red
+    image[0x300:0x300+len(packed)]=packed                          # I8 4×4 in a MIO0 block
+    image[0x400:0x408]=bytes([0x01]*8)                             # CI4 4×4
+    image[0x500:0x520]=bytes.fromhex('0000')+bytes.fromhex('07c1')*15
+    (root/'game.z64').write_bytes(bytes(image))
+    (root/'game.yaml').write_text('options:\n  target_path: game.z64\nsegments:\n'
+                                  '  - name: assets\n    type: bin\n    start: 0x200\n    subsegments:\n'
+                                  '      - [0x200, rgba16, red, 4, 2]\n      - [0x210]\n'
+                                  '      - [0x300, mio0_image, grey, i8, 4, 4]\n      - [0x340]\n'
+                                  '      - [0x400, ci4, green, 4, 4]\n      - [0x408]\n'
+                                  '      - [0x500, palette, green]\n      - [0x520]\n'
+                                  '      - [0x600, ci8, orphan, 4, 4]\n'
+                                  '  - [0x800]\n')
+    cfg=dict(kind='fork',platform='n64',fork_kind='splat',game_sha1=hashlib.sha1(bytes(image)).hexdigest())
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,arch,root,config) VALUES(?,?,?,?,?)',('game','game','',str(root),json.dumps(cfg)))
+    try:
+        with net.progress.view():
+            rom_explorer.run(net,'game',Log())
+            report=rom_explorer.listing(net,'game')
+            declared={r['detected_asset']['resource_path']:r for r in report['regions']
+                      if (r.get('detected_asset') or {}).get('provider')=='splat-config'}
+            assert set(declared)=={'red','grey','green'}                # a CI8 without a palette is left out
+            assert declared['grey']['detected_asset']['packed']
+            shown={name:rom_explorer.asset_preview(net,'game',dict(region=row['id'],image_hash=report['image_hash'],options={}))
+                   for name,row in declared.items()}
+        assert (shown['red']['details']['width'],shown['red']['details']['height'])==(4,2)
+        assert shown['grey']['decoded']['codec']=='MIO0' and shown['grey']['details']['height']==4
+        assert shown['green']['details']['palette']==0
+    finally:
+        if hasattr(net,'autosave'):net.autosave.close()

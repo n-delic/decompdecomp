@@ -41,9 +41,13 @@ def _source(net, proj):
         known={h.lower() for h in (need.get('sha1'),cfg.get('game_sha1')) if isinstance(h,str)}
         image=fp.original_image(cfg.get('version'),known,console.image_ext)
         if image is None:return None
-        segments,gp=fp.segments_for(image,cfg.get('version'))
+        config=fp.splat_config_for(image,cfg.get('version'))
+        segments,gp=fp.segments_for(image,cfg.get('version'),config) if config else ([],0)
     except (OSError,ForkError):return None
-    return dict(path=image,segments=segments,gp=gp,arch=console.arch,big_endian=console.big_endian,fork=True)
+    from ..rom import config_images
+    # The images the project's own config declares (its textures, where it has worked them out).
+    return dict(path=image,segments=segments,gp=gp,arch=console.arch,big_endian=console.big_endian,fork=True,
+                images=config_images.images(config) if config else [])
 
 
 def _project(net, slug):
@@ -68,7 +72,7 @@ def _revision(net, proj):
     cfg=net.cfg(proj)
     stat=source['path'].stat()
     layout={key:cfg.get(key) for key in ('rom','segments','platform','big_endian','gp')}
-    if source['fork']:layout['source']=[str(source['path']),source['segments'],source['gp']]
+    if source['fork']:layout['source']=[str(source['path']),source['segments'],source['gp'],source['images']]
     return hashlib.sha256(json.dumps([ANALYSIS_REVISION,layout,proj['big_endian'],(stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns),[tuple(r) for r in rows],[tuple(r) for r in syms],_contracts(net,proj)],sort_keys=True).encode()).hexdigest()
 
 
@@ -148,7 +152,7 @@ def _run(net, slug, log):
         else:
             from .analysis_image import verify
             verify(image,proj,cfg,check=log.check_cancel)
-        from ..rom import asset_flow, resource_catalog
+        from ..rom import asset_flow, config_images, resource_catalog
         console=net.console(proj)
         segments,gp=source['segments'],source['gp']
         flow=asset_flow.trace(image,segments,functions,arch.get(source['arch']).asset_flow,
@@ -157,7 +161,8 @@ def _run(net, slug, log):
                               check=log.check_cancel,progress=log.progress)
         report = analyse(image,segments,functions,symbols,big_endian=source['big_endian'],
                          progress=log.progress,check=log.check_cancel,ranges=[c['source'] for c in flow['chains']],
-                         assets=resource_catalog.regions(image,check=log.check_cancel)+console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=segments,gp=gp),check=log.check_cancel,progress=log.progress))
+                         assets=resource_catalog.regions(image,check=log.check_cancel)+
+                                config_images.regions(image,source.get('images',[]),'splat config')+console.asset_regions(image,context=dict(functions=functions,symbols=symbols,segments=segments,gp=gp),check=log.check_cancel,progress=log.progress))
         resource_catalog.attach(report)
         asset_flow.attach(report,flow)
     log.check_cancel()
@@ -298,7 +303,10 @@ def _asset_read(net,slug,data,read, *, detect=False):
         selection=dict(options)
         options=dict(detected['preview_settings'])
         original_read=read
-        if detected.get('provider') in ('portable-font','portable-records'):
+        if detected.get('provider')=='splat-config':
+            from ..rom import config_images
+            read=lambda image,settings:config_images.preview(image,detected,selection)
+        elif detected.get('provider') in ('portable-font','portable-records'):
             from ..rom import resource_catalog
             source=_source(net,proj)
             read=lambda image,settings:resource_catalog.preview(image,detected,selection,source['segments'],source['big_endian'])
