@@ -1020,7 +1020,9 @@ Left:
   RDP filters them (its three-texel bilinear filter, or the four-texel average), as the game asks for its 3D and
   text, at no cost in speed natively or in the browser. The blender follows its selectors in both cycles, with
   fog: the RSP's fog alpha per vertex (G_FOG, G_MW_FOG) and the fog colour, which the game's races use for most of
-  what they draw (measured: the RDP states it draws with, by pixels). Not drawn: anti-aliasing and dithering; no
+  what they draw (measured: the RDP states it draws with, by pixels). Anti-aliasing as the console does it: the
+  RDP's coverage per pixel (8 samples), a mesh's shared edges blended by their coverages, and the VI's filter softening
+  silhouettes as the frame is shown (about 10% slower). Not drawn: dithering; no
   state the game uses needs TEXEL1, mipmaps, IA16 palettes or decal depth. S2DEX sprites (G_OBJ_SPRITE) turn and scale
   with the 2D matrix (its rev counter needle); its rectangles (G_OBJ_RECTANGLE, _R) are drawn as before. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
