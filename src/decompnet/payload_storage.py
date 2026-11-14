@@ -133,7 +133,12 @@ def serialized(method):
         # Another thread's SQL callback needs that GIL: serialize before entering
         # SQLite, using a Python lock whose wait releases it.
         with connection.call_lock:
-            return method(self, *args, **kwargs)
+            try:
+                return method(self, *args, **kwargs)
+            except sqlite3.Error as error:
+                from .sqlite_diagnostics import report
+                report(error, getattr(connection, 'diagnostic_path', ':memory:'), method.__name__)
+                raise
     return call
 
 
@@ -151,7 +156,13 @@ class Cursor(sqlite3.Cursor):
 class Connection(sqlite3.Connection):
     def __init__(self, *args, **kwargs):
         self.call_lock = threading.RLock()
-        super().__init__(*args, **kwargs)
+        self.diagnostic_path = args[0] if args else kwargs.get('database', ':memory:')
+        try:
+            super().__init__(*args, **kwargs)
+        except sqlite3.Error as error:
+            from .sqlite_diagnostics import report
+            report(error, self.diagnostic_path, 'connect')
+            raise
 
     @serialized
     def cursor(self, factory=Cursor):

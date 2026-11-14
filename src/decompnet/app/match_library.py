@@ -75,12 +75,20 @@ class Library:
 
     @contextmanager
     def connect(self,*,write=False,wait=None):
-        db = sqlite3.connect(self.path, timeout=30)
+        from ..sqlite_diagnostics import report
+        try:
+            db = sqlite3.connect(self.path, timeout=30)
+        except sqlite3.Error as error:
+            report(error, self.path, 'connect')
+            raise
         db.row_factory = sqlite3.Row
         db.create_function('library_text',2,read_text,deterministic=True)
         try:
             with self.writer_gate.hold(wait=wait) if write else nullcontext(), db:
                 yield db
+        except sqlite3.Error as error:
+            report(error, self.path, 'execute')
+            raise
         finally:
             db.close()
 
