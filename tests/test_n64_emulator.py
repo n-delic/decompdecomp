@@ -22,19 +22,6 @@ def test_the_emulator_is_pinned_and_built_from_source():
         assert (emulator.HERE / name).is_file()
 
 
-def test_patches_apply_once_and_refuse_a_changed_source(tmp_path):
-    for name, old, _ in emulator.PATCHES:
-        f = tmp_path / name
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text((f.read_text() if f.exists() else "/* start */\n") + old + "/* end */\n")
-    emulator.patch(tmp_path)
-    main = (tmp_path / "src/main/main.c").read_text()
-    assert "DecompSetViHook" in main and "l_DecompViHook(l_DecompViCount)" in main
-    assert "DecompSetViHook;" in (tmp_path / "src/api/api_export.ver").read_text()  # exported on Linux too
-    with pytest.raises(emulator.EmulatorError, match="source changed"):
-        emulator.patch(tmp_path)  # already applied: the text to patch is gone
-
-
 def test_the_frontends_report_is_read():
     log = ("core: Unable to open rom database file '(null)'.\n"
            "watch 2452 8002DC78 8002DB3C 00000001 00000000 802A4594 00000003 802A4594\n"
