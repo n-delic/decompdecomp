@@ -789,6 +789,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
+| Set up as a project folder (import checkbox or Export panel; guessed `units.json`, read-only) | ✓ | — offered, not yet run on the demo | — offered, not yet run on the demo | — offered, not yet run on the demo | the project | the project | the project | the project |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
@@ -1829,6 +1830,18 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### ROM projects as project folders: editable units
+
+Importing a ROM can now also lay it out as a project folder (`rom/project_layout.py`): the rebuildable export plus
+guessed source files in `units.json`, each provisional until all its functions match. Agents still work through ROM
+mode, and the folder is regenerated from the database. Next:
+- objdiff units over the guessed files (`forks/linkedimages.py`), so the project page measures them as a fork's;
+- an adapter that judges an edit to `src/<unit>.c` back through `rom/match.py` at the real address, so agents,
+  autopilot, the permuter and polishing can work in the folder (this clears linked-image exports' "—");
+- regenerating the affected units after joins, splits, function-end reports and compiler-range changes, keeping
+  confirmed units frozen;
+- the folder in saves, reimport and Open a saved project; the PS1, PS2 and PSP demos run with the checkbox.
 
 ### decomprepair: its own repository, a C parser, and other processors
 

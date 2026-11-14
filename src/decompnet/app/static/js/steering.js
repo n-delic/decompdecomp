@@ -914,6 +914,30 @@ function renderSource(ov) {
        <div class="src-line">${ex.matched != null ? `${ex.matched.toLocaleString()} of ${ex.functions.toLocaleString()} functions in C` : ""}${stale ? ` · <b>${ov.matched - ex.matched} new matches since</b>` : ""}</div>
        ${ex.path ? `<div class="src-line">${esc(ex.path)}</div>` : ""}`;
   $("srcExport").textContent = ex ? "Export again" : "Export project";
+  renderProjectLayout(ov);
+}
+/* A ROM project laid out as a project folder: the export plus guessed source files (rom/project_layout.py). */
+function renderProjectLayout(ov) {
+  const pl = ov.project_layout, state = $("srcState");
+  if (!state || state._working) return;
+  state.insertAdjacentHTML("beforeend", `<div class="src-layout"><p class="small">${pl
+      ? `Project folder: <b>${pl.units.toLocaleString()}</b> guessed source files, ${pl.confirmed.toLocaleString()} fully matched (<code>units.json</code>), set up ${since(pl.t)}.`
+      : "Also lay this game out as a project folder: the export plus a guess at its source files, refined as functions match. Agents keep working as they do now."}</p>
+    <button class="ghost small-btn" id="srcLayout" type="button">${pl ? "Refresh project folder" : "Set up as a project folder"}</button></div>`);
+  $("srcLayout").onclick = layoutNow;
+}
+async function layoutNow() {
+  const log = $("expLog"), state = $("srcState");
+  state._working = true;
+  const finish = beginWork(log, "Setting up project folder", [$("srcExport"), $("srcLayout")], "Project folder ready.");
+  showJobError(log, "");
+  try {
+    const { job } = await api("/api/project-layout", { method: "POST", body: { slug: S.slug } });
+    const r = await followJob(job, log);
+    toast(`Project folder ready: ${r.units} guessed source files.`, "match");
+    S.ov = await api(`/api/project?slug=${S.slug}`);
+  } catch (e) { showJobError(log, e.message); if (!exportOpen()) toast(esc(e.message), "err"); }
+  finally { finish(); state._working = false; if (exportOpen()) renderSource(S.ov); }
 }
 async function exportNow() {
   const log = $("expLog");

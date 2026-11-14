@@ -242,6 +242,10 @@ def register(app: App) -> None:
             return {k: v for k, v in res.items() if k != "log"} | {"log": res.get("log", "")[-1500:]}
         return {"job": jobs.start("export", work)}
 
+    def p_project_layout(slug, request, data):
+        """Lay a ROM project out as a project folder (engine.setup_project_layout), in the background."""
+        return {"job": jobs.start("project-layout", lambda log: net.setup_project_layout(slug, log=log), project=slug)}
+
     def p_data_unit(slug, request, data):
         from .. import data_units
         if request.method == "GET":
@@ -1146,7 +1150,8 @@ def register(app: App) -> None:
         "/api/symbol-names": (p_symbol_names, ["POST"]),
         "/api/compiler": (p_compiler, ["POST"]),
         "/api/compiler/test-default": (p_compiler_default_test, ["POST"]),
-        "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
+        "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]),
+        "/api/project-layout": (p_project_layout, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["GET", "POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
         "/api/recover-code": (p_recover_code, ["POST"]),
         "/api/data-regions": (p_data_regions, ["GET", "POST"]),

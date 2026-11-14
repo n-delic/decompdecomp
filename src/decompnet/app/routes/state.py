@@ -393,6 +393,7 @@ def register(app: App) -> None:
         q = request.query_params
         toolchain = q.get("toolchain") or None
         scope = q.get("scope") or None  # what the project covers, where its console sets library code aside
+        project_layout = q.get("layout") == "project"  # a ROM game also laid out as a project folder
         try:  # the answers to the console's import_options (JSON, an object of strings)
             options = json.loads(q.get("options") or "{}")
             if not isinstance(options, dict) or not all(isinstance(v, str) for v in options.values()):
@@ -443,7 +444,7 @@ def register(app: App) -> None:
         def work(log):
             try:
                 slug = net.import_rom(game, toolchain=toolchain, confirmed=True, name=name, log=log, scope=scope,
-                                     options=options)
+                                     options=options, project_layout=project_layout)
             finally:
                 if uploaded:
                     shutil.rmtree(game.parent, ignore_errors=True)

@@ -66,6 +66,35 @@ class GuiMixin:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
         return res
 
+    def setup_project_layout(self, slug: str, log=print) -> dict:
+        """Lay a ROM project out as a project folder: the rebuildable export plus guessed source files
+        (rom/project_layout.py). Rerunning it refreshes both from the project's current work."""
+        from ...rom import project_layout
+        if self.fork_slug(slug):
+            raise NetworkError("this project is already a project folder")
+        proj = self._project(slug)
+        console = self.console(proj)
+        if consoles.EXPORT not in console.features:
+            raise NetworkError(f"setting up a project folder needs a rebuildable export, which "
+                               f"{console.name or 'this console'} doesn't have yet")
+        cfg = self.cfg(proj)
+        rows = self.project_store(proj['id']).all(
+            "SELECT name, vram, size, unit, status FROM functions WHERE project_id=?", proj["id"])
+        units = project_layout.guess_units(
+            [{"name": r["name"], "vram": r["vram"], "size": r["size"] or 0, "segment": r["unit"] or "main",
+              "status": r["status"]} for r in rows], cfg.get("compiler_ranges"))
+        log(f"{len(units)} source files guessed from {len(rows)} functions; writing the project folder")
+        res = self.export_rom(slug, log=log)
+        folder = Path(res["path"])
+        project_layout.write_units(folder, units)
+        done = project_layout.summary(units, folder) | {"identical": res.get("identical")}
+        with self.project_store(proj['id']).tx() as db:
+            cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
+            cfg["project_layout"] = done
+            db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+        log(f"project folder ready at {folder}: {done['units']} source files, {done['confirmed']} fully matched")
+        return done
+
     def overview(self, slug: str, *, room_members=True, quick=False) -> dict:
         from .. import auto_push, match_commits, score_commits
         proj = self._project(slug)
@@ -219,6 +248,7 @@ class GuiMixin:
             "folder": proj["root"],
             "coverage_notes": cfg.get('coverage_notes', []),
             "export": cfg.get("export"),
+            "project_layout": cfg.get("project_layout"),
             "exportable": consoles.EXPORT in console.features,
             "room": self._room_info(proj["slug"], refresh=room_members),
         }
