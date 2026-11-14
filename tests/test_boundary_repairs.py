@@ -408,3 +408,4 @@ def test_agents_cannot_split_a_function_where_the_first_part_runs_on_into_the_se
     else:
         with pytest.raises(NetworkError,match='report_boundary'):net.split_function(agent,'game','merged',f'0x{BASE+at:08X}')
         assert net._function('merged','game')['size']==len(words)*4
+        assert net.split_rom_by_you('game','merged',f'0x{BASE+at:08X}').startswith('✅')  # a person decides
