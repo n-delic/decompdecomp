@@ -60,7 +60,7 @@ static void cvg_set(uint32_t a, int c) { cvg_hole[(a & 0x7FFFFF) >> 1] = (uint8_
 static uint32_t images[8][2]; /* colour images drawn to: address, width */
 static int frame_height(void) { return cimg_width > 320 ? 480 : 240; } /* 640 wide: the high-resolution mode */
 
-static int cycle_type(void) { return (mode_h >> 20) & 3; } /* 0 one, 1 two, 2 copy, 3 fill */
+#define cycle_type() ((int)((mode_h >> 20) & 3)) /* 0 one, 1 two, 2 copy, 3 fill */
 
 static Color unpack5551(uint16_t c) {
     return (Color){((c >> 11) & 31) / 31.0f, ((c >> 6) & 31) / 31.0f, ((c >> 1) & 31) / 31.0f, (c & 1) ? 1.0f : 0.0f};
@@ -75,19 +75,15 @@ static uint16_t pack5551(Color c) { return (uint16_t)(clamp31(c.r) << 11 | clamp
    then wrapped or mirrored inside its mask. A clamped, mirrored tile wider than its mask shows the mirrored copy
    across its whole width; taking the clamp bit as "clamp only" read the second half raw from TMEM (a decal mirrored
    both ways came out as half a decal and garbage). */
-static int wrap_coord(int s, int size, int cm, int mask) {
-    if ((cm & 2) || !mask) s = s < 0 ? 0 : s >= size ? size - 1 : s;
-    if (!mask) return s;
-    int m = 1 << mask;
-    if ((cm & 1) && ((s >> mask) & 1)) return m - 1 - (s & (m - 1));
-    return s & (m - 1);
-}
+#define WRAP_COORD(s, size, cm, mask) do { /* a macro: the host is built without inlining */ \
+        if (((cm) & 2) || !(mask)) (s) = (s) < 0 ? 0 : (s) >= (size) ? (size) - 1 : (s); \
+        if (mask) { int m_ = 1 << (mask); \
+            (s) = (((cm) & 1) && (((s) >> (mask)) & 1)) ? m_ - 1 - ((s) & (m_ - 1)) : (s) & (m_ - 1); } \
+    } while (0)
+static int wrap_coord(int s, int size, int cm, int mask) { WRAP_COORD(s, size, cm, mask); return s; }
 
 /* A tile's shift on texture coordinates: 1 to 10 divide by 2^shift, 11 to 15 multiply by 2^(16 - shift). */
-static float shifted(float v, int shift) {
-    if (!shift) return v;
-    return shift > 10 ? v * (float)(1 << (16 - shift)) : v / (float)(1 << shift);
-}
+#define shifted(v, shift) (!(shift) ? (v) : (shift) > 10 ? (v) * (float)(1 << (16 - (shift))) : (v) / (float)(1 << (shift)))
 
 /* A palette entry as other mode H's TLUT type reads it: RGBA 5551, or IA16 (intensity, alpha). A game's text drawn
    with an IA16 palette came out as solid blocks when every palette was read as RGBA. */
@@ -100,8 +96,8 @@ static Color tlut_colour(uint16_t v) {
 static Color texel(const Tile *tile, int s, int t) {
     int w = (int)(tile->lrs - tile->uls) + 1, h = (int)(tile->lrt - tile->ult) + 1;
     s -= (int)tile->uls; t -= (int)tile->ult;
-    s = wrap_coord(s, w, tile->cms, tile->masks);
-    t = wrap_coord(t, h, tile->cmt, tile->maskt);
+    WRAP_COORD(s, w, tile->cms, tile->masks);
+    WRAP_COORD(t, h, tile->cmt, tile->maskt);
     if (s < 0) s = 0;
     if (t < 0) t = 0;
     uint32_t row = (uint32_t)(tile->tmem * 8 + t * tile->line * 8);
@@ -187,67 +183,80 @@ static uint32_t noise_seed = 0x12345678u;
 static float noise(void) { noise_seed = noise_seed * 1664525u + 1013904223u; return (float)(noise_seed >> 24) / 255.0f; }
 
 typedef struct { Color comb, t0, t1, shade; float lod, noise; } CombIn;
-static Color grey(float v) { return (Color){v, v, v, v}; }
-/* The RGB inputs: `which` is A (4 bits), B (4), C (5) or D (3), as G_SETCOMBINE lays them out. */
-static Color cc_rgb(int which, int sel, const CombIn *in) {
-    switch (sel) {
-    case 0: return in->comb;
-    case 1: return in->t0;
-    case 2: return in->t1;
-    case 3: return prim;
-    case 4: return in->shade;
-    case 5: return env;
-    case 6: return which == 1 ? key_center : which == 2 ? key_scale : grey(1); /* 1, or the chroma key's */
-    case 7: return which == 0 ? grey(in->noise) : which == 1 ? grey(k4) : which == 2 ? grey(in->comb.a) : grey(0);
+
+/* The combiner's selectors, decoded once per change of its settings (combiner_uses): [cycle][A, B, C, D]. */
+static int sel_rgb[2][4], sel_alpha[2][4];
+
+/* What the combiner's settings read, worked out once per change of them: whether any input is TEXEL1 (or, in two
+   cycles, the second cycle's TEXEL0, which is TEXEL1), and whether any is noise. Sampling a second tile and drawing
+   noise for every pixel otherwise cost a racing game a third of its frame rate. */
+static uint32_t uses_key[3] = {~0u, ~0u, ~0u};
+static int uses_t1, uses_noise;
+static void combiner_uses(void) {
+    uint32_t cyc = (uint32_t)cycle_type();
+    if (uses_key[0] == combine0 && uses_key[1] == combine1 && uses_key[2] == cyc) return;
+    uses_key[0] = combine0; uses_key[1] = combine1; uses_key[2] = cyc;
+    uses_t1 = uses_noise = 0;
+    for (int cycle = 0; cycle < 2; cycle++) {
+        int a, b, c, d, aa, ab, ac, ad;
+        if (cycle == 0) {
+            a = (combine0 >> 20) & 15; c = (combine0 >> 15) & 31; aa = (combine0 >> 12) & 7; ac = (combine0 >> 9) & 7;
+            b = (combine1 >> 28) & 15; d = (combine1 >> 15) & 7; ab = (combine1 >> 12) & 7; ad = (combine1 >> 9) & 7;
+        } else {
+            a = (combine0 >> 5) & 15; c = combine0 & 31; aa = (combine1 >> 21) & 7; ac = (combine1 >> 18) & 7;
+            b = (combine1 >> 24) & 15; d = (combine1 >> 6) & 7; ab = (combine1 >> 3) & 7; ad = combine1 & 7;
+        }
+        sel_rgb[cycle][0] = a; sel_rgb[cycle][1] = b; sel_rgb[cycle][2] = c; sel_rgb[cycle][3] = d;
+        sel_alpha[cycle][0] = aa; sel_alpha[cycle][1] = ab; sel_alpha[cycle][2] = ac; sel_alpha[cycle][3] = ad;
+        int t0_in_second = cycle == 1 && (a == 1 || b == 1 || c == 1 || c == 8 || d == 1 || aa == 1 || ab == 1 || ac == 1 || ad == 1);
+        if (cycle == 1 && cyc != 1) break; /* one cycle: the second cycle's settings aren't run */
+        if (a == 2 || b == 2 || c == 2 || c == 9 || d == 2 || aa == 2 || ab == 2 || ac == 2 || ad == 2 || t0_in_second)
+            uses_t1 = 1;
+        if (a == 7) uses_noise = 1;
     }
-    if (which != 2) return grey(0);
-    switch (sel) {
-    case 8: return grey(in->t0.a);
-    case 9: return grey(in->t1.a);
-    case 10: return grey(prim.a);
-    case 11: return grey(in->shade.a);
-    case 12: return grey(env.a);
-    case 13: return grey(in->lod);
-    case 14: return grey(prim_lod_frac);
-    case 15: return grey(k5);
-    }
-    return grey(0);
 }
+#define grey(v) ((Color){(v), (v), (v), (v)})
+#define clamp01(v) ((v) < 0 ? 0.0f : (v) > 1 ? 1.0f : (v)) /* macros: the host is built without inlining */
+/* The RGB inputs: A (4 bits), B (4), C (5) or D (3), as G_SETCOMBINE lays them out; 6 and 7 differ by position
+   (1, the chroma key's centre or scale; noise, K4, the combined alpha, 0), and only C reaches the alphas and the
+   LOD fractions. A macro, picking inline: the host is built without inlining, and a call per input per pixel was
+   a quarter of the renderer's time. */
+#define CC_RGB(dst, which, sel) do { switch (sel) { \
+    case 0: dst = in->comb; break; case 1: dst = in->t0; break; case 2: dst = in->t1; break; \
+    case 3: dst = prim; break; case 4: dst = in->shade; break; case 5: dst = env; break; \
+    case 6: dst = (which) == 1 ? key_center : (which) == 2 ? key_scale : grey(1.0f); break; \
+    case 7: dst = (which) == 0 ? grey(in->noise) : (which) == 1 ? grey(k4) : (which) == 2 ? grey(in->comb.a) : grey(0.0f); break; \
+    case 8: dst = (which) == 2 ? grey(in->t0.a) : grey(0.0f); break; \
+    case 9: dst = (which) == 2 ? grey(in->t1.a) : grey(0.0f); break; \
+    case 10: dst = (which) == 2 ? grey(prim.a) : grey(0.0f); break; \
+    case 11: dst = (which) == 2 ? grey(in->shade.a) : grey(0.0f); break; \
+    case 12: dst = (which) == 2 ? grey(env.a) : grey(0.0f); break; \
+    case 13: dst = (which) == 2 ? grey(in->lod) : grey(0.0f); break; \
+    case 14: dst = (which) == 2 ? grey(prim_lod_frac) : grey(0.0f); break; \
+    case 15: dst = (which) == 2 ? grey(k5) : grey(0.0f); break; \
+    default: dst = grey(0.0f); } } while (0)
 /* The alpha inputs: A, B and D share one list; C has the level of detail's fractions in place of the combined
    alpha and 1. */
-static float cc_alpha(int which, int sel, const CombIn *in) {
-    switch (sel) {
-    case 0: return which == 2 ? in->lod : in->comb.a;
-    case 1: return in->t0.a;
-    case 2: return in->t1.a;
-    case 3: return prim.a;
-    case 4: return in->shade.a;
-    case 5: return env.a;
-    case 6: return which == 2 ? prim_lod_frac : 1.0f;
-    }
-    return 0;
-}
-static float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+#define CC_ALPHA(dst, which, sel) do { switch (sel) { \
+    case 0: dst = (which) == 2 ? in->lod : in->comb.a; break; case 1: dst = in->t0.a; break; \
+    case 2: dst = in->t1.a; break; case 3: dst = prim.a; break; case 4: dst = in->shade.a; break; \
+    case 5: dst = env.a; break; case 6: dst = (which) == 2 ? prim_lod_frac : 1.0f; break; \
+    default: dst = 0; } } while (0)
 static Color combine(int cycle, const CombIn *in) {
-    int a, b, c, d, aa, ab, ac, ad;
-    if (cycle == 0) {
-        a = (combine0 >> 20) & 15; c = (combine0 >> 15) & 31; aa = (combine0 >> 12) & 7; ac = (combine0 >> 9) & 7;
-        b = (combine1 >> 28) & 15; d = (combine1 >> 15) & 7; ab = (combine1 >> 12) & 7; ad = (combine1 >> 9) & 7;
-    } else {
-        a = (combine0 >> 5) & 15; c = combine0 & 31; aa = (combine1 >> 21) & 7; ac = (combine1 >> 18) & 7;
-        b = (combine1 >> 24) & 15; d = (combine1 >> 6) & 7; ab = (combine1 >> 3) & 7; ad = combine1 & 7;
-    }
-    Color A = cc_rgb(0, a, in), B = cc_rgb(1, b, in), C = cc_rgb(2, c, in), D = cc_rgb(3, d, in);
-    Color out = {(A.r - B.r) * C.r + D.r, (A.g - B.g) * C.g + D.g, (A.b - B.b) * C.b + D.b, 0};
-    out.a = (cc_alpha(0, aa, in) - cc_alpha(1, ab, in)) * cc_alpha(2, ac, in) + cc_alpha(3, ad, in);
-    return (Color){clamp01(out.r), clamp01(out.g), clamp01(out.b), clamp01(out.a)};
+    const int *r = sel_rgb[cycle], *al = sel_alpha[cycle];
+    Color A, B, C, D;
+    float aa, ab, ac, ad;
+    CC_RGB(A, 0, r[0]); CC_RGB(B, 1, r[1]); CC_RGB(C, 2, r[2]); CC_RGB(D, 3, r[3]);
+    CC_ALPHA(aa, 0, al[0]); CC_ALPHA(ab, 1, al[1]); CC_ALPHA(ac, 2, al[2]); CC_ALPHA(ad, 3, al[3]);
+    float or_ = (A.r - B.r) * C.r + D.r, og = (A.g - B.g) * C.g + D.g, ob = (A.b - B.b) * C.b + D.b, oa = (aa - ab) * ac + ad;
+    return (Color){clamp01(or_), clamp01(og), clamp01(ob), clamp01(oa)};
 }
 /* Both cycles as the RDP runs them. One cycle runs the first cycle's settings (libultra's one-cycle modes set both
    alike; which one the hardware reads is unsettled here, and the first is what the games tried so far draw with). In
    two cycles the second sees the texels swapped: its TEXEL0 is the first cycle's TEXEL1 (and its TEXEL1 the next
    pixel's TEXEL0, taken here as this one's). */
 static Color combiner(const Texels *tx, Color shade) {
-    CombIn in = {{0, 0, 0, 0}, tx->t0, tx->t1, shade, tx->lod, noise()};
+    CombIn in = {{0, 0, 0, 0}, tx->t0, tx->t1, shade, tx->lod, uses_noise ? noise() : 0.0f};
     if (cycle_type() != 1) return combine(0, &in);
     in.comb = combine(0, &in);
     in.t0 = tx->t1; in.t1 = tx->t0;
@@ -282,7 +291,8 @@ static int dither_at(int x, int y) {
     }
     return 0;
 }
-static int to5(float v, int d) { int i = ((int)(v * 255.0f + 0.5f) + d) >> 3; return i < 0 ? 0 : i > 31 ? 31 : i; }
+#define TO5(v, d) ((((int)((v) * 255.0f + 0.5f) + (d)) >> 3) < 0 ? 0 : (((int)((v) * 255.0f + 0.5f) + (d)) >> 3) > 31 ? 31 \
+                   : (((int)((v) * 255.0f + 0.5f) + (d)) >> 3))
 static void write_pixel(int x, int y, uint32_t a, Color c, int dither) {
     if (cimg_siz == 3) {
         uint32_t v = (uint32_t)(clamp01(c.r) * 255 + 0.5f) << 24 | (uint32_t)(clamp01(c.g) * 255 + 0.5f) << 16
@@ -291,8 +301,11 @@ static void write_pixel(int x, int y, uint32_t a, Color c, int dither) {
         return;
     }
     if (cimg_siz == 1) { R[a] = (uint8_t)(clamp01(c.r) * 255 + 0.5f); return; }
-    int d = dither ? dither_at(x, y) : 0;
-    wr16(a, (uint16_t)(to5(c.r, d) << 11 | to5(c.g, d) << 6 | to5(c.b, d) << 1 | 1));
+    int d = !dither ? 0 : ((mode_h >> 6) & 3) == 0 ? magic_square[(y & 3) * 4 + (x & 3)]
+          : ((mode_h >> 6) & 3) == 3 ? 0 : dither_at(x, y);
+    uint16_t v = (uint16_t)(TO5(c.r, d) << 11 | TO5(c.g, d) << 6 | TO5(c.b, d) << 1 | 1);
+    v = (uint16_t)(v >> 8 | v << 8);
+    memcpy(R + a, &v, 2);
 }
 
 /* Depth, kept where the game keeps it: the z image in RDRAM, in the RDP's own 16-bit format (an 18-bit depth as a
@@ -308,32 +321,28 @@ static uint16_t z_encode(float z, float dz) {
     uint32_t zi = z <= 0 ? 0 : z >= 0x3FFFF ? 0x3FFFF : (uint32_t)z, e = 0;
     while (e < 7 && zi >= z_ranges[e + 1].base) e++;
     uint32_t m = ((zi - z_ranges[e].base) >> z_ranges[e].shift) & 0x7FF;
-    int dzc = 0;
-    while (dzc < 15 && (float)(1 << dzc) < dz) dzc++;
-    return (uint16_t)(e << 13 | m << 2 | (uint32_t)(dzc >> 2));
-}
-static float z_decode(uint16_t v) {
-    uint32_t e = v >> 13, m = (v >> 2) & 0x7FF;
-    return (float)(z_ranges[e].base + (m << z_ranges[e].shift));
+    static float last_dz = -1; static int last_dzc;
+    if (dz != last_dz) { last_dz = dz; last_dzc = 0; while (last_dzc < 15 && (float)(1 << last_dzc) < dz) last_dzc++; }
+    return (uint16_t)(e << 13 | m << 2 | (uint32_t)(last_dzc >> 2));
 }
 static float zbuf_private[MAXW * MAXH];
-static int z_in_memory(void) { return zimg_addr != 0; }
-static uint32_t z_addr(int x, int y) { return 0x80000000u | ((zimg_addr + (uint32_t)(y * cimg_width + x) * 2) & 0x1FFFFFFF); }
+#define z_in_memory() (zimg_addr != 0)
+#define z_addr(x, y) (0x80000000u | ((zimg_addr + (uint32_t)((y) * cimg_width + (x)) * 2) & 0x1FFFFFFF))
 static float z_read(int x, int y, float *dz) {
     if (!z_in_memory()) { *dz = 0; return zbuf_private[y * MAXW + x]; }
     uint32_t a = z_addr(x, y);
-    uint16_t v = rd16(a);
+    uint16_t v = (uint16_t)(R[a] << 8 | R[a + 1]), e = v >> 13;
     *dz = (float)(1 << (((v & 3) << 2) | dz_hole[(a & 0x7FFFFF) >> 1]));
-    return z_decode(v);
+    return (float)(z_ranges[e].base + ((uint32_t)((v >> 2) & 0x7FF) << z_ranges[e].shift));
 }
 static void z_write(int x, int y, float z, float dz) {
     if (!z_in_memory()) { zbuf_private[y * MAXW + x] = z; return; }
     uint32_t a = z_addr(x, y);
     uint16_t v = z_encode(z, dz);
     wr16(a, v);
-    int dzc = 0;
-    while (dzc < 15 && (float)(1 << dzc) < dz) dzc++;
-    dz_hole[(a & 0x7FFFFF) >> 1] = (uint8_t)(dzc & 3);
+    static float last_dz = -1; static int last_dzc; /* one triangle's pixels share their delta z */
+    if (dz != last_dz) { last_dz = dz; last_dzc = 0; while (last_dzc < 15 && (float)(1 << last_dzc) < dz) last_dzc++; }
+    dz_hole[(a & 0x7FFFFF) >> 1] = (uint8_t)(last_dzc & 3);
 }
 static float prim_z, prim_dz; /* G_SETPRIMDEPTH, for G_ZS_PRIM */
 
@@ -438,6 +447,7 @@ static void fill_pixel(int x, int y) {
     if (cimg_addr == zimg_addr && !z_in_memory()) zbuf_private[y * MAXW + x] = 1e30f;
 }
 static void fill_rect(int x0, int y0, int x1, int y1) {
+    combiner_uses();
     if (cycle_type() == 3) { /* fill mode: edges inclusive */
         for (int y = y0; y <= y1; y++)
             for (int x = x0; x <= x1; x++) if (in_frame(x, y)) fill_pixel(x, y);
@@ -459,6 +469,7 @@ static uint32_t texel_raw(const Tile *tile, int s, int t);
 /* A textured rectangle from (x0, y0) to (x1, y1) in pixels, texture coordinates s, t at its corner and their steps
    per pixel. */
 static void tex_rect(int tile, float x0, float y0, float x1, float y1, float s, float t, float dsdx, float dtdy, int flip) {
+    combiner_uses();
     int copy = cycle_type() == 2;
     if (copy) { dsdx /= 4.0f; x1 += 1; y1 += 1; }
     float lod = fmaxf(fabsf(dsdx), fabsf(dtdy));
@@ -712,26 +723,29 @@ static Texels texels_at(int tile, float s, float t, float lod) {
     }
     const Tile *a = &tiles[t0 & 7], *b = &tiles[t1 & 7];
     out.t0 = sample(a, shifted(s, a->shifts), shifted(t, a->shiftt));
-    out.t1 = sample(b, shifted(s, b->shifts), shifted(t, b->shiftt));
+    out.t1 = uses_t1 ? sample(b, shifted(s, b->shifts), shifted(t, b->shiftt)) : out.t0;
     return out;
 }
 
-/* An edge's value at (px, py): the same two vertices give exactly opposite values in either order, so a pixel on an
-   edge two triangles share is inside exactly one of them. */
-static float edge_fn(const Vtx *p, const Vtx *q, float px, float py) {
+/* An edge's value at (px, py): the same two vertices give exactly opposite values in either order (they're taken
+   in one fixed order, then the sign flipped), so a pixel on an edge two triangles share is inside exactly one. */
+typedef struct { float ux, uy, dx, dy, sign; } Edge;
+static Edge edge_of(const Vtx *p, const Vtx *q) {
     int swap = q->sy < p->sy || (q->sy == p->sy && q->sx < p->sx);
     const Vtx *u = swap ? q : p, *v = swap ? p : q;
-    float e = (v->sx - u->sx) * (py - u->sy) - (v->sy - u->sy) * (px - u->sx);
-    return swap ? -e : e;
+    return (Edge){u->sx, u->sy, v->sx - u->sx, v->sy - u->sy, swap ? -1.0f : 1.0f};
 }
+#define EDGE_AT(e, px, py) (((e).dx * ((py) - (e).uy) - (e).dy * ((px) - (e).ux)) * (e).sign)
 /* Inside, by a weight `l` and its step (gx, gy) per pixel: a point exactly on the edge belongs to the triangle that
    edge is the top or left of (its inside below, or to the right). Every point on a quad's diagonal was drawn by both
    its triangles, so a see-through quad showed a bright seam along it. */
-static int owns(float l, float gx, float gy) { return l > 0 || (l == 0 && (gx > 0 || (gx == 0 && gy > 0))); }
+#define owns(l, gx, gy) ((l) > 0 || ((l) == 0 && ((gx) > 0 || ((gx) == 0 && (gy) > 0))))
 
 /* One triangle already in front of the eye, in screen space. */
 static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
-    float A0 = edge_fn(b, c, a->sx, a->sy), A1 = edge_fn(c, a, b->sx, b->sy), A2 = edge_fn(a, b, c->sx, c->sy);
+    combiner_uses();
+    Edge E0 = edge_of(b, c), E1 = edge_of(c, a), E2 = edge_of(a, b);
+    float A0 = EDGE_AT(E0, a->sx, a->sy), A1 = EDGE_AT(E1, b->sx, b->sy), A2 = EDGE_AT(E2, c->sx, c->sy);
     if (A0 == 0 || A1 == 0 || A2 == 0) return;
     int aa = (mode_l & 0x8) != 0 && cycle_type() < 2; /* anti-aliased: edge pixels by their coverage */
     int minx = (int)floorf(fminf(a->sx, fminf(b->sx, c->sx))), maxx = (int)ceilf(fmaxf(a->sx, fmaxf(b->sx, c->sx)));
@@ -760,7 +774,7 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
     for (int y = miny; y < maxy; y++)
         for (int x = minx; x < maxx; x++) {
             float px = x + 0.5f, py = y + 0.5f;
-            float l0 = edge_fn(b, c, px, py) / A0, l1 = edge_fn(c, a, px, py) / A1, l2 = edge_fn(a, b, px, py) / A2;
+            float l0 = EDGE_AT(E0, px, py) / A0, l1 = EDGE_AT(E1, px, py) / A1, l2 = EDGE_AT(E2, px, py) / A2;
             int cvg = 8;
             if (!aa) {
                 if (!owns(l0, d0x, d0y) || !owns(l1, d1x, d1y) || !owns(l2, d2x, d2y)) continue;
@@ -781,7 +795,7 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
                                         l0 * a->shade.g + l1 * b->shade.g + l2 * c->shade.g,
                                         l0 * a->shade.b + l1 * b->shade.b + l2 * c->shade.b,
                                         l0 * a->shade.a + l1 * b->shade.a + l2 * c->shade.a} : c->shade;
-            Texels tx = one_texel((Color){1, 1, 1, 1});
+            Texels tx = {{1, 1, 1, 1}, {1, 1, 1, 1}, 0};
             if (tex_on) {
                 /* s and t at a point of the triangle by its weights; with perspective correction through 1/w.
                    Without it the RDP takes texture coordinates at half the scale it takes them with it: a racing
@@ -1123,6 +1137,7 @@ static void s2d_matrix(uint32_t w0, uint32_t a) { /* S2DEX2's G_OBJ_MOVEMEM: ind
    the screen as (A x + B y + X, C x + D y + Y), and each pixel they cover back to the texel it shows. A racing
    game's rev counter needle turns this way; drawn unrotated, it was a grey streak above the gauge. */
 static void s2d_sprite_rotated(uint32_t sp) {
+    combiner_uses();
     Sprite o = s2d_sprite_tile(sp);
     float A = obj_mtx[0], B = obj_mtx[1], C = obj_mtx[2], D = obj_mtx[3], X = obj_mtx[4], Y = obj_mtx[5];
     float det = A * D - B * C, w = o.iw / o.sw, h = o.ih / o.sh;
@@ -1143,6 +1158,7 @@ static void s2d_sprite_rotated(uint32_t sp) {
         }
 }
 static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight from memory */
+    combiner_uses();
     float ix = rd16(bg) / 32.0f, iw = rd16(bg + 2) / 4.0f, fx = (int16_t)rd16(bg + 4) / 4.0f, fw = rd16(bg + 6) / 4.0f;
     float iy = rd16(bg + 8) / 32.0f, ih = rd16(bg + 10) / 4.0f, fy = (int16_t)rd16(bg + 12) / 4.0f, fh = rd16(bg + 14) / 4.0f;
     uint32_t image = phys(rd32(bg + 16));
