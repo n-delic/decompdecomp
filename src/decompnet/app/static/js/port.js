@@ -125,8 +125,9 @@ function renderPortReadiness(report) {
 }
 
 /* A log with what beginWork and showJobError put before it (its status line, progress bar and error), moved
-   together: a refresh that moved the log alone left a running build's bar in the step list it replaced. */
-const withWork = (log) => [log._workStatus, log._workBar, log._errorBox, log].filter(Boolean);
+   together: a refresh that moved the log alone left a running build's bar in the step list it replaced. The log
+   moves in its frame (base.js, frameJoblog): moving the pre alone left its Copy button behind in an empty frame. */
+const withWork = (log) => [log._workStatus, log._workBar, log._errorBox, log._frame || log].filter(Boolean);
 
 const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, Math.round(100 * part / whole))) : null);
 
