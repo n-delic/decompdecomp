@@ -246,7 +246,9 @@ def test_judge_persists_only_real_best_score_improvements(setup, monkeypatch):
     agent = net.authenticate(net.register_agent('helper', 'test'))
     pid = net._project('demo')['id']
     with net.store.tx() as db:
-        fid = db.execute('INSERT INTO functions(project_id,name,best_score) VALUES(?,?,?)', (pid,'target',1040)).lastrowid
+        # A scored function has an instruction count; the recorder uses it for useful-progress accounting.
+        fid = db.execute('INSERT INTO functions(project_id,name,best_score,n_insns) VALUES(?,?,?,?)',
+                         (pid,'target',1040,20)).lastrowid
     monkeypatch.setattr(net, 'on_improvement', lambda *args: None)
     monkeypatch.setattr(net, 'check_attempt_limit', lambda *args: None)
     for score in [660,800,None,500]:
