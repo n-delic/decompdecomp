@@ -2,8 +2,8 @@
  * The RSP and RDP, in software: each graphics task's display list drawn into the game's own frame buffer, as the
  * N64 does (port/wasm). A first renderer, to see the game: Nintendo's F3DEX2 (3D) and S2DEX (2D backgrounds and
  * sprites) microcodes, chosen per task by the microcode it loads, and the RDP commands both send. Textures filtered
- * as the RDP filters them (point, its three-texel bilinear, or average), one or two combiner cycles, a depth
- * buffer, no anti-aliasing or dithering.
+ * as the RDP filters them (point, its three-texel bilinear, or average), one or two combiner cycles, the blender
+ * with fog, a depth buffer, no anti-aliasing or dithering.
  *
  * Addresses in a display list are segmented (segment << 24 | offset) or physical; the segment table is the list's
  * own (G_MOVEWORD). The game's memory is big-endian at the console's addresses: physical p is 0x80000000 | p here.
@@ -42,7 +42,8 @@ static uint32_t timg_addr; static int timg_siz, timg_width;
 static uint32_t cimg_addr; static int cimg_width = 320;
 static uint32_t zimg_addr;
 static uint32_t fill_color;
-static Color prim, env, blend;
+static Color prim, env, blend, fog;
+static int fog_mul, fog_off; /* G_MW_FOG: the RSP's fog alpha is z/w * fog_mul + fog_off, 0 to 255 */
 static uint32_t combine0, combine1, mode_h, mode_l;
 static int scissor[4] = {0, 0, 320, 240};
 #define MAXW 640
@@ -187,6 +188,35 @@ static int in_frame(int x, int y) {
 }
 static uint32_t pixel_addr(int x, int y) { return 0x80000000u | ((cimg_addr + (uint32_t)(y * cimg_width + x) * 2) & 0x1FFFFFFF); }
 
+/* The blender, one cycle of it: P * A + M * B, each picked by other mode L (the first cycle's at bits 30, 26, 22 and
+   18, the second's at 28, 24, 20 and 16). P and M: the pixel coming in, the frame buffer's, the blend colour or the
+   fog colour; A: the incoming alpha, the fog colour's, the shade's (the RSP's fog alpha under G_FOG) or 0; B: 1 - A,
+   the frame buffer's alpha, 1 or 0. Alpha passes through. A racing game fogs most of a race in the first cycle
+   (fog * shade alpha + in * (1 - shade alpha)); without it, every race was drawn without its haze. */
+static Color blender_cycle(int cycle, Color in, Color mem, Color shade) {
+    int at = cycle == 0 ? 30 : 28;
+    int p = (int)(mode_l >> at) & 3, a = (int)(mode_l >> (at - 4)) & 3;
+    int m = (int)(mode_l >> (at - 8)) & 3, b = (int)(mode_l >> (at - 12)) & 3;
+    Color pick[4] = {in, mem, blend, fog};
+    float A = a == 0 ? in.a : a == 1 ? fog.a : a == 2 ? shade.a : 0;
+    float B = b == 0 ? 1 - A : b == 1 ? mem.a : b == 2 ? 1 : 0;
+    float sum = A + B > 1 ? A + B : 1;
+    Color P = pick[p], M = pick[m];
+    return (Color){(P.r * A + M.r * B) / sum, (P.g * A + M.g * B) / sum, (P.b * A + M.b * B) / sum, in.a};
+}
+/* Both cycles as the RDP runs them: in two-cycle mode the first always blends (fog); the last blends only with
+   force blend (anti-aliasing, which would blend edges, isn't drawn here) and otherwise passes its P through. */
+static Color blender(Color in, Color mem, Color shade) {
+    int two = cycle_type() == 1;
+    Color out = two ? blender_cycle(0, in, mem, shade) : in;
+    int last = two ? 1 : 0;
+    if (mode_l & 0x4000) return blender_cycle(last, out, mem, shade);
+    Color pick[4] = {out, mem, blend, fog};
+    Color passed = pick[(mode_l >> (last ? 28 : 30)) & 3];
+    passed.a = in.a;
+    return passed;
+}
+
 /* One pixel through the combiner and blender: shade and texel colours in, the frame buffer written. */
 static void plot(int x, int y, float z, Color shade, Color t0, int depth) {
     if (!in_frame(x, y)) return;
@@ -197,10 +227,7 @@ static void plot(int x, int y, float z, Color shade, Color t0, int depth) {
     if ((mode_l & 3) == 1 && c.a <= blend.a) return; /* alpha compare: above the blend colour's alpha */
     if ((mode_l & 0x2000) && c.a <= 0.0f) return; /* coverage times alpha: nothing covered */
     uint32_t a = pixel_addr(x, y);
-    if ((mode_l & 0x4000) && c.a < 1.0f) { /* force blend: in * alpha + memory * (1 - alpha) */
-        Color m = unpack5551(rd16(a));
-        c.r = c.r * c.a + m.r * (1 - c.a); c.g = c.g * c.a + m.g * (1 - c.a); c.b = c.b * c.a + m.b * (1 - c.a);
-    }
+    c = blender(c, unpack5551(rd16(a)), shade);
     wr16(a, pack5551(c));
     if (depth && zupd) zbuf[zi] = z;
 }
@@ -307,6 +334,7 @@ static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
     case 0xFA: prim = unpack8888(w1); break;
     case 0xFB: env = unpack8888(w1); break;
     case 0xF9: blend = unpack8888(w1); break;
+    case 0xF8: fog = unpack8888(w1); break;
     case 0xFC: combine0 = w0 & 0xFFFFFF; combine1 = w1; break;
     case 0xED: scissor[0] = (int)((w0 >> 12) & 0xFFF) >> 2; scissor[1] = (int)(w0 & 0xFFF) >> 2;
                scissor[2] = (int)((w1 >> 12) & 0xFFF) >> 2; scissor[3] = (int)(w1 & 0xFFF) >> 2; break;
@@ -386,6 +414,10 @@ static void load_vertices(uint32_t addr, int n, int v0) {
             }
             v->shade = (Color){c.r > 1 ? 1 : c.r, c.g > 1 ? 1 : c.g, c.b > 1 ? 1 : c.b, c3 / 255.0f};
         } else v->shade = (Color){c0 / 255.0f, c1 / 255.0f, c2 / 255.0f, c3 / 255.0f};
+        if (geometry & 0x10000) { /* G_FOG: the shade's alpha becomes the fog's, from the vertex's depth */
+            float f = (v->z / (v->w > 1e-4f ? v->w : 1e-4f)) * (float)fog_mul + (float)fog_off;
+            v->shade.a = (f < 0 ? 0 : f > 255 ? 255 : f) / 255.0f;
+        }
         v->clip = 0;
     }
 }
@@ -554,7 +586,10 @@ static void f3dex2(uint8_t op, uint32_t w0, uint32_t w1) {
                 light_dir[l][0] = x / len; light_dir[l][1] = y / len; light_dir[l][2] = z / len;
             } }
         break; }
-    case 0xDB: if (((w0 >> 16) & 0xFF) == 2) num_lights = (int)(w1 / 24); break;
+    case 0xDB:
+        if (((w0 >> 16) & 0xFF) == 2) num_lights = (int)(w1 / 24);
+        if (((w0 >> 16) & 0xFF) == 8) { fog_mul = (int16_t)(w1 >> 16); fog_off = (int16_t)(w1 & 0xFFFF); } /* G_MW_FOG */
+        break;
     default: rdp(op, w0, w1);
     }
 }
