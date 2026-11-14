@@ -146,7 +146,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     kept=[];dropped=0;ordered=sorted(result,key=lambda f:(f.segment,f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
-        if (fn.size==4 and previous is not None and following is not None
+        if (filler_extent(fn.size,fn.lines[0].word) and previous is not None and following is not None
                 and previous.segment==fn.segment==following.segment
                 and previous.rom+previous.size==fn.rom and following.rom==fn.rom+4 and following.vram==fn.vram+4
                 and alignment_fill(fn.vram,previous.size>=8 and previous.lines[-2].word==JR_RA,
@@ -170,3 +170,11 @@ def alignment_fill(address, returned, entry_follows, referenced):
     that opens its own stack frame, and nothing branches to it, calls it or points at it. Zero alignment is
     trimmed earlier (split._trim_padding); export rebuilds either kind from the image (export_build.fill_gaps)."""
     return address%8==4 and returned and entry_follows and not referenced
+
+
+def filler_extent(size, first):
+    """Whether an entry of `size` bytes starting with the word `first` can be one alignment word: 4 bytes, or 8 when
+    the filler happens to decode as a branch or jump, so the disassembler gave it the next entry's first
+    instruction as its delay slot (an N64 game had 4 of these; the next entry still starts 4 bytes in)."""
+    import rabbitizer
+    return size==4 or size==8 and rabbitizer.Instruction(first).hasDelaySlot()

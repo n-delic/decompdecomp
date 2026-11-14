@@ -319,3 +319,92 @@ def test_safe_fixes_archive_one_alignment_word_between_a_return_and_the_next_ent
         assert [net._function(n,'game')['size'] for n in ('returns','entry')]==[12,12]  # neighbours untouched
     else:
         assert ('filler','padding') not in fixed
+
+
+def overlap(net,name,extra):
+    """Give `name` the next `extra` words of the image too, overlapping the entry after it (as spimdisasm does)."""
+    fn=net._function(name,'game');image=(net.project_row('game')['root']+'/rom.z64')
+    data=open(image,'rb').read()[fn['rom_offset']:fn['rom_offset']+fn['size']+4*extra]
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET size=?,n_insns=?,target=? WHERE id=?',(len(data),len(data)//4,data,fn['id']))
+
+
+def test_safe_fixes_archive_filler_that_decodes_as_a_jump_with_its_borrowed_delay_slot(tmp_path,monkeypatch):
+    net,_=layout(tmp_path,monkeypatch,[('returns',[LOAD,JR_RA,NOP],'open'),('filler',[jal(0x8b53c0fc)],'open'),('entry',[FRAME,JR_RA,UNFRAME],'open')])
+    overlap(net,'filler',1)
+    result=repair.apply_safe(net,'game')
+    assert [(f['flagged'],f['action']) for f in result['fixed']]==[('filler','padding')] and result['remaining']==0
+    assert net._function('entry','game')['gone_mark'] is None and net._function('entry','game')['size']==12
+
+
+@pytest.mark.parametrize('case',['delay slot','own word'])
+def test_safe_fixes_never_start_a_function_on_the_delay_slot_of_the_entry_before(tmp_path,monkeypatch,case):
+    # The entry before lacks its delay slot and is claimed, so it can't take its slot back now; the lone slot word
+    # must not be joined to the function after it instead.
+    first=[LOAD,JR_RA] if case=='delay slot' else [LOAD,JR_RA,NOP]
+    net,_=layout(tmp_path,monkeypatch,[('first',first,'open'),('slot',[NOP],'open'),('after',[STEP,JR_RA,NOP],'open')])
+    worker,_=net.local_agent('worker')
+    with net.store.tx() as db:db.execute('INSERT INTO claims VALUES(?,?,?,?)',(net._function('first','game')['id'],worker.id,time.time(),time.time()+3600))
+    result=repair.apply_safe(net,'game')
+    joined=('slot','join_previous','slot') in [(f['flagged'],f['action'],f['function']) for f in result['fixed']]
+    if case=='delay slot':
+        assert not joined and net._function('after','game')['gone_mark'] is None
+    else:  # a word after a complete function is not borrowed: the guard leaves that join alone
+        assert joined
+
+
+LW_RA=0x8fbf0014
+
+
+@pytest.mark.parametrize('case',['epilogue','other frame','no saved return address','own frame'])
+def test_safe_fixes_join_the_ending_that_pops_this_frame_after_a_call(tmp_path,monkeypatch,case):
+    callee=BASE+0x40
+    head=[FRAME,0xafbf0014,LOAD,jal(callee),NOP]
+    ending={'epilogue':[LOAD,LW_RA,JR_RA,UNFRAME],'other frame':[LOAD,LW_RA,JR_RA,0x27bd0020],
+            'no saved return address':[LOAD,LOAD,JR_RA,UNFRAME],'own frame':[FRAME,LW_RA,JR_RA,UNFRAME]}[case]
+    words=head+ending
+    net,_=layout(tmp_path,monkeypatch,[('head',head,'open'),('ending',ending,'open'),('pad',[0]*(16-len(words)),'open'),('callee',[JR_RA,NOP],'open')])
+    result=repair.apply_safe(net,'game')
+    fixed=[(f['flagged'],f['action'],f['function']) for f in result['fixed']]
+    if case=='epilogue':
+        assert fixed==[('head','join_previous','head')] and net._function('head','game')['size']==36
+        assert repair.audit(net,'game')['history'][0]['evidence']==repair.SAFE_NOTE['epilogue']
+    else:
+        assert fixed==[] and net._function('head','game')['size']==20
+
+
+@pytest.mark.parametrize('case',['duplicate','container flagged','different mapping'])
+def test_safe_fixes_archive_an_entry_that_only_repeats_part_of_a_complete_one(tmp_path,monkeypatch,case):
+    whole=[FRAME,STEP,JR_RA,UNFRAME] if case!='container flagged' else [FRAME,STEP,STEP,STEP]
+    net,_=layout(tmp_path,monkeypatch,[('whole',whole,'open'),('after',[JR_RA,NOP],'matched')])
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,rom_offset,size,n_insns,target,relocs,asm,unit,status) VALUES(1,'dup',?,0,4,1,?,'[]','','code','asm')",
+                   (BASE+(0x100 if case=='different mapping' else 0),raw(FRAME)))
+    result=repair.apply_safe(net,'game')
+    fixed=[(f['flagged'],f['action']) for f in result['fixed']]
+    if case=='duplicate':
+        assert fixed==[('dup','padding')] and net._function('dup','game')['gone_mark'] is not None
+        assert net._function('whole','game')['size']==16
+    else:
+        assert ('dup','padding') not in fixed and net._function('dup','game')['gone_mark'] is None
+
+
+@pytest.mark.parametrize('case',['before the return','on the delay slot','after the return','after a call'])
+def test_agents_cannot_split_a_function_where_the_first_part_runs_on_into_the_second(tmp_path,monkeypatch,case):
+    getter=[0x3c02800b,0x8c423630,JR_RA,NOP]  # lui; lw; jr $ra; nop
+    words=getter+getter if case=='after the return' else [FRAME,jal(BASE+0x40),NOP]+getter if case=='after a call' else getter
+    net,_=layout(tmp_path,monkeypatch,[('merged',words,'open')])
+    import rabbitizer
+
+    from decompnet.rom.split import AsmLine, RomFunction, function_asm
+    lines=[AsmLine(4*i,BASE+4*i,w,rabbitizer.Instruction(w,BASE+4*i).getOpcodeName(),
+                   rabbitizer.Instruction(w,BASE+4*i).disassemble().split(None,1)[-1]) for i,w in enumerate(words)]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET asm=? WHERE name='merged'",(function_asm(RomFunction('merged',BASE,0,'code',lines,None)),))
+    at={'before the return':8,'on the delay slot':12,'after the return':16,'after a call':12}[case]
+    agent,_=net.local_agent('worker')
+    if case in ('after the return','after a call'):
+        assert net.split_function(agent,'game','merged',f'0x{BASE+at:08X}').startswith('✅')
+    else:
+        with pytest.raises(NetworkError,match='report_boundary'):net.split_function(agent,'game','merged',f'0x{BASE+at:08X}')
+        assert net._function('merged','game')['size']==len(words)*4
