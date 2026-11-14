@@ -46,8 +46,8 @@ def _source(net, proj):
     except (OSError,ForkError):return None
     from ..rom import config_images
     # The images the project's own config declares (its textures, where it has worked them out).
-    return dict(path=image,segments=segments,gp=gp,arch=console.arch,big_endian=console.big_endian,fork=True,
-                images=config_images.images(config) if config else [])
+    images=(config_images.images(config) if config else [])+config_images.asset_list_images(fp.root,cfg.get('version'))
+    return dict(path=image,segments=segments,gp=gp,arch=console.arch,big_endian=console.big_endian,fork=True,images=images)
 
 
 def _project(net, slug):

@@ -361,3 +361,25 @@ def test_a_fork_shows_the_images_its_splat_config_declares(tmp_path):
         assert shown['green']['details']['palette']==0
     finally:
         if hasattr(net,'autosave'):net.autosave.close()
+
+
+def test_a_fork_shows_the_images_its_json_asset_list_declares(tmp_path):
+    """An assets.json in the style of the first 3D platformer's decompilation: formats in the paths, dims, palettes."""
+    from decompnet.rom import config_images
+    root=tmp_path/'decomp';root.mkdir()
+    listing={'assets/textures/red.rgba16.png':{'meta':{'dims':[4,2]},'offsets':{'us':['0x200','0x0'],'jp':['0x300','0x0']}},
+             'assets/textures/pal.rgba16.png':{'meta':{'dims':[4,4]},'offsets':{'us':['0x500','0x0']}},
+             'assets/textures/green.ci4.png':{'meta':{'dims':[4,4],'pal':['assets/textures/pal.rgba16.png']},'offsets':{'us':['0x400','0x0']}},
+             'assets/textures/lost.ci4.png':{'meta':{'dims':[4,4],'pal':['assets/textures/missing.rgba16.png']},'offsets':{'us':['0x400','0x0']}},
+             'bin/code.bin':{'meta':{'size':'0x80'},'offsets':{'us':['0x0','0x0']}}}
+    (root/'assets.json').write_text(json.dumps(listing))
+    found={i['name']:i for i in config_images.asset_list_images(root,'us')}
+    assert set(found)=={'textures/red.rgba16.png','textures/pal.rgba16.png','textures/green.ci4.png'}
+    assert found['textures/green.ci4.png']['palette']==0x500 and found['textures/red.rgba16.png']['offset']==0x200
+    assert [(i['name'],i['offset']) for i in config_images.asset_list_images(root,'jp')]==[('textures/red.rgba16.png',0x300)]
+    assert config_images.asset_list_images(root,None)==[]                 # two releases listed, none chosen
+    image=bytearray(0x800);image[0x200:0x210]=bytes.fromhex('f801')*8
+    assets=config_images.regions(bytes(image),list(found.values()),'x')
+    red=next(a for a in assets if a['resource_path']=='textures/red.rgba16.png')
+    shown=config_images.preview(bytes(image),red,{})
+    assert (shown['details']['width'],shown['details']['height'])==(4,2) and 'asset list' in red['reason']
