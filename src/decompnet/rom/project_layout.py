@@ -16,6 +16,7 @@ from pathlib import Path
 
 UNITS_FILE = "units.json"
 FILE_ALIGN = 16  # MIPS GCC and its assemblers start each object's .text on a 16-byte boundary
+MIN_SAMPLE = 16  # functions needed before their common alignment means the compiler's padding
 
 
 def _compiler_at(vram: int, ranges: list[dict]) -> tuple:
@@ -25,14 +26,28 @@ def _compiler_at(vram: int, ranges: list[dict]) -> tuple:
     return (None, ())
 
 
+def function_alignment(starts: list[int]) -> int:
+    """What every function is padded to by its compiler: the largest of 8..64 nearly all starts are multiples of,
+    else 4. EE-GCC starts each PS2 function on 8 bytes, so its 4-byte gaps say nothing about files (the PS2 demo:
+    49 such gaps, 18 real files); KMC GCC on the N64 pads only objects."""
+    if len(starts) < MIN_SAMPLE:  # a handful of functions can share any alignment by chance
+        return 4
+    for k in (64, 32, 16, 8):
+        if sum(s % k == 0 for s in starts) >= 0.98 * len(starts):
+            return k
+    return 4
+
+
 def guess_units(functions: list[dict], ranges: list[dict] | None = None) -> list[dict]:
     """Group functions (dicts with name, vram, size, segment, status) into guessed source files, in address order.
 
     A new file starts where a segment changes, where the project's compiler ranges change compiler, or after a
-    gap of padding that ends on a file-aligned address (an object's .text is padded to 16 bytes, a function's end
-    within one object is not). Neighbouring files with no padding between them stay together: nothing in the
-    bytes tells them apart, so only matching and the agents' joins and splits can."""
+    gap of padding that ends on a file-aligned address and that the compiler's own function alignment doesn't
+    explain (an object's .text is padded to 16 bytes, a function's end within one object is not). Neighbouring
+    files with no padding between them stay together: nothing in the bytes tells them apart (the PS1 demo's 18
+    files have none), so only matching and the agents' joins and splits can."""
     ranges = sorted(ranges or [], key=lambda r: r["start"])
+    align = function_alignment([f["vram"] for f in functions])
     units: list[dict] = []
     prev = None
     for fn in sorted(functions, key=lambda f: f["vram"]):
@@ -43,7 +58,8 @@ def guess_units(functions: list[dict], ranges: list[dict] | None = None) -> list
             why = "segment"
         elif _compiler_at(fn["vram"], ranges) != _compiler_at(prev["vram"], ranges):
             why = "compiler"
-        elif fn["vram"] > prev["vram"] + prev["size"] and fn["vram"] % FILE_ALIGN == 0:
+        elif (end := prev["vram"] + prev["size"]) < fn["vram"] and fn["vram"] % FILE_ALIGN == 0 \
+                and align < FILE_ALIGN and fn["vram"] != -(-end // align) * align:
             why = "padding"
         if why:
             units.append({"name": f"{fn['segment']}_{fn['vram']:08X}", "segment": fn["segment"],

@@ -789,7 +789,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
-| Set up as a project folder (import checkbox or Export panel; guessed `units.json`, read-only) | ✓ | — offered, not yet run on the demo | — offered, not yet run on the demo | — offered, not yet run on the demo | the project | the project | the project | the project |
+| Set up as a project folder (import checkbox or Export panel; guessed `units.json`, read-only) | ✓ demo: 14 of 16 files found | ✓ demo: 1 of 18 files found (no padding between objects) | ✓ demo: 1 of 18 files found (functions padded like files) | — offered; demo not run (no PSP compiler build for Apple Silicon) | the project | the project | the project | the project |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
@@ -1841,7 +1841,10 @@ mode, and the folder is regenerated from the database. Next:
   autopilot, the permuter and polishing can work in the folder (this clears linked-image exports' "—");
 - regenerating the affected units after joins, splits, function-end reports and compiler-range changes, keeping
   confirmed units frozen;
-- the folder in saves, reimport and Open a saved project; the PS1, PS2 and PSP demos run with the checkbox.
+- better file seams where padding says nothing: on the PS1 and PS2 demos no padding separates objects (or every
+  function is padded alike), so only 1 of 18 files is found. Candidates: each object's `.rodata`/`.data` block
+  following the code's order, library signatures, and the boundaries agents confirm by matching;
+- the folder in saves, reimport and Open a saved project; the PSP demo run with the checkbox.
 
 ### decomprepair: its own repository, a C parser, and other processors
 
