@@ -80,6 +80,13 @@ function renderPortReadiness(report) {
     if (link.duplicates.length) facts.append(portRow("  defined twice", link.duplicates.slice(0, 8)
       .map((d) => `${d.name} (${d.in.join(", ")})`).join("; ")));
   }
+  const calls = report.calls;
+  if (calls && calls.calls) {
+    facts.append(portRow("Matched but suspicious", `${calls.calls.toLocaleString()} calls in `
+      + `${calls.functions.toLocaleString()} functions disagree with the function they call (last WebAssembly build)`));
+    for (const k of calls.kinds) facts.append(portRow(`  ${k.about}`, `${k.calls} calls in ${k.functions} functions: `
+      + `${k.why}. ` + k.examples.join(", ") + (k.calls > k.examples.length ? ", ..." : "")));
+  }
   const assets = report.assets;
   if (assets) facts.append(portRow("Asset map", `${assets.resources} resources, `
     + Object.entries(assets.groups).map(([g, b]) => `${g} ${b.toLocaleString()} bytes`).join(", ")
@@ -103,7 +110,7 @@ const pct = (part, whole) => (whole > 0 ? Math.max(0, Math.min(100, Math.round(1
 /* The steps, from the report: each {title, pct (null: done or not, no share to show), detail, buttons and logs (the
    panel's own elements, moved into the step)}. */
 function portSteps(report) {
-  const code = report.code, pc = report.pc, link = report.link, assets = report.assets;
+  const code = report.code, pc = report.pc, link = report.link, assets = report.assets, calls = report.calls;
   const library = code.replaced + code.native + (code.glue || 0);
   const steps = [
     { title: "The game's code in C", pct: pct(code.c, code.total),
@@ -123,6 +130,10 @@ function portSteps(report) {
     { title: "Links for a PC", pct: link ? (link.undefined || link.duplicates.length ? null : 100) : 0,
       detail: link ? `${link.undefined.toLocaleString()} symbols needed and defined nowhere`
         + (link.duplicates.length ? `, ${link.duplicates.length} defined twice` : "") : "after Compile for PC" },
+    { title: "Calls agree with what they call", pct: calls ? pct(code.total - calls.functions, code.total) : null,
+      detail: calls ? (calls.calls ? `${calls.calls.toLocaleString()} calls in ${calls.functions.toLocaleString()} `
+        + "functions match but disagree with the function they call: a port can behave differently there"
+        : "every call agrees with the function it calls") : "after Play builds the game" },
     { title: "Assets extracted", pct: assets ? (assets.extracted && assets.extracted.current ? pct(assets.extracted.mapped, assets.extracted.total)
         : assets.written ? 50 : 0) : 0,
       detail: assets ? `${assets.resources} resources mapped` + (assets.extracted && assets.extracted.current

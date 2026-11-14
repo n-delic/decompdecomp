@@ -67,6 +67,19 @@ def _link(net, proj) -> dict | None:
     return report(net, proj)
 
 
+def _calls(net, slug: str) -> dict | None:
+    """Matched but suspicious: calls whose C disagrees with the function they call, from the last WebAssembly build
+    (port/wasm/calls.py), which this report reads but never runs. None before the game has been built."""
+    from ..app import saves
+    from .wasm import calls
+    from .wasm.play import save_repository
+    try:
+        repo = save_repository(saves.default_folder(net, slug))
+    except NetworkError:
+        return None
+    return calls.load(repo / "port" / "wasm" / "build")
+
+
 def _assets(net, slug: str) -> dict | None:
     """The asset map as it would be written now (port/asset_map.py), and whether the project's folder has it."""
     from .asset_map import current
@@ -168,6 +181,7 @@ def readiness(net, slug: str) -> dict:
         "pc": _pc(net, proj),
         "link": _link(net, proj),
         "assets": _assets(net, slug),
+        "calls": _calls(net, slug),
     }
     report["blockers"] = blockers(report)
     report["ready"] = not report["blockers"]
@@ -234,6 +248,12 @@ def blockers(report: dict) -> list[str]:
     if report["addresses"]["literals"]:
         out.append(f"{report['addresses']['functions']} functions write {report['addresses']['literals']} addresses "
                    "as numbers: each needs to be a symbol so the port (and mods) can move it.")
+    calls = report.get("calls")
+    if calls and calls["calls"]:
+        worst = calls["kinds"][0]
+        out.append(f"{calls['calls']} calls in {calls['functions']} functions disagree with the function they call: "
+                   "they match, but only the original compiler sees them right, and a port can behave differently "
+                   f"there. Worst first, {worst['calls']} {worst['about']}: {worst['why']}.")
     pc = report.get("pc")
     if pc is None:
         out.append("The game's C hasn't been compiled for a PC yet: Compile for PC lists what a port build refuses.")
@@ -326,6 +346,12 @@ def describe(report: dict) -> str:
         if link["duplicates"]:
             lines.append("- defined twice: " + ", ".join(f"{d['name']} ({', '.join(d['in'])})"
                                                         for d in link["duplicates"][:12]))
+    calls = report.get("calls")
+    if calls and calls["calls"]:
+        lines.append(f"Matched but suspicious, from the last WebAssembly build: {calls['calls']} calls in "
+                     f"{calls['functions']} functions disagree with the function they call.")
+        lines += [f"- {k['about']} ({k['calls']} calls in {k['functions']} functions; {k['why']}): "
+                  + ", ".join(k["examples"]) for k in calls["kinds"]]
     rom = report["rom_data"]
     if rom["scanned"]:
         lines.append("ROM outside code, as ROM Explorer read it: "

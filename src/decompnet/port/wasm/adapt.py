@@ -147,6 +147,46 @@ REPORT = None
 CALLER = [""]
 
 
+def note(kind, callee, **detail):
+    """A call whose C disagrees with its callee's one signature, which the build bridged as MIPS would have behaved:
+    matched C can rely on that, and only the original compiler sees it right (port/wasm/calls.py names the kinds)."""
+    if REPORT is not None:
+        REPORT.append({"kind": kind, "caller": CALLER[0], "callee": callee, **detail})
+
+
+def _width(t):
+    """A type's class and size as a call sees it: an i8 and an i32 differ (how it widens), a pointer and an i32
+    don't (both a 32-bit word)."""
+    c = wclass(t)
+    m = re.fullmatch(r"i(\d+)", t.strip())
+    return (c, int(m.group(1)) if m else 32) if c == "i32" else (c, 0)
+
+
+def classify(name, cret, args, raw_args, ret, params, variadic, explicit_variadic, abyval, pbyval):
+    """Note every way a call disagrees with its callee's signature (one call, each kind once)."""
+    if cret != "void" and ret == "void":
+        note("void-result", name)
+    elif cret != "void" and _width(cret) != _width(ret):
+        note("result-type", name, passed=cret, declared=ret)
+    if variadic and not explicit_variadic and len(args) > len(params):
+        note("variadic-declared-fixed", name)
+    if not variadic and explicit_variadic:
+        note("fixed-declared-variadic", name)
+    elif not variadic and len(args) > len(params):
+        note("extra-arguments", name, passed=len(args), declared=len(params))
+    if len(args) < len(params):
+        note("missing-arguments", name, passed=len(args), declared=len(params))
+    for i, ((t, _), p) in enumerate(zip(args, params)):
+        if abyval[i] or i in pbyval:
+            if abyval[i] != pbyval.get(i, 0):
+                note("by-value-size", name, argument=i + 1, passed=abyval[i], declared=pbyval.get(i, 0))
+        elif _width(t)[0] != _width(p)[0] or _width(t)[1] < _width(p)[1]:
+            # another kind (an integer for a float), or narrower than the callee takes: how it widens (a u8 the
+            # callee reads as s32) is the caller's type on MIPS and the callee's elsewhere. Wider than the callee
+            # takes is cut down the same everywhere.
+            note("argument-type", name, argument=i + 1, passed=t, declared=p, unsigned="zeroext" in raw_args[i])
+
+
 def word_thunk(tname, name, ret, params, pbyval, cret, args, abyval):
     """A thunk that lays the call's arguments out as MIPS o32 argument words (a struct passed by value as its
     words, read from memory, big-endian as the registers held them) and takes the callee's parameters from them."""
@@ -244,6 +284,15 @@ def adapt(text, report=None, types=None, byval=None):
             params.append(parse_arg(p + " %x")[0] if " " not in p.strip() else parse_arg(p)[0])
         ret = m.group(1).split()[-1]
         sigs[m.group(2)] = (ret, params, variadic)
+    # how often each value is named in each function: a call's result counts as taken only if something uses it
+    # (an unprototyped call's `%5 = call i32 ...` is there whether or not the C reads the value)
+    uses, counts = {}, None
+    for line in text.split("\n"):
+        if line.startswith("define "):
+            counts = uses.setdefault(re.search(r"@([\w.$]+)\(", line).group(1), {})
+        elif counts is not None:
+            for v in re.findall(r"%[\w.$]+", line):
+                counts[v] = counts.get(v, 0) + 1
     thunks, out_lines = {}, []
     current = []  # the enclosing function's parameters: [(type, name)]
     void_function = False
@@ -305,6 +354,10 @@ def adapt(text, report=None, types=None, byval=None):
         abyval = [byval_size(types, a) if "byval(" in a else 0 for a in raw_args]
         ret, params, variadic = sigs[name]
         pbyval = byval.get(name, {})
+        result = re.match(r"^\s*(%[\w.$]+) = ", line)
+        taken = bool(result) and uses.get(CALLER[0], {}).get(result.group(1), 0) > 1
+        classify(name, cret if taken else "void", args, raw_args, ret, params, variadic, "..." in cm.group(1),
+                 abyval, pbyval)
         if (any(abyval) or pbyval) and not variadic:
             key = ("words", name, cret, tuple(t for t, _ in args), tuple(abyval))
             if key not in thunks:
@@ -345,9 +398,6 @@ def adapt(text, report=None, types=None, byval=None):
                 tmpname = f"%port_a{i}_{len(out_lines)}"
                 loads.append(f"  {tmpname} = load i32, ptr {reg(i)}, align 4")
                 missing.append(("i32", tmpname))
-        if missing and REPORT is not None:
-            REPORT.append(f"{CALLER[0]} calls {name} with {len(args)} of its {len(params)} arguments: "
-                          f"the next {len(missing)} come from {CALLER[0]}'s own")
         args_full = args + [(t, v) for t, v in missing]
         unsigned = tuple("zeroext" in a for a in raw_args) + (False,) * len(missing)
         key = (name, cret, tuple(t for t, _ in args_full), unsigned)

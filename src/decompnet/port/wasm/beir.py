@@ -429,8 +429,14 @@ def main():
         from webir import rewrite
         result = rewrite(result, fixed, re.sub(r"\W", "_", os.path.basename(dst)))
     open(dst, "w").write(result)
+    # the calls whose C disagrees with the callee (adapt.note), one JSON record a line (calls.py reads them); none:
+    # no file, so a function whose C was put right doesn't keep its old ones
     if report:
-        open(dst + ".calls", "w").write("\n".join(report) + "\n")
+        import json
+        lines = dict.fromkeys(json.dumps(r, sort_keys=True) for r in report)
+        open(dst + ".calls", "w").write("\n".join(lines) + "\n")
+    elif os.path.exists(dst + ".calls"):
+        os.remove(dst + ".calls")
 
 
 if __name__ == "__main__":

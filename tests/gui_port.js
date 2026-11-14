@@ -31,9 +31,10 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.deepEqual(t.calls,['/api/port-readiness?slug=a']);
    assert.equal(t.c.$('portBlockers').children.length,2);
    const steps=t.c.$('portSteps').children;
-   assert.equal(steps.length,8,'eight steps');
+   assert.equal(steps.length,9,'nine steps');
    assert.match(steps[0].className,/part/);assert.equal(steps[0].children[1].children[0].children[1].textContent,'57%');
-   assert.ok(steps[7].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),'Play sits in its step');
+   assert.ok(steps[8].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),'Play sits in its step');
+   assert.equal(steps[6].children[1].children[0].children[1].textContent,'to do','calls: not built yet');
    assert.match(t.c.$('portOverall').textContent,/^\d+%$/);
    assert.match(t.c.$('portKit').textContent,/libultraship and Torch/);
    assert.ok(t.c.$('portFacts').children.some(r=>r.children[1].textContent.includes('F3DEX.Rej 2.05')));
@@ -92,6 +93,18 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(rows.some(r=>r.startsWith('Linked for a PC: 5 symbols needed and defined nowhere, 1 defined twice; 1,300 pieces of zeroed memory defined in port/src (2 functions')),rows.join('\n'));
    assert.ok(rows.some(r=>r.includes('renamed')&&r.includes('func_80000580 (now draw_hud), ...')));
    assert.ok(rows.some(r=>r.includes('defined twice')&&r.includes('tbl (a, b)')));}
+  {const t=setup();t.c.S.tab='porting';
+   t.c.reply=async()=>({...report,calls:{functions:2,calls:3,kinds:[{kind:'void-result',
+     about:'takes a result from a function its C declares void',why:'declare its return type',calls:1,functions:1,
+     examples:['start_yaw \u2192 wrapper']},{kind:'argument-type',about:'passes an argument of another width',
+     why:'how it widens differs',calls:2,functions:1,examples:['draw \u2192 set_uv (argument 3: unsigned i8 for i32)']}]}});
+   await t.run('loadPortReadiness()');
+   const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
+   assert.ok(rows.some(r=>r.startsWith('Matched but suspicious: 3 calls in 2 functions disagree')),rows.join('\n'));
+   assert.ok(rows.some(r=>r.includes('declares void')&&r.includes('start_yaw \u2192 wrapper')));
+   const step=t.c.$('portSteps').children[6];
+   assert.equal(step.children[1].children[0].children[0].textContent,'Calls agree with what they call');
+   assert.equal(step.children[1].children[0].children[1].textContent,'71%','5 of 7 functions without a disagreeing call');}
   {const t=setup();t.c.S.tab='porting';const followed=[];t.c.followJob=async(job)=>{followed.push(job);};
    t.c.reply=async url=>url==='/api/rename-calls'?{job:'r1'}:report;
    await t.run('fixRenamedCalls()');
@@ -120,7 +133,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.equal(t.c.$('portStop').hidden,false);assert.equal(t.c.$('portStop').textContent,'Stop the build');
    await t.run('playGame()');assert.deepEqual(t.calls.filter(u=>u==='/api/play'),['/api/play'],'a second click starts nothing');
    await t.run('loadPortReadiness()');
-   const body=t.c.$('portSteps').children[7].children[1].children;
+   const body=t.c.$('portSteps').children[8].children[1].children;
    assert.ok(body.includes(log._workStatus)&&body.includes(log._workBar)&&body.includes(log),'status, bar and log move together');
    assert.ok(body.indexOf(log._workBar)<body.indexOf(log));
    await t.run('stopGame()');assert.deepEqual(cancels,['p3'],'Stop cancels the build');
@@ -167,7 +180,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
      {id:'n64modernruntime',name:'N64ModernRuntime',summary:'Native.',built:false,missing:[],playable:false}];
    t.c.reply=async url=>url==='/api/play'?{job:'p3'}:{...report,runtimes};
    await t.run('loadPortReadiness()');
-   const play=t.c.$('portSteps').children[7].children[1];
+   const play=t.c.$('portSteps').children[8].children[1];
    const choice=play.children.find(c=>c.className==='port-runtimes');
    assert.ok(choice,'the Play step offers its runtimes');
    const options=choice.children.slice(1).map(l=>({radio:l.children[0],status:l.children[1].children[2].textContent}));
@@ -178,5 +191,5 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.match(options[2].status,/steps it needs are done; .*isn't in decompdecomp yet/);
    await t.run('playGame()');
    assert.equal(t.bodies[t.calls.indexOf('/api/play')].runtime,'wasm','Play asks for the chosen runtime');}
-  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
+  console.log('Port readiness panel: closed, read, stale reply, failure, asset map, extraction, link, suspicious calls, renamed calls, play, runtimes, the build bar, Stop, reattaching and export passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

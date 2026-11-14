@@ -539,6 +539,11 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
         raise NetworkError(f"{len(failed)} functions couldn't be placed at their addresses: " + "; ".join(failed[:3]))
     objects = linked(out / "o", sources)
     _write(out / "objects.txt", "\n".join(str(p) for p in objects) + "\n")
+    from . import calls
+    suspicious = calls.summary(calls.write(out, objects))
+    if suspicious["calls"]:
+        log(f"{suspicious['calls']} calls in {suspicious['functions']} functions disagree with the function they call "
+            "(matched, but only the original compiler sees them right): Port readiness lists them")
 
     progress.start(STEPS[4])
     log(f"linking {len(objects)} functions")

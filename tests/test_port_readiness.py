@@ -188,3 +188,26 @@ def test_a_native_runtime_is_closed_until_decompdecomp_builds_on_it():
     pointers = done | {"pc": {"failed": 0, "warned": 4}}  # 64-bit ports lose half of each cast pointer
     assert runtimes(kit, pointers)[2]["missing"] == ["Compiles for a PC"]
     assert runtimes(None, done) == []
+
+
+def test_calls_that_disagree_with_their_callee_come_from_the_last_build(project):
+    """Matched but suspicious: the last WebAssembly build's calls.json, read from the save; nothing before a build."""
+    from decompnet.app import saves
+    net, _ = project
+    with net.progress.view():
+        assert readiness(net, "game")["calls"] is None
+    repo = saves.default_folder(net, "game")
+    (repo / "progress" / "src").mkdir(parents=True)
+    (repo / "progress" / "decompdecomp.json").write_text("{}")
+    build = repo / "port" / "wasm" / "build"
+    build.mkdir(parents=True)
+    (build / "calls.json").write_text(json.dumps({"update": [
+        {"kind": "void-result", "caller": "update", "callee": "helper"},
+        {"kind": "extra-arguments", "caller": "update", "callee": "helper", "passed": 2, "declared": 1}]}))
+    with net.progress.view():
+        report = readiness(net, "game")
+    assert (report["calls"]["functions"], report["calls"]["calls"]) == (1, 2)
+    text = " ".join(report["blockers"])
+    assert "2 calls in 1 functions disagree with the function they call" in text
+    assert "takes a result from a function its C declares void" in text
+    assert "update → helper" in describe(report) and "update → helper (2 of 1)" in describe(report)
