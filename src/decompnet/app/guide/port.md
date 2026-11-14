@@ -71,3 +71,8 @@ To see what the real game does there, `watch_in_emulator` runs the user's ROM in
 (N64): kind="write" names the code that writes an address, kind="call" what a function is called with and from
 where. Without input the game sits at its title; a controller script ("vi:A,vi:START,...", 2 VIs a frame for a
 30 fps game) takes it further. A run that takes long answers "still running": ask again with the same arguments.
+
+`compare_behaviour(function)` checks a matched function for exactly this: its first real calls, recorded on the
+console, run through its recompiled C (the original's instructions) and its decompiled C as the port builds it, with
+what differs ($v0, memory by symbol). A difference is the C doing something the original doesn't once another
+compiler builds it: put its declarations, types or return right while it still matches, then ask again.

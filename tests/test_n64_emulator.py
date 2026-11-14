@@ -62,6 +62,7 @@ def test_a_run_hands_the_frontend_its_requests_and_keeps_a_cut_short_report(tmp_
                       'echo "stopped $EMU_VIS" >&2\n')
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setattr(emulator, "installed", lambda: tmp_path)
+    monkeypatch.setattr(emulator, "current", lambda folder, log=print: folder)  # never a real install from a test
     rom = tmp_path / "game.z64"
     rom.write_bytes(bytes(64))
     seen = []

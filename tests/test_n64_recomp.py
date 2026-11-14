@@ -124,3 +124,28 @@ def test_recompile_writes_c_that_compiles(project):
     assert "RECOMP_FUNC void recomp_entrypoint(" in text and "RECOMP_FUNC void listed(" in text
     assert "func_80000440(rdram, ctx);" in text and "RECOMP_FUNC void func_80000440(" in text
     assert recomp.load(root)["files"] == summary["files"]
+
+
+def _state(path, sp=0x80100000, args=(0, 0, 0, 0), fpr=None):
+    gpr = [0] * 32
+    gpr[29] = sp | 0xFFFFFFFF00000000
+    for i, a in enumerate(args):
+        gpr[4 + i] = a
+    path.write_text("80000400 " + " ".join(f"{g:016X}" for g in gpr) + " 0 0 "
+                    + " ".join(f"{w:08X}" for w in (fpr or [0] * 32)) + "\n")
+    return path
+
+
+@pytest.mark.skipif(toolchains.installed("n64recomp") is None, reason="needs the n64recomp tool")
+def test_one_recorded_call_runs_through_the_recompiled_c(project, tmp_path):
+    """The harness runs one recompiled function from a recorded state: `listed` calls the function the split didn't
+    list, which returns 7 in $v0, and jumps to its own return."""
+    net, root = project
+    recompile.run(net, "game", log=lambda *a: None)
+    program = recomp.harness(recomp.folder(root), 0x80000400, log=lambda *a: None)
+    rdram = tmp_path / "in.rdram"
+    rdram.write_bytes(bytes(4 << 20))
+    result = recomp.run_one(program, 0x80000420, _state(tmp_path / "in.state"), rdram, tmp_path / "out")
+    assert result["ok"] and result["v0"] == 7 and result["runtime"] == [], result
+    assert (tmp_path / "out.rdram").stat().st_size == 4 << 20
+    assert recomp.run_one(program, 0x80000999, tmp_path / "in.state", rdram, tmp_path / "x")["ok"] is False

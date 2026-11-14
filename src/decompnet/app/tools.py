@@ -387,6 +387,11 @@ def _check_for_pc(net: RomNetwork, slug: str, function: str, source: str = "", e
     return port_fix.check(net, slug, function, source, edits=edits)
 
 
+def _compare_behaviour(net: RomNetwork, slug: str, *args) -> str:
+    from .behaviour import answer
+    return answer(net, slug, *args)
+
+
 def _watch_in_emulator(net: RomNetwork, slug: str, *args) -> str:
     from .emulator_watch import watch
     return watch(net, slug, *args)
@@ -630,6 +635,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
     "port_readiness": lambda net, agent, slug: _port_readiness(net, slug),
+    "compare_behaviour": lambda net, agent, slug, function, calls=3, vis=3600, from_vi=0, input="",
+        expansion_pak=False: _compare_behaviour(net, slug, function, calls, vis, from_vi, input, expansion_pak),
     "watch_in_emulator": lambda net, agent, slug, target, kind="write", vis=600, from_vi=0, input="", length=4,
         max_hits=40, expansion_pak=False: _watch_in_emulator(net, slug, target, kind, vis, from_vi, input, length,
                                                              max_hits, expansion_pak),
@@ -667,7 +674,7 @@ READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
                        "port_readiness", "get_data_unit", "check_for_pc", "watch_in_emulator"})
 
-ROM_ONLY = {"port_readiness","watch_in_emulator","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
+ROM_ONLY = {"port_readiness","watch_in_emulator","compare_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
@@ -1328,6 +1335,19 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         """What still stands between this game and a native PC port (docs/PORTING.md): code without C, library
         code, graphics microcode, data reached by address, addresses written as numbers, raw blobs. Read-only."""
         return await run(ctx, "port_readiness")
+
+    @tool
+    async def compare_behaviour(ctx: Context, function: str, calls: int = 3, vis: int = 3600, from_vi: int = 0,
+                                input: str = "", expansion_pak: bool = False) -> str:
+        """Does a function behave like the original once built by another compiler? Records its first `calls` real
+        calls (1-8) in the console's reversing emulator from your ROM (N64 for now), runs each through its
+        recompiled C (the original's instructions) and through its decompiled C as the port builds it, and compares
+        $v0/$v1/$f0 and the memory each leaves, named by symbol. For matched C that a port runs differently (a
+        result from a void function, a wrong prototype or type). vis/from_vi/input as in watch_in_emulator: the game
+        must reach the function (without input it sits at its title). The first run builds a lot: it answers
+        "still running"; call again with the same arguments. Changes nothing in the project."""
+        return await run(ctx, "compare_behaviour", function=function, calls=calls, vis=vis, from_vi=from_vi,
+                         input=input, expansion_pak=expansion_pak)
 
     @tool
     async def watch_in_emulator(ctx: Context, target: str, kind: str = "write", vis: int = 600, from_vi: int = 0,

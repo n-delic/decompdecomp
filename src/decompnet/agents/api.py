@@ -627,6 +627,14 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                                           "required": ["old", "new"]}})),
         "compile_data": ("Judge C defining one data symbol: kept only if it holds the game's bytes there, all of it.",
                          s(name=st("data symbol", True), source=st("C defining it", True))),
+        "compare_behaviour": ("Does a function behave like the original in a port? Records its first real calls in "
+                              "the reversing emulator (N64), runs each through its recompiled and decompiled C, and "
+                              "compares results and memory. Slow the first time: 'still running' means call again "
+                              "with the same arguments.",
+                              s(function=st("function", True), calls=it("1-8 (3)"),
+                                vis=it("how far to run, VIs, 60 a second (3600)"), from_vi=it("record from this VI"),
+                                input=st("controller script vi:A+START,...; none: the game sits at its title"),
+                                expansion_pak=bo("8 MB instead of 4"))),
         "watch_in_emulator": ("Run the user's ROM in the console's reversing emulator (N64): kind=write lists the code "
                               "writing target (data symbol or hex address), kind=call each call of target (a function) "
                               "with a0-a3. For C that matches but behaves differently in a port. A long run says "

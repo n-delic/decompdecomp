@@ -6,6 +6,7 @@
      watch <vi> <pc> <ra> <a0> <a1> <a2> <a3> <v0>        a write breakpoint hit (before the store)
      break <vi> <pc> <ra> <a0> <a1> <a2> <a3> <v0> <w0> <w1> <w2> <w3>   an execution breakpoint hit, with the four
                                              words at $a0
+     recorded <vi> <n> <path>                a call recorded (EMU_RECORD): <path>.state and <path>.rdram
      stopped <vi>                            the run ended
 
    usage: frontend core rsp input video rom
@@ -17,7 +18,10 @@
    EMU_MAX=n           report at most n hits (200)
    EMU_8MB=1           the Expansion Pak's 8 MB (default 4 MB, what the WebAssembly port's host gives a game)
    EMU_CONFIG=folder   the core's configuration folder (a scratch one: nothing is saved between runs)
-   EMU_INPUT           the input plugin's script (input.c) */
+   EMU_INPUT           the input plugin's script (input.c)
+   EMU_RECORD=dir:n    at the first n execution-breakpoint hits (from EMU_FROM), the machine's state: dir/<i>.state
+                       (one line: pc, the 32 GPRs, hi and lo as 64-bit hex, then the 32 FPRs' single-precision words)
+                       and dir/<i>.rdram (RDRAM, big-endian); the run stops after the n-th */
 #include <dlfcn.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -40,6 +44,7 @@ static unsigned int stop_at, report_from;
 static unsigned long hits, max_hits = 200;
 static int expansion;
 static unsigned int breaks[64], nbreaks;
+static unsigned long recorded;
 
 static void debug_cb(void *context, int level, const char *message) {
     (void)context;
@@ -116,9 +121,42 @@ static void go_on(void) { set_run_state(M64P_DBG_RUNSTATE_RUNNING); step(); }
 /* breakpoints go in once the core has set up its memory map (adding a memory breakpoint changes it) */
 static void dbg_init(void) { add_breakpoints(); go_on(); }
 static void dbg_vi(void) {}
+/* EMU_RECORD: the state a call starts from, for running the same call elsewhere (app/behaviour.py) */
+static void record(unsigned int pc, unsigned int vi, int64_t *r) {
+    char dir[3072];
+    const char *spec = getenv("EMU_RECORD"), *colon = strrchr(spec, ':');
+    unsigned long most = colon ? strtoul(colon + 1, NULL, 10) : 1;
+    if (recorded >= most) return;
+    snprintf(dir, sizeof dir, "%.*s", colon ? (int)(colon - spec) : (int)strlen(spec), spec);
+    char path[4096];
+    snprintf(path, sizeof path, "%s/%lu.state", dir, recorded);
+    FILE *f = fopen(path, "w");
+    if (!f) { fprintf(stderr, "error can't write %s\n", path); return; }
+    int64_t *hi = cpu_data(M64P_CPU_REG_HI), *lo = cpu_data(M64P_CPU_REG_LO);
+    float **fpr = cpu_data(M64P_CPU_REG_COP1_SIMPLE_PTR);
+    fprintf(f, "%08X", pc);
+    for (int i = 0; i < 32; i++) fprintf(f, " %016llX", (unsigned long long)r[i]);
+    fprintf(f, " %016llX %016llX", (unsigned long long)(hi ? *hi : 0), (unsigned long long)(lo ? *lo : 0));
+    for (int i = 0; i < 32; i++) {
+        uint32_t bits = 0;
+        if (fpr && fpr[i]) memcpy(&bits, fpr[i], 4);
+        fprintf(f, " %08X", bits);
+    }
+    fputc('\n', f);
+    fclose(f);
+    snprintf(path, sizeof path, "%s/%lu.rdram", dir, recorded);
+    dump(path, vi);
+    snprintf(path, sizeof path, "%s/%lu", dir, recorded);
+    fprintf(stderr, "recorded %u %lu %s\n", vi, recorded, path);
+    if (++recorded >= most) do_command(M64CMD_STOP, 0, NULL);
+}
+
 static void dbg_update(unsigned int pc) {
     int64_t *r = cpu_data(M64P_CPU_REG_REG);
     unsigned int vi = vi_count();
+    if (r && vi >= report_from && getenv("EMU_RECORD"))
+        for (unsigned int i = 0; i < nbreaks; i++)
+            if (breaks[i] == pc) record(pc, vi, r);
     if (r && vi >= report_from && hits < max_hits) {
         int exec = 0;
         for (unsigned int i = 0; i < nbreaks; i++) exec |= breaks[i] == pc;
