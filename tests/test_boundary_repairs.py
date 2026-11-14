@@ -409,3 +409,11 @@ def test_agents_cannot_split_a_function_where_the_first_part_runs_on_into_the_se
         with pytest.raises(NetworkError,match='report_boundary'):net.split_function(agent,'game','merged',f'0x{BASE+at:08X}')
         assert net._function('merged','game')['size']==len(words)*4
         assert net.split_rom_by_you('game','merged',f'0x{BASE+at:08X}').startswith('✅')  # a person decides
+
+
+def test_safe_fixes_never_join_a_piece_that_holds_another_function(tmp_path,monkeypatch):
+    # The piece continues the head's code, returns, then a separate function opens its own frame inside it.
+    net,_=layout(tmp_path,monkeypatch,[('head',[FRAME,LOAD],'open'),('piece',[LOAD,JR_RA,UNFRAME,FRAME,LOAD,JR_RA,UNFRAME],'open')])
+    result=repair.apply_safe(net,'game')
+    assert ('head','join_previous','head') not in [(f['flagged'],f['action'],f['function']) for f in result['fixed']]
+    assert net._function('piece','game')['gone_mark'] is None and net._function('head','game')['size']==8
