@@ -23,6 +23,7 @@ from . import App
 def register(app: App) -> None:
     net, mcp, manager, jobs = app.net, app.mcp, app.manager, app.jobs
     settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
+    comparison_jobs: dict[str, str] = {}
 
     def with_project(fn):
         async def handler(request: Request) -> Response:
@@ -113,6 +114,29 @@ def register(app: App) -> None:
     def p_compilermap(slug, request, data):
         """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
         answer is old. POST: check again now (the survey and the applied ranges)."""
+        if request.method == "POST" and data.get("apply_compiler_result"):
+            fn, tc, flags = data.get("function"), data.get("toolchain"), data.get("flags")
+            if not isinstance(fn, str) or not isinstance(tc, str) or not isinstance(flags, list) or not all(
+                    isinstance(flag, str) for flag in flags):
+                raise NetworkError("Choose a tested function and compiler profile.")
+            return net.apply_compiler_test_result(slug, fn, tc, flags)
+        if request.method == "POST" and data.get("find_better_settings"):
+            options = {key: data.get(key, default) for key, default in (
+                ("flags_only", False), ("used_profiles_only", False),
+                ("untested_only", True), ("auto_apply", False))}
+            with jobs._lock:
+                existing = comparison_jobs.get(slug)
+                if existing and jobs.jobs.get(existing, {}).get("state") == "running":
+                    return {"job": existing}
+                jid = jobs.start("compiler settings comparison", lambda log:
+                                 net.find_better_compiler_settings(slug, log=log, **options))
+                comparison_jobs[slug] = jid
+            return {"job": jid}
+        if request.query_params.get("compiler_results") == "1":
+            active = comparison_jobs.get(slug)
+            results = net.compiler_comparison_results(slug)
+            return {"results": results, "ran": bool(results) or active is not None,
+                    "job": active if active and jobs.jobs.get(active, {}).get("state") == "running" else None}
         return net.compiler_answer(slug, check_now=request.method == "POST")
 
     def p_open(slug, request, data):
