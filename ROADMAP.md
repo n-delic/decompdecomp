@@ -1059,8 +1059,18 @@ Left:
   fog: the RSP's fog alpha per vertex (G_FOG, G_MW_FOG) and the fog colour, which the game's races use for most of
   what they draw (measured: the RDP states it draws with, by pixels). Anti-aliasing as the console does it: the
   RDP's coverage per pixel (8 samples), a mesh's shared edges blended by their coverages, and the VI's filter softening
-  silhouettes as the frame is shown (about 10% slower). Not drawn: dithering; no
-  state the game uses needs TEXEL1, mipmaps, IA16 palettes or decal depth. S2DEX sprites (G_OBJ_SPRITE) turn and scale
+  silhouettes as the frame is shown (about 10% slower). Then what other games rely on, from a list of the
+  graphics fixes Miyoo64's fifteen handheld ports needed, checked against the renderer (tests on display lists
+  built in Python, `tests/test_n64_port_render_gbi.py`): Fast3D, F3DEX 1.x (F3DLX, F3DLP) and S2DEX 1.x told apart
+  by their signatures and decoded with their own opcodes, G_LOAD_UCODE switching microcode inside a list,
+  G_BRANCH_Z, G_MW_MATRIX; lights in their own slots (F3DEX2's LIGHT_1 at offset 48: every light was one slot
+  late); a shared edge's pixels drawn once; TEXEL1, mip levels by the level of detail, detail and sharpen, every
+  combiner input; mirroring inside a clamp; depth in the game's own z image in the RDP's format (games draw into
+  it and read it), primitive depth and decal mode; G_TEXTURE_GEN; IA16 palettes; alpha as coverage; dithering;
+  8- and 32-bit colour images; the VI's mode (the frame at its size, gamma, the dedither and divot filters). Not
+  yet: Diddy Kong Racing's F3DDKR (its signature isn't known here, so it can't be recognised), lines (G_LINE3D),
+  the RDP's fixed-point arithmetic (floats here: compare with angrylion's renderer frame by frame), which
+  cycle's combiner one-cycle mode reads (the first, here). S2DEX sprites (G_OBJ_SPRITE) turn and scale
   with the 2D matrix (its rev counter needle); its rectangles (G_OBJ_RECTANGLE, _R) are drawn as before. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash

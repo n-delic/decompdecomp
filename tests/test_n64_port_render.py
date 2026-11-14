@@ -73,8 +73,8 @@ int main(int argc, char **argv) {
         ram[SPRITE + 20] = 2; ram[SPRITE + 21] = 0; ram[SPRITE + 22] = 0; /* CI4, palette 0 */
         gfx(0xFF100000u | 319, 0x80000000u | FB);
         gfx(0xEF000000u, 0);
-        gfx(0xFC000000u | 1 << 20 | 6 << 15 | 1 << 12 | 6 << 9 | 15 << 5 | 31,
-            15u << 28 | 7 << 15 | 7 << 12 | 7 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 7 << 3);
+        gfx(0xFC000000u | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,
+            15u << 28 | 1 << 15 | 7 << 12 | 1 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 7 << 3);
         gfx(0xFD100000u, 0x80000000u | TLUT);
         gfx(0xF5000100u, 7u << 24);
         gfx(0xF0000000u, 7u << 24 | 15u << 14);
@@ -127,8 +127,8 @@ int main(int argc, char **argv) {
     gfx(0xEF000000u | (persp ? 0x80000 : 0) | (bilerp ? 0x2000 : 0) | (fog ? 1 << 20 : 0),
         fog ? 3u << 30 | 2u << 26 | 1u << 20 | 1u << 16                 /* cycles, perspective, filter, blender */
             : pass ? 0x4000u | 3u << 26 | 2u << 18 | 3u << 24 | 2u << 16 : 0);
-    gfx(0xFC000000u | 1 << 20 | 6 << 15 | 1 << 12 | 6 << 9 | 15 << 5 | 31,  /* TEXEL0, then the combined colour */
-        15u << 28 | 7 << 15 | 7 << 12 | 7 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 7 << 3);
+    gfx(0xFC000000u | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,  /* D = TEXEL0, then the combined colour */
+        15u << 28 | 1 << 15 | 7 << 12 | 1 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 7 << 3);
     if (fog) {
         gfx(0xF8000000u, 0x0000FFFFu);                                      /* G_SETFOGCOLOR: blue */
         gfx(0xDB080000u, 0x00000080u);                                      /* G_MW_FOG: multiplier 0, offset 128 */

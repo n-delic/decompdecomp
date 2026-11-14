@@ -388,10 +388,14 @@ void w2c_env_osViSetEvent(struct w2c_env *e, u32 mq, u32 msg, u32 every) {
     LOG("osViSetEvent(%08X, every %u)", mq, every);
     vi.queue = mq; vi.msg = msg; vi.every = every ? every : 1;
 }
-void w2c_env_osViSetMode(struct w2c_env *e, u32 mode) { (void)e; LOG("osViSetMode(%08X)", mode); }
-void w2c_env_osViSetYScale(struct w2c_env *e, f32 s) { (void)e; (void)s; }
+/* The VI's mode, Y scale and filters go to the renderer (render.c), which shows each frame at its size. */
+void port_vi_mode(uint32_t mode);
+void port_vi_yscale(float s);
+void port_vi_features(uint32_t f);
+void w2c_env_osViSetMode(struct w2c_env *e, u32 mode) { (void)e; LOG("osViSetMode(%08X)", mode); port_vi_mode(mode); }
+void w2c_env_osViSetYScale(struct w2c_env *e, f32 s) { (void)e; port_vi_yscale(s); }
 void w2c_env_osViBlack(struct w2c_env *e, u32 on) { (void)e; (void)on; }
-void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) { (void)e; (void)f; }
+void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) { (void)e; port_vi_features(f); }
 void port_frame_shown(uint32_t fb, unsigned long n); /* render.c: saves it when asked */
 void w2c_env_viSetSwapBuffer(struct w2c_env *e, u32 fb) { (void)e; frame_buffer = fb; swaps++; port_frame_shown(fb, swaps); }
 
