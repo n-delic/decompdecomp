@@ -489,6 +489,16 @@ class Network:
             self._event(db, row["project_id"], row["agent_id"], "expired", row["name"])
         db.execute("DELETE FROM claims WHERE expires_at < ?", (now,))
 
+    def _drop_dead_claims(self, db, agent_id: int, alive: tuple[str, ...] = ("open",)) -> None:
+        """Drop the claims an agent holds on functions it can no longer work through them (#283): most set-aside
+        paths (Check again's notes, ROM twins, a console's set-aside, a save's restore) change the status but keep
+        the claim, and renewing it handed the agent a function it couldn't work on while keeping it from claiming
+        another. A claim is a lease on work in one of `alive`'s statuses (polishing holds matched functions), so a
+        claim outside them is dead, never a hold."""
+        marks = ",".join("?" * len(alive))
+        db.execute(f"DELETE FROM claims WHERE agent_id=? AND function_id IN "
+                   f"(SELECT id FROM functions WHERE status NOT IN ({marks}))", (agent_id, *alive))
+
     def _event(self, db, project_id, agent_id, kind, detail) -> None:
         db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
                    (project_id, agent_id, kind, detail, time.time()))
@@ -606,7 +616,7 @@ class Network:
         if function:
             return ""
         held = self.store.one("SELECT f.name, c.claimed_at FROM claims c JOIN functions f ON f.id=c.function_id "
-                              "WHERE c.agent_id=?", agent.id)
+                              "WHERE c.agent_id=? AND f.status='open'", agent.id)
         if held is None or not self.store.one(
                 "SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND created_at >= ?",
                 agent.id, held["name"], held["claimed_at"] or 0):
@@ -703,6 +713,8 @@ class Network:
         if strategy not in STRATEGIES:
             raise NetworkError(f"strategy must be one of {', '.join(STRATEGIES)}")
         now = time.time()
+        with self.store.tx() as db:  # its own transaction: a claim by name of the set-aside function still drops it
+            self._drop_dead_claims(db, agent.id)  # #283: a function set aside while it held it isn't a hold
         with self.store.tx() as db:
             self._expire_claims(db)
             held = db.execute("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
@@ -1044,6 +1056,8 @@ class Network:
             scratch = fn["status"] == "matched"
             if not scratch:
                 if claim is None:
+                    # #283: a claim left on a set-aside function isn't a hold (a polishing claim on a matched one is)
+                    self._drop_dead_claims(db, agent.id, ("open", "matched"))
                     held = db.execute("SELECT 1 FROM claims WHERE agent_id=?", (agent.id,)).fetchone()
                     if held:
                         raise NetworkError("you hold another claim; release it before working on a different function")
