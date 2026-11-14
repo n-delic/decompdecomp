@@ -164,6 +164,12 @@ branch, open and merge its pull request, tag a release, then bump the tag link i
 call the new code from the permuter here, in one pull request. What runs candidates stays in `app/`: compiling,
 scoring, the judge, workers, budgets, progress and the database. A permuter change that is only about running them
 needs no library release.
+Since 0.3.0 the permuter's rewrites are there: `permuter.py`, `app/permuter_local.py`,
+`app/permuter_initialization.py` and the generator `permuter_gen.py` with `permuter_capture.py`,
+`permuter_dependencies.py` and `permuter_formatting.py` are names for the library's modules. `app/permute.py` runs
+the library's `permuter_gen.py` by path, its helpers beside it. Don't add code to those alias files: change the
+library. The worker's restart check (`permuter_worker.WATCHED`) and `claim_stalls._repair_rules` read a name from
+the library when it lives there, so a moved module needs no new entry.
 
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
