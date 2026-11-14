@@ -361,7 +361,7 @@ def test_defined_region_gp_rel_is_refused_without_g0(tmp_path):
 def test_static_helper_in_the_functions_own_text_is_out_of_scope(tmp_path):
     """Scope limit: this change covers helpers and data the candidate keeps in its OTHER sections, not a static
     helper that shares the function's own .text. Such a helper the game doesn't name is refused, never silently
-    matched with its body unchecked; verifying same-.text helper bodies is left to a follow-up (review point 3)."""
+    matched with its body unchecked; verifying same-.text helper bodies is left to a follow-up."""
     src = ("int caller(int x);\n"
            "static int helper(int x) __attribute__((noinline));\n"
            "int caller(int x){ return helper(x) + 1; }\n"
@@ -386,3 +386,21 @@ def test_gp_rel_load_width_ignores_an_unused_array_element(tmp_path):
     obj, target, table, read = _defined_region_oracle(tmp_path, src, gp_datum=rom_datum)
     res = match.link(obj, "caller", target, table, read)
     assert res.exact, res.problems
+
+
+@_EE
+def test_gp_rel_load_width_takes_the_widest_reference(tmp_path):
+    """A .fclone helper that reads a static `g` first as one byte (lbu) and then as a word (lw), both $gp-relative, must compare all
+    four bytes: place_pointees keeps the widest width across every reference to the datum, not the first one's.
+    With the ROM's g = 44 00 00 00 against the clone's 0x11223344, the lw reads bytes the candidate does not have,
+    so the judge must reject it (a first-reference width of 1 would compare only 0x44 and report exact)."""
+    src = ("static union { int i; unsigned char c; } g = { 0x11223344 };\n"
+           "static int helper(int x) __attribute__((section(\".fclone\")));\n"
+           "static int helper(int x){ if (x) return g.c; return g.i; }\n"  # lbu g, then lw g (both $gp-relative)
+           "int caller(int x){ return helper(x); }\n")
+    rom_datum = (0x44).to_bytes(4, "little")
+    obj, target, table, read = _defined_region_oracle(tmp_path, src, gp_datum=rom_datum)
+    res = match.link(obj, "caller", target, table, read)
+    assert not res.exact
+    assert res.problems, "the datum must be compared (served at the judge's dest), not skipped"
+

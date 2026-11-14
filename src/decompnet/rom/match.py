@@ -290,7 +290,7 @@ class _Linker:
         """Place nested data from ROM pointers: a jump table's entries, and the HI16/LO16 address, $gp-relative
         datum, or jal target a submitted helper body carries. A helper sharing the function's own .text is out of
         scope (address() refuses it, never matching its body unchecked); this covers the candidate's other
-        sections (review point 3)."""
+        sections."""
         todo = list(self.data)
         while todo:
             shndx, off = todo.pop()
@@ -335,17 +335,17 @@ class _Linker:
                     dest = ((pc + 4) & 0xF0000000) | ((linked[k]["value"] & 0x03FFFFFF) << 2)
                 else:
                     dest = section_target("mips", linked, k) & 0xFFFFFFFF
+                if rtype == R_MIPS_GPREL16:  # the $gp load says how much of the datum it reads; keep the widest, as address() does
+                    w = _WIDTH.get(linked[k]["value"] >> 26)
+                    prev = self.widths.get(own, 0)
+                    self.widths[own] = None if w is None or prev is None else max(prev, w)
+                else:  # its address is used, so all of it matters
+                    self.widths[own] = None
                 if own in self.data:
                     if self.data[own] != dest:
                         self.problem(f"{sec.name}+0x{off + r['off']:X} points to conflicting ROM addresses")
                     continue
                 self.local_map[own] = self.data[own] = dest
-                if rtype == R_MIPS_GPREL16:  # the $gp load says how much of the datum it reads (address() does this for .text)
-                    w = _WIDTH.get(linked[k]["value"] >> 26)
-                    prev = self.widths.get(own, 0)
-                    self.widths[own] = None if w is None or prev is None else max(prev, w)
-                else:
-                    self.widths.setdefault(own, None)
                 todo.append(own)
 
     def significant(self, mine: bytes, addr: int, width: int | None) -> int:
