@@ -30,7 +30,7 @@ WATCHED = ("read_cache.py", "metadata_rows.py", "function_rows.py", "candidate_s
            "app/wrapper_families.py", "app/view_snapshots.py", "app/code_coverage.py", "app/progress.py", "app/saves.py", "app/permuter_worker.py", "permuter_claims.py", "app/permute.py", "app/local_claims.py", "app/permuter_initialization.py", "app/permuter_local.py",
            "app/snapshot_branch_repairs.py", "app/dispatch_specialization.py", "app/layout_frontiers.py", "app/targeted_debug_layout.py", "app/compiler_phase_repairs.py", "app/carrier_sequence_repairs.py", "app/record_layout_search.py", "app/compiler_phase_routing.py",
            "app/permuter_macro_effects.py", "app/inline_scheduling_repairs.py", "app/call_preparation_repairs.py", "app/repair_cleanup.py", "inline_helpers.py", "object_emission.py", "app/argument_mask_repairs.py", "app/store_result_repairs.py", "app/loop_weight_repairs.py", "app/local_flow.py",
-           "permuter_gen.py", "permuter_capture.py", "permuter_formatting.py")
+           "permuter_gen.py", "permuter_capture.py", "permuter_formatting.py", "app/maintenance_tasks.py")
 POLL_SECONDS = 1
 STOP_SECONDS = 5
 
@@ -75,6 +75,7 @@ class PermuterWorker:
         self._running: set[str] = set()
         self.explicit: set[str] = set()
         self._replies: dict[int, queue.Queue] = {}
+        self._task_status: dict[int, object] = {}  # task ident -> the app-side callback for its progress
         self._next_id = 0
         self._settings: dict = {}
         self.max_insns = 400
@@ -174,6 +175,57 @@ class PermuterWorker:
             with self._lock:
                 self._replies.pop(ident, None)
 
+    def run_task(self, kind: str, payload: dict, *, stop: threading.Event, on_status=None,
+                 promote: threading.Event | None = None):
+        """A background pass in the child (maintenance_tasks.TASKS), waiting for its result.
+
+        `on_status` gets the task's progress snapshots; `stop` cancels it there; `promote` (the user asked for it
+        now) is passed on once set. Raises maintenance_tasks.Unavailable when the child can't take it (paused for a
+        code update, or it can't start), so the caller runs it in the app."""
+        from .maintenance_tasks import Unavailable
+        if stop.is_set():
+            return {}
+        with self._lock:
+            if self._paused or self._closed.is_set():
+                raise Unavailable("the permuter worker is paused")
+            try:
+                self._ensure()
+            except (OSError, NetworkError) as error:
+                raise Unavailable(str(error)) from None
+            self._next_id += 1
+            ident = self._next_id
+            reply = self._replies[ident] = queue.Queue(maxsize=1)
+            if on_status is not None:
+                self._task_status[ident] = on_status
+            self._send("task", ident=ident, kind=kind, payload=payload)
+        cancelled = promoted = False
+        try:
+            while not self._closed.is_set():
+                try:
+                    message = reply.get(timeout=.2)
+                except queue.Empty:
+                    if stop.is_set() and not cancelled:
+                        self._send("cancel", ident=ident)
+                        cancelled = True
+                    if promote is not None and promote.is_set() and not promoted:
+                        self._send("promote", ident=ident)
+                        promoted = True
+                    if self._process is None or self._process.poll() is not None:
+                        raise NetworkError("The background worker stopped during a pass. It runs again with the next one.")
+                    continue
+                if "error" in message:
+                    if message.get("type") == "Cancelled" or stop.is_set():
+                        return {}
+                    raise NetworkError(message["error"] if message.get("type") == "NetworkError" else
+                                       "A background pass failed in its worker. Check permuter-worker.log; it runs again "
+                                       "with the next pass.")
+                return message.get("result") or {}
+            raise NetworkError("The background worker stopped during a pass. It runs again with the next one.")
+        finally:
+            with self._lock:
+                self._replies.pop(ident, None)
+                self._task_status.pop(ident, None)
+
     def _ensure(self) -> None:
         if self._process is not None and self._process.poll() is None:
             return
@@ -226,6 +278,13 @@ class PermuterWorker:
                         reply = self._replies.get(message.get("ident"))
                         if reply is not None:
                             reply.put_nowait(message)
+                    callback = (self._task_status.get(message.get("ident"))
+                                if message.get("kind") == "task_status" else None)
+                if callback is not None:
+                    try:
+                        callback(message.get("fields") or {})  # (outside the lock: it may touch app state)
+                    except Exception:
+                        log.exception("A background pass's progress could not be shown")
         finally:
             with self._lock:
                 if process is self._process:
@@ -370,6 +429,18 @@ def child(db_path: str, workspace: str) -> None:
             snapshot()
 
     threading.Thread(target=heartbeat, daemon=True, name="permuter-status").start()
+    task_promotes: dict[int, threading.Event] = {}
+
+    def task(ident, kind, payload, stop, promote):
+        from . import maintenance_tasks
+        try:
+            outcome = maintenance_tasks.run(net, kind, payload, stop, promote,
+                                            lambda fields: emit({"kind": "task_status", "ident": ident, "fields": fields}))
+            emit({"kind": "reply", "ident": ident, **outcome})
+        finally:
+            repair_stops.pop(ident, None)
+            repair_threads.pop(ident, None)
+            task_promotes.pop(ident, None)
 
     def repair(ident, slug, stop):
         try:
@@ -390,6 +461,11 @@ def child(db_path: str, workspace: str) -> None:
                 break
             if action == "configure":
                 permuter.configure(message["settings"])
+                try:  # (background passes here keep the app's own CPU limit for maintenance work)
+                    from . import maintenance
+                    maintenance.configure_cpu(message["settings"].get("maintenance_cpu_percent", 0))
+                except ValueError:
+                    pass
                 workers.configure(max(1, workers.clamp(message["settings"].get("worker_threads")) - 1))
             elif action == "links":
                 linked = set(message["slugs"])
@@ -409,6 +485,18 @@ def child(db_path: str, workspace: str) -> None:
             elif action == "cancel":
                 if stop := repair_stops.get(message["ident"]):
                     stop.set()
+            elif action == "task":
+                ident = message["ident"]
+                stop = repair_stops[ident] = threading.Event()
+                promote = task_promotes[ident] = threading.Event()
+                thread = threading.Thread(target=task, args=(ident, message["kind"], message.get("payload") or {},
+                                                             stop, promote),
+                                          daemon=True, name=f"maintenance-{message['kind']}")
+                repair_threads[ident] = thread
+                thread.start()
+            elif action == "promote":
+                if promote := task_promotes.get(message["ident"]):
+                    promote.set()
             snapshot()
     finally:
         stopped.set()
