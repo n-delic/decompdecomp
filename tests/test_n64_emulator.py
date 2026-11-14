@@ -1,0 +1,93 @@
+"""The reversing emulator (consoles/n64/emulator): its pinned build, the frontend's report, RDRAM comparisons, and
+a real run on the user's own ROM when the tool is installed and DECOMP_TEST_N64_ROM names one (CI has neither)."""
+import os
+import stat
+import sys
+
+import pytest
+
+from decompnet import toolchains
+from decompnet.consoles.n64 import emulator
+
+
+def test_the_emulator_is_pinned_and_built_from_source():
+    tc = toolchains.get("mupenre")
+    assert tc.build == "mupenre" and "cmake" in tc.requires and tc.binary_name == "mupenre-frontend"
+    intos = [p["into"] for p in tc.parts]
+    assert intos == ["source/core", "source/core/libRetroReversing", "source/rsp-hle", "source/sdl2", "source/libpng"]
+    for part in tc.parts:
+        assert len(part["sha256"]) == 64 and part["file"].startswith("mupenre-")
+        assert "windows-x86_64" not in part["platforms"]  # the frontend uses dlopen: Linux and macOS only
+    for name in ("frontend.c", "input.c", "video.c"):
+        assert (emulator.HERE / name).is_file()
+
+
+def test_the_frontends_report_is_read():
+    log = ("core: Unable to open rom database file '(null)'.\n"
+           "watch 2452 8002DC78 8002DB3C 00000001 00000000 802A4594 00000003 802A4594\n"
+           "break 2452 8002E148 80023100 800B3418 802C88EC 800B3450 801C16C0 00000000 00000800 10001C1C 802C7EC0 00000000\n"
+           "dumped 2500 /tmp/a b/vi2500.bin\n"
+           "stopped 2525\n")
+    run = emulator.parse(log)
+    assert run.vis == 2525 and run.dumps == {2500: emulator.Path("/tmp/a b/vi2500.bin")}
+    watch, brk = run.hits
+    assert (watch.kind, watch.vi, watch.pc, watch.ra, watch.v0, watch.words) == ("watch", 2452, 0x8002DC78, 0x8002DB3C,
+                                                                                0x802A4594, ())
+    assert brk.kind == "break" and brk.args[0] == 0x800B3418 and brk.words == (0x800, 0x10001C1C, 0x802C7EC0, 0)
+    assert run.errors == ["core: Unable to open rom database file '(null)'."]
+
+
+def test_differences_group_nearby_words_at_console_addresses():
+    a = bytearray(0x1000)
+    b = bytearray(a)
+    b[0x100:0x104] = b"\x3f\x80\x00\x00"
+    b[0x108:0x10C] = b"\x00\x00\x00\x01"  # within 16 bytes: the same range
+    b[0x800:0x804] = b"\xbf\x80\x00\x00"
+    assert emulator.differences(bytes(a), bytes(b), 0x80000000, 0x80001000) == [
+        (0x80000100, 0x8000010C, 2), (0x80000800, 0x80000804, 1)]
+    assert emulator.differences(bytes(a), bytes(b), 0x80000400, 0x80001000) == [(0x80000800, 0x80000804, 1)]
+    assert emulator.word(bytes(b), 0x80000800) == 0xBF800000
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in frontend is a shell script")
+def test_a_run_hands_the_frontend_its_requests_and_keeps_a_cut_short_report(tmp_path, monkeypatch):
+    """A stand-in frontend: what the runner passes in, and a run cut short by its timeout (a game that never starts
+    its video interface counts no VIs) still returns the hits reported until then."""
+    script = tmp_path / "mupenre-frontend"
+    script.write_text("#!/bin/sh\n"
+                      'echo "args $# $5" >&2\n'
+                      'echo "env $EMU_VIS $EMU_WATCH $EMU_BREAK $EMU_DUMP $EMU_8MB" >&2\n'
+                      'echo "break 0 80000400 0 0 0 0 0 0 1 2 3 4" >&2\n'
+                      'if [ "$EMU_VIS" = 9 ]; then sleep 30; fi\n'
+                      'echo "stopped $EMU_VIS" >&2\n')
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(emulator, "installed", lambda: tmp_path)
+    monkeypatch.setattr(emulator, "current", lambda folder, log=print: folder)  # never a real install from a test
+    rom = tmp_path / "game.z64"
+    rom.write_bytes(bytes(64))
+    seen = []
+    real = emulator.parse
+    monkeypatch.setattr(emulator, "parse", lambda log: (seen.append(log), real(log))[1])
+    run = emulator.run(rom, 3, watches=[(0x802A45C8, 4)], breaks=[0x8002E148], dumps={2: tmp_path / "d.bin"},
+                       expansion_pak=True, timeout=20)
+    assert run.vis == 3 and not run.timed_out and run.hits[0].pc == 0x80000400
+    assert f"args 5 {rom}" in seen[-1]
+    assert f"env 3 2A45C8:4 8002E148 2:{tmp_path / 'd.bin'} 1" in seen[-1]  # watches physical, breaks virtual
+    cut = emulator.run(rom, 9, timeout=2)
+    assert cut.timed_out and cut.vis == 0 and cut.hits[0].words == (1, 2, 3, 4)
+
+
+ROM = os.environ.get("DECOMP_TEST_N64_ROM", "")
+
+
+@pytest.mark.skipif(toolchains.installed("mupenre") is None or not os.path.isfile(ROM),
+                    reason="needs the mupenre tool and DECOMP_TEST_N64_ROM set to your own N64 ROM")
+def test_your_rom_runs_the_same_twice_and_stops_at_its_entry_point(tmp_path):
+    entry = int.from_bytes(open(ROM, "rb").read(12)[8:12], "big")
+    first = emulator.run(ROM, 60, dumps={60: tmp_path / "a.bin"}, timeout=300)
+    again = emulator.run(ROM, 60, dumps={60: tmp_path / "b.bin"}, timeout=300)
+    assert first.vis == again.vis == 60
+    a, b = (tmp_path / "a.bin").read_bytes(), (tmp_path / "b.bin").read_bytes()
+    assert len(a) == 4 << 20 and a == b, "the same run every time (no randomised interrupts)"
+    hit = emulator.run(ROM, 2, breaks=[entry], max_hits=1, timeout=300).hits
+    assert hit and hit[0].kind == "break" and hit[0].pc == entry

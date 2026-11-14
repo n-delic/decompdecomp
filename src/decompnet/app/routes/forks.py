@@ -34,6 +34,17 @@ def register(app: App) -> None:
         except NetworkError as e:
             return fail(e)
 
+    @mcp.custom_route("/api/fork/directory", methods=["GET"])
+    async def api_fork_directory(request: Request) -> Response:
+        """Community decompilations listed by RetroReversing's directory, each one importable with a click."""
+        if (bad := guard(request)):
+            return bad
+        from ...forks import directory
+        try:
+            return JSONResponse({"projects": await call(directory.listing)})
+        except NetworkError as e:
+            return fail(e)
+
     @mcp.custom_route("/api/fork", methods=["POST"])
     async def api_fork(request: Request) -> Response:
         if (bad := guard(request, write=True)):

@@ -1135,6 +1135,103 @@ subdir = "zlib-51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf"
 into = "source/deps/zlib"
 platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
 
+[mupenre]
+name = "mupenRE, the N64 reversing emulator"
+kind = "tool"
+license = "GPL-2.0"
+source = "RetroReversing/mupen64plus-core 4a69be3 with libRetroReversing b68d811, mupen64plus-rsp-hle 2.6.0, SDL2 2.32.10, libpng 1.6.50"
+description = "Runs your own N64 ROM headless, as the console would, to compare with a port or a decompiled function: memory at a chosen moment, which code writes an address, what a function is called with. Built here from its source with the pinned CMake and this computer's C/C++ compiler (consoles/n64/emulator)."
+binary_name = "mupenre-frontend"
+build = "mupenre"
+requires = ["cmake"]
+[[mupenre.parts]]
+url = "https://codeload.github.com/RetroReversing/mupen64plus-core/tar.gz/4a69be3194b63fe5a3cb1f059124123361f513a4"
+sha256 = "b35fcd305df056afb266195975780d1a84ec99542ec961226610ba9962a21ca7"
+file = "mupenre-core-4a69be3194b63fe5a3cb1f059124123361f513a4.tar.gz"
+subdir = "mupen64plus-core-4a69be3194b63fe5a3cb1f059124123361f513a4"
+into = "source/core"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[mupenre.parts]]
+url = "https://codeload.github.com/RetroReversing/libRetroReversing/tar.gz/b68d811e69f9b1edb0df0379ee627d78a95e0a6b"
+sha256 = "ef611c68fb33345d8a848d0f4a92c57c9a2318ea073bf1e8671363ad02522d92"
+file = "mupenre-libRetroReversing-b68d811e69f9b1edb0df0379ee627d78a95e0a6b.tar.gz"
+subdir = "libRetroReversing-b68d811e69f9b1edb0df0379ee627d78a95e0a6b"
+into = "source/core/libRetroReversing"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[mupenre.parts]]
+url = "https://github.com/mupen64plus/mupen64plus-rsp-hle/archive/refs/tags/2.6.0.tar.gz"
+sha256 = "55099a5089b1dd841080d4dcb8be367c65559c1ce3d29bef34682a0a5d0f80e5"
+file = "mupenre-rsp-hle-2.6.0.tar.gz"
+subdir = "mupen64plus-rsp-hle-2.6.0"
+into = "source/rsp-hle"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[mupenre.parts]]
+url = "https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.tar.gz"
+sha256 = "5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165"
+file = "mupenre-SDL2-2.32.10.tar.gz"
+subdir = "SDL2-2.32.10"
+into = "source/sdl2"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[mupenre.parts]]
+url = "https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.50.tar.gz"
+sha256 = "71158e53cfdf2877bc99bcab33641d78df3f48e6e0daad030afe9cb8c031aa46"
+file = "mupenre-libpng-1.6.50.tar.gz"
+subdir = "libpng-1.6.50"
+into = "source/libpng"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+
+[n64recomp]
+name = "N64Recomp, the N64 static recompiler"
+kind = "tool"
+license = "MIT"
+source = "N64Recomp/N64Recomp ffb39cd and the libraries it uses as submodules, each pinned by commit"
+description = "Turns the game's own instructions into C, one function each, from the project's split and your own ROM: for a port that plays before the decomp is done, and a reference for every function. Built here from its source with the pinned CMake and this computer's C++ compiler (consoles/n64/recomp.py)."
+binary_name = "N64Recomp"
+build = "n64recomp"
+requires = ["cmake"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/N64Recomp/N64Recomp/tar.gz/ffb39cdad1da5de07eaaa48bd1db4a89a7986771"
+sha256 = "f58d8f178d39e4a95db0ba29691206adeb2492df945d40e1d6f53347ffcb9c77"
+file = "n64recomp-N64Recomp-ffb39cdad1da5de07eaaa48bd1db4a89a7986771.tar.gz"
+subdir = "N64Recomp-ffb39cdad1da5de07eaaa48bd1db4a89a7986771"
+into = "source"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/Decompollaborate/rabbitizer/tar.gz/e0d8003047938e2ec3697eaf8d61a84d11d17b43"
+sha256 = "088635b06542c6b0a237c85dadb53444aa4269b350e637cddaf86dee83d6a9e0"
+file = "n64recomp-rabbitizer-e0d8003047938e2ec3697eaf8d61a84d11d17b43.tar.gz"
+subdir = "rabbitizer-e0d8003047938e2ec3697eaf8d61a84d11d17b43"
+into = "source/lib/rabbitizer"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/serge1/ELFIO/tar.gz/ad8b641f9682b6091ba8b9f7c8152255c1a2c803"
+sha256 = "7ac1348e9bc9fc2c983c6ce318ee0398626f2dbdafe3a3382f7cd56a3caa09b4"
+file = "n64recomp-ELFIO-ad8b641f9682b6091ba8b9f7c8152255c1a2c803.tar.gz"
+subdir = "ELFIO-ad8b641f9682b6091ba8b9f7c8152255c1a2c803"
+into = "source/lib/ELFIO"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/fmtlib/fmt/tar.gz/407c905e45ad75fc29bf0f9bb7c5c2fd3475976f"
+sha256 = "2bc1fe4a5b6d5d6a614239b4ca1d520e66e152a02d3d262684d26dfd6ab3438a"
+file = "n64recomp-fmt-407c905e45ad75fc29bf0f9bb7c5c2fd3475976f.tar.gz"
+subdir = "fmt-407c905e45ad75fc29bf0f9bb7c5c2fd3475976f"
+into = "source/lib/fmt"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/marzer/tomlplusplus/tar.gz/1f7884e59165e517462f922e7b6de131bd9844f3"
+sha256 = "e2af055f0ababf8ed4d6294df1f2616494f5f01d8f3df5100400597672841c4c"
+file = "n64recomp-tomlplusplus-1f7884e59165e517462f922e7b6de131bd9844f3.tar.gz"
+subdir = "tomlplusplus-1f7884e59165e517462f922e7b6de131bd9844f3"
+into = "source/lib/tomlplusplus"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+[[n64recomp.parts]]
+url = "https://codeload.github.com/zherczeg/sljit/tar.gz/f6326087b3404efb07c6d3deed97b3c3b8098c0c"
+sha256 = "3a8752f14e4c1c347a95155cc9f879e58be495a41e196e4e655f76c8cd1714ea"
+file = "n64recomp-sljit-f6326087b3404efb07c6d3deed97b3c3b8098c0c.tar.gz"
+subdir = "sljit-f6326087b3404efb07c6d3deed97b3c3b8098c0c"
+into = "source/lib/sljit"
+platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
+
 [binutils-mips]
 name = "GNU binutils for MIPS (decompals)"
 kind = "tool"

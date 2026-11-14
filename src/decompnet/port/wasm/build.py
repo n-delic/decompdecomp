@@ -31,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from ... import consoles, limits, toolchains
@@ -415,7 +416,7 @@ def function_table(header: str, fixed: list[str]) -> str:
         n, a, k = row.split()
         if k == "func":
             where[n] = int(a, 16)
-    entries, wrappers = [], []
+    entries, wrappers, invokers = [], [], []
     for m in re.finditer(r"/\* export: '([^']+)' \*/\n(\w+) (w2c_game_\w+)\(w2c_game\*([^)]*)\);", header):
         name, ret, c, params = m.groups()
         address = where.get(name)
@@ -423,6 +424,7 @@ def function_table(header: str, fixed: list[str]) -> str:
             address = int(auto.group(1), 16)
         if address is None:
             continue
+        invokers.append((address, invoker(c, ret, [t.strip() for t in params.split(",") if t.strip()])))
         if ret == "void":
             types = [t.strip() for t in params.split(",") if t.strip()]
             args = "".join(f", {t} a{i}" for i, t in enumerate(types))
@@ -437,7 +439,55 @@ def function_table(header: str, fixed: list[str]) -> str:
              f"0x{REGS + 16:X}u, 4); return __builtin_bswap32(v); }}", *wrappers, "const PortFunc port_funcs[] = {"]
     lines += [f"    {{0x{a:08X}u, (void *){c}}}, /* {n} */" for a, c, n in entries]
     lines += ["};", f"const unsigned port_func_count = {len(entries)};"]
+    # one call from a recorded state (the host's PORT_CALL, app/behaviour.py): each function called with its own
+    # types from MIPS's argument words, float registers and $v0 afterwards
+    invokers.sort()
+    lines += ["typedef void (*PortInvoke)(w2c_game*, const u32 *, const u32 *, u32 *);",
+              "typedef struct { unsigned address; PortInvoke invoke; } PortCall;",
+              "static u64 port_w64(const u32 *w, int i) { return (u64)w[i] << 32 | w[i + 1]; }",
+              "static f32 port_f32(u32 b) { f32 v; __builtin_memcpy(&v, &b, 4); return v; }",
+              "static f64 port_f64(u64 b) { f64 v; __builtin_memcpy(&v, &b, 8); return v; }",
+              "static u32 port_b32(f32 v) { u32 b; __builtin_memcpy(&b, &v, 4); return b; }",
+              "static u64 port_b64(f64 v) { u64 b; __builtin_memcpy(&b, &v, 8); return b; }",
+              *(code for _, (_, code) in invokers), "const PortCall port_calls[] = {"]
+    lines += [f"    {{0x{a:08X}u, {name}}}," for a, (name, _) in invokers]
+    lines += ["};", f"const unsigned port_call_count = {len(invokers)};"]
     return "\n".join(lines) + "\n"
+
+
+def invoker(c: str, ret: str, params: list[str]) -> tuple[str, str]:
+    """(name, C) of a function that calls `c` as MIPS o32 passed its arguments: `w` the argument words ($a0-$a3, then
+    the stack's), `f` the float registers as single words (FR=0: a double in an even and odd pair, low word first);
+    leading float arguments in $f12 and $f14. `out`: $v0, $v1, $f0, $f1 afterwards."""
+    args, slot, fpr, floats = [], 0, 12, True
+    for i, t in enumerate(params):
+        if t in ("f32", "f64") and floats and i < 2:
+            if t == "f64":
+                slot += slot % 2
+                args.append(f"port_f64((u64)f[{fpr + 1}] << 32 | f[{fpr}])")
+                slot += 2
+            else:
+                args.append(f"port_f32(f[{fpr}])")
+                slot += 1
+            fpr += 2
+            continue
+        floats = False
+        if t in ("u64", "f64"):
+            slot += slot % 2
+            args.append(f"port_w64(w, {slot})" if t == "u64" else f"port_f64(port_w64(w, {slot}))")
+            slot += 2
+        else:
+            args.append(f"w[{slot}]" if t == "u32" else f"port_f32(w[{slot}])")
+            slot += 1
+    call = f"{c}(g" + "".join(f", {a}" for a in args) + ")"
+    body = {"void": f"{call}; out[0] = port_v0(g);",
+            "u32": f"out[0] = {call};",
+            "u64": f"u64 r = {call}; out[0] = (u32)(r >> 32); out[1] = (u32)r;",
+            "f32": f"out[2] = port_b32({call});",
+            "f64": f"u64 r = port_b64({call}); out[2] = (u32)r; out[3] = (u32)(r >> 32);"}.get(ret, f"{call};")
+    name = f"port_i_{c}"
+    return name, (f"static void {name}(w2c_game* g, const u32 *w, const u32 *f, u32 *out) {{ (void)w; (void)f; "
+                  f"{body} }}")
 
 
 def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, step=None, *, web: bool = False):
@@ -469,11 +519,28 @@ def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, s
     return _parallel(lls, place, log, "functions", step)
 
 
+_builds: dict[str, threading.Lock] = {}
+_builds_guard = threading.Lock()
+
+
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=()) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
-    caller adds its own after these (play.py); `leave_out`, library files the host provides (gather)."""
+    caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
+    build of one save (Play while compare_behaviour builds) waits for the first, then finds little left to do."""
     repo = Path(repo).expanduser().resolve()
+    with _builds_guard:
+        lock = _builds.setdefault(str(repo), threading.Lock())
+    if not lock.acquire(blocking=False):
+        log("waiting for another build of this game to finish")
+        lock.acquire()
+    try:
+        return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
+    finally:
+        lock.release()
+
+
+def _build(repo: Path, *, console: str, log, steps, leave_out) -> Path:
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
         raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
@@ -539,6 +606,11 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
         raise NetworkError(f"{len(failed)} functions couldn't be placed at their addresses: " + "; ".join(failed[:3]))
     objects = linked(out / "o", sources)
     _write(out / "objects.txt", "\n".join(str(p) for p in objects) + "\n")
+    from . import calls
+    suspicious = calls.summary(calls.write(out, objects))
+    if suspicious["calls"]:
+        log(f"{suspicious['calls']} calls in {suspicious['functions']} functions disagree with the function they call "
+            "(matched, but only the original compiler sees them right): Port readiness lists them")
 
     progress.start(STEPS[4])
     log(f"linking {len(objects)} functions")

@@ -255,7 +255,7 @@ def unexpected_files(folder: Path, names, expected: dict[str, str], *, first: bo
 
 
 def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | None = None,
-             expected: dict[str, str] | None = None, *, chosen: bool = False) -> bool:
+             expected: dict[str, str] | None = None, *, chosen: bool = False, guarded=()) -> bool:
     """Only change owned files whose contents changed; keep git and contributors' other files intact.
 
     `chosen`: the progress folder is the one the user saved to or configured, so a link at its own path is theirs to
@@ -263,13 +263,16 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
 
     `files`, `previous` and `expected` hold the joined manifest (manifest_text); it's written as the files a format
     2 save keeps (split_manifest), each only when it changed: a new best score rewrites decompdecomp.json, not the
-    notes beside it."""
-    logical = files.keys() | (previous or {}).keys()
+    notes beside it. `guarded` also checks captured inputs the caller imported without writing them."""
+    # Imports must also protect read-only inputs used to change database context.
+    # Keep them out of the write/removal sets. Ordinary saves guard only their writes.
+    guarded = set(guarded)
+    logical = files.keys() | (previous or {}).keys() | guarded
     files = split_files(files)
     if previous is not None:
         # Only its names are used (what to remove; some callers pass hashes): a manifest owns its side files.
         previous = dict.fromkeys(previous.keys() | (set(SIDE_FILES.values()) if MANIFEST in previous else set()))
-    names = files.keys() | (previous or {}).keys()
+    names = files.keys() | (previous or {}).keys() | guarded
     for name in names:
         path = Path(name)
         if path.is_absolute() or ".." in path.parts or path.as_posix() != name:

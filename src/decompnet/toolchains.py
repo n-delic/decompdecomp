@@ -745,6 +745,20 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
             _build_psyq_parser(dest, linux, log)
         if tc.build == "torch":
             _build_torch(dest, log)
+        if tc.build == "n64recomp":
+            from .consoles.n64 import recomp
+
+            try:
+                recomp.build(dest, binary("cmake"), log)
+            except recomp.RecompError as error:
+                raise ToolchainError(str(error)) from None
+        if tc.build == "mupenre":
+            from .consoles.n64 import emulator
+
+            try:
+                emulator.build(dest, binary("cmake"), log)
+            except emulator.EmulatorError as error:
+                raise ToolchainError(str(error)) from None
         if linux and not archive_only and "runtime-i386" in tc.requires:  # WSL systems rarely have a 32-bit loader: bring ours
             n = wsl.wrap_i386(dest, wsl.path(path("runtime-i386", linux=True)))
             log(f"  {n} 32-bit programs start through the pinned 32-bit runtime")

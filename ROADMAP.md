@@ -702,7 +702,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Loader/buffer tracing, named contracts and small wrappers | ✓ MIPS / named PI DMA | ✓ MIPS static | ✓ MIPS EE EABI | ✓ shared MIPS reader | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
-| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, named four-block banks, embedded ZIP packs, textures loaded by uncompressed display lists, I64 images in a chunked-RNC filesystem, model textures in a deflated asset table) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | ✓ forks with the game file (N64 checked) |
+| Automatic texture banks (CI4/CI8, mixed CI8 palettes, RGBA32, RGBA16 mipmaps, RNC 1/2, named four-block banks, embedded ZIP packs, textures loaded by uncompressed display lists, I64 images in a chunked-RNC filesystem, model textures in a deflated asset table, UVTX files in a UV FORM filesystem, a texture table of back-reference-packed textures with inferred widths; a fork's own splat image segments) | ✓ ROM | — native formats planned | — native formats planned | — native formats planned | — image adapter | — image adapter | — image adapter | ✓ forks with the game file (N64 checked) |
 | Audio browser, filters, sortable samples and explicit WAV preparation | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
 | Texture gallery, filters and distinct address / loader reference links | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — original image adapter | — original image adapter | — original image adapter | ✓ forks with the game file (N64 checked) |
 | Native directory roles: animation, collision, placements, grid, sequences and demos | ✓ validated schema / linked records | — native formats planned | — native formats planned | — native formats planned | — original image adapter | — original image adapter | — original image adapter | — original image adapter |
@@ -790,6 +790,9 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Set up as a project folder (import checkbox or Export panel; guessed `units.json`; edits to `src/<segment>/<function>.c` judged by the ROM judge on Refresh) | ✓ demo: 14 of 16 files found | ✓ demo: 1 of 18 files found (no padding between objects) | ✓ demo: 1 of 18 files found (functions padded like files) | — offered; demo not run (no PSP compiler build for Apple Silicon) | the project | the project | the project | the project |
+| The reversing emulator for agents (`watch_in_emulator`: which code writes an address, what a function is called with, on the user's ROM) | ✓ mupenRE (Linux, macOS) | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no emulator pinned yet | — no ROM to run |
+| Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS) | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no recompiler pinned | — no ROM to recompile |
+| Behaviour checked against the original (`compare_behaviour`, docs/N64RECOMP.md phase 1) | ✓ (recorded in mupenRE, run through N64Recomp's C and the WebAssembly port's) | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no emulator or recompiler yet | — no ROM to run |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — no kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — no `bss_start` reader | — project mode: data is in the project's sources | — project mode | — project mode | — |
 | The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — no port kit yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — |
@@ -978,6 +981,62 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+### Does a function behave like the original? compare_behaviour
+
+A helper asks `compare_behaviour(function)`. The user's ROM runs in the reversing emulator to the function's first
+calls, each call's registers and memory are recorded, and each runs through the function's recompiled C (the
+original's instructions, N64Recomp) and through its decompiled C as the WebAssembly port builds it. What differs comes
+back: $v0, $v1, $f0, and the memory each left, by symbol, outside the call's stack (`app/behaviour.py`). On a racing
+game it finds the backwards race start in one line (`$v0: recompiled 00000800, decompiled 00000000`). Left: a
+batch over every matched function the game reaches (a Port readiness row), and calls that wait on another thread,
+which time out today.
+
+### The game as C before the decomp is done: Recompile with N64Recomp
+
+Porting's **Recompile with N64Recomp** turns a ROM project's every function into C by N64Recomp (MIT, pinned with
+its five libraries and built from source like Torch): from the split, and the user's own ROM, into build/recomp
+(`consoles/n64/recomp.py` through `Console.recompiler`, `app/recompile.py`). It finds the code the split doesn't list
+by the calls into it, sets aside as stubs what N64Recomp can't translate, with its reason, and checks the C with the
+computer's compiler. Port readiness shows the last run. On a racing game: 2,125 functions and 12 more, 14 stubs, the
+rest compiling, in 16 seconds. docs/N64RECOMP.md phase 0; next, phase 1 (each function's recorded calls run through
+its recompiled and decompiled C).
+
+### Agents watch the real game: watch_in_emulator
+
+Helpers run the user's own ROM in the reversing emulator (`app/emulator_watch.py`, through the console's part
+`Console.emulator`; N64: mupenRE). kind=write lists the code that writes an address with its caller, kind=call each
+call of a function with its arguments, each named by the project's symbols, from a VI on and with a controller
+script. A run that outlasts the gateway's deadline says "still running" and the same call collects it. On a racing
+game it repeats the backwards start's investigation: the code writing a car's matrix, and the angles its setup
+gets, about 40 s each.
+
+### Matched but suspicious: calls that disagree with what they call
+
+A WebAssembly build records each call whose C disagrees with the function it calls (`port/wasm/calls.py`). Each one
+matches the console, because on MIPS arguments and results are just registers, but can behave differently in any
+other build. Port readiness lists them by kind, worst first, with a step of its own: results taken from a void
+function, variadic and fixed prototypes mixed up, structs passed by value at another size, arguments missing, extra
+or of another width, and results of another width. A result counts only when the caller uses it. On a racing game:
+794 calls in 505 functions, the worst 19 among them the backwards race start's.
+
+Left: a helper task that puts each one right while the function still matches; the same report for native PC builds
+(`port/pc_compile.py` sees the same C).
+
+### Your N64 ROM runs in the reversing emulator
+
+**mupenRE** (Compilers & tools → Tools) is RetroReversing's mupen64plus core with libRetroReversing, pinned by
+commit with the HLE RSP, SDL2 and libpng and built here from source like Torch (`consoles/n64/emulator`). It runs your
+own ROM headless, as fast as the computer allows and the same way every run:
+- scripted input, timed in vertical interrupts (the port's input format);
+- RDRAM written at an exact VI, big-endian like the WebAssembly port's dumps, so the two compare word by word
+  (`differences`);
+- write breakpoints report the code that writes an address;
+- execution breakpoints report a function's arguments.
+
+From the command line: `python -m decompnet.consoles.n64.emulator ROM --vis N --dump VI:FILE --watch ADDR --break ADDR`.
+It found why a racing game's port started every car facing backwards: the port lost the `$v0` a void wrapper left
+for its caller.
+
 ### A finished game exports as an app or a browser build
 
 Play it's **Export…** (Porting) makes the game something to keep and share, from the last save, without
@@ -1023,8 +1082,18 @@ Left:
   fog: the RSP's fog alpha per vertex (G_FOG, G_MW_FOG) and the fog colour, which the game's races use for most of
   what they draw (measured: the RDP states it draws with, by pixels). Anti-aliasing as the console does it: the
   RDP's coverage per pixel (8 samples), a mesh's shared edges blended by their coverages, and the VI's filter softening
-  silhouettes as the frame is shown (about 10% slower). Not drawn: dithering; no
-  state the game uses needs TEXEL1, mipmaps, IA16 palettes or decal depth. S2DEX sprites (G_OBJ_SPRITE) turn and scale
+  silhouettes as the frame is shown (about 10% slower). Then what other games rely on, from a list of the
+  graphics fixes Miyoo64's fifteen handheld ports needed, checked against the renderer (tests on display lists
+  built in Python, `tests/test_n64_port_render_gbi.py`): Fast3D, F3DEX 1.x (F3DLX, F3DLP) and S2DEX 1.x told apart
+  by their signatures and decoded with their own opcodes, G_LOAD_UCODE switching microcode inside a list,
+  G_BRANCH_Z, G_MW_MATRIX; lights in their own slots (F3DEX2's LIGHT_1 at offset 48: every light was one slot
+  late); a shared edge's pixels drawn once; TEXEL1, mip levels by the level of detail, detail and sharpen, every
+  combiner input; mirroring inside a clamp; depth in the game's own z image in the RDP's format (games draw into
+  it and read it), primitive depth and decal mode; G_TEXTURE_GEN; IA16 palettes; alpha as coverage; dithering;
+  8- and 32-bit colour images; the VI's mode (the frame at its size, gamma, the dedither and divot filters). Not
+  yet: Diddy Kong Racing's F3DDKR (its signature isn't known here, so it can't be recognised), lines (G_LINE3D),
+  the RDP's fixed-point arithmetic (floats here: compare with angrylion's renderer frame by frame), which
+  cycle's combiner one-cycle mode reads (the first, here). S2DEX sprites (G_OBJ_SPRITE) turn and scale
   with the 2D matrix (its rev counter needle); its rectangles (G_OBJ_RECTANGLE, _R) are drawn as before. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
@@ -1852,6 +1921,37 @@ regenerates the folder; an edit the project didn't take is written back in place
   following the code's order, library signatures, and the boundaries agents confirm by matching;
 - the folder in saves, reimport and Open a saved project; the PSP demo run with the checkbox.
 
+### N64Recomp: a playable game from day one, and a reference for every function
+
+Plan in docs/N64RECOMP.md. N64Recomp (MIT) turns each of the game's functions into C that does exactly what the
+instructions do:
+- **Fallback:** a port uses that C wherever the project hasn't matched a function yet, so a WebAssembly or
+  N64ModernRuntime build plays before the decomp is done, and becomes decompiled C one function at a time.
+- **Reference:** the same functions are a reference beside the reversing emulator. Recorded calls, run through the
+  recompiled and the decompiled C, show where the port's C behaves differently even though its bytes match (the
+  backwards race start's lost `$v0` would have shown on its first call).
+
+Phases:
+- pin and build N64Recomp, and write its configuration from the split;
+- differential tests per function;
+- the WebAssembly port with recomp where there's no matched C, with bridges generated from `sigs.txt`;
+- N64ModernRuntime native ports;
+- functions swapped to decompiled C as they match and pass their tests.
+
+### The reversing emulator for agents, ports and other platforms
+
+- Other consoles: a pinned emulator each with write and execution breakpoints (`Console.emulator`, whose N64
+  part is `consoles/n64/emulator`), PS1 and PS2 first.
+- A breakpoint run starts in the slower interpreter from boot: a savestate taken at `from_vi` by the fast one would
+  bring a late watch from about 40 s to a few.
+- Compare with the emulator in Play: the port's memory at a frame against the console's at the same moment, the
+  first differing range named by symbol (the port's frames and the emulator's VIs line up through the input script).
+- libRetroReversing's function-call log (which functions ran, with what) read back, for a call-by-call comparison
+  with the port's own trace.
+- N64Recomp's output as a third reference, beside the emulator and the decompiled C (next item).
+- Windows: "—" for now (the frontend loads the core with `dlopen`); a ROM that never starts its video interface
+  counts no VIs, so only breakpoints and the timeout end its run.
+
 ### decomprepair: its own repository, a C parser, and other processors
 
 - Move the 36 repair families still in `app/` that need a project or the network behind an interface the app
@@ -1864,9 +1964,13 @@ regenerates the folder; an edit the project didn't take is written back in place
   Turok-engine shooter's RNC-packed models), textures loaded as a sub-rectangle of a wider image, multi-tile and
   mipmapped tiles, and a file's displacement from the code that loads it where the file itself can't decide.
 - N64 games whose textures sit in their own containers still need a recogniser each: raw texture data in MIO0,
-  Yay0, Vpk0 or FLA2 blocks, sized by code or tables (a futuristic racer, a beetle racer, a flight game), Rare's
-  other packers, and a survival horror port. Done in 0.4.0: an off-road RC racer's chunked-RNC filesystem (I64
-  images) and a platformer sequel's deflated model table.
+  Yay0, Vpk0 or FLA2 blocks, sized by code or tables (a futuristic racer, a jet-ski racer, a snowboarding game,
+  a monster-battle game), Rare's other packers, and a survival horror port. Done in 0.4.0: an off-road RC racer's
+  chunked-RNC filesystem (I64 images) and a platformer sequel's deflated model table. Done in 0.5.0: the UV FORM
+  filesystem of a flight game and a beetle racer (UVTX files drawn by their own display lists). Done in 0.6.0: a
+  demolition game's texture table and its six codecs (widths inferred, 96% agree with its decompilation).
+- That demolition game's widths could come from the code that draws each texture instead of being inferred.
+- UVTX files whose palette is another texture file (which one comes from the level) are not shown yet.
 - That platformer sequel's ~2,000 sprite assets (`0103…`) and its models' smaller mip levels.
 - A Turok-engine shooter's front-end images (a small header with a type, dimensions, then RGBA16 pixels, RNC-packed)
   are not recognised yet.
@@ -2161,6 +2265,20 @@ and a port-fix task for agents judged twice: the console build still matches and
 first (`Console.port_kit`), PS1 next on PsyCross; the rest "—" until a kit exists. First check: libultraship's
 S2DEX coverage, then a hand port of one N64 game's boot, title screen and one track. Phase 0 is built (Recently
 done: Port readiness report).
+
+### A software renderer for the libultraship runtime
+
+A third back end for libultraship's Fast3D beside Metal, OpenGL and DirectX, drawn on the CPU: a native port
+that runs without a GPU (headless machines, CI's screenshots, weak hardware). Start from Miyoo64's `gfx_soft.c`
+(mr-finster/miyoo64, MIT: keep its notice), the software back end its fifteen native N64 ports draw with on a
+handheld, under Fast3D. What carries over is its rasterizer: edge functions, the colour combiner evaluated from
+Fast3D's shader ids, depth, NEON paths. What's new: it implements sm64-port's older C interface (26 calls, vertices
+already projected on the CPU, a layout from its PSP port), while the libultraship that Torch pins has a C++
+`GfxRenderingAPI` of about 45 (triangles in clip space laid out per shader, frame buffers created, copied, read
+back and resolved, 64-bit shader ids, depth readback, textures for its ImGui menus). Waits for the native build
+above to link and run on libultraship. Not a replacement for the WebAssembly build's renderer
+(`consoles/n64/port_wasm/render.c`): that one draws into the game's own frame buffer as the RDP does, which
+Fast3D doesn't.
 
 ### Browser room contributions
 

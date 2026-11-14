@@ -328,6 +328,12 @@ def register(app: App) -> None:
         from ...port import asset_map
         return {"job": jobs.start("asset-extract", lambda log: asset_map.extract(net, slug, log), project=slug)}
 
+    def p_recompile(slug, request, data):
+        """The game's own instructions as C by the console's static recompiler (app/recompile.py), in the background:
+        the first run builds it from source."""
+        from .. import recompile
+        return {"job": jobs.start("recompile", lambda log: recompile.run(net, slug, log), project=slug)}
+
     def g_port_readiness(slug, request, data):
         """What stands between the game and a port, and its Play build: still building (the job, for the panel to
         follow again after navigating away) or running (its address)."""
@@ -1196,6 +1202,7 @@ def register(app: App) -> None:
         "/api/rename-calls": (p_rename_calls, ["POST"]),
         "/api/port-identity": (p_port_identity, ["POST"]),
         "/api/asset-extract": (p_asset_extract, ["POST"]),
+        "/api/recompile": (p_recompile, ["POST"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),
         "/api/verification": (p_verification, ["POST"]),
     }

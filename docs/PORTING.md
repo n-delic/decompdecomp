@@ -303,6 +303,29 @@ Found on the first game, all things the judge can't see:
 A **Play port** button builds and starts it. A headless check runs N frames: it starts, doesn't crash, and the
 screen isn't one colour. Later: compare frames with an emulator running the original at the same inputs.
 
+When the port behaves differently from the console, the N64 reversing emulator (mupenRE, under Compilers & tools →
+Tools; `consoles/n64/emulator`) runs the user's own ROM headless with the same input script, timed in vertical
+interrupts (a game drawing 30 frames a second takes two VIs a frame). Its RDRAM dumps have the port's layout, so
+`emulator.differences` compares the two word by word. Its breakpoints show which code writes an address, or what a
+function is called with:
+
+```bash
+python -m decompnet.consoles.n64.emulator baserom.z64 --vis 2600 --input @race.txt --watch 802A45C8 --from 2400
+```
+
+That is how a racing game's backwards start was found. Each car's matrix came from an Euler-angle helper; the
+console passed it a yaw of 0x800, and the port passed 0. The yaw was the `$v0` a void function left for its
+caller, and the port had overwritten it (`port/wasm/adapt.py`).
+
+The build also lists what to look at before playing. Matched C is judged by one compiler, and on MIPS a call works
+whether or not its C agrees with the function it calls. So matched C can take a result from a function it declares
+void, call a variadic function through a fixed prototype, or pass a `u8` where the callee takes an `s32`. Each one is
+right on the console and can behave differently in any other build. The WebAssembly build bridges each one as MIPS
+behaved (`port/wasm/adapt.py`) and records it (`port/wasm/calls.py`: `build/calls.json`). Port readiness then lists
+them by kind, worst first, under **Calls agree with what they call**. On a racing game, 794 calls in 505 functions;
+the 19 worst take a result from a void function, and the backwards start was one of them. Putting their declarations
+right while the function still matches makes the C say what the console does.
+
 ## Where it lives in the code
 
 - `src/decompnet/port/`: what every console shares (readiness report, data claims, the port-fix task and its

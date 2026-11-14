@@ -627,6 +627,24 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                                           "required": ["old", "new"]}})),
         "compile_data": ("Judge C defining one data symbol: kept only if it holds the game's bytes there, all of it.",
                          s(name=st("data symbol", True), source=st("C defining it", True))),
+        "compare_behaviour": ("Does a function behave like the original in a port? Records its first real calls in "
+                              "the reversing emulator (N64), runs each through its recompiled and decompiled C, and "
+                              "compares results and memory. Slow the first time: 'still running' means call again "
+                              "with the same arguments.",
+                              s(function=st("function", True), calls=it("1-8 (3)"),
+                                vis=it("how far to run, VIs, 60 a second (3600)"), from_vi=it("record from this VI"),
+                                input=st("controller script vi:A+START,...; none: the game sits at its title"),
+                                expansion_pak=bo("8 MB instead of 4"))),
+        "watch_in_emulator": ("Run the user's ROM in the console's reversing emulator (N64): kind=write lists the code "
+                              "writing target (data symbol or hex address), kind=call each call of target (a function) "
+                              "with a0-a3. For C that matches but behaves differently in a port. A long run says "
+                              "'still running': call again with the same arguments.",
+                              s(target=st("function, data symbol or hex address", True),
+                                kind=st("write or call"), vis=it("vertical interrupts to run, 60 a second (600)"),
+                                from_vi=it("report hits from this VI"),
+                                input=st("controller script vi:A+START,vi:...; none: the game sits at its title"),
+                                length=it("bytes to watch from target (write)"), max_hits=it("1-200 (40)"),
+                                expansion_pak=bo("8 MB instead of 4"))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "
                       "Give a vtable address or one of its functions; empty lists the classes.",
                       s(what=st("vtable address, or a virtual function / constructor"))),
