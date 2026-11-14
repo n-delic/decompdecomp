@@ -401,13 +401,15 @@ static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
 
 /* ---------------------------------------------------------------- F3DEX2: vertices, matrices, triangles */
 
-typedef struct { float x, y, z, w, sx, sy, sz, s, t; Color shade; int clip; } Vtx;
+/* A vertex: clip space, screen space once projected, texture coordinates in texels, shade; `fixed_xy`/`fixed_z`
+   when G_MODIFYVTX gave its screen place directly. */
+typedef struct { float x, y, z, w, sx, sy, sz, s, t; Color shade; int clip, fixed_xy, fixed_z; float fx, fy, fz; } Vtx;
 static Vtx vtx[64];
 static float mv[10][16], proj[16], mvp[16];
 static int mv_depth;
 static float vp_scale[3] = {640, 480, 511}, vp_trans[3] = {640, 480, 511};
 static uint32_t geometry;
-static int tex_on, tex_tile;
+static int tex_on, tex_tile, tex_levels; /* G_TEXTURE: on, its tile, and how many mip levels beyond the first */
 static float tex_sscale = 1, tex_tscale = 1;
 static Color lights[8];
 static float light_dir[8][3];
@@ -469,7 +471,7 @@ static void load_vertices(uint32_t addr, int n, int v0) {
             float f = (v->z / (v->w > 1e-4f ? v->w : 1e-4f)) * (float)fog_mul + (float)fog_off;
             v->shade.a = (f < 0 ? 0 : f > 255 ? 255 : f) / 255.0f;
         }
-        v->clip = 0;
+        v->clip = v->fixed_xy = v->fixed_z = 0;
     }
 }
 
@@ -478,6 +480,8 @@ static void project(Vtx *v) {
     v->sx = vp_trans[0] / 4.0f + v->x * iw * vp_scale[0] / 4.0f;
     v->sy = vp_trans[1] / 4.0f - v->y * iw * vp_scale[1] / 4.0f;
     v->sz = v->z * iw;
+    if (v->fixed_xy) { v->sx = v->fx; v->sy = v->fy; }
+    if (v->fixed_z && vp_scale[2] != 0) v->sz = (v->fz - vp_trans[2]) / vp_scale[2]; /* back from the screen's 0 to 1023 */
 }
 
 /* One triangle already in front of the eye, in screen space. */
@@ -563,7 +567,7 @@ static Vtx lerp(const Vtx *a, const Vtx *b, float f) {
     v.w = a->w + (b->w - a->w) * f; v.s = a->s + (b->s - a->s) * f; v.t = a->t + (b->t - a->t) * f;
     v.shade.r = a->shade.r + (b->shade.r - a->shade.r) * f; v.shade.g = a->shade.g + (b->shade.g - a->shade.g) * f;
     v.shade.b = a->shade.b + (b->shade.b - a->shade.b) * f; v.shade.a = a->shade.a + (b->shade.a - a->shade.a) * f;
-    v.clip = 0;
+    v.clip = v.fixed_xy = v.fixed_z = 0;
     return v;
 }
 
@@ -623,17 +627,101 @@ static void triangle(int i0, int i1, int i2) {
     for (int i = 1; i + 1 < n; i++) raster(&poly[0], &poly[i], &poly[i + 1]);
 }
 
+/* ---------------------------------------------------------------- what every microcode shares */
+
+/* The microcode a task (or G_LOAD_UCODE) runs, from the signature in its data: "RSP Gfx ucode F3DEX  fifo 2.05" is
+   GBI 2 (F3DEX2, F3DZEX, F3DLX2...), a 1.x version is GBI 1 (F3DEX, F3DLX, F3DLP); "S2DEX" the 2D microcode of
+   either generation; "RSP SW Version" is Fast3D. Without a signature: F3DEX2, as before microcodes were told apart. */
+enum { UC_F3DEX2, UC_S2DEX2, UC_F3D, UC_F3DEX, UC_S2DEX };
+static int ucode;
+static const char *const ucode_names[] = {"F3DEX2", "S2DEX2", "Fast3D", "F3DEX", "S2DEX"};
+static uint32_t half1; /* G_RDPHALF_1's word: G_BRANCH_Z's list, G_LOAD_UCODE's data */
+static int identify_ucode(uint32_t data) { /* data: a physical address */
+    const uint8_t *d = R + 0x80000000u + (data & 0x1FFFFFFF);
+    if ((data & 0x1FFFFFFF) + 0x800 > 0x800000) return UC_F3DEX2;
+    for (int i = 0; i + 40 < 0x800; i++) {
+        if (d[i] == 'R' && !memcmp(d + i, "RSP SW Version", 14)) return UC_F3D;
+        if (d[i] != 'R' || memcmp(d + i, "RSP Gfx ucode ", 14)) continue;
+        const uint8_t *p = d + i + 14;
+        int two_d = !memcmp(p, "S2DEX", 5);
+        while (*p && !(p[0] >= '0' && p[0] <= '9' && p[1] == '.')) p++; /* the version: after the name and "fifo" */
+        if (*p != '1') return two_d ? UC_S2DEX2 : UC_F3DEX2;
+        return two_d ? UC_S2DEX : UC_F3DEX;
+    }
+    return UC_F3DEX2;
+}
+static int tracing;
+static void load_ucode(void) { /* G_LOAD_UCODE: the data's address came in G_RDPHALF_1 */
+    ucode = identify_ucode(half1);
+    if (tracing) fprintf(stderr, "  ucode -> %s\n", ucode_names[ucode]);
+}
+
+static void modify_vertex(int n, int where, uint32_t w1) { /* G_MODIFYVTX, and GBI 1's G_MW_POINTS */
+    /* A racing game sets every road polygon's colours and texture coordinates this way: without it its roads were
+       drawn with one texel each */
+    if (n < 0 || n >= 64) return;
+    Vtx *v = &vtx[n];
+    if (where == 0x10) v->shade = unpack8888(w1);
+    else if (where == 0x14) { v->s = (int16_t)(w1 >> 16) / 32.0f; v->t = (int16_t)w1 / 32.0f; }
+    else if (where == 0x18) { v->fixed_xy = 1; v->fx = (int16_t)(w1 >> 16) / 4.0f; v->fy = (int16_t)w1 / 4.0f; }
+    else if (where == 0x1C) { v->fixed_z = 1; v->fz = (float)w1 / 65536.0f; }
+}
+
+/* G_MW_MATRIX: one pair of the combined matrix's 16-bit halves rewritten, as the RSP keeps it (s15.16). */
+static void matrix_word(int offset, uint32_t w1) {
+    int frac = offset >= 32, at = (offset & 31) / 2; /* the first of the two elements the word holds */
+    for (int k = 0; k < 2 && at + k < 16; k++) {
+        float v = mvp[at + k];
+        int32_t fixed = (int32_t)floorf(v * 65536.0f);
+        uint16_t half = (uint16_t)(k == 0 ? w1 >> 16 : w1);
+        fixed = frac ? (int32_t)(((uint32_t)fixed & 0xFFFF0000u) | half) : (int32_t)((uint32_t)half << 16 | ((uint32_t)fixed & 0xFFFF));
+        mvp[at + k] = (float)fixed / 65536.0f;
+    }
+}
+/* GBI 1's G_MV_MATRIX_1..4: the combined matrix loaded whole, a quarter at a time (gSPForceMatrix). */
+static uint8_t forced[64];
+static void force_matrix(int quarter, uint32_t a) {
+    memcpy(forced + quarter * 16, R + a, 16);
+    if (quarter != 3) return;
+    for (int i = 0; i < 16; i++) {
+        int16_t hi = (int16_t)(forced[i * 2] << 8 | forced[i * 2 + 1]);
+        uint16_t lo = (uint16_t)(forced[32 + i * 2] << 8 | forced[33 + i * 2]);
+        mvp[i] = (float)hi + lo / 65536.0f;
+    }
+}
+
+/* G_MOVEWORD, both generations: `light_step` is how far apart G_MW_LIGHTCOL's lights are (F3DEX2 24, GBI 1 32). */
+static void moveword(int index, uint32_t offset, uint32_t w1, int light_step) {
+    switch (index) {
+    case 0: matrix_word((int)offset, w1); break;                                       /* G_MW_MATRIX */
+    case 2: num_lights = light_step == 24 ? (int)(w1 / 24) : (int)((w1 & 0x7FFFFFFF) / 32) - 1; /* G_MW_NUMLIGHT */
+        if (num_lights < 0) num_lights = 0;
+        break;
+    case 8: fog_mul = (int16_t)(w1 >> 16); fog_off = (int16_t)(w1 & 0xFFFF); break;   /* G_MW_FOG */
+    case 10: if (offset % (uint32_t)light_step == 0 && offset / (uint32_t)light_step < 8) /* G_MW_LIGHTCOL */
+            lights[offset / (uint32_t)light_step] = (Color){(w1 >> 24) / 255.0f, ((w1 >> 16) & 255) / 255.0f,
+                                                              ((w1 >> 8) & 255) / 255.0f, 1};
+        break;
+    case 12: modify_vertex((int)offset / 40, (int)offset % 40, w1); break;             /* G_MW_POINTS */
+    }
+}
+
+/* G_BRANCH_Z (gSPBranchLessZ): the list in G_RDPHALF_1 replaces the rest of this one when the vertex is nearer than
+   zval (the screen depth, 0 to 1023, in 16.16). A model's detail by distance: the near model is drawn when it's near,
+   and the far one otherwise; always taking the far one drew every model at its lowest detail. */
+static uint32_t branch_to;
+static void branch_z(int n, uint32_t zval) {
+    if (n < 0 || n >= 64) return;
+    const Vtx *v = &vtx[n];
+    float w = v->w > 1e-4f ? v->w : 1e-4f, z = v->z / w * vp_scale[2] + vp_trans[2];
+    if (z * 65536.0f <= (float)zval || z > 1023.0f) branch_to = half1 ? half1 : 1;
+}
+
 static void f3dex2(uint8_t op, uint32_t w0, uint32_t w1) {
     switch (op) {
     case 0x01: { int n = (w0 >> 12) & 0xFF, end = (w0 >> 1) & 0x7F; load_vertices(phys(w1), n, end - n); break; }
     case 0x05: triangle(((w0 >> 16) & 0xFF) / 2, ((w0 >> 8) & 0xFF) / 2, (w0 & 0xFF) / 2); break;
-    case 0x02: { /* G_MODIFYVTX: one attribute of a loaded vertex. A racing game sets every road polygon's colours and
-                    texture coordinates this way: without it its roads were drawn with one texel each */
-        int where = (w0 >> 16) & 0xFF, n = (int)(w0 & 0xFFFF) / 2;
-        if (n < 0 || n >= 64) break;
-        if (where == 0x10) vtx[n].shade = unpack8888(w1);
-        else if (where == 0x14) { vtx[n].s = (int16_t)(w1 >> 16) / 32.0f; vtx[n].t = (int16_t)w1 / 32.0f; }
-        break; }
+    case 0x02: modify_vertex((int)(w0 & 0xFFFF) / 2, (int)(w0 >> 16) & 0xFF, w1); break; /* G_MODIFYVTX */
     case 0x06: case 0x07:
         triangle(((w0 >> 16) & 0xFF) / 2, ((w0 >> 8) & 0xFF) / 2, (w0 & 0xFF) / 2);
         triangle(((w1 >> 16) & 0xFF) / 2, ((w1 >> 8) & 0xFF) / 2, (w1 & 0xFF) / 2); break;
@@ -650,7 +738,7 @@ static void f3dex2(uint8_t op, uint32_t w0, uint32_t w1) {
     case 0xD8: { int n = (int)(w1 / 64); mv_depth = mv_depth > n ? mv_depth - n : 0; update_mvp(); break; }
     case 0xD9: geometry = (geometry & (w0 & 0xFFFFFF)) | w1; break;
     case 0xD7:
-        tex_on = (w0 & 0xFF) != 0; tex_tile = (w0 >> 8) & 7;
+        tex_on = (w0 & 0xFF) != 0; tex_tile = (w0 >> 8) & 7; tex_levels = (w0 >> 11) & 7;
         tex_sscale = (w1 >> 16) == 0xFFFF ? 1.0f : (w1 >> 16) / 65536.0f;
         tex_tscale = (w1 & 0xFFFF) == 0xFFFF ? 1.0f : (w1 & 0xFFFF) / 65536.0f; break;
     case 0xDC: { int index = w0 & 0xFF, offset = (int)((w0 >> 8) & 0xFF) * 8; uint32_t a = phys(w1);
@@ -658,11 +746,78 @@ static void f3dex2(uint8_t op, uint32_t w0, uint32_t w1) {
             for (int i = 0; i < 3; i++) { vp_scale[i] = (int16_t)rd16(a + i * 2); vp_trans[i] = (int16_t)rd16(a + 8 + i * 2); }
         else if (index == 10) set_light(offset / 24 - 2, a); /* the look-at X and Y at 0 and 24, LIGHT_1 at 48 */
         break; }
-    case 0xDB:
-        if (((w0 >> 16) & 0xFF) == 2) num_lights = (int)(w1 / 24);
-        if (((w0 >> 16) & 0xFF) == 8) { fog_mul = (int16_t)(w1 >> 16); fog_off = (int16_t)(w1 & 0xFFFF); } /* G_MW_FOG */
-        break;
+    case 0xDB: moveword((w0 >> 16) & 0xFF, w0 & 0xFFFF, w1, 24); break;
+    case 0x04: branch_z((int)(w0 & 0xFFF) / 2, w1); break;   /* G_BRANCH_Z: the far model only when it's far */
+    case 0xE1: half1 = w1; break;                              /* G_RDPHALF_1 */
+    case 0xDD: load_ucode(); break;                            /* G_LOAD_UCODE */
+    case 0x00: case 0x03: case 0xE0: case 0xD3: case 0xD6: break; /* no-ops, G_CULLDL (never culls), DMA/special */
     default: rdp(op, w0, w1);
+    }
+}
+
+/* GBI 1: Fast3D (Super Mario 64's generation, "RSP SW Version") and F3DEX 1.x with its lighter F3DLX and F3DLP.
+   The same RDP commands, the same vertices and lights, other opcodes and encodings: matrices and lights through
+   G_MOVEMEM's index, vertex and triangle indices counted in other units (Fast3D's triangles by ten), other-mode
+   commands by shift and length, and its own geometry mode bits (translated here to F3DEX2's, which the rest of the
+   renderer reads). Decoded as F3DEX2, such a list drew nothing right. */
+static uint32_t gbi1_geometry(uint32_t g) {
+    static const uint32_t from[] = {0x1, 0x4, 0x200, 0x1000, 0x2000, 0x10000, 0x20000, 0x40000, 0x80000};
+    static const uint32_t to[] = {0x1, 0x4, 0x200000, 0x200, 0x400, 0x10000, 0x20000, 0x40000, 0x80000};
+    uint32_t out = 0;
+    for (int i = 0; i < 9; i++) if (g & from[i]) out |= to[i];
+    return out;
+}
+static void gbi1(uint8_t op, uint32_t w0, uint32_t w1) {
+    int fast3d = ucode == UC_F3D, scale = fast3d ? 10 : 2;
+    switch (op) {
+    case 0x01: { /* G_MTX: projection 1, load 2, push 4 */
+        int p = (int)(w0 >> 16) & 0xFF;
+        float m[16];
+        matrix_read(phys(w1), m);
+        if (p & 1) { if (p & 2) memcpy(proj, m, sizeof m); else matrix_mul(m, proj, proj); }
+        else {
+            if ((p & 4) && mv_depth < 9) { memcpy(mv[mv_depth + 1], mv[mv_depth], sizeof m); mv_depth++; }
+            if (p & 2) memcpy(mv[mv_depth], m, sizeof m); else matrix_mul(m, mv[mv_depth], mv[mv_depth]);
+        }
+        update_mvp(); break; }
+    case 0x03: { int index = (w0 >> 16) & 0xFF; uint32_t a = phys(w1); /* G_MOVEMEM by index */
+        if (index == 0x80)
+            for (int i = 0; i < 3; i++) { vp_scale[i] = (int16_t)rd16(a + i * 2); vp_trans[i] = (int16_t)rd16(a + 8 + i * 2); }
+        else if (index >= 0x82 && index <= 0x94) set_light(index == 0x82 ? -1 : index == 0x84 ? -2 : (index - 0x86) / 2, a);
+        else if (index >= 0x9E && index <= 0xA4) force_matrix((index - 0x9E) / 2, a);
+        break; }
+    case 0x04: /* G_VTX: Fast3D's count - 1 and first index in nibbles; F3DEX's first index doubled, count in 6 bits */
+        if (fast3d) load_vertices(phys(w1), (int)((w0 >> 20) & 15) + 1, (int)(w0 >> 16) & 15);
+        else load_vertices(phys(w1), (int)(w0 >> 10) & 0x3F, (int)((w0 >> 16) & 0xFF) / 2);
+        break;
+    case 0xBF: triangle((int)((w1 >> 16) & 0xFF) / scale, (int)((w1 >> 8) & 0xFF) / scale, (int)(w1 & 0xFF) / scale); break;
+    case 0xB1: if (!fast3d) { /* G_TRI2 */
+            triangle((int)((w0 >> 16) & 0xFF) / 2, (int)((w0 >> 8) & 0xFF) / 2, (int)(w0 & 0xFF) / 2);
+            triangle((int)((w1 >> 16) & 0xFF) / 2, (int)((w1 >> 8) & 0xFF) / 2, (int)(w1 & 0xFF) / 2);
+        } break;
+    case 0xB5: if (!fast3d) { /* F3DEX's G_QUAD (Fast3D's G_LINE3D: lines aren't drawn) */
+            int v0 = (int)(w1 >> 24) / 2, v1 = (int)((w1 >> 16) & 0xFF) / 2, v2 = (int)((w1 >> 8) & 0xFF) / 2, v3 = (int)(w1 & 0xFF) / 2;
+            triangle(v0, v1, v2); triangle(v0, v2, v3);
+        } break;
+    case 0xB2: if (!fast3d) modify_vertex((int)(w0 & 0xFFFF) / 2, (int)(w0 >> 16) & 0xFF, w1); break; /* G_MODIFYVTX */
+    case 0xB0: if (!fast3d) branch_z((int)(w0 & 0xFFF) / 2, w1); break;   /* G_BRANCH_Z */
+    case 0xBD: mv_depth = mv_depth > 0 ? mv_depth - 1 : 0; update_mvp(); break; /* G_POPMTX */
+    case 0xBC: moveword((int)(w0 & 0xFF), (w0 >> 8) & 0xFFFF, w1, 32); break;
+    case 0xBB: /* G_TEXTURE */
+        tex_on = (w0 & 0xFF) != 0; tex_tile = (w0 >> 8) & 7; tex_levels = (w0 >> 11) & 7;
+        tex_sscale = (w1 >> 16) == 0xFFFF ? 1.0f : (w1 >> 16) / 65536.0f;
+        tex_tscale = (w1 & 0xFFFF) == 0xFFFF ? 1.0f : (w1 & 0xFFFF) / 65536.0f; break;
+    case 0xBA: case 0xB9: { /* G_SETOTHERMODE_H / _L: shift and length */
+        int shift = (int)(w0 >> 8) & 0xFF, len = (int)w0 & 0xFF;
+        uint32_t mask = (len >= 32 ? 0xFFFFFFFFu : ((1u << len) - 1)) << (shift & 31);
+        if (op == 0xB9) mode_l = (mode_l & ~mask) | (w1 & mask); else mode_h = (mode_h & ~mask) | (w1 & mask);
+        break; }
+    case 0xB7: geometry |= gbi1_geometry(w1); break;
+    case 0xB6: geometry &= ~gbi1_geometry(w1); break;
+    case 0xB4: half1 = w1; break;          /* G_RDPHALF_1 */
+    case 0xAF: load_ucode(); break;         /* G_LOAD_UCODE */
+    case 0x00: case 0xBE: case 0xB3: case 0xB8: case 0x06: break; /* no-op, G_CULLDL, halves; lists in the task loop */
+    default: if (op >= 0xC0) rdp(op, w0, w1);
     }
 }
 
@@ -701,11 +856,17 @@ static void s2d_sprite(uint32_t sp) { /* an unrotated rectangle from TMEM */
 }
 /* The 2D matrix (uObjMtx, G_OBJ_MOVEMEM at index 0, 24 bytes): A, B, C, D (s15.16) and X, Y (s10.2). */
 static float obj_mtx[6] = {1, 0, 0, 1, 0, 0};
-static void s2d_matrix(uint32_t w0, uint32_t a) {
-    if ((w0 & 0xFF) != 0 || ((w0 >> 19) & 0x1F) != 2) return; /* another load (the viewport, at index 8) */
-    for (int i = 0; i < 4; i++) obj_mtx[i] = (float)(int32_t)rd32(a + (uint32_t)i * 4) / 65536.0f;
-    obj_mtx[4] = (int16_t)rd16(a + 16) / 4.0f;
-    obj_mtx[5] = (int16_t)rd16(a + 18) / 4.0f;
+static void s2d_matrix_load(uint32_t a, int sub) { /* the whole uObjMtx, or its uObjSubMtx (X, Y and the scales) */
+    if (!sub) {
+        for (int i = 0; i < 4; i++) obj_mtx[i] = (float)(int32_t)rd32(a + (uint32_t)i * 4) / 65536.0f;
+        a += 16;
+    }
+    obj_mtx[4] = (int16_t)rd16(a) / 4.0f;
+    obj_mtx[5] = (int16_t)rd16(a + 2) / 4.0f;
+}
+static void s2d_matrix(uint32_t w0, uint32_t a) { /* S2DEX2's G_OBJ_MOVEMEM: index 0 the matrix, 2 the sub-matrix */
+    if ((w0 & 0xFF) == 0 && ((w0 >> 19) & 0x1F) == 2) s2d_matrix_load(a, 0);
+    else if ((w0 & 0xFF) == 2) s2d_matrix_load(a, 1);
 }
 /* G_OBJ_SPRITE: the sprite through the 2D matrix, rotated and scaled: its corners in object space are mapped to
    the screen as (A x + B y + X, C x + D y + Y), and each pixel they cover back to the texel it shows. A racing
@@ -756,7 +917,25 @@ static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight f
             else plot(px, py, 0, (Color){1, 1, 1, 1}, c, 0, 8, 0);
         }
 }
+/* S2DEX 1.x (GBI 1) numbers its object commands differently: each mapped to S2DEX2's; the rest are GBI 1's. */
+static int s2dex1_op(uint8_t op) {
+    switch (op) {
+    case 0x01: return 0x09; case 0x02: return 0x0A; case 0x03: return 0x01; case 0x04: return 0x02;
+    case 0x05: return 0xDC; case 0xB0: return 0x04; case 0xB1: return 0x0B; case 0xB2: return 0xDA;
+    case 0xC1: return 0x05; case 0xC2: return 0x06; case 0xC3: return 0x07; case 0xC4: return 0x08;
+    }
+    return -1;
+}
 static void s2dex(uint8_t op, uint32_t w0, uint32_t w1) {
+    if (ucode == UC_S2DEX) {
+        int mapped = s2dex1_op(op);
+        if (mapped < 0) { gbi1(op, w0, w1); return; }
+        if (mapped == 0xDC) { /* gSPObjMatrix (24 bytes) or gSPObjSubMatrix (8, from X), by the length in w0 */
+            s2d_matrix_load(phys(w1), ((w0 >> 16) & 0xFF) == 7 ? 1 : 0);
+            return;
+        }
+        op = (uint8_t)mapped;
+    }
     switch (op) {
     case 0x02: s2d_sprite_rotated(phys(w1)); break;
     case 0x01: case 0xDA: s2d_sprite(phys(w1)); break; /* the rectangles: no rotation (their scale is the sprite's) */
@@ -766,7 +945,9 @@ static void s2dex(uint8_t op, uint32_t w0, uint32_t w1) {
     case 0xDC: s2d_matrix(w0, phys(w1)); break;
     case 0x09: s2d_bg(phys(w1), 1); break;
     case 0x0A: s2d_bg(phys(w1), 0); break;
-    case 0x0B: case 0x04: case 0xD7: case 0xD9: break;
+    case 0xE1: half1 = w1; break;
+    case 0xDD: load_ucode(); break;
+    case 0x0B: case 0x04: case 0xD7: case 0xD9: case 0x00: break;
     default: rdp(op, w0, w1);
     }
 }
@@ -778,15 +959,11 @@ static unsigned long render_tasks;
 void port_render_task(uint32_t task) {
     R = port_memory();
     render_tasks++;
-    uint32_t ud = rd32(task + 24) & 0x1FFFFFFF;
-    int is_2d = 0; /* the microcode's data names it: "RSP Gfx ucode S2DEX ..." */
-    for (uint32_t i = 0; i + 19 < 0x800; i++)
-        if (R[0x80000000u + ud + i] == 'R' && !memcmp(R + 0x80000000u + ud + i, "RSP Gfx ucode ", 14)) {
-            is_2d = !memcmp(R + 0x80000000u + ud + i + 14, "S2DEX", 5); break; }
+    ucode = identify_ucode(rd32(task + 24)); /* the microcode's data names it */
     static long trace = -1;
     if (trace < 0) trace = getenv("PORT_DLTRACE") ? atol(getenv("PORT_DLTRACE")) : 0;
-    int tracing = trace > 0 && (long)render_tasks >= trace && (long)render_tasks < trace + 6;
-    if (tracing) fprintf(stderr, "== task %lu, %s\n", render_tasks, is_2d ? "S2DEX" : "F3DEX2");
+    tracing = trace > 0 && (long)render_tasks >= trace && (long)render_tasks < trace + 6;
+    if (tracing) fprintf(stderr, "== task %lu, %s\n", render_tasks, ucode_names[ucode]);
     if (tracing && getenv("PORT_TRIDEBUG")) debug_tris = atoi(getenv("PORT_TRIDEBUG"));
     if (tracing && getenv("PORT_DUMPAT")) { /* words at physical addresses, comma-separated, for debugging */
         char *list = strdup(getenv("PORT_DUMPAT")), *tok = strtok(list, ",");
@@ -806,8 +983,11 @@ void port_render_task(uint32_t task) {
         uint8_t op = w0 >> 24;
         if (tracing) fprintf(stderr, "%*s%08X %08X %08X\n", depth * 2, "", pc, w0, w1);
         pc += 8;
-        if (op == 0xDB && ((w0 >> 16) & 0xFF) == 0x06) segments[((w0 & 0xFFFF) / 4) & 15] = w1 & 0x1FFFFFFF;
-        else if (op == 0xDE) { /* G_DL: a call, or a branch when the no-push bit is set */
+        int one = ucode >= UC_F3D; /* GBI 1: G_DL 0x06, G_ENDDL 0xB8, G_MOVEWORD 0xBC */
+        uint8_t op_dl = one ? 0x06 : 0xDE, op_end = one ? 0xB8 : 0xDF;
+        if (!one && op == 0xDB && ((w0 >> 16) & 0xFF) == 0x06) segments[((w0 & 0xFFFF) / 4) & 15] = w1 & 0x1FFFFFFF;
+        else if (one && op == 0xBC && (w0 & 0xFF) == 0x06) segments[(((w0 >> 8) & 0xFFFF) / 4) & 15] = w1 & 0x1FFFFFFF;
+        else if (op == op_dl) { /* G_DL: a call, or a branch when the no-push bit is set */
             if ((phys(w1) & 0x1FFFFFFF) < 0x400) { /* the boot's vectors, never a display list: a null pointer */
                 static int said;
                 if (!said++) fprintf(stderr, "render: a display list calls address %08X (a null pointer); skipped\n", w1);
@@ -816,7 +996,7 @@ void port_render_task(uint32_t task) {
             }
             if (!((w0 >> 16) & 1) && depth < 18) stack[depth++] = pc;
             pc = phys(w1);
-        } else if (op == 0xDF) { /* G_ENDDL */
+        } else if (op == op_end) { /* G_ENDDL */
             if (!depth) break;
             pc = stack[--depth];
         } else if (op == 0xE4 || op == 0xE5) { /* a textured rectangle: two more commands carry s, t and steps */
@@ -826,8 +1006,10 @@ void port_render_task(uint32_t task) {
             float xl = ((w1 >> 12) & 0xFFF) / 4.0f, yl = (w1 & 0xFFF) / 4.0f;
             tex_rect((w1 >> 24) & 7, xl, yl, xh, yh, (int16_t)(h1 >> 16) / 32.0f, (int16_t)h1 / 32.0f,
                      (int16_t)(h2 >> 16) / 1024.0f, (int16_t)h2 / 1024.0f, op == 0xE5);
-        } else if (is_2d) s2dex(op, w0, w1);
+        } else if (ucode == UC_S2DEX || ucode == UC_S2DEX2) s2dex(op, w0, w1);
+        else if (one) gbi1(op, w0, w1);
         else f3dex2(op, w0, w1);
+        if (branch_to) { pc = phys(branch_to); branch_to = 0; } /* G_BRANCH_Z taken: the rest of the list replaced */
     }
 }
 

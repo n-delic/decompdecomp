@@ -110,17 +110,32 @@ def combine(a: int, b: int, c: int, d: int, aa: int, ab: int, ac: int, ad: int) 
 
 
 SHADE = combine(15, 15, 31, 4, 7, 7, 7, 4)       # the shade's colour and alpha
-TEXEL0 = combine(1, 15, 31, 7, 1, 7, 7, 7)       # (TEXEL0 - 0) * ... : TEXEL0 as D would be 1: here A * C with C = 1
-TEX = combine(15, 15, 31, 1, 7, 7, 7, 1)         # D = TEXEL0, alpha D = TEXEL0
+TEX = combine(15, 15, 31, 1, 7, 7, 7, 1)         # the texel's colour and alpha (D = TEXEL0)
+
+
+# Each family's signature, as its data carries it: GBI 2 versions are 2.x, GBI 1's 1.x; Fast3D has its own.
+SIGNATURES = {
+    "F3DEX2": "RSP Gfx ucode F3DEX       fifo 2.05  Yoshitaka Yasumoto 1998 Nintendo.",
+    "F3DZEX": "RSP Gfx ucode F3DZEX.NoN  fifo 2.06H Yoshitaka Yasumoto 1998 Nintendo.",
+    "S2DEX2": "RSP Gfx ucode S2DEX       fifo 2.05  Yoshitaka Yasumoto 1998 Nintendo.",
+    "F3DEX": "RSP Gfx ucode F3DEX       1.23 Yoshitaka Yasumoto 1997 Nintendo.",
+    "F3DLX": "RSP Gfx ucode F3DLX.Rej   1.21 Yoshitaka Yasumoto 1996 Nintendo.",
+    "S2DEX": "RSP Gfx ucode S2DEX       1.07 Yoshitaka Yasumoto 1998 Nintendo.",
+    "Fast3D": "RSP SW Version: 2.0D, 04-01-96",
+}
+
+
+def ucode_data(mem: Memory, ucode: str) -> int:
+    """A microcode's data, its signature in it: the physical address (G_LOAD_UCODE's G_RDPHALF_1)."""
+    return mem.put(b"\0" * 64 + (SIGNATURES[ucode] + "\0").encode(), 16)
 
 
 class Gfx:
-    """Display list commands written into memory at `at`. `ucode` names the microcode as its data does."""
+    """Display list commands written into memory at `at`. `ucode` names the microcode the task starts with."""
 
     def __init__(self, mem: Memory, ucode: str = "F3DEX2", at: int = DL, task: int = TASK) -> None:
         self.mem, self.at, self.start, self.task = mem, at, at, task
-        data = mem.put(("RSP Gfx ucode " + ucode + " 2.05 Yoshitaka Yasumoto 1998 Nintendo.\0").encode(), 16)
-        mem.w32(task + 24, 0x80000000 | data)
+        mem.w32(task + 24, 0x80000000 | ucode_data(mem, ucode))
         mem.w32(task + 48, 0x80000000 | at)
 
     def __call__(self, w0: int, w1: int = 0) -> Gfx:
@@ -144,7 +159,7 @@ class Gfx:
         return self(0xF6000000 | (x1 * 4) << 12 | y1 * 4, (x0 * 4) << 12 | y0 * 4)
 
     def end(self) -> int:
-        """G_ENDDL (F3DEX2's or GBI 1's, by the microcode the list was made for); the task's RAM address."""
+        """The task's RAM address (the list ends with its own G_ENDDL, written by the test)."""
         return self.task | 0x80000000
 
 
@@ -160,3 +175,22 @@ def run(program: Path, mem: Memory, folder: Path, *steps: str | int) -> tuple[Me
     raw = shown.read_bytes()
     w, h = struct.unpack_from("<ii", raw)
     return out, (w, h, raw[8:])
+
+
+QUADRANT_COLOURS = [0xF801, 0x07C1, 0x003F, 0xFFFF]  # red, green, blue, white (RGBA 5551)
+
+
+def quadrant_texture(mem: Memory) -> int:
+    """An 8x8 RGBA16 texture whose quadrants are red, green (top), blue, white (bottom)."""
+    texels = b"".join(QUADRANT_COLOURS[(s >= 4) + 2 * (t >= 4)].to_bytes(2, "big") for t in range(8) for s in range(8))
+    return mem.put(texels)
+
+
+def load_texture(g: Gfx, image: int, tile: int = 0, tmem: int = 0, size: int = 8, cm: int = 0) -> Gfx:
+    """An RGBA16 size x size image into TMEM by LoadTile, set up as `tile` (clamp/mirror bits `cm` both ways)."""
+    line = size * 2 // 8
+    g(0xFD100000 | (size - 1), 0x80000000 | image)
+    g(0xF5100000 | line << 9 | tmem, 7 << 24)
+    g(0xF4000000, 7 << 24 | ((size - 1) * 4) << 12 | (size - 1) * 4)
+    g(0xF5100000 | line << 9 | tmem, tile << 24 | cm << 18 | cm << 8)
+    return g(0xF2000000, tile << 24 | ((size - 1) * 4) << 12 | (size - 1) * 4)
