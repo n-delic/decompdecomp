@@ -10,6 +10,7 @@ import wave
 import pytest
 
 from decompnet.app import rom_explorer
+from decompnet.arch import mips_assets
 from decompnet.consoles.n64 import audio
 from decompnet.network import NetworkError
 from decompnet.rom import explorer
@@ -44,7 +45,8 @@ def fixture(*, raw=False, predictors=1):
     image[:len(code)]=code
     functions=[dict(name='audio_loader',vram=0x80000000,rom_offset=0,size=len(code),relocs=[]),
                dict(name='alBnkfNew',vram=0x80000040,rom_offset=64,size=4,relocs=[])]
-    return bytes(image),dict(functions=functions),base
+    # decomp-assets reads the loader calls with the reader the app gives it (the N64 console passes this one).
+    return bytes(image),dict(functions=functions,read_code=mips_assets.read),base
 
 
 def wav(result):
