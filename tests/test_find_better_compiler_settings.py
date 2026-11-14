@@ -7,6 +7,7 @@ import pytest
 
 from decompnet import consoles, toolchains
 from decompnet.app.engine import RomNetwork
+from decompnet.project import compiler_for
 
 
 def test_own_compiler_is_usable_in_profile_selection(tmp_path, monkeypatch):
@@ -134,7 +135,7 @@ def test_saved_result_is_rechecked_before_applying_one_function(tmp_path, monkey
     monkeypatch.setattr(net, "_judge_with", judge)
     net.find_better_compiler_settings("demo", log=lambda *_: None)
     changed = []
-    monkeypatch.setattr(net, "set_compiler_ranges", lambda *args: changed.append(args))
+    monkeypatch.setattr(net, "set_compiler_ranges", lambda *args, **kw: changed.append(args))
     monkeypatch.setattr(net, "try_quietly", lambda *args: None)
     assert net.apply_compiler_test_result("demo", "f", "gcc-2.7.2-psx", ["-O3", "-G8"])["matched"] is False
     assert changed[0][1] == [[0x80010000, 0x80010040]]
@@ -157,3 +158,41 @@ def test_saved_comparisons_go_with_their_project(tmp_path):
         db.execute("INSERT INTO compiler_tests VALUES(?,?,?,?)", (fid, "digest", 0.0, "{}"))
     net.remove_project("demo")
     assert net.store.one("SELECT 1 FROM compiler_tests WHERE function_id=?", fid) is None
+
+
+@pytest.mark.parametrize("winner", [["-O3"], ["-O2"]])  # another profile, and the project's own default
+def test_applying_one_function_keeps_its_neighbours_range(tmp_path, monkeypatch, winner):
+    """#241: applying one function's result replaced the whole range around it with the function's own, so the other
+    functions in that range (matched ones too, unchecked) built with the project's default again; a default winner
+    removed the range altogether. Now the range is split around the function."""
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    cfg = {"kind": "rom", "platform": "ps", "compiler": {"toolchain": "gcc-2.7.2-psx", "flags": ["-O2"]},
+           "compiler_ranges": [{"start": 0x80010000, "end": 0x80020000,
+                                "toolchain": "gcc-2.7.2-psx", "flags": ["-O1"]}]}
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)",
+                         ("demo", "Demo", str(tmp_path), json.dumps(cfg))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,best_score,best_source) "
+                   "VALUES(?,?,?,?,?,?,?,?)", (pid, "f", 0x80010040, 64, 16, "open", 160, "int f(void) { return 1; }"))
+        for name, vram in (("before", 0x80010000), ("after", 0x80010080)):
+            db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,matched_source) "
+                       "VALUES(?,?,?,?,?,?,?)", (pid, name, vram, 64, 16, "matched", "void g(void) {}"))
+    monkeypatch.setattr(toolchains, "installed", lambda tc: {"installed": True} if tc == "gcc-2.7.2-psx" else None)
+    monkeypatch.setattr(toolchains, "get", lambda tc: SimpleNamespace(id=tc, supported=True, name=tc, flags=["-O2"]))
+    monkeypatch.setattr(toolchains, "runtime_error", lambda tc: None)
+    monkeypatch.setattr(net, "flag_variants", lambda tc, flags, *args: [flags, winner])
+    monkeypatch.setattr(net, "_judge_with", lambda proj, fn, tc, flags, source: (
+        flags == winner, SimpleNamespace(percent=100.0 if flags == winner else 50.0, score=0), ""))
+    rechecked = []
+    monkeypatch.setattr(net, "regression_test", lambda proj, agent, only, **kw: rechecked.extend(only) or [])
+    monkeypatch.setattr(net, "try_quietly", lambda *args: None)
+    net.find_better_compiler_settings("demo", log=lambda *_: None)
+    net.apply_compiler_test_result("demo", "f", "gcc-2.7.2-psx", winner)
+    after = json.loads(net._project("demo")["config"])
+    assert compiler_for(after, 0x80010040)["flags"] == winner
+    for neighbour in (0x80010000, 0x80010080, 0x8001FFFC):  # the matched ones keep theirs, so need no recheck
+        assert compiler_for(after, neighbour)["flags"] == ["-O1"]
+    assert not rechecked  # only the function itself changed compiler, and it isn't matched
+    own = [(0x80010040, 0x80010080, winner)] if winner != ["-O2"] else []  # a default winner: just carved out
+    assert [(r["start"], r["end"], r["flags"]) for r in after["compiler_ranges"]] == [
+        (0x80010000, 0x80010040, ["-O1"]), *own, (0x80010080, 0x80020000, ["-O1"])]

@@ -84,6 +84,7 @@ def gui():
 
     env = {**os.environ, "GUI_CONSOLES": json.dumps([c.describe() for c in CONSOLES])}  # (/api/state's)
     out = subprocess.run([NODE, str(Path(__file__).with_name("gui_polls.js"))], capture_output=True, text=True,
+                         encoding="utf-8",  # node writes UTF-8; Windows' default (cp1252) garbled "Stopping…"
                          timeout=GUI_TIMEOUT_SECONDS, check=True, env=env)
     result = json.loads(out.stdout)
     assert result["errors"] == []

@@ -350,8 +350,10 @@ class CompilerMixin:
             raise NetworkError("These settings no longer improve this function. Run a fresh comparison.")
         default = self.cfg(proj)["compiler"]
         is_default = toolchain == default["toolchain"] and flags == default["flags"]
+        # split: the functions around this one in a range keep the range's compiler (a default winner just leaves
+        # this function out of it)
         self.set_compiler_ranges(slug, [[fn["vram"], fn["vram"] + fn["size"]]],
-                                 None if is_default else toolchain, flags)
+                                 None if is_default else toolchain, flags, split=True)
         agent, _ = self.local_agent("autopilot")
         self.try_quietly(agent, self._project(slug), self._function(function, slug), source)
         fresh = self._function(function, slug)
@@ -750,12 +752,17 @@ class CompilerMixin:
             "status", "applied" if apply else "dismissed"))
 
     def set_compiler_ranges(self, slug: str, ranges: list[list[int]], toolchain: str | None,
-                            flags: list[str] | None = None, reopen: bool = False) -> list[str]:
+                            flags: list[str] | None = None, reopen: bool = False, split: bool = False) -> list[str]:
         """Address ranges built by another compiler than the rest of the game (replacing ranges they overlap), or
         with toolchain None: those ranges back to the project's compiler. Matched functions that wouldn't match any
         more stop it, unless `reopen` (removing a range the user judged a quirk: Ridge Racer V's two GCC 2.96 ranges
         held two functions whose C only matched with 2.96): then they're open again, their C their best attempt.
-        Returns the functions `reopen` opened, so the page can say which the range no longer matches."""
+        Returns the functions `reopen` opened, so the page can say which the range no longer matches.
+
+        `split`: a range these overlap keeps its parts outside them, at its own compiler, instead of going whole. One
+        function's applied comparison result (#241) took a whole range from the functions around it otherwise, matched
+        ones too, and with no check, since only the functions inside the new ranges are checked. The page and the
+        suggestions name a whole range to replace or remove, so they keep the replacing."""
         if self.fork_slug(slug):
             raise NetworkError("a fork builds with the project's own compilers and flags")
         if toolchain:
@@ -766,8 +773,19 @@ class CompilerMixin:
 
         before = self.cfg(self._project(slug)).get("compiler_ranges", [])
 
+        def outside(r):
+            """The parts of range r that none of `ranges` covers."""
+            parts = [(r["start"], r["end"])]
+            for a, b in ranges:
+                parts = [piece for s, e in parts for piece in ((s, min(e, a)), (max(s, b), e)) if piece[0] < piece[1]]
+            return [{**r, "start": s, "end": e} for s, e in parts]
+
         def change(cfg):
-            keep = [r for r in cfg.get("compiler_ranges", []) if all(r["end"] <= a or r["start"] >= b for a, b in ranges)]
+            if split:
+                keep = [part for r in cfg.get("compiler_ranges", []) for part in outside(r)]
+            else:
+                keep = [r for r in cfg.get("compiler_ranges", [])
+                        if all(r["end"] <= a or r["start"] >= b for a, b in ranges)]
             if toolchain:
                 keep += [{"start": a, "end": b, "toolchain": toolchain, "flags": flags} for a, b in ranges]
             cfg["compiler_ranges"] = sorted(keep, key=lambda r: r["start"])
