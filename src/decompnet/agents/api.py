@@ -62,6 +62,7 @@ class Api(Agent):
     docs = "https://api-docs.deepseek.com"
     recommended = True  # decompdecomp runs its whole loop, and no other program's update can break it
     uses_endpoints = True
+    built_in = True  # the app drives the model itself; there is no program to install (unlike Hermes)
     # OpenAI's reasoning_effort, which OpenAI-compatible servers with reasoning models take; which words a model knows
     # is its own (a llama.cpp model's chat template took xhigh, medium and low, and refused high and max, saying so)
     takes_effort = True

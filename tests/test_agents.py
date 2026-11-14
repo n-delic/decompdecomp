@@ -1672,6 +1672,15 @@ def test_hermes_drops_the_session_id_stderr_trailer():
     assert hermes.HERMES.clean_stderr("ConnectionError: refused") == "ConnectionError: refused"
 
 
+def test_hermes_is_not_the_built_in_api_helper():
+    """Hermes uses endpoints (it picks a saved base_url/key) but is not the app's built-in API helper: it
+    installs a binary and runs its own loop. The GUI tells the two apart by `built_in`, so Hermes reports it
+    false while the built-in `api` helper reports it true."""
+    h = kinds.get("hermes").describe()
+    assert h["uses_endpoints"] is True and h["built_in"] is False
+    assert kinds.get("api").describe()["built_in"] is True
+
+
 def test_shutdown_stops_leftover_gateways(tmp_path, monkeypatch):
     """At quit the app must tell each live helper to end what it left running; a Hermes gateway daemonises out of the
     process group, so without this its gateway can outlive the app on Windows."""

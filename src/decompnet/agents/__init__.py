@@ -116,6 +116,7 @@ class Agent:
     tool_meta: dict = {}  # what it reads on the definition of each of decompdecomp's MCP tools (tools.ALWAYS_LOAD)
     recommended = False  # the launcher lists it first, and starts on it until the user picks another
     uses_endpoints = False  # its model and key come from the API endpoints saved in Agents & models, not a sign-in
+    built_in = False  # the app's own loop drives the model, with no program to install (only the "API key" helper)
     uses_accounts = False  # named sign-ins in separate configuration directories
     takes_effort = False  # the launcher offers a reasoning effort: with the model's name ("provider/model#high"), or
     # for an agent whose model is an endpoint's, as the helper's `effort` option
@@ -128,7 +129,8 @@ class Agent:
         """What the GUI shows about it, before what app/agents.py `detect` finds out (installed, version, models)."""
         return {"id": self.id, "name": self.name, "vendor": self.vendor, "signin": self.signin, "docs": self.docs,
                 "install": self.install_text(), "recommended": self.recommended, "uses_endpoints": self.uses_endpoints,
-                "uses_accounts": self.uses_accounts, "takes_effort": self.takes_effort, "efforts": list(self.efforts)}
+                "built_in": self.built_in, "uses_accounts": self.uses_accounts, "takes_effort": self.takes_effort,
+                "efforts": list(self.efforts)}
 
     def install_text(self) -> str:
         return (self.windows_install or self.install) if sys.platform == "win32" else self.install

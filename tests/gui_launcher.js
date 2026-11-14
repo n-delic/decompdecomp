@@ -98,7 +98,7 @@ ctx.window = ctx;
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "decompnet", "app", "static", "js", "agents.js"), "utf8"), ctx);
 
-const apiAgent = { id: "api", name: "API", uses_endpoints: true, installed: true, recommended: true, takes_effort: false };
+const apiAgent = { id: "api", name: "API", uses_endpoints: true, built_in: true, installed: true, recommended: true, takes_effort: false };
 const cliAgent = { id: "claude", name: "Claude Code", uses_accounts: true, installed: true, recommended: false, takes_effort: false,
   models: [{ id: "opus", name: "Opus" }, { id: "sonnet", name: "Sonnet" }, { id: "haiku", name: "Haiku" }] };
 const manualAgent = { id: "manual", name: "Manual provider", installed: true, recommended: false, takes_effort: false, models: [] };
@@ -328,5 +328,18 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   await pendingSave;
   requireOk(get("dialog").hidden && accountBox.html.includes("Saved after closing"),
     "a save finishing after the drawer closes must update the list without reopening it");
+  // A built_in=false agent that uses endpoints (Hermes) keeps the endpoint picker (it does pick an endpoint)
+  // but must not claim the app's built-in loop or that nothing installs; the built-in api helper still does.
+  const hermesAgent = { id: "hermes", name: "Hermes", uses_endpoints: true, built_in: false, installed: true,
+    recommended: false, takes_effort: false, signin: "Nothing to sign in to." };
+  ctx.S.st.agents = [apiAgent, hermesAgent];
+  vm.runInContext('LZ.kind="hermes"; LZ.eps=["e1"]; LZ.count=1; LZ.multiple=false; LZ.models=[]; LZ.apiSingleModel=null;', ctx);
+  ctx.renderLauncher(box);
+  requireOk(box.html.includes("Default · base"), "a non-built-in endpoint agent still gets the endpoint picker");
+  requireOk(!box.html.includes("A built-in agent loop drives the model") && !box.html.includes("nothing else to install"),
+    "a non-built-in endpoint agent must not claim the app's built-in loop or that nothing installs");
+  vm.runInContext('LZ.kind="api"; LZ.eps=["e1"]; LZ.count=1; LZ.multiple=false; LZ.models=[]; LZ.apiSingleModel=null;', ctx);
+  ctx.renderLauncher(box);
+  requireOk(box.html.includes("A built-in agent loop drives the model"), "the built-in API helper still describes its own loop");
   console.log("launcher model selections and accounts passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
