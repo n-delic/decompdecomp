@@ -57,6 +57,7 @@ SIDE_FILES = {"notes": NOTES_FILE, "verification": VERIFICATION_FILE}  # manifes
 SIDE_DEFAULTS = {"notes": list, "verification": dict}
 TOP_FILES = (MANIFEST, NOTES_FILE, VERIFICATION_FILE)  # the save's own top-level files a sync reads
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
+COMMIT_RETRY_SECONDS = 30  # failed background commits keep their durable work pending
 SET_ASIDE_META = ("asm_code", "not_c", "asm_twin", "verified_assembly")  # why an agent or user set a function aside
 SOURCE_COMPONENT_BYTES = 249  # leaves room for the publisher's .c.tmp suffix under common 255-byte limits
 SOURCE_PREFIX_BYTES = 80  # readable hint; the SHA-256 suffix distinguishes symbols with the same prefix
@@ -1725,6 +1726,7 @@ class Autosave:
                 if not worker['running']:
                     worker['cancel'].clear()
                 self.retry_after.pop(slug, None)
+                worker.pop('commit_retry_after', None)
                 self.deep_check_after.pop(slug, None)
             if self.settings is not None:
                 self.settings.data['autosave_paused'] = sorted(self.paused)
@@ -1807,6 +1809,9 @@ class Autosave:
         while not self.stop.is_set() and self.workers.get(slug) is worker:
             try:
                 check()
+                if time.monotonic() < worker.get('commit_retry_after', 0):
+                    self.stop.wait(1)  # Stop, removal and explicit resume remain responsive.
+                    continue
                 cfg = _settings(worker['row'])
                 if not (cfg.get('auto_commit_matches') or cfg.get('auto_commit_polished') or cfg.get('score_commits', {}).get('enabled')):
                     self.stop.wait(1)
@@ -1819,11 +1824,14 @@ class Autosave:
                         pool.check_cancel()
                         self._commit_once(slug, report)
                     pool.submit(work).result()
+                worker.pop('commit_retry_after', None)
             except _AutosavePaused:
                 pass
             except Exception:
                 if not self.stop.is_set() and slug not in self.paused:
-                    log.exception('Could not process automatic commits for %s', slug)
+                    worker['commit_retry_after'] = time.monotonic() + COMMIT_RETRY_SECONDS
+                    log.exception('Could not process automatic commits for %s; retrying in %s seconds',
+                                  slug, COMMIT_RETRY_SECONDS)
             self.stop.wait(1)
 
     def _commit_once(self, slug, output):
