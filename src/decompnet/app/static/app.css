@@ -615,6 +615,8 @@ a.ghost, a.primary { text-decoration: none; }
 .note { padding: 10px 12px; font-size: 13.5px; color: var(--ink-2); }
 .note small { display: block; color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .note > .row { margin-top: 10px; }  /* a suggestion's buttons, clear of its text */
+.export-next { margin-top: 8px; }  /* what to do with an export, under its log */
+.export-next ol { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 4px; }
 /* agents learn long unbroken lines (paths, symbol lists) that widened the panel past the page */
 /* a guest's project until the host's work is here (project.js: renderRoomCover) */
 .room-cover { margin: 56px auto; max-width: 32em; display: grid; justify-items: center; gap: 10px; text-align: center; }

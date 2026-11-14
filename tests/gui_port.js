@@ -209,12 +209,18 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    t.c.$('portExportMenu').open=true;t.c.docListeners.click({target:{}});assert.equal(t.c.$('portExportMenu').open,false,'a click elsewhere closes it');}
   {// The Miyoo Mini export is one more kind of the same job, and the log says what to do with the folder
    const t=setup(),bodies=[];t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
-   t.c.followJob=async()=>({kind:'miyoo',path:'/save/port/wasm/export/miyoo/README.txt',folder:'/save/port/wasm/export/miyoo'});
+   t.c.followJob=async()=>({kind:'miyoo',path:'/save/port/wasm/export/miyoo/README.txt',folder:'/save/port/wasm/export/miyoo',
+     instructions:['Copy the App and Tools folders to the root of your SD card.','Your ROM is already in App/Rally64/ as rom.z64.']});
    t.c.reply=async(url,opts)=>{if(url==='/api/play-export'){bodies.push(opts.body);return {job:'e3'};}return report;};
    await t.run('exportGame("miyoo")');
    assert.equal(JSON.stringify(bodies[0]),JSON.stringify({slug:'a',kind:'miyoo'}));
    assert.equal(t.c.$('portExportMiyoo').disabled,false,'its button comes back');
-   assert.ok(t.c.$('portExportLog').children.some(x=>/SD card/.test(String(x))&&/rom\.z64/.test(String(x))),'the log says where the ROM goes');}
+   const next=t.c.$('portExportNext'),text=JSON.stringify(next.children,(k,v)=>k==='parentNode'?undefined:v);
+   assert.equal(next.hidden,false,'what to do next shows under the log');
+   assert.ok(/SD card/.test(text)&&/rom\.z64/.test(text),'its steps say what to copy and where the ROM is');
+   assert.ok(!t.c.$('portExportLog').children.some(x=>/rom\.z64/.test(String(x))),'not buried in the log');
+   t.c.followJob=()=>new Promise(()=>{});t.run('exportGame("web")');for(let i=0;i<5;i++)await Promise.resolve();
+   assert.equal(next.hidden,true,'a new export clears the last one\'s steps until it ends');}
   {// an export running when the panel is drawn again is followed, and its Stop cancels it
    const t=setup(),follow=deferred(),cancels=[];t.c.S.tab='porting';t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
    t.c.reply=async(url,opts)=>{if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return {...report,play:{job:null,url:null,export_job:{id:'e2',progress:{phase:'Linking',step:5,steps:11}}}};};

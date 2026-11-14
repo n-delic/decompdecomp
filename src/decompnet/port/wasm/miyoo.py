@@ -12,8 +12,10 @@ pinned Zig and glibc 2.28 (the oldest the Miyoo OSes ship):
   RAM), and the program is linked above them (IMAGE_BASE), as Miyoo64's ports are.
 
 The pack (`package`) holds App/<Folder>/ (the program, launch.sh, config.json: the stock OS's and Onion's Apps) and
-Tools/miyoomini/<Title>.pak/launch.sh (MinUI), and a README. The ROM goes in App/<Folder>/ as rom.z64 (.v64 and .n64
-work too, the host converts them as it reads them). The device-side lessons (the panel turned 180 degrees, the
+Tools/miyoomini/<Title>.pak/launch.sh (MinUI), and a README. The project's own ROM is copied in as
+App/<Folder>/rom.z64, so the folder is ready for the card: it's the user's copy, for their own device, and the export
+folder is never committed (git ignores it). A ROM put there by hand works too, in any byte order (.v64 and .n64: the
+host converts them as it reads them). The device-side lessons (the panel turned 180 degrees, the
 buttons as keys, sound through the audioserver, both cores at full clock) come from the Miyoo64 ports
 (github.com/mr-finster/miyoo64, MIT), which found each on devices.
 """
@@ -139,8 +141,7 @@ Install
 
 1. Copy the App folder (and Tools, for MinUI) to the root of your Miyoo's SD card, merging them with the folders
    already there.
-2. Put your ROM of {title} in App/{folder}/ as rom.z64 ({rom}). A .v64 or .n64 dump works too; so does a .z64 in
-   Roms/N64/.
+2. {rom_step}
 3. Start {title} from Apps (stock OS, Onion) or Tools (MinUI).
 
 Buttons
@@ -160,8 +161,9 @@ def _write(path: Path, text: str, executable: bool = False) -> None:
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def package(program: Path, dest: Path, title: str, rom: str = "") -> Path:
-    """The SD card's folders for the program in `dest` (replaced): App/<Folder>/ and Tools/miyoomini/<Title>.pak/."""
+def package(program: Path, dest: Path, title: str, rom: str = "", rom_file: Path | None = None) -> Path:
+    """The SD card's folders for the program in `dest` (replaced): App/<Folder>/ and Tools/miyoomini/<Title>.pak/,
+    with the project's ROM (`rom_file`) as App/<Folder>/rom.z64 when given. `rom` names its version for the README."""
     folder = _folder(title)
     if dest.exists():
         shutil.rmtree(dest)
@@ -175,5 +177,24 @@ def package(program: Path, dest: Path, title: str, rom: str = "") -> Path:
            'from its decompilation"\n}\n' % (label, label))
     pak = dest / "Tools" / "miyoomini" / f"{re.sub(r'[^\w .-]+', '', title).strip() or folder}.pak"
     _write(pak / "launch.sh", MINUI.format(title=title, folder=folder), executable=True)
-    _write(dest / "README.txt", README.format(title=title, folder=folder, rom=rom or "the version this export is for"))
+    if rom_file is not None:
+        shutil.copyfile(rom_file, app / "rom.z64")
+        step = (f"Your ROM is already in App/{folder}/ as rom.z64 (copied from your project). It's your own copy: "
+                "keep this folder to yourself.")
+    else:
+        step = (f"Put your ROM of {title} in App/{folder}/ as rom.z64 ({rom or 'the version this export is for'}). "
+                "A .v64 or .n64 dump works too; so does a .z64 in Roms/N64/.")
+    _write(dest / "README.txt", README.format(title=title, folder=folder, rom_step=step))
     return dest
+
+
+def instructions(dest: Path, title: str) -> list[str]:
+    """What the player does with the pack, one step a line, for the Porting tab to show under the export's log."""
+    folder = _folder(title)
+    has_rom = (dest / "App" / folder / "rom.z64").is_file()
+    return [f"Copy the App and Tools folders from {dest} to the root of your Miyoo's SD card, merging them with the "
+            "folders already there (on a Mac, merge with Terminal, `cp -R`: Finder's Replace deletes the card's folder).",
+            f"Your ROM is already in App/{folder}/ as rom.z64." if has_rom
+            else f"Put your ROM of {title} in App/{folder}/ on the card as rom.z64.",
+            f"Start {title} from Apps (stock OS, Onion) or Tools (MinUI). If it doesn't start, App/{folder}/play.log "
+            "on the card says why."]
