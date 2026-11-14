@@ -412,6 +412,21 @@ static float tex_sscale = 1, tex_tscale = 1;
 static Color lights[8];
 static float light_dir[8][3];
 static int num_lights = 1;
+static float lookat[2][3] = {{1, 0, 0}, {0, 1, 0}}; /* G_TEXTURE_GEN's axes: X then Y */
+
+/* A Light (or a LookAt entry, the same shape) from memory: its colour, then its direction at byte 8. `l` counts
+   from LIGHT_1 at 0; -2 and -1 are the look-at X and Y. Every microcode's G_MOVEMEM puts LIGHT_1 after the two
+   look-at entries: F3DEX2 at offset 48, GBI 1 at index G_MV_L0. Read from offset 24, as the renderer once did,
+   every light landed one slot late: the loop's first light was the look-at, and the real light was taken for the
+   ambient. */
+static void set_light(int l, uint32_t a) {
+    float x = (int8_t)R[a + 8], y = (int8_t)R[a + 9], z = (int8_t)R[a + 10], len = sqrtf(x * x + y * y + z * z);
+    if (len == 0) len = 1;
+    if (l == -2 || l == -1) { float *d = lookat[l + 2]; d[0] = x / len; d[1] = y / len; d[2] = z / len; return; }
+    if (l < 0 || l >= 8) return;
+    lights[l] = (Color){R[a] / 255.0f, R[a + 1] / 255.0f, R[a + 2] / 255.0f, 1};
+    light_dir[l][0] = x / len; light_dir[l][1] = y / len; light_dir[l][2] = z / len;
+}
 
 static void matrix_read(uint32_t a, float *m) { /* s15.16: the integer halves, then the fractions */
     for (int i = 0; i < 16; i++) m[i] = (float)(int16_t)rd16(a + i * 2) + rd16(a + 32 + i * 2) / 65536.0f;
@@ -641,13 +656,7 @@ static void f3dex2(uint8_t op, uint32_t w0, uint32_t w1) {
     case 0xDC: { int index = w0 & 0xFF, offset = (int)((w0 >> 8) & 0xFF) * 8; uint32_t a = phys(w1);
         if (index == 8)
             for (int i = 0; i < 3; i++) { vp_scale[i] = (int16_t)rd16(a + i * 2); vp_trans[i] = (int16_t)rd16(a + 8 + i * 2); }
-        else if (index == 10) { int l = (offset - 0x18) / 24; /* lights come after the two look-at entries */
-            if (l >= 0 && l < 8) {
-                lights[l] = (Color){R[a] / 255.0f, R[a + 1] / 255.0f, R[a + 2] / 255.0f, 1};
-                float x = (int8_t)R[a + 8], y = (int8_t)R[a + 9], z = (int8_t)R[a + 10], len = sqrtf(x * x + y * y + z * z);
-                if (len == 0) len = 1;
-                light_dir[l][0] = x / len; light_dir[l][1] = y / len; light_dir[l][2] = z / len;
-            } }
+        else if (index == 10) set_light(offset / 24 - 2, a); /* the look-at X and Y at 0 and 24, LIGHT_1 at 48 */
         break; }
     case 0xDB:
         if (((w0 >> 16) & 0xFF) == 2) num_lights = (int)(w1 / 24);
