@@ -6,9 +6,10 @@
 - "web": the browser build (web.py): a folder with index.html and what it loads, to put on any web server (it
   needs http, not a file: page); the player chooses their ROM in the page.
 - "miyoo": the native build for the Miyoo Mini family (miyoo.py): the folders to copy to its SD card (App/ for the
-  stock OS and Onion, Tools/ for MinUI); the player puts their ROM beside the program.
+  stock OS and Onion, Tools/ for MinUI), with the project's ROM beside the program.
 
-Neither holds the ROM: each asks the player for their own. Both go to the save repository's port/wasm/export/,
+The app and the browser build don't hold the ROM: each asks the player for their own. The Miyoo Mini's folder does,
+copied from the project, since a handheld has nothing to ask with: it's the user's own card. Both go to the save repository's port/wasm/export/,
 which git ignores (they're built from the game: game data). Exporting again replaces that kind's folder.
 """
 
@@ -161,7 +162,7 @@ def export(net, slug: str, kind: str, log=print) -> dict:
 
     if kind not in KINDS:
         raise NetworkError(f"export as one of: {', '.join(KINDS)}")
-    repo, cfg, _rom = play.game(net, slug)
+    repo, cfg, rom_file = play.game(net, slug)
     leave_out = play.library(net, slug, log)
     console = cfg.get("platform", "n64")
     title = cfg.get("rom", {}).get("title") or slug
@@ -182,8 +183,9 @@ def export(net, slug: str, kind: str, log=print) -> dict:
         log("packing the Miyoo Mini's SD card folders")
         rom = cfg.get("rom", {})
         version = " ".join(x for x in (rom.get("title"), rom.get("region"), rom.get("sha1") and f"SHA-1 {rom['sha1']}") if x)
-        folder = miyoo.package(program, out / "miyoo", title, version)
+        folder = miyoo.package(program, out / "miyoo", title, version, rom_file)
         path = folder / "README.txt"
+        steps_for_player = miyoo.instructions(folder, title)
     else:
         steps = (*web.STEPS, PACKING)
         folder = web.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
@@ -194,7 +196,13 @@ def export(net, slug: str, kind: str, log=print) -> dict:
         path = folder / "index.html"
     files = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file())
     size = sum((folder / f).stat().st_size for f in files)
-    log(f"exported {KINDS[kind]} to {path} ({len(files)} files, {size / 1e6:.1f} MB); the ROM isn't in it: "
-        "the player chooses their own")
+    log(f"exported {KINDS[kind]} to {path} ({len(files)} files, {size / 1e6:.1f} MB)"
+        + ("; your ROM is in it" if kind == "miyoo" and any(f.endswith("/rom.z64") for f in files)
+           else "; the ROM isn't in it: the player chooses their own"))
+    if kind == "web":
+        steps_for_player = [f"Serve {folder} over http and open it in Chrome or Edge (its README.txt says how): "
+                            "browsers load WebAssembly only over http.", "The page asks the player for their ROM."]
+    elif kind == "app":
+        steps_for_player = [f"Open {path} to play: it asks for your ROM the first time."]
     return {"kind": kind, "folder": str(folder), "path": str(path), "files": files, "bytes": size,
-            "system": {"app": sys.platform, "web": "browser"}.get(kind, kind)}
+            "system": {"app": sys.platform, "web": "browser"}.get(kind, kind), "instructions": steps_for_player}

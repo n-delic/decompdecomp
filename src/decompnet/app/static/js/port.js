@@ -177,7 +177,7 @@ function portSteps(report) {
         ? "Your last save, played on the runtime you choose: WebAssembly now, the native runtimes once the steps they need are done"
         : "The WebAssembly build of your last save, in the browser: no native port needed",
       buttons: ["portPlay", "portStop", "portExportMenu", ...(report.recomp_available ? ["portRecompile"] : [])],
-      logs: ["portPlayLog", "portExportLog", "portExportActions", "portRecompLog"] },
+      logs: ["portPlayLog", "portExportLog", "portExportActions", "portExportNext", "portRecompLog"] },
   ];
   return steps;
 }
@@ -191,7 +191,7 @@ function renderPortSteps(report) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
   for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portAssetsLog", "portExtractLog", "portPlayLog",
-    "portExportLog", "portExportActions", "portRecompLog", "portBehaviourLog"]) {
+    "portExportLog", "portExportActions", "portExportNext", "portRecompLog", "portBehaviourLog"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
@@ -427,6 +427,20 @@ async function stopGame() {
    index.html), from the last save. Its bar counts the build's steps; Stop cancels it; Show the folder opens it. */
 let exportJob = null;
 const EXPORTS = { app: "a standalone app", web: "a browser build", miyoo: "a Miyoo Mini SD card folder" };
+const EXPORT_NEXT = { app: "Next: open the app", web: "Next: put it on a web server", miyoo: "Next: copy it to your Miyoo's SD card" };
+
+/* What to do with the export, as numbered steps under the log (not in it: they're what the user acts on). */
+function showExportNext(result) {
+  const box = $("portExportNext");
+  if (!box) return;
+  const steps = (result && result.instructions) || [];
+  box.hidden = !steps.length;
+  if (!steps.length) { box.replaceChildren(); return; }
+  const head = document.createElement("b"); head.textContent = EXPORT_NEXT[result.kind] || "Next";
+  const list = document.createElement("ol");
+  for (const step of steps) { const li = document.createElement("li"); li.textContent = step; list.append(li); }
+  box.replaceChildren(head, list);
+}
 
 function closeExportMenu(focus = true) {
   const menu = $("portExportMenu");
@@ -441,6 +455,7 @@ async function exportGame(kind, existing = null) {
   log.hidden = false; log._showJobProgress = true;
   showJobError(log, "");
   $("portExportActions").hidden = false; show.hidden = true; stop.hidden = false; stop.disabled = false;
+  showExportNext(null);
   stop.textContent = "Stop the export";
   const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWeb"), $("portExportMiyoo")],
     "Exported.");
@@ -451,11 +466,8 @@ async function exportGame(kind, existing = null) {
     if (result && result.path) {
       show.dataset.kind = result.kind;
       show.hidden = false;
-      log.append(`\nExported ${EXPORTS[result.kind]} to ${result.path}. `
-        + (result.kind === "web" ? "Serve that folder over http to play it (its README.txt says how)."
-          : result.kind === "miyoo" ? "Copy its App and Tools folders to your Miyoo's SD card and put your ROM in "
-            + "App/<game>/ as rom.z64 (its README.txt says how)."
-          : "Open it to play: it asks for your ROM the first time."));
+      log.append(`\nExported ${EXPORTS[result.kind]} to ${result.path}.`);
+      showExportNext(result);
     }
   } catch (error) {
     showJobError(log, error.message);

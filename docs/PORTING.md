@@ -292,8 +292,10 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     address is still the host's address; `miyoo/miyoo.c` replaces `live.c` with the device's own SDL 1.2, opened
     at run time (the panel turned 180 degrees, the buttons as keys, sound through the audioserver: what the Miyoo64
     ports, mr-finster/miyoo64, found on devices). The pack is `App/<Game>/` (program, `launch.sh`, `config.json`:
-    the stock OS and Onion) and `Tools/miyoomini/<Game>.pak/` (MinUI); the player's ROM goes beside the program,
-    in any byte order (the host turns .v64 and .n64 into .z64 as it reads them). Under qemu-arm a racing game
+    the stock OS and Onion) and `Tools/miyoomini/<Game>.pak/` (MinUI), with the project's own ROM copied in as
+    `App/<Game>/rom.z64`, so the folder goes on the card as it is (a ROM put there by hand works in any byte order:
+    the host turns .v64 and .n64 into .z64 as it reads them). What to copy where shows as numbered steps under the
+    export's log, not in it. Under qemu-arm a racing game
     boots to its language menu with the PC build's frames; on a device it is untried;
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
   machine only, which shows each frame and sends the keyboard or a gamepad to the first controller (arrows steer, X is A,
