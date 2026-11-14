@@ -9,8 +9,9 @@ execution breakpoint on its Euler-angle helper found the yaw the console compute
 
 Its sources are pinned in toolchains.toml ([mupenre]) and built here (`build`, called by toolchains.install) with
 the pinned CMake and the host's C/C++ compiler: SDL2 and libpng (static), the core with its debugger, the HLE RSP,
-and decompdecomp's own frontend and plugins in this folder (frontend.c, input.c, video.c). The core's few changes
-(`PATCHES`) are applied here rather than carried in a fork of a fork.
+and decompdecomp's own frontend and plugins in this folder (frontend.c, input.c, video.c). What the frontend needs
+from the core (its VI counter and hook, DecompGetViCount and DecompSetViHook; C++17 and arm64 builds) is in the
+pinned commits themselves (RetroReversing/mupen64plus-core#2, RetroReversing/libRetroReversing#44).
 
 usage: python -m decompnet.consoles.n64.emulator ROM --vis N [--input SCRIPT] [--dump VI:FILE] [--watch ADDR[:LEN]]
        [--break ADDR] [--from VI] [--expansion-pak]
@@ -32,57 +33,8 @@ HERE = Path(__file__).resolve().parent
 TOOL = "mupenre"
 SO = "dylib" if sys.platform == "darwin" else "so"  # (not on Windows: the frontend uses dlopen)
 
-# (file in the core's tree, text, replacement): the changes decompdecomp needs, each applied once and checked
-PATCHES = (
-    # a VI counter and hook, so input and dumps are timed in vertical interrupts and land on exactly the VI asked for
-    ("src/main/main.c", "void new_vi(void)\n{\n",
-     "/* decompdecomp: vertical interrupts since boot, and a hook the frontend runs at each (input and dumps by VI) */\n"
-     "static unsigned int l_DecompViCount = 0;\n"
-     "static void (*l_DecompViHook)(unsigned int) = NULL;\n"
-     "EXPORT unsigned int CALL DecompGetViCount(void) { return l_DecompViCount; }\n"
-     "EXPORT void CALL DecompSetViHook(void (*hook)(unsigned int)) { l_DecompViHook = hook; }\n\n"
-     "void new_vi(void)\n{\n    l_DecompViCount++;\n    if (l_DecompViHook) l_DecompViHook(l_DecompViCount);\n"),
-    ("src/api/api_export.ver", "DebugBreakpointCommand;\n",
-     "DebugBreakpointCommand;\nDecompGetViCount;\nDecompSetViHook;\n"),
-    # libRetroReversing's <filesystem> takes C++17
-    ("projects/unix/Makefile", "-std=c++11", "-std=c++17"),
-    # the debugger's host disassembler is binutils' libopcodes (x86 only, and not on a Mac): not needed without it
-    ("projects/unix/Makefile", "  LDLIBS += -lopcodes -lbfd -L/usr/local/opt/binutils/lib -liberty -lintl -liconv\n",
-     "  ifneq ($(NO_ASM), 1)\n"
-     "    LDLIBS += -lopcodes -lbfd -L/usr/local/opt/binutils/lib -liberty -lintl -liconv\n"
-     "  endif\n"),
-    # current libc++ has no <experimental/filesystem>, and std::__fs is its internal name
-    ("libRetroReversing/cdl/CDL.hpp",
-     "#  if __has_include(<experimental/filesystem>)\n#    include <experimental/filesystem>\n"
-     "     namespace fs = std::experimental::filesystem;\n#  elif __has_include(<filesystem>)\n"
-     "#    include <filesystem>\n     namespace fs = std::__fs::filesystem;\n",
-     "#  if __has_include(<filesystem>) && __cplusplus >= 201703L\n#    include <filesystem>\n"
-     "     namespace fs = std::filesystem;\n#  elif __has_include(<experimental/filesystem>)\n"
-     "#    include <experimental/filesystem>\n     namespace fs = std::experimental::filesystem;\n"),
-    # the function-call hooks read back() of these before a headless frontend ever pushed one: a sentinel each
-    ("libRetroReversing/cdl/CDL_interface.cpp",
-     " std::vector<uint32_t> function_stack = std::vector<uint32_t>();\nstd::vector<uint32_t> previous_ra;",
-     "std::vector<uint32_t> function_stack = std::vector<uint32_t>(1, 0);\n"
-     "std::vector<uint32_t> previous_ra = std::vector<uint32_t>(1, 0);"),
-    ("libRetroReversing/consoles/N64.cpp", "    function_stack.pop_back();\n",
-     "    if (function_stack.size() > 1) function_stack.pop_back();\n"),
-    ("libRetroReversing/consoles/N64.cpp", "    previous_ra.pop_back();\n",
-     "    if (previous_ra.size() > 1) previous_ra.pop_back();\n"),
-)
-
-
 class EmulatorError(RuntimeError):
     pass
-
-
-def patch(core: Path) -> None:
-    """Apply PATCHES to an unpacked core (with libRetroReversing inside it); each must apply exactly once."""
-    for name, old, new in PATCHES:
-        f = core / name
-        text = f.read_text(encoding="utf-8", errors="surrogateescape")
-        if text.count(old) != 1:
-            raise EmulatorError(f"the reversing emulator's source changed: {name} doesn't have the text to patch")
-        f.write_text(text.replace(old, new), encoding="utf-8", errors="surrogateescape")
 
 
 def _host_cpu() -> str:
@@ -124,7 +76,6 @@ def build(dest: Path, cmake: Path, log=print) -> None:
             run([cmake, "--build", out, "--parallel", jobs], tmp, f"building {name}")
             run([cmake, "--install", out], tmp, f"installing {name}")
         core = source / "core"
-        patch(core)
         sdl_libs = run(["sh", prefix / "bin" / "sdl2-config", "--static-libs"], tmp, "reading SDL2's libraries").split()
         lib = next((prefix / d for d in ("lib", "lib64") if (prefix / d / "libpng16.a").is_file()), prefix / "lib")
         unix = core / "projects" / "unix"
@@ -299,4 +250,4 @@ def main(argv=None) -> int:
     return 0
 
 
-__all__ = ["EmulatorError", "Hit", "Run", "build", "differences", "main", "parse", "patch", "run", "word"]
+__all__ = ["EmulatorError", "Hit", "Run", "build", "differences", "main", "parse", "run", "word"]

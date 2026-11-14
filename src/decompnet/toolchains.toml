@@ -1139,23 +1139,23 @@ platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
 name = "mupenRE, the N64 reversing emulator"
 kind = "tool"
 license = "GPL-2.0"
-source = "RetroReversing/mupen64plus-core 90a2722 with libRetroReversing 4b7fe0d, mupen64plus-rsp-hle 2.6.0, SDL2 2.32.10, libpng 1.6.50"
+source = "RetroReversing/mupen64plus-core 4a69be3 with libRetroReversing b68d811, mupen64plus-rsp-hle 2.6.0, SDL2 2.32.10, libpng 1.6.50"
 description = "Runs your own N64 ROM headless, as the console would, to compare with a port or a decompiled function: memory at a chosen moment, which code writes an address, what a function is called with. Built here from its source with the pinned CMake and this computer's C/C++ compiler (consoles/n64/emulator)."
 binary_name = "mupenre-frontend"
 build = "mupenre"
 requires = ["cmake"]
 [[mupenre.parts]]
-url = "https://codeload.github.com/RetroReversing/mupen64plus-core/tar.gz/90a27223dccedf54cc11ddb6d6071a6eaf04dbdb"
-sha256 = "49e15d3128563551b4cef911f9d48bee7977133dcce58c96922ae129b5143221"
-file = "mupenre-core-90a27223dccedf54cc11ddb6d6071a6eaf04dbdb.tar.gz"
-subdir = "mupen64plus-core-90a27223dccedf54cc11ddb6d6071a6eaf04dbdb"
+url = "https://codeload.github.com/RetroReversing/mupen64plus-core/tar.gz/4a69be3194b63fe5a3cb1f059124123361f513a4"
+sha256 = "b35fcd305df056afb266195975780d1a84ec99542ec961226610ba9962a21ca7"
+file = "mupenre-core-4a69be3194b63fe5a3cb1f059124123361f513a4.tar.gz"
+subdir = "mupen64plus-core-4a69be3194b63fe5a3cb1f059124123361f513a4"
 into = "source/core"
 platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
 [[mupenre.parts]]
-url = "https://codeload.github.com/RetroReversing/libRetroReversing/tar.gz/4b7fe0df6a5a1b7ca8952175365e16477e2e9289"
-sha256 = "4c46cc1f9062e5a5d84cf6f0ac656968ac9c2fd75fbd3df90bb42faf99104d6e"
-file = "mupenre-libRetroReversing-4b7fe0df6a5a1b7ca8952175365e16477e2e9289.tar.gz"
-subdir = "libRetroReversing-4b7fe0df6a5a1b7ca8952175365e16477e2e9289"
+url = "https://codeload.github.com/RetroReversing/libRetroReversing/tar.gz/b68d811e69f9b1edb0df0379ee627d78a95e0a6b"
+sha256 = "ef611c68fb33345d8a848d0f4a92c57c9a2318ea073bf1e8671363ad02522d92"
+file = "mupenre-libRetroReversing-b68d811e69f9b1edb0df0379ee627d78a95e0a6b.tar.gz"
+subdir = "libRetroReversing-b68d811e69f9b1edb0df0379ee627d78a95e0a6b"
 into = "source/core/libRetroReversing"
 platforms = ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"]
 [[mupenre.parts]]
