@@ -34,11 +34,13 @@ static void gfx(uint32_t w0, uint32_t w1) { w32(dl, w0); w32(dl + 4, w1); dl += 
 
 enum { TASK = 0x100, UCODE = 0x200, TLUT = 0x400, MTX = 0x600, VTX = 0x700, IMAGE = 0x2000, FB = 0x10000 };
 
-/* argv[1]: 1 with perspective correction, 0 without; argv[2]: ci4 (LoadTile), rgba32block or rgba32tile */
+/* argv[1]: 1 with perspective correction, 0 without; argv[2]: ci4 (LoadTile), rgba32block or rgba32tile;
+   argv[3], if any: "bilerp", the RDP's bilinear filter (G_TF_BILERP) */
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
     int persp = argv[1][0] == '1', scale = persp ? 1 : 2; /* without perspective, coordinates twice as large */
     const char *kind = argv[2];
+    int bilerp = argc > 3 && !strcmp(argv[3], "bilerp");
     memcpy(ram + UCODE, "RSP Gfx ucode F3DEX2", 20);
     w32(TASK + 24, 0x80000000u | UCODE);
     w32(TASK + 48, 0x80000000u | dl);
@@ -60,7 +62,7 @@ int main(int argc, char **argv) {
         w32(v + 12, 0xFFFFFFFFu);
     }
     gfx(0xFF100000u | 319, 0x80000000u | FB);                               /* G_SETCIMG: 320 wide */
-    gfx(0xEF000000u | (persp ? 0x80000 : 0), 0);                            /* one cycle, perspective or not */
+    gfx(0xEF000000u | (persp ? 0x80000 : 0) | (bilerp ? 0x2000 : 0), 0);  /* one cycle, perspective, filter */
     gfx(0xFC000000u | 1 << 20 | 6 << 15 | 1 << 12 | 6 << 9, 15u << 28 | 7 << 15 | 7 << 12 | 7 << 9); /* TEXEL0 */
     if (kind[0] == 'c') {
         gfx(0xFD100000u, 0x80000000u | TLUT);                               /* the palette */
@@ -88,8 +90,9 @@ int main(int argc, char **argv) {
     gfx(0x06000204u, 0x00000406u);
     gfx(0xDF000000u, 0);
     port_render_task(0x80000000u | TASK);
-    int at[8][2] = {{40, 30}, {120, 90}, {200, 30}, {280, 90}, {40, 150}, {120, 210}, {200, 150}, {280, 210}};
-    for (int i = 0; i < 8; i++) { /* two points in each screen quadrant: an even and an odd texel row */
+    int at[9][2] = {{40, 30}, {120, 90}, {200, 30}, {280, 90}, {40, 150}, {120, 210}, {200, 150}, {280, 210},
+                    {140, 60}}; /* the last: s = 3.51, half way from texel 3 (red) to texel 4 (green) */
+    for (int i = 0; i < 9; i++) { /* two points in each screen quadrant: an even and an odd texel row */
         uint32_t a = FB + (uint32_t)(at[i][1] * 320 + at[i][0]) * 2;
         printf("%04X\n", (unsigned)(ram[a] << 8 | ram[a + 1]));
     }
@@ -97,7 +100,7 @@ int main(int argc, char **argv) {
 }
 """
 
-QUADRANTS = [0xF801, 0xF801, 0x07C1, 0x07C1, 0x003F, 0x003F, 0xFFFF, 0xFFFF]
+QUADRANTS = [0xF801, 0xF801, 0x07C1, 0x07C1, 0x003F, 0x003F, 0xFFFF, 0xFFFF, 0xF801]
 
 
 @pytest.fixture(scope="module")
@@ -113,9 +116,9 @@ def renderer(tmp_path_factory):
     return program
 
 
-def drawn(program: Path, persp: bool, kind: str = "ci4") -> list[int]:
-    out = subprocess.run([str(program), "1" if persp else "0", kind], check=True, capture_output=True, text=True,
-                         timeout=60).stdout
+def drawn(program: Path, persp: bool, kind: str = "ci4", *extra: str) -> list[int]:
+    out = subprocess.run([str(program), "1" if persp else "0", kind, *extra], check=True, capture_output=True,
+                         text=True, timeout=60).stdout
     return [int(line, 16) for line in out.split()]
 
 
@@ -134,3 +137,15 @@ def test_a_32bit_texture_is_read_at_its_tiles_line(renderer, kind):
     """The car shadows' case: a 32-bit texture loaded by LoadBlock or LoadTile into a tile whose line counts two
     bytes a texel reads back row by row, odd rows included."""
     assert drawn(renderer, True, kind) == QUADRANTS
+
+
+@pytest.mark.parametrize("kind", ["ci4", "rgba32tile"])
+def test_the_rdps_bilinear_filter_blends_neighbouring_texels(renderer, kind):
+    """With G_TF_BILERP (a racing game's 3D and menu text) a point half way between a red and a green texel is a
+    blend of both, where point sampling gives the red one; inside a quadrant's own colour nothing changes. (The
+    odd-row probes lie a sixtieth of a texel from a quadrant's edge, so the filter rightly tints them.)"""
+    pixels = drawn(renderer, True, kind, "bilerp")
+    assert pixels[0:8:2] == QUADRANTS[0:8:2]
+    assert drawn(renderer, True, kind)[8] == 0xF801  # point sampling: the red texel
+    red, green, blue = pixels[8] >> 11 & 31, pixels[8] >> 6 & 31, pixels[8] >> 1 & 31
+    assert 10 <= red <= 21 and 10 <= green <= 21 and blue == 0, hex(pixels[8])
