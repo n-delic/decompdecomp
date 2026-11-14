@@ -417,3 +417,45 @@ def test_cache_contention_is_actionable_but_unrelated_timeouts_remain_errors(tmp
     with pytest.raises(ToolError if pending else UnexpectedToolError, match='Synthetic metadata wait' if pending else 'Error executing tool'):
         anyio.run(run)
     assert records[-1]['error'] == 'Synthetic metadata wait'
+
+
+@pytest.mark.parametrize('name', ['release_function', 'add_note'])
+@pytest.mark.parametrize('fails', [False, True])
+def test_note_publication_records_project_wait_and_retains_lock_scope(monkeypatch, name, fails):
+    from contextlib import contextmanager, nullcontext
+    from types import SimpleNamespace
+
+    from decompnet import request_timing
+
+    clock = SimpleNamespace(value=0.)
+    held = []
+    published = []
+    @contextmanager
+    def project_lock():
+        clock.value += 37.0  # simulated acquisition wait; no real sleep
+        held.append(True)
+        try:yield
+        finally:held.pop()
+    def changed(slug):
+        assert held
+        published.append(slug)
+    progress = SimpleNamespace(foreground=nullcontext, _project_lock=lambda slug: project_lock(),
+                               foreground_changed=changed)
+    net = SimpleNamespace(progress=progress, _attempt_locks={},
+                          _function=lambda *args: {'id': 1, 'project_id': 1},
+                          project_store=lambda *args: SimpleNamespace(lock=threading.RLock()))
+    agent = SimpleNamespace(id=1)
+    monkeypatch.setattr(tools.asset_agents, 'scope', lambda *args: False)
+    monkeypatch.setattr(request_timing, 'time', SimpleNamespace(monotonic=lambda: clock.value))
+    def publish():
+        with tools._tool_foreground(net, agent, 'game', name, {'function': 'f'}):
+            assert held
+            if fails:raise ValueError('synthetic publication failure')
+    with request_timing.capture() as metrics:
+        if fails:
+            with pytest.raises(ValueError, match='synthetic publication failure'):publish()
+        else:publish()
+    assert metrics.get('progress_project_lock_wait', 0.) == 37.0
+    assert metrics.get('candidate_lock_wait', 0.) == 0.
+    assert not held
+    assert published == ([] if fails else ['game'])
