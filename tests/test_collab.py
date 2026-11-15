@@ -1171,6 +1171,38 @@ def test_apply_remote_layout_join_skips_a_matched_guest_head(built, tmp_path):  
     assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='func_800007D0'", pid) is not None  # tail kept
 
 
+def test_apply_remote_layout_join_skips_a_match_that_lands_during_the_sync(built, tmp_path):  # noqa: F811
+    # #192 review (medium): the snapshot apply_remote_layout takes can go stale. A match can land on the head
+    # between the snapshot and the write -- here while join_saved_functions reads the ROM -- so the head-matched
+    # guard (which reads the snapshot) passes. The transaction must re-read the pieces and skip the whole fold, or
+    # it overwrites the match with the joined extent (status matched, the joined size, matched_source for the short
+    # piece) and deletes the tail.
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("tester")
+    orig = net._function("func_800007C4", slug)
+    orig_size, pid = orig["size"], orig["project_id"]
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")       # guest is over-split: head + tail
+    short = net._function("func_800007C4", slug)["size"]
+    assert short < orig_size
+    console = net.console(net._project(slug))
+    real_join = console.join_saved_functions
+
+    def land_match_then_join(*a, **k):                                   # a match lands while the ROM is read
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched', matched_source='/* done */' "
+                       "WHERE project_id=? AND name='func_800007C4'", (pid,))
+        return real_join(*a, **k)
+
+    console.join_saved_functions = land_match_then_join
+    net.console = lambda proj: console                                   # the loop uses this same patched console
+    net.apply_remote_layout(slug, [{"name": "func_800007C4", "vram": orig["vram"], "size": orig_size}], [])
+    head = net._function("func_800007C4", slug)
+    assert head["status"] == "matched" and head["size"] == short         # the match was not overwritten
+    assert head["matched_source"] == "/* done */"                        # still the short piece's C, not a stale fold
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='func_800007D0'", pid) is not None  # tail kept
+
+
 def test_apply_remote_layout_join_reopens_a_set_aside_guest_head(built, tmp_path):  # noqa: F811
     # #192 review (tests): the guest's agents set the over-split head aside (no C makes the short piece: status asm,
     # not_c votes). Once the host's layout joins it into a longer function, the shared joined() path must reopen it

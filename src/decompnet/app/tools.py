@@ -782,8 +782,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         that never returns and runs straight into the next symbol, a switch whose cases are in the next symbol.
         Such a piece cannot match on its own, so don't body it, stub it or compile it alone, and don't just say so
         in a note — call this. Works across overlays too: if the two are adjacent in the ROM they join even when
-        their names or units differ. Say what in the code shows they are one. It takes effect once agents of two
-        models say so of the same pair (never a matched function), so if a note already calls a function a piece of
+        their names or units differ. Say what in the code shows they are one. It takes effect once three agents of
+        two models say so of the same pair (never a matched function), so if a note already calls a function a piece of
         the one before it, add your vote here rather than re-noting it. Undo a wrong join by splitting it again."""
         return await run(ctx, "join_functions", function=function, with_function=with_function, reason=reason)
 

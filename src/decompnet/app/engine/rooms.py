@@ -249,6 +249,17 @@ class RoomMixin:
                 continue  # a real gap between them in this analysis; leave the layout as it is
             tgt = self._make_target(proj, joined, self.symbols(pid))
             with self.store.tx() as db:
+                # Re-read inside the transaction: a match can land between the snapshot (apply_remote_layout) and
+                # here -- the head can match at its short extent while join_saved_functions reads the ROM. Folding
+                # then would overwrite the match with the joined extent (status matched, the joined size, but
+                # matched_source for the short piece) and delete the tail. Skip the whole fold -- the write, the
+                # tail deletes and the symbol resize -- when any piece is now matched or gone (#192 review: the
+                # mirrored join overwrites a match that lands during the sync).
+                ids = [head["id"], *(t["id"] for t in tails)]
+                fresh = db.execute("SELECT status, matched_source FROM functions WHERE id IN "
+                                   f"({','.join('?' * len(ids))})", ids).fetchall()
+                if len(fresh) != len(ids) or any(r["status"] == "matched" or r["matched_source"] for r in fresh):
+                    continue  # leave the over-split; a later sync re-mirrors it once the match settles
                 db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, "
                            "best_score=NULL, best_source=NULL, attempts=attempts+? WHERE id=?",
                            (joined.size, console.function_insns(joined), tgt.code, json.dumps(tgt.to_json()),

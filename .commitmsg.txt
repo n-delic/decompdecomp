@@ -1,0 +1,21 @@
+fix(rom-join): skip the mirrored fold when a match lands mid-sync
+
+apply_remote_layout snapshots the guest's functions, then joins an
+over-split head and its tails back inside a later transaction. A match
+could land on the head between the snapshot and that write (e.g. the
+head matching at its short extent while join_saved_functions reads the
+ROM), and the fold went ahead on the stale snapshot -- leaving the head
+status='matched' at the joined size but with matched_source for the
+short piece, and the tail deleted.
+
+Re-read the head and tails inside the transaction and skip the whole
+fold -- the write, the tail deletes and the symbol resize -- when any
+piece is now matched or gone. The new test lands the match during the
+join and fails without the guard.
+
+Also correct the join gate's wording in the workflow guide and the
+join_functions tool help: a join lands once three agents of two models
+agree (not two), matching agents/api.py.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01U9qvtARCkpbfDTUzBo8mG9

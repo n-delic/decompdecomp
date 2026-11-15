@@ -24,7 +24,7 @@ returns and runs straight into the next symbol; or a switch's cases sit in the n
 never match on its own — don't body it, stub it or compile it alone. Call `join_functions(the piece, the
 symbol before it, why)` to make them one function again. This works across overlays too: if the two are
 adjacent in the ROM they join even when their names or units differ (a source-file name on one, an overlay
-label on the other). A join takes effect once agents of two models agree on the same pair, so if a note
+label on the other). A join takes effect once three agents of two models agree on the same pair, so if a note
 already calls a function a piece of the one before it, cast your vote with join_functions instead of
 re-noting it or retrying a standalone match. When it lands, the earlier symbol is the whole function: claim
 it and match that.
