@@ -1,4 +1,5 @@
 """A shutdown racing Share reports the existing admission error instead of HTTP 500."""
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +24,8 @@ def test_share_admission_failure_is_actionable_and_does_not_create_a_room(tmp_pa
             return register
     jobs=Jobs(tmp_path/'test.log')
     setattr(jobs,state,True)
-    net=SimpleNamespace(links={},rooms={},fork_slug=lambda slug:None,store=SimpleNamespace(all=lambda *a:[]))
+    net=SimpleNamespace(links={},rooms={},fork_slug=lambda slug:None,store=SimpleNamespace(all=lambda *a:[]),
+                        progress=SimpleNamespace(view=nullcontext))
     async def call(fn,*args):return fn(*args)
     async def body(request):return await request.json()
     app=SimpleNamespace(net=net,mcp=MCP(),home=tmp_path,manager=SimpleNamespace(),jobs=jobs,settings={},

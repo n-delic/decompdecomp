@@ -1,5 +1,6 @@
 """Restore explicitly open rooms, retaining invite and member identity, never closed rooms."""
 import json
+from contextlib import nullcontext
 
 from ..network import NetworkError
 
@@ -9,11 +10,15 @@ def restore(net, open_room, log=print):
     errors={}
     for row in rows:
         slug=row['slug']
-        cfg=json.loads(net.project_row(slug)['config']).get('collab') or {}
-        if not cfg.get('open'):
-            continue
-        mode=cfg.get('mode','tunnel')
         try:
+            # Configuration discovery must not synchronize closed/idle projects.
+            # Opening a saved room below still performs its normal validation.
+            progress = getattr(net, 'progress', None)
+            with progress.view() if progress is not None else nullcontext():
+                cfg=json.loads(net.project_row(slug)['config']).get('collab') or {}
+            if not cfg.get('open'):
+                continue
+            mode=cfg.get('mode','tunnel')
             if mode not in ('address','tunnel'):
                 raise NetworkError('Unknown saved room connection mode. Choose how to share this room again.')
             if mode=='address' and not cfg.get('address'):
