@@ -346,30 +346,31 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     stream_limiter = anyio.CapacityLimiter(1)
     control_limiter = anyio.CapacityLimiter(4)
 
-    async def ui_call(fn, *args):
-        def snapshot():
-            with net.progress.view():
-                return fn(*args)
-        return await anyio.to_thread.run_sync(snapshot, limiter=ui_limiter)
+    # Each lane's requests are recorded while they queue and run: one stuck past 10 s saves the Python stacks of the
+    # threads holding its lane (lane_watch.py), which named nothing before when the fast lane jammed for minutes.
+    from ..lane_watch import Watch
+    from ..ui_diagnostics import current_route
+    lanes = Watch(home / "logs" / "request-lane-stacks.log")
 
-    async def fast_call(fn, *args):
-        # Sidebar and live counters must not wait behind four expensive function/diff requests.
-        def snapshot():
-            with net.progress.view():
-                return fn(*args)
-        return await anyio.to_thread.run_sync(snapshot, limiter=fast_limiter)
+    def laned(lane, limiter, view=True):
+        async def run(fn, *args):
+            lanes.start()
+            with lanes.queued(lane, current_route.get() or getattr(fn, '__qualname__', '')) as key:
+                def work():
+                    lanes.running(key)
+                    if not view:
+                        return fn(*args)
+                    with net.progress.view():
+                        return fn(*args)
+                return await anyio.to_thread.run_sync(work, limiter=limiter)
+        return run
 
-    async def live_call(fn, *args):
-        def snapshot():
-            with net.progress.view():
-                return fn(*args)
-        return await anyio.to_thread.run_sync(snapshot, limiter=live_limiter)
-
-    async def stream_call(fn, *args):
-        return await anyio.to_thread.run_sync(fn, *args, limiter=stream_limiter)
-
-    async def control_call(fn, *args):
-        return await anyio.to_thread.run_sync(fn, *args, limiter=control_limiter)
+    ui_call = laned('ui', ui_limiter)
+    # Sidebar and live counters must not wait behind four expensive function/diff requests.
+    fast_call = laned('fast', fast_limiter)
+    live_call = laned('live', live_limiter)
+    stream_call = laned('stream', stream_limiter, view=False)
+    control_call = laned('control', control_limiter, view=False)
 
     async def call(fn, *args):
         return await anyio.to_thread.run_sync(fn, *args)
