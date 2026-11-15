@@ -362,6 +362,18 @@ The browser build's page offers two renderers (its **Renderer** choice, kept in 
   three-texel bilinear), levels of detail and the fog the RSP gives; depth is a depth buffer per z image, cleared
   when the game fills it. Each frame buffer the game draws to is a texture of its own, shown when the VI is given
   its address.
+- **Smooth motion** (WebGL's in-between frames, on by default): the game's motion drawn on every refresh of the
+  screen, not only on the frames the game draws (25 a second for a PAL game, 30 or 20 for most NTSC ones), at the
+  game's own speed, one game frame behind. Each triangle's vertices go in clip space twice (`render_gpu.h`,
+  `gpu_match`): as this frame has them and as the previous frame had the same vertex, found again by what the game
+  loaded for it (its model-space position and texture coordinates) and how many such came before it in the frame,
+  so a model is found again wherever the game put its vertices and matrices that frame. One moved further than a
+  camera cut's worth (half the screen) starts where it is. The page records each game frame's draws (`gl.js`,
+  `Frame`) and draws it again on every refresh, its vertices `t` of the way from the previous frame's places to its
+  own, each time from a copy of its frame buffers as they were before it, so what it blends isn't blended twice.
+  Rectangles, 2D and lines aren't moved. In a racing game's races about three in four of the vertices drawn carried a
+  previous place, and what didn't was mostly roadside clutter coming into view (half of the vertices it loads are
+  found again; `?verbose=1` says how many every 250 frames); a vertex not found is drawn where its frame has it.
 
 What the WebGL renderer doesn't do yet, which software does (ROADMAP.md, "The browser build's WebGL renderer"):
 - frame-buffer effects: the GPU's frames aren't in RDRAM, so a game that reads its frame buffer back (a frame as a
@@ -371,9 +383,13 @@ What the WebGL renderer doesn't do yet, which software does (ROADMAP.md, "The br
 - the RDP's coverage anti-aliasing and dither, and the VI's filters other than gamma (anti-aliasing, dedither,
   divot); 8-bit and 32-bit frame buffers are drawn as colour like the 16-bit ones;
 - a blender whose first cycle reads the frame buffer (rare) takes the pixel itself in its place.
+- in-between frames: a game that makes a model's vertices anew each frame (animated on the CPU, or in camera space)
+  shows that model at its game frames while the rest moves smoothly; a camera cut within half the screen sweeps
+  for one game frame.
 
 A racing game's boot, menus (2D backgrounds, sprites, a 3D car), attract races and a race were checked against
-software in Chrome, switching between the two on the same frames. `tests/test_n64_port_render_gpu.py` runs display
+software in Chrome, switching between the two on the same frames, and with smooth motion: drawn at a frame's start,
+middle and end its frames differ, and the same moment drawn twice is the same to the pixel. `tests/test_n64_port_render_gpu.py` runs display
 lists through the GPU path and checks what the page is sent; `tests/web_gl_shaders.mjs` the shaders' combiner and
 blender.
 

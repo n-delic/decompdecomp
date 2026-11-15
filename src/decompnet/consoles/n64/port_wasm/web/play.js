@@ -77,24 +77,37 @@ const video = (() => {
   try { saved = JSON.parse(localStorage.getItem(VIDEO) || "{}"); } catch {}
   const asked = new URLSearchParams(location.search).get("renderer");
   const renderer = [asked, saved.renderer].find((r) => r === "software" || r === "webgl") || "software";
-  return { renderer, scale: [1, 2, 3, 4].includes(Number(saved.scale)) ? Number(saved.scale) : 2 };
+  return { renderer, scale: [1, 2, 3, 4].includes(Number(saved.scale)) ? Number(saved.scale) : 2,
+    smooth: saved.smooth !== false };
 })();
 let g = null, gpu = null;
-let shown = 0, since = performance.now();
+/* Frames a second: shown on the screen and, with in-between frames, how many of them the game drew. */
+let shown = 0, since = performance.now(), gameSince = 0;
 function counted() {
   shown++;
   const now = performance.now();
-  if (now - since > 1000) { $("rate").textContent = `${Math.round(shown * 1000 / (now - since))} frames a second`; shown = 0; since = now; }
+  if (now - since < 1000) return;
+  const rate = (n) => Math.round(n * 1000 / (now - since));
+  let text = `${rate(shown)} frames a second`;
+  if (gpu && video.smooth) {
+    const game = gpu.stats.gpuFrames + gpu.stats.rdramFrames;
+    text += ` (${rate(game - gameSince)} from the game)`;
+    gameSince = game;
+  }
+  $("rate").textContent = text;
+  shown = 0; since = now;
 }
-function useRenderer(renderer, scale) {
+function useRenderer(renderer, scale, smooth) {
   const old = $("screen"), canvas = old.cloneNode(false);
   old.replaceWith(canvas);
+  if (gpu) gpu.dispose();
   g = gpu = null;
+  gameSince = 0;
   $("video-note").textContent = "";
   if (renderer === "webgl") {
     try {
       if (!gpuSupported()) throw new Error("This browser has no WebGL 2");
-      gpu = new GpuRenderer(canvas, scale);
+      gpu = new GpuRenderer(canvas, scale, smooth);
       gpu.onShow = counted;
       globalThis.n64Gpu = gpu; // its stats, for the console (frames drawn on the GPU, from RDRAM)
     } catch (error) {
@@ -106,14 +119,17 @@ function useRenderer(renderer, scale) {
   canvas.style.imageRendering = gpu ? "auto" : "";
   video.renderer = renderer;
   video.scale = scale;
+  video.smooth = smooth;
   $("renderer").value = renderer;
   $("scale").value = String(scale);
-  $("scale-choice").hidden = renderer !== "webgl";
+  $("smooth").checked = smooth;
+  $("scale-choice").hidden = $("smooth-choice").hidden = renderer !== "webgl";
   try { localStorage.setItem(VIDEO, JSON.stringify(video)); } catch {}
 }
-$("renderer").onchange = (e) => useRenderer(e.target.value, video.scale);
-$("scale").onchange = (e) => useRenderer(video.renderer, Number(e.target.value));
-useRenderer(video.renderer, video.scale);
+$("renderer").onchange = (e) => useRenderer(e.target.value, video.scale, video.smooth);
+$("scale").onchange = (e) => useRenderer(video.renderer, Number(e.target.value), video.smooth);
+$("smooth").onchange = (e) => useRenderer(video.renderer, video.scale, e.target.checked);
+useRenderer(video.renderer, video.scale, video.smooth);
 function frame(rgb, w, h) {
   if (gpu) { gpu.showRGB(rgb, w, h); return; } // a frame from RDRAM (one the CPU wrote), on the GPU's canvas
   const canvas = $("screen");

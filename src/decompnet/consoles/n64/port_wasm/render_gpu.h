@@ -13,6 +13,13 @@
  * coverage and its dither aren't drawn. A frame the CPU writes (a logo, a movie) is still shown from RDRAM: the
  * frame is taken from the GPU only while its RDRAM is as it was when the GPU last drew it.
  *
+ * In-between frames (the page's Smooth motion): each vertex of a triangle goes in clip space twice, as this frame
+ * has it and as the previous frame had the same vertex (gpu_match), so the page can draw the frame again as the
+ * motion goes, between the two, on every refresh of the screen rather than every game frame. A vertex is the same
+ * one by what the game loaded for it (its model-space position and texture coordinates) and how many such vertices
+ * came before it in the frame, which finds a model again wherever the game put its vertices and matrices that
+ * frame. One with no match (new, or moved more than a camera cut's worth) stays where this frame has it.
+ *
  * The page reads what's sent from the host's memory, little-endian: a list of commands (five u32 words each:
  * GPU_TEXTURE id, width, height, its first texel's index in the pixels; GPU_DRAW the draw's index; GPU_CLEAR_DEPTH
  * the z image), the draws (GpuDraw), their vertices (GPU_VERTEX floats each) and the decoded textures (RGBA, 8 bits
@@ -31,8 +38,13 @@ __attribute__((weak)) int port_gpu_present(uint32_t addr, int w, int h, int flag
 
 enum { GPU_TEXTURE = 1, GPU_DRAW = 2, GPU_CLEAR_DEPTH = 3 };
 enum { GPU_KIND_COMBINE = 0, GPU_KIND_COPY = 1, GPU_KIND_FILL = 2 };
-enum { GPU_DEPTH = 1, GPU_ONE_TEXEL = 2, GPU_POINT = 4, GPU_COPY_ALPHA = 8, GPU_TEXTURED = 16 };
-#define GPU_VERTEX 10 /* x, y (the frame's pixels), z (0 to 1), w, s, t (texels before the tile's shift), r, g, b, a */
+/* GPU_SCREEN: the vertices are in the frame's pixels (rectangles), not clip space; GPU_AFFINE: texture coordinates
+   without perspective correction (G_TP_NONE) */
+enum { GPU_DEPTH = 1, GPU_ONE_TEXEL = 2, GPU_POINT = 4, GPU_COPY_ALPHA = 8, GPU_TEXTURED = 16, GPU_SCREEN = 32,
+       GPU_AFFINE = 64 };
+/* x, y, z, w (clip space; or the frame's pixels, depth 0 to 1, and 1), the same as the previous frame had them,
+   s, t (texels before the tile's shift), r, g, b, a */
+#define GPU_VERTEX 14
 
 typedef struct {
     uint32_t tex;                   /* the texture's id (0: none) */
@@ -50,9 +62,10 @@ typedef struct {
     int32_t scissor[4];
     uint32_t cimg, cimg_width, cimg_height, cimg_siz, zimg;
     GpuTile tiles[8];
+    float vp_scale[3], vp_trans[3]; /* the viewport, clip space to the frame's pixels (x, y) and depth (0 to 1023) */
     uint32_t first, count; /* its vertices: the first and how many (not part of what's compared) */
 } GpuDraw;
-_Static_assert(sizeof(GpuDraw) == 156 * 4, "web/gl.js reads a GpuDraw as 156 words (DRAW_WORDS)");
+_Static_assert(sizeof(GpuDraw) == 162 * 4, "web/gl.js reads a GpuDraw as 162 words (DRAW_WORDS)");
 
 #define GPU_MAX_COMMANDS 65536
 #define GPU_MAX_DRAWS 8192
@@ -224,6 +237,11 @@ static GpuDraw *gpu_draw(uint32_t kind, uint32_t flags, int tile, int textured) 
     d.tex_levels = tex_levels;
     memcpy(d.scissor, scissor, sizeof d.scissor);
     d.cimg = cimg_addr; d.cimg_width = (uint32_t)cimg_width; d.cimg_height = (uint32_t)frame_height();
+    if (!(flags & GPU_SCREEN))
+        for (int k = 0; k < 3; k++) {
+            d.vp_scale[k] = k < 2 ? vp_scale[k] / 4.0f : vp_scale[k];
+            d.vp_trans[k] = k < 2 ? vp_trans[k] / 4.0f : vp_trans[k];
+        }
     d.cimg_siz = (uint32_t)cimg_siz; d.zimg = zimg_addr;
     uint32_t uploads = gpu_uploads;
     if (textured) {
@@ -251,12 +269,80 @@ static GpuDraw *gpu_room(GpuDraw *d, uint32_t n, uint32_t kind, uint32_t flags, 
     gpu_flush();
     return gpu_draw(kind, flags, tile, textured);
 }
-static void gpu_vertex(GpuDraw *d, float x, float y, float z, float w, float s, float t, Color c) {
+static void gpu_vertex(GpuDraw *d, const float pos[4], const float prev[4], float s, float t, Color c) {
     float *v = gpu_vertices + (size_t)gpu_nvertices * GPU_VERTEX;
-    v[0] = x; v[1] = y; v[2] = z < 0 ? 0 : z > 1 ? 1 : z; v[3] = w; v[4] = s; v[5] = t;
-    v[6] = c.r; v[7] = c.g; v[8] = c.b; v[9] = c.a;
+    memcpy(v, pos, 4 * sizeof *v);
+    memcpy(v + 4, prev, 4 * sizeof *v);
+    v[8] = s; v[9] = t; v[10] = c.r; v[11] = c.g; v[12] = c.b; v[13] = c.a;
     gpu_nvertices++;
     d->count++;
+}
+/* A rectangle's corner, in the frame's pixels (at depth 0): the same in the previous frame. */
+static void gpu_screen_vertex(GpuDraw *d, float x, float y, float s, float t, Color c) {
+    const float pos[4] = {x, y, 0, 1};
+    gpu_vertex(d, pos, pos, s, t, c);
+}
+
+/* ---------------------------------------------------------------- in-between frames: vertices across frames */
+
+/* Each frame's vertices by key (what the game loaded for them, and how many such came before in the frame), with
+   where they were in clip space: this frame's being filled, the previous frame's read. A table's entries count only
+   with its frame's stamp, so a new frame starts empty without clearing. */
+#define GPU_MATCH 65536
+typedef struct { uint64_t key; float pos[4]; uint32_t stamp; } GpuSeen;
+static GpuSeen *gpu_seen[2];            /* [0] this frame's, [1] the previous frame's */
+static uint32_t gpu_seen_stamp[2] = {1, 0};
+typedef struct { uint64_t key; uint32_t count, stamp; } GpuCount;
+static GpuCount *gpu_counts;            /* this frame's: how many vertices with each loaded value so far */
+static struct { unsigned long loaded, matched, far, unseen; } gpu_matches; /* PORT_VERBOSE=1: said every 250 frames */
+static GpuSeen *gpu_seen_slot(GpuSeen *t, uint32_t stamp, uint64_t key, int insert) {
+    for (uint32_t i = (uint32_t)(key ^ key >> 29) & (GPU_MATCH - 1), n = 0; n < 64; i = (i + 1) & (GPU_MATCH - 1), n++) {
+        if (t[i].stamp != stamp) return insert ? &t[i] : NULL;
+        if (t[i].key == key) return &t[i];
+    }
+    return NULL; /* (crowded: no match, rather than a long search) */
+}
+/* The vertex v the game loaded from `raw` (its Vtx in RDRAM): its key, its previous frame's place (v->prev), and
+   this frame's remembered for the next. */
+static void gpu_match(const uint8_t *raw, Vtx *v) {
+    memcpy(v->prev, &v->x, sizeof v->prev); /* without a match: where this frame has it */
+    if (!gpu || !gpu_counts) return;
+    uint8_t loaded[10];
+    memcpy(loaded, raw, 6);       /* its position */
+    memcpy(loaded + 6, raw + 8, 4); /* its texture coordinates */
+    uint64_t base = gpu_hash(0xCBF29CE484222325ull, loaded, sizeof loaded), key;
+    uint32_t i = (uint32_t)(base ^ base >> 31) & (GPU_MATCH - 1), n = 0;
+    for (; n < 64; i = (i + 1) & (GPU_MATCH - 1), n++)
+        if (gpu_counts[i].stamp != gpu_seen_stamp[0] || gpu_counts[i].key == base) break;
+    if (n == 64) return;
+    if (gpu_counts[i].stamp != gpu_seen_stamp[0]) gpu_counts[i] = (GpuCount){base, 0, gpu_seen_stamp[0]};
+    gpu_matches.loaded++;
+    key = gpu_hash(base, (const uint8_t *)&gpu_counts[i].count, 4);
+    gpu_counts[i].count++;
+    GpuSeen *now = gpu_seen_slot(gpu_seen[0], gpu_seen_stamp[0], key, 1);
+    if (now) { now->key = key; now->stamp = gpu_seen_stamp[0]; memcpy(now->pos, &v->x, sizeof now->pos); }
+    const GpuSeen *was = gpu_seen_slot(gpu_seen[1], gpu_seen_stamp[1], key, 0);
+    if (!was || was->pos[3] <= 1e-4f || v->w <= 1e-4f) { gpu_matches.unseen++; return; }
+    /* a camera cut, or another of its kind taking its place: on the screen, too far to be the same vertex moving */
+    float dx = was->pos[0] / was->pos[3] - v->x / v->w, dy = was->pos[1] / was->pos[3] - v->y / v->w;
+    if (dx * dx + dy * dy > 0.5f * 0.5f) { gpu_matches.far++; return; }
+    memcpy(v->prev, was->pos, sizeof v->prev);
+    gpu_matches.matched++;
+}
+/* A frame shown: this frame's vertices become the previous frame's. */
+static void gpu_match_next(void) {
+    static int verbose = -1;
+    if (verbose < 0) verbose = getenv("PORT_VERBOSE") ? atoi(getenv("PORT_VERBOSE")) : 0;
+    if (verbose && gpu_frame % 250 == 0 && gpu_matches.loaded) {
+        fprintf(stderr, "gpu: %lu vertices loaded in 250 frames: %lu%% found in the frame before, %lu%% too far from "
+                "it, %lu%% not in it\n", gpu_matches.loaded, gpu_matches.matched * 100 / gpu_matches.loaded,
+                gpu_matches.far * 100 / gpu_matches.loaded, gpu_matches.unseen * 100 / gpu_matches.loaded);
+        memset(&gpu_matches, 0, sizeof gpu_matches);
+    }
+    GpuSeen *t = gpu_seen[1];
+    gpu_seen[1] = gpu_seen[0]; gpu_seen[0] = t;
+    gpu_seen_stamp[1] = gpu_seen_stamp[0];
+    gpu_seen_stamp[0] = gpu_seen_stamp[1] + 1;
 }
 
 /* A triangle in screen space, as raster() takes it: its shade smooth or the last vertex's, its texture coordinates
@@ -264,14 +350,26 @@ static void gpu_vertex(GpuDraw *d, float x, float y, float z, float w, float s, 
 static void gpu_triangle(const Vtx *a, const Vtx *b, const Vtx *c) {
     if (cimg_addr == zimg_addr && zimg_addr) return; /* drawing into the depth image: only fills reach it (a clear) */
     combiner_uses();
-    uint32_t flags = (geometry & 1) ? GPU_DEPTH : 0;
+    uint32_t flags = ((geometry & 1) ? GPU_DEPTH : 0) | ((mode_h & 0x80000) ? 0 : GPU_AFFINE) | (gpu_line ? GPU_SCREEN : 0);
     GpuDraw *d = gpu_draw(GPU_KIND_COMBINE, flags, -1, tex_on);
     d = gpu_room(d, 3, GPU_KIND_COMBINE, flags, -1, tex_on);
-    int smooth = (geometry & 0x200000) != 0, persp = (mode_h & 0x80000) != 0;
+    int smooth = (geometry & 0x200000) != 0;
+    float k = (mode_h & 0x80000) ? 1.0f : 0.5f; /* without perspective correction, at half scale (as raster()) */
     const Vtx *v[3] = {a, b, c};
     for (int i = 0; i < 3; i++) {
-        float w = persp ? v[i]->w : 1.0f, k = persp ? 1.0f : 0.5f;
-        gpu_vertex(d, v[i]->sx, v[i]->sy, v[i]->sz / 262143.0f, w, v[i]->s * k, v[i]->t * k, smooth ? v[i]->shade : c->shade);
+        float pos[4] = {v[i]->x, v[i]->y, v[i]->z, v[i]->w};
+        const float *prev = v[i]->prev;
+        if (gpu_line) { /* in the frame's pixels, at its depth */
+            pos[0] = v[i]->sx; pos[1] = v[i]->sy; pos[2] = v[i]->sz / 262143.0f; pos[3] = 1;
+            prev = pos;
+        } else if (v[i]->fixed_xy || v[i]->fixed_z) { /* G_MODIFYVTX put it on the screen: back to clip space, as it is */
+            float w = v[i]->w;
+            if (vp_scale[0]) pos[0] = (v[i]->sx - vp_trans[0] / 4.0f) / (vp_scale[0] / 4.0f) * w;
+            if (vp_scale[1]) pos[1] = -(v[i]->sy - vp_trans[1] / 4.0f) / (vp_scale[1] / 4.0f) * w;
+            if (vp_scale[2]) pos[2] = (v[i]->sz / 256.0f - vp_trans[2]) / vp_scale[2] * w;
+            prev = pos;
+        }
+        gpu_vertex(d, pos, prev, v[i]->s * k, v[i]->t * k, smooth ? v[i]->shade : c->shade);
     }
 }
 
@@ -279,12 +377,13 @@ static void gpu_triangle(const Vtx *a, const Vtx *b, const Vtx *c) {
 static void gpu_quad(uint32_t kind, uint32_t flags, int tile, int textured, const float xy[4][2], const float st[4][2],
                      Color shade) {
     if (cimg_addr == zimg_addr && zimg_addr) return;
+    flags |= GPU_SCREEN;
     GpuDraw *d = gpu_draw(kind, flags, tile, textured);
     d = gpu_room(d, 6, kind, flags, tile, textured);
     static const int order[6] = {0, 1, 2, 0, 2, 3};
     for (int i = 0; i < 6; i++) {
         int k = order[i];
-        gpu_vertex(d, xy[k][0], xy[k][1], 0, 1, st[k][0], st[k][1], shade);
+        gpu_screen_vertex(d, xy[k][0], xy[k][1], st[k][0], st[k][1], shade);
     }
 }
 
@@ -348,13 +447,14 @@ static void gpu_bg(int fx, int fy, int fw, int fh, const uint32_t *rgba) {
     int copy = cycle_type() == 2;
     if (gpu_nvertices + 6 > GPU_MAX_VERTICES) gpu_flush();
     gpu_open = NULL; /* its own draw: its tile is set after the comparison */
-    GpuDraw *d = gpu_draw(copy ? GPU_KIND_COPY : GPU_KIND_COMBINE, GPU_ONE_TEXEL | GPU_POINT | (copy ? GPU_COPY_ALPHA : 0), 7, 0);
+    GpuDraw *d = gpu_draw(copy ? GPU_KIND_COPY : GPU_KIND_COMBINE,
+                          GPU_ONE_TEXEL | GPU_POINT | GPU_SCREEN | (copy ? GPU_COPY_ALPHA : 0), 7, 0);
     /* the background's own texture, in tile 7's place: not a tile of TMEM's */
     d->flags |= GPU_TEXTURED;
     d->tiles[7] = (GpuTile){id, fw, fh, 0, 0, 1, 1, fw, fh, 2, 2, 0, 0};
     gpu_open = NULL; /* nothing may join it */
     static const int order[6] = {0, 1, 2, 0, 2, 3};
-    for (int i = 0; i < 6; i++) gpu_vertex(d, xy[order[i]][0], xy[order[i]][1], 0, 1, st[order[i]][0], st[order[i]][1], (Color){1, 1, 1, 1});
+    for (int i = 0; i < 6; i++) gpu_screen_vertex(d, xy[order[i]][0], xy[order[i]][1], st[order[i]][0], st[order[i]][1], (Color){1, 1, 1, 1});
     tiles[7] = saved;
 }
 
@@ -370,9 +470,15 @@ static void gpu_use(int renderer) {
         gpu_vertices = malloc((size_t)GPU_MAX_VERTICES * GPU_VERTEX * sizeof *gpu_vertices);
         gpu_pixels = malloc(GPU_MAX_PIXELS * sizeof *gpu_pixels);
         gpu_scratch = malloc(1024 * 1024 * sizeof *gpu_scratch);
-        if (!gpu_commands || !gpu_draws || !gpu_vertices || !gpu_pixels || !gpu_scratch) {
+        gpu_seen[0] = calloc(GPU_MATCH, sizeof **gpu_seen);
+        gpu_seen[1] = calloc(GPU_MATCH, sizeof **gpu_seen);
+        gpu_counts = calloc(GPU_MATCH, sizeof *gpu_counts);
+        if (!gpu_commands || !gpu_draws || !gpu_vertices || !gpu_pixels || !gpu_scratch || !gpu_seen[0] || !gpu_seen[1]
+            || !gpu_counts) {
             fprintf(stderr, "render: no memory for the GPU renderer's buffers; drawing in software\n");
             free(gpu_commands); free(gpu_draws); free(gpu_vertices); free(gpu_pixels); free(gpu_scratch);
+            free(gpu_seen[0]); free(gpu_seen[1]); free(gpu_counts);
+            gpu_seen[0] = gpu_seen[1] = NULL; gpu_counts = NULL;
             gpu_commands = NULL;
             gpu = 0;
             gpu_unavailable = 1;
@@ -395,6 +501,7 @@ static void gpu_use(int renderer) {
 static int gpu_present(uint32_t addr, int w, int h, int gamma) {
     gpu_flush();
     gpu_frame++;
+    gpu_match_next();
     for (int k = 0; k < 16; k++)
         if (gpu_drawn[k].addr == addr && gpu_drawn[k].sum == gpu_rdram_sum(addr))
             return port_gpu_present(addr, w, h, gamma);

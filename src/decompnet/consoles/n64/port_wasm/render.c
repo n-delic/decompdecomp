@@ -720,9 +720,12 @@ static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
 
 /* A vertex: clip space, screen space once projected, texture coordinates in texels, shade; `fixed_xy`/`fixed_z`
    when G_MODIFYVTX gave its screen place directly. */
-typedef struct { float x, y, z, w, sx, sy, sz, s, t; Color shade; int clip, fixed_xy, fixed_z; float fx, fy, fz; } Vtx;
+typedef struct { float x, y, z, w, sx, sy, sz, s, t; Color shade; int clip, fixed_xy, fixed_z; float fx, fy, fz;
+                 float prev[4]; /* the GPU path's: x, y, z, w in the previous frame (render_gpu.h's gpu_match) */ } Vtx;
 static Vtx vtx[64];
 static void gpu_triangle(const Vtx *a, const Vtx *b, const Vtx *c);
+static int gpu_line; /* the triangles are a line's, in screen space */
+static void gpu_match(const uint8_t *raw, Vtx *v);
 static float mv[10][16], proj[16], mvp[16];
 static int mv_depth;
 static float vp_scale[3] = {640, 480, 511}, vp_trans[3] = {640, 480, 511};
@@ -801,6 +804,7 @@ static void load_vertices(uint32_t addr, int n, int v0) {
             v->shade.a = (f < 0 ? 0 : f > 255 ? 255 : f) / 255.0f;
         }
         v->clip = v->fixed_xy = v->fixed_z = 0;
+        if (gpu) gpu_match(R + a, v);
     }
 }
 
@@ -988,6 +992,7 @@ static Vtx lerp(const Vtx *a, const Vtx *b, float f) {
     v.w = a->w + (b->w - a->w) * f; v.s = a->s + (b->s - a->s) * f; v.t = a->t + (b->t - a->t) * f;
     v.shade.r = a->shade.r + (b->shade.r - a->shade.r) * f; v.shade.g = a->shade.g + (b->shade.g - a->shade.g) * f;
     v.shade.b = a->shade.b + (b->shade.b - a->shade.b) * f; v.shade.a = a->shade.a + (b->shade.a - a->shade.a) * f;
+    for (int k = 0; k < 4; k++) v.prev[k] = a->prev[k] + (b->prev[k] - a->prev[k]) * f;
     v.clip = v.fixed_xy = v.fixed_z = 0;
     return v;
 }
@@ -1065,8 +1070,10 @@ static void line3d(int i0, int i1, int wd) {
     Vtx q[4] = {a, a, b, b};
     q[0].sx -= ox; q[0].sy -= oy; q[1].sx += ox; q[1].sy += oy;
     q[2].sx += ox; q[2].sy += oy; q[3].sx -= ox; q[3].sy -= oy;
+    gpu_line = 1; /* (widened on the screen: the GPU path takes its corners as they are there) */
     raster(&q[0], &q[1], &q[2]);
     raster(&q[0], &q[2], &q[3]);
+    gpu_line = 0;
 }
 
 /* ---------------------------------------------------------------- what every microcode shares */
