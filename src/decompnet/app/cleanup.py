@@ -164,6 +164,26 @@ def remove_registrations(home: Path) -> list[str]:
     return said
 
 
+def stale_uploads(internal: Path) -> list[Path]:
+    """Delete the copies of games the window sent (a file dropped on or picked in the import box, or a room's game):
+    an import deletes its copy when its job ends, but one cut short by a quit or crash left it for good (a 1.4 GB
+    disc image sat there for ten days). Called before the server starts, when no import of this home can be running
+    (one app per home)."""
+    uploads = internal / "uploads"
+    if not uploads.is_dir():
+        return []
+    removed = []
+    for entry in uploads.iterdir():
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            entry.unlink(missing_ok=True)
+        removed.append(entry)
+    if removed:
+        logging.getLogger("decompdecomp").info("removed %d unfinished upload(s) from %s", len(removed), uploads)
+    return removed
+
+
 def old_registrations(internal: Path) -> None:
     """Once, in the installed app on the user's own projects (a development copy, or an app given a home of its own
     with DECOMP_HOME, a test or an experiment, leaves the user's agents alone), in the background so the window

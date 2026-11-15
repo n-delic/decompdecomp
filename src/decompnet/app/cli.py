@@ -232,6 +232,7 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     state_file.write_text(json.dumps({"port": port, "secret": secret, "pid": os.getpid(), "mode": "serve" if headless else "desktop"}), encoding="utf-8")
     os.chmod(state_file, 0o600)
     cleanup.old_registrations(internal)
+    cleanup.stale_uploads(internal)
     from .. import compiler_processes
     compiler_processes.configure(internal / "compiler-processes")
     from ..store import CorruptDatabaseError
