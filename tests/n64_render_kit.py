@@ -50,13 +50,14 @@ int main(int argc, char **argv) {
 """
 
 
-def build(folder: Path) -> Path | None:
+def build(folder: Path, *defines: str) -> Path | None:
+    """The harness around render.c, compiled into `folder`; `defines` (-D...) for the renderer's test switches."""
     cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     if not cc:
         return None
     (folder / "harness.c").write_text(HARNESS)
     program = folder / "render"
-    subprocess.run([cc, "-O1", "-o", str(program), str(folder / "harness.c"), str(RENDER), "-lm"],
+    subprocess.run([cc, "-O1", *defines, "-o", str(program), str(folder / "harness.c"), str(RENDER), "-lm"],
                    check=True, capture_output=True, timeout=180)
     return program
 
