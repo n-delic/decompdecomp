@@ -438,6 +438,10 @@ static void port_recomp_decomp(uint32_t vram, uint8_t *rdram, recomp_context *ct
     for (int i = 0; i < 4; i++) w[i] = (u32)(&ctx->r4)[i];
     for (int i = 4; i < 16; i++) w[i] = (u32)MEM_W(4 * i, ctx->r29);
     f[12] = ctx->f12.u32l; f[13] = ctx->f12.u32h; f[14] = ctx->f14.u32l; f[15] = ctx->f14.u32h;
+    /* $a0-$a3 as MIPS leaves them in the registers, for a callee whose C passes on what it doesn't declare (a racing
+       game's `void heap_free_stub(void)` hands its caller's block on to heapFreeBlock through them: adapt.py's
+       register words, which the game's own callers fill and a call from recompiled code left stale) */
+    for (int i = 0; i < 4; i++) STORE_W(4 * i, 0x%(regs)Xu, w[i]);
     uint32_t saved = port_recomp_sp;
     port_recomp_sp = (uint32_t)ctx->r29;
     port_calls[lo].invoke(port_game(), w, f, out);

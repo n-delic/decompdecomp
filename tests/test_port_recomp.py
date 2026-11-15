@@ -99,6 +99,8 @@ def test_each_function_runs_as_the_games_c_the_hosts_or_recompiled(tmp_path):
     assert "u32 w2c_env_func_80003000(struct w2c_env *e, u32 a0, f32 a1)" in bridges and "port_rb32(a1)" in bridges
     assert "{0x80003000u, (void *)G_func_80003000}" in bridges  # through a pointer, or as a thread's entry
     assert "R___osSiRawStartDma_recomp(uint8_t* rdram" in (out / "funcs.h").read_text()
+    # into the game's C: $a0-$a3 in adapt.py's register words, for a callee that passes on what it doesn't declare
+    assert "for (int i = 0; i < 4; i++) STORE_W(4 * i, 0x90000u, w[i]);" in bridges
     cc = shutil.which("cc") or shutil.which("clang")
     if cc:
         for unit in prepared["units"]:
