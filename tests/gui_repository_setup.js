@@ -243,6 +243,12 @@ async function stalePathAndTimeoutRegression() {
   assert.equal(get('repositoryAutoCommit').disabled,false);
   assert.equal(get('repositorySetupState').textContent,'Git repository: /v-rally');
   assert.equal(get('repositorySetupRetry').hidden,true);
+  // A background recheck keeps the layout still; the bar shows only for a first check or an explicit retry.
+  context.Date={now:()=>Date.now()+60000};
+  const recheck=context.refreshRepositorySetup();
+  assert.equal(get('repositorySetupLoading').hidden,true,'a background recheck must not shift the Settings page');
+  requests.shift()(state('v-rally'));await recheck;
+  context.Date=Date;
   late(state('old'));await Promise.resolve();
   context.renderRepositorySetup(state('old'));
   assert.equal(get('repositorySetupState').textContent,'Git repository: /v-rally');
