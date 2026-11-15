@@ -87,7 +87,7 @@ async function refreshFn(first) {
       } catch (e) { toast(esc(e.message), "err"); }
     };
     const pinned = (S.ov.priority || []).includes(d.name);
-    $("fnPin").hidden = S.ov.kind === "fork" || d.status !== "open";
+    $("fnPin").hidden = d.status !== "open";
     $("fnPin").classList.toggle("on", pinned);
     $("fnPin").setAttribute("aria-pressed", pinned);
     $("fnPin").textContent = pinned ? "★ Agents do this first" : "☆ Do this first";
@@ -310,9 +310,9 @@ const L = { q: "", filter: "all", sort: "i", dir: 1, limit: FUNCTION_ROWS, rows:
 const FILTERS = [["all", "All"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["polished", "Polished"], ["first", "★ First"]];
 // polished: matched, and made readable (real names, types, a comment) by polishing helpers; still counted as matched
 const polished = (f) => f.status === "matched" && !!f.polished;
-// ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM projects only
+// ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM and fork projects
 const starred = (f) => !!(S.ov && (S.ov.priority || []).includes(f.name));
-const canStar = () => !!(S.ov && S.ov.kind !== "fork");
+const canStar = () => !!(S.ov);  // star/priority works on ROM and fork projects alike
 const fnState = (f) => (f.status === "matched" ? "matched" : f.status === "asm" ? "asm" : f.status === "working" ? "working" : f.best != null ? "tried" : "open");
 const STATE_RANK = { working: 0, tried: 1, open: 2, matched: 3, asm: 4 };
 

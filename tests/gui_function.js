@@ -96,6 +96,7 @@ const which = () => vm.runInContext("S.which", ctx);
   assert.equal(buttons[0].classList.contains("on"), false);
   assert.equal(buttons[1].classList.contains("on"), true);
   assert.ok(asked.some((url) => url.includes("/api/diff") && url.includes("which=best")), asked.join(" "));
+  assert.equal(get("fnPin").hidden, false); // ★ the star shows on an open function of a fork project (PR #290)
 
   // The same function's refresh keeps the choice (a live poll calls refreshFn(false)).
   await ctx.refreshFn(false);
@@ -115,6 +116,7 @@ const which = () => vm.runInContext("S.which", ctx);
   await ctx.openFn("f2");
   await settle();
   assert.equal(get("diffWhich").hidden, true);
+  assert.equal(get("fnPin").hidden, true); // ...and not on a matched one.
   assert.equal(which(), "latest");
 
   // Nor does one with no best attempt yet.
