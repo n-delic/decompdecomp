@@ -181,7 +181,7 @@ def test_visual_cpp_x64_runner_follows_the_host_not_the_target(tmp_path, layout,
 
 @pytest.mark.parametrize("here", ["linux", "win32"])
 def test_an_x64_only_copy_is_offered_and_verified_on_any_platform(tmp_path, monkeypatch, here):
-    """n-delic's #281 point: a 2005-2013 copy whose only 64-bit compiler is the native one (bin/amd64) must still
+    """#281: a 2005-2013 copy whose only 64-bit compiler is the native one (bin/amd64) must still
     yield an own-...-x64 compiler, and verify() must never give a runner/platform ("wibo can't run") reason.
     compilers() and verify() don't branch on the platform, so a Windows user is not refused either."""
     monkeypatch.setattr("sys.platform", here)
@@ -546,7 +546,7 @@ def test_duplicate_x64_hosts_provide_one_target_and_old_x64_tools_use_wine(tmp_p
 
 def test_the_2017_cross_finds_mspdbcore_when_only_the_pdb_server_is_beside_cl(tmp_path):
     """Review of #236: mspdbsrv.exe is the server cl spawns, not the DLL it loads, so a Hostx86/x64 folder holding
-    only the server (2017's risner copy) must still send the search on to the sibling Hostx86/x86's mspdbcore.dll."""
+    only the server (the 2017 copy that showed C1356) must still send the search on to the sibling Hostx86/x86's mspdbcore.dll."""
     mod = _pc_compile_module()
     host = tmp_path / "bin" / "Hostx86"
     (host / "x64").mkdir(parents=True)
@@ -557,17 +557,47 @@ def test_the_2017_cross_finds_mspdbcore_when_only_the_pdb_server_is_beside_cl(tm
     assert str(host / "x86") in mod._dll_dirs(str(host / "x64" / "cl.exe"))
 
 
-def test_a_kit_that_cant_be_read_does_not_abort_the_pc_build_environment(tmp_path, monkeypatch):
-    """Review of #236: wine.build_env scans every registered kit on every build; a copy whose file can no longer be
-    read (PermissionError out of xdk/ps3sdk/owncompiler) must count as "needs no wine", not abort the build."""
+def test_kits_compilers_skips_an_unreadable_copy_and_keeps_the_rest(tmp_path, monkeypatch):
+    """Review of #236: a copy whose file can't be read raises OSError out of its kit's compilers(); kits.compilers
+    catches it per copy and carries on, so one unreadable copy never hides a readable copy later in the scan."""
+    good = make_vc(tmp_path / "vc", "15.0.30729.1", "VC/bin/amd64")
+
+    class Unreadable:
+        def compilers(self, at):
+            raise PermissionError(13, "Permission denied", "lib/xapilib.lib")
+
+    real_get = kits.get
+    monkeypatch.setattr(kits, "folders",
+                        lambda kid: {"xdk": [tmp_path / "bad"], "visualcpp": [good.resolve()]}.get(kid, []))
+    monkeypatch.setattr(kits, "get", lambda kid: Unreadable() if kid == "xdk" else real_get(kid))
+    out = kits.compilers([k.id for k in kits.KITS])
+    assert any(c.version == "own-15.0.30729-x64" for c in out)  # the readable copy survived the unreadable one
+
+
+def test_build_env_keeps_wine_for_a_readable_copy_despite_an_unreadable_sibling(tmp_path, monkeypatch):
+    """Review of #236: one registered copy with a file that can't be read must not drop the wine environment a
+    readable own copy needs -- kits.compilers skips the unreadable copy, not the whole scan, so build_env still
+    returns the wine env rather than {}."""
     from decompnet import wine
 
+    good = make_vc(tmp_path / "vc", "15.0.30729.1", "VC/bin/amd64")  # a native-x64 own copy -> runner "wine"
+    bad = tmp_path / "xdk"
+    (bad / "include").mkdir(parents=True)
+    (bad / "include" / "xtl.h").write_bytes(b"")
+    (bad / "bin" / "vc71").mkdir(parents=True)
+    (bad / "bin" / "vc71" / "cl.exe").write_bytes(b"")
+    (bad / "lib").mkdir()
+    unreadable = bad / "lib" / "xapilib.lib"
+    unreadable.write_bytes(b"XAPILIB\0" + b"\0" * 16)
+    unreadable.chmod(0o000)
+
+    places = {"visualcpp": [good.resolve()], "xdk": [bad.resolve()]}
+    monkeypatch.setattr(kits, "folders", lambda kid: places.get(kid, []))
     monkeypatch.setattr(wine, "needed", lambda: True)
     monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
     monkeypatch.setattr(toolchains, "registry", lambda: {})
-
-    def broken(ids):
-        raise PermissionError(13, "Permission denied", "lib/xapilib.lib")
-
-    monkeypatch.setattr(kits, "compilers", broken)
-    assert wine.build_env() == {}
+    try:
+        env = wine.build_env()
+    finally:
+        unreadable.chmod(0o644)
+    assert env.get("DECOMPNET_WINE") == "/opt/wine/bin/wine"  # the good copy's wine survived the unreadable sibling

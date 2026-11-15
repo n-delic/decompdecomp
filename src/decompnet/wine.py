@@ -1,5 +1,5 @@
 """wine: how Linux and macOS run the Windows compilers wibo can't -- the packs toolchains.toml marks
-`wine = true` (Visual C++ 2017), and the user's own 2015-and-newer or x64 copies (kits/visualcpp.py, runner="wine").
+`wine = true` (Visual C++ 2017), and the user's own 2015-and-newer or 64-bit-hosted copies (kits/visualcpp.py, runner="wine").
 
 wibo runs Visual C++ 6.0 to 2010 by itself. 2017's cl.exe calls much more of Windows: under a patched wibo a hello
 world compiled but exited 99, and `#include <windows.h>` failed without a word, where an unmodified wine 9.0 built
@@ -23,7 +23,6 @@ cl.exe as Z:\\...: cl.exe reads /Users/... as a switch. Windows runs the compile
 
 from __future__ import annotations
 
-import logging
 import os
 import shutil
 import subprocess
@@ -130,12 +129,7 @@ def build_env(always: bool = False) -> dict[str, str]:
 
     packs = [toolchains.path(tid) for tid, tc in toolchains.registry().items()
              if tc.wine and toolchains.installed(tid) is not None]
-    own = False
-    if not (packs or always):
-        try:
-            own = any(c.runner == "wine" for c in kits.compilers(k.id for k in kits.KITS))
-        except OSError as e:  # a registered copy with a file that can't be read: it needs no wine from us, the build goes on
-            logging.getLogger(__name__).warning("a kit copy can't be read, so wine isn't set up for it: %s", e)
+    own = not (packs or always) and any(c.runner == "wine" for c in kits.compilers(k.id for k in kits.KITS))
     wine = find() if packs or always or own else None
     if not wine:
         return {}

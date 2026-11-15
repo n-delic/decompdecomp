@@ -230,7 +230,8 @@ different build, which is planned.
   decompdecomp has, and the import says so: 2015's with 2017's (much of its code is the same), 2019 and newer with
   2017's (what their compilers generate differently can't match until they come), 2012 and 2013 with 2010's (little
   matches). 64-bit games start too, and build with Visual C++ 2017's 64-bit compiler, the only 64-bit one decompdecomp
-  has (a game built with another says so, unless your own x64 copy has it: your own copies build 64-bit games too): their functions come from the program's
+  has (a game built with another says so, unless your own x64 copy has it: your own copies build 64-bit games too):
+  their functions come from the program's
   own table (.pdata), not a guess. Programs for other processors (ARM), mostly-/GL ones and protected ones aren't
   started, and the import says why. Visual C++ 2017 (32- and 64-bit) runs through wine on Linux and macOS, which you
   install. decompdecomp never removes or gets around DRM. A game that keeps code in DLLs of its own comes with them when

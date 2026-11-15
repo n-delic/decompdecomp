@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import logging
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -158,7 +159,12 @@ def compilers(kids) -> list[OwnCompiler]:
     out: dict[str, OwnCompiler] = {}
     for k in kids:
         for at in folders(k):
-            for c in get(k).compilers(at):
+            try:
+                found = get(k).compilers(at)
+            except OSError as e:  # a copy with a file that can't be read: skip it, the other copies still count (wine.build_env)
+                logging.getLogger(__name__).warning("a %s copy in %s can't be read, skipping it: %s", k, at, e)
+                continue
+            for c in found:
                 out.setdefault(c.version, c)
     return list(out.values())
 
