@@ -534,7 +534,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False) -> str:
         """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
         tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
-        the move-on rule), it answers once with what to try instead; call it again to release anyway.
+        the move-on rule), it answers once with what to try instead; call it again to release anyway. A release with
+        no compile since you claimed it is not taken, however often you ask: compile first, or end your session.
 
         Args:
             function: the function you hold
