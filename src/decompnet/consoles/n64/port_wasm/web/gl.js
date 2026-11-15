@@ -14,24 +14,42 @@
 
 const COMMAND = { TEXTURE: 1, DRAW: 2, CLEAR_DEPTH: 3 };
 const KIND = { COMBINE: 0, COPY: 1, FILL: 2 };
-const FLAG = { DEPTH: 1, ONE_TEXEL: 2, POINT: 4, COPY_ALPHA: 8, TEXTURED: 16 };
-const VERTEX = 10; // floats: x, y, z, w, s, t, r, g, b, a (render_gpu.h's GPU_VERTEX)
-const DRAW_WORDS = 156; // render_gpu.h's GpuDraw, every field 4 bytes
+const FLAG = { DEPTH: 1, ONE_TEXEL: 2, POINT: 4, COPY_ALPHA: 8, TEXTURED: 16, SCREEN: 32, AFFINE: 64 };
+// floats: x, y, z, w (clip space, or the frame's pixels), the same in the previous frame, s, t, r, g, b, a
+// (render_gpu.h's GPU_VERTEX)
+const VERTEX = 14;
+const DRAW_WORDS = 162; // render_gpu.h's GpuDraw, every field 4 bytes
+const D = { VP_SCALE: 154, VP_TRANS: 157, FIRST: 160, COUNT: 161 }; // its last fields' words
 const TILE_WORDS = 13;
 
+/* The vertex between the previous frame's place and this frame's (u_t: 0 the previous, 1 this), from clip space to
+   the frame's pixels by the draw's viewport as the RSP does (render.c's project()), or already in pixels
+   (rectangles, lines: u_screen). Texture coordinates without perspective correction (G_TP_NONE) are made affine by
+   carrying w along and dividing it out again (GLSL ES has no noperspective). */
 const VERTEX_SHADER = `#version 300 es
 precision highp float;
-layout(location = 0) in vec4 a_pos;   // the frame's pixels (x, y), depth 0 to 1, w
+layout(location = 0) in vec4 a_pos;
+layout(location = 3) in vec4 a_prev;
 layout(location = 1) in vec2 a_st;
 layout(location = 2) in vec4 a_shade;
 uniform vec2 u_size;
-out vec2 v_st;
+uniform float u_t;
+uniform bvec2 u_mode;     // screen, affine
+uniform vec3 u_vpScale, u_vpTrans;
+out vec3 v_stq;
 out vec4 v_shade;
 void main() {
-  float w = a_pos.w;
-  vec2 ndc = vec2(a_pos.x / u_size.x * 2.0 - 1.0, 1.0 - a_pos.y / u_size.y * 2.0);
-  gl_Position = vec4(ndc * w, (a_pos.z * 2.0 - 1.0) * w, w);
-  v_st = a_st;
+  vec4 c = mix(a_prev, a_pos, u_t);
+  vec3 px; float w;
+  if (u_mode.x) { px = c.xyz; w = 1.0; }
+  else {
+    w = c.w;
+    vec3 ndc = c.xyz / w;
+    px = vec3(u_vpTrans.x + ndc.x * u_vpScale.x, u_vpTrans.y - ndc.y * u_vpScale.y,
+              clamp((ndc.z * u_vpScale.z + u_vpTrans.z) * 256.0 / 262143.0, 0.0, 1.0));
+  }
+  gl_Position = vec4((px.x / u_size.x * 2.0 - 1.0) * w, (1.0 - px.y / u_size.y * 2.0) * w, (px.z * 2.0 - 1.0) * w, w);
+  v_stq = u_mode.y ? vec3(a_st * w, w) : vec3(a_st, 1.0);
   v_shade = a_shade;
 }`;
 
@@ -159,8 +177,9 @@ function fragmentShader(d) {
   return `#version 300 es
 precision highp float;
 precision highp int;
-in vec2 v_st;
+in vec3 v_stq;
 in vec4 v_shade;
+vec2 v_st; // the texture coordinates (main's first line: v_stq made affine where it carried w)
 out vec4 o;
 uniform sampler2D u_tex[8];
 uniform vec4 u_tileF[8];   // the corner (uls, ult) and the shift's factors
@@ -231,6 +250,7 @@ void texels(out vec4 t0, out vec4 t1, out float lodFrac, bool second) {
   t1 = second ? textureTile(b & 7, v_st) : t0;
 }
 void main() {
+  v_st = v_stq.xy / v_stq.z;
   ${body}
 }`;
 }
@@ -265,28 +285,36 @@ export function gpuSupported() {
 
 let renderers = 0;
 
+/* A game frame as recorded: what the host sent between two frames shown (its draws, copied out of the host's
+   memory with their vertices in a buffer of their own, and the textures they drew with), drawn again as often as
+   the screen refreshes, its vertices moved from the previous frame's places to this frame's (u_t). */
+class Frame {
+  constructor() { this.ops = []; this.blocks = []; this.targets = new Set(); }
+}
+
 export class GpuRenderer {
-  /* `canvas`: where frames are shown; `scale`: the resolution, times the console's (1 to 4). */
-  constructor(canvas, scale = 2) {
+  /* `canvas`: where frames are shown; `scale`: the resolution, times the console's (1 to 4); `smooth`: in-between
+     frames, the game's motion drawn on every refresh of the screen, one game frame behind. */
+  constructor(canvas, scale = 2, smooth = true) {
     const gl = canvas.getContext("webgl2", { antialias: false, depth: false, alpha: false, preserveDrawingBuffer: true });
     if (!gl) throw new Error("This browser has no WebGL 2: choose the software renderer.");
     this.gl = gl;
     this.id = ++renderers; // the host sends a renderer it hasn't seen every texture again
     this.canvas = canvas;
     this.scale = scale;
-    this.targets = new Map(); // frame buffer address -> {fbo, tex, w, h, depth}
+    this.smooth = smooth;
+    this.targets = new Map(); // frame buffer address -> {fbo, tex, w, h, depth, base}
     this.depths = new Map();  // `${z image} ${w}x${h}` -> {rb, zimg, clear}
-    this.textures = [];       // id -> WebGLTexture
+    this.textures = [];       // id -> WebGLTexture (the one the host's id names now)
+    this.retired = [];        // [texture, the frame count after which no recorded frame can use it]
     this.programs = new Map();
     this.seed = 0;
-    this.stats = { draws: 0, triangles: 0, textures: 0, gpuFrames: 0, rdramFrames: 0 }; // for ?verbose and tests
-    this.vbo = gl.createBuffer();
+    this.frames = 0;          // game frames shown
+    this.stats = { draws: 0, triangles: 0, textures: 0, gpuFrames: 0, rdramFrames: 0, shown: 0 };
+    this.recording = new Frame();
+    this.showing = null;      // {frame, addr, w, h, gamma, since, drawnAt}
+    this.period = 40;         // ms between game frames, as measured
     this.vao = gl.createVertexArray();
-    gl.bindVertexArray(this.vao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 4, gl.FLOAT, false, VERTEX * 4, 0);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, VERTEX * 4, 16);
-    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, VERTEX * 4, 24);
     this.quadVao = gl.createVertexArray();
     gl.bindVertexArray(this.quadVao);
     const quad = gl.createBuffer();
@@ -297,7 +325,14 @@ export class GpuRenderer {
     this.present_ = this.link(PRESENT_VERTEX, PRESENT_FRAGMENT);
     this.rgbTex = gl.createTexture();
     this.blank = this.texture(1, 1, new Uint8Array([255, 255, 255, 255]));
+    this.readFbo = gl.createFramebuffer();
+    this.drawFbo = gl.createFramebuffer();
+    const refresh = () => { if (this.dead) return; this.refresh(); requestAnimationFrame(refresh); };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(refresh);
   }
+
+  /* The page made another renderer: this one stops drawing. */
+  dispose() { this.dead = true; }
 
   link(vs, fs) {
     const gl = this.gl, p = gl.createProgram();
@@ -344,13 +379,13 @@ export class GpuRenderer {
   target(addr, w, h) {
     const gl = this.gl, s = this.scale;
     let t = this.targets.get(addr);
-    if (t && (t.w !== w || t.h !== h)) { gl.deleteFramebuffer(t.fbo); gl.deleteTexture(t.tex); t = null; }
+    if (t && (t.w !== w || t.h !== h)) {
+      gl.deleteFramebuffer(t.fbo); gl.deleteTexture(t.tex);
+      if (t.base) gl.deleteTexture(t.base);
+      t = null;
+    }
     if (!t) {
-      t = { w, h, fbo: gl.createFramebuffer(), tex: gl.createTexture(), depth: null, drawn: false };
-      gl.bindTexture(gl.TEXTURE_2D, t.tex);
-      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w * s, h * s);
-      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
-        [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+      t = { w, h, fbo: gl.createFramebuffer(), tex: this.targetTexture(w, h), depth: null, drawn: false, base: null };
       gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0);
       gl.disable(gl.SCISSOR_TEST);
@@ -361,6 +396,15 @@ export class GpuRenderer {
       this.bound = null;
     }
     return t;
+  }
+
+  targetTexture(w, h) {
+    const gl = this.gl, tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w * this.scale, h * this.scale);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+      [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    return tex;
   }
 
   /* The depth buffer of z image `zimg` for a target of `w` x `h`: cleared (to the farthest) when made. */
@@ -399,27 +443,24 @@ export class GpuRenderer {
   }
 
   /* render_gpu.h's commands, from the host's memory: `ptr` the commands, `draws`, `vertices` and `pixels` where
-     the draws, their vertices and the textures' texels are (the commands name them by index). */
+     the draws, their vertices and the textures' texels are (the commands name them by index). Textures are made at
+     once; the draws are recorded into the frame being made, which is drawn when it's shown. */
   run(buffer, ptr, words, draws, vertices, pixels) {
     const gl = this.gl;
     if (this.buffer !== buffer) {
       this.buffer = buffer;
       this.u32 = new Uint32Array(buffer);
       this.f32 = new Float32Array(buffer);
-      this.i32 = new Int32Array(buffer);
       this.u8 = new Uint8Array(buffer);
     }
-    const u32 = this.u32, at = ptr / 4;
-    let verticesUploaded = false;
-    this.bound = null;
-    gl.bindVertexArray(this.vao);
-    gl.colorMask(true, true, true, false);
-    this.seed = (this.seed + 1) & 0xffff;
+    const u32 = this.u32, at = ptr / 4, frame = this.recording;
+    let block = null;
     for (let i = 0; i < words; i += 5) {
       const op = u32[at + i], a = u32[at + i + 1], b = u32[at + i + 2], c = u32[at + i + 3], e = u32[at + i + 4];
       if (op === COMMAND.TEXTURE) {
-        let t = this.textures[a];
-        if (!t) t = this.textures[a] = gl.createTexture();
+        const old = this.textures[a];
+        if (old) this.retired.push([old, this.frames + 2]); // a recorded frame may still draw with it
+        const t = this.textures[a] = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, t);
         gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
         const from = pixels + e * 4;
@@ -428,36 +469,70 @@ export class GpuRenderer {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         this.stats.textures++;
       } else if (op === COMMAND.CLEAR_DEPTH) {
-        for (const d of this.depths.values()) if (d.zimg === a) d.clear = true;
+        frame.ops.push({ clear: a });
       } else if (op === COMMAND.DRAW) {
-        if (!verticesUploaded) { // every draw's vertices, sent once a run
-          let end = 0;
-          for (let k = i; k < words; k += 5) {
-            if (u32[at + k] !== COMMAND.DRAW) continue;
-            const dw = draws / 4 + u32[at + k + 1] * DRAW_WORDS;
-            end = Math.max(end, u32[dw + 154] + u32[dw + 155]);
-          }
-          gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
-          gl.bufferData(gl.ARRAY_BUFFER, this.f32.subarray(vertices / 4, vertices / 4 + end * VERTEX), gl.STREAM_DRAW);
-          verticesUploaded = true;
+        if (!block) { // this run's draws and every vertex they have, copied: the host reuses its buffers
+          let ndraws = 0, end = 0;
+          for (let k = i; k < words; k += 5) if (u32[at + k] === COMMAND.DRAW) ndraws = Math.max(ndraws, u32[at + k + 1] + 1);
+          const words32 = u32.slice(draws / 4, draws / 4 + ndraws * DRAW_WORDS);
+          for (let k = 0; k < ndraws; k++) end = Math.max(end, words32[k * DRAW_WORDS + D.FIRST] + words32[k * DRAW_WORDS + D.COUNT]);
+          const buf = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+          gl.bufferData(gl.ARRAY_BUFFER, this.f32.subarray(vertices / 4, vertices / 4 + end * VERTEX), gl.STATIC_DRAW);
+          block = { u32: words32, f32: new Float32Array(words32.buffer), i32: new Int32Array(words32.buffer), buf };
+          frame.blocks.push(block);
         }
-        this.draw(draws / 4 + a * DRAW_WORDS);
+        const w = a * DRAW_WORDS;
+        if (!block.u32[w + D.COUNT]) continue;
+        // the textures its tiles name, as they are now (a later upload under the same id is another texture)
+        const tex = [];
+        for (let k = 0; k < 8; k++) { const id = block.u32[w + 50 + k * TILE_WORDS]; tex.push((id && this.textures[id]) || this.blank); }
+        frame.ops.push({ block, w, tex });
+        frame.targets.add(block.u32[w + 45]);
       }
+    }
+  }
+
+  /* A frame drawn: its draws in order, its vertices at `t` between the previous frame's places and its own. */
+  replay(frame, t) {
+    const gl = this.gl;
+    this.bound = null;
+    gl.colorMask(true, true, true, false);
+    gl.bindVertexArray(this.vao);
+    let block = null;
+    for (const op of frame.ops) {
+      if (op.clear !== undefined) {
+        for (const d of this.depths.values()) if (d.zimg === op.clear) d.clear = true;
+        continue;
+      }
+      if (op.block !== block) {
+        block = op.block;
+        gl.bindBuffer(gl.ARRAY_BUFFER, block.buf);
+        const stride = VERTEX * 4;
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 4, gl.FLOAT, false, stride, 0);
+        gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 4, gl.FLOAT, false, stride, 16);
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, stride, 32);
+        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, stride, 40);
+      }
+      this.draw(op, t);
     }
     gl.bindVertexArray(null);
   }
 
-  draw(w) {
-    const gl = this.gl, u32 = this.u32, f32 = this.f32, i32 = this.i32;
-    const count = u32[w + 155];
-    if (!count) return;
+  draw(op, t) {
+    const gl = this.gl, { u32, f32, i32 } = op.block, w = op.w;
+    const count = u32[w + D.COUNT];
     const d = { kind: u32[w], flags: u32[w + 1], c0: u32[w + 2], c1: u32[w + 3], modeH: u32[w + 4], modeL: u32[w + 5],
       cimg: u32[w + 45], width: u32[w + 46], height: u32[w + 47], zimg: u32[w + 49] };
     if (!d.width || !d.height) return;
-    const t = this.bind(d), s = this.scale;
+    const tg = this.bind(d), s = this.scale;
     const prog = this.program(d), un = prog.u;
     gl.useProgram(prog.p);
     gl.uniform2f(un.u_size, d.width, d.height);
+    gl.uniform1f(un.u_t, t);
+    gl.uniform2i(un.u_mode, (d.flags & FLAG.SCREEN) ? 1 : 0, (d.flags & FLAG.AFFINE) ? 1 : 0);
+    gl.uniform3f(un.u_vpScale, f32[w + D.VP_SCALE], f32[w + D.VP_SCALE + 1], f32[w + D.VP_SCALE + 2]);
+    gl.uniform3f(un.u_vpTrans, f32[w + D.VP_TRANS], f32[w + D.VP_TRANS + 1], f32[w + D.VP_TRANS + 2]);
     const colour = (name, off) => { if (un[name]) gl.uniform4f(un[name], f32[w + off], f32[w + off + 1], f32[w + off + 2], f32[w + off + 3]); };
     colour("u_prim", 6); colour("u_env", 10); colour("u_fog", 14); colour("u_blend", 18);
     colour("u_keyCenter", 22); colour("u_keyScale", 26); colour("u_fill", 35);
@@ -469,7 +544,7 @@ export class GpuRenderer {
       for (let k = 0; k < 8; k++) {
         const o = w + 50 + k * TILE_WORDS;
         gl.activeTexture(gl.TEXTURE0 + k);
-        gl.bindTexture(gl.TEXTURE_2D, (u32[o] && this.textures[u32[o]]) || this.blank);
+        gl.bindTexture(gl.TEXTURE_2D, op.tex[k]);
         tf.set([f32[o + 3], f32[o + 4], f32[o + 5], f32[o + 6]], k * 4);
         ti.set(u32[o] ? [i32[o + 1], i32[o + 2], i32[o + 7], i32[o + 8]] : [1, 1, 1, 1], k * 4);
         tj.set([i32[o + 9], i32[o + 10], i32[o + 11], i32[o + 12]], k * 4);
@@ -484,7 +559,7 @@ export class GpuRenderer {
     const x1 = Math.min(d.width, i32[w + 43]), y1 = Math.min(d.height, i32[w + 44]);
     if (x1 <= x0 || y1 <= y0) return;
     gl.enable(gl.SCISSOR_TEST);
-    gl.scissor(x0 * s, (t.h - y1) * s, (x1 - x0) * s, (y1 - y0) * s);
+    gl.scissor(x0 * s, (tg.h - y1) * s, (x1 - x0) * s, (y1 - y0) * s);
     // depth, as render.c's plot(): compared (decals only at the surface's own depth) and written by other mode L
     const zsPrim = (d.modeL & 4) !== 0, zcmp = (d.modeL & 0x10) !== 0, zupd = (d.modeL & 0x20) !== 0;
     const depthOn = d.kind === KIND.COMBINE && ((d.flags & FLAG.DEPTH) || zsPrim) && (zcmp || zupd);
@@ -502,24 +577,96 @@ export class GpuRenderer {
     const plan = d.kind === KIND.COMBINE ? blenderPlan(d.modeL, (d.modeH >>> 20) & 3) : { blend: null, write: true };
     if (plan.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl[plan.blend[0]], gl[plan.blend[1]]); } else gl.disable(gl.BLEND);
     gl.colorMask(plan.write, plan.write, plan.write, false);
-    gl.drawArrays(gl.TRIANGLES, u32[w + 154], count);
+    gl.drawArrays(gl.TRIANGLES, u32[w + D.FIRST], count);
     this.stats.draws++;
     this.stats.triangles += count / 3;
   }
 
-  /* The frame buffer at `addr` shown, `w` x `h` of it: 1, or 0 when the GPU never drew it (the caller shows RDRAM's). */
+  /* One frame buffer's texture copied into another's (the same size). */
+  copy(from, to, w, h) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.readFbo);
+    gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, from, 0);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.drawFbo);
+    gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, to, 0);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.colorMask(true, true, true, true);
+    gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    this.bound = null;
+  }
+
+  free(frame) {
+    for (const b of frame.blocks) this.gl.deleteBuffer(b.buf);
+    frame.blocks = [];
+  }
+
+  /* The frame buffer at `addr` shown, `w` x `h` of it: the frame recorded since the last one shown, drawn (and, with
+     in-between frames, drawn again on every refresh until the next comes). 0 when the GPU never drew it (the caller
+     shows RDRAM's). */
   present(addr, w, h, flags) {
-    const t = this.targets.get(addr);
-    if (!t || !t.drawn) return 0;
-    this.show(t.tex, w * this.scale, h * this.scale, [0, 1 - Math.min(h, t.h) / t.h, Math.min(w, t.w) / t.w, Math.min(h, t.h) / t.h],
-      (flags & 1) !== 0);
+    const frame = this.recording, now = performance.now();
+    this.recording = new Frame();
+    this.frames++;
     this.stats.gpuFrames++;
+    // the last one: finished as the game drew it (where it left its frame buffers, the next frame starts from)
+    const last = this.showing;
+    if (last) {
+      if (this.smooth && last.t !== 1) this.drawFrame(last, 1);
+      this.free(last.frame);
+      const gap = now - last.since;
+      if (gap > 5 && gap < 200) this.period = this.period * 0.8 + gap * 0.2;
+    }
+    for (; this.retired.length && this.retired[0][1] <= this.frames; this.retired.shift()) this.gl.deleteTexture(this.retired[0][0]);
+    this.seed = (this.seed + 1) & 0xffff;
+    if (!this.targets.has(addr) && !frame.targets.has(addr)) { this.free(frame); this.showing = null; return 0; }
+    const showing = { frame, addr, w, h, gamma: (flags & 1) !== 0, since: now, t: -1 };
+    if (this.smooth) { // where each frame buffer it draws into starts: drawn over again from there each refresh
+      for (const a of frame.targets) {
+        const tg = this.targets.get(a);
+        if (!tg) continue;
+        if (!tg.base) tg.base = this.targetTexture(tg.w, tg.h);
+        this.copy(tg.tex, tg.base, tg.w * this.scale, tg.h * this.scale);
+        tg.based = true;
+      }
+      this.drawFrame(showing, 0);
+    } else this.drawFrame(showing, 1);
+    this.showing = showing;
     return 1;
   }
 
-  /* A frame as RGB (software's, from RDRAM): shown at the same size as the GPU's. */
+  drawFrame(showing, t) {
+    const { frame } = showing;
+    if (this.smooth && showing.t >= 0) // drawn before: its frame buffers back as they were before it
+      for (const a of frame.targets) {
+        const tg = this.targets.get(a);
+        if (tg && tg.base && tg.based) this.copy(tg.base, tg.tex, tg.w * this.scale, tg.h * this.scale);
+      }
+    this.replay(frame, t);
+    showing.t = t;
+    const tg = this.targets.get(showing.addr);
+    if (!tg) return;
+    const { w, h } = showing;
+    this.show(tg.tex, w * this.scale, h * this.scale, [0, 1 - Math.min(h, tg.h) / tg.h, Math.min(w, tg.w) / tg.w, Math.min(h, tg.h) / tg.h],
+      showing.gamma);
+  }
+
+  /* Every refresh of the screen: the frame shown, its motion this much further on. */
+  refresh() {
+    const showing = this.showing;
+    if (!this.smooth || !showing || showing.t === 1) return;
+    const t = Math.min(1, (performance.now() - showing.since) / this.period);
+    if (t - showing.t < 0.02) return;
+    this.drawFrame(showing, t);
+  }
+
+  /* A frame as RGB (software's, from RDRAM): shown at the same size as the GPU's, in place of any recorded. */
   showRGB(rgb, w, h) {
     const gl = this.gl;
+    if (this.showing) { this.free(this.showing.frame); this.showing = null; }
+    this.free(this.recording);
+    this.recording = new Frame();
     gl.bindTexture(gl.TEXTURE_2D, this.rgbTex);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, w, h, 0, gl.RGB, gl.UNSIGNED_BYTE, rgb);
@@ -548,6 +695,7 @@ export class GpuRenderer {
     gl.bindVertexArray(this.quadVao);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
+    this.stats.shown++;
     if (this.onShow) this.onShow();
   }
 }

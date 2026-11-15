@@ -1160,7 +1160,9 @@ Left:
 The browser build's page can draw on the GPU (Renderer: WebGL, at 1x to 4x the console's resolution) as well as in
 software (docs/PORTING.md, "The browser build's renderers"): `render.c` reads the display lists as for software and
 sends each primitive with the RDP's state (`render_gpu.h`); `web/gl.js` draws it with WebGL 2. A racing game's boot,
-menus and races draw as in software, and the player can switch while it plays.
+menus and races draw as in software, and the player can switch while it plays. Smooth motion draws in-between
+frames at the screen's refresh rate, at the game's own speed (a PAL racing game's 25 frames a second shown as 60 or
+more), its vertices found again from frame to frame by what the game loaded for them.
 
 Left:
 - frame-buffer effects: a frame buffer read back as a texture or by the CPU (copied to RDRAM when a texture load or
@@ -1169,6 +1171,9 @@ Left:
   gamma;
 - a games-wide check: only one racing game has been played with it; Firefox and Safari untried;
 - the native window (`window/sdl.c`) on the GPU: the same `render_gpu.h` drawn by OpenGL or SDL_GPU.
+- in-between frames for what a game makes anew each frame (CPU-animated or camera-space vertices): matched by
+  matrix instead (as RT64 does), and the HUD's 2D at the game's frames while the 3D lags one behind;
+- a 30 fps option for PAL games (the retrace at 60 Hz): the game would run a fifth fast, its sound too.
 
 The Miyoo Mini is a third kind (Export… → For Miyoo Mini, `port/wasm/miyoo.py`): the same build's game with its
 host compiled for the handheld's 32-bit ARM by the pinned Zig, the game's memory mapped at its own addresses

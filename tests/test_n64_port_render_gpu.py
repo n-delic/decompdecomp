@@ -49,15 +49,16 @@ void port_gpu_run(const uint32_t *c, uint32_t words, const void *draws, const fl
             for (uint32_t k = 0; k < c[i + 2] * c[i + 3] && k < 64; k++) fprintf(out, " %08x", p[k]);
             fputc('\n', out);
         } else if (c[i] == 2) {
-            const uint32_t *d = (const uint32_t *)draws + c[i + 1] * 156;
+            const uint32_t *d = (const uint32_t *)draws + c[i + 1] * 162;
             fprintf(out, "draw kind %u flags %u cimg %x zimg %x tile %d count %u textures", d[0], d[1], d[45], d[49],
-                    (int)d[39], d[155]);
+                    (int)d[39], d[161]);
             for (int k = 0; k < 8; k++) fprintf(out, " %u", d[50 + k * 13]);
             fputc('\n', out);
-            for (uint32_t v = 0; v < d[155]; v++) {
-                const float *f = vertices + (d[154] + v) * 10;
-                fprintf(out, "  v %.2f %.2f %.4f %.3f %.3f %.3f %.2f %.2f %.2f %.2f\n", f[0], f[1], f[2], f[3], f[4], f[5],
-                        f[6], f[7], f[8], f[9]);
+            for (uint32_t v = 0; v < d[161]; v++) {
+                const float *f = vertices + (d[160] + v) * 14;
+                fprintf(out, "  v");
+                for (int k = 0; k < 14; k++) fprintf(out, " %.4f", f[k]);
+                fputc('\n', out);
             }
         } else if (c[i] == 3) fprintf(out, "clear-depth %x\n", c[i + 1]);
     }
@@ -137,8 +138,8 @@ def _triangle_list(mem: Memory, g: Gfx) -> None:
 
 def test_a_triangle_goes_to_the_page_and_not_into_rdram(page, tmp_path):
     """On the GPU path the display list is read, transformed and clipped as for software, and the triangle goes to
-    the page in screen space with its shade, its depth, and the frame and z images it's drawn into; the frame in RDRAM
-    is left as it was (the page draws it)."""
+    the page in clip space with its shade, the viewport (in the draw), and the frame and z images it's drawn into; the
+    frame in RDRAM is left as it was (the page draws it)."""
     mem = Memory()
     g = Gfx(mem)
     _triangle_list(mem, g)
@@ -147,9 +148,9 @@ def test_a_triangle_goes_to_the_page_and_not_into_rdram(page, tmp_path):
     (draw, vertices), = _draws(log)
     assert draw["kind"] == "0" and int(draw["flags"]) & 1, draw  # combined, depth on
     assert draw["cimg"] == f"{FB:x}" and draw["zimg"] == f"{ZB:x}"
-    assert [(v[0], v[1]) for v in vertices] == [(0, 0), (W / 2, 0), (0, 240)]
-    assert [v[6:10] for v in vertices] == [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1]]
-    assert all(0 < v[2] < 1 for v in vertices)  # depth: the screen's middle
+    assert [v[0:4] for v in vertices] == [[-1, 1, 0, 1], [0, 1, 0, 1], [-1, -1, 0, 1]]
+    assert all(v[4:8] == v[0:4] for v in vertices)  # the first frame: nowhere before it
+    assert [v[10:14] for v in vertices] == [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1]]
     assert not any(after.ram[FB:FB + W * 240 * 2]), "the GPU path wrote the frame in RDRAM"
 
 
@@ -194,7 +195,8 @@ def test_a_texture_is_decoded_once_and_sent_once(page, tmp_path):
     assert draws[0][0]["kind"] == "0" and int(draws[0][0]["flags"]) & 16  # combined, textured
     # the rectangle's corners: s at the first pixel's centre is 0, as the software path samples it
     corners = draws[0][1]
-    assert (corners[0][0], corners[0][1], corners[0][4], corners[0][5]) == (0, 0, -0.5, -0.5)
+    assert (corners[0][0], corners[0][1], corners[0][8], corners[0][9]) == (0, 0, -0.5, -0.5)
+    assert int(draws[0][0]["flags"]) & 32  # in the frame's pixels
     # other texels: a texture of its own
     mem.w16(image, 0x003F)
     log, _ = _run(page, mem, tmp_path, first)
@@ -274,9 +276,71 @@ def test_the_shaders_follow_the_combiner_and_blender():
     assert done.stdout.strip() == "ok"
 
 
+def _moving_triangle(mem: Memory, g: Gfx, dx: float) -> None:
+    """The same model (one triangle, its vertices as loaded) through a model view moved `dx` across: a car between
+    two frames. Its vertices and matrix in memory of their own, as a game's per-frame buffers have them."""
+    ident, moved = mem.put(matrix()), mem.put(matrix([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, dx, 0, 0, 1]))
+    g.frame()
+    g(0xDA380007, 0x80000000 | ident)
+    g(0xDA380003, 0x80000000 | moved)
+    g.othermode(0, 0)
+    g(*SHADE)
+    g(0xD9000000, 0x200000)
+    vtx = mem.put(b"".join(vertex(x, y, 0) for x, y in [(-1, 1), (0, 1), (-1, -1)]))
+    g(0x01000000 | 3 << 12 | 3 << 1, 0x80000000 | vtx)
+    g(0x05000204)
+    g(0xDF000000)
+
+
+@pytest.mark.parametrize("dx, follows", [(0.25, True), (1.5, False)], ids=["moving", "camera-cut"])
+def test_each_vertex_carries_where_it_was_in_the_frame_before(page, tmp_path, dx, follows):
+    """In-between frames: a vertex the game loads again the next frame (the same model-space data, wherever it put
+    it) carries its previous frame's clip-space place, so the page can draw the motion between. One that moved
+    further than a camera cut's worth starts where it is, rather than sweeping across the screen."""
+    mem = Memory()
+    first, second = Gfx(mem), Gfx(mem, at=0x3000, task=0x180)
+    _moving_triangle(mem, first, 0)
+    _moving_triangle(mem, second, dx)
+    log, _ = _run(page, mem, tmp_path, first.end(), f"show:{FB:x}", second.end())
+    (_, before), (_, after) = _draws(log)
+    assert [v[0] for v in after] == [-1 + dx, dx, -1 + dx]
+    if follows:
+        assert [v[4:8] for v in after] == [v[0:4] for v in before]
+    else:
+        assert all(v[4:8] == v[0:4] for v in after)
+
+
+def test_equal_vertices_are_told_apart_by_their_order(page, tmp_path):
+    """Two cars of one model load the same vertices: each is found again as the first or second of its kind that
+    frame, so neither takes the other's motion."""
+    mem = Memory()
+    frames = []
+    for n, (left, right) in enumerate([(0.0, 0.5), (0.1, 0.6)]):
+        g = Gfx(mem, at=0x1000 + n * 0x1000, task=0x100 + n * 0x80)
+        ident = mem.put(matrix())
+        g.frame()
+        g(0xDA380007, 0x80000000 | ident)
+        g.othermode(0, 0)
+        g(*SHADE)
+        g(0xD9000000, 0x200000)
+        for dx in (left, right):
+            mtx = mem.put(matrix([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, dx, 0, 0, 1]))
+            g(0xDA380003, 0x80000000 | mtx)
+            vtx = mem.put(b"".join(vertex(x, y, 0) for x, y in [(-1, 1), (0, 1), (-1, -1)]))
+            g(0x01000000 | 3 << 12 | 3 << 1, 0x80000000 | vtx)
+            g(0x05000204)
+        g(0xDF000000)
+        frames.append(g.end())
+    log, _ = _run(page, mem, tmp_path, frames[0], f"show:{FB:x}", frames[1])
+    second = [v for _, vertices in _draws(log)[1:] for v in vertices]
+    assert [round(v[4], 3) for v in second] == [-1, 0, -1, -0.5, 0.5, -0.5]  # each from its own car's place
+    assert [round(v[0], 3) for v in second] == [-0.9, 0.1, -0.9, -0.4, 0.6, -0.4]
+
+
 def test_the_page_reads_the_draw_as_render_gpu_lays_it_out():
     """gl.js reads each draw by word (DRAW_WORDS, the fields' places): its numbers and render_gpu.h's struct agree."""
     header = RENDER.with_name("render_gpu.h").read_text()
     gl = RENDER.parent.joinpath("web", "gl.js").read_text()
-    assert "sizeof(GpuDraw) == 156 * 4" in header and "const DRAW_WORDS = 156;" in gl
-    assert "const VERTEX = 10;" in gl and "#define GPU_VERTEX 10" in header
+    assert "sizeof(GpuDraw) == 162 * 4" in header and "const DRAW_WORDS = 162;" in gl
+    assert "const VERTEX = 14;" in gl and "#define GPU_VERTEX 14" in header
+    assert "VP_SCALE: 154, VP_TRANS: 157, FIRST: 160, COUNT: 161" in gl

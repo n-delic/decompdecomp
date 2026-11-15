@@ -18,6 +18,7 @@
                          font: inherit; cursor: pointer; }
   button.primary, label.button { background: var(--accent); color: #111; border-color: var(--accent); }
   input[type=file] { display: none; }
+  #video label { margin: 0 6px; }
   #error { color: #f88; white-space: pre-wrap; }
   #start[hidden], #play[hidden] { display: none; }
 </style>
@@ -42,7 +43,8 @@
       <option value="webgl">WebGL: on the GPU, sharper and faster</option></select></label>
     <label id="scale-choice">Resolution <select id="scale">
       <option value="1">1× (the console's)</option><option value="2">2×</option><option value="3">3×</option>
-      <option value="4">4×</option></select></label></p>
+      <option value="4">4×</option></select></label>
+    <label id="smooth-choice" title="The game's motion drawn on every refresh of the screen, between the frames the game draws (one game frame behind)"><input id="smooth" type="checkbox" checked> Smooth motion</label></p>
   <p class="muted" id="video-note"></p>
   <p id="error" role="alert"></p>
 </main>
