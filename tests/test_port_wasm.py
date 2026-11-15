@@ -505,3 +505,22 @@ def test_an_old_name_for_a_function_with_no_c_goes_to_its_name_now(tmp_path):
     ll = tmp_path / "a.ll"
     ll.write_text("define void @caller() {\n}\ndeclare void @func_80033A90(ptr, ptr, i32)\n")
     assert renames([ll], ["osCreateMesgQueue 0x80033A90 func"]) == {"func_80033A90": "osCreateMesgQueue"}
+
+
+def test_c_ido_takes_is_read_as_clang_reads_it():
+    """An N64 game's matched C that IDO compiled: m2c's untyped declarations, a hex constant before a minus, and a
+    part's header declaring a function it then defines static. 9 of its files stopped the WebAssembly build."""
+    from decompnet.port.wasm.build import ido_c, static_prototypes
+    text = ido_c("M2C_UNK Humvee_StopSound(arg0);  /* extern */\nvoid *f(arg0, arg1);\n"
+                 "    return g(arg0);\nstruct B{char q[0x2be-0x174];};\ndouble d = 1e-5;\n")
+    assert "M2C_UNK Humvee_StopSound();" in text and "void *f();" in text
+    assert "return g(arg0);" in text  # a call stays a call
+    assert "0x2be - 0x174" in text and "1e-5" in text
+    header = static_prototypes("int Send (int Event);\nint other(void);\nstatic BOOL Send(int Event)\n{\n}\n")
+    assert "static int Send (int Event);" in header and "\nint other(void);" in header
+
+
+def test_the_build_leaves_debug_only_code_out():
+    """zig cc defines _DEBUG at -O0, so libultra's debug heap code (`hp->count`) was compiled into the port."""
+    from decompnet.port.wasm.build import IR_FLAGS
+    assert "-U_DEBUG" in IR_FLAGS
