@@ -12,6 +12,7 @@ from ...network import NetworkError
 # Tools shown in Setup besides the compilers, with what each console adds (its packs and the kits users bring for it:
 # consoles/<id>/, kits/)
 TOOLS = {
+    "wibo": "runs Windows-based compilers on macOS and Linux; installed automatically with compiler packs that need it",
     "m2c": "machine-made first drafts (MIPS, PowerPC, ARM)",
     "decomp-permuter": "rewrites near misses thousands of ways in the background, so more of them match",
     "objdiff-cli": "judges forks of public decomps, function by function",

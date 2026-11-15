@@ -222,6 +222,8 @@ def test_a_prefix_that_fails_fails_the_install_with_its_own_reason(tc_root, monk
     pack = toolchains.Toolchain(id="pack", name="A Visual C++ pack", license="MIT", source="test", wine=True,
                                 parts=[{"url": archive.as_uri(), "sha256": digest}])
     monkeypatch.setattr(toolchains, "registry", lambda: {"pack": pack})
+    original_registered = toolchains._registered
+    monkeypatch.setattr(toolchains, '_registered', lambda tid: toolchains.registry().get(tid) or original_registered(tid))
     monkeypatch.setattr(wine, "needed", lambda: True)
     monkeypatch.setattr(wine, "problem", lambda what="": None)
 

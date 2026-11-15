@@ -1,6 +1,7 @@
 """One notification centre for the whole app: the feed of every project's news, helpers that pause in it, and the
 compiler as one answer that checks itself."""
 
+import pytest
 from starlette.testclient import TestClient
 
 from decompnet.app import agents
@@ -88,3 +89,56 @@ def test_the_compiler_answer_checks_by_itself(tmp_path, monkeypatch):
     net.surveys["game"] = {"state": "running"}
     net.compiler_answer("game")
     assert surveys == ["game"]  # (one survey at a time)
+
+
+def test_recent_history_limits_each_kind_and_ignores_routine_events(tmp_path):
+    net=RomNetwork(tmp_path/'events.db',tmp_path)
+    tiny_game(net,'a')
+    with net.store.tx() as db:
+        pid=net.project_row('a')['id']
+        db.executemany('INSERT INTO events(project_id,kind,detail,created_at) VALUES(?,?,?,0)',
+                       [(pid,'match',str(i)) for i in range(20)]+
+                       [(pid,'claim','routine') for _ in range(1000)]+
+                       [(pid,'paused','paused')])
+    recent=net.recent_events(3)
+    assert [e['detail'] for e in recent]==['paused','19','18']
+    statements=[]
+    net.store._reader().set_trace_callback(statements.append)
+    net.recent_events(3)
+    query=next(q for q in statements if q.startswith('SELECT e.id'))
+    plan=net.store.all('EXPLAIN QUERY PLAN '+query)
+    assert any('idx_events_kind_id' in row['detail'] for row in plan)
+    assert net.recent_events(0)==[]
+
+
+def test_notification_dialog_renders_before_loading_and_shares_request():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+    node=shutil.which('node')
+    if not node:pytest.skip('needs Node')
+    subprocess.run([node,str(Path(__file__).with_name('gui_notifications_loading.js'))],check=True,capture_output=True,text=True,timeout=30)
+
+
+@pytest.mark.parametrize('name', ['progress-judge', 'project'])
+def test_progress_rechecks_stay_out_of_matcher_feeds_and_notifications(tmp_path, name):
+    # 'project': each project's own judge, progress-judge.<id>, which the exact-name filter showed as matches.
+    net=RomNetwork(tmp_path/'quiet.db',tmp_path)
+    tiny_game(net,'a')
+    judge=(net.local_agent('progress-judge')[0] if name=='progress-judge'
+           else net.attribution_agent(f"progress-judge.{net._project('a')['id']}"))
+    matcher,_=net.local_agent('real-matcher')
+    start=net.events_after(None)['last']
+    net.record_event('a','match','real_function',matcher.name)
+    for _ in range(5):
+        net.record_event('a','claim','rechecked_function',judge.name)
+        net.record_event('a','match','rechecked_function',judge.name)
+    news=net.events_after(start)
+    assert [e['agent'] for e in news['events']]==['real-matcher']
+    assert net.events_after(news['last'])['events']==[]
+    assert [e['agent'] for e in net.recent_events(1)]==['real-matcher']
+    assert [e['agent'] for e in net.live('a')['events']]==['real-matcher']
+    # Verification history is retained for auditing, even though it is not matcher news.
+    assert net.store.one('SELECT COUNT(*) n FROM events WHERE agent_id=?',judge.id)['n']==10

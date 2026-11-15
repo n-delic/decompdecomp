@@ -26,11 +26,12 @@ def test_only_blocks_follow_the_platform():
 
 
 def test_a_pc_projects_up_front_guides_have_no_gamecube_material_and_gamecubes_no_x86():
-    pc = tools.up_front("pc", "fork", "")
+    assert 'guide(topic="fork")' in tools.up_front("pc", "fork", "")
+    pc = tools.guide_text("fork", "pc") + tools.guide_text("objdiff", "pc")
     for word in (".rodata:0x88", "func_8001234", "s32", "REL/", 'asm("r4")', "<!--"):
         assert word not in pc, word
     assert "D_00402034" in pc and "split_file(path, at, new_name)" in pc  # its own placeholder names, its own split
-    gc = tools.up_front("gc", "fork", "")
+    gc = tools.guide_text("fork", "gc") + tools.guide_text("objdiff", "gc")
     assert "split_file" in gc and "func_8001234" in gc
     for word in ("ret N", "__thiscall", "D_00402034", "<!--"):
         assert word not in gc, word

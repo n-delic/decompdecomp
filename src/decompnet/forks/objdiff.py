@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from .. import toolchains
+from .. import spawner, toolchains
 from ..network import NetworkError
 
 KIND_MARK = {None: " ", "DIFF_NONE": " ", "DIFF_REPLACE": "|", "DIFF_DELETE": "<", "DIFF_INSERT": ">",
@@ -46,11 +45,54 @@ def judge_options(project_options: dict | None = None, unit_options: dict | None
 
 
 def _run(args: list[str], cwd: Path, timeout: float = 600) -> str:
-    res = subprocess.run([_exe(), "--no-color", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout,
+    # Judged once per unit: started without forking the app (spawner.py)
+    res = spawner.run([_exe(), "--no-color", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout,
                          encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     if res.returncode != 0:
         raise ObjdiffError((res.stderr or res.stdout).strip()[-1500:] or f"objdiff-cli exited with {res.returncode}")
     return res.stdout
+
+
+def _exclude_stubs(project: Path, cfg: dict, rep: dict) -> dict:
+    """Assembly placeholders are undecompiled even when their bytes compare identically."""
+    from . import csource
+
+    units = {u.get("name"): u for u in cfg.get("units", [])}
+    removed_count = removed_bytes = 0
+    for unit in rep.get("units", []):
+        source = (units.get(unit.get("name"), {}).get("metadata") or {}).get("source_path")
+        if not source:
+            continue
+        path = (project / source).resolve()
+        if project.resolve() not in path.parents:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        count = size = 0
+        for fn in unit.get("functions", []):
+            span = csource.find(text, fn["name"])
+            if span and csource.is_stub(text[span[0]:span[1]]):
+                if float(fn.get("fuzzy_match_percent") or 0) >= 100:
+                    count += 1
+                    size += int(fn.get("size") or 0)
+                fn.pop("fuzzy_match_percent", None)
+        removed_count += count
+        removed_bytes += size
+        _subtract_matches(unit.get("measures", {}), count, size)
+    _subtract_matches(rep.get("measures", {}), removed_count, removed_bytes)
+    return rep
+
+
+def _subtract_matches(measures: dict, count: int, size: int) -> None:
+    if not count:
+        return
+    measures["matched_functions"] = max(0, int(measures.get("matched_functions") or 0) - count)
+    measures["matched_code"] = str(max(0, int(measures.get("matched_code") or 0) - size))
+    for kind in ("functions", "code"):
+        total = int(measures.get("total_" + kind) or 0)
+        measures["matched_" + kind + "_percent"] = 100 * int(measures["matched_" + kind]) / total if total else 0
 
 
 def report(project: Path, out: Path) -> dict:
@@ -60,10 +102,13 @@ def report(project: Path, out: Path) -> dict:
     compile yet, or that the project's default build never compiles). Those units are measured from the game's
     object alone, as not matched yet, the way the projects' own report scripts do it."""
     cfg = json.loads((project / "objdiff.json").read_text(encoding="utf-8"))
-    missing = [u for u in cfg.get("units", []) if u.get("base_path") and not (project / u["base_path"]).is_file()]
+    from .linkedimages import stale
+    guards = {}
+    missing = [u for u in cfg.get("units", []) if u.get("base_path") and
+               (not (project / u["base_path"]).is_file() or stale(project, u, guards))]
     if not missing:
         _run(["report", "generate", "-p", str(project), "-o", str(out)], cwd=project, timeout=1800)
-        return subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8")))
+        return _exclude_stubs(project, cfg, subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8"))))
     for unit in cfg.get("units", []):
         for key in ("target_path", "base_path"):
             if unit.get(key):
@@ -73,7 +118,7 @@ def report(project: Path, out: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="decompwtf-report-") as tmp:
         (Path(tmp) / "objdiff.json").write_text(json.dumps(cfg), encoding="utf-8")
         _run(["report", "generate", "-p", tmp, "-o", str(out.resolve())], cwd=project, timeout=1800)
-    return subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8")))
+    return _exclude_stubs(project, cfg, subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8"))))
 
 
 @dataclass

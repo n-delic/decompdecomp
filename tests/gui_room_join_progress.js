@@ -1,0 +1,16 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const source=fs.readFileSync('src/decompnet/app/static/js/base.js','utf8');
+const bar={attrs:{},style:{setProperty(k,v){this[k]=v;}},setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];}};
+const log={_workStatus:{},_workBar:bar};const ctx={};vm.createContext(ctx);
+vm.runInContext(source.slice(source.indexOf('function updateWorkProgress('),source.indexOf('async function followJob(')),ctx);
+ctx.updateWorkProgress(log,{phase:'Host checking saved work',finished:25,total:100,function:'f_test',confirmed:3});
+assert.match(log._workStatus.textContent,/25 \/ 100 processed \(25%\)/);
+assert.match(log._workStatus.textContent,/f_test/);assert.match(log._workStatus.textContent,/3 matches confirmed/);
+assert.equal(bar.attrs['aria-valuenow'],'25');assert.equal(bar.style['--work-progress'],'25%');
+assert.equal(bar.className,'workbar counted');
+ctx.updateWorkProgress(log,{phase:'Synchronizing host results'});
+assert.equal(bar.className,'workbar');assert.equal(bar.attrs['aria-valuenow'],undefined);
+assert.equal(log._workStatus.textContent,'Synchronizing host results');
+ctx.updateWorkProgress(log,{phase:'Checking',finished:0,total:0});
+assert(!log._workStatus.textContent.includes('NaN'));assert(!log._workStatus.textContent.includes('100%'));

@@ -4,8 +4,8 @@ Extract the entire ZIP, then double-click decompdecomp.exe. Keep the python and
 packages folders beside the EXE. No app installation or administrator access is
 needed, and no shortcuts or uninstall entry are created automatically.
 
-Projects and settings use %USERPROFILE%\Decomp. An explicit DECOMP_HOME
-environment variable still works.
+Projects and settings use %USERPROFILE%\Decomp-RetroReversing, separate from
+upstream decompdecomp. An explicit DECOMP_HOME environment variable still works.
 To move your work to another computer, copy that data folder as well as the app.
 
 The native window needs .NET Framework 4.8 and Microsoft Edge WebView2 Runtime.

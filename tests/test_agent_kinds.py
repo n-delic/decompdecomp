@@ -47,7 +47,8 @@ def test_every_agent_says_everything_the_app_asks(agent, stand_in, tmp_path):
         work = tmp_path / "work"
         work.mkdir()
         cmd, env = agent.session_command(str(stand_in), work, "http://127.0.0.1:1/mcp", TOKEN, "some-model")
-        assert cmd[0] == str(stand_in) and "some-model" in cmd
+        assert cmd[0] == str(stand_in)
+        assert "some-model" in cmd, "the launcher's model reaches the session"
         assert not any(TOKEN in a for a in cmd), "a token on the command line is there for every process to read"
         assert all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())
         assert "line one" in agent.stdin(PROMPT) and agent.parse_line("not json") == [("info", "not json")]
@@ -77,6 +78,7 @@ def test_ids_are_unique_and_older_ids_lead_to_their_agent():
     for agent in agents.AGENTS:
         assert agents.get(agent.id) is agent
         assert all(agents.get(old) is agent and agents.kind_id(old) == agent.id for old in agent.aliases)
+    assert agents.kind_id("zcode-cli") == "zcode"
     assert agents.kind_id("autopilot") == "autopilot"  # any other name stays as it is
 
 
@@ -139,22 +141,26 @@ def test_an_agent_that_runs_one_makers_models_names_their_family():
     assert network.model_family("gemini-2") == network.model_family("antigravity-1") == "gemini"
     assert network.model_family("opencode-deepseek-v4.1-flash-1") == "deepseek"  # the model in its name says
     assert network.model_family("zcode-glm-5.3-1") == "glm"
-    assert agents.get('cursor').id == 'cursor'
-    assert not agents.get('kimi').family
+    assert agents.get('cursor') is agents.get('cursor-cli')
+    assert agents.kind_id('cursor') == 'cursor-cli'
+    assert agents.get('kimi').family == 'kimi'
     assert network.model_family(helpers.helper_name(agents.get('cursor').id, 'claude-sonnet-5', set())) == "claude"
     assert network.model_family("cursor-gpt-5-1") == "gpt"
-    assert network.model_family("kimi-claude-sonnet-5-1") == "claude"
-    assert network.model_family("kimi-gemini-3-1") == "gemini"
+    assert network.model_family("cursor-cli-gpt-5-1") == "gpt"
+    assert network.model_family("cursor-cli-1") == "cursor-cli"
+    assert network.model_family("kimi-claude-sonnet-5-1") == "kimi"
+    assert network.model_family("kimi-gemini-3-1") == "kimi"
 
 
 def test_real_cli_signin_errors_are_recognized_from_stderr():
     assert helpers._SIGNED_OUT.search("Error: Authentication required. Please run 'agent login' first")
     assert helpers._SIGNED_OUT.search("No model configured. Run kimi and use /login to sign in")
+    # The shared manager recognizes sign-in before applying the CLI fatal fallback.
+    assert agents.get('cursor').fatal("Error: Authentication required. Please run 'agent login' first")
     # Oh My Pi with no sign-in: what `omp doctor` and a failed turn print
     assert helpers._SIGNED_OUT.search("error: No API key found for openai.")
     assert helpers._SIGNED_OUT.search("401 Incorrect API key provided: sk-x")
     assert helpers._SIGNED_OUT.search("Use /login, set an API key environment variable, or select a local model")
-    assert not agents.get('cursor').fatal("Error: Authentication required. Please run 'agent login' first")
     assert not agents.get('kimi').fatal("No model configured. Run kimi and use /login to sign in")
     assert not agents.get('omp').fatal("error: No API key found for openai.")
 
@@ -184,3 +190,42 @@ def test_nothing_outside_agents_asks_an_agents_name():
             if _NAME_CHECK.search(line):
                 found.append(f"{path.relative_to(SRC)}:{number}: {line.strip()}")
     assert not found, "\n".join(found)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX npm launchers")
+def test_nvm_agents_are_found_and_run_without_shell_initialization(tmp_path, monkeypatch):
+    import os
+    import subprocess
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("NVM_DIR", raising=False)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    for version in ("v9.0.0", "v24.0.0"):
+        folder = tmp_path / ".nvm/versions/node" / version / "bin"
+        folder.mkdir(parents=True)
+        cli = folder / "example-agent"
+        cli.write_text("#!/usr/bin/env node\nnot actual javascript\n")
+        cli.chmod(0o755)
+        node = folder / "node"
+        node.write_text('#!/bin/sh\nprintf "%s\\n" "$2"\n')
+        node.chmod(0o755)
+    found = helpers._which("example-agent")
+    assert found == str(cli)
+    argv = agents.cli_argv([found, "--version"])
+    assert argv == [str(node), found, "--version"]
+    result = subprocess.run(argv, capture_output=True, text=True, env=dict(os.environ), check=True)
+    assert result.stdout.strip() == "--version"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX nvm layout and executable permissions")
+def test_custom_nvm_directory_is_searched_but_nonexecutables_are_ignored(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "empty-home")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("NVM_DIR", str(tmp_path / "custom-nvm"))
+    folder = tmp_path / "custom-nvm/versions/node/v24.0.0/bin"
+    folder.mkdir(parents=True)
+    cli = folder / "example-agent"
+    cli.write_text("not executable")
+    assert helpers._which("example-agent") is None
+    cli.chmod(0o755)
+    assert helpers._which("example-agent") == str(cli)

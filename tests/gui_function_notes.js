@@ -1,0 +1,14 @@
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('src/decompnet/app/static/js/function.js','utf8'),base=fs.readFileSync('src/decompnet/app/static/js/base.js','utf8');
+const ctx=vm.createContext({});
+vm.runInContext(base.split('\n').find(line=>line.startsWith('const esc =')),ctx);
+vm.runInContext(source.slice(source.indexOf('function functionNoteCard'),source.indexOf('// Copy the source assembly')),ctx);
+const note={id:1,ids:[1,2],agent:'<unsafe>',created_at:1700000000,text:'<script>neverRun()</script>',score_before:100,score_after:90};
+let html=ctx.functionNotesHTML([note]);
+assert.match(html,/Improved by 10/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>/);assert.match(html,/settings-disclosure function-notes-section/);assert.match(html,/Notes from agents/);assert.match(html,/data-remove-note="\[1,2\]"/);
+html=ctx.functionNoteCard({...note,text:'Long note '.repeat(100),score_after:120});assert.match(html,/Increased by 20/);assert.match(html,/data-note-key="1"/);assert.match(html,/agent-note-preview/);assert.match(html,/Long note /);
+html=ctx.functionNoteCard({...note,score_before:null,score_after:null});assert.match(html,/No measured baseline/);
+html=ctx.functionNoteCard({...note,score_after:100});assert.match(html,/No score change/);
+html=ctx.functionNotesHTML([{...note,agent:'you'}]);assert.match(html,/Your notes/);assert.doesNotMatch(html,/Notes from agents/);assert.doesNotMatch(html,/Improved by/);
+assert.equal(ctx.functionNotesHTML([]),'');
+console.log('note cards, source escaping, score outcomes and grouping passed');

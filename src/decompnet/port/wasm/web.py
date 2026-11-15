@@ -1,0 +1,362 @@
+"""The browser build of a finished game (port/wasm, docs/PORTING.md "Export"): a folder with an index.html that plays
+it in a browser, nothing installed, from the player's own ROM.
+
+The native build (build.py) runs the game's WebAssembly through wasm2c inside a host program. Here the browser runs
+it as it is, so what wasm2c's C was made to do is done to the game's IR instead (webir.py: big-endian memory,
+uncached addresses through the host, calls through pointers by console address) and linked with web/be.c into
+game-web.wasm. The console's host (its kit's wasm folder: host.c, render.c, audio.c) is compiled to WebAssembly too,
+host-web.wasm, sharing the game's memory: its data and C stacks live above the game's (0xB0000000 up). Its threads
+are coroutines (web/co.c) the page switches with JavaScript Promise Integration, and the page (the kit's
+web/play.js, on web/runtime.js) shows the frames, plays the sound and reads the keyboard and gamepads.
+
+For browsers without JavaScript Promise Integration, the two modules are also merged into one (Binaryen's
+wasm-merge) and rewritten with Asyncify (wasm-opt), app-asyncify.wasm: there a waiting thread unwinds its own wasm
+stack into a buffer and is rewound to where it waited, which needs the whole stack, game and host, in one module.
+
+Built from the native build's own files (its IR, tables and wasm2c header), into port/wasm/build/web/: only what
+changed is made again, as there.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+
+from ... import consoles, toolchains
+from ...network import NetworkError
+from . import build as native
+
+HERE = Path(__file__).parent
+RUNTIME = HERE / "web"
+STEPS = (*native.STEPS, "Placing every function for the browser", "Linking the game for the browser",
+         "Building the host for the browser", "Making the build for browsers without Promise Integration")
+# The host's data, heap and coroutine stacks: above the game's RAM (0x80000000 up) and its uncached mirror
+HOST_BASE = 0xB0000000
+MEMORY = ["--initial-memory=4294967296", "--max-memory=4294967296"]
+# The host's view of the same memory: zig's driver reads the size as 32 bits, so 64 KB short of 4 GB (the import
+# takes the page's 4 GB memory all the same, and the host's heap runs up to there)
+HOST_MEMORY = ["--initial-memory=4294901760"]
+HOST_FLAGS = ["-target", "wasm32-wasi", "-O2", "-DPORT_WEB=1", "-fno-delete-null-pointer-checks", "-Wno-everything"]
+# Game functions the host calls, besides those its C names as w2c_game_*: thread entries, the game's stack pointer
+HOST_CALLS = {"port_call1": ("void", ["u32", "u32"]), "port_sp": ("u32", []), "port_set_sp": ("void", ["u32"])}
+ASYNCIFY = "app-asyncify.wasm"
+# The faster build an export may carry too (build(simd=True)): the host compiled with WebAssembly SIMD, which the
+# renderer's colour arithmetic (four floats) runs a tenth faster with, frame for frame the same. Safari before 16.4
+# can't load a module that uses SIMD, so the page plays these only where the browser validates them (runtime.js).
+SIMD_FLAGS = ["-msimd128"]
+SIMD = {"host-web.wasm": "host-web-simd.wasm", ASYNCIFY: "app-asyncify-simd.wasm"}
+# The features the two modules use (zig's clang's defaults). Not --all-features: its newest encodings (compact
+# imports) were refused by Chrome 156.
+BINARYEN_FEATURES = ["--enable-bulk-memory", "--enable-mutable-globals", "--enable-sign-ext",
+                     "--enable-nontrapping-float-to-int", "--enable-reference-types", "--enable-multivalue"]
+# The one import that pauses a thread (web/co.c's js_suspend): only stacks that can reach it are made to unwind
+ASYNCIFY_FLAGS = ["--asyncify", "--pass-arg=asyncify-imports@port_web.suspend", "-O2"]
+
+
+def _c_params(text: str) -> list[str]:
+    return [p.strip() for p in text.split(",") if p.strip()]
+
+
+def glue(game_h: str, host_sources: list[str]) -> tuple[str, str, list[str]]:
+    """The browser host's game.h (in place of wasm2c's), its exports.c (each import of the game's, by its name, calling
+    the host's w2c_env_ function) and the names of the game's functions the page puts in the host's table for it,
+    from the native build's wasm2c header and the host's C."""
+    imports = re.findall(r"/\* import: 'env' '([^']+)' \*/\n(u32|u64|f32|f64|void) (w2c_env_\w+)\(struct w2c_env\*([^)]*)\);",
+                         game_h)
+    exports = {}
+    for name, ret, c, params in re.findall(r"/\* export: '([^']+)' \*/\n(u32|u64|f32|f64|void) (w2c_game_\w+)\(w2c_game\*([^)]*)\);",
+                                           game_h):
+        exports[c] = (name, ret, _c_params(params))
+    used = sorted({m for text in host_sources for m in re.findall(r"\b(w2c_game_\w+)\(", text)})
+    calls = []  # (C name, export name, ret, params)
+    for c in used:
+        if c in exports:
+            name, ret, params = exports[c]
+            calls.append((c, name, ret, params))
+    for name, (ret, params) in HOST_CALLS.items():
+        if f"w2c_game_{name}" not in exports:
+            calls.append((f"w2c_game_{name}", name, ret, params))
+    header = ["/* The browser build's game.h (generated by port/wasm/web.py from the native build's wasm2c header). */",
+              "#ifndef PORT_WEB_GAME_H", "#define PORT_WEB_GAME_H", "#include <stdint.h>",
+              "typedef uint8_t u8; typedef int8_t s8; typedef uint16_t u16; typedef int16_t s16;",
+              "typedef uint32_t u32; typedef int32_t s32; typedef uint64_t u64; typedef int64_t s64;",
+              "typedef float f32; typedef double f64;",
+              "typedef struct { uint8_t *data; uint64_t size; } wasm_rt_memory_t;",
+              "typedef struct { void *func; } wasm_rt_funcref_t;",
+              "typedef struct { wasm_rt_funcref_t *data; uint32_t size; } wasm_rt_funcref_table_t;",
+              "struct w2c_env;",
+              "typedef struct w2c_game { wasm_rt_memory_t w2c_memory; wasm_rt_funcref_table_t "
+              "w2c_0x5F_indirect_function_table; uint32_t w2c_0x5F_stack_pointer0x2E1; } w2c_game;",
+              "/* the game's imports, which the host implements */"]
+    header += [f"{ret} {c}(struct w2c_env*{params});" for _, ret, c, params in imports]
+    header += ["/* the game's functions the host calls: the page puts them in the host's table (port_web_slot) */",
+               f"extern uint32_t port_web_slots[{max(len(calls), 1)}];"]
+    for i, (c, _, ret, params) in enumerate(calls):
+        args = ", ".join(f"{t} a{k}" for k, t in enumerate(params))
+        names = ", ".join(f"a{k}" for k in range(len(params)))
+        ftype = f"{ret} (*)({', '.join(params) or 'void'})"
+        header.append(f"static inline {ret} {c}(w2c_game *g{', ' if args else ''}{args}) {{ (void)g; "
+                      f"{'' if ret == 'void' else 'return '}(({ftype})(uintptr_t)port_web_slots[{i}])({names}); }}")
+    header.append("#endif")
+    source = ['#include "game.h"', "/* generated by port/wasm/web.py: each import of the game's, under its own name */",
+              # one placeholder function per slot gives each its own entry in the host's table, which the page then
+              # points at the game's function (the host's table can't grow: zig's driver has no --growable-table)
+              *(f"static void port_web_slot_{i}(void) {{ __builtin_trap(); }}" for i in range(max(len(calls), 1))),
+              f"uint32_t port_web_slots[{max(len(calls), 1)}] = {{"
+              + ", ".join(f"(uint32_t)(uintptr_t)port_web_slot_{i}" for i in range(max(len(calls), 1))) + "};",
+              '__attribute__((export_name("port_web_slot"))) uint32_t port_web_slot(int i) { return port_web_slots[i]; }',
+              "static w2c_game port_web_game;",
+              "uint32_t port_web_game_sp(void) { return w2c_game_port_sp(&port_web_game); }",
+              "void port_web_set_game_sp(uint32_t sp) { w2c_game_port_set_sp(&port_web_game, sp); }",
+              "u64 port_io_load(u64 addr); u64 port_io_store(u64 addr, u64 value); void port_bad_call(u32 index);",
+              '__attribute__((export_name("port_io_load"))) u64 port_web_io_load(u64 a) { return port_io_load(a); }',
+              '__attribute__((export_name("port_io_store"))) u64 port_web_io_store(u64 a, u64 v) '
+              "{ return port_io_store(a, v); }",
+              '__attribute__((export_name("port_bad_call"))) void port_web_bad_call(u32 a) { port_bad_call(a); }']
+    for i, (name, ret, c, params) in enumerate(imports):
+        ps = _c_params(params)
+        args = ", ".join(f"{t} a{k}" for k, t in enumerate(ps)) or "void"
+        names = "".join(f", a{k}" for k in range(len(ps)))
+        source.append(f'__attribute__((export_name("{name}"))) {ret} port_web_import_{i}({args}) '
+                      f"{{ {'' if ret == 'void' else 'return '}{c}((struct w2c_env *)0{names}); }}")
+    return "\n".join(header) + "\n", "\n".join(source) + "\n", [name for _, name, _, _ in calls]
+
+
+def _leb(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        byte, n = n & 0x7F, n >> 7
+        out.append(byte | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+
+def _read_leb(b: bytes, at: int) -> tuple[int, int]:
+    result = shift = 0
+    while True:
+        byte = b[at]
+        at += 1
+        result |= (byte & 0x7F) << shift
+        shift += 7
+        if not byte & 0x80:
+            return result, at
+
+
+def _sections(code: bytes) -> list[tuple[int, bytes]]:
+    if code[:4] != b"\0asm":
+        raise NetworkError("that isn't a WebAssembly module")
+    out, at = [], 8
+    while at < len(code):
+        size, body = _read_leb(code, at + 1)
+        out.append((code[at], code[body:body + size]))
+        at = body + size
+    return out
+
+
+def _module(sections) -> bytes:
+    return b"\0asm\1\0\0\0" + b"".join(bytes([i]) + _leb(len(body)) + body for i, body in sections)
+
+
+def _name(b: bytes, at: int) -> tuple[bytes, int]:
+    length, at = _read_leb(b, at)
+    return b[at:at + length], at + length
+
+
+def without_custom_sections(code: bytes) -> bytes:
+    """The module without its custom sections, which the merged module doesn't need and Binaryen can't always read:
+    the game's linker sections (relocations), the host's DWARF ("TODO: DW_LNE_define_file")."""
+    return _module([(i, body) for i, body in _sections(code) if i != 0])
+
+
+def host_for_merge(code: bytes) -> bytes:
+    """The host as wasm-merge takes it beside the game: the memory it imports comes from "js" (named "env" in the
+    merge, the host would import from itself), is declared as the game declares it (exactly 4 GB; zig's driver
+    says 64 KB less and no maximum) and is exported as "memory", which the game's own import of it then finds.
+    Without its custom sections, as without_custom_sections."""
+    sections, memories = [], 0
+    for i, body in _sections(without_custom_sections(code)):
+        if i == 2:  # imports
+            count, at = _read_leb(body, 0)
+            out = bytearray(_leb(count))
+            for _ in range(count):
+                start = at
+                module, at = _name(body, at)
+                field, at = _name(body, at)
+                kind = body[at]
+                at += 1
+                if kind == 0:
+                    _, at = _read_leb(body, at)
+                elif kind in (1, 2):
+                    at += 1 if kind == 1 else 0  # a table's element type
+                    flags = body[at]
+                    _, at = _read_leb(body, at + 1)
+                    if flags & 1:
+                        _, at = _read_leb(body, at)
+                elif kind == 3:
+                    at += 2
+                else:
+                    raise NetworkError(f"the browser host imports something Binaryen's merge can't take (kind {kind})")
+                if kind == 2 and (module, field) == (b"env", b"memory"):
+                    memories += 1
+                    out += _leb(2) + b"js" + _leb(6) + b"memory" + bytes([2, 1]) + _leb(65536) + _leb(65536)
+                else:
+                    out += body[start:at]
+            body = bytes(out)
+        elif i == 7:  # exports
+            count, at = _read_leb(body, 0)
+            body = _leb(count + 1) + body[at:] + _leb(6) + b"memory" + bytes([2]) + _leb(0)
+        sections.append((i, body))
+    if memories != 1:
+        raise NetworkError("the browser host doesn't import its memory as env.memory, as the merge expects")
+    return _module(sections)
+
+
+def merge_for_asyncify(host: Path, game: Path, out: Path, binaryen: Path, log, simd: bool = False) -> None:
+    """The browser build for browsers without JavaScript Promise Integration: the host and the game merged into one
+    module, then rewritten with Asyncify, into `out`; `simd`: the host uses WebAssembly SIMD."""
+    features = [*BINARYEN_FEATURES, *(["--enable-simd"] if simd else [])]
+    bins = binaryen / "bin"
+    work = out.with_name(out.stem + "-work")
+    work.mkdir(exist_ok=True)
+    (work / "host.wasm").write_bytes(host_for_merge(host.read_bytes()))
+    (work / "game.wasm").write_bytes(without_custom_sections(game.read_bytes()))
+    merged = work / "merged.wasm"
+    done = native._run([bins / "wasm-merge", work / "host.wasm", "env", work / "game.wasm", "game", "-o", merged,
+                        *features, "--rename-export-conflicts"], log)
+    if done.returncode:
+        raise NetworkError(f"merging the game and its host failed: {done.stderr.strip()[-600:]}")
+    done = native._run([bins / "wasm-opt", merged, *features, *ASYNCIFY_FLAGS, "-o", out], log)
+    if done.returncode:
+        raise NetworkError(f"Asyncify failed on the merged game: {done.stderr.strip()[-600:]}")
+    shutil.rmtree(work, ignore_errors=True)
+
+
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), simd: bool = False,
+          library_c=None, library_names=None, function_headers=None) -> Path:
+    """Build the game in the save repository `repo` for the browser; returns the folder that plays it
+    (port/wasm/build/web: index.html and what it loads, without the ROM, which the player chooses). `simd`: also
+    the faster build for browsers with WebAssembly SIMD (SIMD), which the page plays where it can."""
+    repo = Path(repo).expanduser().resolve()
+    kit = consoles.get(console).port_kit
+    if kit is None or kit.wasm is None or not (Path(kit.wasm) / "web").is_dir():
+        raise NetworkError(f"{consoles.get(console).name} has no browser build yet (its port kit has no web host)")
+    host = Path(kit.wasm)
+    native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c,
+                 library_names=library_names, function_headers=function_headers)  # its IR, tables and wasm2c header; only what changed
+    out = repo / "port" / "wasm" / "build"
+    web = out / "web"
+    for name in ("gen", "obj"):
+        (web / name).mkdir(parents=True, exist_ok=True)
+    progress = native.Progress(log, steps)
+    zig = toolchains.binary("zig")
+    env = {**__import__("os").environ, "ZIG_GLOBAL_CACHE_DIR": str(out / "zig-cache"),
+           "ZIG_LOCAL_CACHE_DIR": str(out / "zig-cache")}
+    files = native._Files()
+
+    progress.start(STEPS[len(native.STEPS)])
+    log("placing every function for the browser: memory big-endian, calls through pointers by console address")
+    lls = sorted((out / "ll").glob("*.ll"))
+    functions = set((out / "functions.txt").read_text(encoding="utf-8").split())
+    if failed := native.place_all(out, lls, functions, zig, env, log, progress.files, web=True):
+        raise NetworkError(f"{len(failed)} functions couldn't be built for the browser: " + "; ".join(failed[:3]))
+
+    progress.start(STEPS[len(native.STEPS) + 1])
+    log("linking the game for the browser")
+    be = web / "obj" / "be.o"
+    key = files.key(RUNTIME / "be.c", [], zig, "be")
+    if not native._fresh(be, key):
+        done = native._run([zig, "cc", "-target", "wasm32-freestanding", "-O2", "-c", RUNTIME / "be.c", "-o", be], log,
+                           env=env)
+        if done.returncode:
+            raise NetworkError(f"the browser build's memory helpers didn't compile: {done.stderr.strip()[-400:]}")
+        native._stamp(be, key)
+    sources = [p.name for p in (out / "src").glob("*.c")]
+    objects = native.linked(out / "o-web", sources) + [be]
+    native._write(web / "objects.txt", "\n".join(str(p) for p in objects) + "\n")
+    link = [a for a in native.LINK_FLAGS if not a.startswith(("--initial-memory", "--max-memory"))]
+    done = native._run([zig, "wasm-ld", "-o", web / "game-web.wasm", f"@{web / 'objects.txt'}", *link, "--import-memory",
+                        *MEMORY], log, env=env)
+    if done.returncode:
+        raise NetworkError(f"linking the browser build failed: {done.stderr.strip()[-600:]}")
+    native._run([sys.executable, HERE / "beslots.py", web / "game-web.wasm"], log)
+
+    progress.start(STEPS[len(native.STEPS) + 2])
+    log("building the host for the browser")
+    units = ([p for p in sorted(host.glob("*.c")) if p.name != "live.c"] + native.game_host(host, repo)
+             + sorted((host / "web").glob("*.c")) + [out / "interp.c"])  # (interp.c: the interpreter's bridges)
+    header, exports, calls = glue((out / "c" / "game.h").read_text(encoding="utf-8"),
+                                  [p.read_text(encoding="utf-8") for p in units])
+    native._write(web / "gen" / "game.h", header)
+    native._write(web / "gen" / "exports.c", exports)
+    units += [web / "gen" / "exports.c", RUNTIME / "co.c", out / "stubs.c"]
+    dirs = [RUNTIME / "include", web / "gen"]
+    includes = [a for d in dirs for a in ("-I", d)]
+
+    def build_host(flags: list, objs: Path, program: Path) -> None:
+        objs.mkdir(exist_ok=True)
+
+        def compile_unit(unit: Path) -> str | None | bool:
+            obj = objs / (unit.stem + ".host.o")
+            key = files.key(unit, dirs, zig, *flags)
+            if native._fresh(obj, key):
+                return False
+            native._unstamp(obj)
+            done = native._run([zig, "cc", *flags, *includes, "-c", unit, "-o", obj], log, env=env)
+            if done.returncode:
+                return (done.stderr.strip().splitlines() or ["failed"])[0]
+            native._stamp(obj, key)
+            return None
+        if failed := native._parallel(units, compile_unit, log, "host files", progress.files):
+            raise NetworkError("building the browser host failed: " + "; ".join(failed[:3]))
+        done = native._run([zig, "cc", "-target", "wasm32-wasi", "-mexec-model=reactor", "-o", program,
+                            *(objs / (u.stem + ".host.o") for u in units), "-Wl,--import-memory",
+                            *(f"-Wl,{m}" for m in HOST_MEMORY), f"-Wl,--global-base={HOST_BASE}",
+                            "-Wl,-z,stack-size=1048576", "-Wl,--export-table"], log, env=env)
+        if done.returncode:
+            raise NetworkError(f"linking the browser host failed: {done.stderr.strip()[-600:]}")
+    build_host(HOST_FLAGS, web / "obj", web / "host-web.wasm")
+    if simd:
+        log("building the host again with WebAssembly SIMD, for the browsers that have it")
+        build_host([*HOST_FLAGS, *SIMD_FLAGS], web / "obj-simd", web / SIMD["host-web.wasm"])
+
+    progress.start(STEPS[len(native.STEPS) + 3])
+    log("merging the game and its host for browsers without Promise Integration (Asyncify)")
+    binaryen = toolchains.ensure("binaryen", log=log)
+    for with_simd in (False, True) if simd else (False,):
+        host_wasm, merged = (SIMD["host-web.wasm"], SIMD[ASYNCIFY]) if with_simd else ("host-web.wasm", ASYNCIFY)
+        key = native._digest(files(web / host_wasm), files(web / "game-web.wasm"), files(Path(__file__)), binaryen,
+                             *BINARYEN_FEATURES, *ASYNCIFY_FLAGS, *(["simd"] if with_simd else []))
+        if not native._fresh(web / merged, key):
+            native._unstamp(web / merged)
+            merge_for_asyncify(web / host_wasm, web / "game-web.wasm", web / merged, binaryen, log, simd=with_simd)
+            native._stamp(web / merged, key)
+
+    # the page: the kit's (what the console shows and takes) on the shared runtime, and what it needs to know
+    for page in sorted((host / "web").glob("*")):
+        if page.suffix in (".html", ".js", ".css"):
+            native._write(web / page.name, page.read_text(encoding="utf-8"))
+    native._write(web / "runtime.js", (RUNTIME / "runtime.js").read_text(encoding="utf-8"))
+    native._write(web / "build.json", json.dumps({"slots": calls, "simd": simd}) + "\n")
+    log(f"built the browser build in {web}: serve that folder and open index.html")
+    return web
+
+
+def export(web: Path, dest: Path) -> Path:
+    """The browser build's files (no ROM, no saves) copied to `dest` (replaced), ready to serve."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    try:
+        simd = json.loads((web / "build.json").read_text(encoding="utf-8")).get("simd")
+    except (OSError, ValueError, AttributeError):  # no build.json, or not one this writes: no SIMD modules
+        simd = False
+    for name in ("index.html", "play.js", "gl.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm", ASYNCIFY,
+                 *(SIMD.values() if simd else ())):  # (an earlier build's SIMD modules stay out unless asked for)
+        if (web / name).is_file():
+            shutil.copyfile(web / name, dest / name)
+    for extra in web.glob("*.css"):
+        shutil.copyfile(extra, dest / extra.name)
+    return dest

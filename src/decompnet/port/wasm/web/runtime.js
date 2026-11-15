@@ -1,0 +1,421 @@
+/* The browser build's runtime (port/wasm/web.py): loads the game's module and its host's, which share one 4 GB
+   memory, and runs the game's threads as coroutines with JavaScript Promise Integration. The console's own page
+   (its kit's web/play.js) gives it the ROM and what to do with frames, sound and the controller.
+
+   Threads (web/co.c): a game thread waiting for the CPU suspends its wasm stack; between calls from here, the host
+   says which one runs next (co_next) and this resumes it until it waits again. Each has its own C stack in the
+   host's part of memory, swapped into the host's __stack_pointer here (co_sp, co_set_sp). The page's own calls
+   (the boot, each retrace) run outside any thread and never wait.
+
+   A browser without JavaScript Promise Integration plays the build's Asyncify module instead (app-asyncify.wasm,
+   startAsyncify below): the game and its host merged into one module that can unwind its own stack. `?asyncify` in
+   the page's address chooses it anywhere, to try it. */
+
+/* JavaScript Promise Integration: Chrome and Edge 137 and later, Safari 27. */
+export function promiseIntegration() {
+  return typeof WebAssembly.Suspending === "function" && typeof WebAssembly.promising === "function";
+}
+
+/* Whether this browser has WebAssembly SIMD (Chrome 91, Firefox 89, Safari 16.4 and later): a function returning
+   a v128, which a browser without it refuses to validate. */
+const SIMD_PROBE = Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0,
+  253, 15, 253, 98, 11);
+export function simdSupported() {
+  try { return WebAssembly.validate(SIMD_PROBE); } catch { return false; }
+}
+/* The module to load: the build's SIMD one (web.py's SIMD, an export made with it) where the browser has SIMD, else
+   the plain one, which every browser with WebAssembly plays. `?nosimd` in the page's address chooses the plain one
+   anywhere, to compare. */
+export function moduleFor(name, build, search = globalThis.location?.search || "") {
+  const simd = build && build.simd && simdSupported() && !new URLSearchParams(search).has("nosimd");
+  return simd ? name.replace(/\.wasm$/, "-simd.wasm") : name;
+}
+
+/* Whether this browser can play the build at all: one with WebAssembly, through either module. */
+export function supported() {
+  return typeof WebAssembly === "object" && typeof WebAssembly.instantiate === "function";
+}
+
+/* Every data segment here lives above 2 GB (the game's RAM from 0x80000000, the host's data from 0xB0000000), and
+   Safari places a segment at such an address as if it were negative (its offset sign-extended to 64 bits), so it
+   refuses the module: "segment writes outside of memory". So each active segment whose offset is a constant becomes
+   passive (the browser places nothing, and nothing else refers to it) and the page copies it into memory itself, at
+   its address read as unsigned, once the module is instantiated. Other segments are left as they are. */
+function readLeb(b, at, signed = false) {
+  let result = 0n, shift = 0n, byte;
+  do { byte = b[at++]; result |= BigInt(byte & 0x7f) << shift; shift += 7n; } while (byte & 0x80);
+  if (signed && (byte & 0x40)) result -= 1n << shift;
+  return [result, at];
+}
+function leb(n) {
+  const out = [];
+  do { let byte = n & 0x7f; n >>>= 7; if (n) byte |= 0x80; out.push(byte); } while (n);
+  return Uint8Array.from(out);
+}
+export function placeDataOurselves(code) {
+  const b = new Uint8Array(code), parts = [b.subarray(0, 8)], segments = [];
+  let at = 8;
+  while (at < b.length) {
+    const id = b[at];
+    const [size, body] = readLeb(b, at + 1);
+    const end = body + Number(size);
+    if (id !== 11) { parts.push(b.subarray(at, end)); at = end; continue; } /* only the data section changes */
+    let [count, p] = readLeb(b, body);
+    const out = [leb(Number(count))];
+    for (let i = 0; i < Number(count); i++) {
+      const start = p;
+      let flags;
+      [flags, p] = readLeb(b, p);
+      let q = p;
+      if (flags === 2n) [, q] = readLeb(b, q); /* an explicit memory index */
+      if ((flags === 0n || flags === 2n) && b[q] === 0x41) { /* i32.const <offset> end */
+        let offset;
+        [offset, q] = readLeb(b, q + 1, true);
+        if (b[q] === 0x0b) {
+          let length;
+          [length, q] = readLeb(b, q + 1);
+          const data = b.subarray(q, q + Number(length));
+          segments.push({ address: Number(BigInt.asUintN(32, offset)), data });
+          out.push(Uint8Array.of(1), leb(data.length), data);
+          p = q + Number(length);
+          continue;
+        }
+      }
+      if (flags === 0n || flags === 2n) { while (b[q] !== 0x0b) q++; q++; } /* another offset expression */
+      let length;
+      [length, q] = readLeb(b, q);
+      p = q + Number(length);
+      out.push(b.subarray(start, p));
+    }
+    parts.push(Uint8Array.of(11), leb(out.reduce((n, x) => n + x.length, 0)), ...out);
+    at = end;
+  }
+  const module = new Uint8Array(parts.reduce((n, x) => n + x.length, 0));
+  let o = 0;
+  for (const x of parts) { module.set(x, o); o += x.length; }
+  return {
+    module,
+    segments,
+    place(memory) {
+      const bytes = new Uint8Array(memory.buffer);
+      for (const s of segments) bytes.set(s.data, s.address);
+    },
+  };
+}
+
+/* The few WASI calls the host's C library makes: its stdout and stderr to the console, the clock, its environment
+   (the PORT_* options, from the page). No files: the ROM and the save come through the page. */
+function wasi(memory, environment, log) {
+  const view = () => new DataView(memory.buffer);
+  const bytes = () => new Uint8Array(memory.buffer);
+  const env = Object.entries(environment).map(([k, v]) => new TextEncoder().encode(`${k}=${v}\0`));
+  const lines = { 1: "", 2: "" };
+  const EBADF = 8, ENOENT = 44, ESPIPE = 70;
+  return {
+    environ_sizes_get(count, size) {
+      view().setUint32(count >>> 0, env.length, true);
+      view().setUint32(size >>> 0, env.reduce((n, e) => n + e.length, 0), true);
+      return 0;
+    },
+    environ_get(ptrs, buf) {
+      let p = ptrs >>> 0, b = buf >>> 0;
+      for (const e of env) { view().setUint32(p, b, true); bytes().set(e, b); p += 4; b += e.length; }
+      return 0;
+    },
+    clock_time_get(id, precision, out) {
+      const ns = id === 0 ? BigInt(Date.now()) * 1000000n : BigInt(Math.round(performance.now() * 1e6));
+      view().setBigUint64(out >>> 0, ns, true);
+      return 0;
+    },
+    fd_write(fd, iovs, count, written) {
+      let n = 0, text = "";
+      for (let i = 0; i < count; i++) {
+        const at = (iovs >>> 0) + i * 8, ptr = view().getUint32(at, true), len = view().getUint32(at + 4, true);
+        text += new TextDecoder().decode(bytes().slice(ptr, ptr + len));
+        n += len;
+      }
+      view().setUint32(written >>> 0, n, true);
+      if (fd === 1 || fd === 2) {
+        const parts = (lines[fd] + text).split("\n");
+        lines[fd] = parts.pop();
+        for (const line of parts) log(line, fd);
+      }
+      return 0;
+    },
+    fd_fdstat_get(fd, out) {
+      if (fd > 2) return EBADF;
+      const v = view(), p = out >>> 0;
+      v.setUint8(p, 2); v.setUint16(p + 2, 0, true); v.setBigUint64(p + 8, 0xffffffffn, true); v.setBigUint64(p + 16, 0xffffffffn, true);
+      return 0;
+    },
+    fd_fdstat_set_flags: () => 0,
+    fd_close: () => 0,
+    fd_prestat_get: () => EBADF,
+    fd_prestat_dir_name: () => EBADF,
+    fd_read: () => EBADF,
+    fd_seek: () => ESPIPE,
+    path_open: () => ENOENT,
+    proc_exit(code) { throw new Error(`the game's host exited (${code})`); },
+  };
+}
+
+/* When the threads that run after the `i`th of `due` retraces give way: once the retrace after it is due (`next`
+   is the one after the last), so that the retraces keep their rate however busy the game keeps the CPU. One that is
+   late already still lets the thread it woke run a little (2 ms), as the console's would. `period`: ms a retrace. */
+export function retraceDeadline(next, due, i, period = 20) {
+  return Math.max(next - period * (due - 1 - i), performance.now() + 2);
+}
+
+/* The retrace's period in ms the host read from the ROM's region (20 for PAL, 16.67 for NTSC); 20 from a host
+   older than that. */
+export function retracePeriod(exports) {
+  const ms = exports.port_web_retrace_ms ? Number(exports.port_web_retrace_ms()) : 20;
+  return ms > 0 ? ms : 20;
+}
+
+/* The GPU renderer's imports (the N64 host's render_gpu.h): `io.gpu`, when the page draws on the GPU, takes the
+   renderer's commands and shows its frames; without it the host draws every frame in software. */
+function gpuImports(io, memory) {
+  // (the player may switch renderers between a task and its frame: then there's no GPU to draw on, and the host
+  // shows the frame from RDRAM)
+  const gpu = () => (io.gpu ? io.gpu() : null);
+  return {
+    gpu_ready: () => gpu()?.id || 0, // which renderer: a new one is sent everything again
+    gpu_run: (ptr, words, draws, vertices, pixels) => {
+      gpu()?.run(memory.buffer, ptr >>> 0, words, draws >>> 0, vertices >>> 0, pixels >>> 0);
+    },
+    gpu_present: (addr, w, h, flags) => gpu()?.present(addr >>> 0, w, h, flags) || 0,
+  };
+}
+
+/* Start the game from `base` (the folder of the build's files) and `rom` (the player's ROM, bytes). `io`:
+   {frame(rgb, w, h), audio(lr, frames, hz), input() -> buttons<<16 | x<<8 | y, eepromLoad() -> bytes,
+   eepromSave(bytes), log(line, stream), error(error), gpu() -> the GPU renderer drawing now, or null (optional)};
+   `env`: the host's PORT_* options. Resolves once it runs. */
+export async function start({ base = "", rom, io, env = {} }) {
+  if (!supported()) throw new Error("This browser can't run the game: it has no WebAssembly.");
+  if (!promiseIntegration() || new URLSearchParams(globalThis.location?.search || "").has("asyncify")) {
+    return startAsyncify({ base, rom, io, env });
+  }
+  const memory = new WebAssembly.Memory({ initial: 65536, maximum: 65536 });
+  const bytes = () => new Uint8Array(memory.buffer);
+  const build = await fetch(base + "build.json").then((r) => r.json());
+  const [hostCode, gameCode] = await Promise.all([
+    fetch(base + moduleFor("host-web.wasm", build)).then((r) => r.arrayBuffer()),
+    fetch(base + "game-web.wasm").then((r) => r.arrayBuffer()),
+  ]);
+
+  let host = null, current = -1, mainSp = 0, yielded = null;
+  const threads = [];
+  function leave() {
+    host.co_leave();
+    current = -1;
+    host.co_set_sp(mainSp);
+    const done = yielded;
+    yielded = null;
+    if (done) done();
+  }
+  const suspend = new WebAssembly.Suspending(() => new Promise((resume) => {
+    const t = threads[current];
+    t.resume = resume;
+    t.sp = host.co_sp();
+    leave();
+  }));
+  const portWeb = {
+    suspend,
+    memory_base: () => 0,
+    trace: () => io.log(new Error("the game's host asked for a backtrace").stack, 2),
+    eeprom_load: (ptr, size) => {
+      const saved = io.eepromLoad();
+      if (saved) bytes().set(saved.subarray(0, size), ptr >>> 0);
+    },
+    eeprom_save: (ptr, size) => io.eepromSave(bytes().slice(ptr >>> 0, (ptr >>> 0) + size)),
+    frame: (ptr, w, h) => io.frame(bytes().subarray(ptr >>> 0, (ptr >>> 0) + w * h * 3), w, h),
+    audio: (ptr, frames, hz) => io.audio(new Int16Array(memory.buffer, ptr >>> 0, frames * 2), frames, hz),
+    input: () => io.input(),
+    ...gpuImports(io, memory),
+  };
+  const hostCodePlaced = placeDataOurselves(hostCode), gameCodePlaced = placeDataOurselves(gameCode);
+  const hostModule = await WebAssembly.instantiate(hostCodePlaced.module, {
+    env: { memory }, wasi_snapshot_preview1: wasi(memory, env, io.log), port_web: portWeb,
+  });
+  host = hostModule.instance.exports;
+  hostCodePlaced.place(memory);
+  host._initialize();
+  const gameImports = { memory };
+  for (const [name, value] of Object.entries(host)) if (typeof value === "function") gameImports[name] = value;
+  const gameModule = await WebAssembly.instantiate(gameCodePlaced.module, { env: gameImports });
+  const game = gameModule.instance.exports;
+  gameCodePlaced.place(memory);
+  game.__wasm_call_ctors(); // each file registers its functions, for calls through pointers (web/be.c)
+  build.slots.forEach((name, i) => {
+    if (!game[name]) throw new Error(`the game's module has no ${name}, which the host calls`);
+    host.__indirect_function_table.set(host.port_web_slot(i), game[name]);
+  });
+  const threadMain = WebAssembly.promising(host.co_main);
+
+  /* Run thread `id` until it waits again, or ends. */
+  function step(id) {
+    return new Promise((done) => {
+      yielded = done;
+      current = id;
+      mainSp = host.co_sp();
+      const t = threads[id] || (threads[id] = {});
+      host.co_enter(id);
+      if (!host.co_started(id)) {
+        host.co_set_sp(host.co_stack_top(id));
+        threadMain(id).then(() => leave(), (error) => { io.error(error); leave(); });
+      } else {
+        host.co_set_sp(t.sp);
+        const resume = t.resume;
+        t.resume = null;
+        resume();
+      }
+    });
+  }
+  /* Every thread that can run, in the order the host says, until none can or the next retrace is due (`until`):
+     what the CPU does between retraces. */
+  async function runThreads(until = performance.now() + 15) {
+    host.port_web_deadline(until); /* a thread still running then gives way (port_yield) */
+    while (performance.now() < until) {
+      const id = host.co_next();
+      if (id < 0) return;
+      await step(id);
+    }
+  }
+  let queue = Promise.resolve();
+  const then = (work) => (queue = queue.then(work).catch((error) => io.error(error)));
+
+  const at = host.port_web_alloc(rom.length) >>> 0;
+  if (!at) throw new Error("There's no memory left for the ROM.");
+  bytes().set(rom, at);
+  host.port_web_boot(at, rom.length);
+  await then(runThreads);
+  /* the VI retrace at the game's rate (PAL 50 a second, NTSC 60), as the native host's main loop gives it */
+  const period = retracePeriod(host);
+  let next = performance.now(), stopped = false;
+  function tick() {
+    if (stopped) return;
+    const now = performance.now();
+    let due = 0;
+    while (next <= now && due < 3) { next += period; due++; }
+    if (now - next > 200) next = now + period; /* a background tab: don't catch up for ever */
+    for (let i = 0; i < due; i++) {
+      const until = retraceDeadline(next, due, i, period);
+      then(() => { host.port_web_retrace(); return runThreads(until); });
+    }
+    setTimeout(tick, Math.max(1, next - performance.now()));
+  }
+  tick();
+  return { stop() { stopped = true; }, memory, host, game };
+}
+
+/* start(), on the Asyncify module: one instance holds the game and its host, so its exports are both. A thread that
+   waits unwinds its whole wasm stack into a buffer of its own (asyncify_start_unwind) and returns to here; resuming it
+   calls co_main again in rewind mode, which lands it back where it waited. */
+const ASYNC_DATA = 1 << 20; /* each thread's saved stack: the locals of every frame it waits in */
+const UNWINDING = 1, REWINDING = 2;
+async function startAsyncify({ base = "", rom, io, env = {} }) {
+  const memory = new WebAssembly.Memory({ initial: 65536, maximum: 65536 });
+  const bytes = () => new Uint8Array(memory.buffer);
+  const view = () => new DataView(memory.buffer);
+  const build = await fetch(base + "build.json").then((r) => r.json());
+  const [code] = await Promise.all([
+    fetch(base + moduleFor("app-asyncify.wasm", build)).then((r) => {
+      if (!r.ok) {
+        throw new Error("This browser needs the build's Asyncify module (app-asyncify.wasm), which this copy of the "
+          + "game doesn't have: export it again, or play in Chrome, Edge or Safari 27.");
+      }
+      return r.arrayBuffer();
+    }),
+  ]);
+  let ex = null, current = -1, mainSp = 0;
+  const threads = [];
+  function suspend() {
+    if (ex.asyncify_get_state() === REWINDING) { ex.asyncify_stop_rewind(); return; } /* back where it waited */
+    const t = threads[current];
+    t.sp = ex.co_sp();
+    view().setUint32(t.data, t.data + 8, true);
+    view().setUint32(t.data + 4, t.data + ASYNC_DATA, true);
+    ex.asyncify_start_unwind(t.data);
+  }
+  const placed = placeDataOurselves(code);
+  const instance = (await WebAssembly.instantiate(placed.module, {
+    js: { memory },
+    wasi_snapshot_preview1: wasi(memory, env, io.log),
+    port_web: {
+      suspend,
+      memory_base: () => 0,
+      trace: () => io.log(new Error("the game's host asked for a backtrace").stack, 2),
+      eeprom_load: (ptr, size) => {
+        const saved = io.eepromLoad();
+        if (saved) bytes().set(saved.subarray(0, size), ptr >>> 0);
+      },
+      eeprom_save: (ptr, size) => io.eepromSave(bytes().slice(ptr >>> 0, (ptr >>> 0) + size)),
+      frame: (ptr, w, h) => io.frame(bytes().subarray(ptr >>> 0, (ptr >>> 0) + w * h * 3), w, h),
+      audio: (ptr, frames, hz) => io.audio(new Int16Array(memory.buffer, ptr >>> 0, frames * 2), frames, hz),
+      input: () => io.input(),
+      ...gpuImports(io, memory),
+    },
+  })).instance;
+  ex = instance.exports;
+  placed.place(memory);
+  ex._initialize();
+  ex.__wasm_call_ctors(); // each of the game's files registers its functions, for calls through pointers (web/be.c)
+  build.slots.forEach((name, i) => {
+    if (!ex[name]) throw new Error(`the game's module has no ${name}, which the host calls`);
+    ex.__indirect_function_table.set(ex.port_web_slot(i), ex[name]);
+  });
+
+  /* Run thread `id` until it waits again, or ends. */
+  function step(id) {
+    current = id;
+    mainSp = ex.co_sp();
+    const t = threads[id] || (threads[id] = { data: ex.port_web_alloc(ASYNC_DATA) >>> 0 });
+    if (!t.data) throw new Error("There's no memory left for the game's threads.");
+    ex.co_enter(id);
+    if (!ex.co_started(id)) ex.co_set_sp(ex.co_stack_top(id));
+    else { ex.co_set_sp(t.sp); ex.asyncify_start_rewind(t.data); }
+    try { ex.co_main(id); } finally {
+      if (ex.asyncify_get_state() === UNWINDING) ex.asyncify_stop_unwind();
+      ex.co_leave();
+      current = -1;
+      ex.co_set_sp(mainSp);
+    }
+  }
+  /* Every thread that can run, in the order the host says, until none can: what the CPU does between retraces. */
+  function runThreads(until = performance.now() + 15) {
+    ex.port_web_deadline(until);
+    while (performance.now() < until) {
+      const id = ex.co_next();
+      if (id < 0) return;
+      step(id);
+    }
+  }
+
+  const at = ex.port_web_alloc(rom.length) >>> 0;
+  if (!at) throw new Error("There's no memory left for the ROM.");
+  bytes().set(rom, at);
+  ex.port_web_boot(at, rom.length);
+  runThreads();
+  /* the VI retrace at the game's rate, as in start() */
+  const period = retracePeriod(ex);
+  let next = performance.now(), stopped = false;
+  function tick() {
+    if (stopped) return;
+    const now = performance.now();
+    let due = 0;
+    while (next <= now && due < 3) { next += period; due++; }
+    if (now - next > 200) next = now + period;
+    try {
+      for (let i = 0; i < due; i++) { ex.port_web_retrace(); runThreads(retraceDeadline(next, due, i, period)); }
+    } catch (error) {
+      stopped = true;
+      io.error(error);
+      return;
+    }
+    setTimeout(tick, Math.max(1, next - performance.now()));
+  }
+  tick();
+  return { stop() { stopped = true; }, memory, host: ex, game: ex, asyncify: true };
+}

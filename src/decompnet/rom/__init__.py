@@ -13,6 +13,10 @@ class RomError(ValueError):
     """A game file this app can't split, with a sentence for the user."""
 
 
+class DisassemblyTimeout(RomError):
+    """A split deadline, not a rejection of the game's debug names."""
+
+
 @dataclass
 class Picked:
     """The program a ROM-mode console read from the user's file, ready for splat (Console.read_game)."""

@@ -21,6 +21,21 @@ def test_shift_add_is_local_and_leaves_comments_and_strings_opaque():
     assert 'return (sum << 5) + sum;' in result[0][1]
 
 
-def test_local_probe_count_is_bounded():
+def test_probe_count_bounded_and_unchanged_trials_cached():
+    import time
+
+    from decompnet.app.permute import State
+    from tests.test_permute import AGENT, FakeNet, ScriptedPermuter
     source = 'void f(Item *p) {\n' + ''.join(f'  p->v{i} = 0;\n' for i in range(20)) + '}\n'
     assert len(variants(source, 'f')) == 8
+    net = FakeNet()
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=? WHERE id=1', (source,))
+    p = ScriptedPermuter(net, {})
+    proj, fn, state = net.project_row('game'), net.function(), State()
+    for _ in range(2):
+        assert p._local_order(AGENT, proj, fn, state, None, time.monotonic() + 10, 40, source) == (40, source)
+    assert len(p.judged) == 8 and state.repairs == 8
+    state.stop.set()
+    p._local_order(AGENT, proj, fn, state, None, time.monotonic() + 10, 40, source)
+    assert len(p.judged) == 8

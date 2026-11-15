@@ -50,7 +50,43 @@ class Compiler:
     name: str  # what the app shows: "KMC GCC 2.7.2"
     built: str = ""  # which games it built, for Setup: "many third-party N64 games"
     guess: str = ""  # what read_game calls it when a program looks built by it ("KMC", "EEGCC-2.95.2")
-    target: str = ""  # the processor its code is for, where a console's compilers differ ("x86", "x64"): Console.target
+    target: str = ""  # processor for compiler versions that differ within one console (PC x86 and x64)
+    automatic: bool = True  # routine comparisons; experimental profiles remain available by explicit selection
+
+
+@dataclass(frozen=True)
+class PortRuntime:
+    """One way to run a finished game on a PC (docs/PORTING.md), offered in the Porting tab's Play step: the
+    WebAssembly build runs the game's C as the console's, the native runtimes need the checklist's steps first."""
+    id: str  # "wasm", what Play is asked for
+    name: str  # "libultraship"
+    summary: str  # one sentence: what it is, what it gives
+    needs: tuple = ()  # the readiness steps it waits for: "code", "compiles", "links", "assets" (port/readiness.py)
+    built: bool = False  # decompdecomp builds and plays the game on it; False: planned (ROADMAP.md, Ports)
+
+
+@dataclass(frozen=True)
+class PortKit:
+    """The library a finished game of a console is ported to a PC with (docs/PORTING.md): libultraship and Torch
+    for the N64. What the port readiness report asks of it; a console with no kit has `port_kit = None`."""
+    name: str  # "libultraship and Torch"
+    summary: str  # one sentence on what it gives a port
+    sdk_group: object  # function name -> "replaced" (the kit or the host has it), "native" (compiles as is), "glue"
+    # (console plumbing the kit lacks: the port's own glue supplies it) or None (the game's own)
+    microcode: object = None  # the image's bytes -> [{"name", "variant", "version", "support"}], or None
+    audio: object = None  # the game's function names -> {"library", "need"}, or None
+    asset_map: object = None  # (game facts, resources from port/asset_map.py) -> {file name: text}, or None
+    boot: int = 0  # bytes at the image's start that the console's boot reads, never the game: in no resource
+    extract: object = None  # (asset map folder, image, output folder, log) -> the archive the extractor wrote
+    resources: object = None  # archive -> {resource name: the bytes it holds}, for checking each against the image
+    boot_globals: object = None  # project config -> {address: (libultra name, C type, size, value)}: what the
+    # console's boot leaves in low memory, which a port defines with those values
+    coprocessor_boot: bytes = b""  # how the coprocessor's boot microcode begins in a ROM (the N64's rspboot): it and
+    # the microcode after it are data the C only points at, which a port's renderer replaces: a placeholder
+    wasm: object = None  # the WebAssembly build's console part (port/wasm/): a folder with host.c, the host that
+    # runs the game's translated C (threads, DMA, the hardware's registers), and the library's prototypes
+    # (libultra.sigs: each a name, a return type and parameter types, tab-separated); None: no such build yet
+    runtimes: tuple = ()  # PortRuntime each, the order the Play step offers them; the first playable one is chosen
 
 
 class Console:
@@ -83,6 +119,8 @@ class Console:
     aliases: tuple[str, ...] = ()  # other ids older configs or public decomps use for it ("win32" for "pc")
     status = PUBLIC  # RECOMMENDED, BETA or PUBLIC
     arch = ""  # its processor, an id in arch/ ("mips")
+    asset_argument_count = 4  # register arguments read by the processor's asset-flow adapter
+    asset_calls: dict = {}  # console-specific named transfer contracts, appended to shared libc contracts
     cpu_variant: str = ""  # a variant of it capstone can't decode, read by arch/'s own reader ("allegrex": the PSP's)
     big_endian = False
     mode = ""  # ROM, PROJECT, or "" (only public decomps)
@@ -100,16 +138,30 @@ class Console:
     demo = ""  # its homemade demo game: a folder in projects/ whose build.py makes it (tests/test_consoles.py)
     demo_tools: tuple[str, ...] = ()  # what building and importing the demo needs: toolchains, or programs on PATH
     own_features: frozenset[str] = frozenset()  # EXPORT, REBUILD_CHECK
+    port_kit: PortKit | None = None  # what a finished game is ported with (docs/PORTING.md); None: no kit yet
+    # the console's reversing emulator: a module with run(rom, vis, ...) -> its Run, as consoles/n64/emulator has, which
+    # runs the user's own ROM headless with breakpoints (app/emulator_watch.py, the watch_in_emulator tool); None: none yet
+    emulator: object = None
+    # its static recompiler: a module with TOOL, recompile(program, rom, segments, functions, out, log, stop),
+    # folder(root), load(root) and RecompError, as consoles/n64/recomp has (app/recompile.py); None: none yet
+    recompiler: object = None
     # PROJECT mode: its import recognises code that isn't the game's own (library code, an SDK, the C runtime) and
     # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
     sets_aside = False
+    sdk_corpus = ""  # optional public binary fingerprint corpus; local SDK archives work on every console
+    # a table of library signatures the app ships, from the library rebuilt byte for byte from public source (the
+    # N64's from decompals/ultralib: tools/ultralib_signatures.py), loaded like an indexed SDK (app/sdk_builtin.py)
+    sdk_table = ""
+    # more such tables, each its own corpus: what no public source rebuilds, from the SDK's own archives as hashes
+    # and names only, like decomp-toolkit's GameCube corpus (the N64's n_audio: tools/naudio_signatures.py)
+    sdk_tables: tuple[str, ...] = ()
     # PROJECT mode: choices the import asks about besides the compiler and scope, as (id, question, ((value, text), ...))
     # with the first value the default; create_project takes each as a keyword (Xbox: ltcg)
     import_options: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = ()
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with
     as_flags: tuple[str, ...] = ()
-    reference_tools: tuple[str, str, str] = ()
+    reference_tools: tuple[str, str, str] = ()  # pinned toolchain, assembler and linker for verified splat references
     # ROM mode, a program that's an ELF: the platform splat's config names, when it isn't the PS2's (splat's
     # create_config reads ELF programs as PS2 ones: rom/split.py)
     splat_platform = ""
@@ -125,13 +177,13 @@ class Console:
     def __repr__(self) -> str:
         return f"<console {self.id}>"
 
-    def generate_objdiff(self, project, config_path, config, version: str | None = None, log=print) -> bool:
-        """Generate byte-verified Splat references for consoles with pinned assembler tools."""
+    def generate_objdiff(self, project, config_path, config, log=print) -> bool:
+        """A supported splat build can acquire ROM-derived reference objects after its first verified build."""
         if not self.reference_tools:
             return False
         from ..forks.splatrefs import generate
 
-        return generate(project, config_path, config, self, version=version, log=log)
+        return generate(project, config_path, config, self, log=log)
 
     @property
     def features(self) -> frozenset[str]:
@@ -172,6 +224,18 @@ class Console:
 
     # ------------------------------------------------------------------ starting a project from the user's game
 
+    def asset_regions(self, image, *, context=None, check=lambda: None, progress=lambda _: None):
+        return []  # consoles can recognize structurally validated native asset containers
+
+    def asset_preview(self, data, asset, selection):
+        return None  # native assets can resolve validated image, audio, model or metadata selections
+
+    def asset_scene(self, image, asset, selection, assets):
+        return None  # optional linked preview, inside the original-image hash guard
+
+    def asset_decode(self, data):
+        return None  # None delegates to the common preview codecs
+
     def sniff(self, head: bytes, file: bytes | Path) -> bool:
         """Whether the file the user picked is a game of this console (`head`: its first HEAD_BYTES)."""
         return False
@@ -200,6 +264,10 @@ class Console:
         """The game's file in a folder the user pointed at, when this console's games are folders (a PC game's .exe
         and its DLLs); None: not one of its games."""
         return None
+
+    def display_title(self, name: str, info: dict) -> str:
+        """A stored project's display name; consoles may resolve old serial-only names offline."""
+        return name
 
     # ROM mode
 
@@ -328,6 +396,16 @@ class Console:
         writes it (coprocessor 2's instructions), or would place elsewhere (8-byte data), becomes the raw words it is."""
         from ..arch.mips import raw_cop2, raw_doubles  # (splat's consoles are MIPS)
 
+        # Inferred code can contain data decoded as a link branch through $ra. GNU as rejects this
+        # unpredictable encoding; keep its bytes rather than changing the register or branch target.
+        def link_word(match: re.Match) -> str:
+            word = int.from_bytes(bytes.fromhex(match[2]), "big" if self.big_endian else "little")
+            if word >> 26 == 1 and (word >> 21) & 31 == 31 and (word >> 16) & 31 in (16, 17, 18, 19):
+                return f"{match[1]}.word 0x{word:08X}"
+            return match[0]
+
+        text = re.sub(r"^(\s*/\*\s*[0-9A-Fa-f]+\s+[0-9A-Fa-f]{8}\s+([0-9A-Fa-f]{8})\s*\*/[ \t]*)[^\n]+",
+                      link_word, text, flags=re.M)
         return raw_doubles(raw_cop2(text, self.big_endian), self.big_endian)
 
     def find_gp(self, image: bytes, program: bytes, segments: list) -> int:
@@ -349,6 +427,19 @@ class Console:
 
     def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
         """Work a new project gets once (`chosen`: the user picked its compiler)."""
+
+    sdk_assembly_sizes: tuple[int, ...] = ()
+
+    def sdk_assembly_identity(self, code: bytes, big_endian: bool = True) -> dict | None:
+        """Exact self-contained handwritten SDK bodies only; no heuristic C exclusion."""
+        return None
+
+    def scan_sdk(self, net, proj, job=None) -> None:
+        """Optional binary SDK evidence, refreshed by the shared background naming task.
+
+        Store target-bound identities, not matches or names guessed from their spelling.
+        Consoles without a public fingerprint pack use the shared local archive index.
+        """
 
     def on_start(self, net, slug: str, log=print) -> None:
         """Work each of its projects gets when the app starts (what projects imported by older versions lack)."""
@@ -377,9 +468,24 @@ class Console:
         """What the game file is: {"platform", "id", "title", "sha1"}, the sha1 of what decides which game it is."""
         raise RomError(f"{self.name} projects can't be made from scratch")
 
+    def library_sha1(self, path: Path) -> str:
+        """Hash a library file in the byte order expected by this console's public projects."""
+        import hashlib
+
+        with path.open("rb") as stream:
+            return hashlib.file_digest(stream, "sha1").hexdigest()
+
+    def project_build_command(self, project, command: list[str]) -> list[str]:
+        """Point a public build at an installed tool when this console knows its compiler declaration."""
+        return command
+
+    def project_tool_paths(self, project) -> list[Path]:
+        """Installed tools available only to this project's build process (never the user's global PATH)."""
+        paths = arch.get(self.arch).build_tool_paths
+        return paths(project) if paths else []
+
     def build_env(self) -> dict[str, str]:
-        """What its projects' builds need in their environment, beyond this computer's (the PC's: where wine is, for
-        Visual C++ 2017). Set on every build step the app runs (forks/project.py, ForkProject.run)."""
+        """Extra environment for this console's project builds."""
         return {}
 
     def tool_args(self) -> list[str]:
@@ -394,25 +500,14 @@ class Console:
         """Which game a file is (a sha1), when that isn't the file's own bytes: rooms check members have the same."""
         return None
 
+    def release_key(self, rom: dict) -> str | None:
+        """What every release (region) of one game shares and other games don't, from its imported `rom` facts,
+        or None where nothing does (app/regional.py then compares the games' code)."""
+        return None
+
     def library_candidate(self, path: Path, size: int) -> bool:
         """Whether a library file is plausible before the search hashes its contents."""
         return True
-
-    def fork_game_versions(self, project) -> dict[str, str]:
-        """Original game hashes for supported versions of a public decomp."""
-        return {}
-
-    def fork_game_need(self, project, version: str | None) -> dict | None:
-        """Versioned game file required by a public decomp, if this console recognizes it."""
-        return None
-
-    def default_fork_game_version(self, project) -> str | None:
-        """Default version of a public decomp, when this console recognizes its build."""
-        return None
-
-    def match_fork_game_version(self, project, game: Path, log=print) -> str | None:
-        """Version matching a supplied game, or None when this console has no versioned build."""
-        return None
 
     def fork_game_help(self, target: str, sha1: str | None) -> str | None:
         """Console-specific guidance for supplying a game file to a public decomp, or None for its usual help."""
@@ -439,14 +534,14 @@ class Console:
         return None
 
     def target(self, fp) -> str:
-        """The processor a project's code is for, where the console's compilers make code for more than one (PC:
-        32-bit or 64-bit); "": they all make the same."""
+        """Processor target for project compilers, or empty when all compilers apply."""
         return ""
 
     def project_compilers(self, fp) -> list[Compiler]:
-        """The compilers a project's files can be built with (Settings, try_compiler): those for its target."""
+        """Compilers able to build this project's target."""
         target = self.target(fp)
-        return [c for c in self.compilers if not target or not c.target or c.target == target]
+        return [compiler for compiler in self.compilers
+                if not target or not compiler.target or compiler.target == target]
 
     def file_compiler(self, fp, source: str) -> str | None:
         """The compiler (one of `compilers`) the project builds a source file with, when its build lets each file have
@@ -567,12 +662,23 @@ class Console:
         program's functions by its processor's Arch.field_accesses, consoles/pc/rtti.py)."""
         return None
 
+    def bss_start(self, image: bytes) -> int | None:
+        """Where the program's .bss starts in RAM, read from its own code (the N64's boot stub clears it), or None.
+        Initialised data runs from the end of a code segment's text up to it (app/data_units.py)."""
+        return None
+
     # for agents
 
     def asm_reason(self, code: bytes) -> str | None:
         """Why a function's code can't come from a compiler (hand-written assembly), or None."""
         reason = arch.get(self.arch).asm_reason
         return reason(code, self.big_endian, cpu=self.cpu_variant) if reason else None
+
+    def boundary_reason(self, code: bytes) -> str | None:
+        """Advisory target-extent warning where the processor has a reader."""
+        reason=arch.get(self.arch).boundary_reason
+        if not reason or self.asm_reason(code):return None
+        return reason(code,self.big_endian,cpu=self.cpu_variant)
 
     def is_padding(self, code: bytes, fn=None) -> bool:
         """Whether `code` is all this processor's alignment padding (its nop/filler), so a function trimmed
@@ -622,6 +728,10 @@ class Console:
         reg = toolchains.registry()
         return [c.id for c in self.compilers if c.id in reg and reg[c.id].supported]
 
+    def recognizes_objdiff(self, config: dict) -> bool:
+        """Resolve ambiguous external platform identifiers using console-owned facts."""
+        return False
+
     def project_facts(self) -> dict:
         """What a project's page and its line in the project list say about its console."""
         return {"platform": self.id, "platform_name": self.name, "platform_short": self.short or self.name,
@@ -633,8 +743,7 @@ class Console:
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "import_note": self.import_note, "import_error": self.import_error,
                 "features": sorted(self.features), "packs": [*(tool for tool, _ in self.packs), *self.kits],
-                "compilers": [{"id": c.id, "name": c.name, "built": c.built, "target": c.target}
-                              for c in self.compilers],
+                "compilers": [{"id": c.id, "name": c.name, "built": c.built, "target": c.target} for c in self.compilers],
                 "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",
                 "sets_aside": self.mode == PROJECT and self.sets_aside,

@@ -131,3 +131,48 @@ def test_a_rom_save_updates_tagged_compiler_details_and_preserves_notes(project,
     updated = path.read_text(encoding="utf-8")
     assert "**Compiler:** another-compiler" in updated and "original-compiler" not in updated
     assert updated.endswith("\n## My research\nKeep this.\n")
+
+
+def test_large_progress_map_preserves_order_and_bounds_native_row_handoffs(project, monkeypatch):
+    net, folder = project
+    store = net.project_store(1)
+    with store.tx() as db:
+        db.execute("DELETE FROM functions")
+        for index in reversed(range(513)):
+            # Tied addresses, empty units, Unicode/HTML and a zero score exercise
+            # ordering and state precedence across packet boundaries.
+            db.execute("""INSERT INTO functions(project_id,name,vram,unit,status,best_score,meta)
+                VALUES(1,?,?,?,?,?,?)""", (f"f{index:04d}<&é", index // 8,
+                '' if index % 2 else 'unit',
+                'matched' if index % 4 == 0 else 'asm' if index % 4 == 1 else 'open',
+                0 if index % 4 == 2 else None,
+                '{"set_aside":"library"}' if index == 0 else '{}'))
+        db.execute("""INSERT INTO functions(project_id,name,status,meta)
+            VALUES(1,'gone','matched','{"gone":true}')""")
+    expected = []
+    for group in range(65):
+        indices = range(group * 8, min(group * 8 + 8, 513))
+        for index in sorted(indices, key=lambda i: (i % 2 == 0, i)):
+            state = 'aside' if index == 0 or index % 4 == 1 else (
+                'matched' if index % 4 == 0 else 'attempt' if index % 4 == 2 else 'open')
+            expected.append((f"f{index:04d}<&é", state))
+    returned = []
+    original = store.all
+    def read(sql, *args):
+        rows = original(sql, *args)
+        returned.append(len(rows))
+        return rows
+    monkeypatch.setattr(store, 'all', read)
+    captured = []
+    original_card = save_readme._card
+    def card(states, *args):
+        captured.extend(states)
+        return original_card(states, *args)
+    monkeypatch.setattr(save_readme, '_card', card)
+    folder.mkdir()
+    save_readme.update(net, net._project('p'), folder, '# Guide\n', 0)
+    assert captured == expected
+    assert max(returned) <= 5  # 513 functions fit in five bounded native packets.
+    svg = ET.fromstring((folder / save_readme.CARD).read_text())
+    assert len(svg.findall('.//{*}g/{*}g')) == 513
+    assert 'gone' not in (folder / save_readme.CARD).read_text()

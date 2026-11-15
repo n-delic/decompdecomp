@@ -78,8 +78,30 @@ def no_core_dumps() -> None:
         pass
 
 
+def raise_open_file_limit(target: int = 8192) -> int | None:
+    """Raise this process's soft limit only; desktop launchers can start macOS at 256.
+
+    Children inherit it. Never lower an existing limit or change the hard limit, and
+    tolerate hosts that do not permit the increase (Windows has no resource module).
+    """
+    try:
+        import resource
+    except ImportError:
+        return None
+    try:
+        soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft==resource.RLIM_INFINITY or soft>=target:return soft
+        desired=target if hard==resource.RLIM_INFINITY else min(target,hard)
+        if desired>soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE,(desired,hard))
+        return resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    except (ValueError,OSError):
+        return None
+
+
 def killed_for_memory(returncode: int) -> bool:
     return returncode in (137, -9)
+
 
 
 COMPILER_MEMORY_MB = 2048  # a compiler's resident memory on macOS, as prlimit's 2 GB address space on Linux
@@ -99,9 +121,60 @@ def compiler_memory_limit() -> int:
     return mb << 20
 
 
+# Concurrent compilers must not each spawn a system-wide ps every quarter second.
+# Keep the same per-tree enforcement, sharing only a very recent OS observation.
+_MEMORY_SNAPSHOT_LOCK = threading.Lock()
+_MEMORY_SNAPSHOT = None
+MEMORY_SNAPSHOT_SECONDS = 0.1
+
+
+def _process_memory_snapshot():
+    global _MEMORY_SNAPSHOT
+    with _MEMORY_SNAPSHOT_LOCK:
+        now = time.monotonic()
+        identity = (os.getpid(), subprocess.run)
+        if _MEMORY_SNAPSHOT is not None:
+            started, owner, children, sizes = _MEMORY_SNAPSHOT
+            if owner == identity and 0 <= now-started < MEMORY_SNAPSHOT_SECONDS:
+                return children, sizes
+        try:
+            result = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,rss='], capture_output=True,
+                                    text=True, timeout=2, check=True)
+        except (OSError, subprocess.SubprocessError):
+            # Share failed attempts briefly too; queued watchdogs must not each
+            # wait through another two-second ps timeout. Never return old RSS.
+            _MEMORY_SNAPSHOT = (time.monotonic(), identity, {}, {})
+            return {}, {}
+        children, sizes = {}, {}
+        for line in result.stdout.splitlines():
+            try:
+                pid, parent, rss = map(int, line.split())
+            except ValueError:
+                continue
+            children.setdefault(parent, []).append(pid)
+            sizes[pid] = rss * 1024
+        # Age from the start of sampling: a slow ps must never extend freshness.
+        _MEMORY_SNAPSHOT = (now, identity, children, sizes)
+        return children, sizes
+
+
+def _process_memory_tree(root_pid: int) -> list[tuple[int, int]]:
+    """Resident sizes of this tree, from a bounded shared macOS process snapshot."""
+    children, sizes = _process_memory_snapshot()
+    pending, seen = [root_pid], set()
+    while pending:
+        pid = pending.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        pending.extend(children.get(pid, ()))
+    return [(pid, sizes[pid]) for pid in seen if pid in sizes]
+
+
 def compiler_time_limit() -> float:
     """The longest any compile may take, whatever its caller asked, DECOMP_COMPILER_TIMEOUT_SECONDS: a compiler that
-    never finished on an agent's code held one of the few compiler slots for good."""
+    never finished on an agent's code held one of the few compiler slots for good. Includes compiler subprocesses
+    that never finish."""
     try:
         seconds = float(os.environ.get("DECOMP_COMPILER_TIMEOUT_SECONDS", "300"))
         return seconds if 0 < seconds < float("inf") else 300
@@ -120,21 +193,9 @@ def _session_tree(root_pid: int) -> list[tuple[int, int]]:
     """(pid, resident bytes) of every process a tool started with `start_new_session` (its pid is its session's) has
     running: those under it, and those whose parent has gone (a build step that ended while a compiler it started
     still held its output) but that are still in its session. The session is read with getsid, not ps: macOS's
-    `ps -o sess` prints 0 for every process, so a compiler in its own process group, its parent gone, was missed."""
-    try:
-        listed = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,rss="], capture_output=True, text=True, timeout=10,
-                                check=True).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    children: dict[int, list[int]] = {}
-    sizes: dict[int, int] = {}
-    for line in listed.splitlines():
-        try:
-            pid, parent, rss = map(int, line.split())
-        except ValueError:
-            continue
-        children.setdefault(parent, []).append(pid)
-        sizes[pid] = rss * 1024
+    `ps -o sess` prints 0 for every process, so a compiler in its own process group, its parent gone, was missed.
+    Reads the shared snapshot (`_process_memory_snapshot`), so concurrent watchdogs don't each run ps."""
+    children, sizes = _process_memory_snapshot()
     under, todo = set(), [root_pid]
     while todo:
         pid = todo.pop()
@@ -244,35 +305,74 @@ def stop_group(proc: subprocess.Popen, remembered: set[int] | None = None) -> No
 
 
 class CompilerMemoryWatchdog:
-    """macOS: stop a compiler, or a whole build, that uses more memory than its limit, as Linux's prlimit and systemd
-    scopes do there (see the module's docstring). `whole_tree`: the limit is for all its processes together, as a
-    build's systemd scope is; otherwise for each process. Not started elsewhere: nothing to do, and Windows has no
-    `ps`. The processes it saw are kept in `seen`, for `stop_group`."""
+    """Stop a compiler, or a whole build, that uses more memory than its limit on macOS, as Linux's prlimit and
+    systemd scopes do there (see the module's docstring), or that runs past `timeout` on any system. `whole_tree`:
+    the limit is for all its processes together, as a build's systemd scope is; otherwise for each process. Without a
+    timeout it isn't started outside macOS: nothing to do, and Windows has no `ps`. The processes it saw are kept in
+    `seen`, for `stop_group`."""
 
-    def __init__(self, proc: subprocess.Popen, limit: int | None = None, whole_tree: bool = False):
+    def __init__(self, proc: subprocess.Popen, limit: int | None = None, timeout: float | None = None,
+                 whole_tree: bool = False):
         self.proc = proc
         self.limit = limit if limit is not None else compiler_memory_limit()
         self.whole_tree = whole_tree
         self.exceeded = False
+        self.timed_out = False
+        self.timeout = timeout
         self.seen: set[int] = set()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def __enter__(self):
-        if sys.platform == "darwin":
-            self._thread = threading.Thread(target=self._watch, name="memory-watchdog", daemon=True)
+        if sys.platform == "darwin" or self.timeout is not None:
+            self._thread = threading.Thread(target=self._watch, name="compiler-memory-watchdog", daemon=True)
             self._thread.start()
         return self
 
+    def _over_limit(self) -> bool:
+        if sys.platform != "darwin":
+            return False
+        tree = _session_tree(self.proc.pid) if self.whole_tree else _process_memory_tree(self.proc.pid)
+        self.seen.update(pid for pid, _ in tree)
+        sizes = [rss for _, rss in tree]
+        return (sum(sizes) if self.whole_tree else max(sizes, default=0)) > self.limit
+
     def _watch(self) -> None:
+        started = time.monotonic()
         while not self._stop.wait(WATCH_SECONDS):
-            tree = _session_tree(self.proc.pid)
-            self.seen.update(pid for pid, _ in tree)
-            sizes = [rss for _, rss in tree]
-            if (sum(sizes) if self.whole_tree else max(sizes, default=0)) > self.limit:
-                self.exceeded = True
-                stop_group(self.proc, self.seen)
+            self.timed_out = self.timeout is not None and time.monotonic() - started >= self.timeout
+            self.exceeded = self._over_limit()
+            if self.timed_out or self.exceeded:
+                self._stop_tree()
                 return
+
+    def _stop_tree(self) -> None:
+        if self.whole_tree:
+            # A build: what's in its session or job too, ninja's commands in their own groups and steps whose
+            # parent has gone (#228's review).
+            stop_group(self.proc, self.seen)
+            return
+        try:
+            if os.name == 'nt':
+                from .hostenv import stop_process_tree
+                stop_process_tree(self.proc)
+            else:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            # A denied group signal must not strand a silent build in
+            # its stdout reader. Stop the owned child without closing
+            # pipes here; the caller still owns output and cleanup.
+            import logging
+            logging.getLogger('decompdecomp').warning(
+                'Compiler watchdog group stop failed pid=%d errno=%s; timed_out=%s memory_limit=%s',
+                self.proc.pid, error.errno, self.timed_out, self.exceeded)
+            from .hostenv import stop_process_tree
+            try:stop_process_tree(self.proc)
+            except OSError as fallback:
+                logging.getLogger('decompdecomp').warning(
+                    'Compiler watchdog child stop failed pid=%d errno=%s', self.proc.pid, fallback.errno)
 
     def __exit__(self, *_):
         self._stop.set()
@@ -284,5 +384,5 @@ class CompilerMemoryWatchdog:
         if self.whole_tree:
             return (f"stopped: the build used more than {mb} MiB of memory in all (half this computer's, as on Linux), "
                     "so it was stopped before it could slow down or freeze your computer")
-        return (f"Compiler process exceeded the {mb} MiB memory limit and was stopped. Reduce concurrency or increase "
-                "DECOMP_COMPILER_MEMORY_MB before starting decompdecomp.")
+        return (f"Compiler or build process exceeded the {mb} MiB memory limit and was stopped. Reduce concurrency or "
+                "increase DECOMP_COMPILER_MEMORY_MB before starting decompdecomp.")

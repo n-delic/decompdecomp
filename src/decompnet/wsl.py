@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import json
 import os
 import posixpath
 import secrets
@@ -143,7 +144,8 @@ def prepare_tools(directories: tuple[Path, ...]) -> tuple[str, ...]:
     in Linux. Copying the toolchain too fixes that. The complete tree is published by rename, so parallel starts
     never see half a compiler; a fresh install gets a fresh cache without modifying another app's copy.
     """
-    digest = hashlib.sha256(b"tool-cache-v1")
+    helper = Path(__file__).with_name("linuxvm_worker.py")
+    digest = hashlib.sha256(b"tool-cache-v2" + helper.read_bytes())
     for directory in directories:
         digest.update(str(directory.resolve()).encode("utf-8"))
         digest.update((directory / ".decompnet-toolchain.json").read_bytes())
@@ -157,6 +159,9 @@ def prepare_tools(directories: tuple[Path, ...]) -> tuple[str, ...]:
                  f"  stage=$(mktemp -d {q(cache + '.XXXXXX')}) || exit 1",
                  "  trap 'rm -rf \"$stage\"' EXIT"]
         lines += [f'  cp -R {q(path(directory))} "$stage"/{q(directory.name)} || exit 1' for directory in directories]
+        if any(json.loads((directory / '.decompnet-toolchain.json').read_text()).get('archive_parts') for directory in directories):
+            runtime = 'runtime-i386' if any(directory.name == 'runtime-i386' for directory in directories) else ''
+            lines += [f'  python3 {q(path(helper))} hydrate "$stage" {q(cache)} {q(runtime)} || exit 1']
         lines += ['  touch "$stage/.ready" || exit 1',
                   f'  mv -T "$stage" {q(cache)} 2>/dev/null || [ -f {q(cache + "/.ready")} ] || exit 1', "fi"]
         with tempfile.TemporaryDirectory(prefix="decomp-wsl-tools-") as work:

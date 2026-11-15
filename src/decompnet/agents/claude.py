@@ -93,20 +93,36 @@ class ClaudeCode(Agent):
             return "Open a terminal and sign in with /login using: " + self.account_signin(options["account_dir"])
         return self.signin
 
+    def investigation_command(self, exe: str, prompt: str) -> list[str]:
+        return [exe, prompt]
+
     def session_command(self, exe: str, workdir: Path, mcp_url: str, token: str, model: str) -> tuple[list[str], dict]:
         cfg = workdir / "mcp.json"
         cfg.write_text(json.dumps({"mcpServers": {"decomp": {"type": "http", "url": mcp_url,
                                                               "headers": {"Authorization": f"Bearer {token}"}}}}),
                        encoding="utf-8")
-        cmd = [exe, "-p", "--output-format", "stream-json", "--verbose", "--mcp-config", str(cfg),
+        cmd = [exe, "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--mcp-config", str(cfg),
                "--strict-mcp-config", "--allowedTools", "mcp__decomp", "--disallowedTools", DISALLOWED]
         model, _, effort = (model or "").partition("#")
         env = {} if CACHE_TTL_ENV in os.environ else {CACHE_TTL_ENV: CACHE_TTL}
         return cmd + (["--model", model] if model else []) + (["--effort", effort] if effort else []), env
 
+    focus_resume = True
+
+    def focused_session_command(self, exe, workdir, mcp_url, token, model, conversation=None):
+        cmd, env = self.session_command(exe, workdir, mcp_url, token, model)
+        if conversation:
+            cmd += ['--resume', conversation]
+        return cmd, env
+
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")
         out: list[tuple[str, str] | None] = []
+        from .claude_usage import update
+        if usage_event := update(event,state):
+            out.append(usage_event)
+        if t == "system" and event.get("subtype") == "init" and event.get("session_id"):
+            out.append(("conversation", str(event["session_id"])))
         if t == "assistant" and isinstance(event.get("message"), dict):
             for c in event["message"].get("content", []):
                 if c.get("type") == "text" and c.get("text", "").strip():
@@ -116,19 +132,23 @@ class ClaudeCode(Agent):
                 elif c.get("type") == "tool_use" and c.get("name") != LOADS_TOOLS:
                     out.append(("tool", f"{tool_name(c.get('name', ''))}({args_brief(c.get('input'))})"))
         elif t == "result":  # the end of the session
+            if state.get('claude_result_seen'):
+                return out
+            state['claude_result_seen'] = True
             cost, turns = event.get("total_cost_usd"), event.get("num_turns")
             if event.get("is_error") or event.get("status") == "error":
                 out.append(("error", str(event.get("result") or event.get("error") or "session failed")[:SAID_CHARS]))
             else:
                 bits = [f"{turns} turns" if turns else "", f"${cost:.2f}" if isinstance(cost, (int, float)) else ""]
                 out.append(("info", "session finished" + (f" ({', '.join(b for b in bits if b)})" if any(bits) else "")))
-            # #45: a session can spend tokens before hitting its account limit; errors still report that usage.
+            # A failed session still consumed tokens and may report its final usage.
             usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
             stats = event.get("stats") if isinstance(event.get("stats"), dict) else {}
-            out.append(usage_item(usd=cost, input=number(usage, "input_tokens"), output=number(usage, "output_tokens"),
-                                  cache_read=number(usage, "cache_read_input_tokens"),
-                                  cache_write=number(usage, "cache_creation_input_tokens"),
-                                  tokens=0 if usage else number(stats, "total_tokens"), turns=turns))
+            final_counts = usage_item(usd=cost, tokens=0 if usage else max(0, number(stats, "total_tokens") - sum(state.get("usage_totals", {}).values())), turns=turns)
+            if usage_event and final_counts:
+                out[0] = ('usage', json.dumps({**json.loads(usage_event[1]), **json.loads(final_counts[1])}))
+            elif final_counts:
+                out.append(final_counts)
         return out
 
 

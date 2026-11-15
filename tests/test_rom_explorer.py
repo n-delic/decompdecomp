@@ -1,0 +1,435 @@
+"""Homemade images test byte coverage and evidence without commercial game inputs."""
+import hashlib
+import json
+import struct
+import threading
+import zlib
+
+import pytest
+
+from decompnet.app import rom_explorer
+from decompnet.app.engine import RomNetwork
+from decompnet.app.support import Jobs
+from decompnet.network import NetworkError
+from decompnet.rom.explorer import DECODE_BYTES, PAGE_BYTES, analyse
+
+
+def mapping(name='main',start=0,end=128,vram=0x80000000):
+    return dict(name=name,rom_start=start,rom_end=end,vram=vram)
+
+
+def function(name='reader',offset=0,vram=0x80000000,relocs=()):
+    return dict(name=name,rom_offset=offset,vram=vram,size=8,unit='main',relocs=list(relocs))
+
+
+def test_every_byte_is_covered_once_even_with_overlaps_and_unmapped_gaps():
+    image=bytes(PAGE_BYTES*2+13)
+    report=analyse(image,[mapping(end=64),mapping('other',32,96)],
+                   [function(),function('overlap',4,0x80000004)],
+                   [dict(name='label',address=0x80000020,size=16,kind='data')])
+    rows=report['regions']
+    assert rows[0]['start']==0 and rows[-1]['end']==len(image)
+    assert all(a['end']==b['start'] for a,b in zip(rows,rows[1:]))
+    assert sum(r['size'] for r in rows)==len(image)==sum(report['totals'].values())
+    assert any(len(r['functions'])==2 for r in rows)
+    assert any(not r['mappings'] for r in rows)
+
+
+def test_references_cover_symbol_interiors_and_preserve_overlay_ambiguity():
+    segs=[mapping('a',0,64),mapping('b',64,128),mapping('shared',128,192,0x90000000)]
+    funcs=[function('local',0,relocs=[(4,5,0x80000024)]),function('outside',128,0x90000000,[(4,5,0x80000024)])]
+    report=analyse(bytes(192),segs,funcs,[dict(name='table',address=0x80000020,size=16,kind='data')])
+    refs=[(r,ref) for r in report['regions'] for ref in r['references']]
+    local=[(r,v) for r,v in refs if v['function']=='local']
+    outside=[v for r,v in refs if v['function']=='outside']
+    assert len(local)==1 and local[0][1]['offset']==0x24 and local[0][1]['instruction']==0x80000004
+    assert local[0][1]['confidence']=='recorded'
+    assert len(outside)==2 and all(v['confidence']=='tentative' for v in outside)
+    assert all(s['ambiguous'] for r in report['regions'] for s in r['symbols'])
+
+
+def test_compressed_stream_crosses_page_boundary_and_only_validated_extent_is_counted():
+    stream=zlib.compress(b'hello world'*100)
+    offset=PAGE_BYTES-1
+    image=b'\0'*offset+stream+b'\0'*123
+    result=analyse(image,[],[],[])
+    rows=[r for r in result['regions'] if r['confidence']=='validated']
+    assert rows and sum(r['size'] for r in rows)==len(stream)
+    assert rows[0]['start']==offset
+    assert rows[-1]['end']==offset+len(stream)
+    assert all(r['evidence'][0]['expanded_size']==1100 for r in rows)
+    assert all(r['kind']=='compressed' for r in rows)
+
+
+def test_bombs_and_broken_headers_never_become_validated_assets():
+    image=zlib.compress(bytes(DECODE_BYTES+1))+b'Yaz0'+bytes(30)+b'\x78\x9cgarbage'
+    result=analyse(image,[],[],[])
+    assert not any(r['confidence']=='validated' for r in result['regions'])
+    assert any(e['label']=='Yaz0' for r in result['regions'] for e in r['evidence'])
+    assert all(r['confidence']!='recorded' for r in result['regions'])
+
+
+@pytest.mark.parametrize('big_endian',[True,False])
+def test_pointer_table_chains_are_sampled_leads_in_both_byte_orders(big_endian):
+    image=struct.pack('>8I' if big_endian else '<8I',*([0x80000030]*8))+bytes(96)
+    result=analyse(image,[mapping()],[],[],big_endian=big_endian)
+    row=result['regions'][0]
+    assert row['pointers'][0]['destinations'][0]['rom']==48
+    assert all(e['confidence']=='tentative' for e in row['evidence'])
+
+
+def test_invalid_mapping_and_cooperative_stop():
+    with pytest.raises(ValueError,match='segment'):analyse(b'a',[mapping()],[],[])
+    def stopped():raise RuntimeError('stopped')
+    with pytest.raises(RuntimeError,match='stopped'):analyse(bytes(PAGE_BYTES*2),[],[],[],check=stopped)
+
+
+class Log:
+    def __init__(self):self.updates=[]
+    def __call__(self,line):pass
+    def progress(self,value):self.updates.append(value)
+    def check_cancel(self):pass
+
+
+@pytest.fixture
+def project(tmp_path):
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    image=bytes(8)+b'hello world\0'+bytes(108)
+    (tmp_path/'game.rom').write_bytes(image)
+    cfg=dict(kind='rom',platform='n64',rom=dict(file='game.rom',sha1=hashlib.sha1(image).hexdigest()),segments=[mapping()],compiler={'toolchain':'gcc-2.7.2-kmc','flags':[]})
+    with net.store.tx() as db:
+        pid=db.execute('INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)',('game','game','mips',1,str(tmp_path),json.dumps(cfg))).lastrowid
+        db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs,vram,rom_offset,unit) VALUES(?,?,?,?,?,?,?,?,?)',
+                   (pid,'reader',8,2,bytes(8),json.dumps([[4,5,0x80000008]]),0x80000000,0,'main'))
+        db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',(pid,'message',0x80000008,12,'string'))
+    yield net,pid,tmp_path
+    if hasattr(net,'autosave'):net.autosave.close()
+
+
+def test_saved_map_preview_annotations_staleness_and_no_progress_side_effects(project,monkeypatch):
+    net,pid,root=project
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**k:pytest.fail('Explorer must not synchronize or judge saved work'))
+    before=[tuple(r) for r in net.store.all('SELECT * FROM functions')]
+    rom_explorer.run(net,'game',Log())
+    with net.progress.view():
+        report=rom_explorer.listing(net,'game')
+        assert report['available'] and not report['stale']
+        row=next(r for r in report['regions'] if r['kind']=='strings')
+        assert row['used_by']==1 and row['function_refs']==['reader']
+        packet=dict(region=row['id'],image_hash=report['image_hash'],name='Greeting',notes='Read by the reader.',kind='3d model')
+        rom_explorer.annotate(net,'game',packet)
+        assert 'hello world' in rom_explorer.detail(net,'game',row['id'],report['image_hash'])['preview']
+        rom_explorer.run(net,'game',Log())
+        assert next(r for r in rom_explorer.listing(net,'game')['regions'] if r['id']==row['id'])['annotation']['name']=='Greeting'
+        assert rom_explorer.detail(net,'game',row['id'],report['image_hash'])['annotation']['kind']=='3d model'
+        # Bookkeeping and compiler changes do not invalidate the byte map.
+        proj=net.project_row('game');cfg=dict(net.cfg(proj));cfg['progress_revision']='new';cfg['compiler']={'toolchain':'other'}
+        with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
+        assert not rom_explorer.listing(net,'game')['stale']
+        (root/'game.rom').write_bytes(bytes(128))
+        assert rom_explorer.listing(net,'game')['stale']
+        with pytest.raises(NetworkError,match='changed'):rom_explorer.annotate(net,'game',packet)
+    assert [tuple(r) for r in net.store.all('SELECT * FROM functions')]==before
+
+
+def test_cancelled_rescan_retains_complete_map_and_notes(project):
+    net,pid,root=project
+    rom_explorer.run(net,'game',Log())
+    with net.progress.view():before=rom_explorer.listing(net,'game')
+    log=Log()
+    def stop():raise RuntimeError('stopped')
+    log.check_cancel=stop
+    with pytest.raises(RuntimeError,match='stopped'):rom_explorer.run(net,'game',log)
+    with net.progress.view():assert rom_explorer.listing(net,'game')==before
+
+
+def test_status_is_scoped_and_never_loads_large_report(project,monkeypatch):
+    net,pid,root=project;jobs=Jobs()
+    jobs.jobs={'a':dict(id='a',kind='rom-explorer',activity_project='other',state='running'),
+               'b':dict(id='b',kind='rom-explorer',activity_project='game',state='running')}
+    monkeypatch.setattr(rom_explorer,'_read',lambda *a:pytest.fail('status loaded report'))
+    with net.progress.view():assert rom_explorer.status(net,'game',jobs)['job']['id']=='b'
+
+
+def test_routes_guard_start_deduplicate_and_reattach(project,monkeypatch):
+    from starlette.testclient import TestClient
+
+    from decompnet.app.server import build
+
+    from .test_app_server import PORT, SECRET, WINDOW
+    net,pid,root=project
+    started,release=threading.Event(),threading.Event()
+    def scan(*args):started.set();release.wait(5);return {'size':128}
+    monkeypatch.setattr(rom_explorer,'run',scan)
+    with net.progress.view():mcp,manager,security,_=build(net,root/'.decomp',PORT,SECRET)
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**kw:pytest.fail('Explorer route synchronized the project'))
+    client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),base_url=f'http://127.0.0.1:{PORT}',headers=WINDOW)
+    try:
+        assert client.get('/api/rom-explorer?slug=game',headers={'User-Agent':'outside'}).status_code==401
+        assert client.post('/api/rom-explorer',json={'slug':'game'}).status_code==403
+        first=client.post('/api/rom-explorer',json={'slug':'game'},headers={'X-Decomp':'1'})
+        assert first.status_code==200,first.text
+        assert started.wait(2)
+        again=client.post('/api/rom-explorer',json={'slug':'game'},headers={'X-Decomp':'1'})
+        assert again.json()['job']==first.json()['job']
+        status=client.get('/api/rom-explorer?slug=game&view=status').json()
+        assert status['job']['id']==first.json()['job'] and status['job']['state']=='running'
+    finally:release.set()
+
+
+def test_bss_is_runtime_only_and_never_adds_rom_bytes():
+    report=analyse(bytes(128),[mapping()],
+                   [function(relocs=[(4,5,0x90000004)])],
+                   [dict(name='scratch',address=0x90000000,size=32,kind='bss')])
+    assert sum(report['totals'].values())==128
+    assert report['runtime_symbols'][0]['references']==[dict(function='reader',instruction=0x80000004,target=0x90000004)]
+    assert not any(r['symbols'] for r in report['regions'])
+
+
+def test_flattened_program_hash_is_not_mistaken_for_analysis_hash(project):
+    net,pid,root=project
+    with net.progress.view():
+        proj=net.project_row('game');cfg=dict(net.cfg(proj))
+        cfg['rom']=dict(cfg['rom'],program='program.elf',sha1='program-hash',analysis_sha1=hashlib.sha1((root/'game.rom').read_bytes()).hexdigest())
+        with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
+        rom_explorer.run(net,'game',Log())
+        report=rom_explorer.listing(net,'game')
+        assert report['derived'] and 'not physical-media offsets' in report['note']
+        assert report['image_hash']==hashlib.sha256((root/'game.rom').read_bytes()).hexdigest()
+
+
+def test_hostile_header_density_is_bounded_but_byte_coverage_remains_complete(monkeypatch):
+    from decompnet.rom import explorer
+    monkeypatch.setattr(explorer,'MAX_FORMAT_CLUES',8)
+    report=analyse(b'Yaz0'*100,[],[],[])
+    assert report['format_limit'] and 'limit reached' in report['note']
+    assert sum(r['size'] for r in report['regions'])==400
+    assert len(report['regions'])<20
+
+
+def test_rejected_and_unverified_compression_headers_do_not_classify_bytes(monkeypatch):
+    import decompnet.rom.explorer as module
+    bad=b'\x78\x9cgarbage'+b'\x1f\x8b\x08'+bytes(20)
+    report=analyse(bad,[],[],[])
+    assert not any(row['kind']=='compressed' for row in report['regions'])
+    assert any(e['confidence']=='rejected' for row in report['regions'] for e in row['evidence'])
+    monkeypatch.setattr(module,'MAX_DECODE_PROBES',0)
+    report=analyse(zlib.compress(b'valid but unprobed'),[],[],[])
+    assert not any(row['kind']=='compressed' for row in report['regions'])
+    assert any('budget' in e['reason'] for row in report['regions'] for e in row['evidence'])
+
+
+def test_native_resources_do_not_consume_the_generic_signature_budget(monkeypatch):
+    import decompnet.rom.explorer as module
+    monkeypatch.setattr(module,'MAX_FORMAT_CLUES',1)
+    image=bytes(32)+zlib.compress(b'genuine compressed payload')
+    asset=dict(offset=0,size=8,kind='data',label='Native record',confidence='validated')
+    report=analyse(image,[],[],[],assets=[asset])
+    assert any(r['kind']=='compressed' and r['confidence']=='validated' for r in report['regions'])
+
+
+def _zip_image(files, *, before=1000, after=500):
+    import io
+    import zipfile
+    buffer=io.BytesIO()
+    with zipfile.ZipFile(buffer,'w') as archive:
+        for name,data,method in files:archive.writestr(name,data,compress_type=method)
+    return b'\xff'*before+buffer.getvalue()+bytes(after)
+
+
+def test_zip_members_are_named_by_their_path_and_validated_by_checksum():
+    import zipfile
+    stage=bytes(range(256))*300
+    image=_zip_image([('Stages/',b'',zipfile.ZIP_STORED),('Stages/stage1.V3S',stage,zipfile.ZIP_DEFLATED),
+                      ('scripts/start.ini',b'[race]\nlaps=3\n',zipfile.ZIP_STORED)])
+    rows=analyse(image,[],[],[])['regions']
+    named={r['archive_path']:r for r in rows if r['archive_path']}
+    assert set(named)=={'Stages/','Stages/stage1.V3S','scripts/start.ini'}
+    assert named['Stages/']['kind']=='container'
+    # Every archive byte is named: the folder, both files and the central directory with its end record.
+    archive=[r for r in rows if 1000<=r['start']<len(image)-500]
+    assert archive and all(r['kind']!='unknown' for r in archive)
+    assert any(e['label']=='ZIP central directory (3 entries)' for r in archive for e in r['evidence'])
+    assert named['Stages/stage1.V3S']['kind']=='compressed' and named['Stages/stage1.V3S']['confidence']=='validated'
+    assert named['scripts/start.ini']['kind']=='data' and named['scripts/start.ini']['confidence']=='validated'
+    member=next(e for e in named['Stages/stage1.V3S']['evidence'] if e.get('archive_path'))
+    assert member['label']=='ZIP member: Stages/stage1.V3S' and member['expanded_size']==len(stage)
+    assert image[named['Stages/stage1.V3S']['start']:][:4]==b'PK\x03\x04'  # the span starts at the local header
+
+
+def test_damaged_or_unexpanded_zip_members_are_not_validated(monkeypatch):
+    import zipfile
+
+    import decompnet.rom.explorer as module
+    image=bytearray(_zip_image([('demo.dmo',b'recorded inputs '*8,zipfile.ZIP_STORED)]))
+    image[image.index(b'recorded inputs')]^=0xff  # the payload no longer matches its checksum
+    rows=analyse(bytes(image),[],[],[])['regions']
+    assert not any(r['archive_path'] for r in rows)
+    assert any(e.get('archive_path')=='demo.dmo' and e['confidence']=='rejected' for r in rows for e in r['evidence'])
+    monkeypatch.setattr(module,'MAX_ARCHIVE_EXPANSION',0)
+    rows=analyse(_zip_image([('demo.dmo',b'recorded inputs '*8,zipfile.ZIP_STORED)]),[],[],[])['regions']
+    assert [r['confidence'] for r in rows if r['archive_path']]==['tentative']
+
+
+@pytest.fixture
+def fork(tmp_path):
+    """A forked splat decomp with the user's game in it: no ROM path, segments or function offsets in its config."""
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    root=tmp_path/'decomp';root.mkdir()
+    image=bytes(0x1000)+bytes(8)+b'hello world\0'+bytes(0x200)
+    (root/'game.z64').write_bytes(image)
+    (root/'other.z64').write_bytes(bytes(64))                      # never chosen: its hash isn't the game's
+    (root/'game.yaml').write_text('options:\n  target_path: game.z64\n  base_path: .\nsegments:\n'
+                                  '  - {name: main, type: code, start: 0x1000, vram: 0x80000400}\n  - [0x1100]\n')
+    cfg=dict(kind='fork',platform='n64',fork_kind='splat',game_sha1=hashlib.sha1(image).hexdigest())
+    with net.store.tx() as db:
+        pid=db.execute('INSERT INTO projects(slug,name,arch,root,config) VALUES(?,?,?,?,?)',('game','game','',str(root),json.dumps(cfg))).lastrowid
+    yield net,pid,root
+    if hasattr(net,'autosave'):net.autosave.close()
+
+
+def test_a_forked_decomp_explores_the_users_own_game(fork):
+    net,pid,root=fork
+    jobs=Jobs()
+    with net.progress.view():
+        assert rom_explorer.status(net,'game',jobs)['supported']
+        rom_explorer.run(net,'game',Log())
+        report=rom_explorer.listing(net,'game')
+    assert report['available'] and not report['stale'] and report['image_name']=='game.z64' and not report['derived']
+    text=next(r for r in report['regions'] if r['kind']=='strings')
+    assert text['mappings']==[dict(segment='main',address=0x80000400+text['start']-0x1000)]
+    # The fork's own work (functions without ROM offsets) never makes the map stale.
+    with net.project_store(pid).tx() as db:
+        db.execute('INSERT INTO functions(project_id,name,size,n_insns,target,relocs) VALUES(?,?,?,?,?,?)',(pid,'func_80000400',8,2,bytes(8),'[]'))
+    with net.progress.view():
+        assert not rom_explorer.listing(net,'game')['stale']
+        assert 'hello wo' in rom_explorer.detail(net,'game',text['id'],report['image_hash'])['preview']
+
+
+def test_a_fork_config_that_splits_another_image_maps_no_segments(fork):
+    net,pid,root=fork
+    (root/'game.yaml').write_text('options:\n  target_path: decompressed.z64\nsegments:\n'
+                                  '  - {name: main, type: code, start: 0x1000, vram: 0x80000400}\n  - [0x1100]\n')
+    with net.progress.view():
+        rom_explorer.run(net,'game',Log())
+        assert all(not r['mappings'] for r in rom_explorer.listing(net,'game')['regions'])
+
+
+def test_a_fork_config_with_an_empty_code_segment_still_explores(fork):
+    """An overlay whose next segment starts where it does maps nothing, and doesn't stop the scan."""
+    net,pid,root=fork
+    (root/'game.yaml').write_text('options:\n  target_path: game.z64\nsegments:\n'
+                                  '  - {name: main, type: code, start: 0x1000, vram: 0x80000400}\n'
+                                  '  - {name: empty, type: code, start: 0x1100, vram: 0x80100000}\n  - [0x1100]\n')
+    with net.progress.view():
+        rom_explorer.run(net,'game',Log())
+        mapped={m['segment'] for r in rom_explorer.listing(net,'game')['regions'] for m in r['mappings']}
+    assert mapped=={'main'}
+
+
+def test_a_fork_without_the_recorded_game_is_explained(fork):
+    net,pid,root=fork
+    (root/'game.z64').write_bytes(bytes(0x1300))
+    with net.progress.view():
+        assert not rom_explorer.status(net,'game',Jobs())['supported']
+        with pytest.raises(NetworkError,match='SHA-1 recorded'):rom_explorer.run(net,'game',Log())
+
+
+def test_a_fork_shows_the_images_its_splat_config_declares(tmp_path):
+    """Image segments of the config that splits the game become texture assets: raw, packed and with a palette."""
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    root=tmp_path/'decomp';root.mkdir()
+    texels=bytes(range(16))
+    packed=b'MIO0'+(16).to_bytes(4,'big')+(20).to_bytes(4,'big')+(20).to_bytes(4,'big')+b'\xff\xff\x00\x00'+texels
+    image=bytearray(0x800)
+    image[0x200:0x210]=bytes.fromhex('f801')*8                     # RGBA16 4×2, red
+    image[0x300:0x300+len(packed)]=packed                          # I8 4×4 in a MIO0 block
+    image[0x400:0x408]=bytes([0x01]*8)                             # CI4 4×4
+    image[0x500:0x520]=bytes.fromhex('0000')+bytes.fromhex('07c1')*15
+    (root/'game.z64').write_bytes(bytes(image))
+    (root/'game.yaml').write_text('options:\n  target_path: game.z64\nsegments:\n'
+                                  '  - name: assets\n    type: bin\n    start: 0x200\n    subsegments:\n'
+                                  '      - [0x200, rgba16, red, 4, 2]\n      - [0x210]\n'
+                                  '      - [0x300, mio0_image, grey, i8, 4, 4]\n      - [0x340]\n'
+                                  '      - [0x400, ci4, green, 4, 4]\n      - [0x408]\n'
+                                  '      - [0x500, palette, green]\n      - [0x520]\n'
+                                  '      - [0x600, ci8, orphan, 4, 4]\n'
+                                  '  - [0x800]\n')
+    cfg=dict(kind='fork',platform='n64',fork_kind='splat',game_sha1=hashlib.sha1(bytes(image)).hexdigest())
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,arch,root,config) VALUES(?,?,?,?,?)',('game','game','',str(root),json.dumps(cfg)))
+    try:
+        with net.progress.view():
+            rom_explorer.run(net,'game',Log())
+            report=rom_explorer.listing(net,'game')
+            declared={r['detected_asset']['resource_path']:r for r in report['regions']
+                      if (r.get('detected_asset') or {}).get('provider')=='splat-config'}
+            assert set(declared)=={'red','grey','green'}                # a CI8 without a palette is left out
+            assert declared['grey']['detected_asset']['packed']
+            shown={name:rom_explorer.asset_preview(net,'game',dict(region=row['id'],image_hash=report['image_hash'],options={}))
+                   for name,row in declared.items()}
+        assert (shown['red']['details']['width'],shown['red']['details']['height'])==(4,2)
+        assert shown['grey']['decoded']['codec']=='MIO0' and shown['grey']['details']['height']==4
+        assert shown['green']['details']['palette']==0
+    finally:
+        if hasattr(net,'autosave'):net.autosave.close()
+
+
+def test_a_fork_shows_the_images_its_json_asset_list_declares(tmp_path):
+    """An assets.json in the style of the first 3D platformer's decompilation: formats in the paths, dims, palettes."""
+    from decompnet.rom import config_images
+    root=tmp_path/'decomp';root.mkdir()
+    listing={'assets/textures/red.rgba16.png':{'meta':{'dims':[4,2]},'offsets':{'us':['0x200','0x0'],'jp':['0x300','0x0']}},
+             'assets/textures/pal.rgba16.png':{'meta':{'dims':[4,4]},'offsets':{'us':['0x500','0x0']}},
+             'assets/textures/green.ci4.png':{'meta':{'dims':[4,4],'pal':['assets/textures/pal.rgba16.png']},'offsets':{'us':['0x400','0x0']}},
+             'assets/textures/lost.ci4.png':{'meta':{'dims':[4,4],'pal':['assets/textures/missing.rgba16.png']},'offsets':{'us':['0x400','0x0']}},
+             'bin/code.bin':{'meta':{'size':'0x80'},'offsets':{'us':['0x0','0x0']}}}
+    (root/'assets.json').write_text(json.dumps(listing))
+    found={i['name']:i for i in config_images.asset_list_images(root,'us')}
+    assert set(found)=={'textures/red.rgba16.png','textures/pal.rgba16.png','textures/green.ci4.png'}
+    assert found['textures/green.ci4.png']['palette']==0x500 and found['textures/red.rgba16.png']['offset']==0x200
+    assert [(i['name'],i['offset']) for i in config_images.asset_list_images(root,'jp')]==[('textures/red.rgba16.png',0x300)]
+    assert config_images.asset_list_images(root,None)==[]                 # two releases listed, none chosen
+    image=bytearray(0x800);image[0x200:0x210]=bytes.fromhex('f801')*8
+    assets=config_images.regions(bytes(image),list(found.values()),'x')
+    red=next(a for a in assets if a['resource_path']=='textures/red.rgba16.png')
+    shown=config_images.preview(bytes(image),red,{})
+    assert (shown['details']['width'],shown['details']['height'])==(4,2) and 'asset list' in red['reason']
+
+
+def test_a_fork_shows_the_sno_texture_sheets_its_splat_config_declares():
+    """A project's own sprite_sheet segment: sno-packed, found only by the start and size the config gives."""
+    import struct
+
+    from decompnet.rom import config_images
+    palette=bytes.fromhex('f801')+bytes.fromhex('07c1')*15
+    base=8+16+len(palette)
+    sheet=struct.pack('>II',0,1)+struct.pack('>I6H',base,0,4,2,0,0,0)+palette+bytes([0x01,0x10]*2)
+    packed=b''.join(bytes([0,value]) for value in sheet)
+    image=bytearray(0x400);image[0x100:0x100+len(packed)]=packed
+    config={'segments':[{'name':'menu','type':'sprite_sheet','start':0x100,'decompressed_size':len(sheet)},
+                        {'name':'broken','type':'sprite_sheet','start':0x300,'decompressed_size':len(sheet)},[0x380]]}
+    declared=config_images.sheets(config)
+    assert [s['name'] for s in declared]==['menu','broken']
+    assets=config_images.sheet_regions(bytes(image),declared,'x')
+    assert [a['resource_path'] for a in assets]==['menu']                 # zeros don't unpack to a sheet
+    shown=config_images.preview(bytes(image),assets[0],{})
+    assert shown['decoded']['codec']=='sno' and (shown['details']['width'],shown['details']['height'])==(4,2)
+
+
+def test_a_fork_with_one_config_per_release_reads_the_one_that_splits_its_game(tmp_path):
+    """config/<release>/ layouts: another release's config comes first, the game's own is the one read."""
+    from decompnet.forks.project import ForkProject
+    from decompnet.rom import config_images
+    root=tmp_path/'decomp';(root/'config'/'eur').mkdir(parents=True);(root/'config'/'aaa').mkdir()
+    image=bytearray(0x400);image[0x210:0x220]=bytes.fromhex('f801')*8
+    (root/'config'/'eur'/'baserom.eur.z64').write_bytes(bytes(image))
+    (root/'config'/'aaa'/'game.aaa.yaml').write_text('options:\n  target_path: config/aaa/baserom.aaa.z64\n  base_path: ../../\nsegments:\n  - [0x0]\n')
+    (root/'config'/'eur'/'game.eur.yaml').write_text(
+        'options:\n  target_path: config/eur/baserom.eur.z64\n  base_path: ../../\nsegments:\n'
+        '  - type: group\n    name: art\n    start: 0x200\n    subsegments:\n'
+        '      - [auto, rgba16, first, 4, 2]\n      - { start: auto, type: rgba16, name: second, width: 4, height: 2 }\n'
+        '  - [0x400]\n')
+    config=ForkProject(root,create_state=False).splat_config_for(root/'config'/'eur'/'baserom.eur.z64',None)
+    assert config and config['options']['target_path']=='config/eur/baserom.eur.z64'
+    assert [(i['name'],i['offset']) for i in config_images.images(config)]==[('first',0x200),('second',0x210)]

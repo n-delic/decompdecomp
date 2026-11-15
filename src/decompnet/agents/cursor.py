@@ -17,6 +17,61 @@ from pathlib import Path
 
 from . import SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool_name, usage_item
 
+SHARED = '.cursor-shared'  # beside the helpers' folders: one copy of the CLI's self-updates for all of them
+KEEP_VERSIONS = 2
+KEEP_CHATS = 3
+
+
+def installed_root(exe) -> Path | None:
+    """The user's own install that `exe` runs from: ~/.local/bin/cursor-agent links to
+    <root>/versions/<version>/cursor-agent. None for any other layout."""
+    try:
+        program = Path(exe).resolve()
+    except (OSError, TypeError):
+        return None
+    root = program.parent.parent.parent
+    if program.parent.parent.name == 'versions' and root.name == 'cursor-agent' and root.is_dir():
+        return root
+    return None
+
+
+def share_updates(home: Path, shared: Path) -> None:
+    """The CLI looks for its install, and updates itself, under HOME/.local/share/cursor-agent. With a private HOME
+    per helper, every helper downloaded its own copy of a CLI already installed (~600 MB each; 245 helper folders took
+    5.4 GB). Helpers link there to the user's own install (`installed_root`: an update a helper makes is the one the
+    user's CLI would make itself), else to one folder shared by all helpers. A helper's old copy is replaced."""
+    own = shared.name == 'cursor-agent' and (shared / 'versions').is_dir()
+    target = shared if own else shared / 'cursor-agent'
+    target.mkdir(parents=True, exist_ok=True)
+    link = home / '.local/share/cursor-agent'
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        if link.resolve() == target.resolve():
+            return
+        link.unlink()
+    elif link.exists():
+        shutil.rmtree(link, ignore_errors=True)
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:  # (Windows without symlink rights: a private copy, as before)
+        return
+    versions = target / 'versions'
+    if not own and versions.is_dir():  # the user's install cleans up its own versions
+        old = sorted((v for v in versions.iterdir() if v.is_dir()), key=lambda v: v.stat().st_mtime, reverse=True)
+        for version in old[KEEP_VERSIONS:]:
+            shutil.rmtree(version, ignore_errors=True)
+
+
+def prune_chats(chats: Path) -> None:
+    """Each run is a new headless session that is never resumed, yet the CLI keeps every transcript (up to ~470 MB
+    per helper): keep the latest few for diagnosis."""
+    if not chats.is_dir():
+        return
+    for workspace in (w for w in chats.iterdir() if w.is_dir()):  # chats/<workspace hash>/<chat id>/
+        entries = sorted((c for c in workspace.iterdir() if c.is_dir()), key=lambda c: c.stat().st_mtime, reverse=True)
+        for entry in entries[KEEP_CHATS:]:
+            shutil.rmtree(entry, ignore_errors=True)
+
 
 def config_home() -> Path:
     return Path(os.environ.get('CURSOR_CONFIG_DIR') or
@@ -25,8 +80,8 @@ def config_home() -> Path:
 
 
 class Cursor(Agent):
-    id = 'cursor'
-    aliases = ('cursor-cli',)
+    id = 'cursor-cli'
+    aliases = ('cursor',)  # Stored by earlier app versions; keep saved agents usable.
     name = 'Cursor Agent'
 
     @property
@@ -60,6 +115,8 @@ class Cursor(Agent):
         private = home / '.cursor'
         private.mkdir(parents=True, exist_ok=True, mode=0o700)
         home.chmod(0o700)
+        share_updates(home, installed_root(exe) or workdir.parent / SHARED)
+        prune_chats(private / 'chats')
         # Only login material is carried over, never global rules, plugins or MCP servers.
         login_files = [(Path.home() / relative, relative) for relative in [
                          '.cursor/auth.json', '.cursor-agent/auth.json', '.config/cursor/auth.json',
@@ -77,7 +134,7 @@ class Cursor(Agent):
         settings = {'version': 1, 'editor': {'vimMode': False}, 'approvalMode': 'allowlist',
                     'permissions': {'allow': ['Mcp(decomp:*)'],
                                     'deny': ['Shell(*)', 'Read(**)', 'Read(/**)', 'Write(**)', 'Write(/**)',
-                                             'WebFetch(*)', 'WebSearch(*)']}, 'notifications': False}
+                                             'WebFetch(*)']}, 'notifications': False}
         network = read_json(config_home() / 'cli-config.json').get('network')
         if isinstance(network, dict):
             settings['network'] = {k: v for k, v in network.items() if k == 'useHttp1ForAgent' and isinstance(v, bool)}
@@ -108,7 +165,10 @@ class Cursor(Agent):
         return cmd, env
 
     def fatal(self, error):
-        return bool(re.search(r"invalid model|unknown model|unknown option|couldn't access the keychain", error, re.I))
+        return bool(re.search(r"authentication required|not authenticated|invalid model|unknown model|unknown option|couldn't access.*keychain", error, re.I))
+
+    def investigation_command(self, exe, prompt):
+        return [exe, prompt]
 
     def parse(self, event, state):
         kind = event.get('type')

@@ -24,6 +24,7 @@ The prompt goes in on stdin, never on the command line: no length limit, and not
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import json
 import logging
@@ -35,6 +36,8 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -43,8 +46,16 @@ from decompnet.hostenv import NO_WINDOW
 
 from .. import agents, consoles, network
 from ..network import NetworkError
-from . import tools
+from . import agent_startup, tools
 from .engine import RomNetwork
+
+start_progress = ContextVar('agent-start-progress', default=None)
+
+
+def report_start(message):
+    if (report := start_progress.get()) is not None:
+        report(message)
+
 
 log = logging.getLogger("decompdecomp")
 _windows_jobs: dict[int, object] = {}
@@ -64,6 +75,27 @@ class Fatal(RuntimeError):
     """A helper can't work until the user changes something: it pauses with this, instead of trying again."""
 
 
+class StartupMetadataPending(RuntimeError):
+    """Local derived metadata is in flight; no model process has been launched."""
+
+
+class ToolConnectionUnavailable(RuntimeError):
+    """A recoverable tool connection failure; a CLI handshake retry may require a model request."""
+
+
+def connection_failure(error, token):
+    """Exception groups often hide the transport error; retain bounded, redacted leaf diagnostics."""
+    children = getattr(error, 'exceptions', None)
+    if children:
+        return '; '.join(connection_failure(child, token) for child in children[:4])[:600]
+    return (type(error).__name__+': '+(str(error) or 'no additional message')).replace(token, '[redacted]')[:600]
+
+
+def resumable(s):
+    return (s.state == 'stopped' and s.stopped_by == BY_QUIT or
+            s.state == 'paused' and s.why.startswith("The app's tool connection is unavailable."))
+
+
 # An agent's error that's about signing in or keys: then the pause says how to sign in
 _SIGNIN = re.compile(r"auth|log ?in|sign(ed)? ?in|credential|api.?key|unauthori[sz]ed|\b401\b|\b403\b", re.I)
 
@@ -71,6 +103,10 @@ _SIGNIN = re.compile(r"auth|log ?in|sign(ed)? ?in|credential|api.?key|unauthori[
 # diffs would otherwise ride along into the next one), but pays for its system prompt, tools and guides again:
 # with 2 per session that was most of what small functions cost.
 PER_SESSION = 8
+# Tasks that are not matching functions: polishing, boundary reviews, asset discovery, the game's data as C
+NOT_MATCHING = frozenset({"readable", "boundary", "assets", "data", "port"})
+STARTUP_FACTS_CHARS = 1800
+STARTUP_BRIEF_CHARS = 6000
 MAX_AT_ONCE = 8  # helpers started with one click
 MAX_PER_START = 24  # helpers one start may begin in total, across the models it picks: without it, many models at once
                     # would launch hundreds (a start used to check only each endpoint's own max_sessions)
@@ -135,7 +171,9 @@ SCHEMA = (
       cache_write_tokens INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0,
       turns INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0, compiles INTEGER NOT NULL DEFAULT 0,
       matches INTEGER NOT NULL DEFAULT 0, task TEXT NOT NULL DEFAULT '')""",
+    "CREATE INDEX IF NOT EXISTS idx_helper_sessions_handoff ON helper_sessions(helper_id,project,id)",
     "CREATE INDEX IF NOT EXISTS idx_helper_sessions_model ON helper_sessions(project, model)",
+    "CREATE INDEX IF NOT EXISTS idx_helper_sessions_worker ON helper_sessions(helper_id,agent,ended_at)",
 )
 TOKEN_KINDS = ("input", "output", "cache_read", "cache_write")  # what agents report, as `usage` items say it
 # A model spinning on a project: in the last SPIN_WINDOW its helpers compiled at least SPIN_COMPILES times, and either
@@ -155,7 +193,7 @@ SPIN_MATCHES = 3
 _SIGNED_OUT = re.compile(r"not logged in|run /login|use /login|run ['\"]?(?:agent|kimi) login|no model configured|"
                          r"no api key found|incorrect api key|"
                          r"authentication required|invalid api key|not authenticated|please (?:log|sign) ?in|"
-                         r"auth(?:entication)? method", re.I)
+                         r"auth(?:entication)? (?:method|required)", re.I)
 # and when its sign-in stopped working (Claude Code, exit code 1 at once, nothing done: "Failed to authenticate: OAuth
 # session expired and could not be refreshed", its message marked "error": "authentication_failed"). Read as a plain
 # failure, it went by unnoticed in a long session: two helpers retried after 10, 19, 39 and 76 s with no state saying
@@ -163,16 +201,19 @@ _SIGNED_OUT = re.compile(r"not logged in|run /login|use /login|run ['\"]?(?:agen
 # more times, then the helper asks for a new sign-in.
 AUTH_FAILED = re.compile(r"failed to authenticate|oauth (?:session|token)[^.\n]{0,40}(?:expired|revoked|invalid)|"
                          r"authentication_(?:failed|error)|could not be refreshed|\b401\b[^\n]{0,80}unauthori[sz]ed|"
-                         r"token (?:has )?expired", re.I)
+                         r"token (?:has )?expired|authorization grant[^.\n]{0,40}(?:invalid|revoked|expired)|\binvalid_grant\b", re.I)
 AUTH_RETRIES = 3  # failed sign-ins in a row before the helper pauses and asks for a new one
 AUTH_WAIT = 60  # seconds before the first try again, doubling
 # what a model's provider says when the account has no credit left (DeepSeek: "Insufficient Balance", OpenAI:
 # "insufficient_quota", Anthropic: "credit balance is too low", OpenCode: "quota exceeded"): trying again can't help
 # until it's topped up
 _NO_CREDIT = re.compile(r"insufficient[ _](?:balance|credits?|funds|quota)|exceeded your current quota|"
-                        r"credit balance is too low|payment required|out of credits?", re.I)
+                        r"credit balance is too low|payment required|out of credits?|requires usage credits", re.I)
 # and when it's asked too much at once (HTTP 429): it works again in a while
 THROTTLED = re.compile(r"too many requests|rate[ _-]?limit|concurrency[ _-]?limit|\b429\b|overloaded", re.I)
+# A remote model-capacity refusal is not a failed local MCP handshake.
+PROVIDER_CAPACITY = re.compile(r"\bUNAVAILABLE\s*\(\s*code\s+503\b|\bno capacity available for model\b|"
+                               r"\bUpstream request failed: Model is unavailable\b", re.I)
 # and when a subscription's allowance is used up for now (Claude Code: "usage limit reached", "You've hit your
 # session limit", Codex: "You've hit your usage limit", Antigravity: RESOURCE_EXHAUSTED, OpenCode Go: "quota
 # exceeded"): it resets by itself in hours, so a helper waits for it instead of stopping (a night's run lost most of
@@ -181,6 +222,12 @@ LIMIT = re.compile(r"(?:usage|session|weekly) limit|(?<!rate )(?<!rate-)(?<!rate
                     r"(?<!concurrency-)(?<!concurrency_)limit (?:reached|exceeded)|"
                     r"hit your (?:(?!rate\b)[\w-]+ )?limit|quota[ _](?:exceeded|exhausted)|resource[ _]exhausted|"
                     r"out of (?:usage|messages)", re.I)
+# OpenCode Zen's free models are refused once the free allowance is used up, while the same account's
+# OpenCode Go models keep working. It is a model decision, not the account's subscription limit: one
+# N64 game's Go helpers all waited out an "account" cooldown because a free helper was refused, and
+# each free retry re-armed it. Both the provider's wording and agents.FREE_ALLOWANCE must be kept out
+# of the account-limit classifier, including the title-request lines opencode logs on stderr.
+FREE_MODEL_ALLOWANCE = re.compile(r'Free usage limit reached|' + re.escape(agents.FREE_ALLOWANCE), re.I)
 # When a limit resets, as agents say it. Claude Code: "usage limit reached|1792140000" (seconds since 1970), or
 # "5-hour limit reached ∙ resets 3pm (Europe/Berlin)"; Codex: "try again in 2 hours 13 minutes" or "try again at
 # 8:05 PM"; Gemini: "Please retry in 46.6s"; others an ISO time after "reset" or "until".
@@ -191,6 +238,12 @@ _DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)\s*([dhms])", re.I)
 _SECONDS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
 _RESET_AT = re.compile(r"(?:resets?|try again|available again)(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\b\.?"
                        r"(?:\s*\(([A-Za-z_]+(?:/[A-Za-z_+-]+)+|UTC)\))?", re.I)
+_RESET_DATE = re.compile(
+    r"(?:resets?|try again|available again)(?:\s+at)?\s+"
+    r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|"
+    r"Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})"
+    r"(?:,?\s+(\d{4}))?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\b\.?"
+    r"(?:\s*\(([^()\r\n]*)\))?", re.I)
 _RESET_ISO = re.compile(r"(?:reset|again|until|after)\D{0,40}?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?"
                         r"(?:Z|[+-]\d{2}:?\d{2})?)", re.I)
 HOURS_HALF_DAY = 12
@@ -200,8 +253,33 @@ def no_credit(said: str) -> str | None:
     """The helper's error when its model's provider says the account is out of credit, else None."""
     if not (m := _NO_CREDIT.search(said)):
         return None
-    return (f"the model's provider says the account is out of credit (“{m.group(0)}”): top it up, then "
+    return (f"the model's provider says the account is out of credit (“{m.group(0)}”): top it up or select another available model, then "
             "start the agents again")
+
+
+def _dated_reset(match, now):
+    """English month/day reset messages, with no locale-dependent month parsing."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    month = 'jan feb mar apr may jun jul aug sep oct nov dec'.split().index(match[1][:3].lower()) + 1
+    hour, minute, half, zone = int(match[4]), int(match[5] or 0), match[6], match[7]
+    if not match[5] and not half:
+        return None  # A date followed by a bare number is not an unambiguous clock.
+    if half:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % HOURS_HALF_DAY + (HOURS_HALF_DAY if half.lower() == 'p' else 0)
+    try:
+        tz = timezone.utc if zone and zone.upper() == 'UTC' else ZoneInfo(zone) if zone is not None else None
+        year = int(match[3]) if match[3] else datetime.fromtimestamp(now, tz).year
+        when = datetime(year, month, int(match[2]), hour, minute, tzinfo=tz)
+        when = when if tz else when.astimezone()
+        if not match[3] and when.timestamp() < now - LIMIT_RESET_MARGIN:
+            when = datetime(year+1, month, int(match[2]), hour, minute, tzinfo=tz)
+            when = when if tz else when.astimezone()
+        return when.timestamp()
+    except (ValueError, ZoneInfoNotFoundError):
+        return None
 
 
 def limit_reset(said: str, now: float | None = None) -> float | None:
@@ -219,6 +297,8 @@ def limit_reset(said: str, now: float | None = None) -> float | None:
             at = (when if when.tzinfo else when.astimezone()).timestamp()
         except ValueError:
             at = None
+    elif (m := _RESET_DATE.search(said)):
+        at = _dated_reset(m, now)
     elif (m := _RESET_AT.search(said)) and (m.group(2) or m.group(3)):  # "resets 3" alone could be anything
         hour, minute, half, zone = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower(), m.group(4)
         if half:
@@ -267,16 +347,21 @@ def _which(cmd: str) -> str | None:
     home = Path.home()
     directories = [home / ".local" / "bin", home / ".claude" / "local", home / ".opencode" / "bin",
                    home / ".npm-global" / "bin"]
+    if os.name != "nt":
+        # Desktop launchers do not inherit nvm's shell initialization. nvm-windows uses a different layout.
+        nvm = Path(os.environ.get("NVM_DIR", home / ".nvm")) / "versions" / "node"
+        def version_key(folder):
+            return tuple(int(part) for part in re.findall(r"\d+", folder.name))
+        directories.extend(folder / "bin" for folder in sorted(nvm.glob("v*"), key=version_key, reverse=True))
     if os.name == "nt":
         directories.append(Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "npm")
         directories.append(Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "agy" / "bin")
-        directories.append(Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "cursor-agent")
     for d in directories:
         if os.name == "nt":
             found = shutil.which(cmd, path=str(d))
             if found:
                 return found
-        if (d / cmd).exists():
+        elif (d / cmd).is_file() and os.access(d / cmd, os.X_OK):
             return str(d / cmd)
     return None
 
@@ -324,7 +409,7 @@ def _feed_stdin(proc: subprocess.Popen, prompt: str | None) -> None:
 
 
 def _fresh_usage() -> dict:
-    return {"usd": 0.0, "tokens": 0, "turns": 0, "tool_calls": 0} | {k: 0 for k in TOKEN_KINDS}
+    return {"usd": 0.0, "tokens": 0, "turns": 0, "tool_calls": 0, "coverage": "unknown"} | {k: 0 for k in TOKEN_KINDS}
 
 
 @dataclass
@@ -345,10 +430,20 @@ class Session:
     started_at: float = field(default_factory=time.time)
     restarts: int = 0  # started again by itself, after a failure or a usage limit
     runs: int = 0  # sessions
+    configuration_error: bool = False
     error: str = ""  # the last error
     feed: collections.deque = field(default_factory=lambda: collections.deque(maxlen=FEED_LINES))
     seq: int = 0
+    record: Callable[[str, object], None] | None = field(default=None, repr=False)  # current session transcript callback
+    session_id: int = 0
     prompt_config: dict | None = field(default=None, repr=False)
+    startup_context: str | None = field(default=None, repr=False)
+    startup_stage: str = ""
+    startup_stage_at: float | None = None
+    tool_handshake_failures: int = 0
+    tool_handshake_required: bool = False
+    context_budget: object | None = field(default=None, repr=False)
+    rotated: bool = False
     stop: threading.Event = field(default_factory=threading.Event)
     thread: threading.Thread | None = None
     proc: subprocess.Popen | None = None
@@ -360,6 +455,12 @@ class Session:
     auth_failed: bool = False  # its sign-in failed (an expired session): tried a few times, then a new sign-in
     throttled: bool = False  # the last run ended on the provider's limit of requests at once: not a failure
     limited: bool = False  # the last run ended on the plan's usage limit: wait for it to reset
+    cooldown_observed: float = 0
+    provider_waiting: bool = False
+    provider_retry_requested: bool = False
+    output_limit_retries: int = 0
+    continuation_attempts: int = 0
+    continuation_note: str = ""
     limit_until: float | None = None  # when the agent said that limit resets
 
     @property
@@ -367,6 +468,8 @@ class Session:
         return str(self.options.get("model") or "")
 
     def push(self, kind: str, text: str) -> None:
+        if self.record and kind in ("text", "think", "error", "info", "termination"):
+            self.record(kind, text)
         self.seq += 1
         self.feed.append({"seq": self.seq, "t": time.time(), "type": kind, "text": text[:FEED_TEXT]})
         if kind == "text":
@@ -375,13 +478,23 @@ class Session:
             log.info("helper %s (%s): %s", self.agent_name, self.slug, text[:500])
 
     def snapshot(self, since: int = 0) -> dict:
-        return {"id": self.id, "kind": self.kind, "kind_name": agents.get(self.kind).name, "label": self.label,
+        kind = agents.get(self.kind)
+        return {"id": self.id, "kind": self.kind, "kind_name": kind.name, "can_login": kind.supports_login, "label": self.label,
                 "account_id": self.options.get("account_id") or "", "account_name": self.options.get("account_name") or "",
+                "account_label": kind.account_label(self.model),
+                "selection": self.options.get("selection") or {},
+                "boundary_function":self.options.get("boundary_function"), "boundary_until":self.options.get("boundary_until"),
+                "focus_function":self.options.get("focus_function"), "focus_until":self.options.get("focus_until"),
+                "focus_id":self.options.get("focus_id"), "focus_minutes":self.options.get("focus_minutes"),
+                "per_session": self.options.get("per_session", PER_SESSION),
                 "task": self.options.get("task") or "",  # "readable": it polishes matched code
                 "slug": self.slug, "agent": self.agent_name, "model": self.model, "state": self.state, "why": self.why,
-                "todo": self.todo, "until": self.until, "stopped_by": self.stopped_by,
+                "provider_waiting": self.provider_waiting, "provider_retry_requested": self.provider_retry_requested,
+                "configuration_error": self.configuration_error, "todo": self.todo, "until": self.until, "stopped_by": self.stopped_by,
                 "last_message": self.last_message, "runs": self.runs, "restarts": self.restarts, "error": self.error,
+                "startup_stage": self.startup_stage, "startup_stage_at": self.startup_stage_at,
                 "started_at": self.started_at, "usd": round(self.usd, 4), "tokens": self.tokens,
+                "current_usage_coverage": self.usage.get("coverage", "unknown"),
                 "feed": [f for f in self.feed if f["seq"] > since]}
 
 
@@ -490,12 +603,24 @@ def _terminate(proc: subprocess.Popen) -> None:
     threading.Thread(target=end, daemon=True, name=f"end-{proc.pid}").start()
 
 
+def connection_retry_delay(failures, worker_id):
+    """Fast initial recovery, then at most one reconnect per five minutes during a sustained outage."""
+    return min(300, 5 * 2 ** min(max(0, failures-1), 6)) + (int(worker_id) % 31)
+
+
 class Manager:
     def __init__(self, net: RomNetwork, home: Path, mcp_url: str):
         self.net, self.home, self.mcp_url = net, home, mcp_url
+        from .transcripts import service
+        self.transcripts = service(net)
         self.sessions: dict[str, Session] = {}
         self.assignments: dict[int, str] = {}  # agent id -> project slug
         self._lock = threading.RLock()
+        self._model_change_lock = threading.Lock()
+        net.on_external_match = self.matched_elsewhere
+        # Bound only short local connection probes, never the number of running agents.
+        self._tool_startup_slots = threading.BoundedSemaphore(8)
+        self._metrics_locks = {}
         self._prep: dict[str, threading.Event] = {}  # slug -> giving its code source files before agents claim
         self._found: list[dict] | None = None  # the agents installed, as last found (detected)
         self._finding: threading.Thread | None = None
@@ -507,6 +632,8 @@ class Manager:
         with net.store.tx() as db:
             for statement in SCHEMA:
                 db.execute(statement)
+            if "usage_coverage" not in {r[1] for r in db.execute("PRAGMA table_info(helper_sessions)")}:
+                db.execute("ALTER TABLE helper_sessions ADD COLUMN usage_coverage TEXT NOT NULL DEFAULT 'unknown'")
             if "task" not in {r[1] for r in db.execute("PRAGMA table_info(helper_sessions)")}:
                 # Sessions from before it was kept take their helper's task now, while its record is there. Ids are
                 # reused (helpers.id has no AUTOINCREMENT), so the helper must also be the session's project and
@@ -523,6 +650,18 @@ class Manager:
             for column in ("account_id", "account_name"):
                 if column not in columns:
                     db.execute(f"ALTER TABLE helper_sessions ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+            from .session_history import prepare
+            prepare(db)
+        # End process accounting; supported CLIs can still resume their saved conversation.
+        with net.store.tx() as db:
+            db.execute("UPDATE helper_sessions SET ended_at=?, outcome='interrupted' WHERE ended_at IS NULL",
+                       (time.time(),))
+        from .session_storage import prepare as session_store
+        for store, projects in net.project_stores():
+            if store is net.store:continue
+            for pid in projects:session_store(net, pid)
+            with store.tx() as db:
+                db.execute("UPDATE helper_sessions SET ended_at=?,outcome='interrupted' WHERE ended_at IS NULL", (time.time(),))
         self._restore()
         self.refresh_detected()
 
@@ -545,6 +684,8 @@ class Manager:
             if s.kind not in {a.id for a in agents.AGENTS}:
                 continue
             if s.state in LIVE:
+                from .session_recovery import checkpoint
+                checkpoint(self.net, s)
                 if r["pid"] and r["pid_start"] is not None and _proc_start(r["pid"]) == r["pid_start"]:
                     crashed.add(r["pid"])
                 s.state, s.stopped_by, s.until = "stopped", BY_QUIT, None
@@ -556,71 +697,26 @@ class Manager:
         # 'stopped' event that ends their run (what they released in it no longer keeps them off it)
         self.net.release_local_claims("the app restarted")
 
-    def _save(self, s: Session) -> None:
+    def _save(self, s: Session, *, db=None) -> None:
+        if self._down and db is None:return  # shutdown owns the single batched recovery write
         pid = s.proc.pid if s.proc is not None and s.proc.poll() is None else None
-        with self.net.store.tx() as db:
+        def write(db):
             db.execute("UPDATE helpers SET label=?, state=?, why=?, todo=?, until=?, stopped_by=?, last_message=?, "
-                       "started_at=?, restarts=?, sessions=?, usd=?, tokens=?, pid=?, pid_start=? WHERE id=?",
+                       "started_at=?, restarts=?, sessions=?, usd=?, tokens=?, pid=?, pid_start=?, options=? WHERE id=?",
                        (s.label, s.state, s.why, s.todo, s.until, s.stopped_by, s.last_message, s.started_at,
-                        s.restarts, s.runs, s.usd, s.tokens, pid, s.pid_start if pid else None, s.id))
-
-    def set_prompts(self, sid: str, overrides: dict) -> None:
-        from .prompt_settings import validate
-        overrides = validate(overrides)
-        with self._lock:
-            session = self.sessions.get(sid)
-            if session is None:
-                raise ValueError("This agent no longer exists. Refresh the agents list.")
-            session.options['prompts'] = overrides
-            with self.net.store.tx() as db:
-                kept = {k: v for k, v in session.options.items() if k != 'api_key'}
-                db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), session.id))
-
-    def set_tool(self, sid: str, name: str, enabled: bool) -> None:
-        from .tool_policy import validate
-        validate([name])
-        if type(enabled) is not bool:
-            raise ValueError('Tool enabled must be true or false.')
-        with self._lock:
-            session = self.sessions.get(sid)
-            if session is None:
-                raise ValueError("This agent no longer exists. Refresh the agents list.")
-            blocked = set(session.options.get('disabled_tools', []))
-            blocked.discard(name) if enabled else blocked.add(name)
-            session.options['disabled_tools'] = sorted(blocked)
-            with self.net.store.tx() as db:
-                kept = {k: v for k, v in session.options.items() if k != 'api_key'}
-                db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), session.id))
-
-    def set_tools(self, sid: str, disabled: list[str]) -> None:
-        from .tool_policy import validate
-        disabled = validate(disabled)
-        with self._lock:
-            session = self.sessions.get(sid)
-            if session is None:
-                raise ValueError("This agent no longer exists. Refresh the agents list.")
-            session.options['disabled_tools'] = disabled
-            with self.net.store.tx() as db:
-                kept = {k: v for k, v in session.options.items() if k != 'api_key'}
-                db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), session.id))
-
-    def app_instructions(self, session: Session) -> str:
-        from .prompt_settings import for_session
-        return for_session(self.net, session)['instructions']
-
-    def instructions_for(self, agent, slug: str) -> str:
-        from .prompt_settings import effective
-        for session in list(self.sessions.values()):
-            if session.agent_name == agent.name and session.slug == slug:
-                return self.app_instructions(session)
-        return effective(self.net, {})['instructions']
+                        s.restarts, s.runs, s.usd, s.tokens, pid, s.pid_start if pid else None,
+                        json.dumps({k:v for k,v in s.options.items() if k != "api_key"}), s.id))
+        if db is not None:write(db)
+        else:
+            with self.net.store.tx() as connection:write(connection)
 
     def _record(self, slug: str, kind: str, name: str, label: str, options: dict) -> Session:
         """The helper `name` on this project: its record from before (it carries on its numbers), or a new one."""
         kept = {k: v for k, v in options.items() if k != "api_key"}  # the key stays in the settings
         s = next((x for x in self.sessions.values() if x.slug == slug and x.agent_name == name), None)
         if s is not None:
-            options = {k: v for k, v in s.options.items() if k in ('prompts', 'disabled_tools')} | options
+            # a restart keeps the helper's own prompts and tool choices (this fork keeps those in its selection)
+            options = {k: v for k, v in s.options.items() if k in ('prompts', 'disabled_tools', 'selection')} | options
             kept = {k: v for k, v in options.items() if k != 'api_key'}
             s.kind, s.label, s.options = kind, label, dict(options)
             with self.net.store.tx() as db:
@@ -628,9 +724,16 @@ class Manager:
                            (kind, s.model, label, json.dumps(kept), s.id))
             return s
         with self.net.store.tx() as db:
-            rid = db.execute("INSERT INTO helpers(project, kind, model, name, label, options, state, started_at) "
-                             "VALUES(?,?,?,?,?,?,?,?)", (slug, kind, str(options.get("model") or ""), name, label,
-                                                         json.dumps(kept), "starting", time.time())).lastrowid
+            # Session history can include external text IDs; reserve numeric IDs without mixing SQLite text/integer ordering.
+            # helper_sessions survives Remove; never recycle its helper_id for a new record.
+            latest = db.execute("SELECT MAX(CAST(id AS INTEGER)) FROM (SELECT id FROM helpers UNION ALL "
+                                "SELECT helper_id AS id FROM helper_sessions)").fetchone()[0] or 0
+            floor = db.execute("SELECT value FROM settings WHERE key='helper-id-floor'").fetchone()
+            rid = max(latest, int(floor['value']) if floor else 0) + 1
+            db.execute("INSERT OR REPLACE INTO settings VALUES('helper-id-floor',?)", (str(rid),))
+            db.execute("INSERT INTO helpers(id, project, kind, model, name, label, options, state, started_at) "
+                             "VALUES(?,?,?,?,?,?,?,?,?)", (rid, slug, kind, str(options.get("model") or ""), name, label,
+                                                         json.dumps(kept), "starting", time.time()))
         s = self.sessions[str(rid)] = Session(str(rid), kind, label, slug, name, dict(options))
         return s
 
@@ -648,11 +751,70 @@ class Manager:
     # -- control
 
     def start(self, kind: str, slug: str, count: int = 1, options: dict | None = None) -> list[str]:
+        # Creation only records the worker. Its thread synchronizes saved files before work.
+        if (options or {}).get('focus_function') or (options or {}).get('task')=='assets':
+            with self.net.progress.view():
+                return self._start(kind, slug, count, options)
+        return self._start(kind, slug, count, options)
+
+    def change_model(self, sid: str, slug: str, kind: str, model: str) -> list[str]:
+        """Replace one worker without changing the identity of its saved exchanges."""
+        with self._model_change_lock:
+            old = self.sessions.get(sid)
+            if old is None or old.slug != slug or old.kind != kind:
+                raise ValueError('This agent is no longer available in this project. Refresh Agents.')
+            if agents.get(kind).uses_endpoints:
+                raise ValueError('Start a new API agent with its endpoint settings instead.')
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError('Choose a model before replacing this agent.')
+            # Persist the result on the retained record: a repeated request must not
+            # create another paid worker, including after reopening the app.
+            replacement = old.options.get('model_replacement')
+            if replacement:
+                raise ValueError('This agent was already replaced. Change the new agent instead.')
+            options = dict(old.options)
+            options['model'] = model
+            report_start('Validating and creating the replacement; the original is kept if creation fails…')
+            ids = self.start(kind, slug, 1, options)
+            old.options['model_replacement'] = ids[0]
+            try:
+                self._save(old)
+            except Exception:
+                old.options.pop('model_replacement', None)
+                for replacement_id in ids:
+                    self.stop(replacement_id)
+                raise
+            report_start('Stopping the original agent; its history and saved work are retained…')
+            self.stop(sid)
+            return ids
+
+    def _start(self, kind: str, slug: str, count: int = 1, options: dict | None = None) -> list[str]:
+        if getattr(self, 'source_update_pending', False):
+            raise ValueError('A source update is queued. Cancel it before adding new agents.')
+        report_start("Validating worker selection…")
         options = dict(options or {})
+        options["selection"] = self.net.validate_selection(options.get("selection"))
+        from . import focused_agents
+        options = focused_agents.configure(self.net,slug,options,count)
+        from . import boundary_investigations
+        options = boundary_investigations.configure(self.net,slug,options,count)
+        from . import asset_agents
+        options = asset_agents.configure(self.net,slug,options,count)
+        from . import data_agents
+        options = data_agents.configure(self.net,slug,options,count)
+        from . import port_agents
+        options = port_agents.configure(self.net,slug,options,count)
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
         if agent.id != kind:
             kind = agent.id
-            options.pop("model", None)  # a Gemini CLI model name may mean nothing to Antigravity: use its default
+            if not agent.alias_model_compatible:
+                options.pop("model", None)  # a legacy Gemini CLI model name may mean nothing to Antigravity
+        configured = str(options.get('model') or agent.config_model() or '')
+        resolved = agent.resolve_known_model(configured, agent.models(_which(agent.command), run=False) if agent.command else [])
+        if why := agent.validate_model(resolved):
+            raise ValueError(why)
+        if options.get('model') or resolved != configured:
+            options['model'] = resolved
         if self._down:
             raise ValueError("decompdecomp is quitting")
         # A helper keeps the model it starts on (#204): one started on the CLI's own default records that default
@@ -670,31 +832,163 @@ class Manager:
                 if pinned:
                     options["model"] = name_model = pinned
         ids = []
-        self._prepare(slug)
+        report_start("Preparing the project before creating workers…")
+        if not options.get("focus_id") and options.get("task") not in NOT_MATCHING:
+            self._prepare(slug)
+        report_start("Waiting for the worker registry, then reserving new identities…")
         with self._lock:
-            for _ in range(max(1, min(int(count), MAX_AT_ONCE))):
+            for index in range(max(1, min(int(count), MAX_AT_ONCE))):
+                report_start(f"Creating worker {index+1} / {max(1, min(int(count), MAX_AT_ONCE))}…")
                 model = name_model
                 if options.get("effort") and "#" not in model:  # an effort is a record of its own, as with the others
                     model = f"{model}#{options['effort']}"
-                # #45: a stopped helper keeps its account and totals. Another account of the same model must
-                # get a different record; otherwise its card would inherit the first account's spend.
+                # A new helper must never inherit attempts credited to an old identity.
+                reserved = self._taken() | {x.agent_name for x in self.sessions.values()}
+                reserved |= {r['name'] for r in self.net.store.all('SELECT name FROM agents')}
+                reserved |= {r['agent'] for r in self.net.store.all('SELECT DISTINCT agent FROM helper_sessions')}
+                reserved |= {r['key'].removeprefix('helper-name:') for r in self.net.store.all(
+                    "SELECT key FROM settings WHERE key LIKE 'helper-name:%'")}
                 other_accounts = {s.agent_name for s in self.sessions.values() if s.slug == slug
                                   and s.options.get("account_id", "") != options.get("account_id", "")}
-                name = helper_name(kind, model, self._taken() | other_accounts)
+                name = helper_name(kind, model, reserved | other_accounts)
                 s = self._record(slug, kind, name, self._label(kind, name, options), options)
                 s.restarts = 0
+                report_start(f"Launching {s.label}…")
                 self._launch(s)
                 ids.append(s.id)
         return ids
 
+    def rename(self, sid: str, label: str) -> str:
+        """Change the display name without changing tokens, claims or attribution."""
+        if not isinstance(label, str) or not label.strip() or len(label.strip()) > 80 or any(ord(c) < 32 for c in label):
+            raise ValueError("Enter an agent name of 1–80 characters without control characters.")
+        with self._lock:
+            s = self.sessions.get(sid)
+            if s is None:
+                raise ValueError("This agent no longer exists. Refresh the agents list.")
+            s.label = label.strip()
+            self._save(s)
+            return s.label
+
+    def retry_provider(self, sid):
+        with self._lock:
+            s=self.sessions.get(sid)
+            if s is None:raise ValueError('This agent no longer exists. Refresh the agents list.')
+            if s.stop.is_set() or s.state!='waiting' or not s.provider_waiting:
+                raise ValueError('This agent is not waiting for a provider limit.')
+            s.provider_retry_requested=True
+            self._set(s,'waiting','Provider retry requested; checking within 30 seconds',time.time()+30,
+                      'This worker will retry once. A successful session releases the shared account wait.')
+        return {'requested':True}
+
+    def retry_paused(self, sid, limit=5, log=lambda *_: None):
+        from . import retry_paused
+        with self._lock:
+            session=self.sessions.get(sid)
+            if session is None:raise ValueError('This agent no longer exists. Refresh the agents list.')
+            if session.options.get('task') in NOT_MATCHING:raise ValueError('Retry paused functions applies to matching agents.')
+            slug, name = session.slug, session.agent_name
+        agent=self.net.attribution_agent(name)
+        return retry_paused.retry(self.net,slug,agent,limit,log=log)
+
+    def set_selection(self, sid: str, policy: dict, per_session: int | None = None) -> dict:
+        with self._lock:
+            s = self.sessions.get(sid)
+            if s is None:
+                raise ValueError("This agent no longer exists. Refresh the agents list.")
+            if per_session is not None and (type(per_session) is not int or not 1 <= per_session <= 20):
+                raise ValueError("Functions per session must be a whole number from 1 to 20.")
+            policy = self.net.validate_selection(policy)
+            if 'disabled_tools' not in policy and 'disabled_tools' in (s.options.get('selection') or {}):
+                policy = {**policy, 'disabled_tools':s.options['selection']['disabled_tools']}
+            policy = self.net.set_selection(s.slug, s.agent_name, policy)
+            if per_session is not None:
+                s.options["per_session"] = per_session
+            s.options["selection"] = policy
+            with self.net.store.tx() as db:
+                kept = {k: v for k, v in s.options.items() if k != "api_key"}
+                db.execute("UPDATE helpers SET options=? WHERE id=?", (json.dumps(kept), s.id))
+            return policy
+
+    def set_prompts(self, sid, overrides):
+        from .prompt_settings import validate
+        overrides = validate(overrides)
+        with self._lock:
+            session = self.sessions.get(sid)
+            if session is None:
+                raise ValueError('This agent no longer exists. Refresh the agents list.')
+            session.options['prompts'] = overrides
+            with self.net.store.tx() as db:
+                kept = {k:v for k,v in session.options.items() if k != 'api_key'}
+                db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), session.id))
+
+    def app_instructions(self, session):
+        if session.options.get("task")=="assets":
+            from .asset_agents import INSTRUCTIONS
+            return INSTRUCTIONS
+        if session.options.get('task') == 'boundary':
+            from .boundary_investigations import INSTRUCTIONS
+            return INSTRUCTIONS
+        from .prompt_settings import for_session
+        return for_session(self.net, session)['instructions']
+
+    def instructions_for(self, agent, slug):
+        for session in list(self.sessions.values()):
+            if session.agent_name == agent.name and session.slug == slug:
+                return self.app_instructions(session)
+        from .prompt_settings import effective
+        return effective(self.net, {})['instructions']
+
+    def set_tool(self, sid, name, enabled):
+        from .tool_policy import validate
+        validate([name])
+        if type(enabled) is not bool:
+            raise ValueError('Tool enabled must be true or false.')
+        with self._lock:
+            session = self.sessions.get(sid)
+            if session is None:
+                raise ValueError('This agent no longer exists. Refresh the agents list.')
+            policy = dict(session.options.get('selection') or {})
+            blocked = set(policy.get('disabled_tools', []))
+            blocked.discard(name) if enabled else blocked.add(name)
+            return self.set_selection(sid, {**policy, 'disabled_tools':sorted(blocked)})
+
     def _launch(self, s: Session) -> None:
+        self.net.set_selection(s.slug, s.agent_name, s.options.get("selection"))
         s.stop = threading.Event()
         s.state, s.why, s.todo, s.until, s.stopped_by, s.error = "starting", "", "", None, "", ""
         s.signed_out = s.throttled = s.limited = s.auth_failed = False
+        s.configuration_error = False
+        s.cooldown_observed = 0
+        s.continuation_attempts, s.continuation_note = 0, ""
+        s.output_limit_retries = 0
         s.started_at = time.time()
+        if s.options.get('focus_id'):
+            s.options.setdefault('focus_until',s.started_at+s.options['focus_minutes']*60)
+            with self.net.store.tx() as db:
+                db.execute('UPDATE helpers SET options=? WHERE id=?',(json.dumps({k:v for k,v in s.options.items() if k!='api_key'}),s.id))
         self._save(s)
         s.thread = threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{s.agent_name}")
         s.thread.start()
+
+    def matched_elsewhere(self, agent_id, function, project_id):
+        """Rotate only the displaced matching worker after the exact match commits."""
+        row=self.net.store.one('SELECT name FROM agents WHERE id=?',agent_id)
+        proj=self.net.store.one('SELECT slug FROM projects WHERE id=?',project_id)
+        if not row or not proj:return
+        if self.net.project_store(project_id).one("SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id "
+                              "WHERE c.agent_id=? AND f.status='open'",agent_id):
+            return  # the worker already moved on; do not interrupt its new function
+        from .session_recovery import completed
+        with self._lock:
+            for s in self.sessions.values():
+                if (s.agent_name!=row['name'] or s.slug!=proj['slug'] or s.state!='working'
+                        or s.stop.is_set() or s.options.get('task') in NOT_MATCHING):continue
+                s.rotated=True
+                completed(s,self.net)
+                s.continuation_note=function+' was matched and saved by another operation. Claim a different eligible function.'
+                s.push('info',s.continuation_note)
+                if s.proc is not None:_terminate(s.proc)
 
     def restart(self, sid: str) -> None:
         """Start a stopped or paused helper again, by hand."""
@@ -711,28 +1005,35 @@ class Manager:
             options = self.options_now(s.kind, dict(s.options))
             if options is None:
                 raise ValueError("its account or API endpoint was removed: start a new helper and choose another one")
+            options.pop('focus_until',None)  # A manual restart explicitly begins a fresh time allowance.
             s.options, s.restarts = options, 0
-            self._prepare(s.slug)
+            if not s.options.get("focus_id") and s.options.get("task") not in NOT_MATCHING:
+                self._prepare(s.slug)
             self._launch(s)
 
     def resume(self) -> list[str]:
-        """Helpers the app stopped by quitting carry on, as their options are now (options_now)."""
+        """Resume saved helpers without holding the UI's agent-state lock during project synchronization."""
         ids = []
         with self._lock:
-            for s in list(self.sessions.values()):
-                if s.state != "stopped" or s.stopped_by != BY_QUIT:
+            pending = [s for s in self.sessions.values() if resumable(s)]
+        for s in pending:
+            if self._down:
+                break
+            try:
+                self.net.project_row(s.slug)
+            except NetworkError:
+                continue
+            options = self.options_now(s.kind, dict(s.options))
+            if options is not None and not options.get("focus_id") and options.get("task") not in NOT_MATCHING:
+                self._prepare(s.slug)
+            with self._lock:
+                if self._down or not resumable(s):
                     continue
-                try:
-                    self.net.project_row(s.slug)
-                except NetworkError:
-                    continue
-                options = self.options_now(s.kind, dict(s.options))
                 if options is None:
                     s.stopped_by, s.why = BY_ITSELF, "its account or API endpoint was removed"
                     self._save(s)
                     continue
                 s.options = options
-                self._prepare(s.slug)
                 self._launch(s)
                 ids.append(s.id)
         return ids
@@ -742,20 +1043,25 @@ class Manager:
         left for last meanwhile), and on a GameCube/Wii decomp where code has no source file yet, files for it
         (start_files, checked against the game's checksum), or they'd all share the few hard functions left."""
         try:
+            report_start("Refreshing identical-function matches; saved-file verification may need to finish first…")
             self.net.twins.refresh(slug)
-            self.net.permuter.start(slug)  # near misses agents leave, on spare CPU
+            report_start("Preparing background permutation work…")
+            self.net.permuter.start(slug, automatic=True)  # near misses agents leave, on spare CPU
         except Exception:  # agents work without them
             log.exception("twins or the permuter didn't start for %s", slug)
         with self._lock:
             if slug in self._prep:
                 return
-            try:
-                if not self.net.fork_slug(slug):
-                    return
-                _, fp, cfg = self.net.forks.get(slug)
-                if not (self.net.forks.uncovered(slug) or {}).get("functions") or not fp.linkable():
-                    return
-            except Exception:  # agents work on what has files
+        try:
+            if not self.net.fork_slug(slug):
+                return
+            _, fp, cfg = self.net.forks.get(slug)
+            if not (self.net.forks.uncovered(slug) or {}).get("functions") or not fp.linkable():
+                return
+        except Exception:  # agents work on what has files
+            return
+        with self._lock:
+            if slug in self._prep:
                 return
             done = self._prep[slug] = threading.Event()
 
@@ -783,6 +1089,13 @@ class Manager:
         for s in list(self.sessions.values()):
             if sid not in (None, s.id):
                 continue
+            if s.state in LIVE:
+                s.stopped_by = by
+                s.push('termination', 'App requested termination: '+{BY_YOU: 'user stopped this helper', BY_QUIT: 'app shutdown/restart'}.get(by, str(by)))
+            if by == BY_QUIT and s.state in LIVE:
+                from .session_recovery import checkpoint
+                checkpoint(self.net, s)
+                self._save(s)
             s.stop.set()
             proc = s.proc
             if proc is not None and proc.poll() is None:
@@ -801,10 +1114,23 @@ class Manager:
                 self.stop(s.id)
 
     def remove(self, sid: str) -> None:
-        """Stop a helper and forget its record (its matches stay credited to its name)."""
+        """Stop a helper and clear its transcripts; saved work, attribution and cost totals remain."""
+        session=self.sessions.get(sid)
         self.stop(sid)
+        # Backfill lifetime tool counters before dropping the older exchanges they may still depend on.
+        from . import tool_policy
+        tool_policy.ensure(self.net)
+        split = session is not None and self.net.project_store(session.slug) is not self.net.store
+        if split:
+            # Commit the removal marker before dropping shared configuration. If
+            # the catalog write fails, retrying Remove is safe and late callbacks
+            # remain blocked. Never acquire a project writer inside the catalog's.
+            self.transcripts.clear_helper(sid,session.slug,session.agent_name)
         with self.net.store.tx() as db:
+            if session is not None and not split:
+                self.transcripts.clear_helper(sid,session.slug,session.agent_name)
             db.execute("DELETE FROM helpers WHERE id=?", (sid,))
+            db.execute("DELETE FROM settings WHERE key=?", ("helper-conversation:" + sid,))
         self.sessions.pop(sid, None)
 
     def remove_paused(self, slug: str) -> int:
@@ -823,10 +1149,12 @@ class Manager:
         compiles of a day had made no match. The GUI dismisses advice by model (#131): its sentence carries counts that
         change as helpers work."""
         query = ("SELECT kind, model, COUNT(*) AS sessions, SUM(usd) AS usd, SUM(tokens) AS tokens, SUM(matches) AS "
-                 "matches, SUM(compiles) AS compiles FROM helper_sessions WHERE project=? AND started_at >= ? {} "
+                 "matches, SUM(compiles) AS compiles, SUM(input_tokens) AS input_tokens, SUM(cache_read_tokens) AS cache_read_tokens, "
+                 "SUM(cache_write_tokens) AS cache_write_tokens, SUM(output_tokens) AS output_tokens FROM helper_sessions WHERE project=? AND started_at >= ? {} "
                  "GROUP BY kind, model")
-        rows = self.net.store.all(query.format(""), slug, 0)
-        recent = [dict(r) for r in self.net.store.all(query.format("AND task != 'readable'"), slug,
+        self.transcripts.for_project(slug)
+        rows = self.net.project_store(slug).all(query.format(""), slug, 0)
+        recent = [dict(r) for r in self.net.project_store(slug).all(query.format("AND task NOT IN (" + ",".join(f"'{task}'" for task in sorted(NOT_MATCHING)) + ")"), slug,
                                                       time.time() - SPIN_WINDOW)]
         advice = spin_advice(recent)
         out = []
@@ -845,26 +1173,42 @@ class Manager:
             if s.slug == slug:
                 self.remove(s.id)
 
-    def shutdown(self) -> None:
-        """The app quits: every helper stops (they carry on when the app starts again), each with its whole process
-        group, and so does anything a helper started that left its group (an `opencode serve` service): nothing the
-        app started keeps running, or spending, after it. Waits up to STOP_GRACE seconds for them to end."""
-        if self._down:
-            return
+    def request_shutdown(self) -> None:
+        """Signal all workers before touching a transcript, database or manager mutex."""
+        if self._down:return
         self._down = True
-        processes = [s.proc for s in list(self.sessions.values())]  # retain Windows handles until _end_groups returns
-        groups = {proc.pid for proc in processes if proc is not None and proc.poll() is None}
-        self.stop()
-        _end_groups(groups | self._strays())
+        self._shutdown_sessions = list(self.sessions.values())
+        self._shutdown_live = {s.id for s in self._shutdown_sessions if s.state in LIVE}
+        self._shutdown_groups = set()
+        self._shutdown_processes = [s.proc for s in self._shutdown_sessions]  # retain Windows handles until cleanup ends
+        for s,proc in zip(self._shutdown_sessions,self._shutdown_processes):
+            s.stop.set()
+            if s.id in self._shutdown_live:
+                s.state, s.stopped_by, s.until, s.todo = 'stopped', BY_QUIT, None, ''
+                s.why = 'decompdecomp closed while it worked'
+            if proc is not None and proc.poll() is None:
+                self._shutdown_groups.add(proc.pid)
+                _terminate(proc)
+
+    def close_rooms(self) -> None:
+        if getattr(self, '_shutdown_rooms_closed', False):return
+        self._shutdown_rooms_closed = True
+        try:self.on_stop()
+        except Exception:log.exception('closing rooms while quitting failed')
+
+    def shutdown(self, *, notify=lambda _:None, timeout=30) -> None:
+        """End processes first, then checkpoint/release helpers in database batches."""
+        self.request_shutdown()
+        if getattr(self, '_shutdown_finished', False):return
+        from .agent_shutdown import persist
+        deadline = time.monotonic() + timeout
+        self.close_rooms()
+        notify('Ending remaining agent process groups')
+        _end_groups(self._shutdown_groups | self._strays())
         try:
-            from .tool_policy import flush
-            flush(self.net)  # the tool calls counted since the last write (tool_policy.FLUSH_SECONDS)
-        except Exception:  # the app quits anyway
-            log.exception("saving the tool call counts while quitting failed")
-        try:
-            self.on_stop()
-        except Exception:  # the app quits anyway
-            log.exception("closing rooms while quitting failed")
+            persist(self, deadline, notify)
+        finally:
+            self._shutdown_finished = True
 
     def _strays(self) -> set[int]:
         """Process groups of processes this app's helpers started, found by HELPER_ENV in their environment."""
@@ -900,9 +1244,55 @@ class Manager:
                 continue
         return out
 
-    def snapshot(self, since: dict | None = None) -> list[dict]:
+    def reset_metrics(self, sid: str) -> dict:
+        from .agent_metrics import reset
+        return reset(self, sid)
+
+    def snapshot(self, since: dict | None = None, *, project: str | None = None) -> list[dict]:
+        from .agent_metrics import results
         since = since or {}
-        return [s.snapshot(int(since.get(s.id, 0))) for s in self.sessions.values()]
+        sessions = [s for s in list(self.sessions.values()) if project is None or s.slug == project]
+        board = {}
+        for slug in {s.slug for s in sessions}:
+            selected = [s for s in sessions if s.slug == slug]
+            # A global overview and a project poll can overlap. Share one refresh per project.
+            with self._metrics_locks.setdefault(slug, threading.RLock()):
+                cache = getattr(self, '_metrics_cache', {})
+                key = tuple((s.id, s.agent_name, s.options.get('_metrics', {}).get('attempt', 0),
+                             s.options.get('_metrics', {}).get('event', 0)) for s in selected)
+                pid = self.net.project_row(slug)['id']
+                revision = self.net.project_store(pid).one('SELECT revision FROM history_revisions WHERE project_id=?', pid)
+                signature = revision['revision'] if revision else 0
+                old = cache.get(slug)
+                if old is None or old[0] != (key, signature) or time.monotonic() - old[1] > 5:
+                    old = ((key, signature), time.monotonic(), results(self.net, slug, selected))
+                    cache[slug] = old
+                board.update(old[2])
+                self._metrics_cache = cache
+        out = []
+        for s in sessions:
+            row = s.snapshot(int(since.get(s.id, 0)))
+            from . import session_history
+            history_version, records = session_history.records(self.net,s.id,s.agent_name,project=s.slug)
+            from .agent_metrics import lifetime_cost
+            row["estimated_cost"] = lifetime_cost(self, s, history_version, records)
+            baseline = s.options.get('_metrics', {})
+            row['metrics'] = board.get(s.agent_name, {})
+            row['metrics_since'] = baseline.get('at')
+            row['efficiency']=session_history.efficiency(self.net,s.id,s.agent_name,history_version,baseline.get('at',0),records,project=s.slug)
+            row['metrics_after'] = baseline.get('attempt', 0)
+            row['lifetime_tokens'] = s.tokens
+            for key in ('tokens', 'usd', 'runs', 'restarts'):
+                row[key] = max(0, row[key] - baseline.get(key, 0))
+            if baseline:
+                # Provider totals may arrive only at session end. The display counts
+                # usage reported after reset, never guesses how to split an active call.
+                old_cost = baseline.get('estimated_cost')
+                cost = row['estimated_cost']
+                row['estimated_cost'] = (max(0, cost - old_cost) if cost is not None and old_cost is not None
+                                         else 0 if row['tokens'] == 0 else None)
+            out.append(row)
+        return out
 
     def project_of(self, agent_id: int) -> str | None:
         return self.assignments.get(agent_id)
@@ -941,23 +1331,29 @@ class Manager:
 
     # -- the loop
 
-    def _progress(self, agent_id: int) -> int:
-        """Compiles + claims + notes by this agent: a session that adds none of these made no progress. A release
-        refused without a compile (release_pushed) isn't progress: without this, a session with only those (the
-        agent told to compile or end its session) counted as one that worked, and the next one started 3 seconds
-        later on the same function, again and again, until the user's quota ran out."""
-        row = self.net.store.one(
-            "SELECT (SELECT COUNT(*) FROM attempts WHERE agent_id=?) + (SELECT COUNT(*) FROM events WHERE agent_id=? "
-            "AND kind != 'release_pushed') AS n", agent_id, agent_id)
-        return row["n"]
+    def _progress(self, agent_id: int, *, project=None) -> int:
+        """Recorded attempts plus completed diagnostic builds; administrative events are not compilation."""
+        store = self.net.project_store(project) if project is not None else self.net.store
+        row = store.one(
+            "SELECT COUNT(*) AS n FROM attempts WHERE agent_id=?", agent_id)
+        return row["n"] + getattr(self.net, "_session_diagnostic_compiles", {}).get(agent_id, 0)
 
     def _left(self, slug: str, task: str = "") -> int:
         """What the session's task has left in the project: open functions, or for polishing, matched ones it can
         still take (app/readable.py)."""
         proj = self.net.project_row(slug)
+        if task == "assets":
+            from .asset_agents import left
+            return left(self.net,slug)
         if task == "readable":
             return self.net.readability.left(proj)
-        row = self.net.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
+        if task == "data":
+            from .data_agents import left
+            return left(self.net, slug)
+        if task == "port":
+            from .port_agents import left
+            return left(self.net, slug)
+        row = self.net.project_store(proj["id"]).one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
         return row["n"]
 
     def _ruled_out(self, slug: str, agent_name: str) -> int:
@@ -972,6 +1368,10 @@ class Manager:
 
     def account(self, s: Session, usage: dict) -> None:
         """Add what a session spent to the helper, the session and the project (kept in its config)."""
+        if s.record:
+            s.record("usage", usage)
+        if usage.get('coverage') in {'partial','complete'}:
+            s.usage['coverage'] = usage['coverage']
         usd = float(usage.get("usd") or 0)
         parts = {k: int(usage.get(k) or 0) for k in TOKEN_KINDS}
         total = sum(parts.values()) or int(usage.get("tokens") or 0)
@@ -1017,11 +1417,27 @@ class Manager:
             s.state, s.why, s.until, s.todo = state, why, until, todo
         self._save(s)
 
-    def _wait(self, s: Session, why: str, until: float, todo: str = "") -> None:
+    def _wait(self, s: Session, why: str, until: float, todo: str = "", *, wall_clock=False) -> None:
         """Wait (unless stopped meanwhile), saying why and until when."""
         self._set(s, "waiting", why, until, todo)
-        s.push("info", f"waiting until {datetime.fromtimestamp(until).strftime('%H:%M')}: {why}")
-        s.stop.wait(max(0.0, until - time.time()))
+        s.push("info", f"waiting until {datetime.fromtimestamp(until).astimezone().strftime('%d %b %Y %H:%M %Z')}: {why}")
+        if wall_clock:
+            # Event.wait uses an elapsed-time clock which can stop during system sleep.
+            # Provider reset timestamps use wall time: recheck after wake/clock changes.
+            from . import session_followups
+            s.provider_waiting=True
+            try:
+                while not s.stop.is_set() and (remaining := until - time.time()) > 0:
+                    if s.provider_retry_requested:break
+                    if s.cooldown_observed and not session_followups.active_limit(self,s):break
+                    s.stop.wait(min(30.0, remaining))
+            finally:
+                s.provider_waiting=False
+                s.provider_retry_requested=False
+            if not s.stop.is_set():
+                self._set(s, "starting", "Checking provider availability")
+        else:
+            s.stop.wait(max(0.0, until - time.time()))
 
     def _pause(self, s: Session, why: str, todo: str = "") -> None:
         """It can't work until the user does something: it stops trying, says why and what to do."""
@@ -1053,65 +1469,244 @@ class Manager:
         return True
 
     def _run(self, s: Session) -> None:
+        from . import asset_agents, boundary_investigations, focused_agents
+        if s.options.get("task")=="assets":return asset_agents.run(self,s)
+        if s.options.get("task") == boundary_investigations.TASK:
+            return boundary_investigations.run(self,s)
+        focused_agents.run(self,s)
+
+    @agent_startup.current_projects
+    def _run_work(self, s: Session) -> None:
+        from . import focused_agents
+        agent_startup.stage(s, "Reading project and worker settings")
         agent, token = self.net.local_agent(s.agent_name)
+        self.net.set_selection(s.slug, agent.name, s.options.get("selection"))
         self.assignments[agent.id] = s.slug
+        focused_agents.bind(self.net,s,agent)
+        from . import asset_agents, boundary_investigations
+        boundary_investigations.bind(self.net,s,agent)
+        asset_agents.bind(self.net,s,agent)
+        from . import data_agents
+        data_agents.bind(self.net,s,agent)
+        from . import port_agents
+        port_agents.bind(self.net,s,agent)
+        if not hasattr(self.net, '_agent_tool_tasks'): self.net._agent_tool_tasks = {}
+        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'boundary' if s.options.get('task') == 'boundary' else 'assets' if s.options.get('task')=='assets' else 'data' if s.options.get('task')=='data' else 'port' if s.options.get('task')=='port' else 'matching'
+
         workdir = self.home / "agents" / s.agent_name
         workdir.mkdir(parents=True, exist_ok=True)
         s.push("info", f"{s.label} starting on {s.slug}")
-        if (prep := self._prep.get(s.slug)) is not None:
+        # Targeted work already has its input; unrelated matching preparation cannot unlock it.
+        targeted = bool(s.options.get("focus_id")) or s.options.get("task") in NOT_MATCHING
+        if not targeted and (prep := self._prep.get(s.slug)) is not None:
+            agent_startup.stage(s, "Waiting for source preparation")
             self._set(s, "starting", "first giving the game's code without a source file one (about a minute)")
             prep.wait(PREP_WAIT)
         twins = getattr(getattr(self.net, "twins", None), "jobs", {}).get(s.slug)
-        if twins is not None and not twins.ordered.is_set():
+        if not targeted and twins is not None and not twins.ordered.is_set():
+            agent_startup.stage(s, "Waiting for function ordering")
             self._set(s, "starting", "first setting hand-written assembly aside and putting the functions in order "
                                      "(seconds; a minute the first time)")
             twins.ordered.wait(ORDER_WAIT)
-        failures = fast = throttles = limits = auths = 0
+        s.tool_handshake_failures = 0
+        failures = fast = throttles = limits = auths = connection_failures = transport_failures = 0
+        no_progress_sessions = 0
         while not s.stop.is_set():
-            if self._left(s.slug, task := s.options.get("task") or "") == 0:
-                self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
+            if not focused_agents.ready(self,s,agent):continue
+            if getattr(self, 'source_update_pending', False):
+                why = 'Update ready: brief restart check (up to 15 seconds)'
+                if s.why != why:
+                    self._set(s, 'waiting', why, None,
+                              'Your work is saved. Sessions resume after restart, or within 15 seconds if active work needs longer.')
+                s.stop.wait(1)
+                continue
+            task = s.options.get("task") or ""
+            if task=='assets':
+                try:asset_ready=asset_agents.ready(self.net,s,agent)
+                except network.NetworkError as error:
+                    self._pause(s,str(error));break
+                if not asset_ready and asset_agents.awaiting_peer(self.net,s,agent):
+                    self._set(s,'waiting','Waiting for another worker’s discovery before independent review',None)
+                    s.stop.wait(1)
+                    continue
+                if not asset_ready:
+                    self._finish(s,'Asset discovery has no unclaimed work; review findings in ROM Explorer.')
+                    break
+            if task == 'boundary' and boundary_investigations.reported(self.net,s):
+                self._finish(s,'Boundary recommendation saved; review it in Review function boundaries.')
                 break
-            if task != "readable" and (ruled := self._ruled_out(s.slug, agent.name)):
+            if task != 'boundary' and self._left(s.slug, task) == 0:
+                self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'write as C' if task == 'data' else 'fix for the PC' if task == 'port' else 'decompile'} here 🎉")
+                break
+            if task not in NOT_MATCHING and not s.options.get("focus_id") and (ruled := self._ruled_out(s.slug, agent.name)):
                 self._finish(s, f"nothing left it can do: the {ruled} open function{'s' * (ruled != 1)} "
                                 f"{'are ones' if ruled != 1 else 'is one'} it found no C makes. Set "
                                 f"{'them' if ruled != 1 else 'it'} aside in {'their' if ruled != 1 else 'its'} panel, "
                                 "or start a helper of another model to look")
                 break
+            agent_startup.stage(s, "Selecting eligible work")
+            from ..read_cache import ReadPending
+            try:
+                counts = self.net.selection_counts(s.slug, agent) if not s.options.get("focus_id") and task not in NOT_MATCHING else None
+                policy = self.net.selection(s.slug, agent.name)
+            except ReadPending:
+                if s.stop.is_set():break
+                self._wait(s, 'Waiting for project metadata before the next model request.', time.time()+5,
+                           'This helper retries automatically when local metadata is ready.')
+                continue
+            if counts is not None and (policy.get("match_below") is not None or policy.get("max_tries") or policy.get("model_untried")):
+                if not counts["selected"] and not self.net.project_store(s.slug).one(
+                        "SELECT 1 FROM claims WHERE agent_id=?", agent.id):
+                    below = policy.get("match_below")
+                    why = f"no functions remain below {below:g}% match" if below is not None else "no functions remain unchecked by this model" if policy.get("model_untried") else "no functions remain within max tries"
+                    self._pause(s, why + " for this worker (unscored functions also count)",
+                                "Change Work selection, then press Start again.")
+                    break
+            if not s.options.get('focus_id') and task not in NOT_MATCHING and not counts['available'] and not self.net.project_store(s.slug).one(
+                    'SELECT 1 FROM claims WHERE agent_id=?',agent.id):
+                why, todo = self.net.selection_wait_reason(s.slug, agent, counts=counts)
+                self._wait(s, why, time.time()+30, todo)
+                continue
             if (cap := self.over_budget(s.slug)) is not None:
                 self._finish(s, f"the agents on this project have spent the ${cap:.2f} budget (Setup)")
                 break
             if self._room_away(s):
                 continue
-            if (broken := self._build_problem(s.slug)) is not None:
+            if task not in {"boundary","assets"} and (broken := self._build_problem(s.slug)) is not None:
                 self._pause(s, f"the project doesn't build on this computer, so no session starts: {broken}",
                             "Fix the project's setup (its page says what's wrong), then press Start again.")
                 break
+            from . import session_followups
+            if (rejected := session_followups.configuration_error(self, s)):
+                s.configuration_error = True
+                self._pause(s, rejected, 'Choose another model; this configuration was rejected for this account. Restart the app after changing account access.')
+                break
+            if (shared_until := session_followups.cooldown(self, s)) is not None:
+                s.cooldown_observed = shared_until
+                self._wait(s, agents.get(s.kind).limit_wait_why(), shared_until + session_followups.stagger(s),
+                           "Helpers on the same account or model resume automatically after reset.", wall_clock=True)
+                continue
             s.runs += 1
-            self._set(s, "working")
+            with self._lock:
+                if getattr(self, "source_update_pending", False):
+                    continue
+                self._set(s, "working")
             began = time.time()
-            before = self._progress(agent.id)
+            before = self._progress(agent.id, project=s.slug)
+            asset_before=asset_agents.progress(self.net,s.slug,agent.id) if task=='assets' else 0
+            activity_before = self.net.project_store(s.slug).one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] if task == 'readable' else 0
+            agent_startup.stage(s, "Preparing session records and prompt settings")
             row = self._session_begin(s)
             kind = agents.get(s.kind)
             try:
+                if not kind.command:agent_startup.stage(s, "")
                 ok = self._run_cli(s, token, workdir) if kind.command else kind.run(self, s, agent)
+                while (ok and kind.command and kind.focus_resume and s.options.get('focus_id')
+                       and s.options.get('focus_conversation') and not s.stop.is_set()
+                       and not s.limited and not s.throttled and not s.auth_failed
+                       and not focused_agents.completion(self,s)
+                       and not getattr(self, 'source_update_pending', False)):
+                    s.push('info','Continuing the same focused conversation; provider context compaction stays enabled.')
+                    if s.stop.wait(SESSION_GAP):break
+                    ok = self._run_cli(s, token, workdir)
+            except StartupMetadataPending:
+                self._session_end(s, row, agent, began, 'stopped' if s.stop.is_set() else 'metadata_retry')
+                if s.stop.is_set():break
+                self._wait(s, 'Waiting for project metadata before the next model request.', time.time()+5,
+                           'This helper retries automatically when local metadata is ready.')
+                continue
+            except ToolConnectionUnavailable as error:
+                connection_failures += 1
+                s.error = str(error)
+                s.push('error', s.error)
+                self._session_end(s, row, agent, began, 'connection_retry')
+                delay = connection_retry_delay(connection_failures, s.id)
+                self._wait(s, f'Local tool connection unavailable; retry {connection_failures} in {delay}s. '+('The CLI session did not complete its handshake.' if s.tool_handshake_failures else 'No model request started.'),
+                           time.time()+delay, 'This helper reconnects automatically; saved work is retained.')
+                continue
             except Fatal as e:  # needs the user first: retrying can't help
+                if agents.get(s.kind).fatal(str(e)):
+                    s.configuration_error = True
+                    session_followups.configuration_error(self, s, str(e))
+                s.push("error", str(e))
                 self._session_end(s, row, agent, began, "paused")
                 s.error = str(e)
-                self._pause(s, str(e))
+                self._pause(s, str(e), 'Choose another model in Add agents; this configuration cannot recover by retrying.' if s.configuration_error else '')
                 break
             except Exception as e:  # keep the runner alive; show what happened
                 log.exception("helper %s failed", s.agent_name)
                 s.error = f"{type(e).__name__}: {e}"
                 s.push("error", s.error)
                 ok = False
-            if ok and not s.stop.is_set() and self._progress(agent.id) == before:
-                s.error = "the session ended without compiling anything (its messages are in its details)"
+            from .tool_connections import failure as connection_failure_report
+            if ok and not s.stop.is_set() and (transport := connection_failure_report(s,self.net)):
+                connection_failures += 1
+                s.error=transport
+                s.push('error',transport)
+                transport_failures += 1
+                self._session_end(s,row,agent,began,'connection_retry' if transport_failures == 1 else 'paused')
+                if transport_failures > 1:
+                    self._pause(s,'The CLI repeatedly reported local tool connection failures. Automatic model retries paused; saved work is retained.',
+                                'Review MCP startup diagnostics and restart this helper when the connection is available.')
+                    break
+                delay=connection_retry_delay(connection_failures, s.id)
+                self._wait(s,transport,time.time()+delay,'Local tool connection retry; saved work remains available.')
+                continue
+            if ok and not s.stop.is_set() and not s.limited and not s.throttled and not s.auth_failed:
+                session_followups.clear_limit(self,s)
+                from .session_recovery import completed
+                completed(s, self.net)
+                self._save(s)
+            connection_failures = transport_failures = 0
+            compiled = self._progress(agent.id, project=s.slug) - before
+            investigation = session_followups.investigation_outcome(self.net, agent, began, project=s.slug) if compiled == 0 else None
+            if task == 'boundary' and boundary_investigations.reported(self.net,s):
+                ok = True
+                investigation = 'Boundary recommendation submitted'
+            if task=="assets" and asset_agents.progress(self.net,s.slug,agent.id)>asset_before:
+                investigation="Asset findings or unsuccessful approaches saved for review"
+            followup = task not in {"boundary","assets"} and ok and not s.rotated and not investigation and session_followups.premature(self, s, agent, compiled)
+            if compiled >= 2:
+                s.continuation_attempts = 0
+            if followup:
+                s.continuation_attempts += 1
+                s.continuation_note = session_followups.CONTINUATION
+                s.push('info', 'Session ended early; continuing once with explicit compilation guidance.')
+            readable_progress = task == 'readable' and self.net.project_store(s.slug).one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] > activity_before
+            work_remains = task != "boundary" and self._left(s.slug,task) > 0
+            no_progress = (task not in {'boundary', 'readable'} and ok and not investigation
+                           and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0
+                           and not (s.limited or s.throttled or s.auth_failed or s.signed_out))
+            if getattr(self.net, '_progress_disturbed', {}).pop(agent.id, 0):
+                no_progress = False  # saves and rechecks kept its tools from working: not a reason to pause it
+            no_progress_sessions = no_progress_sessions + 1 if no_progress else 0
+            if ok and not investigation and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
+                s.error = "The discovery session ended without a structured finding or unsuccessful approach." if task=="assets" else "the session ended without compiling anything (its messages are in its details)"
                 s.push("error", s.error)
                 ok = False
-            self._session_end(s, row, agent, began, "stopped" if s.stop.is_set() else "ok" if ok else
+            if task == 'boundary' and ok and not boundary_investigations.reported(self.net,s):
+                s.error = 'The agent ended without a structured boundary recommendation. Read its transcript or start another investigation.'
+                ok = False
+            if investigation and ok:
+                s.push("info", investigation+"; no compilation was needed for this report.")
+            self._session_end(s, row, agent, began, "investigated" if task == "boundary" and investigation else "stopped" if s.stop.is_set() else "rotated" if s.rotated else "early_finish" if followup else "investigated" if ok and investigation else "ok" if ok else
                               "limit" if s.limited else "signin" if s.auth_failed else "failed")
+            if no_progress_sessions >= session_followups.NO_PROGRESS_SESSIONS:
+                self._pause(s, f'{no_progress_sessions} consecutive sessions ended without a build or investigation. Automatic retries paused.',
+                            'Review recent tool errors or choose another model, then press Start. Saved sources and handoffs are retained.')
+                break
+            if task == 'boundary' and ok:
+                self._finish(s, 'Boundary recommendation saved; review it in Review function boundaries.')
+                break
+            if task == 'boundary' and not ok and not (s.limited or s.throttled or s.auth_failed):
+                self._pause(s, s.error or 'Boundary investigation failed. Review the transcript before retrying.')
+                break
             if s.stop.is_set():
                 break
+            if s.context_budget and s.context_budget.waiting:
+                why,todo=self.net.selection_wait_reason(s.slug,agent)
+                self._wait(s,why,time.time()+30,todo)
+                continue
             if s.signed_out:
                 self._pause(s, s.error, kind.signin_for(s.options))
                 break
@@ -1130,20 +1725,25 @@ class Manager:
             if s.limited:  # the plan's allowance is used up for now: it resets, so wait as long as it takes
                 limits += 1
                 until = s.limit_until or time.time() + min(LIMIT_WAIT_LONGEST, LIMIT_WAIT_FIRST * 2 ** (limits - 1))
+                until = session_followups.remember_limit(self, s, until + LIMIT_RESET_MARGIN)
+                s.cooldown_observed = until
                 s.limited, s.limit_until = False, None
                 s.restarts += 1
-                self._wait(s, f"{kind.name}'s usage limit is reached", until + LIMIT_RESET_MARGIN,
-                           "it resets by itself; this helper carries on then")
+                self._wait(s, f"{kind.name}'s usage limit is reached", until + session_followups.stagger(s),
+                           "it resets by itself; this helper carries on then", wall_clock=True)
                 continue
             if s.throttled and throttles < THROTTLES_IN_A_ROW:  # the provider's limit, not the agent's failure
                 s.throttled, throttles = False, throttles + 1
-                self._wait(s, "the model's provider says too many requests at once", time.time() + THROTTLE_WAIT,
-                           "fewer agents at once on this account would wait less")
+                capacity = bool(PROVIDER_CAPACITY.search(s.error))
+                self._wait(s, "The model provider has no capacity available; retrying after backoff." if capacity
+                           else "the model's provider says too many requests at once", time.time() + THROTTLE_WAIT,
+                           "Provider availability must recover; this is not a local tool connection failure." if capacity
+                           else "fewer agents at once on this account would wait less")
                 continue
             throttles = 0
             if ok:
                 failures = fast = limits = 0
-                self._set(s, "waiting", "the next session starts in a moment")
+                self._set(s, "waiting", "Session ended early; continuing with compilation guidance." if followup else "Session completed; helper is continuing. The next session starts in a moment.")
                 s.stop.wait(SESSION_GAP)
                 continue
             failures += 1
@@ -1173,13 +1773,18 @@ class Manager:
     def _release(self, s: Session, agent=None) -> None:
         """Free the function a helper holds (in a room, the host holds the real claim). A stop may happen before its
         runner notices, so recover the helper's identity to tell the host too."""
+        if self._down:return  # shutdown releases all helper claims in one pass per database
         if agent is None:
             row = self.net.store.one("SELECT id, name, owner, trusted FROM agents WHERE name=?", s.agent_name)
             if row is None:
                 return
             agent = network.Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
+        if s.options.get("task")=="assets":
+            from .asset_agents import release
+            release(self.net,s,agent)
+            return
         agent_id = agent.id
-        held = self.net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
+        held = self.net.project_store(s.slug).one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                                   agent_id)
         link = self.net.links.get(s.slug)
         if held and link is not None:
@@ -1188,50 +1793,168 @@ class Manager:
             except Exception:  # the host lets the claim expire
                 pass
         # its claims go now, with a note, rather than when their lease runs out; and its next run starts afresh
-        self.net.release_stopped([agent_id], (s.why or "it stopped")[:200])
+        self.net.release_stopped([agent_id], (s.why or "it stopped")[:200], project=s.slug)
 
     def _session_begin(self, s: Session) -> int:
         from .prompt_settings import effective
         s.prompt_config = effective(self.net, s.options)
+        s.startup_context = None
         s.usage = _fresh_usage()
+        self.transcripts.for_project(s.slug)
         with self.net.store.tx() as db:
-            return db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task, "
-                              "account_id, account_name) VALUES(?,?,?,?,?,?,?,?,?)",
-                              (s.id, s.slug, s.kind, s.model or agents.get(s.kind).default_model(s.options) or "",
-                               s.agent_name, time.time(), s.options.get("task") or "",
-                               s.options.get("account_id") or "", s.options.get("account_name") or "")).lastrowid
+            db.execute('INSERT OR IGNORE INTO settings VALUES(?,?)', ('helper-name:'+s.agent_name,'1'))
+        with self.net.project_store(s.slug).tx() as db:
+            row = db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task, account_id, account_name) "
+                              "VALUES(?,?,?,?,?,?,?,?,?)", (s.id, s.slug, s.kind, s.model or agents.get(s.kind).config_model() or "",
+                                                      s.agent_name, time.time(), s.options.get("task") or "",
+                                                      s.options.get("account_id") or "", s.options.get("account_name") or "")).lastrowid
+        from .session_efficiency import context
+        snapshot=context(self.net,s.slug,s.options)
+        with self.net.project_store(s.slug).tx() as db:
+            db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',('session-efficiency:'+str(row),json.dumps(snapshot)))
+        s.session_id = row
+        from .session_budget import start
+        agent_row=self.net.store.one('SELECT id FROM agents WHERE name=?',s.agent_name)
+        s.context_budget=start(self.net,agent_row['id'],s.slug,s.options) if agent_row else None
+        s.rotated=False
+        s.record = lambda kind, value: self.transcripts.append(row, kind, value, (s.options.get('api_key'),), helper=s.id, project=s.slug)
+        return row
+
+    def record_agent(self, agent, slug, kind, value):
+        for session in list(self.sessions.values()):
+            if session.agent_name == agent.name and session.slug == slug and session.record:
+                session.record(kind, value)
+                break
+
+    def transcript(self, slug, helper, session=0, after=0, before=0, whole=False):
+        result = self.transcripts.read(slug, helper, session, after, before, whole=whole)
+        for live in list(self.sessions.values()):
+            if result['session'] and live.slug == slug and live.session_id == result['session']['id'] and live.record:
+                for key in TOKEN_KINDS:
+                    result['session'][key + '_tokens'] = live.usage[key]
+                result['session']['usd'] = live.usage['usd']
+                result['session']['tokens'] = live.usage['tokens']
+                result['session']['usage_coverage'] = live.usage.get('coverage','unknown')
+        if result.get('session'):
+            from .session_efficiency import for_sessions
+            result['efficiency']=for_sessions(self.net,[result['session']],project=slug) if result['session']['ended_at'] else []
+        return result
 
     def _session_end(self, s: Session, row: int, agent, began: float, outcome: str) -> None:
         """What a session did and spent, on its row: to compare models on cost per match."""
-        compiles = self.net.store.one("SELECT COUNT(*) AS n FROM attempts WHERE agent_id=? AND created_at>=?",
+        compiles = self.net.project_store(s.slug).one("SELECT COUNT(*) AS n FROM attempts WHERE agent_id=? AND created_at>=?",
                                       agent.id, began)["n"]
-        matches = self.net.store.one("SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='match' AND "
+        matches = self.net.project_store(s.slug).one("SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='match' AND "
                                      "created_at>=?", agent.id, began)["n"]
+        from .session_handoffs import capture
+        handoff = capture(self.net, agent, s.slug, began, session=row)
+        if s.record:
+            s.record('handoff', handoff)
         u = s.usage
-        with self.net.store.tx() as db:
+        with self.net.project_store(s.slug).tx() as db:
             db.execute("UPDATE helper_sessions SET ended_at=?, outcome=?, usd=?, input_tokens=?, output_tokens=?, "
                        "cache_read_tokens=?, cache_write_tokens=?, tokens=?, turns=?, tool_calls=?, compiles=?, "
                        "matches=? WHERE id=?", (time.time(), outcome, u["usd"], u["input"], u["output"],
                                                 u["cache_read"], u["cache_write"], u["tokens"], u["turns"],
                                                 u["tool_calls"], compiles, matches, row))
+        with self.net.project_store(s.slug).tx() as db:
+            db.execute('UPDATE helper_sessions SET usage_coverage=? WHERE id=?', (s.usage.get('coverage','unknown'),row))
+        from .session_efficiency import finish
+        finish(self.net,agent,s.slug,row,began)
         spent = f", ${u['usd']:.2f}" if u["usd"] else f", {u['tokens'] // 1000}k tokens" if u["tokens"] else ""
-        s.push("info", f"session {s.runs} done: {u['tool_calls']} tool calls, {compiles} compiles, {matches} "
+        ending = 'ended early; helper continues with compilation guidance' if outcome == 'early_finish' else 'completed; boundary investigation finished' if s.options.get('task') == 'boundary' and outcome == 'investigated' else 'completed; helper continues' if outcome in ('ok', 'rotated', 'investigated') and not s.stop.is_set() else 'ended ('+outcome+')'
+        s.push("info", f"session {s.runs} {ending}: {u['tool_calls']} tool calls, {compiles} compiles, {matches} "
                        f"matched{spent}")
         self._save(s)
+        from .. import agent_notes
+        with self.net.project_store(s.slug).tx() as db:
+            agent_notes.finish(db, row)
+        s.record = None
+
+    @agent_startup.current_projects
+    def prepare_session(self, s: Session, agent=None, *, token=None) -> None:
+        """Preload facts and one ordinary claim, once; previews never claim work."""
+        if s.startup_context is not None:
+            return
+        if s.options.get("task")=="assets":
+            s.startup_context="First call project_info(detail=false), then claim_asset_region. No function has been claimed."
+            return
+        if s.options.get('task') == 'boundary':
+            s.startup_context = 'First check project_info(detail=false), then get_boundary_evidence. No function has been claimed.'
+            return
+        if agent is None:
+            agent = self.net.authenticate(token)
+        if (agent.id, s.slug) in getattr(self.net, '_pending_tool_handshakes', set()):
+            s.startup_context = 'Connection check required: first call project_info(detail=false). Then claim_function to receive your function. No new claim has been handed over by this startup.'
+            return
+        facts = tools._project_info(self.net, s.slug, detail=False).split('Next:')[0][:STARTUP_FACTS_CHARS]
+        parts = ['App-provided startup context (already fetched; no project_info call needed):', facts]
+        # Only a matching session gets a function claimed for it: the other tasks claim their own work (a port-fix
+        # helper given claim_function's answer found nothing to match on a finished game and waited forever).
+        if s.options.get('task') not in NOT_MATCHING:
+            # A fresh provider session has no copy of a previous session's brief/C.
+            getattr(self.net, '_claim_packets', {}).pop((agent.id, s.slug), None)
+            packet = tools._claim(self.net, agent, s.slug, '', '', count=1)
+            if len(packet) > STARTUP_BRIEF_CHARS:
+                packet = packet[:STARTUP_BRIEF_CHARS].rsplit('\n', 1)[0] + '\n[Startup brief abbreviated. Read get_function(section=brief) or get_candidate for omitted evidence before editing.]'
+            parts += ['The app already called claim_function(count=1) for you. Start with the brief below. '
+                      'Do not claim again before working on or releasing this function. '
+                      'If no function was available, do not invent one; end the session.', packet]
+        s.startup_context = '\n\n'.join(parts)
 
     def prompt(self, s: Session) -> str:
-        text = self._prompt(s)
-        # the know-how every session reads first, given up front (saves each session its first tool calls)
-        ov = self.net.overview(s.slug)  # (only its platform's parts: tools.for_platform)
-        text += "\nKnow-how you'd otherwise read with guide() (more topics: guide()):\n\n" + tools.up_front(
-            ov.get("platform") or "", ov.get("kind") or "", ov["compiler"]["toolchain"])
-        if (known := self.net.knowledge.for_prompt(s.slug)):
-            text += f"\n{known}\n"
-        if (wish := self.net.instructions(s.slug)):
-            text += f"\nThe user's instructions for this project (they come first):\n{wish}\n"
+        from . import focused_agents
+        from .session_handoffs import previous
+        if s.options.get("task")=="assets":
+            from .asset_agents import prompt
+            return prompt(s)+"\nUser project instructions: "+self.net.instructions(s.slug)
+        if s.options.get('task') == 'boundary':
+            from .boundary_investigations import prompt
+            return prompt(s)
+        if s.options.get('task') == 'data':
+            from .data_agents import prompt
+            return prompt(self.net, s) + ('\n\n' + s.startup_context if s.startup_context else '')
+        if s.options.get('task') == 'port':
+            from .port_agents import prompt
+            return prompt(self.net, s) + ('\n\n' + s.startup_context if s.startup_context else '')
+        # What stays the same from one session of the project to the next comes first, and what changes (the last
+        # session's handoff, held work, the claimed function's brief) after it: providers cache a prompt's longest
+        # unchanged start, so the guides line, the owner's order and instructions and the shared knowledge are read
+        # from the cache by every later session, rather than sent again behind a handoff that differs each time.
+        text = focused_agents.prompt(s) if s.options.get('focus_id') else self._prompt(s)
+        # Keep detailed guides on demand; the work prompt already teaches the matching loop.
+        ov = agent_startup.project_facts(self.net, s.slug)
+        text += "\nGuides to load when needed:\n\n" + tools.up_front(
+            ov.get("platform") or "", ov.get("kind") or "", (ov.get("compiler") or {}).get("toolchain", ""))
         if (order := self.net.claim_order(s.slug)):
             text += (f"\nThe project's owner chose the order helpers take functions in: {network.CLAIM_ORDERS[order]}. "
                      "claim_function without a function follows it; one you name still comes.\n")
+        if (wish := self.net.instructions(s.slug)):
+            text += f"\nThe user's instructions for this project (they come first):\n{wish}\n"
+        knowledge_agent = self.net.store.one('SELECT id,name,owner,trusted FROM agents WHERE name=?',s.agent_name)
+        knowledge_agent = network.Agent(knowledge_agent['id'],knowledge_agent['name'],knowledge_agent['owner'],bool(knowledge_agent['trusted'])) if knowledge_agent else None
+        if (known := self.net.knowledge.for_prompt(s.slug, knowledge_agent)):
+            text += f"\n{known}\n"
+        text += previous(self.net, s.id, s.slug)
+        if s.options.get('focus_id'):
+            text += (f"\nUSER FOCUS: Work only on {s.options['focus_function']} until the app's deadline. "
+                     'Do not move to other functions, even after repeated failures. Read callees as needed, save improved candidates and notes. '
+                     'Keep this conversation running; compact older context rather than ending the session. The app stops this worker on a match or timeout.\n')
+        if s.continuation_note:
+            text += '\n\nSession continuation guidance:\n' + s.continuation_note
+            s.continuation_note = ""
+        if s.options.get('task') != 'readable':
+            from . import agent_tokens, local_experiments
+            row = self.net.store.one('SELECT id,name,owner,trusted FROM agents WHERE name=?',s.agent_name)
+            agent = network.Agent(row['id'],row['name'],row['owner'],bool(row['trusted'])) if row else None
+            if agent:
+                held = self.net.project_store(s.slug).all('SELECT f.* FROM functions f JOIN claims c ON c.function_id=f.id '
+                                          'JOIN projects p ON p.id=f.project_id WHERE c.agent_id=? AND p.slug=? LIMIT 6',agent.id,s.slug)
+                for fn in held:
+                    source,revision = agent_tokens.candidate(self.net,agent,s.slug,fn['name'])
+                    text += '\n'+fn['name']+': '+local_experiments.summary(self.net,agent,s.slug,fn,source,revision)
+        if s.startup_context:
+            text += '\n\n' + s.startup_context
         return text
 
     def _prompt(self, s: Session) -> str:
@@ -1243,10 +1966,11 @@ class Manager:
 
         def offers(fork: bool, console, **kw) -> set[str]:
             """The tools this helper gets: its console's, less those Agents & models turned off, so the prompt
-            never points it at a tool its calls would be refused."""
-            return set(visible(self.net, s.slug, tools.tool_names(fork, console, **kw),
-                               SimpleNamespace(name=s.agent_name)))
-        ov = self.net.overview(s.slug)
+            never points it at a tool its calls would be refused (#256)."""
+            row = self.net.store.one("SELECT id FROM agents WHERE name=?", s.agent_name)
+            helper = SimpleNamespace(id=row["id"] if row else None, name=s.agent_name)
+            return set(visible(self.net, s.slug, tools.tool_names(fork, console, **kw), helper))
+        ov = agent_startup.project_facts(self.net, s.slug)
         count = s.options.get("per_session", PER_SESSION)
         if s.options.get("task") == "readable":  # (in either mode: the step that differs is the mode's)
             return templates['initial_readable'].format(title=ov["title"], count=count, names=tools.READABLE_FORK
@@ -1263,7 +1987,7 @@ class Manager:
             if "join_functions" in offers(True, console, scratch=scratch):
                 text = text.replace("\nRules:", "\n" + tools.FORK_JOIN + "\n\nRules:", 1)
             return text
-        guide = console.up_front_guide(ov["compiler"]["toolchain"])
+        guide = console.up_front_guide((ov.get("compiler") or {}).get("toolchain", ""))
         text = templates['initial_rom'].format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
         offered = offers(False, console)
@@ -1292,12 +2016,23 @@ class Manager:
         # other agent leaves prompt_file at None and keeps getting the prompt on stdin. Written before the command:
         # a prompt zcode cannot attach fails the session before its settings file exists, and pauses the helper
         # instead of retrying a prompt only the user can shorten.
-        prompt = self.prompt(s)
+        if s.options.get('focus_id') and s.options.get('focus_conversation') and k.focus_resume:
+            from .focused_agents import prompt as focus_prompt
+            prompt = focus_prompt(s) + '\nContinue from your existing context; retrieve current saved C if needed.'
+        else:
+            prompt = self.prompt(s)
+        from .session_recovery import handoff
+        prompt += handoff(s)
+        if s.options.get('resume_conversation') and k.focus_resume:
+            prompt += '\nResume this conversation after interruption. Continue from saved context, checking current state first.\n'
+        if s.tool_handshake_required:
+            prompt += '\nFirst call project_info(detail=false) to confirm tools in this CLI session, before claiming or editing. If unavailable, end immediately and report the connection failure. The app will retry once.'
         try:
             prompt_file = k.prompt_file(workdir, prompt)
         except ValueError as e:
             raise Fatal(str(e)) from e
-        cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model)
+        cmd, more = (k.focused_session_command(exe, workdir, self.mcp_url, token, s.model, s.options.get('focus_conversation') if s.options.get('focus_id') else s.options.get('resume_conversation'))
+                     if k.focus_resume or s.options.get('focus_id') else k.session_command(exe, workdir, self.mcp_url, token, s.model))
         cmd = k.launch_command(agents.cli_argv(cmd))
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
@@ -1308,18 +2043,132 @@ class Manager:
             raise Fatal(str(e)) from e
         return cmd, env, None if prompt_file is not None else k.stdin(prompt)
 
+    def _preflight_tools(self, token: str, *, session=None) -> bool:
+        # Capacity is a local queue, never a connection failure or a new session.
+        if session is not None:
+            agent_startup.stage(session, "Waiting for local tool connection slot")
+        while not self._tool_startup_slots.acquire(timeout=.1):
+            if (session is not None and session.stop.is_set()) or getattr(self, '_down', False):
+                return False
+        try:
+            if (session is not None and session.stop.is_set()) or getattr(self, '_down', False):
+                return False
+            if session is not None:
+                agent_startup.stage(session, "Checking local tool connection")
+            self._probe_tools(token)
+            return True
+        finally:
+            self._tool_startup_slots.release()
+
+    def _probe_tools(self, token: str) -> None:
+        """Check local authenticated wiring, without building project facts or making a model request."""
+        phase = 'local authentication'
+        began = time.monotonic()
+        async def check():
+            nonlocal phase
+            from mcp import ClientSession
+            from mcp.client.streamable_http import streamable_http_client
+            from mcp.shared._httpx_utils import create_mcp_http_client
+
+            phase = 'opening MCP transport'
+            async with create_mcp_http_client(headers={"Authorization": f"Bearer {token}", "X-Decomp-Connection-Check":"1"}) as http:
+                async with streamable_http_client(self.mcp_url, http_client=http) as streams:
+                    async with ClientSession(*streams[:2]) as client:
+                        phase = 'initializing MCP'
+                        await client.initialize()
+                        phase = 'listing tools'
+                        tools = await client.list_tools()
+                        names = {tool.name for tool in tools.tools}
+                        from .tool_policy import connection_required
+                        missing = connection_required(self.net, agent) - names
+                        if missing:
+                            raise Fatal('The decomp MCP server is missing required tools: '+', '.join(sorted(missing))+'. Review tool settings before restarting this helper.')
+                        phase = 'authenticated project check'
+                        result = await client.call_tool('project_info', {'detail': False})
+                        if result.is_error:
+                            message = ' '.join(getattr(block, 'text', '') for block in getattr(result, 'content', ()))
+                            raise Fatal('Authenticated tool check rejected: '+(message[:400] or 'project access was denied'))
+                        phase = 'closing MCP transport'
+        try:
+            agent = self.net.authenticate(token)
+        except NetworkError as error:
+            raise Fatal('Local helper authentication failed: '+connection_failure(error, token)+'. No model request was started.') from error
+        try:
+            asyncio.run(asyncio.wait_for(check(), timeout=15))
+        except Exception as error:
+            detail = f'Tool connection check failed during {phase} after {time.monotonic()-began:.1f}s: '+connection_failure(error, token)
+            # Context-manager cleanup can wrap permanent errors inside an exception group.
+            def permanent(exc):
+                return (isinstance(exc, Fatal) or getattr(getattr(exc, 'response', None), 'status_code', None) in (401,403,404)
+                        or any(permanent(child) for child in getattr(exc, 'exceptions', ())))
+            if permanent(error):
+                raise Fatal(detail+'. No model request was started.') from error
+            raise ToolConnectionUnavailable(detail+'. No model request was started; reconnecting automatically.') from error
+
+    @agent_startup.current_projects
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
-        k = agents.get(s.kind)
-        cmd, env, prompt = self._command(s, token, workdir)
+        from ..read_cache import ReadPending
+        try:
+            k = agents.get(s.kind)
+            if why := k.validate_model(s.model):
+                raise Fatal(why)
+            if self._preflight_tools(token, session=s) is False:
+                return True
+            if s.context_budget and s.context_budget.waiting:
+                s.rotated = True
+                s.push('info','No eligible work; waiting without starting a model request.')
+                return True
+            agent = self.net.authenticate(token)
+            # Availability may change after the runner's selection check while local
+            # connection setup is in progress. Do not launch a paid handshake for an
+            # empty queue; retained claims and explicitly targeted tasks still run.
+            if not s.options.get('focus_id') and s.options.get('task') not in NOT_MATCHING:
+                counts = self.net.selection_counts(s.slug, agent)
+                if not counts['available'] and not self.net.project_store(s.slug).one(
+                        'SELECT 1 FROM claims WHERE agent_id=?', agent.id):
+                    if s.context_budget:s.context_budget.waiting = True
+                    s.rotated = True
+                    s.push('info', 'No eligible work after the connection check; waiting without a model request.')
+                    return True
+            pending = self.net.__dict__.setdefault('_pending_tool_handshakes', set())
+            # Selection was checked by the runner. The authenticated claim rechecks live availability.
+            if s.options.get('task') not in NOT_MATCHING:
+                pending.add((agent.id, s.slug))
+                s.tool_handshake_required = True
+            agent_startup.stage(s, "Preparing compact startup context")
+            self.prepare_session(s, token=token)
+            if s.context_budget and s.context_budget.waiting:
+                s.rotated=True
+                s.push('info','No eligible work; waiting without starting a model request.')
+                return True
+            agent_startup.stage(s, "Preparing agent CLI")
+            cmd, env, prompt = self._command(s, token, workdir)
+        except ReadPending as error:
+            raise StartupMetadataPending('Shared startup metadata is still being prepared.') from error
+        if s.rotated:return True
+        if s.record:
+            previous = s.record
+            s.record = lambda kind, value: previous(kind, (value if isinstance(value, str) else
+                                                          json.dumps(value, ensure_ascii=False, indent=2))
+                                                   .replace(token, '[redacted]'))
+            s.record('prompt', prompt)
+            s.record('instructions', self.app_instructions(s))
+        agent_startup.stage(s, "")
         s.push("info", f"session {s.runs}: {k.name} started")
         if os.name == "nt":
             import sys
 
             cmd = [sys.executable, "-I", str(Path(__file__).with_name("winhelper.py")), *cmd]
         # its own session and process group: stopping it ends everything it started
-        proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        if self._down or s.stop.is_set():return False
+        try:
+            proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1,
                                 start_new_session=True, creationflags=NO_WINDOW)
+        except OSError as error:
+            from ..spawn_diagnostics import record
+            record(error, 'agent')
+            raise
         if os.name == "nt":
             from ..winprocess import Job
 
@@ -1337,6 +2186,7 @@ class Manager:
                     _close_windows_job(proc.pid)
                 threading.Thread(target=reap_job, daemon=True, name=f"job-{proc.pid}").start()
         s.proc, s.pid_start = proc, _proc_start(proc.pid)
+        if self._down or s.stop.is_set():_terminate(proc)
         self._save(s)  # its process, should the app crash: the next start ends it
         errors: collections.deque = collections.deque(maxlen=20)
 
@@ -1346,18 +2196,47 @@ class Manager:
             except OSError:  # it exited before reading (stderr says why)
                 pass
 
+        stream_rejected = threading.Event()
+        stream_errors: list[str] = []
+        from .provider_retries import Retries
+        provider_retries = Retries()
+        retry_failure = getattr(k, 'stderr_retry', None)
+        connection_diagnostics: list[str] = []
+        connection_diagnostic = getattr(k, 'stderr_connection', None)
+
         def drain_err():
             for line in proc.stderr:
-                if (text := k.clean_stderr(line)) and (not errors or errors[-1] != text):
+                diagnostic = connection_diagnostic(line) if connection_diagnostic is not None else ''
+                if diagnostic and diagnostic not in connection_diagnostics and len(connection_diagnostics) < 4:
+                    connection_diagnostics.append(diagnostic)
+                    s.push('info', 'CLI tool connection diagnostic: '+diagnostic)
+                failure = k.stderr_failure(line, s.model)
+                if not failure and retry_failure is not None:
+                    failure = provider_retries.observe(retry_failure(line, s.model))
+                if failure and not stream_rejected.is_set() and not s.stop.is_set():
+                    stream_errors.append(failure)
+                    stream_rejected.set()
+                    errors.append(failure)
+                    _terminate(proc)  # unblock stdout; normal limit handling keeps work and cooldowns
+                text=k.clean_stderr(line).replace(token,'[redacted]')
+                if text and (not errors or errors[-1] != text):
                     errors.append(text)
         threading.Thread(target=feed_prompt, daemon=True).start()
-        threading.Thread(target=drain_err, daemon=True).start()
+        stderr_thread = threading.Thread(target=drain_err, daemon=True)
+        stderr_thread.start()
         saw_tool = False
         said: collections.deque = collections.deque(maxlen=20)
         state: dict = {}
         last_error = refused = ""
         for line in proc.stdout:
             for kind, text in k.parse_line(line, state):
+                if kind in ('text', 'think', 'tool'):
+                    provider_retries.progress()
+                if kind == "conversation":
+                    from .session_recovery import conversation
+                    if k.focus_resume and conversation(s, text):
+                        self._save(s)
+                    continue
                 if kind == "usage":
                     self.account(s, json.loads(text))
                     continue
@@ -1369,24 +2248,75 @@ class Manager:
                     last_error = text
                     refused = refused or (text if k.fatal(text) else "")
                 s.push(kind, text)
-            if s.stop.is_set():
+            if not s.options.get('focus_id') and s.context_budget and s.context_budget.ready() and not s.stop.is_set():
+                s.rotated=True
+                s.push('info','No eligible work; ending this conversation so the app can wait without model requests.' if s.context_budget.waiting else 'Starting a fresh session to keep context small; saved work and claims are retained.')
+            if s.stop.is_set() or s.rotated:
+                reason = 'budget rotation' if s.rotated else 'stop request ('+str(s.stopped_by)+')'
+                s.push('termination', 'App requested termination: '+reason)
                 _terminate(proc)
                 break
         code = proc.wait()
+        s.push('termination', f'CLI exited: code={code}; stdout_tools_seen={str(saw_tool).lower()}; '
+                             f'provider_finish={k.exit_reason(state)}.')
         _close_windows_job(proc.pid)
+        # Fast failures may close stdout before the stderr reader receives the sign-in error.
+        # Bound the wait in case a descendant inherited the pipe.
+        stderr_thread.join(timeout=1)
         s.proc = None
-        if s.stop.is_set():
+        if s.stop.is_set() or s.rotated:
             return True
+        said.extend(stream_errors)
+        for failure in stream_errors:
+            s.push('error', failure)
         everything = " ".join([*said, *errors])
+        if (k.focus_resume and code and (s.options.get('resume_conversation') or s.options.get('focus_conversation'))
+                and re.search(r'(?:no (?:session|conversation|thread) found|(?:session|conversation|thread).{0,100}(?:not found|does not exist|could not be found))', everything, re.I)):
+            s.options.pop('resume_conversation', None)
+            s.options.pop('focus_conversation', None)
+            self._save(s)
+            s.push('info','Saved CLI conversation is unavailable. Continuing with saved function handoff and current project state.')
+            return False
+
+        if code != 0 and not saw_tool and (startup := k.startup_failure('\n'.join([*errors,last_error]))):
+            message=startup.replace(token,'[redacted]')
+            s.push('error',message)
+            raise ToolConnectionUnavailable(message+' Retrying the required connection before starting another model turn.')
+
+        refused = refused or next((text for text in errors if k.fatal(text)), "")
         if refused:
-            raise Fatal(refused)  # every retry would meet it the same way
-        if LIMIT.search(everything):
+            raise Fatal(refused + " Review the agent settings and resolve this error before restarting.")  # every retry would meet it the same way
+        # stderr_failure only reports this after confirming the selected primary stream was refused;
+        # a title request can fail for the same reason while the main model turn still works. Pause
+        # just this helper with a model choice, never the whole account's cooldown.
+        if any(FREE_MODEL_ALLOWANCE.search(f) for f in stream_errors):
+            raise Fatal(f"{agents.FREE_ALLOWANCE} for the selected model. Choose an OpenCode Go model "
+                        "in Add agents, or wait for the free allowance to reset.")
+        # Raw stderr (including title requests) still carries the provider's "usage limit" wording.
+        # Strip it so a free-tier refusal cannot publish the account-wide cooldown.
+        limit_text = FREE_MODEL_ALLOWANCE.sub("", everything)
+        if LIMIT.search(limit_text):
             s.limited = True  # whatever the exit code: Claude Code says so in an ordinary result
-            s.limit_until = limit_reset(everything)
+            s.limit_until = limit_reset(limit_text)
+            # Publish the account cooldown before closing this session, so siblings
+            # do not launch another paid request while its exit is being recorded.
+            from . import session_followups
+            session_followups.remember_limit(self, s, (s.limit_until or time.time()+LIMIT_WAIT_FIRST)+LIMIT_RESET_MARGIN)
+            s.error = "Provider usage limit reached; waiting for reset."
+            s.push('info', s.error)
+            return False
         elif code != 0 and (why := no_credit(everything)):
             raise Fatal(why)  # every agent on this account fails the same way until it's topped up
-        if code != 0 and THROTTLED.search(everything):
+        if (agent.id, s.slug) not in pending and re.search(r"invalid API token|(?:decomp tools|decomp MCP server)[^\n]{0,100}(?:not available|aren't available|not connected|unavailable)|none of the decomp tools|no decomp tools", everything, re.I):
+            raise Fatal("The helper lost access to the app's tools. Restart this helper to reconnect; repeated paid retries are paused.")
+        if "Toolchain infrastructure failure" in everything:
+            raise Fatal("The compiler/converter setup failed. Fix the toolchain before restarting this helper; repair retries are paused.")
+        capacity = PROVIDER_CAPACITY.search("\n".join([*errors, last_error]))
+        if code != 0 and (THROTTLED.search(everything) or capacity):
             s.throttled = True
+            if capacity:
+                s.error = 'No capacity available for model at the provider.'
+                s.push('info', 'Provider model capacity is unavailable; waiting before retrying.')
         if code != 0 and _SIGNED_OUT.search(everything):
             s.signed_out = True
             s.error = f"{k.name} isn't signed in on this computer. {k.signin_for(s.options)}"
@@ -1398,7 +2328,45 @@ class Manager:
             s.error = said_it.strip()[:200] or "its sign-in failed"
             s.push("error", f"{k.name}'s sign-in failed (exit code {code}): {s.error}")
             return False
+        if s.throttled:
+            return False  # provider concurrency backoff must not spend the handshake retry
+        if not s.limited and k.exit_reason(state) == 'output_limit':
+            from . import session_followups
+            # Clear every incomplete conversation, including the one that pauses
+            # retries, so a later manual Start also begins from saved app state.
+            s.options.pop('resume_conversation', None)
+            s.options.pop('focus_conversation', None)
+            self._save(s)
+            if s.output_limit_retries:
+                raise Fatal('The model reached its output limit again after one recovery attempt. '
+                            'Automatic retries paused; saved candidates are retained. '
+                            'Review the transcript and use smaller edits or another model before pressing Start.')
+            s.output_limit_retries += 1
+            s.continuation_note = session_followups.OUTPUT_RECOVERY
+            s.error = 'The model response reached its output limit; the unfinished tool call was not confirmed.'
+            s.push('error', s.error)
+            s.push('info', 'One fresh-session recovery will request smaller edits and re-read the live candidate. '
+                   'A repeated output-limit failure pauses automatic retries.')
+            return False
+        if (agent.id, s.slug) in pending and not s.limited and not s.auth_failed:
+            s.tool_handshake_failures += 1
+            message = 'CLI tool handshake was not completed: the server preflight passed, but this agent never successfully called project_info. No new function was handed over.'
+            if connection_diagnostics:message += ' '+' '.join(connection_diagnostics)
+            if errors:message += ' CLI startup diagnostics: '+ ' · '.join(list(errors)[-3:])[-600:]
+            if s.tool_handshake_failures <= 1:
+                raise ToolConnectionUnavailable(message+' Reconnecting once; this requires another model request.')
+            raise Fatal(message+' Automatic retries paused after two attempts. Review the CLI MCP startup diagnostics.')
+        s.tool_handshake_failures = 0
+        if s.tool_handshake_required and (agent.id, s.slug) not in pending:
+            saw_tool = True  # the authenticated server observed the actual CLI, even if its stdout omitted tool events
         if code != 0:
+            if code < 0:
+                try:
+                    signal_name = signal.Signals(-code).name
+                except ValueError:
+                    signal_name = str(-code)
+                s.push('termination', f'Helper exited from signal {signal_name}; no app termination request recorded on this path. '
+                       'An external kill or resource pressure is possible; the signal alone does not identify the cause.')
             tail =" · ".join(list(errors)[-3:]) or last_error or f"exited with code {code}"
             s.error = tail[:300]
             s.push("error", f"exited with code {code}: {tail[:600]}" if tail != f"exited with code {code}" else tail)

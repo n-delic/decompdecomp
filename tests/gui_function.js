@@ -27,6 +27,9 @@ function element(id) {
     focus() {}, contains: () => true, querySelector: () => element("x"), querySelectorAll: () => [],
     getContext: () => ctx, scrollTo() {}, appendChild() {}, insertBefore() {}, removeChild() {},
     getBoundingClientRect: () => ({ left: 0, top: 0 }), children: [], lastChild: null,
+    // what our fork's drawer also calls (function.js): emptied panels, inserted status lines, closest() look-ups
+    replaceChildren() {}, insertAdjacentHTML() {}, insertAdjacentElement() {}, closest: () => null, matches: () => false,
+    toggleAttribute() {}, hasAttribute: () => false, getAttribute: () => null, before() {}, after() {}, replaceWith() {},
   };
 }
 const elements = new Map();
@@ -78,7 +81,8 @@ const ctx = {
 ctx.window = ctx;
 vm.createContext(ctx);
 const js = process.env.GUI_JS || path.join(__dirname, "..", "src", "decompnet", "app", "static", "js");
-for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "deep-permuter", "steering", "pages"]) {
+// the scripts the drawer needs, in the page's order (index.html)
+for (const name of ["base", "sidebar", "home", "project", "map", "agents", "focused-agents", "source-mismatches", "function", "deep-permuter", "steering", "pages"]) {
   vm.runInContext(fs.readFileSync(path.join(js, `${name}.js`), "utf8"), ctx, { filename: `${name}.js` });
 }
 ctx.drawMap = () => {};

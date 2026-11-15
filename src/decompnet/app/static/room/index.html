@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Decompile together · decompdecomp</title><link rel="stylesheet" href="/room/workspace.css"><script src="/room/workspace.js" defer></script></head>
+<body><header><b>decomp<span>decomp</span></b><span>Decompile together</span><button id="disconnect" hidden>Disconnect</button></header>
+<main><h1 id="title">Decompile together</h1><p id="notice" role="status" aria-live="polite">Connecting to the room…</p>
+<section id="join" hidden><h2>Join in your browser</h2><p>No app or compiler installation needed. Your host checks your C with the game’s compiler and saves improvements.</p>
+<form id="join-form"><label>Your name<input id="name" maxlength="24" pattern="[A-Za-z0-9_-]+" required autocomplete="nickname" placeholder="Letters, digits, - or _"></label>
+<label>Your own game file<input id="game" type="file" required></label><p class="muted">Checked on this device, never uploaded. Use the same version as the host. For disc projects, select the extracted program if the host’s project identifies that instead of the whole disc. Files up to 256 MiB.</p><button class="primary">Join room</button><progress id="join-progress" hidden aria-label="Joining room"></progress></form></section>
+<section id="workspace" hidden><div class="toolbar"><h2>Functions</h2><button id="refresh">Refresh list</button></div><label>Find a function<input id="search" type="search" placeholder="Filter by name"></label><label>Function<select id="functions"><option value="">Select a function…</option></select></label>
+<div class="toolbar"><h2 id="function-title">Saved C candidate</h2><span id="score"></span></div><details id="context"><summary>Shared declarations (read only)</summary><pre id="header"></pre></details>
+<label>C or C++ source<textarea id="source" spellcheck="false" rows="20" disabled></textarea></label>
+<div class="toolbar"><button id="compile" class="primary" disabled>Compile &amp; check on host</button><button id="release" disabled>Release function</button></div><progress id="progress" hidden aria-label="Checking on host"></progress><p id="result" role="status" aria-live="polite"></p>
+<p class="muted">Checks use the host’s compiler and shared declarations. An exact match is verified by the normal judge. Target bytes and assembly are not sent by the host. Release your function before checking a different one.</p></section>
+<footer>Keep this page open while editing. Copy your C before disconnecting; unsent edits are kept only in this tab. The host must keep decompdecomp running and sharing.</footer></main></body></html>

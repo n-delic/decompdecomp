@@ -46,3 +46,8 @@ scripts/
 
 # Local development launcher
 launch-dev.ps1
+
+# the MCP gateway's cargo build (gateway/)
+/gateway/target/
+/src/decompnet/bin/decomp-mcp-gateway
+/src/decompnet/bin/decomp-mcp-gateway.exe

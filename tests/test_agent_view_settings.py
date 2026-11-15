@@ -15,10 +15,9 @@ def test_prompt_overrides_validate_inherit_and_snapshot(tmp_path, monkeypatch):
     manager = Manager(net, tmp_path, 'http://localhost/mcp')
     session = Session('1', 'codex', 'Reader', 'game', 'reader', {'per_session': 3})
     manager.sessions[session.id] = session
-    monkeypatch.setattr(net, 'overview', lambda _: {
-        'title': 'Synthetic game', 'kind': 'rom', 'platform': 'n64',
-        'compiler': {'toolchain': 'gcc-2.7.2-kmc'},
-    })
+    # (the prompt reads the project's own facts, agent_startup.project_facts, not the dashboard overview)
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET name='Synthetic game' WHERE slug='game'")
     prompt_settings.save_global(net, {'initial_rom': 'Global {title}: {count}',
                                       'instructions': 'Global instructions'})
     assert manager._prompt(session) == 'Global Synthetic game: 3'
@@ -64,7 +63,8 @@ def test_stopped_helper_keeps_its_prompts_and_disabled_tools_on_restart(tmp_path
     restarted = manager._record('game', 'codex', 'codex-1', 'Reader', {'model': 'second'})
     assert restarted is session
     assert restarted.options['prompts']['instructions'] == 'Keep this'
-    assert 'guide' in restarted.options['disabled_tools']
+    # (this fork keeps a helper's tool choices in its work selection)
+    assert 'guide' in restarted.options['selection']['disabled_tools']
     assert restarted.options['model'] == 'second'
     stored = json.loads(net.store.one('SELECT options FROM helpers WHERE id=?', session.id)['options'])
     assert stored == restarted.options
@@ -84,10 +84,8 @@ def test_tool_policy_applies_to_lists_and_calls_and_counts_usage(tmp_path, monke
     monkeypatch.setitem(tools.HANDLERS, 'guide', lambda *args, **kwargs: 'guide text')
     assert tools._invoke(net, agent, 'game', 'guide', {}) == 'guide text'
     assert net.store.one('SELECT calls FROM agent_tool_usage WHERE name=?', 'guide')['calls'] == 1
-    # Later calls are counted in memory, not with a write each: Agents & models reads them through usage().
+    # The fork counts each call as it's made (per-task usage); usage() stays for upstream's callers.
     tools._invoke(net, agent, 'game', 'guide', {})
-    assert net.store.one('SELECT calls FROM agent_tool_usage WHERE name=?', 'guide')['calls'] == 1
-    assert tool_policy.usage(net)['guide']['calls'] == 2
     assert net.store.one('SELECT calls FROM agent_tool_usage WHERE name=?', 'guide')['calls'] == 2
     tools._invoke(net, agent, 'game', 'guide', {})
     manager.shutdown()  # quitting writes what's still in memory
@@ -100,7 +98,7 @@ def test_tool_policy_applies_to_lists_and_calls_and_counts_usage(tmp_path, monke
         tool_policy.preset_disabled('unknown')
     assert 'claim_function' not in tool_policy.preset_disabled('matching')
     row = net.store.one('SELECT options FROM helpers WHERE project=? AND name=?', 'game', agent.name)
-    assert json.loads(row['options'])['disabled_tools'] == []
+    assert json.loads(row['options'])['selection']['disabled_tools'] == []  # (kept in the work selection here)
 
 
 def test_agent_settings_routes_require_window_and_validate_changes(tmp_path):
@@ -162,10 +160,9 @@ def test_the_prompt_leaves_out_a_tool_this_helper_has_turned_off(tmp_path, monke
     net, _ = _game(tmp_path, [('f', 10, 'open')])
     manager = Manager(net, tmp_path, 'http://localhost/mcp')
     session = manager._record('game', 'codex', 'codex-1', 'Reader', {})
-    monkeypatch.setattr(net, 'overview', lambda _: {
-        'title': 'Synthetic game', 'kind': 'rom', 'platform': 'n64',
-        'compiler': {'toolchain': 'gcc-2.7.2-kmc'},
-    })
+    # (the prompt reads the project's own facts, agent_startup.project_facts, not the dashboard overview)
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET name='Synthetic game' WHERE slug='game'")
     if 'guess_struct' not in tools.tool_names(False, consoles.get('n64')):
         pytest.skip('the N64 offers no guess_struct')
     assert tools.WORK_STRUCTS in manager._prompt(session)

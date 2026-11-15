@@ -205,11 +205,11 @@ def name_system_calls(net, slug: str, log=print) -> int:
     program = Path(proj["root"]) / cfg.get("rom", {}).get("program", "")
     if cfg.get("kind") != "rom" or cfg.get("system_calls_named") or net._link(slug) or not program.is_file():
         return 0  # (a room's guest: the host names them; the game's files gone: they may come back)
-    rows = net.store.all("SELECT id, name, target, meta, status FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
+    rows = net.project_store(proj['id']).all("SELECT id, name, target, meta, status FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
     pairs, stubs = imports.names([(r["name"], r["target"]) for r in rows], imports.read_imports(program.read_bytes()),
                                  set(net.symbols(proj["id"]).by_name))
     why = "an imported system function's stub: the loader links it to the library function its NID names, so no C is behind it"
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         db.executemany("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'",
                        [(json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why}), r["id"])
                         for r in rows if r["name"] in stubs])

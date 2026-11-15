@@ -1,0 +1,851 @@
+"""Build a finished game as WebAssembly, translate it back to C and build it with the console's host (port/wasm).
+
+Inputs, all from the game's save repository (the folder Save writes, under git) and the console's port kit:
+- progress/src/*.c and progress/include/*.h: the game's matched C and its shared header, as the decomp has them;
+- progress/decompdecomp.json: where every function and named datum lives (the layout and the symbols);
+- port/wasm/exclude.txt: matched C the build leaves out, one file name a line (# comments): library code the host
+  provides, or code the port doesn't run. Play and Export add the library code the project proves (`leave_out`:
+  play.library), so a save that never wrote this list still leaves libultra to the host;
+- port/wasm/src/*.c: C only the port has, for functions with no matched C yet (it needn't match, only behave);
+- port/wasm/overrides/*.c: the port's version of a matched file, until the fix is in the matched C behind
+  `#ifdef PORT` (Fix C for the PC);
+- port/wasm/include/*.h: headers only the port's C includes;
+- `library_c` (not from the save): library code set aside as SDK that the port builds from the user's own copy of
+  ultralib (port/ultralib.units), one function a file, written to port/wasm/build/ultralib/ (git ignores it: that C
+  is SGI's and Nintendo's, never part of a save) and compiled with ultralib's own headers and defines.
+
+The build goes to port/wasm/build/ (generated, never committed: git ignores it). Its result is a program that runs
+the game from the user's own ROM: `port/wasm/build/game ROM [seconds]`.
+
+A rebuild redoes only what changed. Each file the build makes keeps a key beside it (`<file>.key`): the hash of
+everything it was made from, the headers its C includes among them. Times aren't trusted: a Save
+rewrites files whose text didn't change, a part's header changes without its C, and the tables every function's
+placing reads (signatures, addresses) change on almost every Save, so a function is placed again only when its own
+rows in them change.
+"""
+
+from __future__ import annotations
+
+import concurrent.futures
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+from ... import consoles, limits, toolchains
+from ...network import NetworkError
+
+HERE = Path(__file__).parent
+# The game's C as wasm32 IR, unoptimised: LLVM's load combining would assume little-endian memory, which beir.py and
+# bemem.py make big-endian after it.
+IR_FLAGS = ["-target", "wasm32-freestanding", "-std=gnu17", "-DPORT_WASM=1", "-O0", "-g0",
+            # WebAssembly has no return address to read: the heap's `#ifdef PORT` branch records 0 as its caller
+            "-D__builtin_return_address(n)=((void *)0)",
+            "-fno-sanitize=all", "-ffreestanding", "-fno-strict-aliasing", "-fwrapv", "-Wno-everything",
+            # zig cc defines _DEBUG at -O0: the game's `#ifdef _DEBUG` code (libultra's debug heap, its thread
+            # checks) was compiled into the port, against headers without its fields
+            "-U_DEBUG"]
+# The console's C, not the native port's: memory here is the console's own 32-bit layout, where the matched C is
+# right, and a fix behind `#ifdef PORT` is for a 64-bit PC (one wrote a display list's address as 0 there: "no
+# meaning on PC", and the racing game's menu text sampled the wrong glyphs). PORT is defined only for a file that
+# needs it here: one using <stdarg.h> (its console branch walks the MIPS stack for its arguments with
+# `__builtin_next_arg`), inline assembly, or one that doesn't compile without it. The other MIPS builtins
+# (`__builtin_mips_read_status`, `__builtin_mips_debug_break`...) stay calls the host answers (port_wasm/host.c).
+# An empty debug-print stub in K&R varargs (`void f(va_alist) va_dcl {}`, as GCC 2.7.2 takes it): clang refuses the
+# `...` its va_dcl declares, so one that never reads its arguments is compiled as `void f()` (`kr_varargs`)
+KR_VARARGS = re.compile(r"\(\s*va_alist\s*\)\s*va_dcl\b")
+NEEDS_PORT = re.compile(r"\bva_start\b|\b__builtin_next_arg\b|\b__asm__\b|\basm\s*\(")
+# The console's memory (4 GB, so every console address is in it), its data placed by the C's own addresses, a
+# stack per thread below it (the host's), and every function exported: the host finds them by address.
+LINK_FLAGS = ["--no-entry", "--allow-undefined", "--export-all", "--export-table", "--growable-table",
+              "--emit-relocs", "--global-base=1048576", "-z", "stack-size=65536", "--stack-first",
+              "--initial-memory=4294967296", "--max-memory=4294967296"]
+TIMEOUT = 900
+# What the progress bar counts, in order (play.py adds starting the game).
+STEPS = ("Gathering the game's C from its save", "Compiling to WebAssembly IR", "Reading each function's signature",
+         "Placing every symbol at its console address", "Linking", "Translating to C (wasm2c)", "Building the host")
+
+
+def _write(path: Path, text: str) -> None:
+    """Write only what changed, so a rebuild recompiles only the C that changed."""
+    if not path.exists() or path.read_text(encoding="utf-8") != text:
+        path.write_text(text, encoding="utf-8")
+
+
+def _names(path: Path) -> set[str]:
+    if not path.is_file():
+        return set()
+    return {line.split("#", 1)[0].strip() for line in path.read_text(encoding="utf-8").splitlines()} - {""}
+
+
+def _digest(*parts) -> str:
+    h = hashlib.sha256()
+    for part in parts:
+        h.update(part if isinstance(part, bytes) else str(part).encode("utf-8"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
+
+
+class _Files:
+    """The hashes of the files a build step reads and the headers each includes, each read once per build (2,000
+    files share a header)."""
+
+    def __init__(self):
+        self.seen: dict[Path, str] = {}
+        self.included: dict[Path, list[str]] = {}
+
+    def __call__(self, path: Path) -> str:
+        path = Path(path)
+        if path not in self.seen:
+            try:
+                data = path.read_bytes()
+            except OSError:
+                data = None
+            self.seen[path] = _digest(data) if data is not None else "missing"
+            self.included[path] = _INCLUDE.findall(data.decode("utf-8", "replace")) if data else []
+        return self.seen[path]
+
+    def key(self, source: Path, dirs, *inputs) -> str:
+        """The key of what's compiled from `source`: the inputs given, the source and every header it includes,
+        found in its own folder or `dirs` as the compiler finds them. One the folders don't have (the compiler's
+        own) comes with the compiler, which the inputs name. An include inside an #if counts too: at worst a file
+        is compiled again for nothing. (Not the compiler's dependency list: zig's `-MD` dropped the IR it wrote.)"""
+        seen, todo, parts = set(), [Path(source)], []
+        while todo:
+            path = todo.pop()
+            if path in seen:
+                continue
+            seen.add(path)
+            parts.append(f"{path}={self(path)}")
+            for name in self.included[path]:
+                for folder in (path.parent, *dirs):
+                    if (found := Path(folder) / name).is_file():
+                        todo.append(found)
+                        break
+        return _digest(*inputs, *sorted(parts))
+
+
+def _fresh(made: Path, key: str) -> bool:
+    stamp = made.with_name(made.name + ".key")
+    try:
+        return made.exists() and stamp.read_text(encoding="utf-8") == key
+    except OSError:
+        return False
+
+
+def _stamp(made: Path, key: str) -> None:
+    made.with_name(made.name + ".key").write_text(key, encoding="utf-8")
+
+
+def _unstamp(made: Path) -> None:
+    """A failed or redone file loses its key, so it's made again next time whatever its inputs say."""
+    made.with_name(made.name + ".key").unlink(missing_ok=True)
+
+
+def _sync(new: Path, old: Path) -> None:
+    """Make folder `old` hold what `new` does, rewriting only the files that differ: an unchanged file keeps its key
+    and isn't compiled again."""
+    old.mkdir(exist_ok=True)
+    names = {p.name for p in new.iterdir()}
+    for p in old.iterdir():
+        if p.name not in names:
+            p.unlink()
+    for p in new.iterdir():
+        target = old / p.name
+        if not target.exists() or target.read_bytes() != p.read_bytes():
+            shutil.copyfile(p, target)
+    shutil.rmtree(new)
+
+
+_REF = re.compile(r"@([\w.$]+)(?![\w.$])")
+
+
+def table_rows(text: str, sigs: dict, fixed: dict, functions: set, renamed: dict) -> list[str]:
+    """The rows of the build's tables that placing one function's IR (beir.py) reads: those of the names it uses
+    (and the names a renamed call goes to). The tables change with almost every Save; this IR's rows rarely do."""
+    names = set(_REF.findall(text))
+    names |= {renamed[n] for n in names if n in renamed}
+    rows = []
+    for n in sorted(names):
+        rows.append(f"{n}|{sigs.get(n, '')}|{fixed.get(n, '')}|{n in functions}|{renamed.get(n, '')}")
+    return rows
+
+
+def _rows(path: Path, sep: str | None = None) -> dict[str, str]:
+    out = {}
+    for row in path.read_text(encoding="utf-8").splitlines():
+        if row.strip():
+            name, _, rest = row.partition(sep or " ")
+            out[name.strip()] = rest
+    return out
+
+
+# A bitfield's declared type: its storage unit's size in bytes.
+_FIELD_TYPES = {"char": 1, "u8": 1, "s8": 1, "short": 2, "u16": 2, "s16": 2, "int": 4, "long": 4, "u32": 4, "s32": 4,
+                "unsigned": 4, "signed": 4, "long long": 8, "u64": 8, "s64": 8}
+_BITFIELD = re.compile(r"^(\s*)((?:(?:unsigned|signed|const|volatile)\s+)*(\w+(?:\s+long)?)?)\s*(\w*)\s*:\s*(\d+)\s*;(.*)$")
+
+
+def _unit_size(type_text: str) -> int | None:
+    words = [w for w in type_text.split() if w not in ("const", "volatile")]
+    if not words:
+        return None
+    if words[-1] in ("unsigned", "signed"):
+        return 4
+    return _FIELD_TYPES.get(" ".join(w for w in words if w not in ("unsigned", "signed")))
+
+
+def big_endian_bitfields(text: str) -> str:
+    """Bitfields laid out as the console's compiler does: a big-endian MIPS compiler gives a unit's first field its
+    top bits, wasm32 its bottom ones. Each unit's fields are declared in reverse (a unit left part-empty gets its
+    unused bits first) and closed with a zero-width field, so every field lands on the console's bits and is read
+    with its unit's width from the big-endian memory. A racing game's track setup looked for the segment whose
+    `b0 : 1` was set, read the top bit instead, ran off the end of its table and corrupted the next one."""
+    lines = text.split("\n")
+    result, i = [], 0
+    while i < len(lines):
+        run = []
+        while i + len(run) < len(lines) and (m := _BITFIELD.match(lines[i + len(run)])) and int(m.group(5)):
+            run.append(m)
+        if not run:
+            result.append(lines[i])
+            i += 1
+            continue
+        units, unit, used, size = [], [], 0, 0
+        for m in run:
+            width, field_size = int(m.group(5)), _unit_size(m.group(2))
+            if field_size is None:
+                units = None
+                break
+            if unit and used + width > size * 8:
+                units.append((unit, used, size))
+                unit, used = [], 0
+            if not unit:
+                size = field_size
+            if width > size * 8:
+                units = None
+                break
+            unit.append(m)
+            used += width
+        if units is None:  # a type it can't size: left as it was
+            result.extend(m.group(0) for m in run)
+        else:
+            units.append((unit, used, size))
+            for unit, used, size in units:
+                if not any(m.group(4) for m in unit):  # only padding: nothing reads it, and it may start mid-unit
+                    result.extend(m.group(0) for m in unit)
+                    continue
+                indent, type_text = unit[0].group(1), unit[0].group(2).strip()
+                if used < size * 8:
+                    result.append(f"{indent}{type_text} : {size * 8 - used};")
+                result.extend(f"{m.group(1)}{m.group(2).strip()} {m.group(4)} : {m.group(5)};{m.group(6)}"
+                              for m in reversed(unit))
+                result.append(f"{indent}{type_text} : 0;")
+        i += len(run)
+    return "\n".join(result)
+
+
+# m2c's declaration of a function it saw called but not typed: `M2C_UNK f(arg0);`, which IDO takes and clang
+# doesn't ("a parameter list without types is only allowed in a function definition")
+UNTYPED_DECLARATION = re.compile(r"^([ \t]*(?!return\b|else\b|case\b|goto\b)[A-Za-z_][\w \t*]*?[\s*]\w+)"
+                                 r"\(\s*arg\d+(?:\s*,\s*arg\d+)*\s*\)(\s*;)", re.M)
+# `0x2be-0x174`: one preprocessing number to clang (an `e` then a sign), a subtraction to IDO
+HEX_EXPONENT_SIGN = re.compile(r"\b(0[xX][0-9a-fA-F]*[eE])([+-])(?=[0-9A-Za-z_(])")
+
+
+def ido_c(text: str) -> str:
+    """The game's C as clang reads what IDO took: m2c's untyped declarations unprototyped, and a hex constant
+    followed by a sign spaced apart."""
+    return HEX_EXPONENT_SIGN.sub(r"\1 \2 ", UNTYPED_DECLARATION.sub(r"\1()\2", text))
+
+
+_PROTOTYPE = r"^([ \t]*)((?!static\b|extern\b|typedef\b|return\b)[A-Za-z_][\w \t*]*?[\s*]{name}\s*\([^;{{}}]*\)\s*;)"
+
+
+def static_prototypes(text: str) -> str:
+    """A part's header that declares a function, then defines it `static` (an N64 game's own source: IDO takes it,
+    clang stops at "static declaration follows non-static declaration"): its declarations made static too."""
+    for name in set(re.findall(r"^[ \t]*static\b[^;{}=]*?\b(\w+)\s*\([^;{}]*\)\s*\{", text, re.M)):
+        text = re.sub(_PROTOTYPE.format(name=re.escape(name)), r"\1static \2", text, flags=re.M)
+    return text
+
+
+def kr_varargs(text: str) -> str:
+    """A K&R varargs function that never reads its arguments, as an unprototyped one: callers pass what they pass."""
+    if KR_VARARGS.search(text) and not re.search(r"\bva_(?:start|arg|end)\s*\(", text):
+        return KR_VARARGS.sub("()", text)
+    return text
+
+
+def own_functions(chosen: dict[str, Path], texts: dict[str, str]) -> dict[str, str]:
+    """Each file's text without the functions another file of the build is for: a save's file of matched C can define
+    more than its own function (a racing game's three sound-player setters were each matched with C defining all
+    three), and the port compiles whole files, so the copies collided at link. The other file's is that function's
+    own matched C. Static helpers and the file's own function stay."""
+    from ..csource import defined, only
+    files = {name.casefold() for name in chosen}
+    out = {}
+    for name, text in texts.items():
+        extra = {f for f in defined(text) if f != name[:-2] and f"{f}.c".casefold() in files}
+        out[name] = only(text, extra) if extra else text
+    return out
+
+
+def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[str, Path]:
+    """The C the build compiles, in out/src (one file per function, the shared header included) and out/include.
+    `leave_out`: more matched files to leave out than exclude.txt names (play.library). `function_headers`: the
+    project's own {function: part} (play.function_headers), over the save's, which an older save lacks. Returns
+    {file name: where it came from}."""
+    progress, port = repo / "progress", repo / "port" / "wasm"
+    if not (progress / "src").is_dir() or not (progress / "decompdecomp.json").is_file():
+        raise NetworkError(f"{repo} has no progress/src and progress/decompdecomp.json: choose the game's save "
+                           "repository (the folder Save writes)")
+    exclude = _names(port / "exclude.txt") | set(leave_out)
+    chosen = {p.name: p for p in sorted((progress / "src").glob("*.c")) if p.name not in exclude}
+    for folder in (port / "src", port / "overrides"):
+        chosen.update({p.name: p for p in sorted(folder.glob("*.c"))})
+    (out / "src").mkdir(parents=True, exist_ok=True)
+    (out / "include").mkdir(parents=True, exist_ok=True)
+    # The decomp compiles every function with the shared header, or with its part's own when the save names one
+    # (a function from the game's own source files: common_<part>.h, the manifest's function_headers).
+    manifest = json.loads((progress / "decompdecomp.json").read_text(encoding="utf-8"))
+    units = (manifest.get("function_headers") or {}) | (function_headers or {})
+    headers = {h.name for folder in (progress / "include", port / "include") for h in folder.glob("*.h")}
+    texts = own_functions(chosen, {name: kr_varargs(source.read_text(encoding="utf-8")) for name, source in chosen.items()})
+    for name in chosen:
+        text = texts[name]
+        unit = units.get(name[:-2])
+        # a part the save has no header for compiles with the shared one, as the app compiles it (_effective_unit):
+        # older saves named such a part anyway, and the build stopped at the missing header
+        header = f"common_{unit}.h" if unit and f"common_{unit}.h" in headers else "common.h"
+        if not re.search(r'^#include "common(_\w+)?\.h"', text, re.M):
+            text = f'#include "{header}"\n' + text
+        _write(out / "src" / name, big_endian_bitfields(ido_c(text)))
+    # By name in any case: on a case-insensitive disk (macOS, Windows) a file an old save wrote as SelectStateReset.c
+    # is the one just written as selectStateReset.c, and deleting it as stale deleted that function's C
+    kept = {name.casefold() for name in chosen}
+    for stale in (out / "src").glob("*.c"):
+        if stale.name.casefold() not in kept:
+            stale.unlink()
+    for folder in (progress / "include", port / "include"):
+        for header in folder.glob("*.h"):
+            _write(out / "include" / header.name,
+                   big_endian_bitfields(static_prototypes(ido_c(header.read_text(encoding="utf-8")))))
+    return chosen
+
+
+def _library(out: Path, units: dict, sources: dict, log) -> dict[str, list[str]]:
+    """Write the library units (`library_c`) to out/ultralib; {file name: flags}. The game's own C for a function
+    wins: a unit whose function the save has C for is left out (it was matched after it was set aside)."""
+    folder = out / "ultralib"
+    taken = {name.casefold() for name in sources}
+    library = {name: list(flags) for name, (_, flags) in units.items() if name.casefold() not in taken}
+    if library:
+        folder.mkdir(parents=True, exist_ok=True)
+        log(f"{len(library)} library functions from your copy of ultralib")
+    for name in library:
+        _write(folder / name, units[name][0])
+    for stale in folder.glob("*.c") if folder.is_dir() else ():
+        if stale.name not in library:
+            stale.unlink()
+    return library
+
+
+def game_host(host: Path, repo: Path) -> list[Path]:
+    """The game's own host file, if the console's host has one for it (games/<its ROM's SHA-1, 12 digits>.c): what
+    only that game needs, such as functions it names by its own addresses. The N64 host was written on one racing game
+    and held its bzero at 0x80091920 for every game, where another game has a function of its own."""
+    try:
+        sha1 = json.loads((repo / "progress" / "decompdecomp.json").read_text(encoding="utf-8"))["game"]["sha1"] or ""
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    own = host / "games" / f"{sha1[:12].lower()}.c"
+    return [own] if len(sha1) >= 12 and own.is_file() else []
+
+
+def linked(objects: Path, sources) -> list[Path]:
+    """The objects of the files the build compiled, by name in any case: on a case-insensitive disk the object an old
+    save's SelectStateReset.c made keeps that name when selectStateReset.o is written over it, and leaving it out
+    linked the game without that function (a racing game's menu then never finished opening)."""
+    compiled = {name.casefold() for name in sources}
+    return sorted(p for p in objects.glob("*.o") if (p.stem + ".c").casefold() in compiled)
+
+
+def addresses(manifest: dict) -> tuple[list[str], set[str]]:
+    """fixed.txt's rows (name, address, kind) and the functions' names, from the save's manifest."""
+    rows, functions = {}, set()
+    for f in manifest.get("layout") or []:
+        rows[f["name"]] = (f["vram"], "func")
+        functions.add(f["name"])
+    for s in manifest.get("symbols") or []:
+        func = s.get("kind") == "func"
+        rows.setdefault(s["name"], (s["address"], "func" if func else s.get("kind", "data")))
+        if func:
+            functions.add(s["name"])
+    return [f"{n} 0x{a:08X} {k}" for n, (a, k) in sorted(rows.items(), key=lambda r: (r[1][0], r[0]))], functions
+
+
+def host_compiler(zig: Path) -> list:
+    """The C compiler that builds the host, the one native program here. The pinned Zig on Linux and Windows. On
+    macOS the system's own clang (Xcode's Command Line Tools), like wine an exception to "never from PATH": Zig
+    0.14.1 can't link against a current macOS's system library (macOS 27 left `_strlen` and the rest undefined), and
+    the host has to. The game's own C is compiled by the pinned Zig everywhere."""
+    if sys.platform == "darwin":
+        if shutil.which("xcrun") is None:
+            raise NetworkError("building the host needs Xcode's Command Line Tools on macOS: install them with "
+                               "`xcode-select --install`, then build again")
+        return ["xcrun", "clang", "-mmacosx-version-min=11.0"]  # an exported app runs on Macs older than this one
+    return [zig, "cc"]
+
+
+# A Mac app that runs on both kinds of Mac: Apple Silicon and Intel. Only the export asks for it (export.py), since
+# Play runs the game on this Mac and a second architecture would double its build for nothing.
+UNIVERSAL = ["-arch", "arm64", "-arch", "x86_64"]
+
+
+def host_arch_flags(universal: bool, platform: str = sys.platform) -> list:
+    """The flags that make the host a universal program: only on macOS, whose clang builds both architectures into
+    one file; elsewhere the program is for this computer, as before."""
+    return list(UNIVERSAL) if universal and platform == "darwin" else []
+
+
+def _run(argv: list, log, cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(limits.capped([str(a) for a in argv]), cwd=cwd, env=env, capture_output=True, text=True,
+                          timeout=TIMEOUT)
+
+
+def _parallel(jobs, work, log, what: str, step=None) -> list[str]:
+    """Run work(job) for every job, a core each; the jobs that failed, with their first error line. work returns an
+    error line, or None when it did the job, or False when the job was already done (its key matched). `step`
+    counts the jobs done for the progress bar, and the log says how many were already done."""
+    failed, done, cached = [], 0, 0
+    jobs = list(jobs)
+    if step:
+        step(0, len(jobs))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+        futures = {pool.submit(work, job): job for job in jobs}
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                error = future.result()
+                if error:
+                    failed.append(f"{futures[future]}: {error}")
+                elif error is False:
+                    cached += 1
+                done += 1
+                if step:
+                    step(done, len(jobs))
+        except BaseException:  # cancelled (Stop) or failed: the queued jobs don't start
+            for future in futures:
+                future.cancel()
+            raise
+    if jobs:
+        log(f"{len(jobs) - cached} {what} redone, {cached} unchanged")
+    if failed:
+        log(f"{len(failed)} {what} failed: " + "; ".join(failed[:5]))
+    return failed
+
+
+class Progress:
+    """The build's steps for the job's progress bar (the log's `progress`, where it has one): {phase, step, steps,
+    done, total}; done and total count a step's files."""
+
+    def __init__(self, log, steps=STEPS):
+        self.report = getattr(log, "progress", None)
+        self.steps, self.at = tuple(steps), 0
+
+    def start(self, phase: str) -> None:
+        self.at = self.steps.index(phase) + 1
+        self.phase = phase
+        self.files(None, None)
+
+    def files(self, done, total) -> None:
+        if self.report:
+            value = {"phase": self.phase, "step": self.at, "steps": len(self.steps)}
+            if total:
+                value.update(done=done, total=total)
+            self.report(value)
+
+
+def renames(lls: list[Path], fixed: list[str], library_names=None) -> dict[str, str]:
+    """{name a call uses: the defined function at its address}: C still calling a function by an older name (its
+    automatic one, before polishing renamed it) links in the decomp through the symbol table; here it must name the
+    function wasm-ld has. Only a name that resolves to exactly one defined function is renamed. `library_names`:
+    {a function's name: its library name} for library code no file has C for (play.library_names): a call to it is
+    to the library's name, which the host answers (a racing game's bzero was `func_8003DDC0`, stubbed to nothing)."""
+    defined, declared = set(), set()
+    for ll in lls:
+        for m in re.finditer(r"^(define|declare) [^@\n]*@([\w.$]+)\(", ll.read_text(encoding="utf-8"), re.M):
+            (defined if m.group(1) == "define" else declared).add(m.group(2))
+    where = {}
+    for row in fixed:
+        n, a, k = row.split()
+        if k == "func":
+            where[n] = int(a, 16)
+    at = {}
+    for n in defined:
+        address = where.get(n)
+        if address is None and (auto := re.fullmatch(r"func_([0-9A-Fa-f]{8})", n)):
+            address = int(auto.group(1), 16)
+        if address is not None:
+            at.setdefault(address, set()).add(n)
+    named = {}  # the project's name for each function's address (the layout's)
+    for n, address in where.items():
+        named.setdefault(address, set()).add(n)
+    out = {}
+    for n in declared - defined:
+        address = where.get(n)
+        # a function the C calls by an automatic name, `func_` or a data-style `D_` (a split that once took the
+        # function for data: a racing game's HUD called D_8000A840 for the sprite drawer there)
+        if address is None and (auto := re.fullmatch(r"(?:func|D)_([0-9A-Fa-f]{8})", n)):
+            address = int(auto.group(1), 16)
+        if address is not None and len(at.get(address, ())) == 1:
+            out[n] = next(iter(at[address]))
+        elif n not in out and (library := (library_names or {}).get(n)) and library != n:
+            out[n] = library
+        elif address is not None and address not in at and len(named.get(address, ())) == 1 and n not in named[address]:
+            # no C for it in the build, but the project names it now: a racing game's matched C still called
+            # libultra's osCreateMesgQueue and osSpTaskStartGo by their automatic names, the host answers them by
+            # name, and they were stubbed (its threads never got their queue, nothing was drawn)
+            out[n] = next(iter(named[address]))
+    return out
+
+
+def function_table(header: str, fixed: list[str]) -> str:
+    """funcs.c: the game's functions by console address, sorted, for calls through pointers (the host's port_func).
+    A function the C declares void is listed through a wrapper that returns the $v0 word (adapt.py): called through
+    a pointer for its value, it gives what its last call left there, as on the console (a racing game's heap calls
+    its allocator through a table, and the allocator is a void function that ends with the call that allocates)."""
+    from .adapt import REGS
+    where = {}
+    for row in fixed:
+        n, a, k = row.split()
+        if k == "func":
+            where[n] = int(a, 16)
+    entries, wrappers, invokers = [], [], []
+    for m in re.finditer(r"/\* export: '([^']+)' \*/\n(\w+) (w2c_game_\w+)\(w2c_game\*([^)]*)\);", header):
+        name, ret, c, params = m.groups()
+        address = where.get(name)
+        if address is None and (auto := re.fullmatch(r"func_([0-9A-Fa-f]{8})", name)):
+            address = int(auto.group(1), 16)
+        if address is None:
+            continue
+        invokers.append((address, invoker(c, ret, [t.strip() for t in params.split(",") if t.strip()])))
+        if ret == "void":
+            types = [t.strip() for t in params.split(",") if t.strip()]
+            args = "".join(f", {t} a{i}" for i, t in enumerate(types))
+            wrappers.append(f"static u32 port_v_{c}(w2c_game* g{args}) {{ {c}(g"
+                            + "".join(f", a{i}" for i in range(len(types))) + "); return port_v0(g); }")
+            c = f"port_v_{c}"
+        entries.append((address, c, name))
+    entries.sort()
+    lines = ['#include "game.h"', "/* The game's functions by their console address (generated). */",
+             "typedef struct { unsigned address; void *func; } PortFunc;",
+             "static u32 port_v0(w2c_game* g) { u32 v; __builtin_memcpy(&v, g->w2c_memory.data + "
+             f"0x{REGS + 16:X}u, 4); return __builtin_bswap32(v); }}", *wrappers, "const PortFunc port_funcs[] = {"]
+    lines += [f"    {{0x{a:08X}u, (void *){c}}}, /* {n} */" for a, c, n in entries]
+    lines += ["};", f"const unsigned port_func_count = {len(entries)};"]
+    # one call from a recorded state (the host's PORT_CALL, app/behaviour.py): each function called with its own
+    # types from MIPS's argument words, float registers and $v0 afterwards
+    invokers.sort()
+    lines += ["typedef void (*PortInvoke)(w2c_game*, const u32 *, const u32 *, u32 *);",
+              "typedef struct { unsigned address; PortInvoke invoke; } PortCall;",
+              "static u64 port_w64(const u32 *w, int i) { return (u64)w[i] << 32 | w[i + 1]; }",
+              "static f32 port_f32(u32 b) { f32 v; __builtin_memcpy(&v, &b, 4); return v; }",
+              "static f64 port_f64(u64 b) { f64 v; __builtin_memcpy(&v, &b, 8); return v; }",
+              "static u32 port_b32(f32 v) { u32 b; __builtin_memcpy(&b, &v, 4); return b; }",
+              "static u64 port_b64(f64 v) { u64 b; __builtin_memcpy(&b, &v, 8); return b; }",
+              *(code for _, (_, code) in invokers), "const PortCall port_calls[] = {"]
+    lines += [f"    {{0x{a:08X}u, {name}}}," for a, (name, _) in invokers]
+    lines += ["};", f"const unsigned port_call_count = {len(invokers)};"]
+    return "\n".join(lines) + "\n"
+
+
+def invoker(c: str, ret: str, params: list[str]) -> tuple[str, str]:
+    """(name, C) of a function that calls `c` as MIPS o32 passed its arguments: `w` the argument words ($a0-$a3, then
+    the stack's), `f` the float registers as single words (FR=0: a double in an even and odd pair, low word first);
+    leading float arguments in $f12 and $f14. `out`: $v0, $v1, $f0, $f1 afterwards, and what the function returns
+    (0 nothing, 1 a word, 2 64 bits, 3 a float, 4 a double): only those registers mean anything after it."""
+    args, slot, fpr, floats = [], 0, 12, True
+    for i, t in enumerate(params):
+        if t in ("f32", "f64") and floats and i < 2:
+            if t == "f64":
+                slot += slot % 2
+                args.append(f"port_f64((u64)f[{fpr + 1}] << 32 | f[{fpr}])")
+                slot += 2
+            else:
+                args.append(f"port_f32(f[{fpr}])")
+                slot += 1
+            fpr += 2
+            continue
+        floats = False
+        if t in ("u64", "f64"):
+            slot += slot % 2
+            args.append(f"port_w64(w, {slot})" if t == "u64" else f"port_f64(port_w64(w, {slot}))")
+            slot += 2
+        else:
+            args.append(f"w[{slot}]" if t == "u32" else f"port_f32(w[{slot}])")
+            slot += 1
+    call = f"{c}(g" + "".join(f", {a}" for a in args) + ")"
+    body = {"void": f"{call}; out[0] = port_v0(g); out[4] = 0;",
+            "u32": f"out[0] = {call}; out[4] = 1;",
+            "u64": f"u64 r = {call}; out[0] = (u32)(r >> 32); out[1] = (u32)r; out[4] = 2;",
+            "f32": f"out[2] = port_b32({call}); out[4] = 3;",
+            "f64": f"u64 r = port_b64({call}); out[2] = (u32)r; out[3] = (u32)(r >> 32); out[4] = 4;"
+            }.get(ret, f"{call};")
+    name = f"port_i_{c}"
+    return name, (f"static void {name}(w2c_game* g, const u32 *w, const u32 *f, u32 *out) {{ (void)w; (void)f; "
+                  f"{body} }}")
+
+
+def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, step=None, *, web: bool = False):
+    """Every function's IR placed at its console address and compiled (beir.py): into out/o, or out/o-web for the
+    browser build (`web`: webir.py too). Each is placed again only when its own rows in the tables change, or the
+    tools do. The files that failed, with their first error line."""
+    py, files = sys.executable, _Files()
+    tables = (_rows(out / "sigs.txt", "\t"), _rows(out / "fixed.txt"), functions, _rows(out / "renames.txt"))
+    tools = tuple(files(HERE / n) for n in ("beir.py", "adapt.py", *(("webir.py",) if web else ())))
+    folder = out / ("o-web" if web else "o")
+    folder.mkdir(exist_ok=True)
+
+    def place(ll: Path) -> str | None | bool:
+        be, obj = folder / (ll.stem + ".be.ll"), folder / (ll.stem + ".o")
+        text = ll.read_text(encoding="utf-8")
+        key = _digest(zig, *(("web",) if web else ()), *tools, text, *table_rows(text, *tables))
+        if _fresh(obj, key):
+            return False
+        _unstamp(obj)
+        done = _run([py, HERE / "beir.py", ll, be, "--functions", out / "functions.txt", "--renames", out / "renames.txt",
+                     "--signatures", out / "sigs.txt", "--fixed", out / "fixed.txt", *(["--web"] if web else [])], log)
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["beir failed"])[-1]
+        done = _run([zig, "cc", "-target", "wasm32-freestanding", "-O0", "-c", be, "-o", obj], log, env=env)
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["failed"])[0]
+        _stamp(obj, key)
+        return None
+    return _parallel(lls, place, log, "functions", step)
+
+
+_builds: dict[str, threading.Lock] = {}
+_builds_guard = threading.Lock()
+
+
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
+          library_c=None, library_names=None, recomp=None, function_headers=None) -> Path:
+    """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
+    what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
+    caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
+    build of one save (Play while compare_behaviour builds) waits for the first, then finds little left to do.
+    `universal`: on macOS, a program for Apple Silicon and Intel Macs alike (port/wasm/build/game-universal), its
+    objects kept apart from Play's so neither build undoes the other's. `library_c`: {file name: (C, flags)} of
+    library functions built from ultralib's C (port/ultralib.units). `library_names`: library code's own names for
+    functions with no C (renames). `recomp`: {"folder", "header"} of the console's recompiler's output, whose C the
+    host runs for functions with no C yet (port/wasm/recomp.py)."""
+    repo = Path(repo).expanduser().resolve()
+    with _builds_guard:
+        lock = _builds.setdefault(str(repo), threading.Lock())
+    if not lock.acquire(blocking=False):
+        log("waiting for another build of this game to finish")
+        lock.acquire()
+    try:
+        return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
+                      library_c=library_c or {}, library_names=library_names or {}, recomp=recomp,
+                      function_headers=function_headers)
+    finally:
+        lock.release()
+
+
+def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,
+           library_names=None, recomp=None, function_headers=None) -> Path:
+    kit = consoles.get(console).port_kit
+    if kit is None or kit.wasm is None:
+        raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
+    host = Path(kit.wasm)
+    out = repo / "port" / "wasm" / "build"
+    for name in ("ll", "o", "c", "obj"):
+        (out / name).mkdir(parents=True, exist_ok=True)
+    _write(repo / "port" / "wasm" / ".gitignore", "build/\n")
+    progress = Progress(log, steps)
+    progress.start(STEPS[0])
+    toolchains.ensure("zig", log=log)
+    zig = toolchains.binary("zig")
+    wabt = toolchains.ensure("wabt", log=log)
+    env = {**os.environ, "ZIG_GLOBAL_CACHE_DIR": str(out / "zig-cache"), "ZIG_LOCAL_CACHE_DIR": str(out / "zig-cache")}
+    py = sys.executable
+    files = _Files()
+
+    log("gathering the game's C from its save")
+    sources = gather(repo, out, leave_out, function_headers)
+    library = _library(out, library_c or {}, sources, log)
+    manifest = json.loads((repo / "progress" / "decompdecomp.json").read_text(encoding="utf-8"))
+    fixed, functions = addresses(manifest)
+    _write(out / "fixed.txt", "\n".join(fixed) + "\n")
+    _write(out / "functions.txt", "\n".join(sorted(functions)) + "\n")
+
+    progress.start(STEPS[1])
+    log(f"compiling {len(sources) + len(library)} files to WebAssembly IR")
+
+    def ir(name: str) -> str | None | bool:
+        if name in library:  # ultralib's C, with its own headers and the defines of the game's build of it
+            src, ll = out / "ultralib" / name, out / "ll" / (name[:-2] + ".ll")
+            key = files.key(src, [], zig, *IR_FLAGS, *library[name])
+            if _fresh(ll, key):
+                return False
+            _unstamp(ll)
+            done = _run([zig, "cc", *IR_FLAGS, *library[name], "-S", "-emit-llvm", src, "-o", ll], log, env=env)
+            if done.returncode:
+                return f"{name} (ultralib): " + (done.stderr.strip().splitlines() or ["failed"])[0]
+            _stamp(ll, key)
+            return None
+        src, ll = out / "src" / name, out / "ll" / (name[:-2] + ".ll")
+        key = files.key(src, [out / "include"], zig, *IR_FLAGS)
+        if _fresh(ll, key):
+            return False
+        _unstamp(ll)
+        port = ["-DPORT=1"] if NEEDS_PORT.search(src.read_text(encoding="utf-8")) else []
+        done = _run([zig, "cc", *IR_FLAGS, *port, "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll], log, env=env)
+        if done.returncode and not port:
+            done = _run([zig, "cc", *IR_FLAGS, "-DPORT=1", "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll],
+                        log, env=env)
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["failed"])[0]
+        _stamp(ll, key)
+        return None
+    if failed := _parallel(sorted({*sources, *library}), ir, log, "files", progress.files):
+        raise NetworkError(f"{len(failed)} of the game's files don't compile for the WebAssembly build: "
+                           + "; ".join(failed[:3]))
+    compiled = {name.casefold() for name in (*sources, *library)}
+    for stale in (out / "ll").glob("*.ll"):
+        if (stale.name[:-3] + ".c").casefold() not in compiled:
+            for made in (stale, stale.with_name(stale.name + ".key")):
+                made.unlink(missing_ok=True)
+
+    progress.start(STEPS[2])
+    log("one signature per function")
+    lls = sorted((out / "ll").glob("*.ll"))
+    done = _run([py, HERE / "sigs.py", out / "sigs.txt", host / "libultra.sigs", *lls], log)
+    if done.returncode:
+        raise NetworkError(f"reading the functions' signatures failed: {done.stderr.strip()[-400:]}")
+    own = game_host(host, repo)
+    # what only recompiled C or the interpreter runs (interp.py): MIPS's own shape
+    from . import interp
+    from . import recomp as recomp_c
+    left_out = {n.removesuffix(".c") for n in _names(repo / "port" / "wasm" / "exclude.txt") | set(leave_out)}
+    replaced = (lambda n: kit.sdk_group(n) in ("replaced", "glue")) if kit and kit.sdk_group else (lambda n: False)
+    known = _rows(out / "sigs.txt", "\t")
+    extra = []
+    if recomp and Path(recomp["folder"], "recomp.json").is_file():
+        extra = recomp_c.mips_signatures(Path(recomp["folder"]), lls, fixed, [*sorted(host.glob("*.c")), *own],
+                                         library_names)
+    extra += interp.mips_signatures(lls, fixed, [*sorted(host.glob("*.c")), *own], library_names, left_out, replaced,
+                                    interp.by_value(lls, declared=True))
+    extra = sorted({n for n in extra if n not in known})
+    if extra:
+        ret, params = recomp_c.MIPS_SIGNATURE
+        _write(out / "sigs.txt", (out / "sigs.txt").read_text(encoding="utf-8")
+               + "".join(f"{n}\t{ret}\t{params}\n" for n in extra))
+
+    _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renames(lls, fixed, library_names).items())))
+    progress.start(STEPS[3])
+    log("placing every symbol at its console address, data big-endian")
+    if failed := place_all(out, lls, set(functions), zig, env, log, progress.files):
+        raise NetworkError(f"{len(failed)} functions couldn't be placed at their addresses: " + "; ".join(failed[:3]))
+    objects = linked(out / "o", {*sources, *library})
+    _write(out / "objects.txt", "\n".join(str(p) for p in objects) + "\n")
+    from . import calls
+    suspicious = calls.summary(calls.write(out, objects))
+    if suspicious["calls"]:
+        log(f"{suspicious['calls']} calls in {suspicious['functions']} functions disagree with the function they call "
+            "(matched, but only the original compiler sees them right): Port readiness lists them")
+
+    progress.start(STEPS[4])
+    log(f"linking {len(objects)} functions")
+    done = _run([zig, "wasm-ld", "-o", out / "game.wasm", f"@{out / 'objects.txt'}", *LINK_FLAGS], log, env=env)
+    if done.returncode:
+        raise NetworkError(f"linking the WebAssembly build failed: {done.stderr.strip()[-600:]}")
+    _run([py, HERE / "beslots.py", out / "game.wasm"], log)
+
+    progress.start(STEPS[5])
+    log("translating it to C (wasm2c)")
+    fresh = out / "c.new"
+    shutil.rmtree(fresh, ignore_errors=True)
+    fresh.mkdir()
+    done = _run([wabt / "bin" / "wasm2c", out / "game.wasm", "-o", fresh / "game.c", "-n", "game",
+                 "--num-outputs", "8"], log)
+    if done.returncode:
+        raise NetworkError(f"wasm2c failed: {done.stderr.strip()[-600:]}")
+    done = _run([py, HERE / "bemem.py", fresh / "game-impl.h"], log)
+    if done.returncode:
+        raise NetworkError(f"making memory big-endian failed: {done.stderr.strip()[-400:]}")
+    _sync(fresh, out / "c")  # only the parts that changed are compiled again
+    _write(out / "funcs.c", function_table((out / "c" / "game.h").read_text(encoding="utf-8"), fixed))
+    recompiled = []
+    if recomp and Path(recomp["folder"], "recomp.json").is_file():  # recompiled C for the functions with no C yet
+        from . import recomp as recomp_c
+        try:
+            prepared = recomp_c.prepare(Path(recomp["folder"]), out / "recomp", (out / "c" / "game.h").read_text(
+                encoding="utf-8"), fixed, [*sorted(host.glob("*.c")), *own], Path(recomp["header"]), library_names, log)
+        except (OSError, ValueError) as error:
+            raise NetworkError(f"the recompiled C couldn't be prepared for the port: {error}") from error
+        recompiled = prepared["units"]
+    # the functions with no C yet, run by the host's interpreter from the player's ROM (interp.py, mips.c): what
+    # recompiled C doesn't already bridge
+    bridged = set()
+    for u in recompiled:
+        if u.name == "bridges.c":
+            bridged = set(re.findall(r"\b(w2c_env_\w+)\(struct w2c_env \*", u.read_text(encoding="utf-8")))
+    interp_c, counts = interp.generate((out / "c" / "game.h").read_text(encoding="utf-8"), fixed,
+                                       [*sorted(host.glob("*.c")), *own], library_names, bridged, left_out, replaced,
+                                       interp.variadic(lls), interp.by_value(lls), interp.by_value(lls, declared=True),
+                                       interp.pointer_types(p.read_text(encoding="utf-8", errors="replace")
+                                                            for p in sorted((out / "c").glob("game_*.c"))))
+    _write(out / "interp.c", interp_c)
+    if counts["imports"]:
+        log(f"{counts['imports']} functions the game's C calls have no C yet: the interpreter runs them from the ROM")
+    _run([py, HERE / "stubs.py", out / "c" / "game.h", out / "stubs.c", *sorted(host.glob("*.c")), *own,
+          *(u for u in recompiled if u.name == "bridges.c"), out / "interp.c"], log)
+
+    progress.start(STEPS[6])
+    log("building the host")
+    rt = wabt / "share" / "wabt" / "wasm2c"
+    units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-mem-impl.c",
+             rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), *own, *sorted(host.glob("window/*.c")),
+             out / "funcs.c", out / "stubs.c", out / "interp.c", *recompiled]  # window/: PORT_WINDOW's SDL2 window, opened only when asked
+    includes = ["-I", wabt / "include", "-I", rt, "-I", out / "c"]
+    quiet = ["-w", "-I", out / "recomp"]  # recompiled C: thousands of generated functions, warnings off
+    arch = host_arch_flags(universal)
+    cc = [*host_compiler(zig), *arch]
+    host_flags = ["-O1", "-g", "-fno-inline"]
+    objs = out / ("obj-universal" if arch else "obj")
+    objs.mkdir(parents=True, exist_ok=True)
+
+    def compile_unit(unit: Path) -> str | None | bool:
+        obj = objs / (unit.stem + ".o")
+        extra = quiet if unit.parent == out / "recomp" else []
+        key = files.key(unit, [wabt / "include", rt, out / "c", out / "recomp"], *cc, *host_flags, *extra)
+        if _fresh(obj, key):
+            return False
+        _unstamp(obj)
+        done = _run([*cc, *host_flags, *extra, *includes, "-c", unit, "-o", obj], log, env=env)
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["failed"])[0]
+        _stamp(obj, key)
+        return None
+    if failed := _parallel(units, compile_unit, log, "host files", progress.files):
+        raise NetworkError("building the host failed: " + "; ".join(failed[:3]))
+    program = out / ("game-universal" if arch else "game")
+    libs = ["-lpthread"] + (["-lws2_32"] if sys.platform == "win32" else [])  # Winsock, for the live view (live.c)
+    libs += ["-ldl"] if sys.platform.startswith("linux") else []  # dlopen, for SDL2 (window/sdl.c)
+    done = _run([*cc, "-o", program, *(objs / (u.stem + ".o") for u in units), *libs], log, env=env)
+    if done.returncode:
+        raise NetworkError(f"linking the host failed: {done.stderr.strip()[-600:]}")
+    log(f"built {program}: run it with the game's ROM, `{program} ROM [seconds]`")
+    return program

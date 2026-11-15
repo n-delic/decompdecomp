@@ -9,9 +9,14 @@ import os
 import re
 from pathlib import Path
 
-from . import SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool_name, usage_item
+from . import FREE_ALLOWANCE, SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool_name, usage_item
 
 ZEN = "opencode/"  # OpenCode Zen's models: their names start with it, and opencode's default is one of them
+# opencode signs in to each provider separately, so a model's prefix is the account its usage belongs to.
+# Zen's console account and Go's API account have separate allowances, and some models have their own
+# allowance on top: a refusal on one must never pause helpers on the other account or on another model.
+ACCOUNTS = {"opencode": "OpenCode Zen (console)", "opencode-go": "OpenCode Go (API)"}
+GROUPS = {"opencode": "OpenCode", "opencode-go": "OpenCode Go"}
 STANDALONE_FROM = 2  # the major version that runs sessions in a shared service unless told --standalone
 PLACEHOLDER = "Unexpected server error"  # its JSON error when the log line says what failed
 MCP_SERVER = "decompdecomp"  # the app's MCP server, in the config and in the plugin that waits for it
@@ -41,12 +46,67 @@ class Opencode(Agent):
     signin = "Run `opencode auth login` once to add a provider (DeepSeek, OpenRouter, ...)."
     docs = "https://opencode.ai"
     models_args = ("models",)
-    takes_effort = True  # opencode 2 picks a model's reasoning effort as a variant of it: provider/model#high
+    takes_effort = True  # stored as provider/model#high; the CLI syntax depends on its major version
+
+    @staticmethod
+    def _account(model: str) -> tuple[str, str]:
+        """(provider, account label) of a model, from the provider prefix `opencode models` prints."""
+        provider = model.split("/", 1)[0] if "/" in model else ""
+        return provider, ACCOUNTS.get(provider, provider)
 
     def read_models(self, lines: list[str]) -> list[dict]:
-        """`opencode models`: "<provider>/<model>" per model."""
-        rows = [r for r in lines if re.fullmatch(r"[\w.-]+/[\w.:/-]+", r)]
-        return [{"id": r, "name": r.split("/", 1)[1], "note": r.split("/", 1)[0]} for r in rows]
+        """`opencode models`: "<provider>/<model>" per model; the provider names the signed-in account."""
+        rows = [r for r in lines if not self.validate_model(r) and r]
+        out = []
+        for r in rows:
+            provider, account = self._account(r)
+            group = GROUPS.get(provider, provider)
+            out.append({"id": r, "name": r.split("/", 1)[1], "note": account or group,
+                        "group": group, "account": account or group})
+        return out
+
+    def limit_scope(self, model: str) -> tuple[str, ...]:
+        # A separate account (provider) and a separate allowance (model). Keep both in the cooldown key.
+        provider, _ = self._account(model)
+        return (provider, model) if provider else (model,)
+
+    def account_label(self, model: str) -> str:
+        _, label = self._account(model)
+        return label
+
+    def limit_wait_why(self) -> str:
+        return "This provider account's usage limit is reached for this model"
+
+    def resolve_known_model(self, model: str, known: list[dict]) -> str:
+        model = model.strip()
+        base, separator, effort = model.partition('#')
+        if base and '/' not in base:
+            matches = sorted({r['id'] for r in known if r.get('id','').split('/',1)[-1] == base})
+            if len(matches) == 1:
+                return matches[0]+(separator+effort if separator else '')
+            choices = ' Choose one of: '+', '.join(matches[:8])+'.' if matches else ' Refresh models and select its full ID, for example provider/model.'
+            raise ValueError('The opencode model needs a provider/model ID; this short name is ambiguous or was not discovered.'+choices)
+        return model
+
+    def validate_model(self, model: str) -> str | None:
+        if not model:
+            return None
+        base, separator, effort = model.partition('#')
+        if any(segment in {'.','..'} for segment in base.split('/')) or not re.fullmatch(r'[\w.-]+/[\w.:@+%~-]+(?:/[\w.:@+%~-]+)*',base) or (separator and not re.fullmatch(r'[\w.-]+',effort)):
+            return 'The opencode model needs a provider/model ID with nonempty segments. Refresh models or enter the full ID.'
+        return None
+
+    def fatal(self, error: str) -> bool:
+        # A provider privacy-policy refusal needs an account/model decision.
+        # Repeating the same paid request cannot change that policy. An exhausted
+        # free allowance needs a different model, not a wait on the account.
+        # OpenCode 2 reports model/allowance failures with these typed errors, sometimes
+        # exiting successfully before the first tool handshake.
+        return bool(re.search(r'ProviderModelNotFoundError|\bModelUnavailableError\b|\bprovider\.no-route:'
+                              r'|(?:^|\n)provider\.free-limit:'
+                              r'|\bModel not found\b|opencode model needs a provider/model ID'
+                              r'|This Go model trains on request data|Allow paid endpoints that train on request data'
+                              r'|\bModel [^\n]{1,120} has been deprecated\b|' + re.escape(FREE_ALLOWANCE),error,re.I))
 
     def config_model(self) -> str | None:
         base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
@@ -64,10 +124,11 @@ class Opencode(Agent):
     def session_command(self, exe: str, workdir: Path, mcp_url: str, token: str, model: str) -> tuple[list[str], dict]:
         # "deny" takes the tools out of the request, and OpenCode Zen's free models then refuse it ("can only be
         # used from within OpenCode"). "ask" keeps the usual tools, and `opencode run` rejects every ask itself.
+        standalone = self.standalone(exe)
         zen = (model or self.config_model() or ZEN).startswith(ZEN)
         never = "ask" if zen else "deny"
         headers = {"Authorization": f"Bearer {token}"}
-        if self.standalone(exe):
+        if standalone:
             # opencode 2: Mario Kart 64's helpers read the user's home and fetched a public decomp's code. Its own
             # format, since the old one loses `codemode`: off, the app's tools are the model's own, and `execute` (a
             # JavaScript runner whose fetch() reaches the internet, and which only "deny" removes) can go, with
@@ -94,8 +155,17 @@ class Opencode(Agent):
         # --print-logs: opencode's JSON error only says "Unexpected server error"; the log line says what failed.
         # (No --dir: it runs in workdir, and OpenCode before 1.4 stops at the flag. No --log-level either: before
         # 2.0 it took only ERROR, from 2.0 only error, and either stops the other at once.)
-        cmd = [exe, "run", *(["--standalone"] if self.standalone(exe) else []), "--format", "json", "--print-logs"]
-        return cmd + (["-m", model] if model else []), {}
+        cmd = [exe, "run", *(["--standalone"] if standalone else []), "--format", "json", "--print-logs"]
+        # Concurrent helpers otherwise write OpenCode's one user database: a busy writer can end a prompt with
+        # "database is locked" before it calls an app tool. Reuse one database per helper across its sessions.
+        # Override only the database, not HOME/XDG_DATA_HOME: provider sign-in and MCP auth stay in their usual place.
+        model_args = ["-m", model] if model else []
+        if model and '#' in model and not standalone:
+            # OpenCode 1 interprets #high as part of the literal model ID. Keep
+            # the saved selection, but pass effort through its separate flag.
+            base, _, variant = model.partition('#')
+            model_args = ["-m", base, "--variant", variant]
+        return cmd + model_args, {"OPENCODE_DB": str((workdir / "opencode.db").resolve())}
 
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")
@@ -115,12 +185,68 @@ class Opencode(Agent):
                 out.append(("text", text))
         elif t in ("step_finish", "step-finish") and isinstance(event.get("part"), dict):  # one step of the model
             part = event["part"]
+            # Keep categories only, never arbitrary provider text or request bodies.
+            reason = part.get('reason')
+            state['finish_reason'] = reason if reason in ('stop', 'length', 'tool-calls', 'content-filter', 'error', 'other', 'unknown') else 'not reported'
             tokens = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
             cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
             out.append(usage_item(usd=part.get("cost"), input=number(tokens, "input"),
                                   output=number(tokens, "output") + number(tokens, "reasoning"),
                                   cache_read=number(cache, "read"), cache_write=number(cache, "write"), turns=1))
         return out
+
+    def exit_reason(self, state: dict) -> str:
+        # The shared runner permits one fresh recovery for a truncated response.
+        reason = state.get('finish_reason', 'not reported')
+        return 'output_limit' if reason == 'length' else reason
+
+    def stderr_failure(self, line: str, model: str = "") -> str:
+        # --print-logs can report a rejected stream while `run` leaves stdout
+        # open forever. Only its structured error record is authoritative here;
+        # prompts, informational logs and transient retry errors are not failures.
+        # Title/small-model failures may coexist with a healthy main request.
+        # Route only the primary stream for this worker's explicitly selected model.
+        if self._primary_error(line, model) and re.search(
+                r'\bFree usage limit reached\b', self.clean_stderr(line), re.I):
+            # The account is not limited: only this free model is. Do not say "usage limit" here, or
+            # the shared runner reads it as the account's subscription limit and pauses every helper.
+            return (f"{FREE_ALLOWANCE} for the selected model; choose an OpenCode Go model or wait for "
+                    "the free allowance to reset.")
+        return ""
+
+    def stderr_retry(self, line: str, model: str = "") -> str:
+        # Go can leave stdout open across repeated overload failures. Do not
+        # classify arbitrary HTTP errors, title requests or other model routes.
+        if self._primary_error(line, model) and re.search(
+                r'\bThe inference service is overloaded\. Please try again later\.', self.clean_stderr(line), re.I):
+            return "No capacity available for model at the provider; repeated inference service overload."
+        return ""
+
+    def stderr_connection(self, line: str) -> str:
+        # OpenCode 1 can continue model turns after its MCP startup fails. Its
+        # warning is otherwise discarded by clean_stderr, leaving only later
+        # denied shell attempts in the app's final handshake diagnostic.
+        metadata = re.split(r' error(?:\.error)?=', line, maxsplit=1)[0]
+        fields = dict(re.findall(r'(?:^|\s)(\w+)=("[^"\n]*"|[^\s]+)', metadata))
+        if (fields.get('level', '').upper() == 'WARN'
+                and fields.get('message') == '"server unavailable"'
+                and fields.get('key', '').strip('"') == MCP_SERVER
+                and fields.get('type', '').strip('"') == 'remote'
+                and fields.get('status', '').strip('"') == 'failed'):
+            return 'OpenCode reported that the decompdecomp MCP server was unavailable during CLI startup.'
+        return ''
+
+    @staticmethod
+    def _primary_error(line: str, model: str) -> bool:
+        selected = model.split('#', 1)[0]
+        if '/' not in selected:return False
+        provider, selected_model = selected.split('/', 1)
+        metadata = re.split(r' error(?:\.error)?=', line, maxsplit=1)[0]
+        def field(name):
+            match = re.search(r'(?:^|\s)'+name+r'=(?:"([^"\n]*)"|([^\s]+))', metadata)
+            return (match[1] if match[1] is not None else match[2]) if match else None
+        return (field('small') == 'false' and field('providerID') == provider
+                and field('modelID') == selected_model and bool(re.search(r'\blevel=error\b', metadata, re.I)))
 
     def clean_stderr(self, line: str) -> str:
         """--print-logs: keep the error itself, drop the stack noise."""

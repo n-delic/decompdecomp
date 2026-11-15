@@ -8,17 +8,29 @@ import re
 import sys
 import threading
 import time
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from decompnet import seeds, toolchains
 from decompnet.app import permute, workers
 from decompnet.app.permute import MAX_TURNS, Permuter, State, weight_family
-from decompnet.network import Agent
+from decompnet.network import Agent, Network
 from decompnet.store import IN_MEMORY, Store
+
+from .test_rom import ROM, built  # noqa: F401  (fixture that builds the demo ROM)
 
 SOURCE = "s32 f(s32 a) {\n    s32 b = a + 1;\n    return b * 2;\n}\n"
 HEADER = "/* the game's types */\n#define TWO 2\ntypedef int s32;\n"
+
+
+class ProjectStub:
+    """Filesystem facts needed by scoped imported-project repair evidence."""
+    def get(self, slug):
+        project=SimpleNamespace(root=Path('synthetic-project'),
+                                unit=lambda _:SimpleNamespace(source=None,target=None))
+        return None,project,{}
 
 
 class FakeNet:
@@ -26,15 +38,22 @@ class FakeNet:
     header. The judge is the test's own (ScriptedPermuter._score)."""
 
     links: dict = {}
+    project_store = Network.project_store
+    project_stores = Network.project_stores
 
     def __init__(self):
         self.store = Store(IN_MEMORY)
+        self._project_files = None  # This in-memory fixture uses the legacy store, not migrated project files.
+        self._generation = {}
         with self.store.tx() as db:
             db.execute("INSERT INTO projects(id, slug, name, arch, root, config) VALUES(1, 'game', 'Game', 'mips', '.', ?)",
                        (json.dumps({"compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": "-O2"}}),))
             db.execute("INSERT INTO agents(id, name, token_hash) VALUES(1, 'permuter', 'x')")
             db.execute("INSERT INTO functions(id, project_id, name, n_insns, best_score, best_source, vram) "
                        "VALUES(1, 1, 'f', 10, 40, ?, 2147483648)", (SOURCE,))
+
+    def attribution_agent(self, name):
+        return AGENT
 
     def cfg(self, proj):
         return json.loads(proj["config"])
@@ -102,7 +121,7 @@ def test_variants_come_in_batches_from_the_first_and_the_best_c_in_turn(monkeypa
     jobs = batches(monkeypatch, ["broken", "far", "closer"], ["far too"], ["same", "never judged"])
     st = State()
     p._permute(AGENT, net.project_row("game"), net.function(), st)
-    assert [j["source"] for j in jobs] == [SOURCE, "closer", SOURCE]
+    assert [j["source"] for j in jobs] == [SOURCE, "closer", "closer"]
     assert jobs[0]["header"] == "typedef int s32;" and jobs[0]["function"] == "f" and jobs[0]["family"] == "gcc"
     assert p.judged == ["broken", "far", "closer", "far too", "same"]
     assert (st.variants, st.improved, st.matched, st.tried, st.current) == (5, 2, 1, 1, "")
@@ -128,6 +147,9 @@ def test_a_projects_turn_judges_its_variants_in_one_run_of_tries(monkeypatch):
 
         def permuter_name(self, fork, name, source):
             return name
+
+        def get(self, slug):  # (the project's files, for the evidence scope of this fork's repairs)
+            return ProjectStub().get(slug)
 
     class ForkNet(FakeNet):
         forks = Forks()
@@ -162,18 +184,19 @@ def test_a_projects_turn_judges_its_variants_in_one_run_of_tries(monkeypatch):
         ScriptedPermuter(net, {})._permute(AGENT, net.project_row("game"), net.function(), st)
     assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0 and st.current == ""
 
-    # the run waited for another turn on the unit past the turn's hold, and an agent claimed the function meanwhile:
-    # the turn ends without trying anything (the hold is counted from when the run starts)
+    # the run waited for another turn on the unit and an agent claimed the function meanwhile: the permuter's own
+    # workers hold no claim (permuter_claims.nonexclusive), so the turn still tries its variants beside the agent
     @contextmanager
     def slow(proj, unit):
         with net.store.tx() as db:
-            db.execute("UPDATE claims SET agent_id=2")
+            db.execute("INSERT INTO claims VALUES(1, 2, ?, ?)", (time.time(), time.time() + 60))
         yield
 
     monkeypatch.setattr(net.forks, "trial_run", slow, raising=False)
+    batches(monkeypatch, ["far"])
     p = ScriptedPermuter(net, {})
     p._permute(AGENT, net.project_row("game"), net.function(), State())
-    assert p.judged == [] and net.store.one("SELECT agent_id FROM claims")["agent_id"] == 2
+    assert p.judged == ["far"] and net.store.one("SELECT agent_id FROM claims")["agent_id"] == 2
 
 
 def test_decomp_permuter_looks_a_function_up_by_the_name_its_c_has(monkeypatch):
@@ -226,7 +249,7 @@ def test_c_decomp_permuter_cant_read_falls_back_to_the_simple_rewrites(monkeypat
     net = FakeNet()
     p = ScriptedPermuter(net, {})
     jobs = batches(monkeypatch, None)
-    monkeypatch.setattr(permute, "SECONDS", 0.3)
+    monkeypatch.setattr(p, "seconds", 0.3)
     p._permute(AGENT, net.project_row("game"), net.function(), State())
     assert len(jobs) == 1 and p.judged[0] != SOURCE and all("s32 f(s32 a)" in c for c in p.judged)
 
@@ -300,15 +323,20 @@ def test_workers_yield_the_cpu_to_the_app():
     if app >= 19:
         pytest.skip("this test already runs at the lowest priority")
     assert workers.pool().submit(priority).result() == min(19, app + workers.NICE) and priority() == app
-    assert 1 <= workers.WORKERS <= workers.MAX_WORKERS
+    assert workers.WORKERS >= 1
 
 
-def test_drafts_and_the_permuter_share_one_pool_of_workers(monkeypatch):
-    """Two pools of four made eight background threads beside the agents' compiles: both submit to the one pool."""
+def test_drafts_and_permuter_own_separate_stoppable_groups(monkeypatch):
+    """Each purpose has its own identity, project and stop callback."""
     from decompnet.app import drafts
 
     used = []
-    monkeypatch.setattr(workers, "pool", lambda: used.append("pool") or workers.ThreadPoolExecutor(1))
+    from decompnet.app import purpose_work
+    real = purpose_work.Executor
+    def create(*args, **kwargs):
+        used.append((kwargs['purpose'],kwargs['project'],callable(kwargs['stop'])))
+        return real(1,**kwargs)
+    monkeypatch.setattr(purpose_work, 'Executor', create)
     net = FakeNet()
     net.local_agent = lambda name: (AGENT, "")
     p = Permuter(net)
@@ -319,8 +347,8 @@ def test_drafts_and_the_permuter_share_one_pool_of_workers(monkeypatch):
     net.draft_mark, net.can_draft, net.stale_drafts = (lambda proj: 1), (lambda proj: True), (lambda proj: [1])
     d._one = lambda *args: d.stop("game")
     d._loop("game", d.jobs.setdefault("game", drafts.State()))
-    assert used == ["pool", "pool"]
-    assert workers.WORKERS <= workers.MAX_WORKERS == 4
+    assert used == [('Background permutation','game',True),('Machine drafts','game',True)]
+    assert workers.WORKERS == workers.default_workers()
 
 
 def test_compilers_pick_decomp_permuters_weights():
@@ -371,6 +399,53 @@ def test_the_generator_answers_in_json_lines(tmp_path, monkeypatch):
     assert gen.batch({**job, "source": "hang"}) is None and gen.proc.poll() is not None
 
 
+@pytest.mark.parametrize("stream", [True, False])
+def test_exited_generator_keeps_failed_job_fallback_and_closes_pipes(tmp_path, stream):
+    """A small buffered request can fail at flush and again at close after the child exits."""
+    script = tmp_path / "exited.py"
+    script.write_text("raise SystemExit(3)\n")
+    gen = permute.Generator([sys.executable, str(script)])
+    gen.proc.wait(timeout=5)
+    job = {"source": "int f(void) { return 1; }", "function": "f"}
+    try:
+        if stream:
+            assert list(gen.chunks(job, lambda: None)) == []
+            assert gen.failed and gen.empty
+        else:
+            assert gen.batch(job) is None
+        gen.close()
+        gen.close()  # search cleanup may repeat after the failed stream closed itself
+        assert gen.proc.returncode == 3
+        assert not gen._reader.is_alive()
+        assert gen.proc.stdin.closed and gen.proc.stdout.closed
+    finally:
+        # Baseline cleanup itself raises; still release stdout in the failing control.
+        try:
+            gen.close()
+        finally:
+            gen.proc.stdout.close()
+
+
+@pytest.mark.parametrize("error", [permute.GenerationStopped, ValueError])
+def test_generator_cleanup_preserves_cancellation_and_other_failures(tmp_path, error):
+    script = tmp_path / "waiting.py"
+    script.write_text("import sys, time\nsys.stdin.readline()\ntime.sleep(30)\n")
+    gen = permute.Generator([sys.executable, str(script)])
+
+    def stop():
+        gen.proc.stdin.write(b"buffered but obsolete")
+        raise error("original failure")
+
+    try:
+        with pytest.raises(error, match="original failure"):
+            list(gen.chunks({"source": "int f(void) { return 1; }"}, stop))
+        assert gen.proc.poll() is not None
+        assert not gen._reader.is_alive()
+        assert gen.proc.stdin.closed and gen.proc.stdout.closed
+    finally:
+        gen.close()
+
+
 needs_tool = pytest.mark.skipif(toolchains.installed(permute.TOOL) is None, reason="needs decomp-permuter")
 
 
@@ -380,7 +455,7 @@ def test_decomp_permuter_writes_variants_of_the_function_alone():
     gen = permute.Generator()
     try:
         variants = gen.batch(job)
-        assert len(variants) == len(set(variants)) == 20
+        assert 0 < len(variants) == len(set(variants)) <= 20  # possibly uninitialized new temporaries are filtered
         assert all(" f(" in v and "typedef" not in v and "the game's types" not in v for v in variants)
         assert gen.batch({**job, "source": "s32 f(s32 a) { return M2C_FIELD(a, s32 *, 4); }"}) is None  # a macro call
         assert gen.batch({**job, "seed": 2}) != variants  # it answers on after C it couldn't read
@@ -529,7 +604,8 @@ def test_decomp_permuter_reads_an_sdk_local_and_a_macro_with_a_type():
         variants = gen.batch(job)
     finally:
         gen.close()
-    assert variants and all(" Widget::Count(int k)\n" in v for v in variants)
+    # (the randomizer may retype the parameter: `Widget::Count(short k)`; the method's name is what's checked)
+    assert variants and all(re.search(r" Widget::Count\([\w ]*\bk\)\n", v) for v in variants)
 
 
 @needs_tool
@@ -601,8 +677,8 @@ def test_decomp_permuter_reads_a_function_among_msvcs_macros(header, head):
     finally:
         gen.close()
     # the macros are put in where the function uses them, and its convention kept (the randomizer may retype what
-    # it returns: `__declspec(dllexport) volatile unsigned int f(int a)`)
-    convention = r"__declspec\(dllexport\) [^;{]*\bf\(int a\)" if "DLLEXPORT" in head else r"\b__stdcall f\(int a\)"
+    # it returns: `__declspec(dllexport) volatile unsigned int f(int a)`, and its parameter: `f(short a)`)
+    convention = r"__declspec\(dllexport\) [^;{]*\bf\([\w ]*\ba\)" if "DLLEXPORT" in head else r"\b__stdcall f\([\w ]*\ba\)"
     assert variants and all(re.search(convention, v) for v in variants)
 
 
@@ -701,12 +777,15 @@ def test_a_variant_the_project_refuses_is_skipped_and_the_turn_goes_on(monkeypat
 
     net = FakeNet()
     helper = "inline s32 g(s32 a) { return a; }\n" + SOURCE
-    batches(monkeypatch, [helper, "closer", "same"])
-    p = ScriptedPermuter(net, {helper: NetworkError("compile_and_diff takes one function definition"), "closer": 20,
-                               "same": 0})
+    # (the helper is judged as m2cfix.static_helpers writes it; an improvement ends its batch, so the match comes in
+    # the next one, from the improved C)
+    judged_helper = "static " + helper
+    batches(monkeypatch, [helper, "closer"], ["same"])
+    p = ScriptedPermuter(net, {judged_helper: NetworkError("compile_and_diff takes one function definition"),
+                               "closer": 20, "same": 0})
     st = State()
     p._permute(AGENT, net.project_row("game"), net.function(), st)
-    assert p.judged == [helper, "closer", "same"] and st.matched == 1
+    assert p.judged == [judged_helper, "closer", "same"] and st.matched == 1
 
 
 def test_a_turn_whose_every_variant_is_refused_hands_the_refusal_on(monkeypatch):
@@ -734,13 +813,246 @@ def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, m
         db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES('g','G','','arm',0,?,'{}')",
                    (str(tmp_path),))
         db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(1,'f',8,2,'open','a')")
-    p = permute.Permuter.__new__(permute.Permuter)
-    p.net = net
+    p = permute.Permuter(net)
     monkeypatch.setattr(p, "_permute", lambda *a: (_ for _ in ()).throw(NetworkError("send the function definition\nmore")),
                         raising=False)
     with caplog.at_level("INFO", logger="decompdecomp"):
-        p._turn(None, None, {"name": "f", "id": 1}, None)
+        p._turn(None, net._project("g"), {"name": "f", "id": 1, "project_id": 1}, None)
     assert caplog.records[-1].getMessage() == "permuter: f: send the function definition (left to agents)"
     assert caplog.records[-1].exc_info is None
     # the same best attempt is refused every time: its other turns go too
     assert net.store.one("SELECT permuted FROM functions WHERE id=1")["permuted"] == permute.MAX_TURNS
+
+
+def test_a_draft_in_m2cs_macros_is_permuted_as_plain_c_and_a_helper_stays_local(monkeypatch):
+    """decomp-permuter's parser knows no macros: the turn starts from the draft written out. A helper it adds is
+    `static`, so the project still links."""
+    net = FakeNet()
+    macros = "typedef s32 M2C_UNK;\n#define M2C_FIELD(e, t, o) (*(t)((char *)(e) + (o)))\n"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source=? WHERE id=1",
+                   (macros.join(["#ifndef M2C_DEFINES\n", "#endif\n"]) + "s32 f(void *p) { return M2C_FIELD(p, s32 *, 4); }\n",))
+    jobs = batches(monkeypatch, ["inline s32 inline_fn(void) { return 1; }\ns32 f(void *p) { return inline_fn(); }\n"])
+    p = ScriptedPermuter(net, {})
+    p._permute(AGENT, net.project_row("game"), net.function(), State())
+    assert "M2C_" not in jobs[0]["source"] and "(*(s32 *)((char *)(p) + 4))" in jobs[0]["source"]
+    assert p.judged[0].startswith("static inline s32 inline_fn")
+
+
+def test_configured_size_and_turn_limits_admit_large_exhausted_near_misses():
+    net = FakeNet()
+    p = Permuter(net)
+    proj = net.project_row('game')
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET n_insns=800, best_score=100, permuted=4 WHERE id=1')
+    assert p.candidates(proj) == []
+    p.configure({'permuter_max_insns': 1000, 'permuter_max_turns': 5, 'permuter_seconds': 180})
+    assert [r['name'] for r in p.candidates(proj)] == ['f']
+    assert p._hold(AGENT, net.function())
+    assert not net.store.one('SELECT * FROM claims')
+    assert net.function()['permuted'] == 5
+    p._let_go(AGENT, net.function())
+    assert p.candidates(proj) == []
+    p.configure({})
+    assert (p.max_insns, p.seconds, p.max_turns) == (400, 60, 4)
+
+
+@needs_tool
+def test_traced_generator_keeps_successful_rewrite_lineage_without_changing_candidates():
+    job = {'header': HEADER, 'source': SOURCE, 'function': 'f', 'family': 'gcc', 'seed': 3, 'count': 12}
+    gen = permute.Generator()
+    try:
+        ordinary = gen.batch(job)
+        traced = gen.batch(job | {'trace': True})
+    finally:
+        gen.close()
+    assert ordinary == traced and len(traced) == 12
+    assert all(v.lineage and all(name.startswith('perm_') for name in v.lineage) for v in traced)
+
+
+def test_the_worker_count_defaults_to_what_the_computer_can_spare_and_is_a_setting(monkeypatch):
+    """Cores less two by default; a setting of 0 or nothing is automatic; anything above is taken as it is. A new
+    count applies to new purpose groups; existing groups retain their width."""
+    monkeypatch.setattr(workers, "CORES", 16)
+    monkeypatch.setattr(workers, "WORKERS", workers.default_workers())
+    assert workers.default_workers() == 14
+    assert [workers.clamp(v) for v in (None, 0, "junk", -3, 1, 6, 99)] == [14, 14, 14, 14, 1, 6, 99]
+    monkeypatch.setattr(workers, "CORES", 2)
+    assert workers.default_workers() == 1 and workers.clamp(None) == 1
+    monkeypatch.setattr(workers, "CORES", 16)
+    first = workers.pool()
+    assert first._max_workers == 14
+    assert workers.configure(3) == 3
+    second = workers.pool()
+    assert second is not first and second._max_workers == 3
+    assert workers.configure(3) == 3
+    assert first._max_workers == 14  # Running groups keep their configured width.
+    first.shutdown();second.shutdown()
+    assert workers.configure(None) == 14 and workers.pool()._max_workers == 14
+    workers.pool().shutdown(wait=False)
+
+
+def test_the_permuter_queues_a_function_for_every_worker(monkeypatch):
+    net = FakeNet()
+    monkeypatch.setattr(workers, "WORKERS", 30)
+    seen = []
+    net.store.all = lambda *a, **k: seen.append(a[-1]) or []
+    from decompnet.app import permuter_inputs
+
+    monkeypatch.setattr(permuter_inputs, "refresh", lambda *a: None)
+    Permuter(net).candidates(net.store.one("SELECT * FROM projects WHERE id=1"))
+    assert seen[-1] == 60  # (twice the workers, where 20 would leave ten of them idle)
+
+
+def test_the_permuters_status_says_how_many_threads_it_has(monkeypatch):
+    monkeypatch.setattr(workers, "WORKERS", 7)
+    p = Permuter(FakeNet())
+    p.jobs["game"] = State()
+    assert p.status("game")["threads"] == 7 and p.status("other") is None
+
+
+def test_improvement_discards_siblings_and_regenerates_from_winner(monkeypatch):
+    net = FakeNet()
+    permuter = ScriptedPermuter(net, {'better':10, 'exact':0})
+    jobs = batches(monkeypatch, ['better','obsolete sibling'], ['exact'])
+    state = State()
+    permuter._permute(AGENT,net.project_row('game'),net.function(),state)
+    assert permuter.judged == ['better','exact']
+    assert jobs[1]['source'] == 'better'
+    assert state.matched == 1
+
+
+def test_new_saved_improvement_reseeds_next_batch(monkeypatch):
+    net = FakeNet()
+    net._function = lambda *args: net.function()
+    calls=[]
+    class UpdatingPermuter(ScriptedPermuter):
+        def _baseline(self, agent, proj, fn, state, fork):
+            calls.append(fn['best_source'])
+            return fn['best_score'],0
+        def _score(self, agent, proj, fn, source, best, fork):
+            if source == 'old miss':
+                with net.store.tx() as db:
+                    db.execute("UPDATE functions SET best_source='external winner',best_score=5 WHERE id=1")
+            return super()._score(agent,proj,fn,source,best,fork)
+    jobs=batches(monkeypatch,['old miss'],['exact'])
+    permuter=UpdatingPermuter(net,{'exact':0})
+    permuter._permute(AGENT,net.project_row('game'),net.function(),State())
+    assert calls == ['external winner']
+    assert jobs[1]['source'] == 'external winner'
+
+
+def test_random_search_skips_new_compound_update_chains_and_retains_checkpoint(monkeypatch):
+    from decompnet.app.random_safety import view
+    net=FakeNet()
+    invalid='void f(void){a+=(b+=(c+=(d+=n)));}'
+    p=ScriptedPermuter(net,{invalid:0,'closer':10})
+    batches(monkeypatch,[invalid,'closer'],[])
+    state=State()
+    p._permute(AGENT,net.project_row('game'),net.function(),state)
+    assert invalid not in p.judged and 'closer' in p.judged
+    assert state.matched==0
+    assert SOURCE in '\n'.join(view(net,net.function()))
+
+
+def test_status_is_json_safe_with_internal_source_preparation_state():
+    permuter=Permuter(FakeNet())
+    state=permuter.jobs['game']=State(tried=2,variants=7,improved=1,repairs=3)
+    state.preparation_agent=Agent(1,'autopilot',None)
+    state.source_measurement={'pair':('private source','private header'),'rows':[['i','old','new']]}
+    state.future_internal=object()
+    state.holding('entry',True)
+    response=permuter.status('game')
+    assert json.loads(json.dumps(response))==response
+    assert set(response)=={'state','tried','variants','improved','matched','current','started_at','repairs','threads'}
+    assert response['current']=='entry' and response['repairs']==3 and response['variants']==7
+    assert 'private source' not in json.dumps(response)
+    assert state.preparation_agent.name=='autopilot' and state.source_measurement['pair'][1]=='private header'
+    state.state='stopped'
+    assert json.loads(json.dumps(permuter.status('game')))['state']=='stopped'
+
+
+def test_source_disappears_during_preflight(monkeypatch):
+    from decompnet.network import NetworkError
+    net = FakeNet()
+    net._function = lambda *_: net.function()
+    p = ScriptedPermuter(net, {})
+
+    def preflight(*args):
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_source=NULL WHERE id=1')
+        return {'tested': 0}
+
+    monkeypatch.setattr(p, '_compiler_preflight', preflight)
+    with pytest.raises(NetworkError, match='Saved C is no longer available'):
+        p._permute(AGENT, net.project_row('game'), net.function(), State())
+    assert p.judged == []
+    assert net.store.one('SELECT 1 FROM claims') is None
+
+
+@pytest.mark.parametrize('spent', [0, 2])
+def test_progress_movement_does_not_exhaust_remaining_random_turns(monkeypatch, caplog, spent):
+    from decompnet.app.progress import ProgressMoved
+
+    net = FakeNet()
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET permuted=? WHERE id=1', (spent,))
+    p = Permuter(net)
+    def moved(*args):
+        raise ProgressMoved('Progress changed while this attempt compiled.')
+    monkeypatch.setattr(p, '_permute', moved)
+    with caplog.at_level('INFO', logger='decompdecomp'):
+        p._turn(AGENT, net.project_row('game'), net.function(), State())
+    assert net.function()['permuted'] == spent
+    assert [fn['id'] for fn in p.candidates(net.project_row('game'))] == [1]
+    assert caplog.records[-1].exc_info is None
+    assert 'deferred' in caplog.records[-1].getMessage()
+
+
+def test_a_turn_reads_the_projects_saved_files_once(built, tmp_path):  # noqa: F811
+    """Every lookup in a turn synced the project's saved files: on a 2,000-function game eight threads queued on
+    its lock and ran about half as many variants. A turn reads them once, as an agent's tool call does."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.app.permute import State
+
+    from .test_app_engine import CLAMP
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("claude-opus-5.5-1")
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")
+    near = CLAMP.replace("if (v > hi)", "if (v >= hi)")
+    assert not net.compile_and_diff(agent, "func_800007D0", near, slug).startswith("✅ MATCH")
+    net.release(agent, "func_800007D0", "near", slug)
+    p = net.permuter
+    p.seconds = 3
+    fn, proj = net._function("func_800007D0", slug), net.project_row(slug)
+    checked = []
+    real = net.progress._sync_checked
+    net.progress._sync_checked = lambda *a, **k: (checked.append(a), real(*a, **k))[1]
+    p._turn(net.attribution_agent("permuter"), proj, fn, State())
+    assert len(checked) == 1  # it was 6
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_generator_filters_variants_during_legacy_alias_import(tmp_path, monkeypatch, stream):
+    """Concurrent cold imports can still see the compatibility shim before its module alias is replaced."""
+    from types import ModuleType
+
+    monkeypatch.setitem(sys.modules, "decompnet.app.permuter_initialization",
+                        ModuleType("decompnet.app.permuter_initialization"))
+    parent = "int f(int condition) { return 0; }"
+    safe = "int f(int condition) { int temp = 3; return temp; }"
+    unsafe = "int f(int condition) { int temp; if (condition) temp = 3; return temp; }"
+    script = tmp_path / "variants.py"
+    replies = [{"variant": unsafe}, {"variant": safe}, {"done": True}]
+    script.write_text("import sys, json\nfor line in sys.stdin:\n"
+                      + " for reply in " + repr(replies) + ": print(json.dumps(reply), flush=True)\n")
+    gen = permute.Generator([sys.executable, str(script)])
+    try:
+        job = {"source": parent, "function": "f"}
+        variants = [v for chunk in gen.chunks(job, lambda: None) for v in chunk] if stream else gen.batch(job)
+        assert variants == [safe]
+        if stream:assert not gen.failed and not gen.empty
+    finally:
+        gen.close()

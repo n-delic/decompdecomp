@@ -7,7 +7,7 @@ function markNav() {
   const h = location.hash || "#/";
   const route = h.startsWith("#/p/") ? "project" : (h.replace("#/", "") || "home");
   document.querySelectorAll(".nav [data-route]").forEach((a) => a.classList.toggle("on", a.dataset.route === route));
-  document.querySelectorAll(".nav-proj").forEach((a) => a.classList.toggle("on", a.dataset.slug === S.slug && route === "project"));
+  document.querySelectorAll(".nav-proj").forEach((a) => a.classList.toggle("on", (a.dataset.slug === S.slug || (S.projects.find(p => p.slug === a.dataset.slug)?.variants || []).some(v => v.project === S.slug)) && route === "project"));
 }
 /* One ask at a time: when the list took longer than 5 s (11 s with two projects whose game file was gone), the
    timer's asks piled up and kept the app's workers busy. One asked for meanwhile (a project renamed) goes after it. */
@@ -17,15 +17,16 @@ async function loadNav(timer = false) {
   if (navLoading) { navAgain = navAgain || !timer; return; }
   navLoading = true;
   try {
-    /* With hundreds of games the list is long: `since` gets just "the same" when nothing changed (routes/state.py),
-       and nothing is redrawn. A rename or a new project asks without it (timer=false). */
-    const got = await api(timer && navSig ? `/api/projects?since=${navSig}` : "/api/projects?since=");
-    if (Array.isArray(got)) { S.projects = got; navSig = ""; }  // (an older server: the list itself)
-    else if (got.same) return;
-    else { S.projects = got.projects; navSig = got.sig; }
+    /* With hundreds of projects the list is ~80 KB and rarely changes between two asks: the timer sends the
+       signature it has and an unchanged list answers "same" (anything else asks for the whole list). */
+    const answer = await api(`/api/projects?since=${timer ? encodeURIComponent(navSig) : ""}`);
+    if (Array.isArray(answer)) { S.projects = answer; navSig = ""; }  // (a server from before signatures)
+    else if (answer.same) return;
+    else { S.projects = answer.projects; navSig = answer.sig; }
+    navColours = null;
   } catch (e) {
-    if (!S.projects?.length) $("navProjects").innerHTML = `<p class="nav-empty">Couldn't load your projects: ${esc(e.message)}</p>`;
-    return;
+    if (!S.projects?.length) navDrawn = "", $("navProjects").innerHTML = `<p class="nav-empty">Couldn't load your projects: ${esc(e.message)}</p>`;
+    return false;
   } finally {
     navLoading = false;
     if (navAgain) { navAgain = false; loadNav(); }
@@ -36,28 +37,31 @@ async function loadNav(timer = false) {
    the order the projects were made (app.css orders the colours so that neighbours differ most): a new project never
    changes the colours of the ones before it. Past six projects the colours come round again. */
 const PROJECT_COLOURS = 6;  // app.css: .pc-0 ... .pc-5
-let colourList = null, colours = new Map();
+let navColours = null;  // slug -> colour, made once per list (a search per row was quadratic in the projects)
 function colourOf(slug) {
-  if (colourList !== S.projects) {  // (a look-up per row: finding each one in the list was n² for hundreds of games)
-    colourList = S.projects;
-    colours = new Map(S.projects.map((p, i) => [p.slug, (S.projects.length - 1 - i) % PROJECT_COLOURS]));  // newest first
+  if (!navColours || navColours.list !== S.projects) {
+    const n = S.projects.length;  // (the list is newest first)
+    navColours = {list: S.projects, map: new Map(S.projects.map((p, i) => [p.slug, (n - 1 - i) % PROJECT_COLOURS]))};
   }
-  return colours.get(slug) ?? 0;
+  return navColours.map.get(slug) ?? 0;
 }
-/* Past NAV_FILTER_FROM projects the sidebar gets a filter box: hundreds of games don't fit a glance. */
+/* Past NAV_FILTER_FROM projects a filter box shows above the list; the list is only rebuilt when its HTML changed
+   (with hundreds of projects a rebuild every 5 s cost the page more than the ask). */
 const NAV_FILTER_FROM = 12;
-let navFilter = "", navDrawn = "";
-
+let navDrawn = "";
+function navShown() {
+  const words = ($("navFilter")?.value || "").trim().toLowerCase();
+  if (!words || S.projects.length < NAV_FILTER_FROM) return S.projects;
+  return S.projects.filter((p) => `${p.title} ${p.slug} ${p.platform_short || ""} ${p.platform_name || ""}`.toLowerCase().includes(words));
+}
 function renderNav() {
-  const box = $("navProjects");
-  const filter = $("navFilter");
+  const box = $("navProjects"), filter = $("navFilter");
   if (filter) filter.hidden = S.projects.length < NAV_FILTER_FROM;
-  const wanted = S.projects.length < NAV_FILTER_FROM || !navFilter ? S.projects
-    : S.projects.filter((p) => `${p.title} ${p.platform_short || ""} ${p.platform_name || ""}`.toLowerCase().includes(navFilter));
-  let html;
-  if (!S.projects.length) html = `<p class="nav-empty">None yet: drop in a game.</p>`;
-  else if (!wanted.length) html = `<p class="nav-empty">No project matches.</p>`;
-  else html = wanted.map((p) => {
+  if (!S.projects.length) { navDrawn = ""; box.innerHTML = `<p class="nav-empty">None yet: drop in a game.</p>`; return; }
+  const shown = navShown();
+  const html = !shown.length ? `<p class="nav-empty">No project matches.</p>` : shown.map((project) => {
+    const selected = project.variants?.find(v => v.project === S.slug);
+    const p = selected ? {...project, ...selected.summary, slug:project.slug, title:project.title, working:project.working} : project;
     const pct = codePct(p);
     const short = p.platform_short || p.platform_name || "?";
     const state = p.working ? `<span class="dot on" title="${p.working} agent${p.working === 1 ? "" : "s"} working"></span>`
@@ -73,14 +77,22 @@ function renderNav() {
       <span class="np-meta"><span>${p.progress_error ? "progress needs attention" : esc(short)}</span><span class="grow"></span><span>${p.kind === "fork" && !p.ready ? "set up" : pctNum(pct) + "%"}</span></span>
       <span class="np-bar"><i data-w="${pct.toFixed(2)}"></i></span></a>`;
   }).join("");
-  if (html !== navDrawn) {  // (the same list isn't rebuilt: hundreds of rows, every few seconds)
-    box.innerHTML = navDrawn = html;
-    setWidths(box);
-  }
+  if (html !== navDrawn) { box.innerHTML = navDrawn = html; setWidths(box); }
   markNav();
 }
-if ($("navFilter")) $("navFilter").oninput = (e) => { navFilter = e.target.value.trim().toLowerCase(); renderNav(); };
-setInterval(() => loadNav(true), 5000);
+$("navFilter")?.addEventListener("input", renderNav);
+/* The list every NAV_MS (not while the window is hidden), less often after errors or slow answers. */
+const NAV_MS = 5000, NAV_MAX_MS = 30000;
+let navDelay = NAV_MS;
+async function navTick() {
+  const started = Date.now();
+  let ok = true;
+  if (!document.hidden) { try { ok = await loadNav(true) !== false; } catch { ok = false; } }
+  const took = Date.now() - started;
+  navDelay = !ok ? Math.min(NAV_MAX_MS, navDelay * 2) : Math.max(NAV_MS, Math.min(NAV_MAX_MS, took * 3));
+  setTimeout(navTick, navDelay);
+}
+setTimeout(navTick, NAV_MS);
 function openNav() { document.body.classList.add("nav-open"); $("navShade").hidden = false; }
 function closeNav() { document.body.classList.remove("nav-open"); $("navShade").hidden = true; }
 $("navOpen").onclick = openNav;
@@ -147,7 +159,7 @@ const NOTIFY_POLL_MS = 2000;
 const BURST_SECONDS = 30;  // the same kind of news from one project this close together is one line
 const HISTORY_KEEP = 300;  // events the panel keeps
 const NOTE_TOAST_MS = 6000, NOTE_TOASTS_SHOWN = 3;
-const N = { last: null, polling: false, history: new Map(), live: [], unread: 0, loaded: false };
+const N = { last: null, polling: false, history: new Map(), live: [], unread: 0, loaded: false, loading: null, epoch: 0 };
 
 /* The autopilot's summary ("20 of 95 functions matched from machine drafts") ends the burst of its own matches: one
    line, not a line of matches and another saying the same thing. */
@@ -176,6 +188,7 @@ function noteHtml(g) {
     autopilot: () => `Autopilot: ${esc(d)}`,
     compiler: () => `Compiler: ${esc(d)}`,
     reopen: () => esc(d),
+    regression: () => `Previously exact source failed recheck: ${fn(d)}. Open its last exact verification for changed inputs.`,
     not_c: () => esc(d),
     knowledge: () => `Agents agree on something every agent should know (${esc(d)})`,
     collab: () => esc(sentence(d)),
@@ -229,6 +242,8 @@ function markUnread() {
 async function pollEvents() {
   if (N.polling) return;
   N.polling = true;
+  const started = Date.now();
+  let failed = false;
   try {
     const r = await api(`/api/events${N.last == null ? "" : `?after=${N.last}`}`);
     const first = N.last == null;
@@ -238,8 +253,22 @@ async function pollEvents() {
     trimHistory();
     showNews(r.events);
     if (!$("notifPanel").hidden) renderNotes();
-  } catch { /* the app is restarting: the next poll carries on where this one stopped */ } finally { N.polling = false; }
+  } catch {  /* the app is restarting: the next poll carries on where this one stopped, a little later each time */
+    failed = true;
+  } finally {
+    N.polling = false;
+    N.delay = failed ? Math.min(NOTIFY_MAX_MS, Math.max(2 * (N.delay || NOTIFY_POLL_MS), 4000))
+      : Math.max(NOTIFY_POLL_MS, Math.min(NOTIFY_MAX_MS, Date.now() - started));  // (a slow answer: ask less often)
+  }
 }
+/* The feed's own timer: nothing is asked while the window is hidden (what happened meanwhile comes all at once when it
+   shows again, from where the feed stopped), and errors or slow answers space the asks out. */
+const NOTIFY_MAX_MS = 30000;
+async function eventsTick() {
+  if (!document.hidden) await pollEvents();
+  setTimeout(eventsTick, document.hidden ? NOTIFY_MAX_MS : (N.delay || NOTIFY_POLL_MS));
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { pollEvents(); loadNav(true); } });
 function trimHistory() {
   const ids = [...N.history.keys()].sort((a, b) => a - b);
   for (const id of ids.slice(0, Math.max(0, ids.length - HISTORY_KEEP))) N.history.delete(id);
@@ -256,12 +285,29 @@ async function openNotes() {
   N.unread = 0; markUnread();
   for (const t of N.live) t.el.remove();  // (their news is in the panel now)
   N.live = [];
-  if (!N.loaded) {  // the history once; live news joins it as it comes
-    try { for (const ev of (await api("/api/events?recent=1")).events) N.history.set(ev.id, ev); N.loaded = true; } catch { /* shown empty */ }
-    trimHistory();
-  }
   renderNotes();
   $("notifClose").focus();
+  if (N.loaded || N.loading) return;
+  const epoch = N.epoch, log = $("notifLoading");
+  log.hidden = false; showJobError(log, "");
+  const finish = beginWork(log, "Loading recent events", []);
+  N.loading = (async () => {
+    try {
+      const result = await api("/api/events?recent=1");
+      if (epoch !== N.epoch) return; // Clear all while the request was in flight.
+      for (const ev of result.events) N.history.set(ev.id, ev);
+      N.loaded = true; trimHistory(); renderNotes();
+      log.hidden = true;
+    } catch (error) {
+      if (epoch !== N.epoch) return;
+      showJobError(log, error);
+      const retry = document.createElement("button");
+      retry.type = "button"; retry.textContent = "Retry loading events";
+      retry.onclick = () => { retry.remove(); openNotes(); };
+      log.append(retry);
+    } finally { finish(); N.loading = null; }
+  })();
+  await N.loading;
 }
 function closeNotes(back = true) {
   if ($("notifPanel").hidden) return;
@@ -276,6 +322,7 @@ $("notifClose").onclick = () => closeNotes();
 /* Clear all: the history up to the newest event goes, and stays gone after a restart (the server keeps where) */
 $("notifClear").onclick = async () => {
   const upTo = Math.max(N.last || 0, ...N.history.keys());
+  N.epoch++; N.loaded = true; $("notifLoading").hidden = true;
   N.history.clear();
   for (const t of N.live) t.el.remove();
   N.live = [];
@@ -301,5 +348,5 @@ for (const box of [$("notifList"), $("toasts")]) {
     if (e.target.closest("a[href^='#/p/']")) closeNotes(false);
   });
 }
-setInterval(pollEvents, NOTIFY_POLL_MS);
+setTimeout(eventsTick, NOTIFY_POLL_MS);
 

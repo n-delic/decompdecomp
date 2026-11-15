@@ -11,7 +11,7 @@ function element() {
   return {
     disabled: false, hidden: false, value: "", checked: true, files: [], textContent: "", innerHTML: "", attrs: {}, dataset: {}, children: [],
     setAttribute(key, value) { this.attrs[key] = value; },
-    append(child) { this.children.push(child); },
+    append(...children) { this.children.push(...children); },
     before(child) {
       if (child.className === "workbar") this.bar = child;
       child.previousElementSibling = this.previousElementSibling; this.previousElementSibling = child;
@@ -26,21 +26,26 @@ const cases = [
   ["project", 'box.querySelector("#startShare").onclick = async () => {', '\n    };', "shareLog", "startShare"],
   ["project", 'body.querySelector("#rGo").onclick = async () => {', '\n  };', "rLog", "rGo"],
   ["project", 'body.querySelector("#jGo").onclick = async () => {', '\n  };', "jLog", "jGo"],
-  ["project", 'async function installToolchain(id, proprietary) {', '\n}\n', "toolLog", null],
-  ["project", '$("fsFind").onclick = async () => {', '\n    };', "fsFindLog", "fsFind"],
+  ["project", 'async function installToolchain(id, proprietary, force = false) {', '\n}\n', "toolLog", null],
   ["steering", '$("romCheck").onclick = async () => {', '\n    };', "sourceCheckLog", "romCheck"],
   ["steering", '$("forkMeasure").onclick = async () => {', '\n    };', "sourceCheckLog", "forkMeasure"],
   ["steering", 'async function exportNow() {', '\n}\n', "expLog", "srcExport"],
   ["steering", '$("setTcSave").onclick = async () => {', '\n};', "setTcLog", "setTcSave"],
   ["agents", 'if (inst) inst.onclick = async () => {', '\n  };', "log", "inst"],
   ["pages", 'b.onclick = async () => {', '\n    };', "log", "b"],
+  ["project", '$("localScan").onclick = async () => {', '\n};', "localScanLog", "localScan"],
+  ["project", 'go.onclick = async () => {', '\n  };', "localImportLog", "localImport"],
+  ["steering", '$("sourcePrepRun").onclick = async () => {', '\n};', "sourcePrepLog", "sourcePrepRun"],
 ];
+// the banner's Install all (every compiler, then the compiler test): outside `cases`, whose places the checks below name
+const installAll = ["project", 'async function installAllCompilers(owned) {', '\n}\n', "tcAllLog", "tcInstall"];
 function setup(file, marker, end, logId, buttonId, ranges = "") {
   const elements = new Map();
   const get = (id) => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
   const log = get(logId), button = get(buttonId || "unused");
+  get("localFolder").value = "/synthetic/collection";
   get("agList").querySelector = () => log; const input = element();
-  const box = { querySelector: (selector) => selector === "[data-log]" ? log : get(selector.replace(/^#/, "")), querySelectorAll: () => [input] };
+  const box = { querySelector: (selector) => ["[data-log]", "[data-local-log]"].includes(selector) ? log : get(selector.replace(/^#/, "")), querySelectorAll: (selector) => selector === "input, button, select" ? [input, button] : [input] };
   get("srcState").querySelectorAll = () => [button];
   get("setRanges").value = ranges;
   get("rLink").value = "https://room.test"; get("jPath").value = "game";
@@ -48,12 +53,15 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   let polls = 0;
   const ctx = {
     $: get, document: { createElement: element },
-    S: { slug: "test", ov: { kind: "fork" } }, info: {}, box, body: box, n: get("compilerNotice"), log, inst: button,
+    followDeepSweep: () => {}, renderDeepQueueState: () => {}, deepSweepSnapshot: null, deepSweepProjectVersion:0, deepSweepRetryTimer:null, clearTimeout, setTimeout, refreshFn: async () => {},
+    S: { slug: "test", fn: "f", ov: { kind: "fork" } }, info: {}, box, body: box, n: get("compilerNotice"), log, inst: button,
     b: Object.assign(button, { dataset: { inst: "test" } }), a: { id: "test", name: "Test" }, ROOM_PORT: 6481,
-    dialog: () => box, id: "test", proprietary: false, confirm: () => true, Blob, location: {},
-    esc: String, plural: () => "files", clock: () => "12:00", toast() {}, loadNav() {}, closeDialog() {}, rerender() {}, check() {},
+    results: get("localResults"), scan: { folder: "/synthetic/collection", projects: [] }, picked: new Set(), renderList() {},
+    selected: () => [{ path: "/synthetic/collection/project" }], renderLocalProjects() {}, update() {},
+    dialog: () => box, owned: [], id: "test", proprietary: false, force: false, confirm: () => true, Blob, location: {},
+    esc: String, plural: () => "files", toast() {}, loadNav() {}, closeDialog() {}, rerender() {}, check() {},
     fields: () => ({}), joinProblem: () => "", exportOpen: () => true, cmdBox: () => "", wireCopies() {},
-    renderHost() {}, renderTools() {}, renderStats() {}, renderSource() {}, renderProjectSettings() {},
+    renderSdkSelection: async () => {}, renderHost() {}, renderTools() {}, renderStats() {}, renderSource() {}, renderProjectSettings() {},
     showAgentsPage() {}, loadState: async () => {}, refreshMap: async () => {},
     sleep: async () => {},
     api(url) {
@@ -67,6 +75,7 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   ctx.box._romSearch = ctx.searchToken;
   ctx.usingGame = false;
   vm.createContext(ctx);
+  vm.runInContext(read("deep-progress"), ctx);
   const base = read("base");
   vm.runInContext(base.slice(base.indexOf("const JOB_POLL_MS"), base.indexOf("/* The map's still")), ctx);
   // The page error box is independent of the bar; keep its text to check that cleanup preserves it.
@@ -78,38 +87,7 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   return { ctx, get, log, button, start, poll, polls: () => polls };
 }
 async function main() {
-  for (const outcome of ["done", "error", "switched"]) {
-    const test = setup("steering", '$("saveGo").onclick = async () => {', '\n};', "saveLog", "saveGo");
-    const { ctx, get, log, button, start } = test;
-    const source = read("steering"), marker = "function renderSaveLocation(ov) {";
-    const offset = source.indexOf(marker);
-    vm.runInContext(source.slice(offset, source.indexOf("\n}", offset) + 2), ctx);
-    ctx.renderSaveLocation({ slug: "first", save_folder: "/saves/first" });
-    assert.equal(get("saveFolder").value, "/saves/first");
-    get("saveFolder").value = "/unsaved-edit";
-    ctx.renderSaveLocation({ slug: "first", save_folder: "/saves/first" });
-    assert.equal(get("saveFolder").value, "/unsaved-edit");
-    ctx.renderSaveLocation({ slug: "test", save_folder: "/saves/test" });
-    assert.equal(get("saveFolder").value, "/saves/test");
-    const running = ctx.run();
-    assert.equal(button.disabled, true);
-    assert.ok(log.bar);
-    if (outcome === "error") start.reject(new Error("Save failed"));
-    else {
-      if (outcome === "switched") {
-        ctx.S.slug = "other";
-        ctx.renderSaveLocation({ slug: "other", save_folder: "/saves/other" });
-      }
-      start.resolve({ folder: "/saved", best: 1 });
-    }
-    await running;
-    assert.equal(button.disabled, false);
-    assert.equal(log.bar.removed, true);
-    if (outcome === "error") assert.match(log.error, /Save failed/);
-    if (outcome === "done") assert.equal(get("saveFolder").value, "/saved");
-    if (outcome === "switched") assert.equal(get("saveFolder").value, "/saves/other");
-  }
-  for (const [file, marker, end, logId, buttonId] of cases) {
+  for (const [file, marker, end, logId, buttonId] of [...cases, installAll]) {
     for (const outcome of ["start-error", "job-error", "cancelled", "done"]) {
       const test = setup(file, marker, end, logId, buttonId);
       const { ctx, log, button, start, poll } = test;
@@ -130,13 +108,13 @@ async function main() {
         assert.equal(log.bar.removed, undefined, marker);
         poll.resolve({ state: outcome === "done" ? "done" : outcome === "cancelled" ? "cancelled" : "error",
           log: ["Building"], error: outcome === "cancelled" ? "Cancelled." : "Build failed",
-          result: { slug: "test", identical: true, switched: 1, stayed: [], functions: 1 } });
+          result: {reason: "Time limit reached", tested: 2,  slug: "test", identical: true, switched: 1, stayed: [], functions: 1, imported: [], errors: [] } });
       }
       await running;
       assert.equal(log.bar.removed, true, marker);
       if (buttonId) assert.equal(button.disabled, false, marker);
       if (outcome !== "done") assert.equal(log.error, outcome === "start-error" ? "Cannot start" : outcome === "cancelled" ? "Cancelled." : "Build failed", marker);
-      if (outcome === "job-error" || outcome === "cancelled") assert.equal(log.textContent, "Building", marker);
+      if (outcome === "job-error" || outcome === "cancelled") assert.equal(log.textContent, (outcome === "cancelled" ? "Cancelled." : "Build failed") + "\n\nBuilding", marker);
       if (outcome === "done") {
         assert.equal(log.error || "", "", marker);
         assert.equal(log._workStatus.dataset.state, "done");
@@ -147,6 +125,61 @@ async function main() {
         assert.equal(log._workStatus.textContent, "Stopped");
       }
     }
+  }
+  // A project sweep has separate start and long-running follow phases, including page navigation.
+  for (const failed of [false, true]) {
+    const test = setup("steering", '$("deepSweepStart").onclick = async () => {', '\n};', "deepSweepLog", "deepSweepStart");
+    const followed = [];
+    test.ctx.setDeepRunVisibility = () => {};
+    test.ctx.followDeepSweep = (...args) => followed.push(args);
+    const running = test.ctx.run();
+    assert.equal(test.button.disabled, true);
+    assert.ok(test.log.bar && !test.log.bar.removed);
+    if (failed) test.start.reject(new Error("Cannot start"));
+    else test.start.resolve({job:"sweep"});
+    await running;
+    assert.equal(test.log.bar.removed, true);
+    assert.equal(test.button.disabled, false);
+    assert.equal(followed.length, failed ? 0 : 1);
+  }
+  // Run again explicitly repeats saved completed turns, even with Advanced unchecked.
+  {
+    const test = setup("steering", '$("deepSweepStart").onclick = async () => {', '\n};', "deepSweepLog", "deepSweepStart");
+    test.ctx.setDeepRunVisibility = () => {};
+    test.ctx.deepSweepSnapshot = {has_activity:true, queue_left:0, queue_done:12};
+    test.ctx.$("deepSweepRepeat").checked = false;
+    let request;
+    test.ctx.api = async (url, options) => {request = options.body; return {};};
+    await test.ctx.run();
+    assert.equal(request.repeat, true);
+  }
+  for (const outcome of ["done", "error", "cancelled", "detached"]) {
+    const test = setup("steering", 'async function followDeepSweep(slug, job) {', '\n}\n', "deepSweepLog", "deepSweepStart");
+    Object.assign(test.ctx, {slug:"test", job:"sweep", deepSweepFollowing:null, setDeepRunVisibility:()=>{}, renderDeepSweep:()=>{}, renderDeepActivity:()=>{}});
+    const running = test.ctx.run();
+    await tick();
+    const log = test.log.children[0];
+    assert.ok(log.bar && !log.bar.removed);
+    if (outcome === "detached") test.ctx.S.slug = "other";
+    test.poll.resolve({state:outcome === "detached" ? "done" : outcome, log:["Working"], error:"Stopped", progress:{function:"f", phase:"local repairs"}, result:{}});
+    await running;
+    assert.equal(log.bar.removed, true);
+    if (outcome === "detached") assert.equal(log.textContent, "");
+    else if (outcome !== "done") assert.equal(log.error, "Stopped");
+  }
+  // SDK indexing includes optional local C and always clears its foreground progress bar.
+  for (const fail of [false, true]) {
+    const test = setup("steering", '$("sdkImport").onclick = async () => {', '\n};', "sdkLog", "sdkImport");
+    const running = test.ctx.run();
+    assert.equal(test.button.disabled, true);
+    assert.equal(test.log.bar.removed, undefined);
+    if (fail) test.start.reject(new Error("Invalid source folder"));
+    else test.start.resolve({ signatures: 12, sources: 4, corpus: "local" });
+    await running;
+    assert.equal(test.button.disabled, false);
+    assert.equal(test.log.bar.removed, true);
+    if (fail) assert.equal(test.log.error, "Invalid source folder");
+    else assert.match(test.log.textContent, /12 signatures and 4 C definitions/);
   }
   // Passive overview refreshes keep a pending check's panel and indicator intact.
   for (const caseIndex of [0, 7]) {
@@ -209,21 +242,54 @@ async function main() {
   const copyTest = setup(...cases[0]);
   const raw = "mips-linux-gnu-cpp: missing\nmake: *** Error 127";
   copyTest.log.textContent = raw;
+  const collapsedDetails={open:false};copyTest.log.closest=()=>collapsedDetails;
   let copied = null;
   copyTest.ctx.copyText = async (text) => { copied = text; return true; };
   copyTest.ctx.showJobError(copyTest.log, "setup step failed: make\nMissing preprocessor.\n\nBuild output:\n" + raw);
+  assert.equal(collapsedDetails.open,true);
+  assert.match(copyTest.log.className,/joblog/);
   assert.equal(copyTest.log._errorBox.textContent, "setup step failed: make");
   assert.equal(copyTest.log.textContent.split("mips-linux-gnu-cpp: missing").length - 1, 1);
-  assert.equal(copyTest.log._copyToolbar.children[0].textContent, "Job log");
-  const toolbar = copyTest.log._copyToolbar;
-  await toolbar.children[1].onclick();
+  assert.equal(copyTest.log.scrollTop,copyTest.log.scrollHeight);
+  // Every log box's own Copy button (the shared component) copies what the box shows and says so.
+  const copyButton = element(); copyButton.textContent = "Copy";
+  assert.equal(await copyTest.ctx.copyJoblog(copyTest.log, copyButton), true);
   assert.equal(copied, copyTest.log.textContent);
   assert.ok(copied.includes("Missing preprocessor."));
+  assert.equal(copyButton.textContent, "Copied");
   copyTest.ctx.showJobError(copyTest.log, "");
-  assert.equal(toolbar.hidden, true);
   assert.equal(copyTest.log.textContent, "");
+  // A log box on the page gets its frame and Copy button once; status lines and bars go beside the frame, not in it.
+  {
+    const pre = element(); let replacement = null;
+    pre.parentNode = {}; pre.replaceWith = (node) => { replacement = node; };
+    const frame = copyTest.ctx.frameJoblog(pre) && replacement;
+    assert.equal(frame.className, "joblog-frame");
+    assert.equal(pre._frame, frame);
+    assert.equal(frame.children[1].className, "joblog-copy");
+    pre.replaceWith = () => assert.fail("a framed log is framed again");
+    copyTest.ctx.frameJoblog(pre);
+  }
+  {
+    const pre = element(), frame = element(); pre._frame = frame;
+    copyTest.ctx.beginWork(pre, "Working")();
+    assert.ok(frame.bar && !pre.bar);
+    const button = element(); button.textContent = "Copy"; pre.textContent = "build output";
+    await copyTest.ctx.copyJoblog(pre, button);
+    assert.equal(copied, "build output");
+  }
+  // The Porting tab moves each log into its step on every refresh: the frame moves, so the Copy button goes with it.
+  {
+    const source = fs.readFileSync(path.join(__dirname, "../src/decompnet/app/static/js/port.js"), "utf8");
+    const line = source.split("\n").find((l) => l.startsWith("const withWork"));
+    const ctx = {}; vm.createContext(ctx); vm.runInContext(line.replace("const withWork", "this.withWork"), ctx);
+    const pre = element(), frame = element(), bar = element(); pre._frame = frame; pre._workBar = bar;
+    const moved = ctx.withWork(pre);
+    assert.equal(moved.length, 2); assert.equal(moved[0], bar); assert.equal(moved[1], frame);
+    assert.equal(ctx.withWork(element()).length, 1);
+  }
   // A range-only compiler setting remains immediate and has no progress bar.
-  const range = setup(...cases[10], "0x1000-0x2000");
+  const range = setup(...cases[9], "0x1000-0x2000");
   const running = range.ctx.run();
   assert.equal(range.log.bar, undefined);
   range.start.resolve({}); await running;
@@ -237,3 +303,60 @@ async function main() {
   assert.equal(test.log.bar.removed, true);
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
+
+// Reuse searches have no known total: show the shared indeterminate bar until they finish or stop.
+{
+  const text = read("steering");
+  const snippet = text.slice(text.indexOf('  const running = ap &&'), text.indexOf('  const perm = pm &&'));
+  for (const state of ["running", "done", "stopped"]) {
+    const bar = { hidden: true, className: "upbar", firstElementChild: { style: { width: "80%" } } };
+    vm.runInNewContext(snippet, { ap: null, tw: { state }, box: { classList: { toggle() {} } }, $: () => bar });
+    assert.equal(bar.hidden, state !== "running");
+    assert.equal(bar.className, state === "running" ? "workbar" : "upbar");
+    if (state === "running") assert.equal(bar.firstElementChild.style.width, "");
+  }
+}
+
+// Durable deep-pass results show every improvement and keep the function link usable.
+{
+  const source = read("steering"), start = source.indexOf("function renderDeepImprovementTable(status, resultHost) {");
+  const end = source.indexOf("function setDeepRunVisibility", start);
+  const result = {dataset:{}, innerHTML:"", replaceChildren(){this.innerHTML="";}, querySelector:()=>null, querySelectorAll:selector=>selector === "[data-deep-result]" ? [button] : []}, button = {dataset:{deepResult:"0"}};
+  let opened;
+  const ctx = {closeDialog:()=>{}, renderDeepMetricDrawer:()=>{}, deepMetricRows:[], S:{slug:"game"}, $:()=>result, esc:s=>String(s).replaceAll("<", "&lt;"), openFn:name=>{opened=name;}};
+  vm.createContext(ctx); vm.runInContext(read("rewrite-performance"),ctx); vm.runInContext(source.slice(start,end), ctx);
+  ctx.resultHost=result;
+  ctx.renderDeepImprovementTable({improved:1, improvements:[{function:"f<0", starting_score:50,
+    new_score:25, starting_percent_text:"95.0%", new_percent_text:"97.5%"}]}, result);
+  for (const text of ["1 functions improved", "f&lt;0", "50", "25", "95.0%", "97.5%"])
+    assert.ok(result.innerHTML.includes(text));
+  button.onclick(); assert.equal(opened,"f<0");
+  ctx.renderDeepImprovementTable({improved:0, improvements:[]}, result);
+  assert.ok(!result.innerHTML.includes("<table>"));
+}
+
+{
+  const source = read('base');
+  const start = source.indexOf('function updateWorkProgress('), end = source.indexOf('async function followJob(', start);
+  const bar = element(); bar.style = {setProperty(key,value){this[key]=value;}}; bar.removeAttribute=key=>{delete bar.attrs[key];};
+  const log = {_workStatus:element(),_workBar:bar};
+  const ctx={};vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);
+  ctx.updateWorkProgress(log,{phase:'Finding shared machine code',game:'Demo',done:2,total:4});
+  assert.equal(bar.attrs['aria-valuenow'],'2');assert.equal(bar.style['--work-progress'],'50%');
+  ctx.updateWorkProgress(log,{phase:'Regenerating machine drafts',done:3,total:12,function:'draft_one, draft_two'});
+  assert.match(log._workStatus.textContent,/3 \/ 12 processed \(25%\).*draft_one, draft_two/);
+  assert.equal(bar.className,'workbar counted');
+  assert.equal(bar.attrs['aria-valuenow'],'3');
+  assert.equal(bar.style['--work-progress'],'25%');
+  ctx.updateWorkProgress(log,{phase:'Compiling candidate',game:'Demo',donor:'old<fn',function:'new',confirmed:1});
+  assert.match(log._workStatus.textContent,/Demo.*old<fn.*new.*1 matches confirmed/);
+  assert.equal(bar.className,'workbar');assert.equal(bar.attrs['aria-valuenow'],undefined);
+  // A job of several steps (Play's build): the bar is the whole job, each step an equal share filled by its files
+  ctx.updateWorkProgress(log,{phase:'Compiling to WebAssembly IR',step:2,steps:8,done:1000,total:2000});
+  assert.equal(log._workStatus.textContent,'Step 2 of 8: Compiling to WebAssembly IR · 1,000 / 2,000 (18% overall)');
+  assert.equal(bar.className,'workbar counted');assert.equal(bar.style['--work-progress'],'18%');
+  assert.equal(bar.attrs['aria-valuemax'],'100');assert.equal(bar.attrs['aria-valuenow'],'18');
+  ctx.updateWorkProgress(log,{phase:'Linking',step:5,steps:8});
+  assert.equal(log._workStatus.textContent,'Step 5 of 8: Linking (50% overall)');
+  assert.equal(bar.style['--work-progress'],'50%');
+}

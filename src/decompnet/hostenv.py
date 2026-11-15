@@ -120,3 +120,27 @@ def open_folder(path: Path) -> str | None:
     except OSError:
         return f"Open this folder in your file manager: {path}"
     return None
+
+
+def login_terminal(argv: list[str], env: dict[str, str]) -> None:
+    """Open an interactive sign-in, with arguments kept separate from shell syntax."""
+    import shlex
+
+    if sys.platform == "win32":
+        quote = lambda value: "'" + value.replace("'", "''") + "'"
+        command = "; ".join(f"$env:{key}={quote(value)}" for key, value in env.items())
+        command += "; & " + " ".join(quote(arg) for arg in argv)
+        subprocess.Popen(["powershell.exe", "-NoProfile", "-NoExit", "-Command", command],
+                         creationflags=subprocess.CREATE_NEW_CONSOLE)
+    elif sys.platform == "darwin":
+        command = shlex.join(["env", *(f"{key}={value}" for key, value in env.items()), *argv])
+        script = 'on run argv\ntell application "Terminal"\nactivate\ndo script (item 1 of argv)\nend tell\nend run'
+        subprocess.run(["osascript", "-e", script, command], check=True, timeout=10,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    else:
+        command = ["env", *(f"{key}={value}" for key, value in env.items()), *argv]
+        for terminal, option in [("x-terminal-emulator", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"), ("xterm", "-e")]:
+            if exe := shutil.which(terminal):
+                subprocess.Popen([exe, option, *command])
+                return
+        raise ValueError("No terminal was found. Run kimi login in your terminal, then press Start again.")

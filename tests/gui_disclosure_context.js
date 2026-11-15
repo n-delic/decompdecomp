@@ -1,0 +1,23 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const base=fs.readFileSync('src/decompnet/app/static/js/base.js','utf8');
+const pages=fs.readFileSync('src/decompnet/app/static/js/pages.js','utf8');
+const elements=new Map();
+const ctx={$:id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id);},S:{st:{agents:[{installed:true},{installed:false},{installed:true,uses_endpoints:true}],agents_detecting:false}},toast:()=>{throw Error('unexpected error');},esc:String};
+vm.createContext(ctx);
+vm.runInContext(base.slice(base.indexOf('function disclosureContext(')),ctx);
+const start=pages.indexOf('  const rows = S.st.agents.filter'),end=pages.indexOf('  $("agList").innerHTML',start);
+vm.runInContext(`function renderCount(){${pages.slice(start,end)}}`,ctx);
+ctx.renderCount();assert.equal(elements.get('agAppsContext').textContent,'— 1 installed');
+ctx.S.st.agents_detecting=true;ctx.renderCount();assert.match(elements.get('agAppsContext').textContent,/checking/);
+ctx.disclosureContext('agApiContext','0 saved endpoints');assert.equal(elements.get('agApiContext').textContent,'— 0 saved endpoints');
+let refreshed=0,prevented=0,stopped=0;
+ctx.showAgentsPage=async()=>{refreshed++;assert.equal(elements.get('agRefresh').disabled,true);};
+const handler=pages.slice(pages.indexOf('$("agRefresh").onclick'),pages.indexOf('/* ------------------------------------------------------------------ compilers'));
+vm.runInContext(handler,ctx);
+(async()=>{
+ await ctx.$('agRefresh').onclick({preventDefault:()=>prevented++,stopPropagation:()=>stopped++});
+ assert.equal(refreshed,1);assert.equal(prevented,1);assert.equal(stopped,1);
+ assert.equal(elements.get('agRefresh').disabled,false);assert.equal(elements.get('agRefresh').textContent,'↻ Refresh');
+ console.log('disclosure context and refresh passed');
+})().catch(e=>{console.error(e);process.exitCode=1;});

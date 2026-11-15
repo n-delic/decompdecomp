@@ -1,0 +1,9 @@
+"""Moved to `decompassets.n64.resources`, the standalone asset library
+(RetroReversing/decomp-assets); this name stays for the rest of the app
+(both names are one module, so a patch through either is seen by both)."""
+
+import sys
+
+from decompassets.n64 import resources
+
+sys.modules[__name__] = resources

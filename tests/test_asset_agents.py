@@ -1,0 +1,426 @@
+"""Advisory discovery uses original synthetic bytes, never build or matching mutations."""
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+
+import pytest
+
+from decompnet.app import asset_agents as discovery
+from decompnet.app import rom_explorer, tools
+from decompnet.network import NetworkError
+
+from .test_rom_explorer import Log, project  # noqa: F401
+
+
+@pytest.fixture
+def discovered(project):  # noqa: F811
+    net,pid,root=project
+    rom_explorer.run(net,'game',Log())
+    run=discovery.prepare(net,'game',{'mode':'range','start':8,'end':128})
+    agent,_=net.local_agent('asset-test')
+    session=SimpleNamespace(id='1',slug='game',label='Asset tester',model='test-model',stop=threading.Event(),options={'task':'assets','asset_run':run})
+    discovery.bind(net,session,agent)
+    return net,pid,root,run,agent,session
+
+
+def call(net,agent,name,**args):
+    result=tools.call(net,agent,'game',name,args)
+    assert not result.startswith('error:'),result
+    return json.loads(result)
+
+
+def proposal(packet):
+    row=packet['region']
+    return dict(name='message_text',kind='strings',confidence='tentative',evidence='Printable bytes at this ROM offset.',counter='No text-rendering call has been proven.',uncertainty='It may be metadata rather than displayed text.',approach='Inspect ASCII and original references',citations=[dict(offset=row['start'])],start=row['start'],end=row['end'],format_notes='NUL-terminated ASCII')
+
+
+def test_worker_scope_claim_recovery_proposal_review_and_no_judging(discovered,monkeypatch):
+    net,pid,root,run,agent,session=discovered
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**k:pytest.fail('Data discovery must not synchronize code'))
+    before=[tuple(r) for r in net.store.all('SELECT * FROM functions')]
+    packet=call(net,agent,'claim_asset_region');again=call(net,agent,'claim_asset_region')
+    assert packet['claim_token']==again['claim_token']
+    assert 'error:' in tools.call(net,agent,'game','rename_symbol',{'old':'reader','new':'changed'})
+    assert 'error:' in tools.call(net,agent,'game','claim_function',{})
+    result=call(net,agent,'propose_asset_region',region=packet['region']['id'],claim_token=packet['claim_token'],proposal=proposal(packet))
+    assert not rom_explorer._read(net,net.store.one('SELECT * FROM projects WHERE id=?',pid))['annotations']
+    read=discovery.review(net,'game',result['proposal'])
+    discovery.review(net,'game',result['proposal'],'accept',annotation_version=read['annotation_version'])
+    note=rom_explorer._read(net,net.store.one('SELECT * FROM projects WHERE id=?',pid))['annotations'][packet['region']['id']]
+    assert note['name']=='message_text' and note['kind']=='strings' and note['discovery']['author']=='Asset tester'
+    assert [tuple(r) for r in net.store.all('SELECT * FROM functions')]==before
+    with pytest.raises(NetworkError,match='already reviewed'):discovery.review(net,'game',result['proposal'],'reject')
+
+
+def test_two_workers_get_unique_claims_and_bad_tokens_cannot_submit(discovered):
+    net,pid,root,run,agent,session=discovered
+    other,_=net.local_agent('asset-other');second=SimpleNamespace(**{**session.__dict__,'id':'2','label':'Other'})
+    discovery.bind(net,second,other)
+    with ThreadPoolExecutor(2) as pool:packets=list(pool.map(lambda a:json.loads(discovery.claim(net,a,'game')),[agent,other]))
+    assert len({p['region']['id'] for p in packets})==2
+    first=packets[0]
+    with pytest.raises(NetworkError,match='expired'):discovery.propose(net,other,'game',first['region']['id'],first['claim_token'],proposal(first))
+
+
+def test_deferrals_history_completion_resume_and_expired_leases(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'));identity=packet['region']['id']
+    discovery.defer(net,agent,'game',identity,packet['claim_token'],'Try indexed textures','No coherent palette found; try text references next.')
+    while True:
+        packet=json.loads(discovery.claim(net,agent,'game'))
+        if packet.get('done'):break
+        discovery.defer(net,agent,'game',packet['region']['id'],packet['claim_token'],'Inspect raw bytes','No convincing format; no type proposed.')
+    assert discovery.status(net,'game')['run']['state']=='complete'
+    newer=discovery.prepare(net,'game',{'mode':'range','start':8,'end':128});session.options['asset_run']=newer
+    packet=json.loads(discovery.claim(net,agent,'game'));assert packet['previous_attempts']
+    assert packet['previous_attempts'][0]['body']['findings']
+    store=net.project_store(pid)
+    with store.tx() as db:db.execute('UPDATE asset_queue SET lease=0 WHERE run=?',(newer,))
+    recovered=json.loads(discovery.claim(net,agent,'game'));assert recovered['claim_token']!=packet['claim_token']
+    manager=SimpleNamespace(sessions={},stop=lambda *a:None)
+    discovery.stop(net,'game',manager)
+    with pytest.raises(NetworkError,match='stopped'):discovery.claim(net,agent,'game')
+    with pytest.raises(NetworkError,match='explicitly'):discovery.prepare(net,'game',identity=newer)
+    discovery.prepare(net,'game',identity=newer,resume=True)
+    assert json.loads(discovery.claim(net,agent,'game'))['region']
+
+
+def test_proposals_validate_citations_boundaries_previews_and_concurrent_notes(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'));args=(net,agent,'game',packet['region']['id'],packet['claim_token'])
+    with pytest.raises(NetworkError,match='Read the cited'):discovery.propose(*args,{**proposal(packet),'citations':[{'offset':100000}]})
+    with pytest.raises(NetworkError,match='functions'):discovery.propose(*args,{**proposal(packet),'kind':'code'})
+    with pytest.raises(NetworkError,match='overlap'):discovery.propose(*args,{**proposal(packet),'start':100,'end':101})
+    result=json.loads(discovery.propose(*args,proposal(packet)));review=discovery.review(net,'game',result['proposal'])
+    with net.progress.view():rom_explorer.annotate(net,'game',dict(region=packet['region']['id'],image_hash=rom_explorer.listing(net,'game')['image_hash'],name='Human label'))
+    with pytest.raises(NetworkError,match='changed during review'):discovery.review(net,'game',result['proposal'],'accept',annotation_version=review['annotation_version'])
+    (root/'game.rom').write_bytes(bytes(128))
+    assert discovery.review(net,'game',result['proposal'])['stale']
+    with pytest.raises(NetworkError,match='older image'):discovery.review(net,'game',result['proposal'],'accept',annotation_version=review['annotation_version'])
+
+
+def test_tool_catalogues_and_api_schema_match_task_scope(discovered):
+    from decompnet.agents.api import api_tool_schemas
+    net,pid,root,run,agent,session=discovered
+    names=tools.project_tools(net,'game',agent)
+    assert set(names)==discovery.TOOLS
+    schemas=api_tool_schemas(names=names)
+    assert {s['function']['name'] for s in schemas}==discovery.TOOLS
+    assert not discovery.TOOLS.intersection(tools.tool_names(True)) - {'project_info','get_assembly','guide'}
+    assert 'Read previous_attempts' in discovery.prompt(session)
+
+
+def test_normal_worker_lifecycle_processes_entire_queue_without_matching(discovered,tmp_path,monkeypatch):
+    from decompnet.app import agents
+    from tests.test_agents import URL, _no_agent_settings
+    net,pid,root,run,agent,session=discovered
+    _no_agent_settings(monkeypatch)
+    monkeypatch.setattr(agents.Manager,'_launch',lambda *a:None)
+    manager=agents.Manager(net,tmp_path,URL)
+    monkeypatch.setattr(manager,'_prepare',lambda *a:pytest.fail('No matching preparation'))
+    monkeypatch.setattr(manager,'_build_problem',lambda *a:pytest.fail('No build needed'))
+    sid=manager.start('codex','game',options={'task':'assets','asset_run':run,'per_session':1})[0];worker=manager.sessions[sid]
+    turns=[]
+    def cli(session,token,workdir):
+        current_agent=net.authenticate(token);turns.append(True);manager.prepare_session(session,current_agent)
+        assert 'No function has been claimed' in session.startup_context
+        assert 'claim_asset_region' in manager.prompt(session)
+        packet=json.loads(tools.call(net,current_agent,'game','claim_asset_region',{}))
+        result=tools.call(net,current_agent,'game','defer_asset_region',dict(region=packet['region']['id'],claim_token=packet['claim_token'],approach='Check imported evidence',findings='Unresolved; another pass should try palettes.'))
+        assert not result.startswith('error:'),result
+        return True
+    monkeypatch.setattr(manager,'_run_cli',cli)
+    monkeypatch.setattr(agents,'SESSION_GAP',0)
+    manager._run_work(worker)
+    state=discovery.status(net,'game')
+    assert len(turns)==state['run']['total'] and state['run']['state']=='complete' and worker.state=='stopped'
+    assert not net.store.all('SELECT * FROM claims') and not net.store.all('SELECT * FROM attempts')
+    assert all(r['compiles']==0 and r['task']=='assets' for r in net.store.all('SELECT * FROM helper_sessions'))
+
+
+def test_other_project_runs_and_reviews_are_isolated(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'))
+    finding=json.loads(discovery.propose(net,agent,'game',packet['region']['id'],packet['claim_token'],proposal(packet)))['proposal']
+    proj=net.store.one('SELECT * FROM projects WHERE id=?',pid)
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)',('other','Other','mips',1,proj['root'],proj['config'])).lastrowid
+    assert discovery.status(net,'other')['run'] is None
+    with pytest.raises(NetworkError,match='Choose a saved'):discovery.review(net,'other',finding)
+    with pytest.raises(NetworkError):discovery.prepare(net,'other',identity=run)
+    discovery.stop(net,'other',SimpleNamespace(sessions={}))
+    assert discovery.status(net,'game')['run']['state']=='active'
+
+
+def test_proposals_and_progress_survive_restart_and_dead_claims_requeue(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'))
+    with net.project_store(pid).tx() as db:db.execute("UPDATE asset_queue SET instance='previous-app' WHERE run=?",(run,))
+    net.__dict__.pop('_asset_discovery_stores',None)
+    state=discovery.status(net,'game')
+    assert state['run']['counts']['queued']==state['run']['total']
+    recovered=json.loads(discovery.claim(net,agent,'game'))
+    assert recovered['claim_token']!=packet['claim_token']
+
+
+def test_discovery_routes_require_window_write_access_and_do_not_recheck(discovered,monkeypatch):
+    from starlette.testclient import TestClient
+
+    from decompnet.app.server import build
+    from tests.test_app_server import PORT, SECRET, WINDOW
+    net,pid,root,run,agent,session=discovered
+    monkeypatch.setattr(net.progress,'sync',lambda *a,**k:pytest.fail('Discovery routes must not recheck saved code'))
+    with net.progress.view():mcp,manager,security,_=build(net,root/'.decomp',PORT,SECRET)
+    client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),base_url=f'http://127.0.0.1:{PORT}',headers=WINDOW)
+    path='/api/rom-explorer/discovery';request=dict(slug='game',action='stop')
+    assert client.get(path+'?slug=game').json()['run']['id']==run
+    assert client.post(path,json=request).status_code==403
+    assert client.post(path,json=request,headers={'User-Agent':'outside','X-Decomp':'1'}).status_code==401
+    assert client.post(path,json=request,headers={'X-Decomp':'1'}).status_code==200
+    assert client.get(path+'?slug=game').json()['run']['state']=='paused'
+    assert client.post(path,json=dict(slug='game',action='resume',run=run),headers={'X-Decomp':'1'}).status_code==200
+
+
+def test_advisory_subrange_acceptance_never_reclassifies_whole_region(discovered):
+    net,pid,root,run,agent,session=discovered;packet=json.loads(discovery.claim(net,agent,'game'))
+    row=packet['region'];body=proposal(packet);body['end']=row['end']-1
+    result=json.loads(discovery.propose(net,agent,'game',row['id'],packet['claim_token'],body))
+    read=discovery.review(net,'game',result['proposal'])
+    discovery.review(net,'game',result['proposal'],'accept',edits={'name':'edited_name'},annotation_version=read['annotation_version'])
+    with net.progress.view():note=rom_explorer.detail(net,'game',row['id'],read['image_hash'])['annotation']
+    assert note['name']=='edited_name' and not note['kind'] and note['discovery']['end']==row['end']-1
+
+
+def test_all_findings_are_pageable_and_rejected_attempts_reappear_in_history(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'))
+    finding=json.loads(discovery.propose(net,agent,'game',packet['region']['id'],packet['claim_token'],proposal(packet)))['proposal']
+    discovery.review(net,'game',finding,'reject',feedback='Check palette pointers rather than ASCII next time.')
+    store=net.project_store(pid)
+    with store.tx() as db:
+        for i in range(54):db.execute('INSERT INTO asset_findings(id,run,region,agent,author,model,outcome,body,status,created) VALUES(?,?,?,?,?,?,?,?,?,?)',(str(i),run,packet['region']['id'],agent.id,'Tester','model','unresolved','{}','recorded',i))
+    first=discovery.status(net,'game');second=discovery.status(net,'game',page=1)
+    assert first['finding_total']==55 and len(first['findings'])==50 and len(second['findings'])==5
+    assert not {r['id'] for r in first['findings']}&{r['id'] for r in second['findings']}
+
+
+def test_api_provider_uses_discovery_tools_and_rotates_after_structured_finding(discovered,tmp_path,monkeypatch):
+    import httpx
+
+    from decompnet import agents as kinds
+    from decompnet.app import agents
+    from tests.test_agents import URL, _no_agent_settings
+    net,pid,root,run,agent,session=discovered
+    _no_agent_settings(monkeypatch);manager=agents.Manager(net,tmp_path,URL)
+    worker=manager._record('game','api','asset-api','API asset investigator',dict(task='assets',asset_run=run,base_url='http://mock/v1',model='m',context_tokens=32768,per_session=1))
+    worker.state='working';owner,_=net.local_agent(worker.agent_name);discovery.bind(net,worker,owner)
+    packet=json.loads(discovery.claim(net,owner,'game'));requests=[]
+    def handler(request):
+        payload=json.loads(request.content);requests.append(payload)
+        assert {t['function']['name'] for t in payload['tools']}==discovery.TOOLS
+        assert 'Never claim functions' in payload['messages'][0]['content']
+        args=dict(region=packet['region']['id'],claim_token=packet['claim_token'],approach='Check palette and byte order',findings='No recognizable layout; try loader evidence next.')
+        return httpx.Response(200,json={'choices':[{'message':{'role':'assistant','tool_calls':[{'id':'report','type':'function','function':{'name':'defer_asset_region','arguments':json.dumps(args)}}]}}],'usage':{'prompt_tokens':100,'completion_tokens':5}})
+    real=httpx.Client;monkeypatch.setattr(httpx,'Client',lambda **kw:real(transport=httpx.MockTransport(handler),**kw))
+    assert kinds.get('api').run(manager,worker,owner)
+    assert len(requests)==1 and discovery.progress(net,'game',owner.id)==1
+    assert not net.store.all('SELECT * FROM attempts')
+
+
+@pytest.mark.parametrize('platform',['n64','psx','ps2','psp'])
+def test_discovery_reaches_each_rom_console_through_the_same_tools(project,platform):  # noqa: F811
+    from decompnet.consoles import get
+    net,pid,root=project;console=get(platform)
+    with net.progress.view():cfg=json.loads(json.dumps(net.cfg(net.project_row('game'))))
+    cfg['platform']=platform
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=?,big_endian=? WHERE id=?',(json.dumps(cfg),int(console.big_endian),pid))
+    rom_explorer.run(net,'game',Log());run=discovery.prepare(net,'game',{'mode':'range','start':8,'end':128})
+    agent,_=net.local_agent('console-investigator')
+    session=SimpleNamespace(slug='game',label='Console investigator',model='fixture',stop=threading.Event(),options={'task':'assets','asset_run':run})
+    discovery.bind(net,session,agent);packet=call(net,agent,'claim_asset_region')
+    result=call(net,agent,'propose_asset_region',region=packet['region']['id'],claim_token=packet['claim_token'],proposal=proposal(packet))
+    assert discovery.review(net,'game',result['proposal'])['status']=='pending'
+
+
+def test_creation_job_discovery_deduplicates_and_stop_cancels_only_this_project(discovered,monkeypatch):
+    from starlette.testclient import TestClient
+
+    from decompnet.app import support
+    from decompnet.app.server import build
+    from tests.test_app_server import PORT, SECRET, WINDOW
+    net,pid,root,run,agent,session=discovered;made=[];original=support.Jobs.__init__
+    def init(self,*args,**kwargs):original(self,*args,**kwargs);made.append(self)
+    monkeypatch.setattr(support.Jobs,'__init__',init)
+    with net.progress.view():mcp,manager,security,_=build(net,root/'.decomp',PORT,SECRET)
+    jobs=made[-1]
+    def waiting(log):log.cancel_event.wait(5);log.check_cancel()
+    identity=jobs.start('Create asset discovery agents',waiting,project='game')
+    other=jobs.start('Create asset discovery agents',waiting,project='other')
+    monkeypatch.setattr(manager,'start',lambda *a,**k:pytest.fail('Existing startup must be reattached'))
+    client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),base_url=f'http://127.0.0.1:{PORT}',headers={**WINDOW,'X-Decomp':'1'})
+    response=client.get('/api/rom-explorer/discovery?slug=game&view=activity')
+    assert response.json()['creation_job']['id']==identity
+    response=client.post('/api/agents/start',json=dict(slug='game',kind='codex',count=1,background=True,options=dict(task='assets',asset_run=run)))
+    assert response.json()['job']==identity
+    assert client.post('/api/rom-explorer/discovery',json=dict(slug='game',action='stop')).status_code==200
+    assert jobs.cancel_events[identity].is_set() and not jobs.cancel_events[other].is_set()
+    jobs.cancel(other)
+
+
+def test_different_worker_challenges_proposal_and_cannot_accept_it(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'));region=packet['region']['id']
+    finding=json.loads(discovery.propose(net,agent,'game',region,packet['claim_token'],proposal(packet)))['proposal']
+    # Drain ordinary work; the author cannot review its own interpretation.
+    while True:
+        next_packet=json.loads(discovery.claim(net,agent,'game'))
+        if 'region' not in next_packet:break
+        discovery.defer(net,agent,'game',next_packet['region']['id'],next_packet['claim_token'],'Inspect bytes','No convincing format')
+    assert next_packet['waiting_for_other_workers']
+    other,_=net.local_agent('independent-reviewer')
+    second=SimpleNamespace(**{**session.__dict__,'id':'reviewer','label':'Reviewer','model':'other-model'})
+    discovery.bind(net,second,other)
+    packet=json.loads(discovery.claim(net,other,'game'))
+    assert packet['review_target']['id']==finding
+    assert not discovery.ready(net,session,agent)
+    with pytest.raises(NetworkError,match='Read the cited'):
+        discovery.propose(net,other,'game',region,packet['claim_token'],dict(verdict='agree',evidence='A claim',citations=[{'offset':999999}]))
+    result=call(net,other,'propose_asset_region',region=region,claim_token=packet['claim_token'],proposal=dict(verdict='disagree',evidence='Printable bytes do not prove displayed text.',citations=[{'offset':packet['region']['start']}]))
+    assert result['saved']
+    review=discovery.review(net,'game',finding)
+    assert review['status']=='pending' and review['critiques'][0]['body']['verdict']=='disagree'
+    assert review['body']['validation']['checks'][1]['status']=='unchecked'
+    assert discovery.status(net,'game')['run']['state']=='complete'
+    assert not rom_explorer._read(net,net.project_row('game'))['annotations']
+
+
+def test_interrupted_independent_review_requeues_as_review(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'))
+    discovery.propose(net,agent,'game',packet['region']['id'],packet['claim_token'],proposal(packet))
+    store=net.project_store(pid)
+    with store.tx() as db:db.execute("UPDATE asset_queue SET state='skipped' WHERE run=? AND state='queued'",(run,))
+    other,_=net.local_agent('reviewer');second=SimpleNamespace(**{**session.__dict__,'id':'2'})
+    discovery.bind(net,second,other);claimed=json.loads(discovery.claim(net,other,'game'))
+    discovery.release(net,second,other)
+    assert store.one('SELECT state FROM asset_queue WHERE run=? AND region=?',run,claimed['region']['id'])['state']=='review_queued'
+    again=json.loads(discovery.claim(net,other,'game'))
+    assert again['review_target'] and again['claim_token']!=claimed['claim_token']
+
+
+def test_similarity_search_is_advisory_and_rejects_stale_images(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'))
+    finding=json.loads(discovery.propose(net,agent,'game',packet['region']['id'],packet['claim_token'],proposal(packet)))['proposal']
+    result=discovery.review(net,'game',finding,'similar')
+    assert result['examined']>=1 and 'Structural leads' in result['note']
+    assert not rom_explorer._read(net,net.project_row('game'))['annotations']
+    (root/'game.rom').write_bytes(bytes(128))
+    with pytest.raises(NetworkError,match='stale'):discovery.review(net,'game',finding,'similar')
+
+
+def test_automatic_checks_compare_layout_bytes_and_loader_extent(discovered,monkeypatch):
+    from decompnet.app.asset_validation import validate
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'));row=packet['region'];body=proposal(packet)
+    report={'regions':[row],'image_hash':'test','loader_flow':{'chains':[dict(source=dict(start=row['start'],end=row['end']),function='reader',instruction=0x80000004,reason='Static arguments',role='copy',steps=[])]}}
+    monkeypatch.setattr(rom_explorer,'asset_preview',lambda *a:dict(details=dict(bytes=100000)))
+    result=validate(net,'game',report,row['id'],{**body,'preview_settings':{'offset':row['start'],'format':'i8','width':2,'height':2}})
+    assert any(c['check']=='Layout within proposed span' and c['status']=='differs' for c in result['checks'])
+    assert any(c['check']=='Static loader extent' and c['status']=='consistent' for c in result['checks'])
+    result=validate(net,'game',report,row['id'],{**body,'end':row['end']-1})
+    assert any(c['check']=='Static loader extent' and c['status']=='differs' for c in result['checks'])
+
+
+def test_similarity_excludes_code_and_searches_all_data_regions(discovered):
+    from decompnet.app.asset_validation import similar
+    net,pid,root,run,agent,session=discovered
+    report=rom_explorer.listing(net,'game');packet=json.loads(discovery.claim(net,agent,'game'))
+    row=next(r for r in report['regions'] if r['id']==packet['region']['id'])
+    # The same synthetic bytes at a second data extent are a structural lead, not a label.
+    duplicate={**row,'id':'copy','functions':[]}
+    report['regions']=[row,duplicate,{**duplicate,'id':'code','kind':'code'}]
+    result=similar(net,'game',report,row['id'],proposal(packet))
+    assert result['examined']==1
+    if len(set((root/'game.rom').read_bytes()[row['start']:min(row['end'],row['start']+64)]))>=4:
+        assert result['matches'][0]['region']=='copy'
+    assert not rom_explorer._read(net,net.project_row('game'))['annotations']
+
+
+def test_idle_reviewer_waits_locally_for_a_peer_then_reviews_final_proposal(discovered):
+    net,pid,root,run,agent,session=discovered
+    packet=json.loads(discovery.claim(net,agent,'game'))
+    store=net.project_store(pid)
+    with store.tx() as db:db.execute("UPDATE asset_queue SET state='skipped' WHERE run=? AND state='queued'",(run,))
+    other,_=net.local_agent('final-reviewer');second=SimpleNamespace(**{**session.__dict__,'id':'2'})
+    discovery.bind(net,second,other)
+    assert not discovery.ready(net,second,other) and discovery.awaiting_peer(net,second,other)
+    discovery.propose(net,agent,'game',packet['region']['id'],packet['claim_token'],proposal(packet))
+    assert discovery.ready(net,second,other) and not discovery.awaiting_peer(net,second,other)
+    review=json.loads(discovery.claim(net,other,'game'))
+    assert review['review_target']
+    discovery.defer(net,other,'game',review['region']['id'],review['claim_token'],'Independent inspection','Not enough consumer evidence to agree.')
+    assert discovery.status(net,'game')['run']['state']=='complete'
+
+
+def test_automatic_decompression_checks_use_original_verified_bytes(project):  # noqa: F811
+    import hashlib
+    import zlib
+
+    from decompnet.app.asset_validation import validate
+    net,pid,root=project
+    image=bytes(8)+zlib.compress(b'private synthetic asset'*20)+bytes(128)
+    (root/'game.rom').write_bytes(image)
+    with net.progress.view():cfg=json.loads(json.dumps(net.cfg(net.project_row('game'))))
+    cfg['rom']['sha1']=hashlib.sha1(image).hexdigest()
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
+    rom_explorer.run(net,'game',Log())
+    report=rom_explorer.listing(net,'game');row=next(r for r in report['regions'] if r['kind']=='compressed')
+    result=validate(net,'game',report,row['id'],dict(kind='compressed',start=row['start'],end=row['end']))
+    check=next(c for c in result['checks'] if c['check']=='Decompression')
+    assert check['status']=='pass' and check['evidence']['bytes']==460
+
+
+@pytest.mark.parametrize('task',['assets','boundary','matching'])
+def test_real_mcp_startup_checks_the_authenticated_tasks_tools(discovered,monkeypatch,task):
+    import socket
+    import time
+
+    import uvicorn
+
+    from decompnet.app import boundary_investigations
+    from decompnet.app.agents import Fatal, Manager, Session
+    from decompnet.app.server import build
+    from tests.test_agents import _no_agent_settings
+
+    net,pid,root,run,agent,_=discovered
+    _no_agent_settings(monkeypatch)
+    monkeypatch.setattr(Manager,'refresh_detected',lambda *a:None)
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+        with net.progress.view():mcp,manager,security,_=build(net,root/'.decomp',port,'scratch-secret')
+        options={'task':task,'asset_run':run,'boundary_until':time.time()+600,'boundary_function':'reader'}
+        session=Session('probe','codex','Probe','game',agent.name,options)
+        manager.sessions[session.id]=session
+        net.__dict__.pop('_asset_investigators',None)
+        discovery.bind(net,session,agent);boundary_investigations.bind(net,session,agent)
+        monkeypatch.setattr(manager,'project_of',lambda agent_id:'game')
+        _,token=net.local_agent(agent.name)
+        server=uvicorn.Server(uvicorn.Config(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),host='127.0.0.1',port=port,log_level='error'))
+        thread=threading.Thread(target=server.run,kwargs={'sockets':[sock]},daemon=True);thread.start()
+        try:
+            deadline=time.monotonic()+5
+            while not server.started and time.monotonic()<deadline:time.sleep(.02)
+            assert server.started
+            names=set(tools.project_tools(net,'game',agent))
+            if task!='matching':assert 'compile_and_diff' not in names and 'claim_function' not in names
+            assert manager._preflight_tools(token,session=session)
+            if task in ('assets','boundary'):
+                required='claim_asset_region' if task=='assets' else 'get_boundary_evidence'
+                with net.store.tx() as db:db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',('agent-disabled-tools',json.dumps([required])))
+                with pytest.raises(Fatal,match=required):manager._preflight_tools(token,session=session)
+            assert not net.store.all('SELECT * FROM claims') and not net.store.all('SELECT * FROM attempts')
+        finally:
+            server.should_exit=True;thread.join(timeout=5)
+            assert not thread.is_alive()

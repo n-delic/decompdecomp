@@ -6,12 +6,12 @@ app/agents.py, the routes, the GUI) asks the agent of a helper, `agents.get(kind
 A person or an agent adding support for another agent reads its module and this file, nothing else.
 
 An agent is one of two sorts:
-- A program the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, ZCode CLI, Oh My Pi). The
-  app runs it headless, once per session, in a private working folder, connected only to the app's own MCP endpoint on
-  127.0.0.1 with a token of its own (`session_command`): MCP is the app's private wiring to it. The prompt goes in
-  on stdin (`stdin`), or in a file the agent is given by path when its CLI has no stdin prompt (`prompt_file`,
-  zcode's `--attach`), never as text on the command line; what it prints, one JSON object a line, is read into the
-  helper's feed (`parse`).
+- A program the user installs and signs in to (Claude Code, Codex, Cursor Agent, Kimi Code, Antigravity CLI,
+  opencode, ZCode CLI). The app runs it
+  headless, once per session, in a private working folder, connected only to the app's own MCP endpoint on 127.0.0.1
+  with a token of its own (`session_command`): MCP is the app's private wiring to it. The prompt goes in on stdin
+  (`stdin`) or through the ZCode CLI's bounded attachment (`prompt_file`); what it prints, one JSON object a line,
+  is read into the helper's feed (`parse`).
 - An agent built into the app (the API helper): no program, a loop in the app that talks to a model's API itself and
   calls the tools directly (`run`).
 
@@ -45,6 +45,12 @@ VERSION_CHARS = 60  # of the first line `--version` prints
 SAID_CHARS = 400  # what the feed keeps of an error, or of a line that isn't JSON
 STDERR_CHARS = 300  # of an error an agent printed on stderr in its own format
 
+# OpenCode Zen's free models are refused once the free allowance is used up, while the same account's
+# OpenCode Go models keep working. agents/opencode.py reports that refusal with this exact wording and
+# app/agents.py keeps it out of the account's usage-limit cooldown: one free helper's refusal otherwise
+# stopped every opencode helper, on every project and model, for an hour at a time.
+FREE_ALLOWANCE = "Free model allowance exhausted"
+
 # what each agent said its version is, and the models it listed, with when it was asked: {id: (time, answer)}
 known_versions: dict[str, tuple[float, str | None]] = {}
 _models: dict[str, tuple[float, list[dict]]] = {}
@@ -65,17 +71,18 @@ def _node() -> str | None:
 
 
 def cli_argv(argv: list[str]) -> list[str]:
-    """Run npm's Windows shim through Node directly: cmd.exe would reinterpret quoted MCP config and shell symbols."""
-    if os.name == "nt" and sys.platform != "win32":
-        return argv  # a POSIX test simulating Windows must not construct WindowsPath
+    """Use npm launchers' own Node runtime; bypass Windows cmd.exe quoting and POSIX desktop PATH gaps."""
     shim = Path(argv[0])
     if sys.platform != "win32":
+        # nvm's npm scripts use env node, but a desktop app has no nvm directory on PATH.
+        # Use the runtime beside the discovered CLI for version checks, model lists and sessions alike.
         node = shim.parent / "node"
         if node.is_file() and os.access(node, os.X_OK):
             try:
                 with shim.open("rb") as script:
-                    if script.readline(256).strip() == b"#!/usr/bin/env node":
-                        return [str(node), *argv]
+                    shebang = script.readline(256).strip()
+                if shebang == b"#!/usr/bin/env node":
+                    return [str(node), *argv]
             except OSError:
                 pass
         return argv
@@ -129,6 +136,27 @@ class Agent:
                 "install": self.install_text(), "recommended": self.recommended, "uses_endpoints": self.uses_endpoints,
                 "uses_accounts": self.uses_accounts, "takes_effort": self.takes_effort, "efforts": list(self.efforts)}
 
+    def estimate_cost(self, model: str, usage: dict) -> float | None:
+        """API-equivalent USD, when this provider has known rates and a complete usage breakdown."""
+        return None
+
+    supports_login = False
+    alias_model_compatible = True
+
+    def resolve_known_model(self, model: str, known: list[dict]) -> str:
+        """Preserve CLI model IDs; connectors may resolve a unique short name from already cached discovery."""
+        return model
+
+    def validate_model(self, model: str) -> str | None:
+        return None
+
+    def login(self, exe: str) -> None:
+        raise ValueError("Open a terminal and follow this agent’s sign-in instructions.")
+
+    def investigation_command(self, exe: str, prompt: str) -> list[str] | None:
+        """Interactive repository work, with the CLI's normal permissions; None when unsupported."""
+        return None
+
     def install_text(self) -> str:
         return (self.windows_install or self.install) if sys.platform == "win32" else self.install
 
@@ -160,6 +188,10 @@ class Agent:
                 version = None
             known_versions[self.id] = cached = (time.time(), version)
         return cached[1] if cached else None
+
+    def forget_models(self) -> None:
+        """Let an explicit refresh ask the CLI again, keeping normal polling cached."""
+        _models.pop(self.id, None)
 
     def models(self, path: str | None, run: bool = True) -> list[dict]:
         """Models to offer: [{"id", "name", "note"}]. By default what `<path> <models_args>` lists (what the user's
@@ -206,6 +238,21 @@ class Agent:
         default doesn't switch the helper (#204)."""
         return None
 
+    def limit_scope(self, model: str) -> tuple[str, ...]:
+        """Extra cooldown-key parts separating one sign-in's usage limits from another's. Most connectors have
+        one subscription, so a limit pauses the whole account. opencode signs in to each provider separately
+        and gives some models their own allowance: a refusal there belongs to one account and one model, and
+        must not pause every other helper on the connector."""
+        return ()
+
+    def account_label(self, model: str) -> str:
+        """Which sign-in/account a model uses, shown when choosing models and on a helper's card; "" for one."""
+        return ""
+
+    def limit_wait_why(self) -> str:
+        """Why helpers wait out a published usage-limit cooldown, given the connector's limit scope."""
+        return "This provider account's usage limit is reached"
+
     def resolve_model(self, model: str, path: str | None) -> str:
         """`model`, a name the agent's own settings hold, as the model id its own command line takes; "" when that
         can't be told without running its program. Then a helper started on that default isn't pinned to it: it
@@ -221,14 +268,20 @@ class Agent:
         for the agent's default."""
         raise RuntimeError(f"{self.name} isn't a program the app runs")
 
+    focus_resume = False
+
+    def focused_session_command(self, exe, workdir, mcp_url, token, model, conversation=None):
+        """Providers may resume a specific persisted conversation; never use a global 'last'."""
+        return self.session_command(exe, workdir, mcp_url, token, model)
+
+    def launch_command(self, cmd: list[str]) -> list[str]:
+        """Optional stdin bridge after resolving the installed CLI's native launcher."""
+        return cmd
+
     def stdin(self, prompt: str) -> str:
         """What goes in on stdin: the prompt, as the agent reads it. Never on the command line: no length limit, and
         nothing in it is parsed."""
         return prompt
-
-    def launch_command(self, cmd: list[str]) -> list[str]:
-        """Adapt a resolved CLI launcher before the helper process starts."""
-        return cmd
 
     def prompt_file(self, workdir: Path, prompt: str) -> Path | None:
         """The file holding the prompt for an agent that reads it by path (zcode's `--attach`), or None: the prompt
@@ -255,9 +308,41 @@ class Agent:
         carries what spans lines, for one session (Antigravity streams its text in pieces)."""
         return []
 
+    def exit_reason(self, state: dict) -> str:
+        """A bounded, non-content provider finish category for the final CLI diagnostic."""
+        return 'not reported'
+
     def clean_stderr(self, line: str) -> str:
         """One line of the agent's stderr as worth showing, or "" for noise: the last ones say why a session failed."""
         return line.strip()
+
+    def stderr_failure(self, line: str, model: str = "") -> str:
+        """A terminal provider rejection on this process's stderr, as a safe diagnostic.
+
+        Ordinary logs and recoverable retries return empty; a confirmed rejection
+        ends this process through the runner's normal error classification.
+        """
+        return ""
+
+    def stderr_connection(self, line: str) -> str:
+        """A fixed, redacted local tool connection diagnostic worth retaining.
+
+        This is evidence, not a request to terminate or retry the process. Do not
+        return raw log fields, request bodies, credentials or provider content.
+        """
+        return ""
+
+    def stderr_retry(self, line: str, model: str = "") -> str:
+        """A selected primary stream's retryable provider failure, as a safe category.
+
+        A single retry does not end a process. The runner requires repeated
+        failures over a quiet interval and resets that history on model progress.
+        """
+        return ""
+
+    def startup_failure(self, text: str) -> str | None:
+        """A CLI startup failure that stops before a model turn, or None for ordinary errors."""
+        return None
 
     def fatal(self, error: str) -> bool:
         """Whether an error it said is one every try would meet the same way (Antigravity refusing decompdecomp's
@@ -376,3 +461,13 @@ def get(kind: str) -> Agent:
         raise ValueError(f"decompdecomp has no agent called {kind!r}: start one of "
                          f"{', '.join(a.name for a in AGENTS)}")
     return found
+
+
+def helper_parts(name: str) -> tuple[str, str]:
+    """Separate a recorded helper kind from its model, including multiword IDs."""
+    name = name.lower()
+    for kind in sorted((*_BY_ID, *_OLD_IDS), key=len, reverse=True):
+        if name.startswith(kind + '-'):
+            return kind, name[len(kind) + 1:]
+    kind, _, rest = name.partition('-')
+    return kind, rest

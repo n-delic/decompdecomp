@@ -133,22 +133,15 @@ def tick(_timer):
                      'var a=document.createElement("a");a.href="/";a.target="_blank";a.click();true',
                      lambda _: None)
         elif phase == 21:
-            if len(headers) <= state["requests_before"]:
+            # Seeing the HTTP request only proves navigation started, not that WebKit has loaded
+            # app.js and completed its first status fetch. Keep polling just as for the initial load;
+            # setting a terminal phase here made a slower CI reload fail and then idle until timeout.
+            if len(headers) <= state["requests_before"] or delegate.view.isLoading():
                 return
-            # The first request isn't a loaded page; it can even be the old page's poll, so phase 22 waits
-            # until the new document (nativeBeforeReload is gone) has fetched /api/state.
-            state["phase"] = 22
-            # A request reaching the server doesn't mean WebKit has initialized the new page yet (Intel CI).
-            # Keep polling until it is ready, and don't accept the old document while navigation is pending.
-            evaluate('Boolean(!window.nativeBeforeReload && typeof S !== "undefined" && S.st '
-                     '&& typeof decompClose === "function")',
-                     lambda loaded: state.update(phase=3 if loaded else 21))
-        elif phase == 22:
-            def loaded(value):
+            def reloaded(value):
                 if value:
                     state["phase"] = 3
-            evaluate('Boolean(!window.nativeBeforeReload && typeof S !== "undefined" && S.st '
-                     '&& typeof decompClose === "function")', loaded)
+            evaluate('Boolean(typeof S !== "undefined" && S.st && typeof decompClose === "function")', reloaded)
         elif phase == 3:
             state["phase"] = 31
             evaluate('window.decompClose=()=>"wait"; true', lambda _: None)

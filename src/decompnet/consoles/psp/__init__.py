@@ -254,7 +254,7 @@ class PlayStationPortable(Console):
         def one(m: re.Match) -> str:
             word = int.from_bytes(bytes.fromhex(m[2]), "little")
             return f"{m[1]}.word 0x{word:08X}" if allegrex_only(word) else m[0]
-        return mips.raw_doubles(_ASM_LINE.sub(one, text), False)
+        return super().export_asm(_ASM_LINE.sub(one, text))
 
     def asm_reason(self, code: bytes) -> str | None:
         return mips.asm_reason(code, False, eabi=True, cpu=self.cpu_variant)  # EABI: arguments in t0-t3 too
@@ -308,10 +308,10 @@ def set_stubs_aside(net, slug: str, log=print) -> int:
     ranges = [stubs] if stubs and isinstance(stubs[0], int) else stubs  # (one range: imported before modules were)
     why = ("an imported system function's stub: the PSP's module loader links it to the library function its NID "
            "names, so no C is behind it")
-    rows = [r for start, end in ranges for r in net.store.all(
+    rows = [r for start, end in ranges for r in net.project_store(proj['id']).all(
         "SELECT id, meta FROM functions WHERE project_id=? AND vram>=? AND vram<? AND status='open'",
         proj["id"], start, end)]
-    with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
         db.executemany("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'",
                        [(json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why}), r["id"]) for r in rows])
     if rows:

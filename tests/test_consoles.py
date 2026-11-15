@@ -15,6 +15,7 @@ from decompnet import arch, consoles, toolchains
 from decompnet.app import tools
 from decompnet.app.engine import RomNetwork
 from decompnet.app.twins import object_prints
+from decompnet.network import NetworkError
 from decompnet.rom import RomError
 
 from .test_ps2_debug import (
@@ -249,3 +250,76 @@ def test_the_game_rebuilds_byte_for_byte(demo):
     else:
         pytest.skip(f"{console.name} has no export yet (ROADMAP.md)")
     assert res["identical"], res.get("log") or res.get("detail")
+
+
+@pytest.mark.parametrize('demo', [c for c in DEMOS if c.mode == consoles.ROM and arch.get(c.arch).boundary_instruction],
+                         indirect=True, ids=lambda c:c.id)
+def test_guided_boundary_evidence_reads_the_original_demo_without_claiming_or_matching(demo):
+    """The same original-byte review adapter serves every mapped MIPS ROM console."""
+    from decompnet.app import boundary_evidence
+    console,net,slug,_,_=demo
+    if console.mode != consoles.ROM or arch.get(console.arch).boundary_instruction is None:
+        pytest.skip('Guided boundary evidence needs a mapped ROM extent adapter (ROADMAP.md).')
+    fn=net.store.one('SELECT * FROM functions WHERE project_id=? AND size>=16 AND vram IS NOT NULL '
+                     'AND rom_offset IS NOT NULL AND gone_mark IS NULL ORDER BY id LIMIT 1',net.project_row(slug)['id'])
+    if fn is None:pytest.skip('Demo has no mapped instruction extent.')
+    # Retain the fixture's original layout for the other demo features in this file.
+    try:
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET size=4,n_insns=1,target=? WHERE id=?',(fn['target'][:4],fn['id']))
+        packet=boundary_evidence.read(net,slug,fn['name'])
+        assert packet['start']==fn['vram'] and packet['end']==fn['vram']+4
+        assert any(line['address']==packet['end'] for line in packet['assembly'])
+        assert 'Indirect calls' in packet['limits'] and packet['segment']['start']<=packet['start']
+        assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
+    finally:
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET size=?,n_insns=?,target=? WHERE id=?',
+                       (fn['size'],fn['n_insns'],fn['target'],fn['id']))
+
+
+def test_rom_explorer_reads_the_imported_image_without_changing_targets(demo):
+    from decompnet.app import rom_explorer
+
+    console,net,slug,game,_=demo
+    if console.mode!=consoles.ROM:
+        with net.progress.view(), pytest.raises(NetworkError,match='original-image mapping'):
+            rom_explorer.listing(net,slug)
+        return
+    class ScanLog:
+        def __call__(self,line):pass
+        def progress(self,value):pass
+        def check_cancel(self):pass
+    with net.progress.view():
+        proj=net.project_row(slug)
+        before=[tuple(r) for r in net.project_store(proj['id']).all('SELECT name,target,status FROM functions WHERE project_id=?',proj['id'])]
+        rom_explorer.run(net,slug,ScanLog())
+        report=rom_explorer.listing(net,slug)
+        assert report['available'] and not report['stale']
+        assert sum(r['size'] for r in report['regions'])==report['size']
+        assert report['regions'][0]['start']==0 and report['regions'][-1]['end']==report['size']
+        row=report['regions'][0]
+        assert rom_explorer.detail(net,slug,row['id'],report['image_hash'])['preview']
+        assert report['loader_flow']['supported']==bool(arch.get(proj['arch']).asset_flow)
+        preview=rom_explorer.asset_preview(net,slug,dict(region=row['id'],image_hash=report['image_hash'],
+            options=dict(format='rgba5551-be',width=1,height=1,offset=row['start'])))
+        assert preview['data_url'].startswith('data:image/png;base64,')
+        inspected=rom_explorer.asset_inspect(net,slug,dict(region=row['id'],image_hash=report['image_hash'],action='model',options=dict(offset=0),model_settings=dict(count=1)))
+        assert len(inspected['vertices'])==1 and not inspected['edges']
+        guessed=rom_explorer.asset_inspect(net,slug,dict(region=row['id'],image_hash=report['image_hash'],action='textures',options=dict(offset=0,width=8,height=16)))
+        assert guessed['candidates'] and len(guessed['candidates'])<=16
+        import threading
+        from types import SimpleNamespace
+
+        from decompnet.app import asset_agents
+        identity=asset_agents.prepare(net,slug,dict(mode='range',start=0,end=report['size']))
+        investigator,_=net.local_agent('demo-asset-investigator')
+        session=SimpleNamespace(id='demo-assets',slug=slug,label='Demo investigator',model='fixture',stop=threading.Event(),options=dict(task='assets',asset_run=identity))
+        asset_agents.bind(net,session,investigator)
+        packet=json.loads(asset_agents.claim(net,investigator,slug))
+        assert packet['region']['kind']!='code' and packet['claim_token']
+        asset_agents.defer(net,investigator,slug,packet['region']['id'],packet['claim_token'],'Inspect original bytes','Recorded demo-only evidence; no type inferred.')
+        asset_agents.stop(net,slug,SimpleNamespace(sessions={}))
+
+
+        assert before==[tuple(r) for r in net.project_store(proj['id']).all('SELECT name,target,status FROM functions WHERE project_id=?',proj['id'])]

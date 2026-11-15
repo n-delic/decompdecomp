@@ -19,18 +19,22 @@ import functools
 import hashlib
 import json
 import os
+import platform
 import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW, console_python, stop_process_tree
 
+from .. import consoles, toolchains
 from ..limits import CompilerMemoryWatchdog, attach_job, capped, default_cap, killed_for_memory, release_job, stop_group
 from ..network import NetworkError
 from . import objdiff
@@ -46,6 +50,7 @@ GAME, PROGRAM = "game", "program"
 SCOPES = (GAME, PROGRAM)
 _CONFIG_CACHE: dict[str, tuple] = {}  # objdiff.json path -> (stat key, parsed, units by name)
 _CONFIG_LOCK = threading.Lock()
+_DOCKER_SETUP_LOCK = threading.Lock()
 # Agents may only edit source and header files, never the project's build setup, targets or verification.
 EDITABLE = re.compile(r"\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inc|inl)$", re.I)
 FORBIDDEN_PARTS = {".git", STATE, "orig", "build", "asm", "expected", "tools", "config", ".github", "assets", "bin"}
@@ -57,6 +62,17 @@ def _sha1(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _file_sha1(path: Path) -> str:
+    """A file's SHA-1, hashed again only when its size or modification time changes (ROM Explorer asks often)."""
+    stat = path.stat()
+    return _stat_sha1(str(path), stat.st_size, stat.st_mtime_ns)
+
+
+@functools.lru_cache(maxsize=64)
+def _stat_sha1(path: str, size: int, mtime_ns: int) -> str:
+    return _sha1(Path(path))
 
 
 class ForkError(NetworkError):
@@ -96,16 +112,11 @@ _CHECK = re.compile(r"^build (\S+[/\\]ok): check\b")  # dtk-template writes buil
 _NINJA_PROGRAM = re.compile(r"^(?:([A-Za-z_][\w.-]*)|\s+command)\s*=\s*(.*)$")
 # A target the build couldn't make: ninja's "FAILED: out.o", make's "make: *** [Makefile:12: out.o] Error 1"
 _FAILED = re.compile(r"^FAILED: (.+)$|^make(?:\[\d+\])?: \*\*\* \[(?:[^\]]*?:\d+: )?([^\]]+)\] Error")
-# CodeWarrior's linker warns about every FORCEACTIVE symbol and unknown section: harmless, and thousands of lines
+_BUILD_ERROR = re.compile(r"(?:fatal error:|\berror:|\bError:|No such file or directory|"
+                          r"command not found|cannot execute binary|ModuleNotFoundError:|Traceback \(most recent|^within )")
+# CodeWarrior's linker warnings are harmless and can run to thousands of lines.
 _NOISE = re.compile(r"^#{1,3}\s*(mwldeppc\.exe Linker Warning:|FORCEACTIVE symbol|(doesn't )?exist\.\s+Ignored\.|"
                     r"Section '\.note\.split' is unknown)")
-
-
-def _said(out: list[str]) -> str:
-    """What a build step said, for agents and the user: what failed, not the warnings after it (dsd's hundreds of
-    "[WARN ] No module for relocation" lines came after a compiler's error and pushed it out of the tail)."""
-    said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
-    return "\n".join(said[-60:])
 
 
 _NO_WORK = "ninja: no work to do."  # what ninja says when everything asked for is built
@@ -207,6 +218,8 @@ def _hash_mismatch(tail: str) -> str | None:
             "from). Or start the game from your own copy instead: choose New project → Open a game file.")
 
 
+# How many YAML files are read looking for the config that splits the game file.
+MAX_SPLAT_CANDIDATES = 400
 MADE_FROM_MAX = 2000  # targets followed up from a build's failures (failed_units): a few levels in practice
 QUERY_BATCH = 50  # targets per `ninja -t query`
 # never_defined: macros compilers define themselves without a leading underscore (IDO's, on SGI and N64 code; the
@@ -258,17 +271,16 @@ def _query_outputs(text: str) -> set[str]:
 
 
 class ForkProject:
-    def __init__(self, root: Path, platform: str = ""):
+    def __init__(self, root: Path, *, create_state: bool = True):
         self.root = Path(root)
-        self.platform = platform
-        (self.root / STATE).mkdir(parents=True, exist_ok=True)
+        if create_state:
+            (self.root / STATE).mkdir(parents=True, exist_ok=True)
 
     def _game_consoles(self):
         """The named console, or each console's file preparation when a public project's platform is unknown."""
         from .. import consoles
 
-        platform = self.detect_platform()
-        return [consoles.get(platform)] if platform else consoles.startable()
+        return [consoles.get(self.platform)] if self.platform else consoles.startable()
 
     # ------------------------------------------------------------------ what is it
 
@@ -331,54 +343,24 @@ class ForkProject:
     def versions(self) -> list[str]:
         return sorted(p.parent.name for p in self.root.glob("config/*/config.yml"))
 
-    def _splat_yaml(self) -> Path | None:
-        for p in sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/*.yaml")) + sorted(self.root.glob("config/**/*.yaml")):
-            try:
-                text = p.read_text(errors="replace", encoding="utf-8")
-            except OSError:
-                continue
-            if "segments:" in text and "options:" in text:
-                return p
-        return None
-
-    def _splat_yaml_for_version(self, version: str | None) -> Path | None:
-        """Select the Splat config named by Make; never guess from sorted YAML files."""
-        candidates = []
-        for path in sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/**/*.yaml")):
-            try:
-                text = path.read_text(errors="replace", encoding="utf-8")
-            except OSError:
-                continue
-            if "segments:" in text and "options:" in text:
-                candidates.append(path)
-        if not version:
-            if len(candidates) > 1:
-                raise ForkError("This project has several Splat configs; select a build version before generating objdiff.")
-            return candidates[0] if candidates else None
-        if not re.fullmatch(r"[A-Za-z0-9._-]+", version):
-            raise ForkError("The selected build version is not a safe Splat version name.")
-        makefile = self.root / "Makefile"
-        if not makefile.is_file():
-            return None
-        make = makefile.read_text(errors="replace", encoding="utf-8")
-        basename = re.search(r"^BASENAME\s*[:?]?=\s*([A-Za-z0-9_-]+)\s*$", make, re.M)
-        paths = []
-        if basename and "config/$(VERSION)/$(BASENAME).$(VERSION).yaml" in make:
-            paths.append(self.root / "config" / version / f"{basename[1]}.{version}.yaml")
-        if basename and "$(BASENAME).$(VERSION).yaml" in make:
-            paths.append(self.root / f"{basename[1]}.{version}.yaml")
-        if "decompressed.$(VERSION).yaml" in make:
-            paths.append(self.root / f"decompressed.{version}.yaml")
-        selected = [p for p in paths if p in candidates]
-        if len(selected) != 1:
-            raise ForkError(f"Could not identify the Splat config Make uses for version {version}.")
-        return selected[0]
     def detect_platform(self) -> str:
-        """Use the declared platform, or read it from a Splat config without running project code."""
-        if self.platform:
-            return self.platform
+        """Read the console declared by a public project's manifest or Splat config without running its code."""
         if value := (self.manifest or {}).get("platform"):
             return value
+        # Public objdiff projects declare their console on per-unit scratch
+        # configurations. Accept a single consistent connector identity only.
+        try:
+            objdiff = json.loads((self.root / 'objdiff.json').read_text(encoding='utf-8'))
+            units = objdiff.get('units', [])
+            declared = {consoles.get(unit['scratch']['platform']).id for unit in units
+                        if isinstance(unit, dict) and isinstance(unit.get('scratch'), dict)
+                        and isinstance(unit['scratch'].get('platform'), str)}
+            known = {c.id for c in consoles.CONSOLES}
+            if len(declared) == 1 and declared <= known:return next(iter(declared))
+            inferred = {console.id for console in consoles.CONSOLES if console.recognizes_objdiff(objdiff)}
+            if len(inferred) == 1:return next(iter(inferred))
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
         path = self._splat_yaml()
         if path is None:
             return ""
@@ -392,22 +374,241 @@ class ForkProject:
         value = options.get("platform") if isinstance(options, dict) else None
         if not isinstance(value, str):
             return ""
-        from .. import consoles
-
         console = consoles.get(value.strip().lower())
         return console.id if console.id in {c.id for c in consoles.CONSOLES} else ""
 
-    def fork_game_versions(self) -> dict[str, str]:
-        """Original game hashes, when the project's console recognizes versioned public builds."""
-        from .. import consoles
+    def _splat_yaml(self) -> Path | None:
+        for p in sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/*.yaml")) + sorted(self.root.glob("config/**/*.yaml")):
+            try:
+                text = p.read_text(errors="replace", encoding="utf-8")
+            except OSError:
+                continue
+            if "segments:" in text and "options:" in text:
+                return p
+        return None
 
-        return consoles.get(self.detect_platform()).fork_game_versions(self)
+    def _splat_version_configs(self) -> dict[str, Path]:
+        """Only infer editions from the YAML template the project's Makefile actually uses."""
+        makefile = self.root / "Makefile"
+        if not makefile.is_file():
+            return {}
+        make = makefile.read_text(errors="replace", encoding="utf-8")
+        basename = re.search(r"^BASENAME\s*[:?]?=\s*([A-Za-z0-9_-]+)\s*$", make, re.M)
+        if not basename:
+            return {}
+        suffix = "$(BASENAME).$(VERSION).yaml"
+        nested = "config/$(VERSION)/" + suffix
+        if nested in make:
+            paths = self.root.glob("config/*/" + basename[1] + ".*.yaml")
+        elif suffix in make:
+            paths = self.root.glob(basename[1] + ".*.yaml")
+        else:
+            return {}
+        configs = {}
+        for path in sorted(paths):
+            version = path.name[len(basename[1]) + 1:-5]
+            if (re.fullmatch(r"[A-Za-z0-9._-]+", version) and
+                    (nested not in make or path.parent.name == version) and
+                    self.root.resolve() in path.resolve().parents):
+                configs[version] = path
+        return configs
 
-    def default_game_version(self) -> str | None:
-        """The default build version, when the project's console recognizes its version layout."""
-        from .. import consoles
+    def splat_baseroms(self) -> dict[str, str]:
+        """Original ROM hashes for direct versioned splits and generated decompressed images.
 
-        return consoles.get(self.detect_platform()).default_fork_game_version(self)
+        Direct configs supply the original hash. For generated images the Makefile names the input/output
+        and the README supplies original hashes; a decompressed-image hash is never a cartridge hash.
+        """
+        if (getattr(self, "platform", None) or self.detect_platform()) != "n64":
+            return {}
+        makefile = self.root / "Makefile"
+        if not makefile.is_file():
+            return {}
+        make = makefile.read_text(errors="replace", encoding="utf-8")
+        # Direct versioned splits must select the same edition for placement and Make.
+        # Require the build's explicit template, not just similarly named YAML files.
+        configs = self._splat_version_configs()
+        if configs:
+            import yaml
+
+            originals = {}
+            for version, path in configs.items():
+                try:
+                    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, yaml.YAMLError):
+                    return {}
+                if not isinstance(config, dict) or not isinstance(config.get("options"), dict):
+                    return {}
+                options = config["options"]
+                digest = config.get("sha1", options.get("sha1"))
+                base = path.parent / str(options.get("base_path", "."))
+                if not (options.get("target_path") == f"baserom.{version}.z64"
+                        and base.resolve() == self.root.resolve()
+                        and isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{40}", digest)):
+                    return {}
+                originals[version] = digest.lower()
+            return originals
+        if not (re.search(r"^BASEROM\s*[:?+]?=\s*baserom\.\$\(VERSION\)\.z64\s*$", make, re.M) and
+                re.search(r"^DECOMPRESSED_BASEROM\s*[:?+]?=\s*decompressed\.\$\(VERSION\)\.z64\s*$", make, re.M)):
+            return {}
+        readme = self.root / "README.md"
+        if not readme.is_file():
+            return {}
+        text = readme.read_text(errors="replace", encoding="utf-8")
+        configured = {p.name.removeprefix("decompressed.").removesuffix(".yaml")
+                      for p in self.root.glob("decompressed.*.yaml")}
+        return {version: digest.lower() for version, digest in re.findall(
+            r"`?baserom\.([A-Za-z0-9._-]+)\.z64`?\s*:\s*`?([0-9a-fA-F]{40})\b", text)
+                if version in configured}
+
+    def original_image(self, version: str | None, known: set[str], image_ext: str) -> Path | None:
+        """The user's own copy of the game inside the project, when its SHA-1 is one the import recorded.
+
+        `known` holds the hashes that identify the game (what `needs` asks for, the game's identity at
+        import). The file `needs` names comes first, then files with the console's image extension at the
+        root or one folder down. A file outside the project, or one whose hash isn't known, is never used."""
+        if not known:
+            return None
+        try:
+            wanted = self.needs(version).get("path")
+        except ForkError:
+            wanted = None
+        root = self.root.resolve()
+        candidates = [self.root / wanted] if wanted and not wanted.endswith("/") else []
+        candidates += sorted(self.root.glob("*" + image_ext)) + sorted(self.root.glob("*/*" + image_ext))
+        seen = set()
+        for path in candidates:
+            try:
+                real = path.resolve()
+                if real in seen or root not in real.parents or not real.is_file():
+                    continue
+            except OSError:
+                continue
+            seen.add(real)
+            if _file_sha1(real) in known:
+                return real
+        return None
+
+    def splat_config_for(self, image: Path, version: str | None) -> dict | None:
+        """The splat config that splits exactly `image`, read, or None.
+
+        A config that splits another image (a decompressed one built from the cartridge, another release) describes
+        other offsets, so it is not used for this one. The config the build names comes first; when it splits
+        another file, the project's other splat configs are looked through for the one whose target is `image`
+        (projects with one config per release under config/<release>/)."""
+        configs = self._splat_version_configs()
+        chosen = configs.get(version or "") or (next(iter(configs.values())) if len(configs) == 1 else self._splat_yaml())
+        found = self._config_splitting(chosen, image) if chosen else None
+        if found is not None:
+            return found
+        candidates = sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/**/*.yaml"))
+        for path in candidates[:MAX_SPLAT_CANDIDATES]:
+            if path != chosen and (found := self._config_splitting(path, image)) is not None:
+                return found
+        return None
+
+    @staticmethod
+    def _config_splitting(path: Path, image: Path) -> dict | None:
+        """The splat config at `path` when its target is `image`, else None."""
+        import yaml
+
+        try:
+            text = path.read_text(encoding="utf-8")
+            if "segments:" not in text or "target_path" not in text:
+                return None
+            config = yaml.safe_load(text)
+        except (OSError, ValueError, yaml.YAMLError):
+            return None
+        options = config.get("options") if isinstance(config, dict) else None
+        if not isinstance(options, dict) or not isinstance(options.get("target_path"), str):
+            return None
+        try:
+            target = (path.parent / str(options.get("base_path", ".")) / options["target_path"]).resolve()
+        except OSError:
+            return None
+        return config if target == image.resolve() else None
+
+    def segments_for(self, image: Path, version: str | None, config: dict | None = None) -> tuple[list[dict], int]:
+        """The code segments (and $gp) of the splat config that splits exactly `image`, else none.
+
+        `config` is that config when the caller has already read it (`splat_config_for`)."""
+        from ..rom.split import segments_from_config_data
+
+        config = config if config is not None else self.splat_config_for(image, version)
+        if config is None:
+            return [], 0
+        try:
+            size = image.stat().st_size
+            # A config may name an empty overlay (its next segment starts where it does): it maps nothing.
+            segments = [dict(name=s.name, rom_start=s.rom_start, rom_end=s.rom_end, vram=s.vram)
+                        for s in segments_from_config_data(config) if 0 <= s.rom_start < s.rom_end <= size]
+        except (OSError, TypeError, ValueError, KeyError):
+            return [], 0
+        gp = config["options"].get("gp_value")
+        return segments, gp if isinstance(gp, int) else 0
+
+    def splat_default_version(self) -> str | None:
+        versions = self.splat_baseroms()
+        if not versions:
+            return None
+        make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
+        match = re.search(r"^VERSION\s*[:?]?=\s*([A-Za-z0-9._-]+)", make, re.M)
+        return match.group(1) if match and match.group(1) in versions else next(iter(versions))
+
+    def _docker_only_macos(self) -> bool:
+        """Some public decomps explicitly support macOS only through their Dockerfile."""
+        if sys.platform != "darwin" or not (self.root / "Dockerfile").is_file():
+            return False
+        readme = self.root / "README.md"
+        return readme.is_file() and bool(re.search(r"macOS.*Docker only|Docker only.*macOS", readme.read_text(
+            errors="replace", encoding="utf-8"), re.I | re.S))
+
+    def _docker_image(self) -> str:
+        paths = (self.root / "Dockerfile", self.root / "packages.txt")
+        digest = hashlib.sha1(str(self.root.resolve()).encode())
+        for path in paths:
+            if path.is_file():
+                digest.update(path.read_bytes())
+        return f"decompdecomp-project-{digest.hexdigest()[:16]}"
+
+    def _docker_command(self, command: list[str]) -> list[str]:
+        arch = ["--platform", "linux/amd64"] if platform.machine() == "arm64" else []
+        return ["docker", "run", "--rm", *arch, "--volume", f"{self.root.resolve()}:/project",
+                "--workdir", "/project", "--entrypoint", "/bin/sh", self._docker_image(), "-c",
+                shlex.join(command)]
+
+    def _prepare_docker(self, log) -> None:
+        with _DOCKER_SETUP_LOCK:
+            if getattr(self, "_docker_ready", False):
+                return
+            if not shutil.which("docker"):
+                raise ForkError("this project builds on macOS through Docker, but Docker is not installed. "
+                                "Install Docker or a Docker-compatible runtime, then retry setup.")
+            ok, tail = self.run(["docker", "info", "--format", "{{.ServerVersion}}"], log=log, timeout=15)
+            if not ok:
+                raise ForkError("this project needs a running Docker engine on macOS. Start it, then retry setup.\n" + tail)
+            image = self._docker_image()
+            ok, _ = self.run(["docker", "image", "inspect", image], log=lambda *_: None, timeout=15)
+            if not ok:
+                arch = ["--platform", "linux/amd64"] if platform.machine() == "arm64" else []
+                log("building the project's Docker image with its MIPS toolchain")
+                ok, tail = self.run(["docker", "build", *arch, "--tag", image, "."], log=log, timeout=3600)
+                if not ok:
+                    raise ForkError("the project's Docker image could not be built:\n" + tail)
+            if (self.root / ".gitmodules").is_file():
+                ok, tail = self.run(["git", "submodule", "update", "--init", "--recursive"], log=log, timeout=900)
+                if not ok:
+                    raise ForkError("the project's submodules could not be fetched:\n" + tail)
+            if ".venv/bin/python3" in (self.root / "Makefile").read_text(errors="replace", encoding="utf-8") and (
+                    self.root / "requirements.txt").is_file() and not (self.root / ".venv/bin/python3").exists():
+                log("installing the project's Python requirements inside Docker")
+                ok, tail = self.run(self._docker_command(["python3", "-m", "venv", ".venv"]), log=log, timeout=600)
+                if ok:
+                    ok, tail = self.run(self._docker_command([".venv/bin/pip", "install", "-r", "requirements.txt"]),
+                                        log=log, timeout=1200)
+                if not ok:
+                    raise ForkError("the project's Python requirements could not be installed:\n" + tail)
+            self._docker_ready = True
 
     def _inside(self, rel: str) -> str | None:
         """`rel` as a clean path inside the project, or None if it points outside or is a template."""
@@ -419,8 +620,32 @@ class ForkProject:
         out = Path(os.path.relpath(p, self.root.resolve())).as_posix()
         return out + "/" if rel.endswith("/") else out
 
+    def progress_save(self) -> tuple[Path, dict] | None:
+        """A portable save at the root or beside a standalone rebuild, never through links."""
+        for folder in (self.root, self.root / "progress"):
+            manifest = folder / "decompdecomp.json"
+            if not manifest.exists():
+                continue
+            if folder.is_symlink() or manifest.is_symlink():
+                raise ForkError("Saved progress must be a regular folder and manifest, not symbolic links.")
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                # (app/saves.FORMATS: format 2 keeps its notes and verification records in files beside this one)
+                if data.get("format") not in (1, 2) or not re.fullmatch(r"[0-9a-fA-F]{40}", data["game"]["sha1"]):
+                    raise ValueError("unsupported progress manifest")
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+                raise ForkError(f"Fix the saved progress manifest at {manifest}: {e}") from None
+            return folder, data
+        return None
+
     def needs(self, version: str | None = None) -> dict:
         """What the user has to provide: {"what", "path" (None: set up by hand), "sha1", "help", "auto"}."""
+        saved = self.progress_save()
+        if saved:
+            _, manifest = saved
+            return {"what": "your copy of the game for this saved progress", "path": "baserom.z64",
+                    "sha1": manifest["game"]["sha1"], "auto": True, "saved_progress": True,
+                    "help": "decompdecomp will restore the bundled sources, drafts, names, notes and compiler settings, and verify saved matches against your game."}
         kind = self.kind()
         manual = {"what": "your copy of the game", "path": None, "sha1": None, "auto": False,
                   "help": "This project has its own setup. Follow its README in a terminal, in the project folder; "
@@ -442,64 +667,90 @@ class ForkProject:
                         "sha1": None, "auto": True, "help": "The build checks the game against the project's hashes."}
             return manual
         if kind == "splat":
-            from .. import consoles
+            originals = self.splat_baseroms()
+            if originals:
+                selected = version if version in originals else self.splat_default_version()
+                docker_help = (" On macOS, setup uses the project's Dockerfile and requires a running Docker engine."
+                               if self._docker_only_macos() else "")
+                return {"what": f"your original game ROM (baserom.{selected}.z64)",
+                        "path": f"baserom.{selected}.z64", "sha1": originals[selected], "auto": True,
+                        "rom_versions": [{"version": v, "sha1": digest} for v, digest in originals.items()],
+                        "help": "Supply an original cartridge ROM in .z64, .v64 or .n64 byte order. Its normalized "
+                                "SHA-1 selects the build version; decompdecomp saves a .z64 copy for the project. "
+                                "The selected version is passed to extraction and subsequent builds."
+                                + docker_help}
+            import yaml
 
-            if need := consoles.get(self.detect_platform()).fork_game_need(self, version):
-                return need
-            y = self._splat_yaml().read_text(errors="replace", encoding="utf-8")
-            target = re.search(r"^\s*target_path:\s*['\"]?([^'\"\n#]+)", y, re.M)
-            base = re.search(r"^\s*base_path:\s*['\"]?([^'\"\n#]+)", y, re.M)
-            sha1 = re.search(r"^sha1:\s*['\"]?([0-9a-fA-F]{40})", y, re.M)
-            path = target.group(1).strip() if target else ""
-            yaml_dir = os.path.relpath(self._splat_yaml().parent, self.root)
-            if path and base:
-                path = str(Path(yaml_dir) / base.group(1).strip() / path)
-            path = self._inside(path) if path else None
+            config_path = self._splat_yaml()
+            try:
+                config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, yaml.YAMLError):
+                return manual
+            options = config.get("options") if isinstance(config, dict) else None
+            if not isinstance(options, dict):
+                return manual
+            target, base = options.get("target_path"), options.get("base_path", ".")
+            digest = config.get("sha1", options.get("sha1"))
+            sha1 = digest.lower() if isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{40}", digest) else None
+            # Use the same effective YAML values as Splat, including the final duplicate key.
+            # Nested configs resolve their base against their own directory, not the checkout root.
+            path = self._inside(str(config_path.parent / base / target)) if (
+                isinstance(target, str) and isinstance(base, str)) else None
             if path is None:
                 return manual
-            digest = sha1.group(1).lower() if sha1 else None
-            help_text = next((hint for console in self._game_consoles()
-                              if (hint := console.fork_game_help(path, digest))), None)
             return {"what": f"your copy of the game ({Path(path).name})", "path": path,
-                    "sha1": digest, "auto": True,
-                    "help": help_text or "Checked against the sha1 in the project's splat config. A PlayStation "
-                                         "disc image works too: the file is taken from it."}
+                    "sha1": sha1, "auto": True,
+                    "help": ("Checked against the SHA-1 in the project's splat config. " if sha1 else
+                             "This splat config does not specify a SHA-1, so decompdecomp cannot check the game "
+                             "file by hash before setup. Check the project's README for the required version. ") +
+                            "For PlayStation projects, a disc image can supply the expected file."}
         return manual
 
     # ------------------------------------------------------------------ setup
 
-    def place_game(self, src: Path, filename: str, version: str | None = None, move: bool = False) -> Path:
+    def place_game(self, src: Path, filename: str, version: str | None = None, move: bool = False, log=None) -> Path:
         """Put the user's game file where the project expects it, checking its sha1 when the project has one.
         Works from a file on disk, so multi-gigabyte discs are never read into memory."""
         need = self.needs(version)
         if not need["path"]:
             raise ForkError("decompdecomp doesn't know where this project expects the game; follow its README")
         src = Path(src)
-        if not need["path"].endswith("/"):
+        if not need["path"].endswith(("/", ".z64")):
             from ..rom import RomError
 
             dest = self.root / need["path"]
             if src.resolve() == dest.resolve():
-                if not need.get('sha1') or _sha1(src) == need['sha1']:
-                    return dest
-                try:
-                    for console in self._game_consoles():
-                        if console.prepare_fork_game(src, dest, need['sha1'], move=False):
-                            return dest
-                except RomError as error:
-                    raise ForkError(str(error)) from error
-                raise ForkError("the game already in this project does not match its expected SHA-1")
+                if need.get("sha1") and _sha1(src) != need["sha1"]:
+                    raise ForkError("The game already in this project does not match its expected SHA-1.")
+                return dest
             try:
                 for console in self._game_consoles():
                     if console.prepare_fork_game(src, dest, need.get("sha1"), move=move):
                         return dest
             except RomError as error:
                 raise ForkError(str(error)) from error
-        if need.get("sha1") and _sha1(src) != need["sha1"]:
+        supplied_sha1 = _sha1(src) if need.get("sha1") or need["path"].endswith(".z64") else None
+        details = f"Supplied file SHA-1: {supplied_sha1}"
+        normalized_sha1 = None
+        if need["path"].endswith(".z64"):
+            from ..consoles.n64.rom import copy_z64_file, file_hashes
+
+            hashes = file_hashes(src, supplied_sha1)
+            details, normalized_sha1 = hashes.describe(), hashes.normalized_sha1
+            if log:
+                log(details)
+        if need.get("sha1") and supplied_sha1 != need["sha1"]:
+            if need["path"].endswith(".z64"):
+                if normalized_sha1 == need["sha1"]:
+                    dest = self.root / need["path"]
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    copy_z64_file(src, dest)
+                    return dest
             inner = self._from_disc(src.read_bytes(), Path(need["path"]).name) if src.stat().st_size < 1 << 30 else None
             if inner is None or hashlib.sha1(inner).hexdigest() != need["sha1"]:
-                raise ForkError("that file isn't the version this project decompiles (its sha1 doesn't match the "
-                                "project's); check the README for the exact version")
+                raise ForkError("That file does not match the version this project expects.\n"
+                                f"Expected SHA-1: {need['sha1']}\n{details}\n"
+                                "Check the project's README for the required region and revision.")
             dest = self.root / need["path"]
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(inner)
@@ -510,6 +761,10 @@ class ForkProject:
             dest = dest / (Path(filename).name or "game.iso")
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
+        # A user may select the game already placed by setup, including through a symlink or hard link.
+        # Validate its hash above, then leave it in place instead of copying or moving it onto itself.
+        if dest.exists() and src.samefile(dest):
+            return dest
         if move:
             shutil.move(str(src), dest)
         else:
@@ -554,9 +809,10 @@ class ForkProject:
             return [[sys.executable, "configure.py"], [_tool("ninja") or "ninja"]]
         if kind == "splat":
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
-            chosen = [f"VERSION={version}"] if version and self.fork_game_versions() else []
-            steps = [["make", *chosen, t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)][:1]
-            return steps + [["make", *chosen, f"-j{os.cpu_count() or 4}"]]
+            chosen = [f"VERSION={version}"] if version and self.splat_baseroms() else []
+            steps = [["make", *chosen, t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)]
+            jobs = min(os.cpu_count() or 4, 4) if self._docker_only_macos() else os.cpu_count() or 4
+            return steps + [["make", *chosen, f"-j{jobs}"]]
         if kind == "objdiff":
             cfg = self.objdiff_config()
             return [[cfg.get("custom_make") or "make", *cfg.get("custom_args", [])]]
@@ -568,7 +824,14 @@ class ForkProject:
         are added to `failed`. `platform`: its console, for a project whose manifest isn't written yet (its import's
         first build: a game built with Visual C++ 2017 then built without wine's settings)."""
         code, out, hints = self._execute(cmd, log, timeout, failed, platform)
-        return code == 0, _said(out) + ("\n\n" + hints if hints else "")
+        # what failed, not the warnings after it: dsd's hundreds of "[WARN ] No module for relocation" lines came after
+        # a compiler's error and pushed it out of the tail agents and the user read
+        said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
+        problems = [line for line in said if _BUILD_ERROR.search(line)] if code else []
+        tail = "\n".join(dict.fromkeys([*problems[:12], *said[-60:]]))
+        if hints:
+            tail = hints + "\n\nBuild output:\n" + tail
+        return code == 0, tail
 
     def _execute(self, cmd: list[str], log, timeout: float, failed: list[str] | None,
                  platform: str | None = None) -> tuple[int | None, list[str], str]:
@@ -578,17 +841,28 @@ class ForkProject:
         started: its output used to be read to the end before the limit was looked at, so a compiler that never
         finished on an agent's code (stuck under wibo, or CodeWarrior looping on one #pragma) kept the build, and
         the project's build lock, for hours (#114, whose fix this is)."""
+        console = consoles.get((self.manifest or {}).get("platform") or platform or self.detect_platform())
+        if self._docker_only_macos() and Path(cmd[0]).name in ("make", "gmake"):
+            self._prepare_docker(log)
+            cmd = self._docker_command(["make", *cmd[1:]])
+        else:
+            cmd = console.project_build_command(self, cmd)
         env = dict(os.environ)
-        env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
-        # what its console's builds need (Console.build_env)
-        if (platform := (self.manifest or {}).get("platform") or platform):
-            from .. import consoles
-
-            env.update(consoles.get(platform).build_env())
+        # Existing project environments carry its pinned extractor dependencies. Do not install into the app.
+        python = next((folder / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python3')
+                       for folder in (self.root / '.venv', self.root / 'venv')
+                       if (folder / 'pyvenv.cfg').is_file() and
+                       (folder / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python3')).is_file()), None)
+        project_python = [python.parent] if python else []
+        if python:
+            env['VIRTUAL_ENV'] = str(python.parent.parent)
+        project_tools = console.project_tool_paths(self)
+        env.update(console.build_env())  # what its console's builds need (Console.build_env)
+        env["PATH"] = os.pathsep.join([*(str(d) for d in [*project_python, *_tool_dirs(), *project_tools]), env.get("PATH", "")])
         env["NINJA_STATUS"] = "[%f/%t] "  # (ninja's own: its progress lines are what a run of units is read by)
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
-        executable = sys.executable if cmd[0] in ("python", "python3") else shutil.which(cmd[0], path=env["PATH"]) or cmd[0]
+        executable = str(python or sys.executable) if cmd[0] in ("python", "python3") else shutil.which(cmd[0], path=env["PATH"]) or cmd[0]
         cmd = [console_python(executable), *cmd[1:]]  # not pythonw.exe: its tools' compilers would flash consoles
         log("$ " + " ".join(Path(c).name if i == 0 else c for i, c in enumerate(cmd)))
         try:
@@ -598,49 +872,102 @@ class ForkProject:
                                     creationflags=NO_WINDOW, start_new_session=os.name != "nt")
         except FileNotFoundError:
             return None, [f"{cmd[0]} isn't installed"], ""
+        from .. import compiler_processes
+        compiler_processes.track(proc.pid)
         attach_job(proc)  # (Windows: its commands are stopped with it, even once it's gone; elsewhere its session)
         out, seen, quiet = [], collections.Counter(), [0]
+        raised: list[BaseException] = []  # what `log` (or `failed`'s caller) raised in the reader: the build's to raise
 
         def read() -> None:
-            for line in proc.stdout:
-                line = line.rstrip()
-                out.append(line)
-                if failed is not None and (m := _FAILED.match(line)):
-                    failed.extend(t for t in (m.group(1) or m.group(2)).split()
-                                  if t not in failed and not t.startswith("[code="))
-                seen[line] += 1
-                if seen[line] > 2 or _NOISE.match(line):  # the same line again, or CodeWarrior's linker chatter
-                    quiet[0] += 1
-                elif len(out) <= 400 or len(out) % 50 == 0:
-                    log(line)
+            try:
+                for line in proc.stdout:
+                    line = line.rstrip()
+                    out.append(line)
+                    if failed is not None and (m := _FAILED.match(line)):
+                        failed.extend(t for t in (m.group(1) or m.group(2)).split()
+                                      if t not in failed and not t.startswith("[code="))
+                    seen[line] += 1
+                    if seen[line] > 2 or _NOISE.match(line):  # the same line again, or CodeWarrior's linker chatter
+                        quiet[0] += 1
+                    elif len(out) <= 400 or len(out) % 50 == 0 or _BUILD_ERROR.search(line):
+                        log(line)
+            except (ValueError, OSError):  # (its output closed under it by the cleanup: what was read stands)
+                pass
+            except BaseException as e:  # a cancellation from the caller's log: stops the build, raised by it
+                raised.append(e)
 
         reader = threading.Thread(target=read, daemon=True, name="build-output")
         reader.start()
-        # (macOS: the whole build's memory, as its systemd scope caps it on Linux; limits.py's docstring)
-        watchdog = CompilerMemoryWatchdog(proc, limit=default_cap(), whole_tree=True)
-        try:
-            with watchdog:
-                code = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            stop_group(proc, watchdog.seen)  # what's still in its session or job, its own parent gone too
+        deadline = time.monotonic() + timeout
+        primary_failure = True
+        code = None
+        watchdogs: list = []
+
+        def watched() -> set[int]:
+            return set().union(*(getattr(w, "seen", ()) for w in watchdogs))
+
+        def stop() -> None:
+            stop_group(proc, watched())  # what's still in its session or job, its own parent gone too
             _stop_tree(proc)  # ninja and the compiler it started: killing ninja alone left the compiler running
+            try:
+                proc.kill()  # (a refused group signal leaves the step itself)
+            except OSError:
+                pass
+
+        def timed_out() -> tuple[None, list[str], str]:
             reader.join(OUTPUT_SECONDS)
-            release_job(proc)
             said = [ln for ln in list(out) if not _NOISE.match(ln)][-40:]
-            return None, [*said, f"stopped: the build didn't finish in {timeout:.0f} seconds, so it was stopped with "
-                                 "everything it started. A compiler that never finishes on this code is the usual "
-                                 "cause: change the code that was just added."], ""
-        reader.join(OUTPUT_SECONDS)  # (the step is over: its output ends with it, or soon after)
-        if reader.is_alive():
-            # The step ended, but something it started still holds its output: stopped, so it doesn't run on with
-            # nobody waiting for it; the step's own exit code stands (#228: a build that succeeded was waited on
-            # for the rest of its hour, then failed as out of time).
-            stop_group(proc, watchdog.seen)
-            reader.join(OUTPUT_SECONDS)
-        release_job(proc)
-        if watchdog.exceeded:
-            code = 1
-            out.append(watchdog.message())
+            return None, [*said, f"stopped: Build timed out after {timeout:g}s: it didn't finish in {timeout:g} "
+                                 "seconds, so it was stopped with everything it started (its compiler processes "
+                                 "too). A compiler that never finishes on this code is the usual cause: change the "
+                                 "code that was just added."], ""
+
+        try:
+            # macOS: each process's memory (DECOMP_COMPILER_MEMORY_MB, as for a compile) and the whole build's, as its
+            # systemd scope caps it on Linux (limits.py's docstring). The time limit is this loop's, not a watchdog's:
+            # stop() reads the build's tree before stopping ninja, whose commands in groups of their own are found
+            # only from it
+            with ExitStack() as stack:
+                watchdogs += [stack.enter_context(CompilerMemoryWatchdog(proc)),
+                              stack.enter_context(CompilerMemoryWatchdog(proc, limit=default_cap(), whole_tree=True))]
+                while True:
+                    try:
+                        code = proc.wait(timeout=0.1)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if raised:
+                            stop()
+                            raise raised[0] from None
+                        if time.monotonic() >= deadline:
+                            stop()
+                            return timed_out()
+            if raised:
+                raise raised[0]
+            if any(getattr(w, "timed_out", False) for w in watchdogs):
+                return timed_out()
+            # (the step is over: its output ends with it, or soon after; the time limit still holds meanwhile)
+            reader.join(min(OUTPUT_SECONDS, max(0.0, deadline - time.monotonic())))
+            if reader.is_alive():
+                if time.monotonic() >= deadline:  # what it started kept its output open past the time limit
+                    code = None
+                    stop()
+                    return timed_out()
+                # The step ended, but something it started still holds its output: stopped, so it doesn't run on
+                # with nobody waiting for it; the step's own exit code stands (#228: a build that succeeded was
+                # waited on for the rest of its hour, then failed as out of time).
+                stop_group(proc, watched())
+                reader.join(OUTPUT_SECONDS)
+            if raised:
+                raise raised[0]
+            primary_failure = any(getattr(w, "exceeded", False) for w in watchdogs)
+        finally:
+            release_job(proc)
+            compiler_processes.finish(proc, failed=primary_failure or code not in (None, 0))
+        if (over := next((w for w in watchdogs if getattr(w, "exceeded", False)), None)) is not None:
+            # The process may exit normally while the watchdog's signal races with it (or is denied). Crossing the
+            # limit still fails the build.
+            code = code or 1
+            out.append(over.message())
         lines = list(out)  # (what was read: a reader still going adds to its own list, not this one)
         if quiet[0]:
             log(f"({quiet[0]} repeated lines and linker warnings not shown)")
@@ -692,9 +1019,20 @@ class ForkProject:
         self.unpack_disc(version, log=log)
         for cmd in self.setup_commands(version):
             ok, tail = self.run(cmd, log=log)
-            if not ok and cmd[0] != "make":  # a Makefile build often fails on purpose until things match
-                mismatch = _hash_mismatch(tail)
-                if mismatch:  # #97: a dtk project built from a file that isn't on the retail disc
+            make_step = Path(cmd[0]).name.removesuffix('.exe') in ('make', 'gmake')
+            if (not ok and make_step and not (self.root / 'objdiff.json').exists()
+                    and re.search(r'computed checksum did NOT match|build succeeded, but did not match', tail)):
+                # A linked but incomplete decomp can still be measured. The generator must independently
+                # verify every original reference section; compiler and missing-tool failures keep failing.
+                log('The whole-image check failed; trying independently verified original references.')
+                try:
+                    self.generate_objdiff(version=version, log=log)
+                except ForkError as error:
+                    log(f'Original references could not be verified: {error}')
+            # Incomplete sources may fail make once objdiff can measure individual units. Without that
+            # configuration, a failed build is a setup failure, not a successful build missing its report.
+            if not ok and (not make_step or not (self.root / "objdiff.json").exists()):
+                if mismatch := _hash_mismatch(tail):
                     raise ForkError(f"{mismatch}\n{tail}")
                 raise ForkError(f"setup step failed: {' '.join(cmd)}\n{tail}")
         if (self.root / "objdiff.json").exists() and self._all_source():
@@ -707,25 +1045,34 @@ class ForkProject:
                             "Some projects generate it with an extra step; check the README.")
 
     def generate_objdiff(self, version: str | None = None, log=print) -> bool:
-        """Create missing, ROM-verified references for a supported Splat layout."""
+        """Try the console's supported reference generator without changing an existing configuration."""
         if (self.root / "objdiff.json").exists():
             return False
-        path = self._splat_yaml_for_version(version)
+        path = self._splat_yaml()
+        if version:
+            path = self._splat_version_configs().get(version) or next(
+                (p for p in self.root.glob("*.yaml") if p.name.endswith(f".{version}.yaml")), path)
         if path is None:
             return False
         import yaml
         from elftools.common.exceptions import ELFError
 
-        from .. import consoles, toolchains
+        from .. import consoles
 
         try:
             config = yaml.safe_load(path.read_text(encoding="utf-8"))
             if not isinstance(config, dict) or not isinstance(config.get("options"), dict):
-                raise ForkError("automatic objdiff setup needs a supported Splat configuration")
-            return consoles.get(config["options"].get("platform")).generate_objdiff(
-                self, path, config, version=version, log=log)
-        except (OSError, ValueError, ELFError, yaml.YAMLError, subprocess.TimeoutExpired,
-                toolchains.ToolchainError) as error:
+                raise ForkError("automatic objdiff setup needs a supported splat configuration")
+            console = consoles.get(config["options"].get("platform"))
+            segments = config.get('segments')
+            if (isinstance(segments, list) and not any(
+                    isinstance(segment, dict) and segment.get('type') == 'code' for segment in segments)
+                    and any(self.root.glob('*/Makefile'))):
+                from .splatnested import generate
+
+                return generate(self, path, config, console, version=version, log=log)
+            return console.generate_objdiff(self, path, config, log=log)
+        except (OSError, ValueError, ELFError, yaml.YAMLError, subprocess.TimeoutExpired, toolchains.ToolchainError) as error:
             raise ForkError(f"automatic objdiff setup could not finish: {error}. Check the project's setup manually.") from None
 
     def build_problem(self) -> str | None:
@@ -994,7 +1341,10 @@ class ForkProject:
         return objdiff.report(self.root, self.root / STATE / "report.json")
 
     def diff(self, unit: Unit, symbol: str) -> objdiff.FunctionDiff:
-        return objdiff.diff(unit.target, unit.base, symbol, cwd=self.root, options=self.diff_options(unit),
+        from .linkedimages import stale
+        entry = next((u for u in self.objdiff_config().get("units", []) if u.get("name") == unit.name), {})
+        base = None if stale(self.root, entry, {}) else unit.base
+        return objdiff.diff(unit.target, base, symbol, cwd=self.root, options=self.diff_options(unit),
                             project=self.root if unit.mappings else None, unit=unit.name)
 
     # ------------------------------------------------------------------ linking (dtk-template projects)
@@ -1050,8 +1400,49 @@ class ForkProject:
             text = text[:start] + word + text[end:]
         return text
 
+    def image_verification(self) -> tuple[Path, str, list[list[str]]] | None:
+        """An explicit whole-image check also protects partially decompiled source units."""
+        manifest = self.manifest or {}
+        check = manifest.get("verify_image")
+        if check is None:
+            return None
+        game = manifest.get("game") or {}
+        if not isinstance(check, dict):
+            raise ForkError("verify_image must name an output and build commands")
+        output, commands, sha1 = check.get("path"), check.get("commands"), game.get("sha1", "")
+        if (not isinstance(output, str) or not output or not isinstance(sha1, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha1)
+                or not isinstance(commands, list) or not commands
+                or any(not isinstance(cmd, list) or not cmd
+                       or any(not isinstance(arg, str) or not arg for arg in cmd) for cmd in commands)):
+            raise ForkError("verify_image needs an output path, nonempty command lists and the original game's SHA-1")
+        path = (self.root / output).resolve()
+        if self.root.resolve() not in path.parents or path == (self.root / game.get("path", "")).resolve():
+            raise ForkError("verify_image must check a rebuilt image inside the project, separate from the original")
+        return path, sha1.lower(), commands
+
+    def source_is_linked(self, unit: Unit) -> bool:
+        """A source replacement must preserve an explicitly verified image, even before its unit is complete."""
+        return self.image_verification() is not None or (unit.complete and self.linkable())
+
     def verify(self, log=lambda *_: None) -> tuple[bool, str]:
         """Build the game and check it against its checksums (regenerating the build when configure.py changed)."""
+        if check := self.image_verification():
+            path, expected, commands = check
+            logs = []
+            for command in commands:
+                cmd = [sys.executable if arg in ("python", "python3") else arg for arg in command]
+                ok, text = self.run(cmd, log=log, timeout=1800)
+                logs.append(text)
+                if not ok:
+                    return False, "\n".join(logs)
+            try:
+                with path.open("rb") as stream:
+                    actual = hashlib.file_digest(stream, "sha1").hexdigest()
+            except OSError as error:
+                return False, f"couldn't read rebuilt image {path.relative_to(self.root)}: {error}"
+            if actual != expected:
+                return False, f"rebuilt image SHA-1 {actual} does not match original SHA-1 {expected}"
+            return True, "\n".join(logs + [f"rebuilt image SHA-1 matches {expected}"])
         target = self.check_target()
         if target is None:
             return False, "this project has no checksum check to run"

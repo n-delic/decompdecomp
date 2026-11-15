@@ -16,7 +16,7 @@ from decompnet.app import saves
 def test_a_running_compiler_stops_without_waiting_for_its_timeout(tmp_path, monkeypatch):
     started = threading.Event()
     processes = []
-    popen = subprocess.Popen
+    popen = compiler.spawner.Popen
 
     def launch(*args, **kwargs):
         proc = popen(*args, **kwargs)
@@ -24,7 +24,7 @@ def test_a_running_compiler_stops_without_waiting_for_its_timeout(tmp_path, monk
         started.set()
         return proc
 
-    monkeypatch.setattr(compiler.subprocess, "Popen", launch)
+    monkeypatch.setattr(compiler.spawner, "Popen", launch)
 
     def cancel():
         if started.is_set():
@@ -43,7 +43,7 @@ def test_restore_import_uses_the_same_cancellation_scope_as_judging(tmp_path, mo
     (tmp_path / "include/common.h").write_text("/* shared header */\n")
     (tmp_path / saves.MANIFEST).write_text(json.dumps({
         "format": saves.FORMAT, "game": {"sha1": "same"}, "headers": {"": "common.h"},
-        "layout": [], "functions": {},
+        "layout": [], "functions": {}, "notes": [],
     }))
     monkeypatch.setattr(saves.consoles, "identify", lambda _: SimpleNamespace(
         read_game=lambda *_: SimpleNamespace(info={"sha1": "same"})))
@@ -55,11 +55,13 @@ def test_restore_import_uses_the_same_cancellation_scope_as_judging(tmp_path, mo
     log.check_cancel = lambda: checks.append(True)
 
     def importing(*args, **kwargs):
-        assert compiler._CANCEL_CHECK.get() is log.check_cancel
+        before = len(checks)
+        compiler._CANCEL_CHECK.get()()
+        assert len(checks) > before
         raise RuntimeError("cancelled at import")
 
     with pytest.raises(RuntimeError, match="cancelled at import"):
-        net = SimpleNamespace(import_rom=importing, store=SimpleNamespace(all=lambda *_: []))
+        net = SimpleNamespace(import_rom=importing, project_rows=lambda: [])
         saves.restore(net, str(tmp_path), tmp_path / "game", log)
     assert checks
     assert compiler._CANCEL_CHECK.get() is None
@@ -112,14 +114,24 @@ def test_wsl_cancellation_signals_linux_before_removing_its_script(tmp_path, mon
     assert not marker.exists()
 
 
-def test_wsl_compiler_receives_cancellation_check(tmp_path, monkeypatch):
+@pytest.mark.parametrize('cancel', [False, True])
+def test_wsl_compiler_receives_cancellation_check(tmp_path, monkeypatch, cancel):
+    forwarded = []
+    checks = []
     def check():
-        pass
+        checks.append(1)
+        if forwarded and cancel:raise RuntimeError('cancelled in remote stage')
 
     def run(*args, **kwargs):
-        assert kwargs["check_cancel"] is check
+        forwarded.append(True)
+        kwargs["check_cancel"]()
         return "stopped"
 
     monkeypatch.setattr(wsl, "run", run)
     with compiler.cancellable(check):
-        assert compiler._exec(compiler.CompilerConfig(["unused"], wsl=True), tmp_path, [], 60) == "stopped"
+        if cancel:
+            with pytest.raises(RuntimeError, match='cancelled in remote stage'):
+                compiler._exec(compiler.CompilerConfig(["unused"], wsl=True), tmp_path, [], 60)
+        else:
+            assert compiler._exec(compiler.CompilerConfig(["unused"], wsl=True), tmp_path, [], 60) == "stopped"
+    assert forwarded and checks

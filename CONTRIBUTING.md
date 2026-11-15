@@ -9,7 +9,7 @@ executables, and no code, assembly or assets taken from them. That includes the 
 the game, and it belongs to you and the game's owner, not to this repository. Sam's request from decomp.wtf still
 stands: only use decompdecomp on games you own, and respect the rules of the decomp projects you work with.
 
-Before you attach a log (`~/Decomp/.decomp/logs/decomp.log`), read it, and cut out any code or assembly.
+Before you attach a log (`~/Decomp-RetroReversing/.decomp/logs/decomp.log`), read it, and cut out any code or assembly.
 
 ## Reporting a bug
 
@@ -26,14 +26,20 @@ decompdecomp is Python 3.12+, managed with [uv](https://docs.astral.sh/uv/).
 ```bash
 git clone https://github.com/n-delic/decompdecomp && cd decompdecomp
 uv sync
-uv run decomp                 # the development copy, in its own window (projects in ~/Decomp-dev, or $DECOMP_HOME)
-uv run pytest -q              # the tests
+uv run decomp                 # the development copy, in its own window (projects in ~/Decomp-RetroReversing-dev, or $DECOMP_HOME)
+uv run pytest -q              # the tests (parallel by default)
 uv run pytest tests/test_ps2.py -q   # one file
+uv run pytest -q -n 0          # one process, when debugging a worker or its output
 uv run ruff check src tests projects   # the linter
 ```
 
-A checkout is a separate app, "decompdecomp dev": its own folder (`~/Decomp-dev`), port and window. It never
-replaces the decompdecomp you have installed, and never touches its projects in `~/Decomp`. For an experiment, give
+There are about 10,000 tests, so `pytest` runs them across all cores (`pytest-xdist`, configured in
+`pyproject.toml`). Modules that build a demo ROM share `projects/<demo>/build/`, so `tests/conftest.py` keeps them
+on one worker; everything else spreads across the rest. `-n 0` turns parallelism off. `pytest --durations=25`
+shows what is still slow. Tests that need a real compiler or decompiler skip when it isn't installed.
+
+A checkout is a separate app, "decompdecomp dev": its own folder (`~/Decomp-RetroReversing-dev`), port and window. It never
+replaces the decompdecomp you have installed, and never touches its projects in `~/Decomp-RetroReversing`. For an experiment, give
 it a scratch folder: `DECOMP_HOME=/some/scratch/folder DECOMP_TRAY=0 uv run decomp`. The tests already use a folder
 of their own.
 
@@ -61,7 +67,7 @@ Some things we won't merge:
   the pinned ones.
 - Letting agents edit a project's build setup. They're limited to source and header files on purpose.
 - Links to the decomp.wtf website. That domain isn't ours. Keep the internal names (`decomp`, `decompnet`,
-  `~/Decomp`, `.decomp.wtf.json`): existing installs depend on them.
+  `.decomp.wtf.json`): existing installs depend on them.
 
 Not sure what to work on? [ROADMAP.md](ROADMAP.md) lists what's planned and why, and has a table of which feature
 works on which platform: every — in it is a gap to fill.
@@ -172,6 +178,7 @@ A console works in one of two modes:
    | `export_project(net, slug, out, log)` | ROM: write and check a tree that rebuilds the game. |
    | `find_gp(image, program, segments)` | ROM: `$gp` as the game sets it. |
    | `debug_info(program, known)`, `debug_brief(known)` | The game's own symbols and types, and their lines in a brief. |
+   | `release_key(rom)` | What every release (region) of one game shares, from its header (N64, GBA: the game code without its region letter): other releases are found by it. None: by identical code. |
    | `after_import(net, slug, chosen)`, `on_start(net, slug)` | Work a new project gets once; work each project gets at start. |
    | `create_project(root, game, compiler)`, `game_info(game)` | PROJECT: makes the project; says which game a file is. |
    | `tool_args()` | PROJECT: points the project's configure step at the pinned tools. |
@@ -374,8 +381,7 @@ An agent is one of two sorts:
    | `session_command(exe, workdir, mcp_url, token, model)` | One session's command line, and what it adds to the environment. |
    | `launch_command(argv)` | Adjust the command used to start the program when its installer uses a shim. |
    | `stdin(prompt)` | What goes in on stdin: the prompt, as the agent reads it. |
-   | `prompt_file(workdir, prompt)` | The prompt as a file, for a CLI with no stdin prompt (zcode's `--attach`); None means stdin. |
-   | `parse(event, state)` | The feed items in one JSON event it prints: text, thinking, tool calls, errors, what the session spent. |
+   | `parse(event, state)` | The feed items in one JSON event it prints: text, thinking, tool calls, errors, what the session spent. A protocol program (zcode) also says ("stdin", line) — the app writes the line to its stdin — and ("stop", line) when the work is done, ending a process that wouldn't exit on its own. |
    | `clean_stderr(line)` | A line of its stderr worth showing, or "" for noise. |
    | `fatal(error)` | Whether an error means every try would fail the same way: the helper pauses instead. |
    | `models(path, run)`, `read_models(lines)` | The models to offer in the launcher. |
@@ -403,6 +409,11 @@ An agent is one of two sorts:
 - A change to a console or a feature says which of the app's features you ran on it and how (AGENTS.md, "Check
   every feature on the console you touch"); reviewers check the same list.
 - Keep each one to one change, and say in the description what it fixes or adds, and how you tested it.
+- A performance change (a `perf/` branch) shows a before and after from the throughput benchmark: run
+  `uv run python -m decompnet.bench --out before.json` on main and `--out after.json` on your branch, on the same
+  computer, and paste `uv run python -m decompnet.bench --compare before.json after.json` into the description.
+  A part that got faster but matches no more functions per CPU-minute isn't a win yet
+  (docs/APP_PERFORMANCE.md, "Throughput: functions matched per CPU-minute").
 - Commit messages describe what users get, in one sentence, with a body explaining why.
 - Don't bump the version. Releases are made separately.
 - Pull requests written with an AI agent are fine (AGENTS.md is there for it). Read the diff yourself, and make sure

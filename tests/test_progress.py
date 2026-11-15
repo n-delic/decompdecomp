@@ -1,6 +1,9 @@
 """A collaborator's files take precedence over SQLite, without an import button or a second on-disk copy."""
 
+import contextlib
+import errno
 import json
+import os
 import shutil
 import threading
 import time
@@ -18,6 +21,9 @@ from decompnet.rom import split
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
+    # One verification lane: these tests stand in for "every lane is busy" by taking the slot themselves.
+    # Several lanes: tests/test_progress_import_admission.py.
+    monkeypatch.setenv("DECOMP_VERIFICATION_PROJECTS", "1")
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     cfg = {"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"}, "instructions": "old"}
     with net.store.tx() as db:
@@ -52,6 +58,111 @@ def manifest(folder, **changes):
     data = json.loads(path.read_text())
     data.update(changes)
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_a_best_draft_improved_while_its_saved_draft_is_judged_is_published(project, monkeypatch):
+    """The permuter improved a best draft while the saved judge compiled the folder's older one. The folder kept the
+    older draft while the baseline recorded the newer one as published, so every later import (any other file
+    changing) compiled the old draft again: hundreds of identical compiles an hour on an N64 game."""
+    net, folder, judged = project
+    pid = net._project("game")["id"]
+
+    def attempt(agent, name, source, slug):
+        judged.append((name, source))
+        matched = "good" in source
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status=?,matched_source=?,best_source=?,best_score=? "
+                       "WHERE project_id=? AND name=?", ("matched" if matched else "open", source if matched else None,
+                                                        source, 0 if matched else 10, pid, name))
+            if name == "g":  # meanwhile a local search found a better draft
+                db.execute("UPDATE functions SET best_source='better draft',best_score=5 WHERE project_id=? AND name='g'",
+                           (pid,))
+        return {"matched": matched}
+    monkeypatch.setattr(net, "attempt", attempt)
+
+    (folder / "best").mkdir(exist_ok=True)
+    (folder / "best/g.c").write_text("older draft\n", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged == [("g", "older draft\n")]
+    assert net._function("g", "game")["best_source"] == "better draft"
+    assert (folder / "best/g.c").read_text() == "better draft\n"
+
+    # Another contribution starts an import pass: only its own function is judged.
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/f.c").write_text("good f\n", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged == [("g", "older draft\n"), ("f", "good f\n")]
+    assert net._function("f", "game")["status"] == "matched"
+    assert net._function("g", "game")["best_source"] == "better draft"
+    assert not net.progress.sync("game", force=True)
+
+
+def _identical_saved_match(net, folder):
+    """f matched in the database, and its saved C arriving on disk outside the sync's record (a recovery, a pull of
+    the same bytes): the import would compile it only to say it matches again."""
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good local',best_source='good local',"
+                   "best_score=0,matched_at=? WHERE name='f'", (time.time(),))
+    net.progress.sync("game", force=True)
+    assert (folder / "src/f.c").read_text() == "good local\n"
+    pid = net._project("game")["id"]
+    net.progress._baseline(pid).disk.files.pop("src/f.c")
+    net.progress.signatures.pop("game", None)
+    return pid
+
+
+def _last_recheck(net, pid, when):
+    with net.project_store(pid).tx() as db:
+        db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                   (f"saved_recheck_at:{pid}", repr(when)))
+
+
+def test_unchanged_saved_matches_are_rechecked_at_most_once_an_interval(project):
+    net, folder, judged = project
+    pid = _identical_saved_match(net, folder)
+    _last_recheck(net, pid, time.time())
+    net.progress.sync("game", force=True)
+    assert judged == []  # not due: the CPU stays with new matches
+    assert net._function("f", "game")["status"] == "matched"
+    assert net._function("f", "game")["matched_source"] == "good local"
+    # A changed file is judged at once, while the unchanged one still waits.
+    (folder / "best").mkdir(exist_ok=True)
+    (folder / "best/g.c").write_text("contributed draft\n", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged == [("g", "contributed draft\n")]
+    # Once the interval has passed, the next import checks the waiting one too, once.
+    _last_recheck(net, pid, time.time() - 61 * 60)
+    (folder / "best/g.c").write_text("another draft\n", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert sorted(judged[1:]) == [("f", "good local\n"), ("g", "another draft\n")]
+    assert net._function("f", "game")["status"] == "matched"
+    assert net.project_store(pid).one("SELECT 1 FROM settings WHERE key=?", f"saved_recheck_pending:{pid}") is None
+
+
+def test_a_zero_recheck_interval_checks_unchanged_saved_matches_on_every_sync(project):
+    net, folder, judged = project
+    net.progress.recheck_minutes = 0
+    pid = _identical_saved_match(net, folder)
+    _last_recheck(net, pid, time.time())
+    net.progress.sync("game", force=True)
+    assert judged == [("f", "good local\n")]
+
+
+def test_metadata_pull_keeps_already_verified_local_matches(project):
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good local',best_source='good local',"
+                   "best_score=0,matched_at=? WHERE name='f'", (time.time(),))
+    # This collaborator changed only instructions, while a local match has not yet
+    # been published. Exporting that verified C must not reopen/rejudge it.
+    manifest(folder, instructions='new collaborator instructions')
+    assert net.progress.sync('game', force=True)
+    assert net._function('f', 'game')['status'] == 'matched'
+    assert net._function('f', 'game')['matched_source'] == 'good local'
+    assert judged == []
+    assert net.instructions('game') == 'new collaborator instructions'
+    assert (folder/'src/f.c').read_text() == 'good local\n'
+    assert not net.progress.sync('game', force=True)
 
 
 def test_long_template_names_survive_saves_edits_and_deletions(project):
@@ -95,16 +206,39 @@ def test_repair_keeps_a_shortened_file_for_a_known_long_symbol(tmp_path):
     name = "lower_bound__" + "template_argument_" * 40
     file = saves._source_file(name)
 
-    class Store:
-        @staticmethod
-        def all(query, project_id):
-            return [{"name": name}]
-
-    disk = {saves.MANIFEST: json.dumps({"layout": [{"name": "g"}]}), f"src/{file}": "edited source"}
-    repaired = _repair(SimpleNamespace(store=Store()), 1, tmp_path, disk, lambda *_: None)
+    # Execute the real metadata query so this guard covers both direct and
+    # aggregate transport, rather than depending on a Store.all-only stub.
+    import sqlite3
+    with sqlite3.connect(':memory:') as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute('CREATE TABLE functions(project_id INTEGER, name TEXT, vram INTEGER, size INTEGER, status TEXT)')
+        connection.execute('INSERT INTO functions VALUES(1,?,NULL,NULL,NULL)', (name,))
+        store = SimpleNamespace(one=lambda query, pid: connection.execute(query, (pid,)).fetchone())
+        disk = {saves.MANIFEST: json.dumps({"layout": [{"name": "g"}]}), f"src/{file}": "edited source"}
+        repaired = _repair(SimpleNamespace(store=store), 1, tmp_path, disk, lambda *_: None)
 
     assert f"src/{file}" in repaired
     assert not (tmp_path / "unlisted" / "src" / file).exists()
+
+
+def test_saved_c_of_a_function_the_layout_lacks_is_added_to_the_layout(project):
+    """An N64 game's split function had its C saved to src/ while the folder's layout kept the entries from before
+    the split: every sync refused the folder ("Add func_… to the function layout"), and since each tool call syncs
+    first, every helper's every tool failed. The database knows the function: the folder's layout gets it."""
+    net, folder, judged = project
+    pid = net._project("game")["id"]
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'h',4104,8,2,'open','')", (pid,))
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/h.c").write_text("good C for h", encoding="utf-8")
+    net.progress.sync("game", force=True)  # (no "Add h to the function layout")
+    layout = json.loads((folder / saves.MANIFEST).read_text())["layout"]
+    assert {"name": "h", "vram": 4104, "size": 8, "status": "open"} in layout
+    assert [entry["name"] for entry in layout] == ["f", "g", "h"]
+    assert ("h", "good C for h") in judged and net._function("h", "game")["status"] == "matched"
+    assert (folder / saves.NOTES_FILE).exists()
+    assert not net.progress.sync("game", force=True)
 
 
 def test_unlisted_shortened_filename_error_names_the_full_function(project):
@@ -145,40 +279,17 @@ def test_manual_save_locations_survive_restart_and_belong_to_one_project(project
     assert "save_folder" not in net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'"))
 
 
-def test_a_failed_save_keeps_the_last_successful_location(project, tmp_path, monkeypatch):
-    net, _, _ = project
-    chosen = tmp_path / "saved"
-    saves.save(net, "game", chosen)
-
-    def fail(*args, **kwargs):
-        raise NetworkError("The save folder is unavailable.")
-
-    monkeypatch.setattr(saves, "_publish", fail)
-    with pytest.raises(NetworkError, match="unavailable"):
-        saves.save(net, "game", tmp_path / "unavailable")
-    assert saves.save_folder(net, "game") == chosen.resolve()
-
-
-def test_a_save_to_an_unwritable_remembered_folder_has_an_actionable_error(project, tmp_path, monkeypatch):
-    net, _, _ = project
-    chosen = tmp_path / "unwritable"
-    saves.save(net, "game", chosen)
-
-    def fail(*args, **kwargs):
-        raise PermissionError("permission denied")
-
-    monkeypatch.setattr(saves, "_publish", fail)
-    with pytest.raises(NetworkError, match="Choose a writable folder"):
-        saves.save(net, "game", chosen)
-
-
-def test_a_project_opened_from_a_save_shows_its_linked_location(project, tmp_path):
-    net, _, _ = project
-    checkout = tmp_path / "checkout"
+@pytest.mark.parametrize('source,expected', [('good local', 'matched'), ('different local', 'open')])
+def test_metadata_pull_judges_unpublished_local_best_even_without_disk_code(project, source, expected):
+    net, folder, judged = project
     with net.store.tx() as db:
-        cfg = dict(net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'")), progress_folder=str(checkout))
-        db.execute("UPDATE projects SET config=? WHERE slug='game'", (json.dumps(cfg),))
-    assert saves.save_folder(net, "game") == checkout
+        db.execute("UPDATE functions SET best_source=?,best_score=10 WHERE name='f'", (source,))
+    manifest(folder, instructions='new instructions')
+    assert net.progress.sync('game', force=True)
+    assert ('f', source+'\n') in judged
+    assert net._function('f', 'game')['status'] == expected
+    assert net._function('f', 'game')['best_source'] == source+'\n'
+    assert not net.progress.sync('game', force=True)
 
 
 def test_a_new_source_is_discovered_without_editing_the_function_index(project):
@@ -201,7 +312,8 @@ def test_editing_a_match_rejudges_it_and_preserves_a_failed_contribution(project
     net.progress.sync("game", force=True)
     assert net._function("f", "game")["status"] == "open"
     saves.save(net, "game")
-    assert path.read_text() == "different C"
+    assert not path.exists()
+    assert (folder / "best/f.c").read_text() == "different C\n"
     assert judged == [("f", "good original"), ("f", "different C")]
 
 
@@ -241,9 +353,11 @@ def test_a_header_change_keeps_the_last_match_until_rejudging_can_run(project, m
         raise NetworkError("the compiler was cancelled")
 
     monkeypatch.setattr(net, "attempt", unavailable)
-    net.progress.sync("game", force=True)
-    fn = net._function("f", "game")
+    with pytest.raises(NetworkError, match="Saved files are retained"):
+        net.progress.sync("game", force=True)
+    fn = net.store.one("SELECT * FROM functions WHERE name='f'")
     assert fn["status"] == "open" and fn["best_source"] == "known match"
+    assert (folder / "src/f.c").read_text() == "known match\n"
 
 
 def test_a_restart_reads_progress_before_writing_stale_database_sources(project):
@@ -260,7 +374,6 @@ def test_a_restart_publishes_a_newer_database_match_over_its_old_saved_snapshot(
     net, folder, _ = project
     agent, _ = net.local_agent("helper")
     net._record(net._function("f", "game"), agent, 0, "new database match", 1, matched=True)
-    assert not (folder / "src/f.c").exists()
     net.progress = Progress(net)
     net.progress.sync("game", force=True)
     assert (folder / "src/f.c").read_text() == "new database match\n"
@@ -272,7 +385,7 @@ def test_cleared_settings_and_deleted_notes_are_authoritative(project):
     agent, _ = net.local_agent("helper")
     net.add_note(agent, "game", "old project note")
     net.progress.sync("game", force=True)
-    assert len(json.loads((folder / saves.MANIFEST).read_text())["notes"]) == 1
+    assert len(saves.read_manifest(folder)["notes"]) == 1
     manifest(folder, instructions="", notes=[], compiler_ranges=[])
     net.progress.sync("game", force=True)
     assert net.instructions("game") == ""
@@ -502,8 +615,7 @@ def test_a_failed_sync_waits_for_a_change_before_reads_and_the_autosave_try_it_a
     assert tries == ["f"]
     for _ in range(3):
         assert saves.Autosave(net).run_once() == []
-        with pytest.raises(NetworkError, match="Could not read or write progress"):
-            net.summary("game")  # the project list still says why
+        assert "Could not read or write progress" in net.summary("game")["progress_error"]
     assert tries == ["f"]
     with pytest.raises(NetworkError):
         net.progress.sync("game", force=True)  # Check again, an edit through the app, a compile
@@ -551,7 +663,7 @@ def test_the_autosave_logs_a_failing_sync_once_not_every_second(project, monkeyp
     with caplog.at_level("ERROR", logger=saves.log.name):
         for _ in range(4):
             saves.Autosave(net).run_once()
-    assert sum("saving game failed" in r.getMessage() for r in caplog.records) == 1
+    assert sum("Progress sync failed for game" in r.getMessage() for r in caplog.records) == 1
 
 
 def test_unchanged_progress_sync_skips_rendering(project, monkeypatch):
@@ -737,18 +849,23 @@ def test_background_compile_discards_results_if_progress_changes(worker, project
     net, folder, _ = project
     from decompnet.scoring import DiffResult
 
+    # The permuter now captures a complete compiler profile before invoking the stub.
+    net._update_cfg("game", lambda cfg: cfg.update(compiler={"toolchain": "gcc-2.7.2-kmc", "flags": []}))
     proj = net.project_row("game")
     fn = net._function("f", "game")
     agent, _ = net.local_agent(worker)
 
     def compile_with_pull(*_args):
-        manifest(folder, instructions="changed during compile")
+        (folder / "include/common.h").write_text("typedef int AddedType;", encoding="utf-8")
         net.progress.sync("game", force=True)
-        return SimpleNamespace(ok=True, obj=object(), log="")
+        return SimpleNamespace(ok=True, obj=b"stub compiled bytes", log="")
 
     monkeypatch.setattr(net, "_compile", compile_with_pull)
     monkeypatch.setattr(net, "_evaluate", lambda *_: (object(), None, []))
-    monkeypatch.setattr(net, "_target_obj", lambda *_: object())
+    monkeypatch.setattr(net, "_target_obj", lambda *_: SimpleNamespace(cpu="mips"))
+    # The fake compiler objects have no instructions; this test exercises the
+    # stale-progress recorder guard after scoring, not diagnostic disassembly.
+    monkeypatch.setattr("decompnet.scoring.disassemble", lambda *_: [])
     monkeypatch.setattr("decompnet.scoring.diff", lambda *_: DiffResult(1, 1, [], False))
     if worker == "autopilot":
         from decompnet.app.engine import autopilot
@@ -1183,114 +1300,2301 @@ def test_polishing_started_before_a_pull_cannot_replace_the_contribution(project
     assert net._function("f", "game")["matched_source"] == "good PR"
 
 
-def test_a_rejected_manifest_says_which_part_it_rejected(project):
-    """#158: one sentence for every reason left a user with a large manifest nowhere to look."""
+def test_read_only_view_does_not_bypass_judging_synchronization(project, monkeypatch):
+    net, _, _ = project
+    calls = []
+    monkeypatch.setattr(net.progress, 'sync', lambda slug, **kwargs: calls.append((slug, kwargs.get('force'))))
+    with net.progress.view():
+        net.project_row('game')
+        assert calls == []
+        with net.progress.judging('game'):
+            pass
+    assert calls == [('game', True), ('game', True)]
+    assert not net.progress.viewing
+
+
+def test_sync_activity_is_project_scoped_and_cleared_on_failure(project, monkeypatch):
     net, folder, _ = project
-    manifest(folder, symbols=[{"name": "bad-name", "address": 4, "size": 1, "kind": "func"}])
-    with pytest.raises(NetworkError, match=r"symbol 'bad-name'"):
-        net.progress.sync("game", force=True)
-    (folder / saves.MANIFEST).write_text('{"format": 1,', encoding="utf-8")
-    with pytest.raises(NetworkError, match=r"reference existing headers \(Expecting"):
-        net.progress.sync("game", force=True)
+    slug = "game"
+    entered, release = threading.Event(), threading.Event()
+    errors = []
+    def blocked_sync(*args, **kwargs):
+        net.progress._activity(slug, phase='Verifying saved functions', done=3, total=8,
+                               function='func_80001000', matched=2, lost=1)
+        entered.set()
+        assert release.wait(3)
+        raise RuntimeError('verification failed')
+    monkeypatch.setattr(net.progress, '_sync', blocked_sync)
+    net.progress.signatures.clear()
+    manifest(folder,instructions="external edit requires synchronization")
+    def run():
+        try:
+            net.progress.sync(slug, force=True)
+        except RuntimeError as exc:
+            errors.append(str(exc))
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(3)
+        status = net.progress.status(slug)
+        assert status['done'] == 3 and status['total'] == 8
+        assert status['function'] == 'func_80001000'
+        assert status['elapsed_seconds'] >= 0
+        assert net.progress.status('another-project') is None
+    finally:
+        release.set()
+        worker.join(4)
+    assert errors == ['verification failed']
+    assert net.progress.status(slug) is None
 
 
-def test_a_piece_named_by_its_label_saves_and_opens_again(project):
-    """#158: spimdisasm names a piece that starts at a jump target by its label (`.L80129B10`); the folder the app
-    wrote with it must read back."""
+def test_judging_lock_does_not_claim_saved_progress_is_running(project):
+    net, _, _ = project
+    slug = "game"
+    with net.progress._project_lock(slug):
+        assert not net.progress.syncing(slug)
+
+
+def test_saved_judge_reports_counts_including_missing_sources(project):
+    net, folder, _ = project
+    updates = []
+    def report(line):
+        pass
+    report.progress = lambda **fields: updates.append(fields)
+    rows = net.store.all("SELECT * FROM functions WHERE project_id=(SELECT id FROM projects WHERE slug='game')")
+    result = saves._judge_saved(net, 'game', folder, {}, {row['name']: row for row in rows},
+                               {'f': {'vram': 4096, 'matched_by': 'autopilot'},
+                                'g': {'vram': 4100, 'matched_by': 'autopilot'}}, report,
+                               files={'src/f.c': 'good source'})
+    assert result['matched'] == 1 and result['lost'] == ['g']
+    assert updates[0]['phase']=='Preparing saved verification'
+    assert [(item['done'], item['total'], item['function']) for item in updates
+            if item.get('phase') in (None,'Verifying saved functions')] == [
+        (0, 2, 'f'), (1, 2, 'g'), (2, 2, None)]
+
+
+def test_pause_keeps_ui_snapshot_readable_and_gates_mutations(project):
+    net, _, _ = project
+    net.progress.pause('game')
+    assert net.progress.status('game')['paused']
+    with net.progress.view():
+        assert net._project('game')['slug'] == 'game'
+    with pytest.raises(NetworkError, match='verification is paused'):
+        net.progress.sync('game', force=True)
+    net.progress.resume('game')
+    assert not net.progress.status('game')
+    net.progress.sync('game', force=True)
+
+
+def test_imported_best_promotes_source_and_manifest_together(project):
+    net, folder, judged = project
+    (folder/'best').mkdir()
+    (folder/'best/f.c').write_text('good new draft')
+    assert net.progress.sync('game',force=True)
+    assert net._function('f','game')['status']=='matched'
+    assert (folder/'src/f.c').read_text()=='good new draft\n'
+    assert not (folder/'best/f.c').exists()
+    data=json.loads((folder/saves.MANIFEST).read_text())
+    assert 'matched_by' in data['functions']['f']
+    assert net.progress.results['game']['matched']==1
+    assert net.progress.results['game']['best']==0
+    # A no-op save and a fresh Progress instance must not reopen or lose the match.
+    net.progress.sync('game',force=True)
+    net.progress=Progress(net)
+    net.progress.sync('game',force=True)
+    assert net._function('f','game')['matched_source']=='good new draft'
+    assert (folder/'src/f.c').read_text()=='good new draft\n'
+
+
+def test_post_judge_promotion_does_not_overwrite_concurrent_editor(project,monkeypatch):
+    net,folder,_=project
+    (folder/'best').mkdir()
+    best=folder/'best/f.c'
+    best.write_text('good new draft')
+    publish=saves._publish
+    def racing(folder,files,*args,**kwargs):
+        if 'src/f.c' in files and kwargs.get('expected',{}).get('best/f.c')=='good new draft':
+            best.write_text('new editor contribution')
+        return publish(folder,files,*args,**kwargs)
+    monkeypatch.setattr(saves,'_publish',racing)
+    net.progress.sync('game',force=True)
+    assert best.read_text()=='new editor contribution'
+    assert not (folder/'src/f.c').exists()
+    monkeypatch.setattr(saves,'_publish',publish)
+    net.progress.sync('game',force=True)
+    assert net._function('f','game')['best_source']=='new editor contribution'
+
+
+@pytest.mark.parametrize('platform',['n64','ps2'])
+def test_exported_assembly_local_symbols_can_be_verified_again(project,platform):
+    net,folder,_=project
+    pid=net._project('game')['id']
+    names=['.L00100380','.Ltmp0','.Lfunction_end']
+    cfg=json.loads(net._project('game')['config']);cfg['platform']=platform
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
+        for i,name in enumerate(names):
+            db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',
+                       (pid,name,0x100380+i*4,0,'data'))
+    net.progress.sync('game',force=True)
+    saved=(folder/saves.MANIFEST).read_bytes()
+    data=json.loads(saved)
+    assert set(names)<={s['name'] for s in data['symbols']}
+    net.progress.sync('game',force=True)
+    assert (folder/saves.MANIFEST).read_bytes()==saved
+
+
+def test_a_name_whose_kind_recovery_left_unknown_saves(project):
+    """Reviewed-tail recovery names an address it can't classify with kind 'unknown' (reviewed_code.py); an N64
+    game's save then stopped at its own check ("symbol 'AW' has an invalid name, address, size or kind")."""
+    net,folder,_=project
+    pid=net._project('game')['id']
+    with net.store.tx() as db:
+        db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',(pid,'AW',0x100390,0,'unknown'))
+    net.progress.sync('game',force=True)
+    assert {'name':'AW','address':0x100390,'size':0,'kind':'unknown'} in json.loads((folder/saves.MANIFEST).read_bytes())['symbols']
+
+
+@pytest.mark.parametrize('name',['../bad','.L../bad','.Lbad/name','bad-name','label:','a;evil',''])
+def test_assembly_label_support_does_not_allow_paths_or_invalid_symbols(project,name):
+    net,folder,_=project
+    manifest(folder,symbols=[{'name':name,'address':4,'size':0,'kind':'data'}])
+    before=(folder/saves.MANIFEST).read_bytes()
+    with pytest.raises(NetworkError,match='invalid name'):
+        net.progress.sync('game',force=True)
+    assert (folder/saves.MANIFEST).read_bytes()==before
+
+
+def test_non_numeric_assembly_labels_are_not_allowed_as_c_layout_names(project):
+    net,folder,_=project
+    manifest(folder,layout=[{'name':'.Ltmp0','vram':0x100380,'size':4,'status':'open'}])
+    with pytest.raises(NetworkError,match='layout entry'):
+        net.progress.sync('game',force=True)
+
+
+def test_numeric_assembly_label_piece_saves_and_opens_again(project):
     net, folder, _ = project
     with net.store.tx() as db:
         db.execute("UPDATE functions SET name='.L00001004' WHERE name='g'")
-    net.progress.sync("game", force=True)
-    manifest(folder, instructions="edited in the folder")
-    net.progress.sync("game", force=True)
-    names = [row["name"] for row in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
-    assert ".L00001004" in names
+    net.progress.sync('game', force=True)
+    manifest(folder, instructions='edited in the folder')
+    net.progress.sync('game', force=True)
+    names = [row['name'] for row in json.loads((folder / saves.MANIFEST).read_text())['layout']]
+    assert '.L00001004' in names
 
 
-def test_the_autosave_reads_every_file_only_of_projects_in_use_and_the_rest_in_turns(project, monkeypatch):
-    """Hundreds of projects: reading every file of each, every second, cost 300 ms a pass with 200 small ones. A
-    project in use is read whole each pass; the quiet ones get the cheap check, and the deep one in turns."""
+def test_verification_counters_reach_import_job_logger(project):
+    net, folder, _ = project
+    (folder / 'src').mkdir()
+    (folder / 'src/f.c').write_text('good', encoding='utf-8')
+    snapshots = []
+    def report(line):
+        pass
+    report.progress = lambda value: snapshots.append(dict(value))
+    net.progress.sync('game', force=True, logger=report)
+    measured = [p for p in snapshots if p.get('total')]
+    assert measured
+    assert measured[0]['done'] == 0
+    assert measured[-1]['done'] == measured[-1]['total'] == 1
+
+
+def test_periodic_autosave_keeps_dirty_saves_prompt_and_finds_in_place_edits(project,monkeypatch):
+    net,folder,judged=project
+    clock=[100.0]
+    monkeypatch.setattr(saves.time,'monotonic',lambda:clock[0])
+    auto=saves.Autosave(net)
+    auto.run_once(force=False)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='draft',best_score=10 WHERE name='f'")
+    clock[0]+=1
+    assert auto.run_once(force=False)==['game']
+    path=folder/'best/f.c'
+    assert path.read_text()=='draft\n'
+    # An editor can change a file without updating the containing folder's stat.
+    directory_stamp=path.parent.stat()
+    path.write_text('changed draft\n')
+    import os
+    os.utime(path.parent,ns=(directory_stamp.st_atime_ns,directory_stamp.st_mtime_ns))
+    clock[0]+=15
+    auto.run_once(force=False)
+    assert net._function('f','game')['best_source']=='changed draft\n'
+
+
+def test_source_edit_preserves_unchanged_note_history_and_ids(project, monkeypatch):
+    net, folder, judged = project
+    (folder / 'src').mkdir(exist_ok=True)
+    path = folder / 'src/f.c'
+    path.write_text('good original')
+    net.progress.sync('game', force=True)
+    agent, _ = net.local_agent('reviewer')
+    net.add_note(agent, 'game', 'temporary history', 'g')
+    temporary = net.store.one("SELECT id FROM notes WHERE text='temporary history'")['id']
+    net.add_note(agent, 'game', 'existing history', 'f')
+    with net.store.tx() as db:
+        db.execute('DELETE FROM notes WHERE id=?',(temporary,))
+    net.progress.sync('game', force=True)
+    before = [dict(r) for r in net.store.all('SELECT id,text,created_at FROM notes WHERE project_id=1 ORDER BY id')]
+    assert before
+    original = net.add_note
+    def no_replay(agent, slug, text, function=None, **kwargs):
+        assert text != 'existing history', 'An unchanged history must not be replayed'
+        return original(agent, slug, text, function, **kwargs)
+    monkeypatch.setattr(net, 'add_note', no_replay)
+    path.write_text('good edited')
+    net.progress.sync('game', force=True)
+    assert [dict(r) for r in net.store.all('SELECT id,text,created_at FROM notes WHERE project_id=1 ORDER BY id')] == before
+    assert judged[-1] == ('f', 'good edited')
+
+
+def test_manifest_note_changes_still_replace_history(project):
+    net, folder, _ = project
+    agent, _ = net.local_agent('reviewer')
+    net.add_note(agent, 'game', 'remove this history', 'f')
+    net.progress.sync('game', force=True)
+    manifest(folder, notes=[{'function': 'f', 'text': 'imported history', 'by': 'contributor'}])
+    net.progress.sync('game', force=True)
+    texts = [r['text'] for r in net.store.all('SELECT text FROM notes WHERE project_id=1')]
+    assert 'remove this history' not in texts
+    assert any('imported history' in text for text in texts)
+
+
+def test_source_edit_keeps_note_added_after_database_render(project, monkeypatch):
+    net, folder, _ = project
+    (folder / 'src').mkdir(exist_ok=True)
+    path = folder / 'src/f.c'
+    path.write_text('good original')
+    net.progress.sync('game', force=True)
+    agent, _ = net.local_agent('reviewer')
+    net.add_note(agent, 'game', 'original history', 'f')
+    net.progress.sync('game', force=True)
+    render = saves._render
+    inserted = []
+    def render_with_note(*args, **kwargs):
+        result = render(*args, **kwargs)
+        if not inserted:
+            inserted.append(True)
+            net.add_note(agent, 'game', 'concurrent history', 'f')
+        return result
+    monkeypatch.setattr(saves, '_render', render_with_note)
+    path.write_text('good edited')
+    net.progress.sync('game', force=True)
+    texts = [r['text'] for r in net.store.all('SELECT text FROM notes WHERE project_id=1')]
+    assert inserted and 'original history' in texts and 'concurrent history' in texts
+
+
+def test_background_autosave_cancellation_rolls_back_restore_and_explicit_save_still_works(project, monkeypatch):
+    net, folder, judged = project
+    manifest(folder, notes=[{'by':'worker','text':'contribution','function':'f'}])
+    changed = (folder / saves.MANIFEST).read_text()
+    cancelled = threading.Event()
+    original = saves._apply_context
+    def apply(*args, **kwargs):
+        result = original(*args, **kwargs)
+        cancelled.set()
+        return result
+    def report(message):pass
+    def check():
+        if cancelled.is_set():raise saves._AutosavePaused('Paused')
+    report.check_cancel = check
+    with monkeypatch.context() as patch:
+        patch.setattr(saves, '_apply_context', apply)
+        with pytest.raises(saves._AutosavePaused):
+            net.progress.sync('game', force=True, logger=report)
+    assert not net.store.all('SELECT * FROM notes')
+    assert (folder / saves.MANIFEST).read_text() == changed
+    assert 'game' not in net.progress.errors
+    assert not net.progress.syncing('game')
+    assert net.progress.sync('game', force=True)
+    assert net.store.one('SELECT text FROM notes')['text']=='contribution'
+
+
+@pytest.mark.parametrize('metadata',[
+    {'instructions':'Documented workflow guidance'},
+    {'notes':[{'function':'g','text':'A contributor note','by':'contributor'}]},
+])
+def test_metadata_pull_during_compile_does_not_discard_result(project,metadata):
+    net,folder,judged=project
+    agent,_=net.local_agent('helper')
+    errors=[]
+    def pull():
+        try:net.progress.sync('game',force=True)
+        except BaseException as error:errors.append(error)
+    with net.progress.judging('game'):
+        manifest(folder,**metadata)
+        worker=threading.Thread(target=pull);worker.start();worker.join(timeout=5)
+        assert not worker.is_alive() and not errors
+        net._record(net._function('f','game'),agent,10,'candidate C',1,matched=False)
+    assert net._function('f','game')['best_source']=='candidate C'
+    assert judged==[]
+    if 'instructions' in metadata:
+        assert net.instructions('game')==metadata['instructions']
+    else:
+        assert net.store.one("SELECT text FROM notes WHERE text='A contributor note'") is not None
+
+
+def test_verification_estimate_uses_completed_functions_and_hides_when_paused(monkeypatch):
+    from decompnet.app import progress
+    worker=Progress.__new__(Progress)
+    worker.local=threading.local()
+    worker.activity={}
+    worker.activity_lock=threading.Lock()
+    now=[100.0]
+    monkeypatch.setattr(progress.time,'monotonic',lambda:now[0])
+    worker._activity('game',phase='Verifying saved functions',done=0,total=10)
+    assert worker.status('game')['remaining_seconds'] is None
+    now[0]=112.0
+    worker._activity('game',done=3)
+    assert worker.status('game')['remaining_seconds']==28
+    assert worker.status('other') is None
+    worker._activity('game',paused=True)
+    assert worker.status('game')['remaining_seconds'] is None
+    worker._activity('game',phase='Saving verified progress',paused=False,done=10,total=10)
+    assert worker.status('game')['remaining_seconds'] is None
+
+
+def test_verification_banner_exposes_reason_counters_and_progress():
+    root=Path(__file__).parents[1]/'src/decompnet/app/static'
+    html=(root/'index.html').read_text()
+    js=(root/'js/project.js').read_text()
+    assert '<section class="notice verification-banner" id="progressSyncNotice"' in html
+    assert 'id="progressSyncReason"' in html
+    assert 'id="progressSyncBar" role="progressbar"' in html
+    assert 'remaining_seconds' in js and 'Estimating time remaining' in js
+    assert 'sync.done / sync.total' in js
+
+
+@pytest.mark.parametrize('fail',[False,True])
+def test_progress_batch_defers_sync_across_threads_and_flushes_once(monkeypatch,fail):
+    worker=Progress(SimpleNamespace(store=SimpleNamespace(_local=threading.local())))
+    original=worker.sync
+    flushes=[]
+    def sync(slug,**kwargs):
+        if worker._batching(slug):
+            return original(slug,**kwargs)
+        flushes.append(slug)
+        return False
+    monkeypatch.setattr(worker,'sync',sync)
+    def run():
+        with worker.batch('game'):
+            for _ in range(5):assert worker.sync('game',force=True) is False
+            worker_thread=threading.Thread(target=lambda:worker.sync('game',force=True))
+            worker_thread.start();worker_thread.join(2)
+            assert not worker_thread.is_alive()
+            with worker.batch('game'):
+                assert worker.sync('game') is False
+            assert flushes==['game']
+            assert not worker._batching('other')
+            if fail:raise NetworkError('candidate failed')
+    if fail:
+        with pytest.raises(NetworkError,match='candidate failed'):run()
+    else:run()
+    assert flushes==['game','game']
+    assert not worker._batching('game')
+
+
+def test_affected_progress_checks_follow_effective_profiles_and_private_headers():
+    from decompnet.app.progress import affected_functions
+    old={'compiler':{'toolchain':'gcc','flags':['-O2']},
+         'headers':{'':'common.h','private':'private.h'}}
+    rows=[{'name':'a','unit':'','vram':4,'rom_offset':4},
+          {'name':'b','unit':'private','vram':4,'rom_offset':16}]
+    new=json.loads(json.dumps(old))
+    new['function_compilers']={'16:4':{'vram':4,'toolchain':'gcc','flags':['-O0']}}
+    assert affected_functions(old,new,set(),rows)=={'b'}
+    assert affected_functions(old,old,{'include/private.h'},rows)=={'b'}
+    assert affected_functions(old,old,{'include/common.h'},rows)=={'a'}
+    assert affected_functions(old,old,{'src/a.c'},rows)=={'a'}
+    assert affected_functions(old,old,{'README.md'},rows)==set()
+    assert affected_functions(old,old,{'include/unknown.h'},rows) is None
+    new['symbols']=[{'name':'data','address':16}]
+    assert affected_functions(old,new,set(),rows) is None
+
+
+def test_default_compiler_change_does_not_recheck_overridden_functions():
+    from decompnet.app.progress import affected_functions
+    old={'compiler':{'toolchain':'gcc','flags':['-O2']},
+         'compiler_ranges':[{'start':16,'end':32,'toolchain':'gcc','flags':['-O1']}]}
+    new=json.loads(json.dumps(old));new['compiler']['flags']=['-O0']
+    rows=[{'name':'a','unit':'','vram':4,'rom_offset':4},
+          {'name':'b','unit':'','vram':16,'rom_offset':16}]
+    assert affected_functions(old,new,set(),rows)=={'a'}
+
+
+def test_private_header_pull_rechecks_only_its_function_and_keeps_other_match(project):
+    net,folder,judged=project
+    pid=net.project_row('game')['id']
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET unit='private' WHERE name='g'")
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,2,'private header',0,'private')",(pid,))
+    net.progress.sync('game',force=True)
+    (folder/'src').mkdir(exist_ok=True)
+    for name in ('f','g'):(folder/f'src/{name}.c').write_text('good C')
+    net.progress.sync('game',force=True)
+    before=net._function('f','game')['matched_source']
+    judged.clear()
+    data=json.loads((folder/saves.MANIFEST).read_text())
+    (folder/'include'/data['headers']['private']).write_text('changed private header')
+    net.progress.sync('game',force=True)
+    assert [name for name,_ in judged]==['g']
+    assert net._function('f','game')['matched_source']==before
+    assert net._function('f','game')['status']=='matched'
+
+
+@pytest.mark.parametrize('code,expected',[(errno.ENOSPC,'disk space'),(errno.EMFILE,'open-file limit')])
+def test_progress_resource_failure_reports_the_actual_host_problem(project,monkeypatch,code,expected):
+    net,folder,_=project
+    def unavailable(*args,**kwargs):raise OSError(code,'synthetic host resource failure','/volume/tmp/compiler-child')
+    monkeypatch.setattr(net,'attempt',unavailable)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src'/'f.c').write_text('good C',encoding='utf-8')
+    with pytest.raises(NetworkError,match=expected):net.progress.sync('game',force=True)
+    error=net.progress.errors['game']
+    assert expected in error
+    assert 'git operation' not in error and 'permissions' not in error
+
+
+def test_background_checks_are_quiet_until_a_full_recheck_is_known(project, monkeypatch):
+    net, folder, _ = project
+    observed = []
+    original = net.attempt
+    def attempt(*args, **kwargs):
+        observed.append(net.progress.status('game'))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(net, 'attempt', attempt)
+    (folder/'src').mkdir(exist_ok=True)
+    for name in ('f', 'g'):
+        (folder/f'src/{name}.c').write_text('good original')
+    net.progress.sync('game', force=True)
+    observed.clear()
+    (folder/'src/f.c').write_text('good changed')
+    net.progress.sync('game', force=True)
+    assert observed and all(s['full_recheck'] is False for s in observed)
+    observed.clear()
+    data = json.loads((folder/saves.MANIFEST).read_text())
+    (folder/'include'/data['headers']['']).write_text('changed shared header')
+    net.progress.sync('game', force=True)
+    assert observed and all(s['full_recheck'] is True for s in observed)
+    assert net.progress.status('game') is None
+    initial = []
+    original_sync = net.progress._sync
+    def sync(*args, **kwargs):
+        initial.append(net.progress.status('game'))
+        return original_sync(*args, **kwargs)
+    monkeypatch.setattr(net.progress, '_sync', sync)
+    net.progress.signatures.clear()
+    manifest(folder,instructions="external edit requires synchronization")
+    net.progress.sync('game', force=True)
+    assert initial and initial[0]['phase'] == 'Comparing saved files'
+    assert initial[0]['full_recheck'] is False
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_sync_reports_project_and_verification_waits_without_changing_lock_behavior(project, monkeypatch, fails):
+    from decompnet import request_timing
     net, _, _ = project
-    for n in range(3):
+    worker = net.progress
+    clock = [0.]
+    events = []
+    class Lock:
+        def __init__(self, name, wait):
+            self.name, self.wait = name, wait
+        def __enter__(self):
+            events.append('enter '+self.name)
+            clock[0] += self.wait
+            if fails and self.name == 'verification':
+                raise RuntimeError('synthetic lock failure')
+        def __exit__(self, *args):
+            events.append('exit '+self.name)
+        def acquire(self, *, blocking):
+            assert blocking is False
+            self.__enter__()
+            return True
+        def release(self):self.__exit__()
+    monkeypatch.setattr(worker, '_batching', lambda slug: False)
+    monkeypatch.setattr(worker, '_state', lambda pid: None)
+    def imported(*args, admit):
+        admit(lambda: True)
+        return False
+    monkeypatch.setattr(worker, '_sync', imported)
+    monkeypatch.setattr(worker, '_signature', lambda folder: ())
+    monkeypatch.setattr(worker, '_stamp', lambda folder: ())
+    monkeypatch.setattr(worker, '_check_paused', lambda slug: None)
+    monkeypatch.setattr(worker, '_project_lock', lambda slug: Lock('project', 5.))
+    monkeypatch.setattr(worker, 'verification_slot', Lock('verification', 7.))
+    monkeypatch.setattr(request_timing, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    with request_timing.capture() as metrics:
+        if fails:
+            with pytest.raises(RuntimeError, match='synthetic lock failure'):
+                worker.sync('game')
+        else:
+            assert worker.sync('game') is False
+    assert metrics['progress_project_lock_wait'] == 5.
+    assert metrics['progress_sync'] == 12.
+    if not fails:
+        assert metrics['progress_verification_wait'] == 7.
+        assert events == ['enter project', 'enter verification', 'exit verification', 'exit project']
+    else:
+        assert events == ['enter project', 'enter verification', 'exit project']
+    assert request_timing._current.get() is None
+
+
+@pytest.mark.parametrize('force', [False, True])
+def test_unchanged_project_check_does_not_wait_for_another_projects_verification(project, force):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    net, _, _ = project
+    worker = net.progress
+    blocked = False
+    # Another project's expensive verification owns the shared slot.
+    worker.verification_slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(worker.sync, 'game', force=force)
+        try:
+            try:
+                result = future.result(timeout=2)
+            except TimeoutError:
+                blocked = True
+        finally:
+            worker.verification_slot.release()
+        if blocked:
+            future.result(timeout=5)
+    assert not blocked, 'An unchanged-project read waited behind unrelated verification'
+    assert result is False
+
+
+def test_real_progress_edit_still_waits_for_shared_verification(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, judged = project
+    worker = net.progress
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good changed')
+    entered = threading.Event()
+    slot = worker.verification_slot
+    class Slot:
+        def acquire(self, *, blocking):
+            entered.set()
+            return slot.acquire(blocking=blocking)
+        def release(self):slot.release()
+    monkeypatch.setattr(worker, 'verification_slot', Slot())
+    slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(worker.sync, 'game', force=True)
+        try:
+            assert entered.wait(2)
+            assert not future.done() and not judged
+        finally:
+            slot.release()
+        assert future.result(timeout=5)
+    assert judged == [('f', 'good changed')]
+    assert net._function('f', 'game')['status'] == 'matched'
+
+
+
+@pytest.mark.parametrize('force', [False, True])
+@pytest.mark.parametrize('change', ['best', 'match', 'metadata'])
+def test_local_publication_does_not_wait_for_unrelated_verification(project, force, change):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    net, folder, judged = project
+    with net.store.tx() as db:
+        if change == 'metadata':
+            db.execute("INSERT INTO notes(project_id,function_id,text,created_at) SELECT project_id,id,'new note',1 "
+                       "FROM functions WHERE name='f'")
+        else:
+            db.execute("UPDATE functions SET best_source='good new source',best_score=10 WHERE name='f'")
+            if change == 'match':
+                db.execute("UPDATE functions SET status='matched',matched_source='good new source' WHERE name='f'")
+    worker = net.progress
+    worker.blocked['game'] = (None, None, None)
+    worker.errors['game'] = 'Previous compiler gate'
+    worker.verification_slot.acquire()
+    blocked = False
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(worker.sync, 'game', force=force)
+        try:
+            try:
+                result = future.result(timeout=2)
+            except TimeoutError:
+                blocked = True
+        finally:
+            worker.verification_slot.release()
+        if blocked:future.result(timeout=5)
+    assert not blocked, 'Local publishing waited behind another project while owning its project lock'
+    assert result is True and not judged
+    assert 'game' not in worker.blocked and 'game' not in worker.errors
+    if change == 'metadata':
+        assert saves.read_manifest(folder)['notes'][0]['text'] == 'new note'
+    else:
+        assert (folder/('src' if change=='match' else 'best')/'f.c').read_text() == 'good new source\n'
+    assert not worker.sync('game', force=True)  # publication acknowledged the actual files and dirty tokens
+
+
+def test_racing_edit_during_local_publication_falls_back_to_verification(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good local',best_score=10 WHERE name='f'")
+    original = saves._render_partial
+    edited = False
+    def render(*args, **kwargs):
+        nonlocal edited
+        result = original(*args, **kwargs)
+        if not edited:
+            edited = True
+            (folder/'best').mkdir(exist_ok=True)
+            (folder/'best/f.c').write_text('good editor')
+        return result
+    monkeypatch.setattr(saves, '_render_partial', render)
+    entered = threading.Event()
+    slot = net.progress.verification_slot
+    class Slot:
+        def acquire(self, *, blocking):
+            entered.set()
+            return slot.acquire(blocking=blocking)
+        def release(self):slot.release()
+    monkeypatch.setattr(net.progress, 'verification_slot', Slot())
+    slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert entered.wait(2)
+            assert not future.done() and not judged
+            assert (folder/'best/f.c').read_text() == 'good editor'
+        finally:
+            slot.release()
+        assert future.result(timeout=5)
+    assert ('f', 'good editor') in judged
+    assert net._function('f','game')['matched_source'] == 'good editor'
+
+
+def test_progress_rejected_link_names_the_relative_path_without_following_it(tmp_path):
+    from decompnet.app.progress import _read
+
+    folder = tmp_path / 'progress'
+    (folder / 'src').mkdir(parents=True)
+    outside = tmp_path / 'outside.c'
+    outside.write_text('private source must not be included')
+    (folder / 'src' / 'bad.c').symlink_to(outside)
+    with pytest.raises(NetworkError) as caught:
+        _read(folder)
+    assert 'src/bad.c' in str(caught.value)
+    assert 'symbolic link' in str(caught.value)
+    assert 'private source' not in str(caught.value)
+    assert outside.read_text() == 'private source must not be included'
+
+
+def test_progress_wrong_file_type_names_the_path(tmp_path):
+    from decompnet.app.progress import _read
+
+    folder = tmp_path / 'progress'
+    (folder / 'best' / 'bad.c').mkdir(parents=True)
+    with pytest.raises(NetworkError) as caught:
+        _read(folder)
+    assert 'best/bad.c' in str(caught.value)
+    assert 'regular file' in str(caught.value)
+
+
+@pytest.mark.parametrize('code', [2, 13, 5])
+def test_sync_filesystem_failure_preserves_cause_and_names_path(project, monkeypatch, code):
+    import errno
+
+    net, folder, _ = project
+    filename = str(folder / 'include' / 'context.h')
+    original = OSError(code, 'synthetic host failure', filename)
+
+    def fail(*args, **kwargs):
+        raise original
+
+    monkeypatch.setattr(net.progress, '_sync', fail)
+    monkeypatch.setattr(net.progress, '_state', lambda pid: None)
+    with pytest.raises(NetworkError) as caught:
+        net.progress.sync('game', force=True)
+    assert caught.value.__cause__ is original
+    assert filename in str(caught.value)
+    assert errno.errorcode[code] in str(caught.value)
+    assert net.progress.errors['game'] == str(caught.value)
+
+
+def test_filesystem_diagnostics_bound_and_escape_paths_without_exception_payload(project, monkeypatch):
+    net, _, _ = project
+    original = OSError(errno.EIO, 'private source must not be printed', 'bad\n' + 'x' * 800)
+
+    def fail(*args, **kwargs):
+        raise original
+
+    monkeypatch.setattr(net.progress, '_state', lambda pid: None)
+    monkeypatch.setattr(net.progress, '_sync', fail)
+    with pytest.raises(NetworkError) as caught:
+        net.progress.sync('game', force=True)
+    message = str(caught.value)
+    assert 'private source' not in message
+    assert "'bad\\n" in message and 'bad\n' not in message
+    assert len(message) < 600
+
+
+@pytest.mark.parametrize('phase', ['stat', 'read'])
+def test_progress_read_restarts_whole_snapshot_when_a_listed_file_disappears(tmp_path, monkeypatch, phase):
+    folder = tmp_path / 'progress'
+    (folder / 'best').mkdir(parents=True)
+    metadata = folder / saves.MANIFEST
+    metadata.write_text('old manifest')
+    disappearing = folder / 'best' / 'gone.c'
+    disappearing.write_text('old candidate')
+    original = Path.lstat if phase == 'stat' else Path.read_text
+    calls = []
+
+    def interrupted(path, *args, **kwargs):
+        if path == disappearing and not calls:
+            calls.append(1)
+            disappearing.unlink()
+            metadata.write_text('new manifest')
+            raise FileNotFoundError(errno.ENOENT, 'removed during snapshot', str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'lstat' if phase == 'stat' else 'read_text', interrupted)
+    assert _read(folder) == {saves.MANIFEST:'new manifest'}
+    assert calls == [1]  # No partially read old manifest survives the retry.
+
+
+def test_progress_read_limits_disappearance_retries_and_keeps_last_cause(tmp_path, monkeypatch):
+    folder = tmp_path / 'progress'
+    (folder / 'best').mkdir(parents=True)
+    path = folder / 'best' / 'moving.c'
+    path.write_text('candidate')
+    original = Path.read_text
+    calls = []
+
+    def missing(current, *args, **kwargs):
+        if current == path:
+            error = FileNotFoundError(errno.ENOENT, 'changing', str(current))
+            calls.append(error)
+            raise error
+        return original(current, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', missing)
+    with pytest.raises(FileNotFoundError) as caught:
+        _read(folder)
+    assert len(calls) == 3 and caught.value is calls[-1]
+
+
+def test_progress_read_does_not_retry_permission_failures(tmp_path, monkeypatch):
+    folder = tmp_path / 'progress'
+    (folder / 'src').mkdir(parents=True)
+    path = folder / 'src' / 'protected.c'
+    path.write_text('candidate')
+    calls = []
+    original = Path.read_text
+
+    def denied(current, *args, **kwargs):
+        if current == path:
+            calls.append(1)
+            raise PermissionError(errno.EACCES, 'denied', str(current))
+        return original(current, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', denied)
+    with pytest.raises(PermissionError):
+        _read(folder)
+    assert calls == [1]
+
+
+def test_progress_retry_rechecks_links_instead_of_following_replacement(tmp_path, monkeypatch):
+    folder = tmp_path / 'progress'
+    (folder / 'best').mkdir(parents=True)
+    path = folder / 'best' / 'moving.c'
+    path.write_text('candidate')
+    outside = tmp_path / 'outside.c'
+    outside.write_text('private target')
+    original = Path.read_text
+    calls = []
+
+    def replaced(current, *args, **kwargs):
+        if current == path:
+            calls.append(1)
+            path.unlink()
+            path.symlink_to(outside)
+            raise FileNotFoundError(errno.ENOENT, 'replaced', str(current))
+        return original(current, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', replaced)
+    with pytest.raises(NetworkError,match='symbolic link'):
+        _read(folder)
+    assert calls == [1] and outside.read_text() == 'private target'
+
+
+def test_set_aside_verdict_updates_preserve_unrelated_matches(project):
+    net,folder,judged=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good f',best_source='good f',best_score=0 WHERE name='f'")
+    net.progress.sync('game',force=True)
+    judged.clear()
+    data=json.loads((folder/saves.MANIFEST).read_text())
+    data['set_aside']=[{'name':'g','vram':4100,'not_c':{'model':{'model':'model','why':'assembly','t':1}}}]
+    for entry in data['layout']:
+        if entry['name']=='g':entry['status']='asm'
+    (folder/saves.MANIFEST).write_text(json.dumps(data))
+    net.progress.sync('game',force=True)
+    assert net._function('f','game')['status']=='matched'
+    assert net._function('g','game')['status']=='asm'
+    assert judged==[]
+    data=json.loads((folder/saves.MANIFEST).read_text())
+    data['set_aside'][0]['not_c']['model']['why']='more evidence for the same verdict'
+    (folder/saves.MANIFEST).write_text(json.dumps(data))
+    net.progress.sync('game',force=True)
+    assert judged==[] and net._function('f','game')['status']=='matched'
+    assert not net.progress.sync('game',force=True)
+    net.progress=Progress(net)
+    assert not net.progress.sync('game',force=True)
+    assert judged==[]
+
+
+def test_saved_verdict_notes_and_list_order_are_not_shared_linking_inputs():
+    from copy import deepcopy
+
+    from decompnet.app.progress import affected_functions
+    old={'layout':[{'name':'a','vram':4,'size':4},{'name':'b','vram':4,'size':4}],
+         'symbols':[{'name':'a','address':4},{'name':'b','address':4}],
+         'set_aside':[{'name':'a','vram':4,'not_c':{'why':'old'}},{'name':'b','vram':4,'asm_code':'jr ra'}]}
+    rows=[{'name':name,'vram':4,'unit':''} for name in ('a','b')]
+    new=deepcopy(old);new['symbols'].reverse();new['set_aside'].reverse()
+    new['set_aside'][1]['not_c']={'why':'updated','t':2}
+    assert affected_functions(old,new,set(),rows)==set()
+    new['set_aside'][0]['asm_code']='changed assembly'
+    assert affected_functions(old,new,set(),rows)=={'b'}
+    new['layout'][0]['size']=8
+    assert affected_functions(old,new,set(),rows) is None
+
+
+def test_merging_set_aside_records_keeps_same_address_overlays_separate():
+    from copy import deepcopy
+
+    from decompnet.app.progress import _merge_manifest
+    old={'set_aside':[{'name':'a','vram':4,'asm_code':'first'}, {'name':'b','vram':4,'asm_code':'second'}]}
+    new=deepcopy(old);new['set_aside'][0]['asm_code']='updated first'
+    current=deepcopy(old);current['set_aside'][1]['asm_code']='updated second'
+    merged=_merge_manifest(old,new,current)
+    assert {entry['name']:entry['asm_code'] for entry in merged['set_aside']}=={'a':'updated first','b':'updated second'}
+
+@pytest.mark.parametrize('platform', ['n64', 'ps1', 'ps2', 'psp'])
+def test_foreground_judge_finishes_while_saved_compile_is_waiting(project, monkeypatch, platform):
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from types import MethodType
+
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.platform',?)", (platform,))
+    net.progress.sync('game', force=True)
+    ordinary_attempt = net.attempt
+    # Controlled compiler verdicts, through the real engine's foreground judging scope.
+    monkeypatch.setattr(net, 'attempt', MethodType(RomNetwork.attempt, net))
+    monkeypatch.setattr(net, '_attempt', ordinary_attempt)
+    waiting, compilation = threading.Event(), Future()
+    def checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
+        for name in saved:
+            prepared = ('synthetic saved compile', compilation) if name == 'f' else None
+            waiting.set()
+            yield name, saved[name], 'src', files['src/'+name+'.c'], name, prepared
+    monkeypatch.setattr(saves, '_saved_checks', checks)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good saved f')
+    (folder/'src/g.c').write_text('good saved g')
+    agent, _ = net.local_agent('you')
+    with ThreadPoolExecutor(3) as pool:
+        background = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert waiting.wait(5)
+            foreground = pool.submit(net.attempt, agent, 'f', 'good foreground', 'game')
+            assert foreground.result(timeout=3)['matched']
+            assert not background.done(), 'Foreground waited for the whole recheck'
+            assert ('f', 'good foreground') in judged
+            # A second importer must wait rather than reset the foreground result.
+            importer = pool.submit(net.progress.sync, 'game', force=True)
+            time.sleep(.05)
+            assert not importer.done()
+        finally:
+            compilation.set_result(None)
+        assert background.result(timeout=5)
+        importer.result(timeout=5)
+    assert ('f', 'good saved f') not in judged
+    assert ('g', 'good saved g') in judged
+    assert (folder/'src/f.c').read_text() == 'good foreground\n'
+    assert not net.progress.rechecking
+
+
+def test_foreground_judge_rejects_a_file_edit_during_saved_recheck(project, monkeypatch):
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from types import MethodType
+
+    net, folder, judged = project
+    ordinary_attempt = net.attempt
+    monkeypatch.setattr(net, 'attempt', MethodType(RomNetwork.attempt, net))
+    monkeypatch.setattr(net, '_attempt', ordinary_attempt)
+    waiting, compilation = threading.Event(), Future()
+    def checks(*args):
+        waiting.set()
+        yield 'f', {'matched_by': 'helper'}, 'src', 'good saved', 'f', ('compile', compilation)
+    monkeypatch.setattr(saves, '_saved_checks', checks)
+    (folder/'src').mkdir(exist_ok=True)
+    path = folder/'src/f.c'
+    path.write_text('good saved')
+    agent, _ = net.local_agent('you')
+    with ThreadPoolExecutor() as pool:
+        background = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert waiting.wait(5)
+            path.write_text('good newer contribution')
+            foreground = pool.submit(net.attempt, agent, 'f', 'good stale', 'game')
+            with pytest.raises(NetworkError, match='Saved files changed'):
+                foreground.result(timeout=3)
+            assert ('f', 'good stale') not in judged
+        finally:
+            compilation.set_result(None)
+        background.result(timeout=5)
+    assert path.read_text() == 'good newer contribution'
+    assert not net.progress.rechecking
+
+
+def test_failed_saved_judge_releases_the_recheck_gate(project, monkeypatch):
+    net, folder, _ = project
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good saved')
+    with monkeypatch.context() as patch:
+        def fail(*args, **kwargs):
+            raise NetworkError('synthetic cancelled recheck')
+        patch.setattr(saves, '_judge_saved', fail)
+        with pytest.raises(NetworkError, match='synthetic cancelled recheck'):
+            net.progress.sync('game', force=True)
+    assert not net.progress.rechecking
+    assert net.progress.sync('game', force=True)
+    assert net._function('f', 'game')['status'] == 'matched'
+
+
+def test_notes_written_during_recheck_are_published_even_without_source_changes(project, monkeypatch):
+    from concurrent.futures import Future, ThreadPoolExecutor
+
+    net, folder, _ = project
+    waiting, compilation = threading.Event(), Future()
+    def checks(*args):
+        waiting.set()
+        yield 'f', {'matched_by': 'helper'}, 'src', 'good saved', 'f', ('compile', compilation)
+    monkeypatch.setattr(saves, '_saved_checks', checks)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good saved')
+    agent, _ = net.local_agent('you')
+    with ThreadPoolExecutor() as pool:
+        background = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert waiting.wait(5)
+            with net.progress.foreground():
+                net.add_note(agent, 'game', 'Fresh foreground notes', 'g')
+                net.progress.foreground_changed('game', 'g')
+                with net.store.tx() as db:
+                    db.execute("UPDATE context_versions SET header='/* foreground context */' WHERE project_id=(SELECT id FROM projects WHERE slug='game')")
+                assert not net.progress.sync('game', force=True)
+        finally:
+            compilation.set_result(None)
+        assert background.result(timeout=5)
+    saved = saves.read_manifest(folder)
+    assert any(note['text'] == 'Fresh foreground notes' for note in saved['notes'])
+    assert any('foreground context' in path.read_text() for path in (folder/'include').glob('*.h'))
+    assert not net.progress.sync('game', force=True)
+
+
+def test_foreground_waits_until_saved_verification_evidence_is_installed(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import MethodType
+
+    net, folder, _ = project
+    ordinary_attempt = net.attempt
+    monkeypatch.setattr(net, 'attempt', MethodType(RomNetwork.attempt, net))
+    monkeypatch.setattr(net, '_attempt', ordinary_attempt)
+    original_judge = saves._judge_saved
+    entered, release = threading.Event(), threading.Event()
+    def delayed(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return original_judge(*args, **kwargs)
+    monkeypatch.setattr(saves, '_judge_saved', delayed)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good saved')
+    agent, _ = net.local_agent('you')
+    with ThreadPoolExecutor(2) as pool:
+        background = pool.submit(net.progress.sync, 'game', force=True)
+        try:
+            assert entered.wait(5)
+            foreground = pool.submit(net.attempt, agent, 'g', 'good foreground', 'game')
+            time.sleep(.05)
+            assert not foreground.done()
+        finally:
+            release.set()
+        assert background.result(timeout=5)
+        assert foreground.result(timeout=5)['matched']
+    assert net._function('g', 'game')['matched_source'].strip() == 'good foreground'
+
+
+def test_final_flush_reports_only_pending_projects_before_synchronizing(tmp_path,monkeypatch):
+    from decompnet.app.engine import RomNetwork
+    from decompnet.network import NetworkError
+    net=RomNetwork(tmp_path/'flush.db',tmp_path)
+    with net.store.tx() as db:
+        db.executemany('INSERT INTO projects(slug,root,config) VALUES(?,?,?)',
+                       [('first',str(tmp_path),'{}'),('second',str(tmp_path),'{}'),
+                        ('untouched',str(tmp_path),'{}')])
+        db.execute("INSERT INTO progress_dirty(project_id,token,functions) "
+                   "SELECT id,'changed',1 FROM projects WHERE slug='first'")
+    net.progress.failed['second'] = ((), 0)
+    events=[]
+    def sync(slug,**kwargs):
+        events.append(('sync',slug))
+        if slug=='first':raise NetworkError('blocked folder')
+    monkeypatch.setattr(net.progress,'sync',sync)
+    failures=net.progress.flush(notify=lambda slug:events.append(('notify',slug)))
+    assert events==[('notify','first'),('sync','first'),('notify','second'),('sync','second')]
+    assert failures=={'first':'blocked folder'}
+
+
+def test_final_flush_skips_projects_with_acknowledged_progress(tmp_path,monkeypatch):
+    from decompnet.app.engine import RomNetwork
+    net=RomNetwork(tmp_path/'flush.db',tmp_path)
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,root,config) VALUES(?,?,?)',('saved',str(tmp_path),'{}'))
+        pid=db.execute("SELECT id FROM projects WHERE slug='saved'").fetchone()[0]
+        db.execute("INSERT INTO progress_state(project_id,disk,projected,updated_at,dirty_token) "
+                   "VALUES(?,'{}','{}',0,'acknowledged')",(pid,))
+        db.execute("INSERT INTO progress_dirty(project_id,token) VALUES(?,'acknowledged')",(pid,))
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:pytest.fail('clean project was synchronized'))
+    assert net.progress.flush()=={}
+
+
+def test_scoped_judging_skips_imports_but_rejects_revision_changes(project, monkeypatch):
+    net, *_ = project
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('no project import'))
+    with net.progress.judging('game', synchronize=False):
+        net.progress.check_result()
+        net.progress.revisions['game'] = net.progress.revisions.get('game', 0) + 1
+        with pytest.raises(NetworkError, match='Progress changed'):
+            net.progress.check_result()
+    assert getattr(net.progress.local, 'judging', None) is None
+
+
+def test_scoped_judging_keeps_saved_file_change_guard(project, monkeypatch):
+    net, *_ = project
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('no project import'))
+    def changed(slug):
+        raise NetworkError('Saved files changed during the recheck.')
+    monkeypatch.setattr(net.progress, '_check_rechecking_files', changed)
+    with net.progress.judging('game', synchronize=False):
+        with pytest.raises(NetworkError, match='Saved files changed'):
+            net.progress.check_result()
+
+
+def test_first_sync_keeps_private_verified_header_bindings():
+    from decompnet.app import progress, saves
+    local = {"headers": {"": "common.h", "exact_match_1_2": "common_exact_match_1_2.h"},
+             "function_headers": {"func_1": "exact_match_1_2"}}
+    projected = {saves.MANIFEST: json.dumps(local), "include/common_exact_match_1_2.h": "typedef int s32;"}
+    merged, pending = progress._initial_merge({"headers": {"": "common.h"}}, projected, {})
+    assert merged["function_headers"] == local["function_headers"]
+    assert pending["include/common_exact_match_1_2.h"] == "typedef int s32;"
+
+
+@pytest.mark.parametrize('depth', [0, 2])
+def test_waiting_verification_releases_recursive_project_lock_and_reloads_files(project, depth, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import ExitStack
+
+    from decompnet import request_timing
+    net, folder, judged = project
+    worker=net.progress
+    manifest(folder,instructions='first external edit')
+    waiting=threading.Event()
+    slot=worker.verification_slot
+    class Slot:
+        def acquire(self, *, blocking):
+            acquired=slot.acquire(blocking=blocking)
+            if not acquired:waiting.set()
+            return acquired
+        def release(self):slot.release()
+        def __enter__(self):
+            waiting.set()
+            slot.acquire()
+        def __exit__(self,*args):slot.release()
+    monkeypatch.setattr(worker,'verification_slot',Slot())
+    lock=worker._project_lock('game')
+    slot.acquire()
+    def sync():
+        with ExitStack() as stack,request_timing.capture() as metrics:
+            for _ in range(depth):stack.enter_context(lock)
+            result=worker.sync('game',force=True)
+            return result,metrics
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(sync)
+        try:
+            assert waiting.wait(2)
+            acquired=lock.acquire(timeout=1)
+            try:
+                assert acquired,'Waiting for another project must not hold this project lock'
+                assert not future.done() and not judged
+                manifest(folder,instructions='newer external edit')
+                (folder/'src').mkdir(exist_ok=True)
+                (folder/'src/f.c').write_text('good newer source')
+            finally:
+                if acquired:lock.release()
+        finally:slot.release()
+        result,metrics=future.result(timeout=5)
+    assert result and metrics['progress_verification_wait']>0
+    assert net.cfg(net._project('game'))['instructions']=='newer external edit'
+    assert judged==[('f','good newer source')]
+    assert net._function('f','game')['matched_source']=='good newer source'
+    assert not worker.sync('game',force=True)
+
+
+@pytest.mark.parametrize('abort', ['cancel', 'pause'])
+def test_verification_wait_is_cancellable_without_releasing_someone_elses_slot(project, monkeypatch, abort):
+    from concurrent.futures import ThreadPoolExecutor
+    net,folder,_=project
+    worker=net.progress
+    manifest(folder,instructions='external edit')
+    waiting=threading.Event();cancel=threading.Event()
+    slot=worker.verification_slot
+    class Slot:
+        def acquire(self, *, blocking):
+            acquired=slot.acquire(blocking=blocking)
+            if not acquired:waiting.set()
+            return acquired
+        def release(self):slot.release()
+        def __enter__(self):
+            waiting.set()
+            slot.acquire()
+        def __exit__(self,*args):slot.release()
+    monkeypatch.setattr(worker,'verification_slot',Slot())
+    class Log:
+        def check_cancel(self):
+            if cancel.is_set():raise RuntimeError('cancelled wait')
+    slot.acquire()
+    busy=[]
+    def sync():
+        try:return worker.sync('game',force=True,logger=Log())
+        finally:busy.append(worker.applying)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(sync)
+        try:
+            assert waiting.wait(2)
+            if abort=='pause':worker.pause('game')
+            else:cancel.set()
+            error,pattern=(NetworkError,'verification is paused') if abort=='pause' else (RuntimeError,'cancelled wait')
+            with pytest.raises(error,match=pattern):future.result(timeout=2)
+            assert not slot.acquire(blocking=False),'Cancellation must not release the active verifier slot'
+        finally:slot.release()
+    assert busy==[False]
+    worker.resume('game')
+    assert worker.sync('game',force=True)
+
+
+@pytest.mark.parametrize('change', ['none', 'local', 'same-bytes'])
+def test_cold_unchanged_progress_does_not_wait_for_another_projects_verifier(project, change):
+    from concurrent.futures import ThreadPoolExecutor
+
+    net,folder,judged=project
+    if change=='local':
         with net.store.tx() as db:
-            pid = db.execute("INSERT INTO projects(slug,name,root,config) SELECT ?,name,root||?,config FROM projects "
-                             "WHERE slug='game'", (f"quiet{n}", str(n))).lastrowid
-            db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
-                       "VALUES(?,1,'',0,'')", (pid,))
-        net.progress.sync(f"quiet{n}", force=True, background=True)
-    folders = {saves.default_folder(net, slug): slug for slug in ("game", "quiet0", "quiet1", "quiet2")}
-    deep = []
-    signature = Progress._signature
-
-    def counted(folder, *, deep_read=True, **kwargs):
-        if kwargs.get("deep", deep_read):
-            deep.append(folders.get(folder))
-        return signature(folder, **kwargs)
-    monkeypatch.setattr(Progress, "_signature", staticmethod(counted))
-    monkeypatch.setattr(saves.Autosave, "DEEP_BUDGET_SECONDS", 0)  # one quiet project's deep read per pass
-    net.progress.used.clear()
-    net.progress.touch("game")  # its page is open
-    autosave = saves.Autosave(net)
-    turns = []
-    for _ in range(3):
-        deep.clear()
-        autosave.run_once()
-        turns.append(sorted(set(deep) - {"game"}))
-        assert "game" in deep
-    assert turns == [["quiet0"], ["quiet1"], ["quiet2"]]
-    net._project("quiet0")  # the sidebar reading a project doesn't make it one in use
-    assert not net.progress.hot("quiet0", saves.Autosave.HOT_SECONDS)
+            db.execute("UPDATE functions SET best_source='local draft',best_score=50 WHERE name='f'")
+    elif change=='same-bytes':
+        path=folder/saves.MANIFEST
+        path.write_text(path.read_text())
+    # A fresh app has the durable baseline but no acknowledged in-memory signature.
+    worker=net.progress=Progress(net)
+    worker.verification_slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(worker.sync,'game',force=True)
+        try:
+            result=future.result(timeout=2)
+            assert result==(change=='local')
+            assert not worker.verification_slot.acquire(blocking=False)
+            assert not judged
+            assert worker.signatures.get('game') is not None
+            if change=='local':assert (folder/'best/f.c').read_text()=='local draft\n'
+        finally:worker.verification_slot.release()
+        future.result(timeout=5)
+    assert not worker.sync('game',force=True)
 
 
-def test_a_quiet_projects_database_change_is_still_saved_on_the_next_pass(project):
-    net, folder, _ = project
-    net.progress.used.clear()
+def test_cold_changed_progress_still_waits_then_judges_latest_source(project,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    net,folder,judged=project
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good external source')
+    worker=net.progress=Progress(net);slot=worker.verification_slot;waiting=threading.Event()
+    class Slot:
+        def acquire(self,*,blocking):
+            acquired=slot.acquire(blocking=blocking)
+            if not acquired:waiting.set()
+            return acquired
+        def release(self):slot.release()
+    monkeypatch.setattr(worker,'verification_slot',Slot())
+    slot.acquire()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future=pool.submit(worker.sync,'game',force=True)
+        try:
+            assert waiting.wait(2)
+            assert not future.done() and not judged
+            (folder/'src/f.c').write_text('good newer external source')
+        finally:slot.release()
+        assert future.result(timeout=5)
+    assert judged==[('f','good newer external source')]
+    assert net._function('f','game')['matched_source']=='good newer external source'
+
+
+def test_cold_noop_does_not_acknowledge_an_edit_arriving_after_snapshot(project,monkeypatch):
+    net,folder,judged=project
+    worker=net.progress=Progress(net)
+    signature=worker._signature;calls=[]
+    def racing_signature(path):
+        calls.append(1)
+        # Before final acknowledgement: the initial read and its stability check
+        # both saw the old files. This new source must be found next time.
+        if len(calls)==4:
+            (folder/'src').mkdir(exist_ok=True)
+            (folder/'src/f.c').write_text('good racing source')
+        return signature(path)
+    monkeypatch.setattr(worker,'_signature',racing_signature)
+    assert not worker.sync('game',force=True)
+    assert 'game' not in worker.signatures and not judged
+    assert worker.sync('game',force=True)
+    assert judged==[('f','good racing source')]
+
+
+@pytest.mark.parametrize('local_change', [False,True])
+def test_cold_project_file_baseline_uses_its_owner_without_verifier(project,monkeypatch,local_change):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app.agents import SCHEMA
+    from tests.test_project_database_migration import close
+    net,folder,_=project
+    root=folder.parent.parent
     with net.store.tx() as db:
-        db.execute("UPDATE functions SET best_source='new attempt',best_score=10 WHERE name='f'")
-    assert saves.Autosave(net).run_once() == ["game"]
-    assert (folder / "best/f.c").read_text() == "new attempt\n"
-    assert net.progress.hot("game", saves.Autosave.HOT_SECONDS)  # work arrived: watched closely for a while
+        for sql in SCHEMA:db.execute(sql)
+    close(net)
+    net=RomNetwork(root/'app.db',root,project_databases=True)
+    store=net.project_store('game')
+    try:
+        if local_change:
+            with store.tx() as db:
+                db.execute("UPDATE functions SET best_source='local project draft',best_score=50 WHERE name='f'")
+        monkeypatch.setattr(net,'attempt',lambda *a,**k:pytest.fail('unchanged files must not be rejudged'))
+        slot=net.progress.verification_slot;slot.acquire()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future=pool.submit(net.progress.sync,'game',force=True)
+            try:
+                assert future.result(timeout=2)==local_change
+                assert not slot.acquire(blocking=False)
+            finally:slot.release()
+            future.result(timeout=5)
+        assert not net.progress.sync('game',force=True)
+        if local_change:assert (folder/'best/f.c').read_text()=='local project draft\n'
+    finally:close(net)
 
 
-def test_a_project_unused_for_a_while_lets_go_of_its_baseline_and_still_saves(project, monkeypatch):
-    """Hundreds of games: each one's baseline (every file's hashes) was kept in memory for good."""
-    net, folder, _ = project
-    pid = net._project("game")["id"]
-    assert net.progress._baseline(pid) is not None and pid in net.progress.baselines
-    net.progress.touch("game")
-    saves.Autosave(net).run_once()
-    assert pid in net.progress.baselines  # in use: kept
-    net.progress.used.clear()
-    saves.Autosave(net).run_once()
-    assert pid not in net.progress.baselines
+def test_saved_import_reports_request_phases_without_changing_verdict(project):
+    from decompnet import request_timing
+    net,folder,judged=project
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good imported source')
+    with request_timing.capture() as metrics:
+        assert net.progress.sync('game',force=True)
+    assert judged==[('f','good imported source')]
+    for phase in ('progress_stat','progress_files','progress_manifest','progress_render','progress_import','progress_saved_judge','progress_publish'):
+        assert metrics[phase]>0
+        assert metrics[phase]<=metrics['progress_sync']
+    assert request_timing._current.get() is None
+
+
+@pytest.mark.parametrize('transport', ['direct','mcp'])
+@pytest.mark.parametrize('tool', ['compile_and_diff','compile_patch','compile_variants','add_note','release_function',
+                                  'claim_readable','polish_function','make_readable'])
+def test_tool_entry_uses_foreground_lane_during_saved_verification(project,monkeypatch,tool,transport):
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from types import MethodType
+
+    from decompnet.app import tools
+    net,folder,judged=project
+    ordinary_attempt=net.attempt
+    monkeypatch.setattr(net,'attempt',MethodType(RomNetwork.attempt,net))
+    monkeypatch.setattr(net,'_attempt',ordinary_attempt)
+    waiting,compilation=threading.Event(),Future()
+    def checks(*args):
+        waiting.set()
+        yield 'f',{'matched_by':'helper'},'src','good saved','f',('compile',compilation)
+    monkeypatch.setattr(saves,'_saved_checks',checks)
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('good saved')
+    agent,_=net.local_agent('you')
+    def dispatch(net,agent,slug,name,args,**kwargs):
+        # Real _dispatch resolves named inputs through _project before its handler.
+        net._project(slug)
+        if name in {'add_note','release_function'}:
+            net.add_note(agent,slug,'fresh foreground findings','g')
+            return 'findings saved'
+        assert net.attempt(agent,'f','good foreground',slug)['matched']
+        return 'judged foreground'
+    monkeypatch.setattr(tools,'_dispatch',dispatch)
+    arguments={'function':'f',**{
+        'compile_and_diff':{'source':'good foreground'},
+        'compile_patch':{'revision':'synthetic','old':'saved','new':'foreground'},
+        'compile_variants':{'revision':'synthetic','patches':[]},
+        'add_note':{'text':'fresh foreground findings'},
+        'release_function':{'notes':'fresh foreground findings'},
+        'claim_readable':{}, 'polish_function':{'comment':'Describe the function.'},
+        'make_readable':{'source':'good foreground'}}[tool]}
+    def invoke():return tools.call(net,agent,'game',tool,arguments)
+    if transport=='mcp':
+        import anyio
+        from mcp.server.mcpserver import Context
+        monkeypatch.setattr(Context,'headers',property(lambda self:{}))
+        server=tools.build_mcp(net,lambda ctx:(agent,'game'))
+        async def request():return await server.call_tool(tool,arguments)
+        def invoke():return anyio.run(request)
+    with ThreadPoolExecutor(2) as pool:
+        background=pool.submit(net.progress.sync,'game',force=True)
+        try:
+            assert waiting.wait(5)
+            foreground=pool.submit(invoke)
+            expected='findings saved' if tool in {'add_note','release_function'} else 'judged foreground'
+            assert expected in str(foreground.result(timeout=2))
+            assert not background.done()
+        finally:compilation.set_result(None)
+        assert background.result(timeout=5)
+    assert not getattr(net.progress.local,'foreground',False)
+    if tool in {'add_note','release_function'}:
+        saved=saves.read_manifest(folder)
+        assert any(n['text']=='fresh foreground findings' for n in saved['notes'])
+    else:
+        assert judged==[('f','good foreground')]
+        assert (folder/'src/f.c').read_text()=='good foreground\n'
+
+
+def test_tool_foreground_scope_resets_on_dispatch_error_and_keeps_sync_outside_rechecks(project,monkeypatch):
+    from decompnet.app import tools
+    net,folder,judged=project
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('good external import')
+    agent,_=net.local_agent('you')
+    def dispatch(*args):
+        assert judged==[('f','good external import')]
+        raise NetworkError('synthetic tool failure')
+    monkeypatch.setattr(tools,'_dispatch',dispatch)
+    with pytest.raises(NetworkError,match='synthetic tool failure'):
+        tools._invoke(net,agent,'game','compile_and_diff',{'function':'f'})
+    assert not getattr(net.progress.local,'foreground',False)
+
+
+@pytest.mark.parametrize('tool,args', [('compile_and_diff',{}),('release_function',{'needs':'g'}),
+                                     ('release_function',{'not_c':True}),('edit_context',{})])
+def test_tool_entry_waits_for_unready_evidence_and_keeps_other_mutations_serialized(project,monkeypatch,tool,args):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+    from decompnet.app import tools
+    from decompnet.app.progress import _Recheck
+    net,folder,_=project;worker=net.progress
+    agent,_=net.local_agent('you')
+    active=_Recheck(folder,worker._signature(folder),ready=tool!='compile_and_diff')
+    worker.rechecking['game']=active
+    dispatched=[]
+    monkeypatch.setattr(tools,'_dispatch',lambda *a:dispatched.append(1) or 'finished')
+    with ThreadPoolExecutor(1) as pool:
+        future=pool.submit(tools._invoke,net,agent,'game',tool,{'function':'f',**args})
+        try:
+            with pytest.raises(TimeoutError):future.result(timeout=.15)
+            assert not dispatched
+        finally:
+            with worker._project_lock('game'):worker.rechecking.pop('game',None)
+        assert future.result(timeout=3)=='finished'
+
+
+def test_tool_entry_rejects_saved_file_edit_during_recheck_before_dispatch(project,monkeypatch):
+    from decompnet.app import tools
+    from decompnet.app.progress import _Recheck
+    net,folder,_=project;worker=net.progress
+    agent,_=net.local_agent('you')
+    worker.rechecking['game']=_Recheck(folder,worker._signature(folder),ready=True)
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('changed during recheck')
+    monkeypatch.setattr(tools,'_dispatch',lambda *a:pytest.fail('stale imported context reached tool'))
+    try:
+        with pytest.raises(NetworkError,match='Saved files changed during the recheck'):
+            tools._invoke(net,agent,'game','compile_and_diff',{'function':'f'})
+    finally:worker.rechecking.pop('game',None)
+    assert not getattr(worker.local,'foreground',False)
+
+
+@pytest.mark.parametrize('mode', ['project', 'missing-fingerprint', 'missing-context'])
+def test_no_saved_judging_work_never_waits_for_unrelated_verifier(project, monkeypatch, mode):
+    from concurrent.futures import ThreadPoolExecutor
+
+    net, folder, judged = project
+    cfg = json.loads(net._project('game')['config'])
+    if mode == 'project':
+        cfg['kind'] = 'project'
+    elif mode == 'missing-fingerprint':
+        cfg.pop('rom')
     with net.store.tx() as db:
-        db.execute("UPDATE functions SET best_source='later attempt',best_score=10 WHERE name='g'")
-    assert saves.Autosave(net).run_once() == ["game"]  # read again from the database, and saved as before
-    assert (folder / "best/g.c").read_text() == "later attempt\n"
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+        if mode == 'missing-context':
+            db.execute('DELETE FROM context_versions')
+    worker = net.progress
+    def forbidden(*args):
+        raise AssertionError('No saved verification work should enter _sync')
+    monkeypatch.setattr(worker, '_sync', forbidden)
+    worker.verification_slot.acquire()
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(worker.sync, 'game', force=True)
+        try:
+            assert future.result(timeout=2) is False
+            assert not worker.verification_slot.acquire(blocking=False)
+            assert not judged
+        finally:
+            worker.verification_slot.release()
+        future.result(timeout=5)
+
+
+@pytest.mark.parametrize('stale', [False, True])
+@pytest.mark.parametrize('depth', [0, 2])
+def test_queued_foreground_uses_recheck_inputs_when_they_become_ready(project, monkeypatch, stale, depth):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import ExitStack
+
+    from decompnet.app.progress import _Recheck
+    net, folder, judged = project
+    worker = net.progress
+    manifest(folder, instructions='external edit before admission')
+    waiting = threading.Event()
+    slot = worker.verification_slot
+    class Slot:
+        def acquire(self, *, blocking):
+            acquired = slot.acquire(blocking=blocking)
+            if not acquired:waiting.set()
+            return acquired
+        def release(self):slot.release()
+    monkeypatch.setattr(worker, 'verification_slot', Slot())
+    lock = worker._project_lock('game')
+    def synchronize():
+        with ExitStack() as stack, worker.foreground():
+            for _ in range(depth):stack.enter_context(lock)
+            return worker.sync('game', force=True)
+    slot.acquire()
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(synchronize)
+        try:
+            if not waiting.wait(2):
+                assert not future.done(), future.result(timeout=1)
+                raise AssertionError("admission not reached")
+            # A verifier overtakes the waiter while Condition.wait releases all
+            # recursive acquisitions. Only its committed, ready inputs qualify.
+            with lock:
+                active = _Recheck(folder, worker._signature(folder), ready=False)
+                worker.rechecking['game'] = active
+                worker._activity('game', phase='Preparing saved verification', done=0, total=100)
+                waiting.clear()
+            assert waiting.wait(2), 'Queued work must still wait before evidence is ready'
+            assert not future.done()
+            with lock:
+                active.ready = True
+                worker._activity('game', phase='Judging saved code', done=1, total=100)
+                if stale:manifest(folder, instructions='racing disk edit')
+            if stale:
+                with pytest.raises(NetworkError, match='Saved files changed'):
+                    future.result(timeout=2)
+            else:
+                assert future.result(timeout=2) is False
+            assert not slot.acquire(blocking=False), 'The active verifier still owns its slot'
+            assert worker.status('game')['phase'] == 'Judging saved code'
+            assert not judged and worker.rechecking['game'] is active
+        finally:
+            with lock:worker.rechecking.pop('game', None)
+            slot.release()
+
+
+def test_slow_verification_wait_reports_actual_owner_phase_and_clears_owner(project, monkeypatch, caplog):
+    net, _, _ = project
+    worker = net.progress
+    # Two independent project locks, with no compiler or live project required.
+    clock = [0.]
+    monkeypatch.setattr('decompnet.app.progress.time.monotonic', lambda: clock[0])
+    class Slot:
+        available = False
+        def acquire(self, *, blocking):
+            clock[0] += 6
+            return self.available
+        def release(self):self.available = True
+    slot = Slot()
+    monkeypatch.setattr(worker, 'verification_slot', slot)
+    worker.verification_holders['other'] = {'lease': object(), 'since': 0., 'thread': 'other-thread',
+                                            'phase': 'Verification admitted', 'phase_started': 0.}
+    worker._activity('other', phase='Preparing saved verification')
+    worker.verification_holders['other']['phase'] = 'Preparing saved verification'
+    class Condition:
+        def __init__(self, lock):pass
+        def wait(self, *, timeout):
+            worker.verification_holders.pop('other')
+            slot.available = True
+    monkeypatch.setattr('decompnet.app.progress.threading.Condition', Condition)
+    with worker._project_lock('game'), caplog.at_level('WARNING'):
+        with worker._verification('game') as acquired:
+            assert acquired and worker.verification_owner[0] == 'game'
+    assert worker.verification_owner is None
+    assert 'owner=other' in caplog.text and 'phase=Preparing saved verification' in caplog.text
+    assert 'wait=6.000s' in caplog.text
+
+
+def test_local_verified_profile_publication_does_not_restart_rechecking(project, monkeypatch):
+    net, folder, judged = project
+    pid = net.project_row('game')['id']
+    # A local deep-search result and its private header arrive after the last
+    # disk snapshot, while an external metadata edit triggers a merge.
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good local',best_source='good local',"
+                   "best_score=0,unit='verified' WHERE name='f'")
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                   "VALUES(?,2,'verified private header',0,'verified')", (pid,))
+    manifest(folder, instructions='updated notes')
+    old_judge = net.progress._judge_saved
+
+    def observe(*args, **kwargs):
+        assert net._function('f', 'game')['status'] == 'matched'
+        assert not kwargs['judge_code']
+        return old_judge(*args, **kwargs)
+
+    monkeypatch.setattr(net.progress, '_judge_saved', observe)
+    assert net.progress.sync('game', force=True)
+    assert judged == []
+    assert net._function('f', 'game')['status'] == 'matched'
+    assert not net.progress.sync('game', force=True)
+
+
+@pytest.mark.parametrize('export_fails', [False, True])
+def test_finished_saved_judge_releases_lane_before_export_and_preserves_next_owner(project, monkeypatch, export_fails):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, judged = project
+    worker = net.progress
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good imported source')
+    exporting, finish = threading.Event(), threading.Event()
+    activity = worker._activity
+    def report(slug, **fields):
+        activity(slug, **fields)
+        if fields.get('phase') == 'Saving verified progress':
+            exporting.set()
+            assert finish.wait(3)
+            if export_fails:raise RuntimeError('Synthetic export failure')
+    monkeypatch.setattr(worker, '_activity', report)
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(worker.sync, 'game', force=True)
+        try:
+            assert exporting.wait(3)
+            assert judged == [('f', 'good imported source')]
+            assert worker.verification_owner is None
+            with worker._project_lock('other'):
+                with worker._verification('other') as acquired:
+                    assert acquired
+                    finish.set()
+                    if export_fails:
+                        with pytest.raises(RuntimeError, match='Synthetic export failure'):future.result(timeout=3)
+                    else:assert future.result(timeout=3)
+                    assert worker.verification_owner[0] == 'other'
+                    assert not worker.verification_slot.acquire(blocking=False)
+        finally:finish.set()
+    assert worker.verification_owner is None
+    assert worker.verification_slot.acquire(blocking=False)
+    worker.verification_slot.release()
+    assert net.project_store('game').one("SELECT matched_source FROM functions WHERE name='f'")[0] == 'good imported source'
+
+
+@pytest.mark.parametrize('changed', [False, True])
+def test_permuter_uses_database_reads_without_tree_sync_and_keeps_result_guard(project, monkeypatch, changed):
+    from decompnet.app import experiment_evidence
+    from decompnet.app.permute import Permuter
+    net, *_ = project
+    proj = net.project_row('game')
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:pytest.fail('per-candidate tree sync'))
+    def measured(*args):
+        assert net.progress.viewing
+        assert net.project_row('game')['id'] == proj['id']
+        assert net.progress.local.judging[0] == 'game'
+        if changed:net.progress.revisions['game'] = net.progress.revisions.get('game',0)+1
+        net.progress.check_result()
+        return 1
+    monkeypatch.setattr(experiment_evidence, 'measured', measured)
+    if changed:
+        with pytest.raises(NetworkError, match='Progress changed'):
+            Permuter(net)._score(None, proj, None, '', 1, None)
+    else:assert Permuter(net)._score(None, proj, None, '', 1, None) == 1
+    assert not net.progress.viewing and net.progress.local.judging is None
+
+
+def test_permuter_keeps_saved_file_recheck_guard(project, monkeypatch):
+    from decompnet.app import experiment_evidence
+    from decompnet.app.permute import Permuter
+    net, *_ = project
+    proj = net.project_row('game')
+    def changed(slug):raise NetworkError('Saved files changed during the recheck.')
+    monkeypatch.setattr(net.progress, '_check_rechecking_files', changed)
+    monkeypatch.setattr(experiment_evidence, 'measured', lambda *args:net.progress.check_result())
+    with pytest.raises(NetworkError, match='Saved files changed'):
+        Permuter(net)._score(None, proj, None, '', 1, None)
+    assert not net.progress.viewing and net.progress.local.judging is None
+
+
+def test_deep_history_priming_does_not_sync_the_tree_per_candidate(project, monkeypatch):
+    from decompnet.app import agent_tokens, deep_permuter
+    from tests.test_deep_permuter import Log
+    net, *_ = project
+    proj = net.project_row('game')
+    fn = net.store.one('SELECT * FROM functions WHERE project_id=? LIMIT 1', proj['id'])
+    search = deep_permuter.Search(net, 1, 10, Log(), fn)
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:pytest.fail('history priming synchronized files'))
+    monkeypatch.setattr(search, '_recent_key', lambda *a:('revision','key'))
+    def scope(*args):
+        assert net.progress.viewing
+        assert net.project_row('game')['id'] == proj['id']
+        return 'scope'
+    monkeypatch.setattr(agent_tokens, 'target_scope', scope)
+    search._prime_trials(None, proj, fn, ['int f(void){return 1;}'], None)
+    assert search._primed_scopes[('revision','key')] == 'scope'
+    assert not net.progress.viewing
+
+
+def test_deep_policy_reads_around_the_judge_do_not_sync_saved_files(project, monkeypatch):
+    from decompnet.app import deep_permuter
+    from tests.test_deep_permuter import Log
+    net, *_ = project
+    proj = net.project_row('game')
+    fn = net.store.one('SELECT * FROM functions WHERE project_id=? LIMIT 1', proj['id'])
+    search = deep_permuter.Search(net, 1, 10, Log(), fn)
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw:pytest.fail('policy read synchronized files'))
+    def score(*args):
+        assert net.progress.viewing
+        assert net.project_row('game')['id'] == proj['id']
+        return 1
+    monkeypatch.setattr(search, '_score_current', score)
+    assert search._score(None, proj, fn, fn['best_source'], 1, None) == 1
+    assert not net.progress.viewing and search._ahead_current is None
+
+
+@pytest.mark.parametrize('change', ['none', 'source', 'rollback', 'settings', 'external'])
+def test_publication_prepares_without_recursive_lock_and_revalidates_receipt(project, monkeypatch, change):
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
+
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good prepared',best_score=10 WHERE name='f'")
+    prepared, release = threading.Event(), threading.Event()
+    render = saves._render_partial
+    calls = []
+    readme = saves._write_readme
+    def write_readme(*args, **kwargs):
+        assert threading.current_thread().name != 'saved-render-game', 'Read-only preparation wrote README'
+        return readme(*args, **kwargs)
+    monkeypatch.setattr(saves, '_write_readme', write_readme)
+    def held(*args, **kwargs):
+        result = render(*args, **kwargs)
+        calls.append(kwargs)
+        if len(calls) == 1:
+            prepared.set()
+            assert release.wait(5), 'test did not release prepared render'
+        return result
+    monkeypatch.setattr(saves, '_render_partial', held)
+    def publish():
+        # Exercise the caller's outer recursive acquisitions, not just sync's own.
+        with net.progress._project_lock('game'), net.progress._project_lock('game'):
+            return net.progress.sync('game', force=True)
+    def foreground():
+        with net.progress.foreground(), net.progress.batch('game'):
+            if change == 'source':
+                with net.store.tx() as db:
+                    db.execute("UPDATE functions SET best_source='good newer' WHERE name='f'")
+            elif change == 'rollback':
+                try:
+                    with net.store.tx() as db:
+                        db.execute("UPDATE functions SET best_source='uncommitted' WHERE name='f'")
+                        raise ValueError('rollback')
+                except ValueError:pass
+            elif change == 'settings':
+                proj=net.project_row('game');cfg=json.loads(proj['config']);cfg['instructions']='new settings'
+                with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending=pool.submit(publish)
+        assert prepared.wait(3)
+        blocked=False
+        try:
+            if change == 'external':
+                manifest(folder,instructions='external edit')
+                edit=pool.submit(net.progress.sync,'game',force=True)
+            else:edit=pool.submit(foreground)
+            try:
+                edit.result(timeout=2)
+                published_manifest=(folder/saves.MANIFEST).read_bytes()
+            except FutureTimeout:blocked=True
+        finally:release.set()
+        result=pending.result(timeout=5)
+        if blocked:edit.result(timeout=5)
+    assert not blocked, 'Foreground work waited for publication rendering while the project lock was held'
+    assert not net.progress.rendering
+    if change in ('source','settings','external'):
+        assert result is False, 'A stale prepared render must not publish or acknowledge newer work'
+        if change != 'external':
+            assert not (folder/'best/f.c').exists()
+            assert net.progress._dirty(net.store.one("SELECT id FROM projects WHERE slug='game'")[0]).token != net.progress._state(net.store.one("SELECT id FROM projects WHERE slug='game'")[0]).dirty_token
+        net.progress.sync('game',force=True)
+    else:assert result is True
+    if change == 'source':assert (folder/'best/f.c').read_text()=='good newer\n'
+    elif change != 'external':assert (folder/'best/f.c').read_text()=='good prepared\n'
+    data=json.loads((folder/saves.MANIFEST).read_text())
+    if change=='settings':assert data['instructions']=='new settings'
+    if change=='external':
+        assert data['instructions']=='external edit'
+        assert (folder/saves.MANIFEST).read_bytes()==published_manifest
+    assert all(call['write_readme'] is False for call in calls)
+
+
+def test_failed_readonly_publication_preserves_error_and_pending_work(project, monkeypatch):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    before=(folder/saves.MANIFEST).read_bytes()
+    def failed(*args, **kwargs):raise NetworkError('Synthetic render failure.')
+    monkeypatch.setattr(saves,'_render_partial',failed)
+    with pytest.raises(NetworkError,match='Synthetic render failure'):
+        net.progress.sync('game',force=True)
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert not (folder/'best/f.c').exists()
+    assert net.progress._dirty(net.store.one("SELECT id FROM projects WHERE slug='game'")[0]).functions
+    assert not net.progress.rendering
+
+
+def test_stale_render_failure_cannot_replace_newer_publication_state(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared, release=threading.Event(),threading.Event()
+    before=(folder/saves.MANIFEST).read_bytes()
+    def failed(*args, **kwargs):
+        prepared.set()
+        assert release.wait(5)
+        raise NetworkError('Removed input from an obsolete render.')
+    monkeypatch.setattr(saves,'_render_partial',failed)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True)
+        assert prepared.wait(3)
+        try:
+            with net.progress.foreground(), net.progress.batch('game'):
+                with net.store.tx() as db:
+                    db.execute("UPDATE functions SET best_source='good replacement' WHERE name='f'")
+        finally:release.set()
+        assert pending.result(timeout=5) is False
+    assert 'game' not in net.progress.errors
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert not net.progress.rendering
+
+
+def test_pause_during_publication_preparation_prevents_file_writes(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, _=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared,release=threading.Event(),threading.Event()
+    before=(folder/saves.MANIFEST).read_bytes();render=saves._render_partial
+    def held(*args, **kwargs):
+        result=render(*args, **kwargs);prepared.set()
+        assert release.wait(5)
+        return result
+    monkeypatch.setattr(saves,'_render_partial',held)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True)
+        assert prepared.wait(3)
+        try:net.progress.pause('game')
+        finally:release.set()
+        with pytest.raises(NetworkError,match='paused'):pending.result(timeout=5)
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert not (folder/'best/f.c').exists()
+    assert not net.progress.rendering
+
+
+def test_explicit_publication_waiter_captures_completed_files(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FutureTimeout
+    net,folder,_=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared,release=threading.Event(),threading.Event();render=saves._render_partial
+    def held(*args, **kwargs):
+        result=render(*args, **kwargs);prepared.set();assert release.wait(5);return result
+    monkeypatch.setattr(saves,'_render_partial',held)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        publisher=pool.submit(net.progress.sync,'game',force=True);assert prepared.wait(3)
+        waiter=pool.submit(net.progress.sync,'game',force=True)
+        try:
+            with pytest.raises(FutureTimeout):waiter.result(timeout=.05)
+            assert not (folder/'best/f.c').exists()
+        finally:release.set()
+        assert publisher.result(timeout=5)
+        assert waiter.result(timeout=5) is False
+    assert (folder/'best/f.c').read_text()=='good pending\n'
+
+
+def test_render_cancellation_survives_a_newer_dirty_generation(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net,folder,_=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared,release=threading.Event(),threading.Event()
+    before=(folder/saves.MANIFEST).read_bytes()
+    def cancelled(*args, **kwargs):
+        prepared.set();assert release.wait(5);raise RuntimeError('Synthetic cancellation.')
+    monkeypatch.setattr(saves,'_render_partial',cancelled)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True);assert prepared.wait(3)
+        try:
+            with net.progress.foreground(),net.progress.batch('game'):
+                with net.store.tx() as db:db.execute("UPDATE functions SET best_source='good replacement' WHERE name='f'")
+        finally:release.set()
+        with pytest.raises(RuntimeError,match='Synthetic cancellation'):pending.result(timeout=5)
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert not net.progress.rendering
+
+
+def test_publication_does_not_defer_import_from_new_progress_destination(project, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    net,folder,_=project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared,release=threading.Event(),threading.Event();render=saves._render_partial
+    def held(*args, **kwargs):
+        result=render(*args, **kwargs)
+        if not prepared.is_set():
+            prepared.set();assert release.wait(5)
+        return result
+    monkeypatch.setattr(saves,'_render_partial',held)
+    before=(folder/saves.MANIFEST).read_bytes()
+    destination=folder.parent/'new-progress';shutil.copytree(folder,destination)
+    manifest(destination,instructions='destination contribution')
+    def change_destination():
+        with net.progress.foreground(),net.progress.batch('game'):
+            proj=net.store.one("SELECT * FROM projects WHERE slug='game'")
+            cfg=json.loads(proj['config']);cfg['progress_folder']=str(destination)
+            with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True);assert prepared.wait(3)
+        try:pool.submit(change_destination).result(timeout=3)
+        finally:release.set()
+        assert pending.result(timeout=5) is False
+    assert (folder/saves.MANIFEST).read_bytes()==before
+    assert net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'"))['instructions']=='destination contribution'
+    assert json.loads((destination/saves.MANIFEST).read_text())['instructions']=='destination contribution'
+
+
+@pytest.mark.parametrize('race',['none','settings','foreground_match','cancel'])
+@pytest.mark.parametrize('prefetched',[True,False])
+def test_stale_saved_compile_retries_without_holding_project_lock(project,monkeypatch,race,prefetched):
+    from concurrent.futures import Future, ThreadPoolExecutor
+
+    net,folder,judged=project
+    waiting,release=threading.Event(),threading.Event()
+    calls=[]
+    def compile(proj,header,text,fn):
+        calls.append(net._compile_snapshot(proj,fn,header,text))
+        if len(calls)==1:
+            waiting.set()
+            assert release.wait(5)
+        return SimpleNamespace(snapshot=net._compile_snapshot(proj,fn,header,text))
+    monkeypatch.setattr(net,'_compile',compile)
+    original=net.attempt
+    def attempt(agent,name,text,slug):
+        fn=net._function(name,slug);proj=net.project_row(slug);ctx=net._context(proj['id'],fn['unit'])
+        result=net._attempt_compilation(proj,ctx['header'],text,fn)
+        assert result.snapshot==net._compile_snapshot(proj,fn,ctx['header'],text), 'Stale compiler result reached the judge'
+        return original(agent,name,text,slug)
+    monkeypatch.setattr(net,'attempt',attempt)
+    def checks(net,proj,folder,files,by_name,by_vram,saved,judge_code,check_cancel):
+        ready=Future();ready.set_result(None)
+        for name in saved:
+            yield name,saved[name],'src',files['src/'+name+'.c'],name,('stale snapshot',ready) if prefetched else None
+    monkeypatch.setattr(saves,'_saved_checks',checks)
+    (folder/'src').mkdir(exist_ok=True);(folder/'src/f.c').write_text('good saved f')
+    def read_or_edit():
+        with net.progress.foreground():
+            net.progress.sync('game',force=True)
+            if race=='settings':
+                proj=net.project_row('game');cfg=json.loads(proj['config']);cfg['instructions']='concurrent setting'
+                with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+            elif race=='foreground_match':
+                with net.progress._project_lock('game'):
+                    original(net.local_agent('foreground')[0],'f','good foreground','game')
+                    net.progress.foreground_changed('game','f')
+            elif race=='cancel':net.progress.pause('game')
+    with ThreadPoolExecutor(2) as pool:
+        pending=pool.submit(net.progress.sync,'game',force=True)
+        try:
+            assert waiting.wait(3)
+            other=pool.submit(read_or_edit)
+            other.result(timeout=2)
+        finally:release.set()
+        if race=='cancel':
+            with pytest.raises(NetworkError,match='paused'):pending.result(timeout=5)
+        else:pending.result(timeout=5)
+    assert len(calls)==(2 if race=='settings' else 1)
+    if race=='foreground_match':assert net._function('f','game')['matched_source']=='good foreground'
+    elif race!='cancel':assert ('f','good saved f') in judged
+    assert not net.progress.rechecking
+
+
+@pytest.mark.parametrize('cancel',[False,True])
+def test_saved_autopilot_claim_wait_leaves_project_lock_available(project,monkeypatch,cancel):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import MethodType
+
+    net,folder,_=project;waiting=threading.Event();stopped=threading.Event()
+    def report(_):pass
+    def check_cancel():
+        if stopped.is_set():raise RuntimeError('Synthetic stop')
+    report.check_cancel=check_cancel
+    autopilot=net.local_agent('autopilot')[0]
+    real_yield=MethodType(RomNetwork._yield_autopilot,net)
+    def wait(function,slug,**kwargs):
+        if not getattr(net._compile_ahead_local,'strict',False):waiting.set()
+        return real_yield(function,slug,**kwargs)
+    monkeypatch.setattr(net,'_yield_autopilot',wait)
+    original=net.attempt
+    def attempt(agent,name,text,slug):
+        net._yield_autopilot(name,slug)
+        return original(agent,name,text,slug)
+    monkeypatch.setattr(net,'attempt',attempt)
+    fn=net._function('f','game')
+    def checks(*args):
+        with net.store.tx() as db:db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],autopilot.id,time.time(),time.time()+60))
+        yield 'f',{'vram':fn['vram'],'matched_by':'synthetic'},'src','good saved','f',None
+    monkeypatch.setattr(saves,'_saved_checks',checks)
+    def run():
+        net.progress.local.busy=True
+        try:return saves._judge_saved(net,'game',folder,{}, {'f':fn},{'f':{'vram':fn['vram'],'matched_by':'synthetic'}},report,files={'src/f.c':'good saved'})
+        finally:net.progress.local.busy=False
+    def finish_autopilot():
+        if cancel:
+            stopped.set()
+            return
+        with net.progress._project_lock('game'),net.store.tx() as db:
+            db.execute('DELETE FROM claims WHERE agent_id=?',(autopilot.id,))
+    with ThreadPoolExecutor(2) as pool:
+        pending=pool.submit(run)
+        try:
+            assert waiting.wait(3)
+            pool.submit(finish_autopilot).result(timeout=2)
+        finally:
+            # A baseline failure must not leave a 20s owned-claim wait behind.
+            with net.store.tx() as db:db.execute('DELETE FROM claims WHERE agent_id=?',(autopilot.id,))
+        if cancel:
+            with pytest.raises(RuntimeError,match='Synthetic stop'):pending.result(timeout=2)
+        else:assert pending.result(timeout=5)['matched']==1
+
+
+@pytest.mark.parametrize('change', ['none', 'external', 'cancel'])
+def test_publication_waiter_scans_once_per_renderer(project, monkeypatch, change):
+    from concurrent.futures import ThreadPoolExecutor
+    net, folder, judged = project
+    worker = net.progress
+    (folder/'src').mkdir(exist_ok=True)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='good pending',best_score=10 WHERE name='f'")
+    prepared, release = threading.Event(), threading.Event()
+    polls = []
+    scans = []
+    render = saves._render_partial
+    signature = worker._signature
+    def held(*args, **kwargs):
+        result = render(*args, **kwargs)
+        prepared.set()
+        assert release.wait(5)
+        return result
+    def traced(path):
+        if threading.current_thread().name == 'publication-waiter':scans.append(1)
+        return signature(path)
+    class Cancelled(Exception):pass
+    class Logger:
+        def __call__(self, line):pass
+        def check_cancel(self):
+            polls.append(1)
+            if len(polls) == 5:
+                if change == 'external':
+                    (folder/'src/f.c').write_text('good external')
+                if change == 'cancel':raise Cancelled()
+                enough.set()
+    enough = threading.Event()
+    def wait():
+        threading.current_thread().name = 'publication-waiter'
+        return worker.sync('game', force=True, logger=Logger())
+    monkeypatch.setattr(saves, '_render_partial', held)
+    monkeypatch.setattr(worker, '_signature', traced)
+    with ThreadPoolExecutor(2) as pool:
+        publisher = pool.submit(worker.sync, 'game', force=True)
+        assert prepared.wait(3)
+        waiter = pool.submit(wait)
+        try:
+            if change == 'cancel':
+                with pytest.raises(Cancelled):waiter.result(timeout=2)
+            else:
+                assert enough.wait(2)
+                assert not waiter.done()
+            assert len(scans) == 1, 'A waiting save repeatedly scanned every file'
+            assert not (folder/'best/f.c').exists()
+        finally:release.set()
+        publisher.result(timeout=5)
+        if change != 'cancel':waiter.result(timeout=5)
+    assert not worker.rendering
+    if change == 'external':
+        assert net._function('f', 'game')['matched_source'] == 'good external'
+        assert ('f', 'good external') in judged
+        assert (folder/'src/f.c').read_text().strip() == 'good external'
+    else:assert (folder/'best/f.c').read_text() == 'good pending\n'
+
+
+def test_import_batches_function_identity_metadata(project, monkeypatch):
+    net, folder, judged = project
+    store = net.project_store('game')
+    original = store.all
+    def read(query, *args):
+        assert not query.startswith('SELECT name,unit,vram,rom_offset FROM functions'), 'Unbatched function identities'
+        return original(query, *args)
+    monkeypatch.setattr(store, 'all', read)
+    (folder/'src').mkdir(exist_ok=True)
+    (folder/'src/f.c').write_text('good imported')
+    assert net.progress.sync('game', force=True)
+    assert judged == [('f', 'good imported')]
+    assert net._function('f', 'game')['matched_source'] == 'good imported'
+def test_signature_ignores_the_apps_temporary_save_files_and_files_that_vanish(project, monkeypatch):
+    """A save writes `<file>.tmp` and renames it: a check that listed the folder meanwhile saw a different folder
+    (or lost the whole directory when the temporary file vanished before its stat), and failed agents' calls."""
+    net, folder, _ = project
+    (folder / "best").mkdir(exist_ok=True)
+    (folder / "best/f.c").write_text("int f;\n")
+    before = Progress._signature(folder)
+    stray = folder / "best/g.c.tmp"
+    stray.write_text("half written")
+    files = lambda signature: [item for item in signature if item[0].startswith('best/')]
+    assert files(Progress._signature(folder)) == files(before)
+    real = os.scandir
+    def vanishing(path):
+        entries = list(real(path))
+        for entry in entries:
+            if entry.name == "f.c":
+                (folder / "best/f.c").unlink()
+        return contextlib.nullcontext(iter(entries))
+    monkeypatch.setattr(os, "scandir", vanishing)
+    after = Progress._signature(folder)
+    assert not any(item[1] is None for item in after if item[0] == "best") and files(after) == []
+
+
+def test_deferring_publishes_database_only_changes_at_most_every_few_seconds(project, monkeypatch):
+    """Eight agents rewrote the multi-megabyte manifest about once a second for attempts nobody had read yet."""
+    net, folder, _ = project
+    path = folder / saves.MANIFEST
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    def attempt(score):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source='int f;',best_score=? WHERE name='f'", (score,))
+    attempt(50)
+    with net.progress.deferring():
+        assert net.progress.sync("game", force=True)
+    first = path.read_text()
+    for score in (40, 30):
+        attempt(score)
+        clock[0] += 1
+        with net.progress.deferring():
+            assert not net.progress.sync("game", force=True)
+        assert path.read_text() == first  # (not rewritten yet)
+    clock[0] += 10
+    with net.progress.deferring():
+        assert net.progress.sync("game", force=True)
+    assert path.read_text() != first  # (after the wait, the latest attempts are published together)
+    attempt(20)
+    assert net.progress.sync("game", force=True)  # (an explicit sync, a save or shutdown never waits)
+
+
+def test_tool_calls_do_not_wait_for_another_calls_publication(project):
+    """Every engine lookup syncs, and a tool call waited at each one for whatever render another agent's call had in
+    flight: with eight agents renaming, one rename_symbol took minutes. A tool call uses the current database; the
+    renderer publishes it."""
+    net, folder, _ = project
+    net.progress.sync("game", force=True)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='int f;' WHERE name='f'")
+    net.progress.rendering["game"] = (folder, Progress._signature(folder))  # another call's render, still running
+    answers = []
+    def tool_call():
+        with net.progress.deferring():
+            answers.append(net.progress.sync("game", force=True))
+    call = threading.Thread(target=tool_call, daemon=True)
+    call.start()
+    call.join(3)
+    waited = call.is_alive()
+    net.progress.rendering.pop("game", None)  # (lets a waiting call finish)
+    call.join(5)
+    assert not waited, "a tool call waited for another call's render"
+    assert answers == [False]
+
+
+def test_a_discarded_publication_still_counts_for_the_deferral(project, monkeypatch):
+    """While agents kept changing the database each publication was discarded (its inputs changed while it
+    rendered), so the deferral never started and every tool call rendered the whole project again."""
+    net, folder, _ = project
+    net.progress.sync("game", force=True)
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    tries = []
+    monkeypatch.setattr(net.progress, "_publish_changes", lambda *args: tries.append(1) or False)
+    for score in (50, 40, 30):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source='int f;',best_score=? WHERE name='f'", (score,))
+        with net.progress.deferring():
+            net.progress.sync("game", force=True)
+        clock[0] += 1
+    assert len(tries) == 1
+    clock[0] += 10
+    with net.progress.deferring():
+        net.progress.sync("game", force=True)
+    assert len(tries) == 2
+
+
+def test_a_tool_call_reads_the_folder_once_per_project(project, monkeypatch):
+    """Every engine lookup syncs: a rename made a dozen lookups, each checking every saved file under the project
+    lock. Inside one tool call only the first runs; the next call, a retry and an explicit sync check again."""
+    net, folder, _ = project
+    runs = []
+    checked = net.progress._sync_checked
+    monkeypatch.setattr(net.progress, "_sync_checked", lambda *a, **k: runs.append(1) or checked(*a, **k))
+    with net.progress.deferring():
+        for _ in range(3):
+            net.progress.sync("game")
+        assert len(runs) == 1
+        net.progress.sync("game", force=True)
+        assert len(runs) == 2
+    with net.progress.deferring():
+        net.progress.sync("game")
+    assert len(runs) == 3
+    net.progress.sync("game")
+    net.progress.sync("game")
+    assert len(runs) >= 5  # (outside a tool call every sync runs, and its own lookup syncs again)
+
+
+@pytest.mark.parametrize('tool,expected', [('compile_and_diff', 2), ('get_function', 2)])
+def test_a_judge_inside_a_tool_call_reads_the_folder_through_the_calls_own_checks(project, monkeypatch, tool, expected):
+    """A compile read a 9,900-file save fully four times: the tool call before and after its work, and its judge
+    before and after again, milliseconds apart. The judge now relies on the call's checks; a read-only tool makes
+    none after its work, so a judge inside one still checks after."""
+    from decompnet.app import tools
+    net, _, _ = project
+    worker = net.progress
+    agent, _ = net.local_agent('you')
+    forced = []
+    real = worker.sync
+
+    def counted(slug, **kw):
+        if kw.get('force'):
+            forced.append(slug)
+        return real(slug, **kw)
+    monkeypatch.setattr(worker, 'sync', counted)
+
+    def dispatch(*_):
+        with worker.judging('game'):
+            pass
+        return 'judged'
+    monkeypatch.setattr(tools, '_dispatch', dispatch)
+    assert tools._invoke(net, agent, 'game', tool, {'function': 'f'}) == 'judged'
+    assert len(forced) == expected
+    forced.clear()
+    with worker.judging('game'):  # outside a tool call (autopilot, the editor) the judge still checks both sides
+        pass
+    assert len(forced) == 2
+    assert getattr(worker.local, 'checked_around', None) is None
+
+
+def test_the_autosave_skips_a_project_whose_folder_was_deleted(project, monkeypatch):
+    """#265: a project whose folder is gone has nothing to save into, only records to remove."""
+    net, _, _ = project
+    shutil.rmtree(net._project("game")["root"], ignore_errors=True)
+    monkeypatch.setattr(net, "project_missing", lambda row: "Its folder is missing.")
+    synced = []
+    monkeypatch.setattr(net.progress, "sync", lambda slug, **kw: synced.append(slug))
+    saves.Autosave(net).run_once()
+    assert synced == []
 
 
 def test_a_folder_check_that_fails_doesnt_stop_the_autosave(project, monkeypatch):
-    """Review of #279: the folder check moved out of the per-project try, so one failure ended the thread."""
-    net, folder, _ = project
+    """Review of #279: one failing folder check mustn't end the pass; the project counts as present."""
+    net, _, _ = project
+    shutil.rmtree(net._project("game")["root"], ignore_errors=True)
     monkeypatch.setattr(net, "project_missing", lambda row: (_ for _ in ()).throw(RuntimeError("database is locked")))
     synced = []
     monkeypatch.setattr(net.progress, "sync", lambda slug, **kw: synced.append(slug))
-    saves.Autosave(net).run_once()  # (raised, and the thread died)
-    assert synced == ["game"]  # the check counts as present and the pass goes on
+    saves.Autosave(net).run_once()
+    assert synced == ["game"]
 
 
-def test_a_failed_autosave_pass_doesnt_end_the_thread(project, monkeypatch):
+@pytest.mark.parametrize('failure', ['claim', 'toolchain'])
+def test_a_failed_saved_check_cannot_acknowledge_and_delete_the_only_c(project, monkeypatch, failure):
+    from decompnet import toolchains
+
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='old candidate',best_score=10 WHERE name='f'")
+    net.progress.sync('game', force=True)
+    path = folder/'best/f.c'
+    path.write_text('new candidate\n')
+    original = net.attempt
+    def fail(*args):
+        if failure == 'toolchain':raise toolchains.ToolchainError('compiler unavailable')
+        raise NetworkError('you hold another claim')
+    monkeypatch.setattr(net, 'attempt', fail)
+    with pytest.raises(NetworkError, match='Saved files are retained'):
+        net.progress.sync('game', force=True)
+    assert path.read_text() == 'new candidate\n'
+    assert 'Could not verify saved C for f' in net.progress.errors['game']
+    # A fresh app must still recover the input, rather than export the empty row
+    # left when the import invalidated its previous candidate.
+    monkeypatch.setattr(net, 'attempt', original)
+    net.progress = Progress(net)
+    net.progress.sync('game', force=True)
+    assert net._function('f', 'game')['best_source'] == 'new candidate\n'
+    assert net._function('f', 'game')['best_score'] == 10
+    net.progress.sync('game', force=True)
+    assert path.is_file()
+
+
+def test_a_saved_folder_the_sync_refuses_does_not_fail_agents_tool_calls(project, monkeypatch, caplog):
+    """An N64 game's folder lacked layout entries; every sync refused it, and since each tool call syncs before and
+    after (and every lookup inside it), every helper's every tool failed and no work was possible. The tool now runs
+    on the database; the folder's error stays where the app shows it, and nothing is written over the folder."""
+    from decompnet.app import tools
+    net, folder, _ = project
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/f.c").write_text("good code", encoding="utf-8")
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    data["layout"][0]["name"] = "renamed"  # a layout edit that renamed f: still refused, it's the folder's to fix
+    (folder / saves.MANIFEST).write_text(json.dumps(data), encoding="utf-8")
+    before = (folder / saves.MANIFEST).read_bytes()
+    agent, _ = net.local_agent("you")
+    monkeypatch.setattr(tools, "_dispatch", lambda net, agent, slug, name, args: net._project(slug)["slug"] + " worked")
+    with caplog.at_level("WARNING", logger="decompdecomp"):
+        for _ in range(3):
+            assert tools._invoke(net, agent, "game", "compile_and_diff", {"function": "f"}) == "game worked"
+    assert "function layout" in net.progress.errors["game"]
+    assert sum("tool calls continue with the database" in r.getMessage() for r in caplog.records) == 1
+    assert (folder / saves.MANIFEST).read_bytes() == before
+    with pytest.raises(NetworkError, match="function layout"):  # (outside a tool call the refusal still stands)
+        net.progress.sync("game", force=True)
+
+
+def test_a_pause_the_user_chose_still_holds_agents_tool_calls(project, monkeypatch):
+    from decompnet.app import tools
     net, _, _ = project
-    autosave = saves.Autosave(net)
-    passes = []
-
-    def run_once():
-        passes.append(1)
-        if len(passes) >= 2:
-            autosave.stop.set()
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(autosave, "run_once", run_once)
-    monkeypatch.setattr(autosave.stop, "wait", lambda seconds: None)
-    autosave._loop()
-    assert len(passes) == 2
+    agent, _ = net.local_agent("you")
+    monkeypatch.setattr(tools, "_dispatch", lambda *args: pytest.fail("ran while paused"))
+    net.progress.pause("game")
+    with pytest.raises(NetworkError, match="paused"):
+        tools._invoke(net, agent, "game", "compile_and_diff", {"function": "f"})

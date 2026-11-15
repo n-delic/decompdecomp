@@ -34,7 +34,7 @@ class AppWindow:
         self.origin = args.url.split("/", 3)[:3]
         self.closing = False
         self.window = Gtk.Window(title=args.title)
-        self.window.set_default_size(*DEFAULT_SIZE)
+        self.window.set_default_size(*getattr(args, "size", DEFAULT_SIZE))
         if args.icon:
             try:
                 self.window.set_icon_from_file(args.icon)
@@ -113,6 +113,8 @@ def main() -> int:
     ap.add_argument("--window-class", default="decompdecomp")
     ap.add_argument("--icon", default="")
     ap.add_argument("--dev", action="store_true", help="allow the web inspector (a development copy)")
+    ap.add_argument("--size", type=lambda v: tuple(int(n) for n in v.split("x")), default=DEFAULT_SIZE,
+                    help="the window's first size, WIDTHxHEIGHT (a game played in its own window)")
     args = ap.parse_args()
     GLib.set_prgname(args.window_class)  # Wayland's app id: the desktop entry's StartupWMClass
     Gdk.set_program_class(args.window_class)  # X11's WM_CLASS

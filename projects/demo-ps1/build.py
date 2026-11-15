@@ -3,18 +3,19 @@ main loop and tiny libc as the N64 demo (CC0, ../demo-rom/src, ../demo-n64/origi
 license), compiled the way PSY-Q-era games were: GCC 2.7.2 for the PlayStation at -O2 -G8 (small globals
 $gp-relative), its assembly through maspsx (Sony's ASPSX) and GNU as, all with the project's own compile command.
 
-    uv run python projects/demo-ps1/build.py    ->  build/DEMOQ_PS1.EXE (no symbols, like a game) + build/demoq_ps1.elf
+    uv run python projects/demo-ps1/build.py [toolchain]    ->  build/DEMOQ_PS1.EXE (no symbols, like a game) + build/demoq_ps1.elf
 """
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import struct
 import subprocess
 import sys
 from pathlib import Path
 
-from decompnet import toolchains
+from decompnet import consoles, toolchains
 from decompnet.compiler import run_in
 from decompnet.project import compiler_config
 
@@ -42,31 +43,36 @@ def run(argv, cwd=None):
 def main() -> None:
     from importlib.util import module_from_spec, spec_from_file_location
 
-    if BUILD.exists():
-        shutil.rmtree(BUILD)
-    (BUILD / "src").mkdir(parents=True)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("toolchain", nargs="?", default=TOOLCHAIN, choices=[c.id for c in consoles.get("ps").compilers])
+    args = ap.parse_args()
+    toolchain = args.toolchain
+    build = BUILD if toolchain == TOOLCHAIN else BUILD / toolchain
+    if build.exists():
+        shutil.rmtree(build)
+    (build / "src").mkdir(parents=True)
     for name, src in (("demo", DEMO), ("game", GAME), ("zlib", ZLIB / "original"), ("sysinclude", ZLIB / "sysinclude")):
-        shutil.copytree(src, BUILD / "src" / name)
-    shutil.copy(HERE / "psxrt.c", BUILD / "src" / "psxrt.c")
+        shutil.copytree(src, build / "src" / name)
+    shutil.copy(HERE / "psxrt.c", build / "src" / "psxrt.c")
     binutils = toolchains.binary("binutils-mips").parent
     run([str(binutils / "mips-ps2-decompals-as"), "-EL", "-march=r3000", "-mabi=32", "-o", "crt0.o",
-         str(HERE / "crt0.s")], cwd=BUILD)
+         str(HERE / "crt0.s")], cwd=build)
     objs = ["crt0.o"]
     jobs = [("src/demo/main.c", ["-Isrc/game"]), ("src/demo/libc.c", []), ("src/psxrt.c", []),
             ("src/game/game.c", ["-Isrc/game"])]
     jobs += [(f"src/zlib/{u}.c", ["-Isrc/zlib"]) for u in ZLIB_UNITS]
     for src, extra in jobs:
         obj = f"{Path(src).stem}.o"
-        cfg = compiler_config(BUILD, {"compiler": {"toolchain": TOOLCHAIN, "flags": ["-O2", "-G8", *extra]}})
+        cfg = compiler_config(build, {"compiler": {"toolchain": toolchain, "flags": [*toolchains.get(toolchain).flags, *extra]}})
         # the toolchain's own compile command, on the copies in build/ (src/sysinclude: the demo's tiny C library)
         argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "src/sysinclude") for a in cfg.cmd]
-        res = run_in(cfg, BUILD, argv, inputs=["src"], outputs=[obj])
+        res = run_in(cfg, build, argv, inputs=["src"], outputs=[obj])
         if res.returncode != 0:
             sys.exit(f"failed: {src}\n{res.stdout}{res.stderr}")
         objs.append(obj)
-    elf = BUILD / "demoq_ps1.elf"
-    run([str(binutils / "mips-ps2-decompals-ld"), "-EL", "-T", str(HERE / "exe.ld"), "-o", str(elf), *objs], cwd=BUILD)
-    body_file = BUILD / "body.bin"
+    elf = build / "demoq_ps1.elf"
+    run([str(binutils / "mips-ps2-decompals-ld"), "-EL", "-T", str(HERE / "exe.ld"), "-o", str(elf), *objs], cwd=build)
+    body_file = build / "body.bin"
     run([str(binutils / "mips-ps2-decompals-objcopy"), "-O", "binary", "-j", ".text", "-j", ".rodata", "-j", ".data",
          "-j", ".sdata", str(elf), str(body_file)])
     body = body_file.read_bytes()
@@ -84,9 +90,9 @@ def main() -> None:
     struct.pack_into("<10I", header, 0x10, syms["_start"], syms["_gp"], LOAD, len(body), 0, 0, syms["_bss_start"],
                      syms["_bss_end"] - syms["_bss_start"], STACK, 0)
     header[0x4C:0x4C + len(MARKER)] = MARKER
-    game = BUILD / "DEMOQ_PS1.EXE"
+    game = build / "DEMOQ_PS1.EXE"
     game.write_bytes(bytes(header) + body)
-    ps2.write_key(BUILD, game, elf)
+    ps2.write_key(build, game, elf)
     print(f"built {game.relative_to(HERE)}: {len(body)} bytes of code and data, gp=0x{syms['_gp']:08X}")
 
 

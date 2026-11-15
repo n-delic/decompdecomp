@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 
 from .. import scoring
+from ..forks.csource import _blank, find
 from ..forks.project import ForkProject
 from ..network import GAME_CODE, IN_BUILD, Agent, NetworkError
 
@@ -40,21 +41,32 @@ CLAIM_SECONDS = 30 * 60
 SMALL_INSNS, BIG_INSNS = 8, 400
 ORDER = (f"boost DESC, CASE WHEN n_insns > {BIG_INSNS} THEN 1 WHEN n_insns < {SMALL_INSNS} THEN 2 ELSE 0 END, "
          f"CASE WHEN n_insns > {BIG_INSNS} THEN n_insns ELSE -n_insns END")
-POLISH_TRIES = 3  # a function taken up this often since it was last made readable, and still not readable, is skipped
+POLISH_TRIES = 3  # hand-outs whose rewrite failed (polish_failed) since it was last made readable: then it's skipped
+# Hand-outs that ended without a judged rewrite: a helper whose session ended, or that let it go, says nothing about
+# the function. Counting each as a try gave up on 199 of an N64 game's last 207 functions, only 8 of which any
+# rewrite had failed on: most tries had gone to polishes refused for reasons since fixed, or never submitted.
+# A function nobody finishes is still let go after this many.
+POLISH_CLAIMS = 10
+# C before the function above this many characters isn't shown in its brief, and make_readable takes the function alone
+# and puts it back under it. A twin's C keeps the declarations of the file it came from and blank lines that hold the
+# function at its line: an N64 game's audio library functions came to 7,500 lines (64,000 characters), a brief agents
+# couldn't read, so each was handed out 10 times without a rewrite.
+BIG_PREAMBLE = 8_000
 # what polishing takes (claim) and what a polishing helper's session counts as left (agents.Manager._left): the game's
 # own matched code that isn't readable yet and isn't given up on: one no rewrite kept matching was handed out again
 # and again, to every helper, being the biggest. (TODO and GIVEN_UP each take one ?, the project's id, after the
 # caller's own)
-GIVEN_UP = ("SELECT p.detail FROM events p WHERE p.project_id=? AND p.kind='polish' AND p.id > COALESCE((SELECT "
-            "MAX(r.id) FROM events r WHERE r.project_id=p.project_id AND r.kind='readable' AND r.detail=p.detail), 0) "
-            f"GROUP BY p.detail HAVING COUNT(*) >= {POLISH_TRIES}")
+GIVEN_UP = ("SELECT p.detail FROM events p WHERE p.project_id=? AND p.kind IN ('polish','polish_failed') AND p.id > "
+            "COALESCE((SELECT MAX(r.id) FROM events r WHERE r.project_id=p.project_id AND r.kind IN ('readable','polish_retry') "
+            "AND r.detail=p.detail), 0) "
+            f"GROUP BY p.detail HAVING SUM(p.kind='polish_failed') >= {POLISH_TRIES} OR SUM(p.kind='polish') >= {POLISH_CLAIMS}")
 TODO = f"status='matched' AND readable=0 AND {GAME_CODE} AND name NOT IN ({GIVEN_UP})"
 
 
 def _left_as_it_is(name: str, without: str) -> str:
-    """What a helper is told of a function or file it held that has had its tries: POLISH_TRIES counts every helper's
-    tries, not this one's, so it says it was tried rather than you tried it (#108)."""
-    return f"You held {name}; it was tried {POLISH_TRIES} times without {without}, so it's left as it is now.\n\n"
+    """What a helper is told of a function or file it held that has had its tries: they count every helper's tries,
+    not this one's, so it says it was tried rather than you tried it (#108)."""
+    return f"You held {name}; it has had its tries without {without}, so it's left as it is now.\n\n"
 
 
 TIDY = """\
@@ -82,7 +94,9 @@ class Readability:
     def __init__(self, net):
         self.net = net
         self._tidying: dict[tuple[int, str], tuple[int, float]] = {}  # (project, unit) -> (agent, until)
+        self._polish_locks = {}  # function id -> reentrant plan/submission lock
         self._tidy_lock = threading.Lock()  # (helpers claim at once: one file, one helper)
+        self._retried: set[int] = set()  # projects whose unread given-up functions were looked for (_retry_unread)
 
     def _untidy(self, proj) -> list[str]:
         """The project's source files (units) to tidy, most functions first: every function of the game's in them
@@ -90,7 +104,7 @@ class Readability:
         a ROM project's C is the database's, one function at a time."""
         if self.net.is_rom(proj):
             return []
-        rows = self.net.store.all(
+        rows = self.net.project_store(proj['id']).all(
             "SELECT unit, COUNT(*) AS n FROM functions WHERE project_id=? AND unit != '' AND "
             f"{GAME_CODE} AND {IN_BUILD} GROUP BY unit HAVING SUM(status='matched' AND readable=1) = COUNT(*) "
             "AND unit NOT IN (SELECT detail FROM events WHERE project_id=? AND kind='tidied') "
@@ -100,7 +114,7 @@ class Readability:
 
     def _file_given_up(self, proj, unit: str) -> bool:
         """Whether a file was handed out POLISH_TRIES times without being tidied (rather than tidied while held)."""
-        row = self.net.store.one(
+        row = self.net.project_store(proj['id']).one(
             "SELECT SUM(kind='tidy') AS tried, SUM(kind='tidied') AS tidied FROM events "
             "WHERE project_id=? AND detail=? AND kind IN ('tidy', 'tidied')", proj["id"], unit)
         return (row["tried"] or 0) >= POLISH_TRIES and not row["tidied"]
@@ -114,14 +128,59 @@ class Readability:
 
     def counts(self, proj) -> dict:
         """The game's own code only (GAME_CODE): library code set aside is out of progress, so out of polishing too."""
-        row = self.net.store.one("SELECT SUM(status='matched') AS matched, SUM(status='matched' AND readable=1) AS readable "
+        row = self.net.project_store(proj['id']).one("SELECT SUM(status='matched') AS matched, SUM(status='matched' AND readable=1) AS readable "
                                  f"FROM functions WHERE project_id=? AND {GAME_CODE}", proj["id"])
         return {"matched": row["matched"] or 0, "readable": row["readable"] or 0}
+
+    @staticmethod
+    def preamble(source: str, name: str) -> int:
+        """Where the function starts in its C when what comes before it is too big to show (BIG_PREAMBLE), else 0."""
+        span = find(source, name)
+        return span[0] if span and span[0] > BIG_PREAMBLE else 0
+
+    def _blocked(self, proj) -> dict[str, str]:
+        """The project's compilers that can't start now (their Linux runner down, say), each with why: its default,
+        its address ranges' and its functions' own. A function is handed out only when its own compiler can run."""
+        from .. import toolchains
+        cfg = self.net.cfg(proj)
+        tids = {(cfg.get("compiler") or {}).get("toolchain")}
+        tids |= {r.get("toolchain") for r in cfg.get("compiler_ranges") or []}
+        tids |= {p.get("toolchain") for p in (cfg.get("function_compilers") or {}).values()}
+        blocked = {}
+        for tid in filter(None, tids):
+            try:
+                if why := toolchains.runtime_error(tid):
+                    blocked[tid] = why
+            except toolchains.ToolchainError:  # a compiler this copy doesn't know: its compiles say why
+                pass
+        return blocked
+
+    def _own_compiler(self, proj, fn) -> str | None:
+        from ..project import compiler_for
+        cfg = self.net.cfg(proj)
+        return compiler_for(cfg, fn["vram"], fn).get("toolchain") if cfg.get("compiler") else None
+
+    def _retry_unread(self, proj) -> None:
+        """Give a function one fresh start (polish_retry) when it was given up on while its brief was too big to read:
+        those hand-outs say nothing about the function. Once per function, so one that fails again stays given up."""
+        if proj["id"] in self._retried:
+            return
+        self._retried.add(proj["id"])
+        store = self.net.project_store(proj['id'])
+        rows = store.all(f"SELECT * FROM functions WHERE project_id=? AND status='matched' AND readable=0 AND {GAME_CODE} "
+                         f"AND name IN ({GIVEN_UP}) AND name NOT IN (SELECT detail FROM events WHERE project_id=? "
+                         "AND kind='polish_retry')", proj["id"], proj["id"], proj["id"])
+        unread = [fn["name"] for fn in rows if self.preamble(self._matching_c(proj, fn), fn["name"])]
+        if unread:
+            with store.tx() as db:
+                for name in unread:
+                    self.net._event(db, proj["id"], None, "polish_retry", name)
 
     def left(self, proj) -> int:
         """How many functions polishing can still take, held ones included, and files to tidy: a polishing helper
         stops at none (a game with nothing left to decompile stopped its polishing helpers before they began)."""
-        return self.net.store.one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND {TODO}",
+        self._retry_unread(proj)
+        return self.net.project_store(proj['id']).one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND {TODO}",
                                   proj["id"], proj["id"])["n"] + len(self._untidy(proj))
 
     def _tidy_job(self, agent: Agent, proj) -> tuple[str | None, str | None]:
@@ -147,12 +206,20 @@ class Readability:
                     return None, left
             # taking a held file up again is a try too: one a helper never finished got it back every claim without a
             # try against it, so it never left and left() never reached 0, as a function did before #108
-            with self.net.store.tx() as db:
+            with self.net.project_store(proj['id']).tx() as db:
                 self.net._event(db, proj["id"], agent.id, "tidy", mine)
             self._tidying[(proj["id"], mine)] = (agent.id, now + CLAIM_SECONDS)
         fp = ForkProject(Path(proj["root"]))
         source = next((u.source for u in fp.units() if u.name == mine), None) or mine
-        return TIDY.format(unit=mine, source=source, data=self._data_held(agent, proj, fp, source)), left
+        from .polish_automation import tidy
+        if proj['slug'] in self.net.links:
+            cleanup = "Mechanical cleanup runs on the room host."
+        else:
+            try:cleanup = tidy(self, agent, proj['slug'], source)
+            except (NetworkError, OSError, UnicodeError) as error:
+                cleanup = f"Mechanical cleanup could not run: {error}. Review the file with read_file."
+        return (TIDY.format(unit=mine, source=source, data=self._data_held(agent, proj, fp, source))
+                + "\n\nMechanical cleanup: " + cleanup), left
 
     def _data_held(self, agent: Agent, proj, fp: ForkProject, source: str) -> str:
         """What the globals a source file declares hold in the original (read_data's summary of each), for its tidy
@@ -192,25 +259,48 @@ class Readability:
             if held is None or held[0] != agent.id or held[1] <= time.time():
                 raise NetworkError(f"you aren't tidying {unit}: claim_readable gives you a file to tidy")
             del self._tidying[(proj["id"], unit)]
-        with self.net.store.tx() as db:
+        with self.net.project_store(proj['id']).tx() as db:
             self.net._event(db, proj["id"], agent.id, "tidied", unit)
             self.net._event(db, proj["id"], agent.id, "tidy_summary", f"{unit}: {summary.strip()[:500]}")
         return f"✅ {unit} is tidy. claim_readable for the next one."
 
     def claim(self, agent: Agent, slug: str) -> str:
+        # A reusable plan consumes ordinary claims, one function at a time. No recursion
+        # or fixed run-size cap: cancellation/revision checks remain in the normal judge.
+        automated = 0
+        while True:
+            from .polish_automation import check_stopped
+            check_stopped(self.net,agent,slug)
+            answer = self._claim(agent, slug)
+            if answer is not None:
+                return (f"Automatically polished {automated} identical helper(s), each verified here.\n\n" if automated else "") + answer
+            automated += 1
+
+    def _claim(self, agent: Agent, slug: str) -> str | None:
         """The next matched function that isn't readable yet, held for this agent, with what it needs to know."""
         proj = self.net._project(slug)
         fork = not self.net.is_rom(proj)
+        self._retry_unread(proj)
+        # every edit of a function whose compiler can't run fails, and each hand-out counts towards POLISH_CLAIMS:
+        # an N64 game's smallest function, built with the compiler its Linux runner runs, was given up on after 10
+        # hand-outs while that runner was down (and while the game's own compiler, which the check looked at, ran)
+        blocked = {} if fork else self._blocked(proj)
+        waiting = None
         now = time.time()
-        with self.net.store.tx() as db:
-            self.net._expire_claims(db)
+        from .local_claims import expiry_ids
+        store = self.net.project_store(proj['id'])
+        identities = expiry_ids(self.net, store)
+        with store.tx() as db:
+            self.net._expire_claims(db, **identities)
             held = db.execute("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                               (agent.id,)).fetchone()
             fn = held if held is not None and held["status"] == "matched" else None
             if held is not None and fn is None:
                 raise NetworkError(f"you hold {held['name']}; match it or release_function it first")
             left = None
-            if fn is not None:
+            if fn is not None and blocked and self._own_compiler(proj, fn) in blocked:
+                waiting, fn = blocked[self._own_compiler(proj, fn)], None  # kept for this agent, not counted
+            elif fn is not None:
                 # taking a held function up again is a try too: a helper whose every rewrite of one failed to compile
                 # kept its claim (each compile renewed it) and got it back each session, 174 times in an afternoon on
                 # an Xbox game, as only a new claim counted
@@ -220,16 +310,25 @@ class Readability:
                     db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
                     tried = db.execute(f"SELECT 1 WHERE ? IN ({GIVEN_UP})", (fn["name"], proj["id"])).fetchone()
                     left, fn = fn["name"] if tried else None, None
-            if fn is None:
+            if fn is None and waiting is None:
                 # in ORDER. The game's own code: an Xbox game's matched SDK functions, set aside, would have been
                 # polished with its 33
-                fn = db.execute(f"SELECT * FROM functions WHERE project_id=? AND {TODO} "
-                                f"AND id NOT IN (SELECT function_id FROM claims) ORDER BY {ORDER} LIMIT 1",
-                                (proj["id"], proj["id"])).fetchone()
+                rows = db.execute(f"SELECT * FROM functions WHERE project_id=? AND {TODO} "
+                                  f"AND id NOT IN (SELECT function_id FROM claims) ORDER BY {ORDER}"
+                                  + ("" if blocked else " LIMIT 1"), (proj["id"], proj["id"]))
+                for row in rows:
+                    if blocked and (tid := self._own_compiler(proj, row)) in blocked:
+                        waiting = waiting or blocked[tid]
+                        continue
+                    fn = row
+                    break
                 if fn is not None:
                     db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
                     self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
         given_up = _left_as_it_is(left, "a rewrite that kept it matching") if left else ""
+        if fn is None and waiting:
+            return (f"{given_up}The compiler for what's left can't run right now: {waiting}\nNothing was handed out. "
+                    "Wait a minute, then claim_readable again.")
         if fn is None:
             if fork:  # every function done: the files next
                 job, file_left = self._tidy_job(agent, proj)
@@ -239,9 +338,13 @@ class Readability:
                     return given_up + job
             if self.left(proj):  # what's left is held by other helpers
                 return given_up + self._held_by_others(proj)
-            return (given_up + "Every matched function is readable already (or was tried "
-                    f"{POLISH_TRIES} times without staying matched), and every file tidy. 🎉 Stop here: nothing is "
-                    "left to polish.")
+            return (given_up + "Every matched function is readable already (or has had its tries without "
+                    "staying matched), and every file tidy. 🎉 Stop here: nothing is left to polish.")
+        from . import polish_automation
+        if polish_automation.reuse(self, agent, proj, fn):
+            return None
+        source = self._matching_c(proj, fn)
+        prepared = polish_automation.safe_brief(self.net, proj, fn, source)
         counts = self.counts(proj)
         where = f" at 0x{fn['vram']:08X}" if fn["vram"] is not None else f" in {fn['unit']}"
         names = ("- rename_symbol the function, and the globals and functions it uses, once their purpose is clear "
@@ -254,15 +357,28 @@ class Readability:
         # picked its own style (Shape3_Init, Shape2_init, vec3_dot_product)
         names += ("- read_data a global before you name it: what it holds (a string, a table, a constant) says what it "
                   "is;\n- name things in the style the names around them already use.\n")
+        start = self.preamble(source, fn["name"])
+        shown, alone = source.strip(), ""
+        if start:
+            before = source[:start].count("\n")
+            shown = source[start:].strip()
+            alone = (f"(Only the function: the {before:,} lines above it, declarations and blank lines that keep it at "
+                     f"line {before + 1:,}, stay as they are. Polish it in place, or give make_readable the function "
+                     "alone: it goes back under them, on the same line.)\n")
+        from ..release_receipts import current
+        lease = current(self.net, fn, agent)
         return (f"{given_up}MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
-                f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n\n"
-                f"It matches today with this C:\n```c\n{self._matching_c(proj, fn).strip()}\n```\n\n"
-                "Make it readable without changing what the compiler makes of it:\n" + names +
+                f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n"
+                f"claim_token: {lease}\n"
+                "Pass this claim_token to release_function if you leave this function for another helper.\n\n"
+                f"It matches today with this C:\n{alone}```c\n{shown}\n```\n\n"
+                + prepared + "\nMake it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
                 "- keep the statements' shape: the order, the casts and the temporaries that make it match.\n"
                 + ("- it's a big function: rename and comment in place, statement for statement; don't restructure it "
                    "(one slip anywhere in it and the rewrite is refused).\n" if fn["n_insns"] > BIG_INSNS else "") +
-                f"Then make_readable(\"{fn['name']}\", source). It's judged again: it must still match byte for byte, or "
+                "Prefer polish_function with a JSON local rename map and a one-line comment; it keeps physical lines intact. "
+                f"For a larger rewrite use make_readable(\"{fn['name']}\", source). It's judged again: it must still match byte for byte, or "
                 "it's refused and the matching C stays.")
 
     def _held_by_others(self, proj) -> str:
@@ -270,10 +386,12 @@ class Readability:
         stop, a helper left for good, and a function or file whose holder's claim then ran out had nobody to take it
         (#89)."""
         now = time.time()
-        held = [(r["name"], r["agent"], r["expires_at"]) for r in self.net.store.all(
-            "SELECT f.name, a.name AS agent, c.expires_at FROM claims c "
-            f"JOIN (SELECT id, name FROM functions WHERE project_id=? AND {TODO}) f ON f.id=c.function_id "
-            "LEFT JOIN agents a ON a.id=c.agent_id", proj["id"], proj["id"])]
+        from .project_labels import label
+        rows = self.net.project_store(proj['id']).all(
+            "SELECT f.name, c.agent_id, c.expires_at FROM claims c "
+            f"JOIN (SELECT id, name FROM functions WHERE project_id=? AND {TODO}) f ON f.id=c.function_id",
+            proj['id'], proj['id'])
+        held = [(r['name'], r['agent'], r['expires_at']) for r in label(self.net, rows, {'agent':'agent_id'})]
         with self._tidy_lock:
             files = [(u, who, until) for (pid, u), (who, until) in self._tidying.items()
                      if pid == proj["id"] and until > now]
@@ -287,51 +405,130 @@ class Readability:
                 f"{', ...' if len(held) > 10 else ''}. Each is free again when its helper finishes it or its claim "
                 "runs out: call claim_readable again later. Don't stop.")
 
-    def submit(self, agent: Agent, slug: str, function: str, source: str) -> str:
-        """An agent's readable rewrite of a matched function: kept only when it still matches byte for byte."""
-        with self.net.progress.judging(slug):
+    def submit(self, agent: Agent, slug: str, function: str, source: str, *, synchronize: bool = True) -> str:
+        """An agent's readable rewrite of a matched function: kept only when it still matches byte for byte.
+        synchronize=False (a pass over many functions, as the other release's polished code): the saved files aren't
+        read before and after each one, which took 12 s a function on a 2,000-function game; the progress watcher
+        writes them afterwards, as for autopilot's drafts."""
+        if synchronize:
+            with self.net.progress.judging(slug):
+                return self._submit(agent, slug, function, source)
+        with self.net.progress.judging(slug, synchronize=False), self.net.progress.view():
             return self._submit(agent, slug, function, source)
 
     def _submit(self, agent: Agent, slug: str, function: str, source: str) -> str:
+        fn = self.net._function(function, slug)
+        with self._polish_locks.setdefault(fn['id'], threading.RLock()):
+            return self._submit_locked(agent, slug, function, source)
+
+    def _submit_locked(self, agent: Agent, slug: str, function: str, source: str) -> str:
         proj = self.net._project(slug)
         fn = self.net._function(function, proj["slug"])
         if fn["status"] != "matched":
             raise NetworkError(f"{fn['name']} isn't matched yet: compile_and_diff it first")
-        claim = self.net.store.one("SELECT agent_id FROM claims WHERE function_id=?", fn["id"])
+        claim = self.net.project_store(proj['id']).one("SELECT agent_id FROM claims WHERE function_id=?", fn["id"])
         if claim is not None and claim["agent_id"] != agent.id:
             raise NetworkError(f"{fn['name']} is held by {self.net._agent_name(claim['agent_id'])}")
-        if " ".join(source.split()) == " ".join(self._matching_c(proj, fn).split()):
+        original = self._matching_c(proj, fn)
+        source = self._under_preamble(original, source, fn["name"])
+        if " ".join(source.split()) == " ".join(original.split()):
             raise NetworkError("that's the C it has already: rename, type and comment it first")
+        from . import polish_automation
+        receipt = {}
+        key = polish_automation.input_key(self.net, proj, fn, original, source, receipt=receipt)
+        cached = polish_automation.failure(self.net, proj, fn, key, source)
+        if cached:
+            return cached
+
+        def rejected(text, cacheable=False, tried=True):
+            polish_automation.remember_failure(self.net, proj, fn, key, source, text, original, cacheable)
+            if tried:
+                self._failed(proj, fn, agent)
+            return text
+
         if not self.net.is_rom(proj):  # the project's own file, judged and committed (or put back) as any compile
             res = self.net.forks.attempt(agent, proj["slug"], fn["name"], source, comment=True)
             if not res.get("matched"):
-                return res["text"]
-            return self._readable(proj, fn, agent, source)
+                return rejected(res["text"])
+            return self._readable(proj, fn, agent, source, original=original)
         ctx = self.net._context(proj["id"], fn["unit"])
         result = self.net._compile(proj, ctx["header"], source, fn)
         if not result.ok:
             self.net._record(fn, agent, None, source, ctx["version"])  # its compiles count, as a decompiling one's
-            return f"❌ COMPILE ERROR: the matching C stays.\n{result.log.strip()}"
+            return rejected(f"❌ COMPILE ERROR: the matching C stays.\n{result.log.strip()}",
+                            polish_automation.deterministic_error(result.log))
+        polish_automation.check_inputs(self.net, proj, fn, original, source, key, receipt, 'compile')
         cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
         if cand is None:
             self.net._record(fn, agent, None, source, ctx["version"], compiled=True)
-            return f"❌ No function named `{fn['name']}` in it: keep its name (rename it with rename_symbol)."
+            # the helper renamed it: its own slip, which says nothing about the function
+            return rejected(f"❌ No function named `{fn['name']}` in it: keep its name (rename it with rename_symbol).",
+                            tried=False)
         d = scoring.diff(self.net._target_obj(fn, proj), cand)
         self.net._record(fn, agent, d.score, source, ctx["version"])  # not as a match: it was one already
         if not (d.bytes_match if verdict is None else verdict):
             note = "\n".join(f"- {p}" for p in problems)
-            return (f"❌ It no longer matches (score {d.score}): the matching C stays. Keep the statements' shape and "
-                    f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""))
-        return self._readable(proj, fn, agent, source)
+            return rejected(f"❌ It no longer matches (score {d.score}): the matching C stays. Keep the statements' shape and "
+                    f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""), cacheable=d.score > 0 and not problems)
+        polish_automation.check_inputs(self.net, proj, fn, original, source, key, receipt, 'judge')
+        return self._readable(proj, fn, agent, source, original=original)
 
-    def _readable(self, proj, fn, agent: Agent, source: str) -> str:
+    def _under_preamble(self, original: str, source: str, name: str) -> str:
+        """The function alone, as a brief that left out a big preamble shows it: back under that preamble, starting on
+        the line it started on. Anything else is the whole C, as before."""
+        start = self.preamble(original, name)
+        span = find(source, name)
+        if not start or span is None:
+            return source
+        clean = _blank(source)
+        if clean[span[1]:].strip() or re.search(r"\S", clean[:span[0]]):
+            return source  # declarations or other code of its own: the agent sent the whole C
+        # its comment (blanked above) stays on the function's first line, so the function keeps its line
+        lead = re.sub(r"//([^\n]*)", lambda m: "/* " + m[1].replace("*/", "* /").strip() + " */", source[:span[0]])
+        lead = " ".join(lead.split())
+        return original[:start] + (lead + " " if lead else "") + source[span[0]:].lstrip() + \
+            ("\n" if original.endswith("\n") and not source.endswith("\n") else "")
+
+    def _failed(self, proj, fn, agent: Agent) -> None:
+        """A judged rewrite didn't compile or stopped matching: its hand-out counts as a try (POLISH_TRIES), once."""
+        with self.net.project_store(proj['id']).tx() as db:
+            latest = db.execute("SELECT MAX(id) FROM events WHERE project_id=? AND kind='polish' AND detail=?",
+                                (proj["id"], fn["name"])).fetchone()[0] or 0
+            if not db.execute("SELECT 1 FROM events WHERE project_id=? AND kind='polish_failed' AND detail=? AND id>?",
+                              (proj["id"], fn["name"], latest)).fetchone():
+                self.net._event(db, proj["id"], agent.id, "polish_failed", fn["name"])
+
+    def _readable(self, proj, fn, agent: Agent, source: str, *, original=None) -> str:
         """A rewrite that still matches: it's the function's C now, and the function counts as readable."""
-        with self.net.progress._project_lock(proj["slug"]), self.net.store.tx() as db:
+        from .polish_history import detail as polish_detail
+        store = self.net.project_store(proj['id'])
+        if original is None:
+            # The matching C the caller read with `fn`. Compared as None, every caller without `original` was told the
+            # source changed while polishing, whatever happened (#961's check).
+            original = fn['matched_source']
+        baseline = polish_detail(store,fn)['unpolished_source'] if fn['readable'] else original
+        with self.net.progress._project_lock(proj["slug"]), store.tx() as db:
             self.net.progress.check_result()
-            db.execute("UPDATE functions SET matched_source=?, best_source=?, readable=1 WHERE id=?",
-                       (source, source, fn["id"]))
+            if self.net.is_rom(proj):
+                latest = store.one('SELECT name,status,matched_source FROM functions WHERE id=?',fn['id'])
+                if latest is None or latest['name'] != fn['name'] or latest['status'] != 'matched' or latest['matched_source'] != original:
+                    raise NetworkError("The matching source changed while polishing. Read the function again and retry.")
+            db.execute("UPDATE functions SET unpolished_source=CASE WHEN readable=0 THEN ? "
+                       "ELSE COALESCE(unpolished_source, ?) END, matched_source=?, best_source=?, readable=1 WHERE id=?",
+                       (baseline, baseline, source, source, fn["id"]))
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             self.net._event(db, proj["id"], agent.id, "readable", fn["name"])
+            if self.net.is_rom(proj):
+                attempt = db.execute('SELECT id,context_version FROM attempts WHERE function_id=? AND agent_id=? AND source=? ORDER BY id DESC LIMIT 1',
+                                     (fn['id'], agent.id, source)).fetchone()
+                if attempt is not None:
+                    from ..match_bundle import capture
+                    capture(db, fn, attempt['id'], source, attempt['context_version'], None)
+                    from . import match_commits
+                    self.net.project_store(proj['id']).after_commit(
+                        lambda: match_commits.enqueue(self.net, self.net.project_row(proj['slug']), fn['id'], polished=True))
+        from .polish_automation import learn
+        learn(self.net,proj,fn,baseline,source)
         counts = self.counts(proj)
         return (f"✅ {fn['name']} is readable now, and still matches byte for byte ({counts['readable']} of "
                 f"{counts['matched']} readable). claim_readable for the next one.")

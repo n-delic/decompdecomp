@@ -1,0 +1,41 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=fs.readFileSync('src/decompnet/app/static/js/project.js','utf8');
+const nodes=new Map();
+function node(id){if(!nodes.has(id))nodes.set(id,{hidden:false,textContent:'',title:'',attrs:{},classList:{toggle(){}},firstElementChild:{style:{}},setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];}});return nodes.get(id);}
+const body={isConnected:true,querySelector:node};
+let refreshed=0;const requests=[];
+const env={S:{slug:'game'},$:node,dialog:()=>{env.S.dialogKind="saved-progress";return body;},api:async(_url,options)=>requests.push(options.body),refreshMap:async()=>refreshed++,esc:s=>s,toast:()=>{}};
+vm.createContext(env);
+vm.runInContext(source.slice(source.indexOf('let quietSyncDialog ='),source.indexOf('function renderHeader(')),env);
+const headerStart=source.indexOf('  const sync = ov.progress_sync;',source.indexOf('function renderHeader('));
+vm.runInContext('function renderSyncHeader(ov){'+source.slice(headerStart,source.indexOf('  const fork = ov.kind',headerStart))+'}',env);
+const sync={phase:'Reading saved files',done:0,total:null,elapsed_seconds:0,full_recheck:false};
+env.renderSyncHeader({progress_sync:sync});
+assert.equal(node('progressSyncNotice').hidden,true);
+assert.equal(node('progressSyncIndicator').hidden,false);
+assert.match(node('progressSyncIndicator').attrs['aria-label'],/Reading saved files/);
+node('progressSyncIndicator').onclick();
+assert.match(node('[data-sync-phase]').textContent,/Reading saved files/);
+assert.equal(node('[data-sync-bar]').attrs.value,undefined);
+env.renderSyncHeader({progress_sync:{...sync,phase:'Verifying saved functions',function:'example_function',done:2,total:5}});
+assert.equal(node('progressSyncNotice').hidden,true);
+assert.match(node('[data-sync-phase]').textContent,/2 \/ 5 functions.*example_function/);
+assert.equal(node('[data-sync-bar]').value,2);
+env.renderSyncHeader({progress_sync:{...sync,full_recheck:true}});
+assert.equal(node('progressSyncNotice').hidden,false);
+assert.equal(node('progressSyncIndicator').hidden,true);
+env.renderSyncHeader({progress_sync:{...sync,paused:true}});
+assert.equal(node('progressSyncNotice').hidden,true);
+assert.equal(node('[data-sync-pause]').textContent,'Resume verification');
+(async()=>{
+ await node('[data-sync-pause]').onclick();
+ assert.equal(requests[0].slug,'game');assert.equal(requests[0].paused,false);assert.equal(refreshed,1);
+ env.S.slug='other';env.renderSyncHeader({});
+ assert.equal(node('progressSyncIndicator').hidden,true);assert.equal(node('progressSyncNotice').hidden,true);
+ assert.equal(node('[data-sync-pause]').hidden,true);assert.match(node('[data-sync-phase]').textContent,/original project/);
+ env.S.slug='game';env.renderSyncHeader({});
+ assert.equal(node('[data-sync-bar]').hidden,true);assert.match(node('[data-sync-phase]').textContent,/up to date/);
+ // Opening another drawer reuses the body; background updates must leave it alone.
+ env.S.dialogKind='another-task';body.querySelector=()=>{throw Error('Wrong drawer updated');};
+ env.renderQuietProgressSync(sync);
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -248,6 +248,8 @@ class _Store:
 
 
 class _Net:
+    project_store = lambda self, project:self.store
+
     def __init__(self, store, stubs):
         self.store, self.stubs = store, stubs
 

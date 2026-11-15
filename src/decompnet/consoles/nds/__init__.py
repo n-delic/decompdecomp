@@ -111,7 +111,7 @@ class NintendoDS(Console):
         joined: dict[str, list[str]] = {}
 
         def pieces(fp):  # not into or out of a matched function: its C would no longer be the whole function
-            matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+            matched = {r["name"] for r in net.project_store(slug).all("SELECT name FROM functions WHERE project_id=? AND "
                                                         "status='matched'", net.project_row(slug)["id"])}
             joined.update(recover.merge_pieces(fp.root, manifest["version"], dsd=scratch.dsd_path(), keep=matched,
                                                log=log))
@@ -119,7 +119,7 @@ class NintendoDS(Console):
             return (f"{n} pieces of functions dsd's analysis cut off are part of the function they belong to again"
                     if n else None)
         def boundaries(fp):  # its own step: a rebuild it breaks takes back only these
-            matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+            matched = {r["name"] for r in net.project_store(slug).all("SELECT name FROM functions WHERE project_id=? AND "
                                                         "status='matched'", net.project_row(slug)["id"])}
             moved = recover.move_boundaries(fp.root, manifest["version"], keep=matched, log=log)
             return (f"{len(moved)} functions a switch runs on into ({', '.join(moved[:3])}{'…' if len(moved) > 3 else ''})"

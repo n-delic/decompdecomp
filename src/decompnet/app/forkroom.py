@@ -184,8 +184,13 @@ def register_member(net, slug: str, root: Path, info: dict, host_title: str) -> 
 
 def save_head(net, slug: str, tip: str) -> None:
     proj = net.project_row(slug)
-    cfg = json.loads(proj["config"])
-    if (cfg.get("link") or {}).get("head") != tip:
-        cfg.setdefault("link", {})["head"] = tip
-        with net.store.tx() as db:
+    with net.project_store(proj['id']).tx() as db:
+        row = db.execute('SELECT config FROM projects WHERE id=?', (proj['id'],)).fetchone()
+        if row is None:
+            return
+        cfg = json.loads(row['config'])
+        if 'link' not in cfg:
+            return  # a pull finishing after unlink must not recreate the connection
+        if (cfg.get("link") or {}).get("head") != tip:
+            cfg.setdefault("link", {})["head"] = tip
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))

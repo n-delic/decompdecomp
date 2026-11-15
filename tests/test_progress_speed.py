@@ -126,3 +126,85 @@ def test_a_manifest_only_pull_neither_judges_nor_rewrites_sources(project):
     after = _file_stats(folder)
     sources = {name: stat for name, stat in after.items() if name.startswith(("src/", "best/"))}
     assert sources == {name: stat for name, stat in before.items() if name.startswith(("src/", "best/"))}
+
+
+def test_tool_calls_waiting_on_one_check_share_the_next_one(project):
+    """Each helper's tool call forces a full check of the save folder before and after its work; with 25 helpers
+    they queued on the project's lock and each then made its own identical check (4 s of a 5.6 s call). A call that
+    waited while a check was running needs only one check that starts after it asked: the first waiter's serves
+    every other waiter."""
+    import threading
+    net, _, _, _, _ = project
+    progress = net.progress
+    checks = []
+    activity = progress._activity
+
+    def counting(slug, **kwargs):
+        if kwargs.get("phase") == "Reading saved files":
+            checks.append(slug)
+        return activity(slug, **kwargs)
+    progress._activity = counting
+    lock = progress._project_lock("game")
+    with lock:  # a check in progress: these calls ask while it runs
+        callers = [threading.Thread(target=progress.sync, args=("game",), kwargs={"force": True}) for _ in range(4)]
+        for caller in callers:
+            caller.start()
+        time.sleep(0.3)
+    for caller in callers:
+        caller.join(30)
+    assert len(checks) == 1, f"{len(checks)} full checks for 4 waiting calls"
+    checks.clear()
+    progress.sync("game", force=True)  # asked after that check finished: it checks again
+    assert len(checks) == 1
+
+
+def test_a_tool_calls_ordinary_check_does_not_queue_behind_a_running_one(project):
+    """An agent's claim waited almost five minutes on the project's lock while the progress-commit job's sync held it.
+    A tool call's ordinary check (its first engine lookup) skips the folder when one ran under CHECK_SECONDS ago, so
+    while another thread's check holds the lock it returns at once. Forced checks (the judge's) and ordinary checks
+    outside a tool call still wait for it."""
+    import threading
+    net, _, _, _, _ = project
+    progress = net.progress
+    lock = progress._project_lock("game")
+    held, release = threading.Event(), threading.Event()
+
+    def background_check():
+        with lock:
+            held.set()
+            release.wait(30)
+    holder = threading.Thread(target=background_check)
+    holder.start()
+    assert held.wait(5)
+    finished = {}
+
+    def run(key, call):
+        call()
+        finished[key] = time.monotonic()
+    try:
+        start = time.monotonic()
+        with progress.deferring():
+            assert progress.sync("game") is False
+        assert time.monotonic() - start < 1, "a tool call's ordinary check waited for the running one"
+        with progress.foreground():
+            assert progress.sync("game") is False
+        assert time.monotonic() - start < 1
+        waiters = [threading.Thread(target=run, args=("forced", lambda: _deferred(progress, force=True))),
+                   threading.Thread(target=run, args=("background", lambda: progress.sync("game")))]
+        for waiter in waiters:
+            waiter.start()
+        time.sleep(0.3)
+        assert finished == {}, "a forced or background check skipped the running one"
+    finally:
+        released = time.monotonic()
+        release.set()
+        holder.join(30)
+    for waiter in waiters:
+        waiter.join(30)
+    assert set(finished) == {"forced", "background"}
+    assert all(when >= released for when in finished.values())
+
+
+def _deferred(progress, **kwargs):
+    with progress.deferring():
+        return progress.sync("game", **kwargs)

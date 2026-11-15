@@ -1,0 +1,68 @@
+"""decomprepair is a dependency (RetroReversing/decomp-repair, which tests the library itself); this checks how the
+app uses it."""
+
+
+def test_app_names_are_the_library_modules():
+    """The app keeps its old names for the shared readers; both names must be one module (patches reach both)."""
+    from decompnet.arch import mips
+    from decompnet.forks import csource
+    from decompnet.rom import symbols
+    from decomprepair import csource as c
+    from decomprepair import mips as m
+    from decomprepair import symbols as s
+    assert (csource, mips, symbols) == (c, m, s)
+
+
+def test_moved_mips_readers_keep_their_app_names():
+    """The MIPS evidence readers (0.2.0) and the permuter's rewrites (0.3.0) moved to decomprepair; the app's names
+    are the same modules."""
+    import importlib
+
+    for name in ("mips_arguments", "mips_literals", "mips_parameters", "mips_stack", "mips_local_storage",
+                 "mips_pointer_lifetime", "mips_returns", "mips_return_paths", "mips_regions", "mips_hazards",
+                 "mips_search", "mips_source_recovery", "mips_templates", "mips_callback_flow", "mips_tail_dispatch",
+                 "mips_references", "mips_runtime", "call_evidence", "mips_count", "mips_compare", "mips_status",
+                 "mips_fcsr", "mips_status_return_spacing", "mips_debug_break", "permuter", "permuter_gen",
+                 "permuter_capture", "permuter_dependencies", "permuter_formatting", "app.permuter_initialization",
+                 "app.permuter_local"):
+        app = f"decompnet.{name}" if name.startswith(("permuter", "app.")) else f"decompnet.arch.{name}"
+        assert importlib.import_module(app) is importlib.import_module(f"decomprepair.{name.split('.')[-1]}")
+
+
+def test_toolchains_name_the_intrinsics_header_the_app_way():
+    """toolchains.toml says `decompnet.arch.mips_debug_break`; the compiler imports it by that name."""
+    import importlib
+
+    from decompnet import toolchains
+    from decomprepair import mips_debug_break
+
+    tc = toolchains.get("gcc-2.7.2-kmc")
+    assert importlib.import_module(tc.intrinsics).header() == mips_debug_break.header()
+
+
+def test_the_permuter_runs_the_library_generator():
+    """app/permute.py starts permuter_gen.py by path: the library's copy, beside its helpers."""
+    import decomprepair
+    from decompnet.app import permute
+
+    assert permute.GENERATOR.parent == __import__("pathlib").Path(decomprepair.__file__).resolve().parent
+    assert (permute.GENERATOR.parent / "permuter_capture.py").is_file()
+
+
+def test_rewrites_moved_in_040_keep_their_app_names():
+    """decomprepair 0.4.0: five rewrite modules and the PS1 GTE header are aliases; three keep their database part here."""
+    import importlib
+
+    for app, library in (("app.switch_constant_dispatch", "switch_constant_dispatch"),
+                         ("app.initializer_clusters", "initializer_clusters"),
+                         ("app.callee_contracts", "callee_contracts"),
+                         ("app.loop_storage_shapes", "loop_storage_shapes"),
+                         ("app.repair_tokens", "repair_tokens"), ("consoles.ps1.gte", "ps1_gte")):
+        assert importlib.import_module(f"decompnet.{app}") is importlib.import_module(f"decomprepair.{library}")
+    from decompnet.app import expression_recipes, layout_frontiers, switch_tables
+    from decomprepair import expression_recipes as er
+    from decomprepair import layout_frontiers as lf
+    from decomprepair import switch_tables as st
+    assert switch_tables.variants is st.variants and switch_tables.read.__module__ == "decompnet.app.switch_tables"
+    assert layout_frontiers.offer is lf.offer and layout_frontiers.saved.__module__ == "decompnet.app.layout_frontiers"
+    assert expression_recipes.apply is er.apply and expression_recipes.learn.__module__ == "decompnet.app.expression_recipes"

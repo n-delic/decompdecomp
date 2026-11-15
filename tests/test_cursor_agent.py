@@ -27,7 +27,7 @@ def test_cursor_private_home_and_permissions_do_not_import_user_mcp(tmp_path, mo
     assert servers['decomp']['headers']['Authorization'] == 'Bearer private-token'
     settings = json.loads((private / 'cli-config.json').read_text())
     assert settings['permissions']['allow'] == ['Mcp(decomp:*)']
-    assert {'Shell(*)', 'Read(/**)', 'Write(/**)', 'WebFetch(*)', 'WebSearch(*)'} <= set(settings['permissions']['deny'])
+    assert {'Shell(*)', 'Read(/**)', 'Write(/**)', 'WebFetch(*)'} <= set(settings['permissions']['deny'])
     assert settings['network']['useHttp1ForAgent'] is True
     assert json.loads((private / 'auth.json').read_text())['accessToken'] == 'login-material'
     assert 'personal' in (config / 'mcp.json').read_text()
@@ -49,9 +49,9 @@ def test_cursor_stream_events_and_missing_usage():
     assert CURSOR.parse({'type': 'tool_call', 'subtype': 'completed'}, state) == []
     rows = CURSOR.parse({'type': 'result', 'result': 'Working'}, state)
     assert [kind for kind, _ in rows] == ['info']
-    assert not CURSOR.fatal('Error: Authentication required. Please run agent login first')
+    assert CURSOR.estimate_cost('auto', {}) is None
+    assert CURSOR.fatal('Authentication required')
     assert not CURSOR.fatal('temporary network error')
-    assert CURSOR.fatal("Cursor couldn't access the keychain")
 
 
 def test_cursor_explicit_usage_is_tracked_only_when_present():

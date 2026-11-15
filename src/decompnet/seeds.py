@@ -16,7 +16,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import scoring, toolchains
+from . import compile_timing, limits, scoring, toolchains
 from .elfobj import FunctionObj
 
 # What m2c's --valid-syntax output needs to compile: its unknown types and macros, defined the simplest way that
@@ -332,16 +332,45 @@ class DraftError(Exception):
     """m2c couldn't make the draft asked for (strict runs only), with its own reason."""
 
 
+def intrinsic_leaf(asm_text: str, name: str, toolchain_id: str | None) -> str | None:
+    """A fixed CP0/FPU leaf (decomprepair's mips_count, mips_status, ...) when the toolchain carries their header:
+    its `intrinsics` is mips_debug_break. The Status write with return spacing is the KMC GCC's alone."""
+    from decomprepair import mips_compare, mips_count, mips_fcsr, mips_status, mips_status_return_spacing
+
+    from . import toolchains
+
+    try:
+        tc = toolchains.get(toolchain_id or "")
+    except toolchains.ToolchainError:
+        return None
+    registered = tc.intrinsics == "decompnet.arch.mips_debug_break"
+    kmc = registered and tc.id == "gcc-2.7.2-kmc"
+    for module, allowed in ((mips_status_return_spacing, kmc), (mips_compare, registered), (mips_fcsr, registered),
+                            (mips_status, registered), (mips_count, registered)):
+        if source := module.candidate(asm_text, name, allowed):
+            return source
+    return None
+
+
 def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, context_header: str = "",
                       data_asm: str | None = None, timeout: float = 20, valid: bool = False,
-                      strict: bool = False) -> str | None:
+                      strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
     """C draft from GNU/splat-style assembly text (plus optional data, for jump tables and strings). `valid`:
     m2c's compilable form (unknown types and expressions as M2C_ macros, see M2C_MACROS), for trying drafts as is.
     `strict`: a context m2c can't read raises DraftError instead of drafting without it."""
+    if source := intrinsic_leaf(asm_text, name, toolchain_id):
+        return source
     target = m2c_target(toolchain_id or "")
     if not target:
         return None
-    return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict)
+    return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict, options)
+
+
+def drop_saved_register_reads(source: str) -> str:
+    """m2c writes `var_s0 = saved_reg_s0;` where the code reads a callee-saved register before it sets it (a value it
+    only conditionally replaces). `saved_reg_s0` is declared nowhere, so no draft with one compiles; the local simply
+    stays unset, which is what the original register did."""
+    return re.sub(r"^[ \t]*\w+ = saved_reg_\w+;[ \t]*\n", "", source, flags=re.M)
 
 
 MAX_REASON_CHARS = 600  # of m2c's reason for a failure, passed on to an agent
@@ -351,14 +380,39 @@ def _failure(res: subprocess.CompletedProcess) -> str:
     """m2c's reason for a failed run: its "Decompilation failure" note, else the end of what it printed."""
     out = res.stdout or ""
     note = out[out.find("Decompilation failure"):] if "Decompilation failure" in out else (res.stderr or out)
-    return note.strip().strip("*/").strip()[-MAX_REASON_CHARS:] or f"m2c stopped with code {res.returncode}"
+    reason = note.strip().strip("*/").strip()[-MAX_REASON_CHARS:] or f"m2c stopped with code {res.returncode}"
+    if "jump table is not provided" in reason:
+        # (Penny Racers: 32 functions whose overlay data was never imported; nothing here can invent the case targets)
+        reason += (" The imported game data has no bytes at the table's address, so no draft is possible until they are"
+                   " added to the project (memory_regions.json for an overlay); the switch can be worked out by hand.")
+    return reason
 
 
+def _execute_m2c(argv, timeout):
+    from . import m2c_sessions
+    try:
+        result=m2c_sessions.run(argv,timeout)
+    except (OSError,ValueError):
+        result=None  # A missing/incompatible worker can use the ordinary pinned CLI.
+    return result if result is not None else subprocess.run(limits.capped(argv),capture_output=True,text=True,
+        timeout=timeout,encoding="utf-8",errors="replace",creationflags=NO_WINDOW)
+
+
+@compile_timing.timed('generation')
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
-            timeout: float = 20, valid: bool = False, strict: bool = False) -> str | None:
+            timeout: float = 20, valid: bool = False, strict: bool = False, options: tuple[str, ...] = ()) -> str | None:
     """Run m2c for one function with an explicit target triple (e.g. ppc-mwcc-c++)."""
+    if any(option not in ('--no-switches', '--no-stack-spill', '--gotos-only', '--stack-structs') for option in options):
+        raise ValueError('Unsupported machine-draft option.')
     if not available():
         return None
+    if target.startswith('mips-'):
+        from .arch.mips import abi_register_names
+        from .rom.split import draft_asm
+
+        asm_text = abi_register_names(asm_text)
+        if data_asm:
+            asm_text = draft_asm(asm_text, name, data_asm=data_asm)
     if target.startswith("gba"):  # a public GBA decomp (pret style): function macros, pre-UAL load mnemonics
         asm_text = re.sub(r"^\s*(?:non_word_aligned_)?thumb_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)
         asm_text = re.sub(r"^\s*arm_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)
@@ -367,7 +421,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
     with tempfile.TemporaryDirectory(prefix="decompnet-m2c-") as tmp:
         asm = Path(tmp) / f"{name}.s"
         asm.write_text(asm_text, encoding="utf-8")
-        argv = [str(m2c), *(["--valid-syntax"] if valid else []), "-t", target, "-f", name, str(asm)]
+        argv = [str(m2c), *options, *(["--valid-syntax"] if valid else []), "-t", target, "-f", name, str(asm)]
         if data_asm:
             (Path(tmp) / "data.s").write_text(data_asm, encoding="utf-8")
             argv.append(str(Path(tmp) / "data.s"))
@@ -376,8 +430,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             ctx.write_text(_context_for_m2c(context_header), encoding="utf-8")
             argv[1:1] = ["--context", str(ctx)]
         try:
-            res = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
-                                 encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+            res = _execute_m2c(argv,timeout)
         except subprocess.TimeoutExpired:
             if strict:
                 raise DraftError(f"m2c took longer than {timeout:g} s") from None
@@ -386,7 +439,16 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             raise DraftError(_failure(res))
         if res.returncode != 0 and "--context" in argv:  # an unparsable context must not cost us the seed
             i = argv.index("--context")
-            res = subprocess.run(argv[:i] + argv[i + 2:], capture_output=True, text=True, timeout=timeout,
-                                 encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+            res = _execute_m2c(argv[:i] + argv[i + 2:],timeout)
         out = res.stdout.strip()
-        return out if res.returncode == 0 and out else None
+        # m2c can exit successfully after emitting a partial function and bare diagnostics.
+        # Its error placeholders discard instructions; they are explanations, never baseline C.
+        errors = [line.strip() for line in out.splitlines()
+                  if re.match(r"\s*(?://\s*Error:|Bad function call operand\b)", line)
+                  or (valid and re.search(r"\bM2C_ERROR\s*\(", line))]
+        reason = '\n'.join(errors)[-MAX_REASON_CHARS:]
+        if res.returncode != 0 or not out or errors:
+            if strict:
+                raise DraftError(reason or (_failure(res) if out or res.stderr or res.returncode else 'm2c produced no C for this function.'))
+            return None
+        return drop_saved_register_reads(out) if valid else out

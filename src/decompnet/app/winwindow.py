@@ -126,7 +126,9 @@ def main() -> int:
     parser.add_argument("--window-class", default="decompdecomp")
     parser.add_argument("--icon", required=True)
     parser.add_argument("--dev", action="store_true")
+    parser.add_argument("--size", default="1440x920")  # WIDTHxHEIGHT: a game played in its own window is smaller
     args = parser.parse_args()
+    width, height = (int(n) for n in args.size.split("x"))
     app_id(args.window_class)
 
     # A user agent works on both window backends, survives long sessions, and keeps the secret out of URLs.
@@ -138,8 +140,8 @@ def main() -> int:
     view = webview.create_window(
         args.title,
         url,
-        width=1440,
-        height=920,
+        width=width,
+        height=height,
         min_size=(480, 320),
         # Retain WS_THICKFRAME and the system menu. Our native caption supplies hit tests, so Windows handles
         # resize cursors, snap, double-click and restoring a maximized window when it is dragged.

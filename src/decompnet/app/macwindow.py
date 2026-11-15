@@ -164,14 +164,15 @@ def create_window(args):
     delegate = MacWindowDelegate.alloc().init()
     delegate.asking = False
     config = WKWebViewConfiguration.alloc().init()
-    delegate.view = WKWebView.alloc().initWithFrame_configuration_(NSMakeRect(0, 0, 1440, 920), config)
+    width, height = (int(n) for n in getattr(args, "size", "1440x920").split("x"))
+    delegate.view = WKWebView.alloc().initWithFrame_configuration_(NSMakeRect(0, 0, width, height), config)
     delegate.view.setCustomUserAgent_("Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 "
                                       + TOKEN_AGENT + os.environ.get("DECOMP_WINDOW_TOKEN", ""))
     delegate.view.setNavigationDelegate_(delegate)
     delegate.view.setUIDelegate_(delegate)
     if args.dev and hasattr(delegate.view, "setInspectable_"):
         delegate.view.setInspectable_(True)
-    delegate.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(NSMakeRect(0, 0, 1440, 920), 15, 2, False)
+    delegate.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(NSMakeRect(0, 0, width, height), 15, 2, False)
     delegate.window.setTitle_(args.title)
     delegate.window.setReleasedWhenClosed_(False)
     delegate.window.setContentView_(delegate.view)
@@ -225,6 +226,7 @@ def main():
     parser.add_argument("--window-class", default="decompdecomp")
     parser.add_argument("--icon", default="")
     parser.add_argument("--dev", action="store_true")
+    parser.add_argument("--size", default="1440x920")  # WIDTHxHEIGHT: a game played in its own window is smaller
     return run(parser.parse_args())
 
 

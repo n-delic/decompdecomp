@@ -67,22 +67,24 @@ class Toolchain:
     pip_extra: list[str] = field(default_factory=list)  # extra requirements for a git tool's environment
     requires_java: int = 0  # minimum Java version (Ghidra)
     prelude: str = ""  # C put before every file it compiles: works around a compiler's own bugs (see toolchains.toml)
+    intrinsics: str = ""  # pinned module providing fixed compiler intrinsic templates
     cplusplus: bool = False  # it compiles C++ too (by the file's extension: .cpp)
-    wine: bool = False  # Windows programs wibo can't run: through wine on Linux and macOS (wine.py)
-    # toolchains whose Include folder a pack's compilers search after their own, in order: a Windows SDK several packs
-    # share, downloaded once (installed first, like `requires`; INCLUDES says where in each version's folder)
-    headers: list[str] = field(default_factory=list)
-    # A local, user-supplied toolchain (kind = "local", a kit: kits/): nothing is downloaded; the user points Setup at
-    # their own copy, which must hold these files (case doesn't matter, as on Windows), in the folder they picked or
-    # one of local_places in it
+    driver: str = ""  # packaged, console-owned compiler adapter, staged read-only with the tools
+    build: str = ""  # native source-built tools, after checksum-verified parts are extracted
+    family: str = ""  # backend family when the registry id doesn't carry its compiler's name
+    wine: bool = False  # Windows programs wibo cannot run: use wine on Linux and macOS
+    headers: list[str] = field(default_factory=list)  # shared compiler header packs
     local_files: list[str] = field(default_factory=list)
     local_places: list[str] = field(default_factory=list)
 
-    native_only: bool = False  # this pack cannot run through WSL or a Linux VM
-    linux_vm: bool = False  # optional local macOS Linux runner for this pack
-
     def __post_init__(self):
         self.requires = [*self.requires, *(h for h in self.headers if h not in self.requires)]
+    native_only: bool = False  # this pack cannot run through WSL or a Linux VM
+    linux_vm: bool = False  # this Linux pack may use the optional macOS VM runner
+    space_free_runtime: bool = False  # an old driver embeds unquoted paths derived from its own executable
+    case_sensitive: bool = False  # proxy hosts must preserve archives until extraction on Linux
+    assembly_preprocess: list[str] = field(default_factory=list)
+    assembly_compile: list[str] = field(default_factory=list)
 
     @property
     def local(self) -> bool:
@@ -165,23 +167,55 @@ def _own(tid: str):
     return None if tid in _registry_data() else kits.own_compiler(tid)
 
 
-def _entry(tid: str) -> Toolchain | None:
-    """One registry entry, made alone: making all 66 for each look-up cost the project list half its time. Through
-    registry() when something stands in for it (tests give it their own toolchains)."""
+def _registered(tid: str) -> Toolchain | None:
+    """One packaged entry, made alone (making all of them for each look-up cost the project list half its time),
+    excluding dynamic compiler versions from user SDK copies. Through registry() when something stands in for it
+    (tests give it their own toolchains)."""
     if registry is not _REGISTRY:
         return registry().get(tid)
     spec = _registry_data().get(tid)
-    return None if spec is None else Toolchain(id=tid, **spec)
+    return Toolchain(id=tid, **spec) if spec is not None else None
 
 
 def get(tid: str) -> Toolchain:
-    if (tc := _entry(tid)) is not None:
+    # A compile needs one entry, not fresh objects for every compiler and SDK.
+    if (tc := _registered(tid)) is not None:
         return tc
     data = _registry_data() if registry is _REGISTRY else registry()
     if (own := _own(tid)) is not None:
         return Toolchain(id=tid, name=own.name, license="proprietary", source="your own copy: nothing is downloaded",
                          description="A compiler in your own SDK copy.", flags=list(own.flags))
     raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(data))}")
+
+
+
+def source_prelude(tc, source: str) -> str:
+    """Carry used fixed intrinsics into portable C exports, including direct compiler builds.
+
+    The app injects these templates itself; an exported Makefile/build.py may invoke the period
+    compiler directly. Include only templates referenced by the source/context so unrelated
+    checkpoints keep their existing headers and source lines.
+    """
+    import importlib
+    intrinsic = getattr(tc, 'intrinsics', '')
+    if not intrinsic:return tc.prelude
+    module = importlib.import_module(intrinsic)
+    header = module.header_for(source) if hasattr(module,'header_for') else module.header()
+    provided = set(re.findall(r'^#define[ \t]+([A-Za-z_]\w*)', header, re.M))
+    used = set(re.findall(r'[A-Za-z_]\w*', source))
+    return tc.prelude + (header if provided & used else '')
+
+
+def compiler_family(tid: str) -> str:
+    """An explicitly declared backend family; custom command ids may be unknown."""
+    return _registry_data().get(tid, {}).get("family", "")
+
+
+def diagnostic_flags(tid: str) -> tuple[str, ...]:
+    """Warning switches for known GCC backends only; no tools are installed to answer this."""
+    spec = _registry_data().get(tid, {})
+    gcc = spec.get('family') == 'gcc' or 'gcc' in tid.split('-')
+    return ('-Wall', '-Wuninitialized') if gcc and spec else ()
 
 
 def data_dir() -> Path:
@@ -210,18 +244,17 @@ def path(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> Path
 
 
 def installed(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> dict | None:
-    """The install's manifest, or None when it isn't installed, or was installed from an entry toolchains.toml has
-    changed since (changed()), or lacks a program its install builds (_unbuilt): every caller then offers to install
-    it again, as for one never installed, and a free tool reinstalls by itself (ensure). Archives already downloaded
-    aren't downloaded again (root()/.downloads)."""
+    """Return the current installed manifest, including a user-supplied kit compiler."""
     manifest = _manifest(tid, linux, vm=vm)
     if manifest is None and _own(tid) is not None:
-        return {"own": True}  # (a compiler in a kit copy is there as long as the copy is: nothing was installed)
-    if manifest is None or changed(tid, manifest, path(tid, linux, vm=vm)) or _unbuilt(tid, linux):
+        return {"own": True}
+    if manifest is None:
         return None
-    tc = _entry(tid)
+    if not get(tid).local and (changed(tid, manifest, path(tid, linux, vm=vm)) or _unbuilt(tid, linux)):
+        return None
+    tc = _registered(tid)
     if tc is not None and any(installed(h, linux, vm=vm) is None for h in tc.headers):
-        return None  # (its compilers can't build without the headers: installing it brings them, install())
+        return None
     return manifest
 
 
@@ -270,7 +303,7 @@ def changed(tid: str, manifest: dict, where: Path | None = None) -> bool:
     made before installs recorded their entry's fingerprint is judged by the archives it records; one that still
     matches is given the fingerprint (in `where`, its folder, when it can be written), so a later change to the entry
     is seen too."""
-    tc = registry().get(tid)
+    tc = _registered(tid)
     if tc is None:  # (a project names a toolchain decompdecomp doesn't have: known())
         return False
     linux = bool(manifest.get("wsl") or manifest.get("linux_vm"))
@@ -314,18 +347,15 @@ def _intel_mac_runtime_ready() -> bool:
 
 
 def runtime_error(tid: str) -> str | None:
-    """What this computer lacks to run a toolchain, said before it's downloaded: Intel-only Mac compiler archives
-    need Apple's translation runtime on Apple Silicon, and a pack wibo can't run needs wine (off Windows)."""
+    """Why an installed compiler cannot start: native translation, wine, or the optional Linux runner."""
+    if get(tid).wine:
+        from . import wine
+        if why := wine.problem(get(tid).name):
+            return why
     if get(tid).via_vm:
         ok, why = linuxvm.status()
         return None if ok else why
-    if get(tid).wine:
-        from . import wine
-
-        return wine.problem(get(tid).name)
-    if current_platform() != "macos-arm64" or not any(
-            p.get("rosetta") for pack in (get(tid), *(get(d) for d in get(tid).requires))
-            for p in pack.parts_for()):
+    if current_platform() != "macos-arm64" or not any(p.get("rosetta") for p in get(tid).parts_for()):
         return None
     if _intel_mac_runtime_ready():
         return None
@@ -336,20 +366,68 @@ def runtime_error(tid: str) -> str | None:
 
 def require(tid: str, linux: bool | None = None, *, vm: bool | None = None) -> Path:
     """Directory of an installed toolchain, or a clear error telling the operator how to install it."""
-    if installed(tid, linux, vm=vm) is None:
-        raise ToolchainError(f"toolchain {tid!r} is not installed: install it in decompdecomp, under Compilers & tools")
+    metadata = installed(tid, linux, vm=vm)
+    if metadata is None:
+        section = "Compilers & tools → Tools" if get(tid).kind == "tool" else "Compilers & tools"
+        raise ToolchainError(f"toolchain {tid!r} is not installed: install it in decompdecomp, under {section}")
+    if get(tid).case_sensitive and (metadata.get('linux_vm') or metadata.get('wsl')) and not metadata.get('archive_parts'):
+        raise ToolchainError(f'Reinstall {tid} in Compilers & tools so its case-sensitive Linux files are preserved.')
     if why := runtime_error(tid):
         raise ToolchainError(why)
     return path(tid, linux, vm=vm)
 
 
+_runtime_copy_lock = threading.Lock()
+_runtime_copy_home = None
+_runtime_copies: dict[tuple, Path] = {}
+
+
+def _space_free_runtime(directory: Path) -> Path:
+    """SN's driver canonicalizes symlinks and embeds an unquoted self-relative include path.
+
+    Copy the verified installed pack once per process, only when its real path has whitespace.
+    A private temporary directory avoids changing installs or sharing writable executables between users.
+    The manifest stamp changes on reinstall; existing compiles can keep using their old snapshot.
+    """
+    global _runtime_copy_home
+    directory = directory.resolve()
+    if not any(character.isspace() for character in str(directory)):
+        return directory
+    try:
+        stamp = (directory / MANIFEST).stat()
+        key = (str(directory), stamp.st_mtime_ns, stamp.st_size)
+        with _runtime_copy_lock:
+            if key in _runtime_copies:
+                return _runtime_copies[key]
+            if _runtime_copy_home is None:
+                _runtime_copy_home = tempfile.TemporaryDirectory(prefix='decompnet-tools-',
+                                                                 dir='/tmp' if os.name == 'posix' else None)
+            cache = Path(_runtime_copy_home.name)
+            if any(character.isspace() for character in str(cache.resolve())):
+                raise ToolchainError('The compiler needs a temporary folder without spaces. Set TMPDIR to one and retry.')
+            target = cache / hashlib.sha256(repr(key).encode()).hexdigest()[:16]
+            try:
+                # Materialize symlinks too: the driver asks the runner for its real executable path.
+                shutil.copytree(directory, target)
+            except OSError:
+                shutil.rmtree(target, ignore_errors=True)
+                raise
+            _runtime_copies[key] = target
+            return target
+    except OSError as error:
+        raise ToolchainError(f'Could not prepare a compiler path without spaces. Check free space and temporary-folder permissions: {error}') from None
+
+
 def runtime_dirs(tid: str) -> tuple[Path, ...]:
     """The toolchain plus everything it requires, for mounting into the sandbox (all Linux builds for WSL)."""
     tc = get(tid)
+    linux = tc.via_wsl
     if tc.via_vm:
         return (require(tid, vm=True), *(require(dep, vm=True) for dep in tc.requires))
-    linux = tc.via_wsl
-    return (require(tid, linux), *(require(dep, linux) for dep in tc.requires))
+    primary = require(tid, linux)
+    if tc.space_free_runtime and not linux:
+        primary = _space_free_runtime(primary)
+    return (primary, *(require(dep, linux) for dep in tc.requires))
 
 
 # ---------------------------------------------------------------------------- install
@@ -474,7 +552,7 @@ def find_local(tc: Toolchain, folder: str | Path) -> Path | None:
 def _copies(m: dict | None) -> list[str]:
     """The folders a local toolchain's manifest records: a list of copies, or (a manifest from before several copies
     were allowed) its one `folder`."""
-    m = m or {}
+    m = m if isinstance(m, dict) else {}
     return list(m.get("folders") or ([m["folder"]] if m.get("folder") else []))
 
 
@@ -482,10 +560,10 @@ def local_folders(tid: str) -> list[Path]:
     """Where the user's own copies of a local toolchain are (as Setup recorded them) that are still there, or a clear
     error when none is."""
     copies = _copies(installed(tid))
-    tc = get(tid)
     if not copies:
-        raise ToolchainError(f"{tc.name} isn't set up: in decompdecomp's Setup, under Compilers & tools, give the "
+        raise ToolchainError(f"{tid} isn't set up: in decompdecomp's Setup, under Compilers & tools, give the "
                              "folder where your own copy is")
+    tc = get(tid)
     found = [Path(c) for c in copies if find_local(tc, c) is not None]
     if not found:
         raise ToolchainError(f"{tc.name} isn't at {copies[0]} any more (it needs {', '.join(tc.local_files)}): give "
@@ -542,16 +620,11 @@ def remove_local(tid: str, folder: str | Path) -> None:
         (path(tid, False) / MANIFEST).unlink(missing_ok=True)
 
 
-def install(tid: str, *, accept_license: bool = False, force: bool = False, log=print, linux: bool | None = None, vm: bool | None = None,
-            folder: str | Path | None = None) -> Path:
-    """Install a toolchain (and what it requires). A local toolchain (the Xbox XDK) is the user's own copy in
-    `folder`: checked and recorded, never copied. `linux`: its Linux build, to run inside WSL (default: when
-    that's how it runs on this computer). One install of a toolchain at a time: a free tool's threads that all need
-    it (ensure) install it once, and the others find it installed. When an update changed objdiff's entry, the
-    project's indexing threads each started its download into the same file, and each found the others' bytes in
-    it (checksum mismatch)."""
-    if get(tid).local:
-        return _link_local(get(tid), folder, accept_license, log)
+def install(tid: str, *, accept_license: bool = False, force: bool = False, log=print, linux: bool | None = None, vm: bool | None = None, folder: str | Path | None = None) -> Path:
+    """Install a pinned tool once at a time, or register a user's local compiler copy."""
+    tc = get(tid)
+    if tc.local:
+        return _link_local(tc, folder, accept_license, log)
     with _INSTALLING:
         lock = _installs.setdefault(tid, threading.RLock())
     with lock:
@@ -559,12 +632,17 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
 
 
 def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | None, vm: bool | None) -> Path:
+    """Install under the per-tool lock; recursive dependencies use their own locks."""
     tc = get(tid)
     if tc.native_only and not tc.parts_for():
         raise ToolchainError(f"{tc.name} needs its native host build. {tc.description}")
     vm = tc.via_vm if vm is None else vm
     linux = (tc.via_wsl or vm) if linux is None else linux
     location = {'vm': True} if vm else {}
+    archive_only = vm or (linux and tc.case_sensitive)
+    existing = installed(tid, linux, **location)
+    if archive_only and existing and not existing.get('archive_parts'):
+        force = True  # explicit reinstall upgrades old host-extracted proxy packs
     _intel_mac_runtime_ready.cache_clear()  # Rosetta may have been installed since the last setup attempt
     if not vm and (why := runtime_error(tid)):
         raise ToolchainError(why)
@@ -573,9 +651,10 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
             f"{tid} ({tc.name}) is proprietary software. Running it on your coordinator is your own licensing "
             f"decision; re-run with --accept-license if you accept that.")
     if vm:
-        ok, why = linuxvm.status(refresh=True)
-        if not ok:
-            raise ToolchainError(why)
+        try:
+            linuxvm.setup(log=log)
+        except linuxvm.VMError as error:
+            raise ToolchainError(str(error)) from error
     elif linux:
         ok, why = wsl.status()
         if not ok:
@@ -619,8 +698,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 raise ToolchainError(f"checksum mismatch for {part['url']}: expected {part['sha256']}, got {digest}")
             if not part.get("sha256"):
                 log(f"  no pinned checksum in the registry; pinning on first use: sha256 {digest}")
-            if vm:
-                if part.get('build') or tc.git or tc.pip_extra:
+            if archive_only:
+                if part.get('build') or tc.build or tc.git or tc.pip_extra:
                     raise ToolchainError(f'{tid} needs a guest build recipe before it can use archive staging.')
                 # macOS and Windows can collapse libc.so.1/libC.so.1 into one file.
                 # Keep the verified bytes intact until the guest's case-sensitive filesystem.
@@ -634,14 +713,28 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 continue
             if part.get("build") == "mips-binutils":
                 _build_mips_binutils(archive, dest, part.get("subdir"), log)
-            elif part.get("build") == "psx-gcc-2.6.3":
-                _build_psx_gcc_263(archive, dest, part, log)
+            elif part.get("build") == "wabt":
+                _build_wabt(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "sdl3":
+                _build_sdl3(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "sn64-gcc":
+                _build_sn64_gcc(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "gcc-papermario":
+                _build_gcc_papermario(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "gcc-2.7.2-kmc":
+                _build_gcc_kmc(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "binutils-2.6-kmc":
+                _build_binutils_kmc(archive, dest, part.get("subdir"), log)
+            elif part.get("build") in ("psx-gcc-2.6.3", "psx-gcc"):
+                _build_psx_gcc(archive, dest, part, log)
                 for url_key, hash_key, _ in (
                     ("patches_url", "patches_sha256", "old-gcc-patches.tar.gz"),
                     ("config_guess_url", "config_guess_sha256", "config.guess"),
                     ("config_sub_url", "config_sub_sha256", "config.sub"),
                 ):
                     pinned.append({"url": part[url_key], "sha256": part[hash_key]})
+            elif part.get("copy"):  # a plain file, not an archive (a data list)
+                shutil.copyfile(archive, dest / part["copy"])
             elif part.get("binary"):  # a plain executable, not an archive
                 shutil.copyfile(archive, dest / part["binary"])
                 os.chmod(dest / part["binary"], 0o755)
@@ -659,10 +752,29 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                     _build_ghidra_decompiler(into, log)
             pinned.append({"url": part["url"], "sha256": digest})
         for into in dict.fromkeys(part.get("into", "") for part in parts) if tc.headers else ():
-            folder = dest / into  # (relative: the toolchains' folder can be moved, DECOMPNET_TOOLCHAINS)
-            lines = [Path(os.path.relpath(path(h, linux, **location) / "Include", folder)).as_posix() for h in tc.headers]
+            folder = dest / into
+            lines = [Path(os.path.relpath(path(h, linux, **location) / "Include", folder)).as_posix()
+                     for h in tc.headers]
             (folder / INCLUDES).write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
-        if linux and not vm and "runtime-i386" in tc.requires:  # WSL systems rarely have a 32-bit loader: bring ours
+        if tc.build == "psyq-obj-parser":
+            _build_psyq_parser(dest, linux, log)
+        if tc.build == "torch":
+            _build_torch(dest, log)
+        if tc.build == "n64recomp":
+            from .consoles.n64 import recomp
+
+            try:
+                recomp.build(dest, binary("cmake"), log)
+            except recomp.RecompError as error:
+                raise ToolchainError(str(error)) from None
+        if tc.build == "mupenre":
+            from .consoles.n64 import emulator
+
+            try:
+                emulator.build(dest, binary("cmake"), log)
+            except emulator.EmulatorError as error:
+                raise ToolchainError(str(error)) from None
+        if linux and not archive_only and "runtime-i386" in tc.requires:  # WSL systems rarely have a 32-bit loader: bring ours
             n = wsl.wrap_i386(dest, wsl.path(path("runtime-i386", linux=True)))
             log(f"  {n} 32-bit programs start through the pinned 32-bit runtime")
         if tc.wine and not linux:
@@ -680,11 +792,75 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
         "id": tid, "name": tc.name, "license": tc.license, "source": tc.source,
         "parts": pinned, "commit": tc.commit or None, "installed_at": time.time(),
         "license_accepted": bool(tc.proprietary and accept_license), "wsl": linux and not vm, "linux_vm": vm,
-        "archive_parts": archive_parts,
-        "fingerprint": fingerprint(tc, linux),
+        "archive_parts": archive_parts, "fingerprint": fingerprint(tc, linux),
     })
     log(f"{tid}: installed at {dest}")
     return dest
+
+
+def _build_psyq_parser(dest: Path, linux: bool, log) -> None:
+    """Build only PCSX-Redux's standalone converter and its pinned header dependencies."""
+    source = "source"
+    argv = ["c++", "-std=c++20", "-O2", "-DNDEBUG", "-DFMT_HEADER_ONLY",
+            *["-I" + source + "/" + p for p in ("", "pcsx/src", "fmt/include", "elfio", "args", "magic_enum/include")],
+            *[source + "/pcsx/" + p for p in ("tools/psyq-obj-parser/psyq-obj-parser.cc",
+                                             "src/supportpsx/psyq-obj.cc", "src/support/file.cc")],
+            "-lz", "-o", "psyq-obj-parser"]
+    log("  building the pinned PsyQ-to-ELF converter (first install only)")
+    try:
+        if linux and sys.platform == "win32":
+            result = wsl.run(["prlimit", "--as=2147483648", "--", *argv], dest, 300,
+                             inputs=[source], outputs=["psyq-obj-parser"])
+        else:
+            result = subprocess.run(limits.capped(argv), cwd=dest, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=300, creationflags=NO_WINDOW)
+        if result.returncode or not (dest / "psyq-obj-parser").is_file():
+            raise ToolchainError("Building the PsyQ converter needs a C++20 compiler and zlib headers "
+                                 "(Xcode Command Line Tools on macOS; g++ and zlib1g-dev on Linux/WSL).\n"
+                                 + (result.stdout + result.stderr)[-3000:])
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ToolchainError(f"Couldn't build the PsyQ converter: {error}. Install a C++20 compiler and zlib headers.") from error
+
+
+# Torch's CMakeLists fetches these at configure time (FetchContent); each is a pinned part of [torch] instead, handed
+# to CMake as an unpacked folder so the build downloads nothing and every computer builds the same sources.
+_TORCH_DEPS = ("dr_libs", "libgfxd", "spdlog", "tinyxml2", "yaml-cpp", "zlib")
+
+
+def _build_torch(dest: Path, log) -> None:
+    """Build Torch from its pinned source with the pinned CMake (its standalone command, no viewer). Only the host's
+    C++ compiler, make and zlib headers come from the system, as for the PsyQ converter."""
+    mac = current_platform().startswith("macos")
+    tools = ("Torch is built from its source on this computer, which needs "
+             + ("Xcode Command Line Tools: run `xcode-select --install`, then try again." if mac else
+                "a C++17 compiler, make and zlib headers (on Debian or Ubuntu: `sudo apt install g++ make zlib1g-dev`), "
+                "then try again."))
+    if not shutil.which("make") or not shutil.which("c++"):
+        raise ToolchainError(tools)
+    source = dest / "source"
+    cmake = str(binary("cmake"))
+    log("  building Torch from its pinned source (first install only, a few minutes)")
+    with tempfile.TemporaryDirectory(prefix="decomp-torch-") as tmp:
+        build = Path(tmp) / "build"
+        configure = [cmake, "-S", str(source / "torch"), "-B", str(build), "-G", "Unix Makefiles",
+                     "-DCMAKE_BUILD_TYPE=Release", "-DUSE_STANDALONE=ON", "-DBUILD_UI=OFF",
+                     "-DFETCHCONTENT_FULLY_DISCONNECTED=ON", "-DCMAKE_DISABLE_FIND_PACKAGE_spdlog=ON",
+                     *(f"-DFETCHCONTENT_SOURCE_DIR_{name.upper()}={source / 'deps' / name}" for name in _TORCH_DEPS)]
+        steps = (configure, [cmake, "--build", str(build), "--parallel", str(min(8, os.cpu_count() or 1))])
+        for argv in steps:
+            try:
+                result = subprocess.run(limits.capped(argv), cwd=tmp, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", timeout=1800, creationflags=NO_WINDOW)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ToolchainError(f"Couldn't build Torch: {error}. {tools}") from error
+            if result.returncode:
+                raise ToolchainError(f"Building Torch failed. {tools}\n" + (result.stdout + result.stderr)[-3000:])
+        built = build / "torch"
+        if not built.is_file():
+            raise ToolchainError(f"Torch's build finished without a torch program in {build}. {tools}")
+        shutil.copyfile(built, dest / "torch")
+        os.chmod(dest / "torch", 0o755)
+    shutil.rmtree(source, ignore_errors=True)  # the program is what's kept; the pinned archives stay in .downloads
 
 
 def _build_ghidra_decompiler(ghidra: Path, log) -> None:
@@ -718,6 +894,91 @@ def _build_ghidra_decompiler(ghidra: Path, log) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(built, target)
         target.chmod(0o755)
+
+
+def _build_sdl3(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """SDL3 as one shared library for both kinds of Mac (arm64 and x86_64, macOS 11 and up), from its pinned source:
+    what an exported app with its own window ships in Contents/Frameworks and opens at run time
+    (consoles/n64/port_wasm/window/sdl.c). Only make and the C compiler come from the system (Xcode's Command Line
+    Tools). Laid out as dest/libSDL3.0.dylib, dest/LICENSE.txt (zlib: the notice travels with the app) and
+    dest/include/SDL3 (what tests/test_n64_port_host.py checks sdl.c's copy of SDL3's ABI against)."""
+    tools = "SDL3 is built from its source on this computer, which needs Xcode Command Line Tools: run " \
+            "`xcode-select --install`, then try again."
+    if not shutil.which("make") or not shutil.which("cc"):
+        raise ToolchainError(tools)
+    ensure("cmake", log=log)
+    cmake = str(binary("cmake"))
+    log("  building SDL3 from its pinned source for Apple Silicon and Intel Macs (first use only, a minute or two)")
+    with tempfile.TemporaryDirectory(prefix="decomp-sdl3-") as tmp:
+        source, build = Path(tmp) / "source", Path(tmp) / "build"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        configure = [cmake, "-S", str(source), "-B", str(build), "-G", "Unix Makefiles", "-DCMAKE_BUILD_TYPE=Release",
+                     "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0",
+                     "-DSDL_SHARED=ON", "-DSDL_STATIC=OFF", "-DSDL_TEST_LIBRARY=OFF", "-DSDL_TESTS=OFF",
+                     "-DSDL_EXAMPLES=OFF"]
+        for argv in (configure, [cmake, "--build", str(build), "--parallel", str(min(8, os.cpu_count() or 1))]):
+            try:
+                result = subprocess.run(limits.capped(argv), cwd=tmp, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", timeout=1800, creationflags=NO_WINDOW)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ToolchainError(f"Couldn't build SDL3: {error}. {tools}") from error
+            if result.returncode:
+                raise ToolchainError(f"Building SDL3 failed. {tools}\n" + (result.stdout + result.stderr)[-3000:])
+        built = build / "libSDL3.0.dylib"
+        if not built.is_file():
+            raise ToolchainError(f"SDL3's build finished without libSDL3.0.dylib in {build}. {tools}")
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(built.resolve(), dest / built.name)
+        shutil.copyfile(source / "LICENSE.txt", dest / "LICENSE.txt")
+        shutil.copytree(source / "include" / "SDL3", dest / "include" / "SDL3", dirs_exist_ok=True)
+
+
+def _build_wabt(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """WABT publishes no Intel Mac build since 1.0.36, and the port's C (port/wasm/bemem.py) is written against the
+    pinned version's wasm2c, so an Intel Mac builds that same pinned source with the pinned CMake: its wasm2c writes
+    the same C as the release's. Only the host's C++ compiler and make come from the system. What the port reads is
+    laid out as in the release: bin/wasm2c (and wat2wasm), include/wasm-rt*.h, share/wabt/wasm2c."""
+    mac = current_platform().startswith("macos")
+    tools = ("WABT's wasm2c is built from its source on this computer, which needs "
+             + ("Xcode Command Line Tools: run `xcode-select --install`, then try again." if mac else
+                "a C++17 compiler and make (on Debian or Ubuntu: `sudo apt install g++ make`), then try again."))
+    if not shutil.which("make") or not shutil.which("c++"):
+        raise ToolchainError(tools)
+    ensure("cmake", log=log)  # only Intel Macs build WABT, so the pack itself doesn't require CMake
+    cmake = str(binary("cmake"))
+    log("  building WABT's wasm2c from its pinned source (first install only, a minute or two)")
+    with tempfile.TemporaryDirectory(prefix="decomp-wabt-") as tmp:
+        source, build = Path(tmp) / "source", Path(tmp) / "build"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        configure = [cmake, "-S", str(source), "-B", str(build), "-G", "Unix Makefiles", "-DCMAKE_BUILD_TYPE=Release",
+                     "-DBUILD_TESTS=OFF", "-DBUILD_LIBWASM=OFF", "-DWITH_WASI=OFF"]
+        steps = (configure, [cmake, "--build", str(build), "--parallel", str(min(8, os.cpu_count() or 1)),
+                             "--target", "wasm2c", "wat2wasm"])
+        for argv in steps:
+            try:
+                result = subprocess.run(limits.capped(argv), cwd=tmp, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", timeout=1800, creationflags=NO_WINDOW)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ToolchainError(f"Couldn't build WABT: {error}. {tools}") from error
+            if result.returncode:
+                raise ToolchainError(f"Building WABT failed. {tools}\n" + (result.stdout + result.stderr)[-3000:])
+        (dest / "bin").mkdir(parents=True, exist_ok=True)
+        for program in ("wasm2c", "wat2wasm"):
+            if not (build / program).is_file():
+                raise ToolchainError(f"WABT's build finished without {program} in {build}. {tools}")
+            shutil.copyfile(build / program, dest / "bin" / program)
+            os.chmod(dest / "bin" / program, 0o755)
+        runtime = source / "wasm2c"
+        (dest / "include").mkdir(exist_ok=True)
+        for header in ("wasm-rt.h", "wasm-rt-exceptions.h"):
+            shutil.copyfile(runtime / header, dest / "include" / header)
+        share = dest / "share" / "wabt" / "wasm2c"
+        share.mkdir(parents=True, exist_ok=True)
+        for f in runtime.glob("wasm-rt-*"):
+            if f.suffix in (".c", ".h", ".inc") and f.name not in ("wasm-rt.h", "wasm-rt-exceptions.h"):
+                shutil.copyfile(f, share / f.name)
 
 
 def _build_mips_binutils(archive: Path, dest: Path, subdir: str | None, log) -> None:
@@ -764,15 +1025,484 @@ def _build_mips_binutils(archive: Path, dest: Path, subdir: str | None, log) -> 
             target.chmod(0o755)
 
 
-def _build_psx_gcc_263(archive: Path, dest: Path, part: dict, log) -> None:
-    """Build the GPL PlayStation GCC 2.6.3 natively for this Mac.
+# Apple arm64 passes variadic arguments on the stack but fixed ones in registers, so a variadic function called
+# with no prototype in scope reads garbage: GCC 2.8 calls its diagnostics that way in about 40 files, and every
+# compile error crashed (a segfault in strlen) where the Intel build exits 33. Forced into each host file, these
+# prototypes give every call the variadic convention. The drivers (gcc.c, g++.c, built with STANDARD_EXEC_PREFIX)
+# and cccp.c (GCC_INCLUDE_DIR) define their own static versions, so they are left alone.
+_GCC_PM_VARARGS = """\
+#ifndef DECOMP_ARM64_VARARGS_H
+#define DECOMP_ARM64_VARARGS_H
+#if !defined (STANDARD_EXEC_PREFIX) && !defined (GCC_INCLUDE_DIR)
+union tree_node; struct rtx_def;
+extern void error (char *, ...);
+extern void warning (char *, ...);
+extern void pedwarn (char *, ...);
+extern void fatal (char *, ...);
+extern void sorry (char *, ...);
+extern void really_sorry (char *, ...);
+extern void error_with_decl (union tree_node *, char *, ...);
+extern void warning_with_decl (union tree_node *, char *, ...);
+extern void pedwarn_with_decl (union tree_node *, char *, ...);
+extern void error_with_file_and_line (char *, int, char *, ...);
+extern void warning_with_file_and_line (char *, int, char *, ...);
+extern void pedwarn_with_file_and_line (char *, int, char *, ...);
+extern void error_for_asm (struct rtx_def *, char *, ...);
+extern void warning_for_asm (struct rtx_def *, char *, ...);
+#endif
+#endif
+"""
+
+# Old-style declarations that conflict with the prototypes above, removed exactly (the build fails closed when
+# the pinned source no longer has them).
+_GCC_PM_DECLARATIONS = {
+    "config/mips/mips.c": ("extern void   error ();\n", "extern void   fatal ();\n", "extern void   warning ();\n"),
+    "cp/errfn.c": ("  extern errorfn error;\n", "  extern errorfn warning;\n", "  extern errorfn pedwarn;\n",
+                   "  extern errorfn error_with_file_and_line;\n", "  extern errorfn warning_with_file_and_line;\n",
+                   "  extern errorfn pedwarn_with_file_and_line;\n"),
+}
+
+
+def _build_gcc_papermario(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """Build the checksum-pinned gcc-papermario (GCC 2.8.1) natively for Apple Silicon.
+
+    Its released Mac build is an Intel program: under Rosetta each launch costs 30-40 ms and one `gcc -S` about
+    230 ms, against 13 ms native, and the permuter and drafts start it thousands of times. Two things make the
+    native build produce the Intel build's bytes (docs/COMPILER_MATCHING_LEARNINGS.md has the comparison):
+    no optimisation of GCC itself, as upstream's CI builds it (clang -O2 miscompiles its float constant folding:
+    a 4294967296.0 came out as the wrong words), and the variadic prototypes above.
+    """
+    if not shutil.which("/usr/bin/clang") or not shutil.which("/usr/bin/make"):
+        raise ToolchainError("Building GCC 2.8.1 (PM matching) needs Xcode Command Line Tools: "
+                             "run `xcode-select --install`, then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-gcc-pm-") as tmp:
+        source = Path(tmp) / "source"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        _edit_exactly(source, _GCC_PM_DECLARATIONS, _CONST_DOUBLE_EDITS, "gcc-papermario")
+        header = source / "decomp-arm64-varargs.h"
+        header.write_text(_GCC_PM_VARARGS, encoding="latin-1")
+        # An archive gives every file one time, and make would then regenerate the shipped parsers with whatever
+        # bison the computer has (a modern one makes a different parser, which doesn't build). Sources older,
+        # the shipped generated files newer.
+        now = time.time()
+        for file in source.rglob("*"):
+            if file.is_file():
+                os.utime(file, (now - 60, now - 60))
+        for name in ("c-parse.c", "c-parse.h", "cexp.c", "cp/parse.c", "cp/parse.h"):
+            if not (source / name).is_file():
+                raise ToolchainError(f"The pinned gcc-papermario source has no generated {name}.")
+            os.utime(source / name, (now, now))
+
+        quiet = ("-std=gnu89 -Wno-return-type -Wno-error -Wno-error=implicit-function-declaration "
+                 "-Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion "
+                 "-Wno-incompatible-pointer-types -Wno-deprecated-non-prototype")
+        env = {k: v for k, v in os.environ.items() if k not in ("CC", "CXX", "CFLAGS", "CPPFLAGS", "LDFLAGS")}
+        env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        commands = [
+            ["./configure", "--target=mips-nintendo-nu64", "--prefix=/opt/cross", "--with-gnu-as",
+             "--disable-gprof", "--disable-gdb", "--disable-werror",
+             "--host=i386-apple-darwin", "--build=i386-apple-darwin"],
+            ["/usr/bin/make", "-j" + str(min(6, os.cpu_count() or 1)), "cpp", "cc1", "xgcc", "cc1plus", "g++",
+             f"CFLAGS={quiet} -include {header}", f"HOST_CFLAGS={quiet} -DHAVE_CONFIG_H -DNU64"],
+        ]
+        for argv in commands:
+            log("  building native GCC 2.8.1 (PM matching) for Apple Silicon (first install only): "
+                + Path(argv[0]).name)
+            try:
+                res = subprocess.run(limits.capped(argv), cwd=source, capture_output=True, text=True,
+                                     errors="replace", timeout=900, env=dict(env, CC="/usr/bin/clang", CFLAGS=quiet))
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ToolchainError(f"Couldn't build GCC 2.8.1 (PM matching): {error}. "
+                                     "Check Xcode Command Line Tools and try again.") from error
+            if res.returncode:
+                raise ToolchainError("Couldn't build GCC 2.8.1 (PM matching). Check Xcode Command Line Tools "
+                                     "and try again.\n" + (res.stdout + res.stderr)[-4000:])
+        _check_gcc_papermario(source, Path(tmp))
+        for name, binary in {"cpp": "cpp", "cc1": "cc1", "gcc": "xgcc", "cc1plus": "cc1plus", "g++": "g++"}.items():
+            if not (source / binary).is_file():
+                raise ToolchainError(f"The GCC 2.8.1 (PM matching) build did not produce {name} ({binary}).")
+            shutil.copy2(source / binary, dest / name)
+            (dest / name).chmod(0o755)
+
+
+def _check_gcc_papermario(build: Path, tmp: Path) -> None:
+    """The two ways a native build went wrong, checked before it is installed: a float constant folded to the
+    wrong words, and a compile error that crashes instead of being reported."""
+    _check_native_gcc(build, tmp, "GCC 2.8.1 (PM matching)")
+
+
+def _check_native_gcc(build: Path, tmp: Path, name: str) -> None:
+    """(_check_gcc_papermario, for any old GCC built natively for Apple Silicon.)"""
+    floats, broken = tmp / "floats.c", tmp / "broken.c"
+    floats.write_text("double f(unsigned int x) { return x; }\ndouble g(double x) { return x * 1e300; }\n",
+                      encoding="utf-8")
+    broken.write_text("int f(void) { return undeclared; }\n", encoding="utf-8")
+    runs = {}
+    for src in (floats, broken):
+        try:
+            runs[src] = subprocess.run([str(build / "cc1"), "-quiet", "-O2", "-G0", "-mips3", str(src),
+                                        "-o", str(src.with_suffix(".s"))],
+                                       capture_output=True, text=True, errors="replace", timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"The native {name} failed its check: {error}") from error
+    asm = floats.with_suffix(".s").read_text(errors="replace") if floats.with_suffix(".s").is_file() else ""
+    if runs[floats].returncode or not re.search(r"li\.d\s+\$f\d+,4\.29496729600000000000e9", asm) or not all(
+            re.search(rf"\.word\s+{word}\b", asm) for word in ("0x7e37e43c", "0x8800759c")):
+        raise ToolchainError(f"The native {name} folds float constants wrongly; not installing it.\n"
+                             + runs[floats].stderr[-2000:] + asm[-2000:])
+    if runs[broken].returncode != 33 or "undeclared" not in runs[broken].stderr:
+        raise ToolchainError(f"The native {name} doesn't report compile errors (exit "
+                             f"{runs[broken].returncode}); not installing it.\n" + runs[broken].stderr[-2000:])
+
+
+# GCC 2.7.2 keeps a CONST_DOUBLE's value as consecutive HOST_WIDE_INTs from CONST_DOUBLE_LOW and copies it with
+# bcopy. The pinned source is configured for a 32-bit host (config/i386/xm-gnu.h), so a HOST_WIDE_INT is 32 bits, but
+# on a 64-bit Mac each rtx operand slot is 8: a double went into LOW's slot whole and CONST_DOUBLE_HIGH was never
+# written. rtx_alloc doesn't clear operands, so whatever the obstack held there decided whether a float constant is
+# `li.s` or a load from .rodata, and it changed from run to run. These helpers copy word by word, laid out as the
+# 32-bit Linux release has them; each bcopy below is replaced exactly, or the build fails closed.
+_SN64_CONST_DOUBLE = """
+/* decompdecomp: copy a CONST_DOUBLE's value one HOST_WIDE_INT per operand slot, as a 32-bit host lays it out.  */
+static void decomp_cd_get (struct rtx_def *x, char *to, int size) __attribute__ ((unused));
+static void decomp_cd_put (struct rtx_def *x, char *from, int size) __attribute__ ((unused));
+static int decomp_cd_cmp (struct rtx_def *x, char *with, int size) __attribute__ ((unused));
+static void decomp_cd_get (struct rtx_def *x, char *to, int size)
+{ int i; for (i = 0; i * (int) sizeof (HOST_WIDE_INT) < size; i++)
+    bcopy ((char *) &XWINT (x, 2 + i), to + i * sizeof (HOST_WIDE_INT), sizeof (HOST_WIDE_INT)); }
+static void decomp_cd_put (struct rtx_def *x, char *from, int size)
+{ int i; for (i = 0; i * (int) sizeof (HOST_WIDE_INT) < size; i++)
+    bcopy (from + i * sizeof (HOST_WIDE_INT), (char *) &XWINT (x, 2 + i), sizeof (HOST_WIDE_INT)); }
+static int decomp_cd_cmp (struct rtx_def *x, char *with, int size)
+{ int i; for (i = 0; i * (int) sizeof (HOST_WIDE_INT) < size; i++)
+    if (bcmp ((char *) &XWINT (x, 2 + i), with + i * sizeof (HOST_WIDE_INT), sizeof (HOST_WIDE_INT))) return 1;
+  return 0; }
+"""
+
+# (file, exact text, replacement): the CONST_DOUBLE copies above, the old-style declarations that conflict with the
+# variadic prototypes (_GCC_PM_VARARGS), and prototypes for the two other variadic functions called without one.
+_SN64_EDITS = (
+    ("rtl.h", "extern int rtx_to_tree_code\tPROTO((enum rtx_code));\n",
+     "extern int rtx_to_tree_code\tPROTO((enum rtx_code));\n" + _SN64_CONST_DOUBLE),
+    ("real.h", "bcopy ((char *) &CONST_DOUBLE_LOW ((from)), (char *) &u, sizeof u);",
+     "decomp_cd_get ((from), (char *) &u, sizeof u);"),
+    ("emit-rtl.c", "bcopy ((char *) &u, (char *) &CONST_DOUBLE_LOW (tem), sizeof u);",
+     "decomp_cd_put (tem, (char *) &u, sizeof u);"),
+    ("dwarf2out.c", "bcopy ((char *) &CONST_DOUBLE_LOW (rtl), (char *) &u, sizeof u);",
+     "decomp_cd_get (rtl, (char *) &u, sizeof u);"),
+    ("varasm.c", "! bcmp ((char *) &CONST_DOUBLE_LOW (r), (char *) &u, sizeof u)",
+     "! decomp_cd_cmp (r, (char *) &u, sizeof u)"),
+    ("varasm.c", "bcopy ((char *) &u, (char *) &CONST_DOUBLE_LOW (r), sizeof u);",
+     "decomp_cd_put (r, (char *) &u, sizeof u);"),
+    ("varasm.c", "bcopy ((char *) &CONST_DOUBLE_LOW (x),\n\t\t (char *) &value->un.du, sizeof value->un.du);",
+     "decomp_cd_get (x, (char *) &value->un.du, sizeof value->un.du);"),
+    ("varasm.c", "bcopy ((char *) &CONST_DOUBLE_LOW (x), (char *) &u, sizeof u);\n\t  assemble_real",
+     "decomp_cd_get (x, (char *) &u, sizeof u);\n\t  assemble_real"),
+    ("config/mips/mips.c", "extern void   error ();\n", ""),
+    ("config/mips/mips.c", "extern void   fatal ();\n", ""),
+    ("config/mips/mips.c", "extern void   warning ();\n", ""),
+    ("profile.c", '#include "gcov-io.h"\n',
+     '#include "gcov-io.h"\nextern void emit_library_call (struct rtx_def *, int, enum machine_mode, int, ...);\n'),
+    ("bc-optab.h", "extern struct increment_operator optab_postincrement_expr[];\n",
+     "extern struct increment_operator optab_postincrement_expr[];\n"
+     "extern void bc_emit_instruction (enum bytecode_opcode, ...);\n"),
+)
+
+
+# GCC 2.7.2 (KMC) and 2.8.1 (PM matching) have SN64's 64-bit host bug in two of these copies (upstream fixed the
+# others by halves): decode_rtx_const and output_constant_pool read a double from CONST_DOUBLE_LOW's slot whole, so
+# a constant MIPS can't `li.d` (1e300, infinity, a denormal) went to .rodata with its high word taken from the
+# slot's never-written half: 1e300 as 0x00000000 0x8800759c, not 0x7e37e43c 0x8800759c. The released Intel Mac
+# builds print the same wrong words; the 32-bit Linux releases print the right ones.
+_CONST_DOUBLE_EDITS = {
+    "rtl.h": tuple((old, new) for file, old, new in _SN64_EDITS if file == "rtl.h"),
+    "varasm.c": tuple((old, new) for file, old, new in _SN64_EDITS
+                      if file == "varasm.c" and "CONST_DOUBLE_LOW (x)" in old),
+}
+
+def _build_sn64_gcc(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """Build the checksum-pinned reconstructed SN compiler (GCC 2.7.2) natively on macOS.
+
+    Upstream's release is a 32-bit Linux program; built as it comes for a 64-bit Mac it crashed on most compile
+    errors and printed different code for one input from run to run. The variadic prototypes (Apple arm64) and the
+    CONST_DOUBLE copies (any 64-bit host) above make it print the Linux release's code:
+    docs/COMPILER_MATCHING_LEARNINGS.md, "Reconstructed SN64 GCC 2.7.2 on 64-bit Macs", has the comparison.
+    """
+    if not shutil.which("/usr/bin/clang") or not shutil.which("/usr/bin/make"):
+        raise ToolchainError("Building reconstructed SN64 GCC needs Xcode Command Line Tools: "
+                             "run `xcode-select --install`, then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-sn64-gcc-") as tmp:
+        source = Path(tmp) / "source"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        texts: dict[str, str] = {}
+        for name, old, new in _SN64_EDITS:
+            if name not in texts:
+                file = source / name
+                texts[name] = file.read_text(encoding="latin-1") if file.is_file() else ""
+            if texts[name].count(old) != 1:
+                raise ToolchainError(f"The pinned reconstructed SN64 GCC {name} no longer matches its 64-bit fix.")
+            texts[name] = texts[name].replace(old, new, 1)
+        # Old GCC's bundled assert.h expects a libgcc host helper absent from Apple's
+        # runtime. Supply that diagnostic routine only; target codegen is untouched.
+        host = source / "getpwd.c"
+        texts["getpwd.c"] = host.read_text(encoding="latin-1") + (
+            '\n#include <stdio.h>\nvoid __eprintf(const char *fmt, const char *expr, unsigned int line, '
+            'const char *file) { fprintf(stderr, fmt, expr, line, file); abort(); }\n')
+        for name, text in texts.items():
+            (source / name).write_text(text, encoding="latin-1")
+        header = source / "decomp-arm64-varargs.h"
+        header.write_text(_GCC_PM_VARARGS, encoding="latin-1")
+        quiet = ("-DDARWIN -std=gnu89 -DHAVE_VPRINTF -Wno-return-type -Wno-error -Wno-implicit-function-declaration "
+                 "-Wno-int-conversion -Wno-incompatible-pointer-types -Wno-deprecated-non-prototype")
+        env = {k: v for k, v in os.environ.items() if k not in ("CC", "CXX", "CFLAGS", "CPPFLAGS", "LDFLAGS")}
+        env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"  # the shipped parsers, never a computer's newer bison
+        # The generators (gen*.c) declare their own non-variadic fatal(), so the prototypes go to cc1 and cpp only.
+        argv = ["/usr/bin/make", "-j" + str(min(6, os.cpu_count() or 1)), "cpp", "cc1", "CC=/usr/bin/clang",
+                f"CFLAGS={quiet} {SN64_GCC_OPT} -include {header}", f"HOST_CFLAGS={quiet} {SN64_GCC_OPT}"]
+        log("  building pinned reconstructed SN64 GCC (first install only)")
+        try:
+            result = subprocess.run(limits.capped(argv), cwd=source, capture_output=True, text=True,
+                                    errors="replace", timeout=900, env=env)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise ToolchainError(f"Couldn't build reconstructed SN64 GCC: {e}. Check Xcode Command Line Tools and try again.") from e
+        if result.returncode:
+            raise ToolchainError("Couldn't build reconstructed SN64 GCC.\n" + (result.stdout + result.stderr)[-4000:])
+        for name in ("cpp", "cc1"):
+            if not (source / name).is_file():
+                raise ToolchainError(f"The reconstructed SN64 GCC build did not produce {name}.")
+        _check_sn64_gcc(source, Path(tmp))
+        for name in ("cpp", "cc1"):
+            shutil.copyfile(source / name, dest / name)
+            (dest / name).chmod(0o755)
+
+
+# clang -O2 miscompiles real.c's type punning (4294967296.0 came out as the words 0, 0x41f0), likely what broke GCC
+# 2.8.1 (PM matching) at -O2 too. With strict aliasing off it prints the Linux release's code on the whole corpus, as
+# an unoptimised build does, and spends about a third less CPU a compile.
+SN64_GCC_OPT = "-O2 -fno-strict-aliasing"
+# What the Linux release prints for _SN64_FLOATS at the profile's flags (run under qemu-i386): a broken 64-bit build
+# loaded these constants from .rodata instead, or printed a different listing on the next run.
+_SN64_FLOATS = ("float g(float x) { return x * 1.5f + 0.1f; }\n"
+                "double f(unsigned int x) { return x; }\n"
+                "float t[] = { -1000.0f, 0.5f };\n")
+_SN64_EXPECTED = (r"li\.s\s+\$f0,1\.50000000000000000000e0\n", r"li\.s\s+\$f0,1\.00000001490116119385e-1\n",
+                  r"li\.d\s+\$f0,4\.29496729600000000000e9\n", r"\.word\s+0xc47a0000\t\t# -1000 \(float\)\n",
+                  r"\.word\s+0x3f000000\t\t# 0\.5 \(float\)\n")
+
+
+def _check_sn64_gcc(build: Path, tmp: Path) -> None:
+    """The ways a native build went wrong, checked before it is installed: float constants that aren't the Linux
+    release's, a listing that changes from run to run, and a compile error that crashes instead of being reported."""
+    floats, broken = tmp / "floats.c", tmp / "broken.c"
+    floats.write_text(_SN64_FLOATS, encoding="utf-8")
+    broken.write_text("int f(void) { return undeclared; }\n", encoding="utf-8")
+    flags = ["-quiet", "-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float", "-fno-exceptions"]
+    listings, runs = [], {}
+    for src, out in ((floats, "a.s"), (floats, "b.s"), (floats, "c.s"), (broken, "broken.s")):
+        try:
+            runs[src] = subprocess.run([str(build / "cc1"), *flags, str(src), "-o", str(tmp / out)],
+                                       capture_output=True, text=True, errors="replace", timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"The native reconstructed SN64 GCC failed its check: {error}") from error
+        if src == floats:
+            listings.append((tmp / out).read_text(errors="replace") if not runs[src].returncode and
+                            (tmp / out).is_file() else "")
+    asm = listings[0]
+    if not asm or not all(re.search(pattern, asm) for pattern in _SN64_EXPECTED):
+        raise ToolchainError("The native reconstructed SN64 GCC prints float constants wrongly; not installing it.\n"
+                             + runs[floats].stderr[-2000:] + asm[-2000:])
+    if len(set(listings)) != 1:
+        raise ToolchainError("The native reconstructed SN64 GCC prints different code for the same file from run "
+                             "to run; not installing it.")
+    if runs[broken].returncode != 33 or "undeclared" not in runs[broken].stderr:
+        raise ToolchainError("The native reconstructed SN64 GCC doesn't report compile errors (exit "
+                             f"{runs[broken].returncode}); not installing it.\n" + runs[broken].stderr[-2000:])
+
+
+# GCC 2.7.2 (KMC) has the same unprototyped diagnostics as GCC 2.8.1 (_GCC_PM_VARARGS covers both), declared
+# old-style in other files, and C++'s errors reach them through an unprototyped pointer (cp_thing): those calls
+# get the variadic convention too, except compiler_error's, which isn't variadic. One call in cp/method.c passes
+# error_with_decl too few arguments; it keeps its old (unprototyped) call. Edits are exact: the build fails closed
+# when the pinned source no longer has them.
+_GCC_KMC_DECLARATIONS = {
+    "config/mips/mips.c": ("extern void   error ();\n", "extern void   fatal ();\n", "extern void   warning ();\n"),
+    "cp/call.c": ("extern void sorry ();\n",),
+    "cp/sig.c": ("extern void error ();\n", "extern void sorry ();\n"),
+    "cp/typeck.c": ("extern void error ();\n", "extern void warning ();\n"),
+    "cp/typeck2.c": ("extern void pedwarn (), error ();\n",),
+    "cp/errfn.c": _GCC_PM_DECLARATIONS["cp/errfn.c"],
+}
+_GCC_KMC_EDITS = {
+    **_CONST_DOUBLE_EDITS,
+    "cp/errfn.c": (
+        ("static void\ncp_thing (", "extern errorfn compiler_error;\n\nstatic void\ncp_thing ("),
+        ("      (*errfn) (file, line, fmt, ARGSLIST);\n",
+         "      (*(void (*) (char *, int, char *, ...)) errfn) (file, line, fmt, ARGSLIST);\n"),
+        ("  else\n    (*errfn) (fmt, ARGSLIST);\n",
+         "  else if (errfn == compiler_error)\n    (*errfn) (fmt, ARGSLIST);\n"
+         "  else\n    (*(void (*) (char *, ...)) errfn) (fmt, ARGSLIST);\n"),
+    ),
+    "cp/method.c": (
+        ("      error_with_decl (\"implementation-reserved name `%s' used\");\n",
+         "      (*(void (*) ()) error_with_decl) (\"implementation-reserved name `%s' used\");\n"),
+        ("    error (\"overloading function `%s' cannot be done in C language context\");\n",
+         "    error (\"overloading function `%s' cannot be done in C language context\", (char *) 0);\n"),
+    ),
+    # Four diagnostics have a %s and no argument: Intel read whatever its register held (a transparent union
+    # warned "cannot make `(null)'..."), arm64 the stack, which crashed. A null pointer prints Intel's "(null)".
+    "c-common.c": (("\t\terror (\"unrecognized format specifier for `%s'\");\n",
+                    "\t\terror (\"unrecognized format specifier for `%s'\", (char *) 0);\n"),),
+    "c-decl.c": (("      warning (\"cannot make `%s' a transparent union\");\n",
+                  "      warning (\"cannot make `%s' a transparent union\", (char *) 0);\n"),),
+    "cp/init.c": (("multiple inheritance lattice\");\n", "multiple inheritance lattice\", (char *) 0);\n"),),
+}
+# What upstream's CI passed (no -O: GCC itself unoptimised), plus what a newer clang turned into errors.
+_OLD_GNU_QUIET = ("-DDARWIN -Wno-return-type -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int "
+                  "-Wno-int-conversion -Wno-incompatible-pointer-types -Wno-deprecated-non-prototype")
+
+
+def _old_gnu_build(source: Path, commands: list[list[str]], quiet: str, what: str, log) -> None:
+    """Run an old GNU package's configure and make with Xcode's clang and nothing else from PATH (a modern bison
+    makes parsers that don't build). The CFLAGS reach configure too: its probes fail under a newer clang's
+    errors otherwise (gas then decided `inline` doesn't exist and macOS's ctype.h defined its functions twice)."""
+    env = {k: v for k, v in os.environ.items() if k not in ("CC", "CXX", "CFLAGS", "CPPFLAGS", "LDFLAGS")}
+    env.update(PATH="/usr/bin:/bin:/usr/sbin:/sbin", CC="/usr/bin/clang", CFLAGS=quiet)
+    for argv in commands:
+        log(f"  building native {what} for Apple Silicon (first install only): {Path(argv[0]).name} "
+            + " ".join(a for a in argv[1:] if not a.startswith("-") and "=" not in a))
+        try:
+            res = subprocess.run(limits.capped(argv), cwd=source, capture_output=True, text=True,
+                                 errors="replace", timeout=900, env=env)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"Couldn't build {what}: {error}. Check Xcode Command Line Tools and try again.") from error
+        if res.returncode:
+            raise ToolchainError(f"Couldn't build {what}. Check Xcode Command Line Tools and try again.\n"
+                                 + (res.stdout + res.stderr)[-4000:])
+
+
+def _edit_exactly(source: Path, removals: dict, edits: dict, what: str) -> None:
+    for name in dict.fromkeys([*removals, *edits]):
+        file = source / name
+        text = file.read_text(encoding="latin-1") if file.is_file() else ""
+        for old, new in [(line, "") for line in removals.get(name, ())] + list(edits.get(name, ())):
+            if text.count(old) != 1:
+                raise ToolchainError(f"The pinned {what} {name} no longer matches its arm64 fix.")
+            text = text.replace(old, new, 1)
+        file.write_text(text, encoding="latin-1")
+
+
+def _date_generated(source: Path, generated: tuple[str, ...], what: str) -> None:
+    """An archive gives every file one time: sources older, the shipped generated files (parsers) newer, so make
+    uses them rather than regenerating them."""
+    now = time.time()
+    for file in source.rglob("*"):
+        if file.is_file():
+            os.utime(file, (now - 60, now - 60))
+    for name in generated:
+        if not (source / name).is_file():
+            raise ToolchainError(f"The pinned {what} source has no generated {name}.")
+        os.utime(source / name, (now, now))
+
+
+def _build_gcc_kmc(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """Build the checksum-pinned decompals GCC 2.7.2 (the source of the KMC compiler's released Mac build) natively
+    for Apple Silicon, as _build_gcc_papermario does GCC 2.8.1: the released Intel build costs a Rosetta start on
+    every compile. Built as upstream's CI built it (unoptimised, -DDARWIN), with the variadic prototypes and the
+    edits above; wherever the Intel build compiles, the output is the same (docs/COMPILER_MATCHING_LEARNINGS.md
+    has the comparison, and the variable-length arrays only the Intel build crashes on)."""
+    what = "GCC 2.7.2 (KMC)"
+    if not shutil.which("/usr/bin/clang") or not shutil.which("/usr/bin/make"):
+        raise ToolchainError(f"Building {what} needs Xcode Command Line Tools: run `xcode-select --install`, "
+                             "then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-gcc-kmc-") as tmp:
+        source = Path(tmp) / "source"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        _edit_exactly(source, _GCC_KMC_DECLARATIONS, _GCC_KMC_EDITS, what)
+        header = source / "decomp-arm64-varargs.h"
+        header.write_text(_GCC_PM_VARARGS, encoding="latin-1")
+        _date_generated(source, ("c-parse.c", "c-parse.h", "cexp.c", "cp/parse.c", "cp/parse.h", "bi-parser.c",
+                                 "bi-parser.h"), what)
+        quiet = "-std=gnu89 " + _OLD_GNU_QUIET
+        jobs = "-j" + str(min(6, os.cpu_count() or 1))
+        _old_gnu_build(source, [
+            ["./configure", "--target=mips-mips-gnu", "--prefix=/opt/cross", "--with-gnu-as", "--disable-gprof",
+             "--disable-gdb", "--disable-werror", "--host=i386-apple-darwin", "--build=i386-apple-darwin"],
+            # The prototypes go into GCC's own files, not the generators (their static fatal()) ...
+            ["/usr/bin/make", jobs, "xgcc", "cc1", "cc1plus", "cpp", "cccp", "CC=/usr/bin/clang",
+             f"CFLAGS={quiet} -include {header}", f"HOST_CFLAGS=$(INTERNAL_CFLAGS) $(X_CFLAGS) $(T_CFLAGS) {quiet}"],
+            # ... nor the g++ driver, which has static error() and fatal() and no macro the header could test.
+            ["/usr/bin/make", "g++", "CC=/usr/bin/clang", f"CFLAGS={quiet}"],
+        ], quiet, what, log)
+        _check_native_gcc(source, Path(tmp), what)
+        for name, binary in {"gcc": "xgcc", "cc1": "cc1", "cc1plus": "cc1plus", "cpp": "cpp", "cccp": "cccp",
+                             "g++": "g++"}.items():
+            if not (source / binary).is_file():
+                raise ToolchainError(f"The {what} build did not produce {name} ({binary}).")
+            shutil.copy2(source / binary, dest / name)
+            (dest / name).chmod(0o755)
+
+
+def _build_binutils_kmc(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """Build the checksum-pinned decompals binutils 2.6 (the KMC compiler's assembler and tools) natively for Apple
+    Silicon, the programs upstream's release holds, from the same source and options."""
+    what = "binutils 2.6 (KMC)"
+    if not shutil.which("/usr/bin/clang") or not shutil.which("/usr/bin/make"):
+        raise ToolchainError(f"Building {what} needs Xcode Command Line Tools: run `xcode-select --install`, "
+                             "then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-binutils-kmc-") as tmp:
+        source = Path(tmp) / "source"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        _date_generated(source, ("binutils/arparse.c", "binutils/arparse.h", "binutils/arlex.c"), what)
+        quiet = "-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 " + _OLD_GNU_QUIET
+        _old_gnu_build(source, [
+            ["./configure", "--target=mips-kmc-elf", "--prefix=/opt/cross", "--disable-gprof", "--disable-gdb",
+             "--disable-werror", "--host=i386-apple-darwin", "--build=i386-apple-darwin"],
+            *[["/usr/bin/make", "-C", folder, "CC=/usr/bin/clang", f"CFLAGS={quiet}"]
+              for folder in ("bfd", "opcodes", "libiberty", "gas", "binutils")],
+        ], quiet, what, log)
+        _check_kmc_as(source / "gas" / "as.new", Path(tmp))
+        for name, binary in {"as": "gas/as.new", "ar": "binutils/ar", "strip": "binutils/strip.new",
+                             "objcopy": "binutils/objcopy", "c++filt": "binutils/c++filt"}.items():
+            if not (source / binary).is_file():
+                raise ToolchainError(f"The {what} build did not produce {name} ({binary}).")
+            shutil.copy2(source / binary, dest / name)
+            (dest / name).chmod(0o755)
+
+
+def _check_kmc_as(assembler: Path, tmp: Path) -> None:
+    """A native assembler that assembles a MIPS III function to its known words and reports a bad opcode."""
+    good, bad = tmp / "good.s", tmp / "bad.s"
+    good.write_text("\t.set noreorder\n\t.text\nf:\n\tdaddu $2,$4,$5\n\tjr $31\n\tnop\n", encoding="utf-8")
+    bad.write_text("\t.text\n\tnotanopcode $3\n", encoding="utf-8")
+    runs = {}
+    for src in (good, bad):
+        try:
+            runs[src] = subprocess.run([str(assembler), "-G0", "-mips3", "-o", str(src.with_suffix(".o")), str(src)],
+                                       capture_output=True, text=True, errors="replace", timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"The native binutils 2.6 (KMC) assembler failed its check: {error}") from error
+    obj = good.with_suffix(".o").read_bytes() if good.with_suffix(".o").is_file() else b""
+    if runs[good].returncode or not obj.startswith(b"\x7fELF") or bytes.fromhex("0085102d03e00008") not in obj:
+        raise ToolchainError("The native binutils 2.6 (KMC) assembler doesn't assemble MIPS correctly; not "
+                             "installing it.\n" + runs[good].stderr[-2000:])
+    if runs[bad].returncode != 1 or "notanopcode" not in runs[bad].stderr:
+        raise ToolchainError("The native binutils 2.6 (KMC) assembler doesn't report errors (exit "
+                             f"{runs[bad].returncode}); not installing it.\n" + runs[bad].stderr[-2000:])
+
+
+def _build_psx_gcc(archive: Path, dest: Path, part: dict, log) -> None:
+    """Build a pinned GPL PlayStation GCC natively for this Mac.
 
     The only host tools are Xcode's clang and make. GCC source and the old-gcc patch bundle,
     plus modern config.guess/config.sub, are checksum-pinned by this toolchain part.
     """
+    version = part.get("version", "2.6.3")
     if not shutil.which("/usr/bin/clang") or not shutil.which("/usr/bin/make"):
         raise ToolchainError(
-            "Building GCC 2.6.3 for PlayStation needs Xcode Command Line Tools. "
+            f"Building GCC {version} for PlayStation needs Xcode Command Line Tools. "
             "Run `xcode-select --install`, then try again."
         )
     dest.mkdir(parents=True, exist_ok=True)
@@ -781,14 +1511,14 @@ def _build_psx_gcc_263(archive: Path, dest: Path, part: dict, log) -> None:
         ("config_guess_url", "config_guess_sha256", "config.guess"),
         ("config_sub_url", "config_sub_sha256", "config.sub"),
     )
-    with tempfile.TemporaryDirectory(prefix="decomp-psx-gcc-263-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="decomp-psx-gcc-") as tmp:
         root = Path(tmp)
         source_root = root / "source"
         source_root.mkdir()
         _extract(archive, source_root, None)
-        source = source_root / "gcc-2.6.3"
+        source = source_root / f"gcc-{version}"
         if not source.is_dir():
-            raise ToolchainError("The pinned GCC 2.6.3 archive has no gcc-2.6.3 source directory.")
+            raise ToolchainError(f"The pinned GCC {version} archive has no gcc-{version} source directory.")
 
         downloads = root / "inputs"
         downloads.mkdir()
@@ -808,9 +1538,6 @@ def _build_psx_gcc_263(archive: Path, dest: Path, part: dict, log) -> None:
         if old_gcc is None:
             raise ToolchainError("The pinned old-gcc patch archive has no repository directory.")
         patches = old_gcc / "patches"
-        for name in ("obstack-2.7.2.h.patch", "sdbout-2.6.3.c.patch", "g++-2.6.3.c.patch", "psx-2.5.7.patch"):
-            if not (patches / name).is_file():
-                raise ToolchainError(f"The pinned old-gcc patch archive is missing {name}.")
 
         env = dict(os.environ)
         env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:" + env.get("PATH", "")
@@ -822,12 +1549,25 @@ def _build_psx_gcc_263(archive: Path, dest: Path, part: dict, log) -> None:
             if "include <varargs.h>" in text:
                 source_file.write_text(text.replace("include <varargs.h>", "include <stdarg.h>"), encoding="latin-1")
 
-        commands = [
-            ["/usr/bin/patch", "-u", "-p1", "-i", str(patches / "obstack-2.7.2.h.patch")],
-            ["/usr/bin/patch", "-u", "-p0", "-i", str(patches / "g++-2.6.3.c.patch")],
-            ["/usr/bin/patch", "-su", "-p1", "-i", str(patches / "psx-2.5.7.patch")],
-        ]
+        recipes = {
+            "2.6.0": (("obstack.h", "obstack-2.7.2.h.patch"), ("collect2.c", "collect2-2.6.0.c.patch"),
+                      ("cccp.c", "cccp-2.6.0.c.patch"), ("gcc.c", "gcc-2.6.0.c.patch"),
+                      ("cp/g++.c", "g++-2.6.0.c.patch"), ("config/mips/mips.h", "mipsel-2.6.patch")),
+            "2.6.3": (("obstack.h", "obstack-2.7.2.h.patch"), ("cp/g++.c", "g++-2.6.3.c.patch")),
+            "2.8.0": (("obstack.h", "obstack-2.8.0.h.patch"), ("config/mips/mips.h", "mips.patch")),
+        }
+        if version not in recipes:
+            raise ToolchainError(f"No native PS1 GCC build recipe for {version}.")
+        commands = []
+        for target, patch in recipes[version]:
+            file = source / target
+            file.chmod(file.stat().st_mode | 0o200)
+            commands.append(["/usr/bin/patch", "-f", "-u", target, "-i", str(patches / patch)])
+        target_patch = "psx.patch" if version == "2.8.0" else "psx-2.5.7.patch"
+        commands.append(["/usr/bin/patch", "-f", "-su", "-p1", "-i", str(patches / target_patch)])
         for argv in commands:
+            if not Path(argv[-1]).is_file():
+                raise ToolchainError(f"The pinned old-gcc archive is missing {Path(argv[-1]).name}.")
             log("  applying pinned PlayStation GCC patch " + Path(argv[-1]).name)
             res = subprocess.run(argv, cwd=source, capture_output=True, text=True, errors="replace",
                                  timeout=60, env=env)
@@ -836,15 +1576,20 @@ def _build_psx_gcc_263(archive: Path, dest: Path, part: dict, log) -> None:
 
         # The upstream sdbout patch's context is one line off in the released 2.6.3 tarball; make the same
         # portability change directly and fail closed if upstream changes the source.
-        sdbout = source / "sdbout.c"
-        sdb = sdbout.read_text(encoding="latin-1")
-        old_guard = "#if defined(USG) && !defined(MIPS) && !defined (hpux) && !defined(WINNT)"
-        new_guard = "#if defined(USG) && !defined(MIPS) && !defined (hpux) && !defined(_WIN32) && !defined(__linux__)"
-        if old_guard not in sdb:
-            raise ToolchainError("GCC 2.6.3 sdbout.c no longer matches the pinned portability patch.")
-        sdbout.write_text(sdb.replace(old_guard, new_guard, 1), encoding="latin-1")
+        if version in ("2.6.0", "2.6.3"):
+            sdbout = source / "sdbout.c"
+            sdb = sdbout.read_text(encoding="latin-1")
+            old_guard = "#if defined(USG) && !defined(MIPS) && !defined (hpux)"
+            if version == "2.6.3":
+                old_guard += " && !defined(WINNT)"
+            new_guard = "#if defined(USG) && !defined(MIPS) && !defined (hpux) && !defined(_WIN32) && !defined(__linux__)"
+            if old_guard not in sdb:
+                raise ToolchainError(f"GCC {version} sdbout.c no longer matches the pinned portability patch.")
+            sdbout.write_text(sdb.replace(old_guard, new_guard, 1), encoding="latin-1")
 
-        for name in ("gcc.c", "cp/g++.c"):
+        for name in ("gcc.c", "cp/g++.c", "g++.c", "cccp.c"):
+            if not (source / name).exists():
+                continue
             path = source / name
             path.chmod(path.stat().st_mode | 0o200)
             text = path.read_text(encoding="latin-1")
@@ -857,11 +1602,11 @@ def _build_psx_gcc_263(archive: Path, dest: Path, part: dict, log) -> None:
         configure = source / "configure"
         config_text = configure.read_text(encoding="latin-1")
         target_defs = "DEFS=-Dpsx -D__psx__ -D__psx"
-        if target_defs not in config_text:
-            raise ToolchainError("GCC 2.6.3 configure no longer has the expected PSX target stanza.")
+        if version in ("2.6.0", "2.6.3") and target_defs not in config_text:
+            raise ToolchainError(f"GCC {version} configure no longer has the expected PSX target stanza.")
         config_text = config_text.replace(target_defs, 'DEFS="-Dpsx -D__psx__ -D__psx"', 1)
 
-        # GCC 2.6.3's config scripts predate Apple Silicon and do not recognize Sony's PSX target OS.
+        # These GCC releases' config scripts predate Apple Silicon and do not recognize Sony's PSX target OS.
         for filename, destination in (("config.guess", source / "config.guess"),
                                       ("config.sub", source / "config.sub")):
             destination.chmod(destination.stat().st_mode | 0o200)
@@ -876,16 +1621,18 @@ def _build_psx_gcc_263(archive: Path, dest: Path, part: dict, log) -> None:
         # Teach this GCC release's hand-written configure script the native Darwin host description.
         case = "\t*)\n\t\techo \"Configuration $machine not supported\" 1>&2"
         if case not in config_text:
-            raise ToolchainError("GCC 2.6.3 configure no longer has the expected host fallback.")
+            raise ToolchainError(f"GCC {version} configure no longer has the expected host fallback.")
         config_text = config_text.replace(
             case,
-            "\t\t*-apple-darwin*)\n\t\t\txm_file=xm-darwin.h\n\t\t\tfixincludes=Makefile.in\n\t\t\t;;\n" + case,
+            "\t\t*-apple-darwin*)\n\t\t\txm_file=xm-darwin.h\n\t\t\txmake_file=x-darwin\n\t\t\tfixincludes=Makefile.in\n\t\t\t;;\n" + case,
             1,
         )
         configure.chmod(configure.stat().st_mode | 0o200)
         configure.write_text(config_text, encoding="latin-1")
         configure.chmod(0o755)
         shutil.copyfile(patches / "xm-darwin.h", source / "config" / "xm-darwin.h")
+        # Older configure scripts otherwise fall back to the MIPS host Makefile and pass IRIX flags to clang.
+        (source / "config" / "x-darwin").write_text("# Native Darwin host: use the system clang defaults.\n")
         for name in ("cp/parse.y", "cp/parse.h", "cp/parse.c", "insn-config.h"):
             path = source / name
             if path.exists():
@@ -894,21 +1641,26 @@ def _build_psx_gcc_263(archive: Path, dest: Path, part: dict, log) -> None:
 
         build = root / "build"
         build.mkdir()
+        (build / "insn-config.h").touch()
+        cflags = "-std=gnu89 -w -Wno-int-conversion -Wno-implicit-function-declaration -Wno-return-mismatch"
+        env["CFLAGS"] = cflags
+        host_flags = ["--host=" + _platform.machine() + "-apple-darwin",
+                      "--build=" + _platform.machine() + "-apple-darwin"]
         commands = [
             [str(source / "configure"), "--target=mips-sony-psx", "--prefix=/opt/cross",
-             "--with-endian-little", "--with-gnu-as"],
+             "--with-endian-little", "--with-gnu-as", *host_flags],
             ["/usr/bin/make", "-j" + str(min(4, os.cpu_count() or 1)), "cpp", "cc1", "xgcc", "cc1plus", "g++",
-             "CFLAGS=-std=gnu89 -w -Wno-int-conversion -Wno-implicit-function-declaration -Wno-return-mismatch"],
+             "CFLAGS=" + cflags],
         ]
         for argv in commands:
-            log("  building native GCC 2.6.3 for PlayStation (first install only): " + Path(argv[0]).name)
+            log(f"  building native GCC {version} for PlayStation (first install only): " + Path(argv[0]).name)
             try:
                 res = subprocess.run(limits.capped(argv), cwd=build, capture_output=True, text=True,
                                      errors="replace", timeout=900, env=dict(env, CC="/usr/bin/clang"))
             except (OSError, subprocess.TimeoutExpired) as error:
-                raise ToolchainError(f"Couldn't build GCC 2.6.3 for PlayStation: {error}. Install Xcode Command Line Tools and retry.") from error
+                raise ToolchainError(f"Couldn't build GCC {version} for PlayStation: {error}. Install Xcode Command Line Tools and retry.") from error
             if res.returncode:
-                raise ToolchainError("Couldn't build GCC 2.6.3 for PlayStation. Install Xcode Command Line Tools and retry.\n"
+                raise ToolchainError(f"Couldn't build GCC {version} for PlayStation. Install Xcode Command Line Tools and retry.\n"
                                      + (res.stdout + res.stderr)[-4000:])
 
         # Check the target's byte order and the GCC extensions expected by PSY-Q before exposing the toolchain.
@@ -919,12 +1671,14 @@ def _build_psx_gcc_263(archive: Path, dest: Path, part: dict, log) -> None:
             res = subprocess.run([str(build / "cc1"), "-quiet", "-O2", str(smoke), "-o", str(asm)],
                                  capture_output=True, text=True, errors="replace", timeout=30, env=env)
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise ToolchainError(f"GCC 2.6.3 failed its target smoke test: {error}") from error
+            raise ToolchainError(f"GCC {version} failed its target smoke test: {error}") from error
         if res.returncode or not re.search(r"lbu\s+\$2,0\(\$4\)", asm.read_text(errors="replace")):
-            raise ToolchainError("GCC 2.6.3 failed its little-endian MIPS smoke test.\n" + (res.stdout + res.stderr)[-2000:])
+            raise ToolchainError(f"GCC {version} failed its little-endian MIPS smoke test.\n" + (res.stdout + res.stderr)[-2000:])
         outputs = {"cpp": "cpp", "cc1": "cc1", "gcc": "xgcc", "cc1plus": "cc1plus", "g++": "g++"}
         for name, binary in outputs.items():
             target = dest / name
+            if not (build / binary).is_file():
+                raise ToolchainError(f"The pinned PS1 GCC build did not produce {name} ({binary}).")
             shutil.copy2(build / binary, target)
             target.chmod(0o755)
 
@@ -963,14 +1717,20 @@ def binary(tid: str) -> Path:
     raise ToolchainError(f"{tid} is installed but {name} wasn't found in {base}")
 
 
+_ensure_locks: dict[str, threading.RLock] = {}
+_ensure_locks_guard = threading.Lock()
+
 def ensure(tid: str, log=print) -> Path:
-    """Install a free tool on first use and return its folder. Proprietary ones must be installed explicitly."""
-    if installed(tid) is None:
-        tc = get(tid)
-        if tc.proprietary:
-            raise ToolchainError(f"{tc.name} is proprietary: install it from Setup if you accept its license")
-        install(tid, log=log)
-    return path(tid)
+    """Install a free tool once across concurrent workers; proprietary packs require explicit acceptance."""
+    with _ensure_locks_guard:
+        lock = _ensure_locks.setdefault(tid, threading.RLock())
+    with lock:
+        if installed(tid) is None:
+            tc = get(tid)
+            if tc.proprietary:
+                raise ToolchainError(f"{tc.name} is proprietary: install it from Setup if you accept its license")
+            install(tid, log=log)
+        return path(tid)
 
 
 JDK_HINT = ("a Java development kit (JDK), not the Java runtime alone: your system's JDK package (Fedora: "
@@ -1023,13 +1783,30 @@ def status() -> list[dict]:
     """Every pinned compiler and tool: whether it's installed and can be on this computer, its licence, and whether
     its downloads are pinned. For Compilers & tools."""
     rows = []
-    for tc in registry().values():
+    tools = registry()
+    dependency_cache = {}
+    def missing(tc, linux, vm, seen):
+        result = []
+        for tid in tc.requires:
+            if tid in seen:
+                continue
+            seen.add(tid)
+            cache_key = (tid, linux, vm)
+            if cache_key not in dependency_cache:
+                dependency_cache[cache_key] = installed(tid, linux, vm=vm)
+            if dependency_cache[cache_key] is None:
+                result.append({'id':tid, 'name':tools[tid].name})
+            else:
+                result.extend(missing(tools[tid], linux, vm, seen))
+        return result
+    for tc in tools.values():
         m = installed(tc.id)
         rows.append({"id": tc.id, "name": tc.name, "kind": tc.kind, "platform": tc.platform, "license": tc.license,
                      "source": tc.source,  # (where it comes from: the install's confirmation says)
                      "installed": m is not None, "supported": tc.supported, "description": tc.description,
-                     # installed from an entry that has changed since: Compilers & tools offers to install it again
+                     "missing_dependencies": missing(tc, tc.via_wsl or tc.via_vm, True if tc.via_vm else None, {tc.id}) if m else [],
                      "changed": m is None and _manifest(tc.id) is not None,
-                     "wsl": tc.via_wsl, "linux_vm": tc.via_vm, "local": tc.local, **(_local_status(tc, m) if tc.local and m else {}),
+                     "wsl": tc.via_wsl, "linux_vm": tc.via_vm, "local": tc.local,
+                     **(_local_status(tc, m) if tc.local and m else {}),
                      "pinned": all(p.get("sha256") for p in tc.parts) or bool(tc.commit)})
     return rows

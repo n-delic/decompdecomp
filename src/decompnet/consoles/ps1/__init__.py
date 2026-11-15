@@ -37,16 +37,19 @@ class PlayStation(Console):
     big_endian = False
     mode = ROM
     layout = "splat"
+    # SDK compiler/assembler banners: https://github.com/mkst/esa/releases
+    # A game can mix library and game compilers: these labels guide the survey, never identify by release year.
     compilers = (
-        Compiler("gcc-2.7.2-psx", "GCC 2.7.2 (PSY-Q 4.0-4.1)", "most PlayStation games (1996-1998)", guess="PSYQ"),
-        Compiler("gcc-2.6.3-psx", "GCC 2.6.3 (early PSY-Q)", "early PlayStation games (1995-1996)"),
-        Compiler("gcc-2.5.7-psx", "GCC 2.5.7", "early PlayStation games (1995)"),
-        Compiler("gcc-2.6.0-psx", "GCC 2.6.0 (PSY-Q 3.3-3.5)", "early PlayStation games (1995-1996)"),
-        Compiler("gcc-2.7.2-cdk-psx", "GCC 2.7.2 CDK (PSY-Q 4.1)", "games that mixed the CDK with PSY-Q 4.3 (1997)"),
-        Compiler("gcc-2.8.0-psx", "GCC 2.8.0 (PSY-Q 4.3)", "PlayStation games of 1997-1998"),
-        Compiler("gcc-2.8.1-psx", "GCC 2.8.1 (PSY-Q 4.4)", "PlayStation games of 1998-1999"),
-        Compiler("gcc-2.91.66-psx", "EGCS 2.91.66 (PSY-Q 4.5)", "late PlayStation games (1999)"),
-        Compiler("gcc-2.95.2-psx", "GCC 2.95.2 (PSY-Q 4.6)", "late PlayStation games (1999-2000)"),
+        Compiler("gcc-2.7.2-psx", "GCC 2.7.2 (PSY-Q 4.0 era)", "many PlayStation games; match tests decide the version", guess="PSYQ"),
+        Compiler("gcc-2.6.3-psx", "GCC 2.6.3 (early PS1 variant)", "early PlayStation code"),
+        Compiler("gcc-2.8.1-psx", "GCC 2.8.1 (PSY-Q 4.4)", "PSY-Q 4.4-era code"),
+        Compiler("gcc-2.5.7-psx", "GCC 2.5.7 (early PS1)", "Early PS1 code"),
+        Compiler("gcc-2.6.0-psx", "GCC 2.6.0 (early PS1)", "Early PSY-Q-era GCC"),
+        Compiler("gcc-2.7.2-cdk", "GCC 2.7.2 CDK (legacy ID)", "Existing fork projects", automatic=False),
+        Compiler("gcc-2.7.2-cdk-psx", "GCC 2.7.2 CDK for PlayStation", "Cygnus/PSY-Q 4.1-era code; ASPSX 2.67"),
+        Compiler("gcc-2.8.0-psx", "GCC 2.8.0 (PSY-Q 4.3)", "PSY-Q 4.3-era code; ASPSX 2.77"),
+        Compiler("gcc-2.91.66-psx", "EGCS 2.91.66 (PSY-Q 4.5)", "later PS1 code, PSY-Q 4.5; ASPSX 2.81"),
+        Compiler("gcc-2.95.2-psx", "GCC 2.95.2 (PSY-Q 4.6)", "late PS1 code, PSY-Q 4.6; ASPSX 2.86"),
     )
     kits = ("own-ps1",)  # another build of one of its compilers, the user's (kits/owncompiler.py)
     guides = ("mips", "ps1")
@@ -64,6 +67,12 @@ class PlayStation(Console):
         from . import exe
 
         return exe.is_exe(head) or exe.is_ps1_disc(file)
+
+    def display_title(self, name: str, info: dict) -> str:
+        from ..playstation_titles import title
+
+        code = info.get("game_code", "")
+        return title("ps", code, name) if code and name == code else name
 
     def read_game(self, file, name: str = "") -> Picked:
         """The program: a PS-X EXE the user picked, or the one a disc image boots (with the disc's overlays)."""
@@ -87,6 +96,7 @@ class PlayStation(Console):
     def _from_disc(self, src) -> Picked:
         import struct
 
+        from ..playstation_titles import disc_title
         from ..ps2 import disc, overlays
         from . import exe
 
@@ -103,6 +113,7 @@ class PlayStation(Console):
             # program it loads. shortcut: the loader's own code is left out, the game's is what's worth decompiling
             path, raw = loaded
         program, info = exe.read_exe(raw, boot)  # (named as the disc boots it: its game code and region)
+        disc_title("ps", info, image)
         if loaded is not None:
             info["program"] = path.replace("\\", "/")
         picked = Picked(self.id, program, "game.exe", info, False)
@@ -140,7 +151,13 @@ class PlayStation(Console):
         # passes its arguments in a0-a3, never a number in t1
         if {w & 0xFFFF for w in words if w & 0xFFFF0000 == LI_T2} & BIOS_TABLES and JR_T2 in words:
             return "calls the BIOS through its A0/B0/C0 table with the function's number in t1: a stub written in assembly"
-        return mips.asm_reason(code, False, cop2="the GTE")
+        # Recognised fixed intrinsics are ordinary C callers. Unknown GTE commands still need support.
+        from .gte import supported
+
+        all_words = [int.from_bytes(code[at:at + 4], "little") for at in range(0, len(code) - 3, 4)]
+        gte = [w for w in all_words if w >> 26 in (0x12, 0x32, 0x3A)]
+        known = bool(gte) and all(supported(w) for w in gte)
+        return mips.asm_reason(code, False, cop2="" if known else "unsupported GTE operations")
 
 
 def _place_text(config: Path, program: bytes, log=print) -> None:

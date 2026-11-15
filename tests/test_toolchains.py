@@ -127,6 +127,8 @@ def _fake(monkeypatch, tc_root, sha):
     fake = toolchains.Toolchain(id="fake", name="Fake", license="MIT", source="test",
                                 parts=[{"url": archive.as_uri(), "sha256": sha or digest}])
     monkeypatch.setattr(toolchains, "registry", lambda: {"fake": fake})
+    original_registered = toolchains._registered
+    monkeypatch.setattr(toolchains, '_registered', lambda tid: toolchains.registry().get(tid) or original_registered(tid))
     return digest
 
 
@@ -575,6 +577,8 @@ def _pack_and_sdk(monkeypatch, tc_root) -> dict:
                                         parts=[{"url": url, "sha256": sha, "keep": {"bin": "Bin", "include": "Include"},
                                                 "into": version} for version in ("1.0", "1.0-x64")])}
     monkeypatch.setattr(toolchains, "registry", lambda: reg)
+    original_registered = toolchains._registered
+    monkeypatch.setattr(toolchains, '_registered', lambda tid: toolchains.registry().get(tid) or original_registered(tid))
     return reg
 
 
@@ -710,3 +714,78 @@ def test_threads_that_all_need_a_free_tool_install_it_once(tc_root, monkeypatch)
         t.join()
     assert not errors and len(downloads) == 1 and toolchains.installed("fake") is not None
     assert not list((toolchains.root() / ".downloads").glob("*.part"))  # (written beside it, then moved whole)
+
+
+@pytest.mark.parametrize('platform', ['macos-arm64', 'macos-x86_64'])
+def test_wibo_is_supported_and_visible_as_a_mac_tool(tc_root, monkeypatch, platform):
+    from decompnet.app.engine import TOOLS
+    monkeypatch.setattr(toolchains, 'current_platform', lambda: platform)
+    assert 'wibo' in TOOLS
+    row = next(t for t in toolchains.status() if t['id'] == 'wibo')
+    assert row['supported'] and not row['installed'] and row['kind'] == 'tool'
+    with pytest.raises(toolchains.ToolchainError, match='Compilers & tools → Tools'):
+        toolchains.require('wibo')
+
+
+def test_install_repairs_missing_runtime_without_reinstalling_compiler(tc_root, monkeypatch):
+    url, sha = _archive(tc_root, 'runtime', {'runner':'test runtime'})
+    compiler_url, compiler_sha = _archive(tc_root, 'compiler', {'compiler':'test compiler'})
+    reg = {
+        'runner':toolchains.Toolchain(id='runner',name='Runner',license='MIT',source='test',kind='tool',
+                                     parts=[{'url':url,'sha256':sha}]),
+        'compiler':toolchains.Toolchain(id='compiler',name='Compiler',license='MIT',source='test',requires=['runner'],
+                                       parts=[{'url':compiler_url,'sha256':compiler_sha}]),
+    }
+    monkeypatch.setattr(toolchains, 'registry', lambda: reg)
+    original_registered = toolchains._registered
+    monkeypatch.setattr(toolchains, '_registered', lambda tid: toolchains.registry().get(tid) or original_registered(tid))
+    toolchains.install('compiler', log=lambda _:None)
+    compiler = toolchains.path('compiler')
+    stamp = (compiler/toolchains.MANIFEST).stat().st_mtime_ns
+    shutil.rmtree(toolchains.path('runner'))
+    row = next(t for t in toolchains.status() if t['id'] == 'compiler')
+    assert row['installed'] and row['missing_dependencies'] == [{'id':'runner','name':'Runner'}]
+    toolchains.install('compiler', log=lambda _:None)
+    assert (compiler/toolchains.MANIFEST).stat().st_mtime_ns == stamp
+    assert toolchains.require('runner').is_dir()
+    assert len(toolchains.runtime_dirs('compiler')) == 2
+    assert next(t for t in toolchains.status() if t['id'] == 'compiler')['missing_dependencies'] == []
+
+
+def test_single_toolchain_lookup_constructs_only_the_requested_entry(monkeypatch):
+    original = toolchains.Toolchain
+    made = []
+    def construct(**fields):
+        made.append(fields['id'])
+        return original(**fields)
+    monkeypatch.setattr(toolchains, 'Toolchain', construct)
+    monkeypatch.setattr(toolchains, 'registry', lambda: pytest.fail('single lookup rebuilt the full catalogue'))
+    assert toolchains.get('gcc-2.7.2-kmc').id == 'gcc-2.7.2-kmc'
+    assert made == ['gcc-2.7.2-kmc']
+
+
+def test_single_toolchain_lookup_keeps_metadata_fresh(monkeypatch):
+    spec = dict(name='First', license='MIT', source='synthetic', flags=['-O1'])
+    monkeypatch.setattr(toolchains, '_registry_data', lambda: {'synthetic':spec})
+    monkeypatch.setattr(toolchains, '_own', lambda tid: None)
+    first = toolchains.get('synthetic')
+    first.name = 'caller edit'
+    spec['name'] = 'Updated'
+    second = toolchains.get('synthetic')
+    assert second is not first and second.name == 'Updated'
+    assert second.flags == ['-O1']
+    with pytest.raises(toolchains.ToolchainError, match='unknown toolchain'):
+        toolchains.get('missing')
+
+
+def test_wabt_has_a_build_for_every_desktop():
+    """Exporting a port (port/wasm) needs wasm2c everywhere the app runs. WABT publishes no Intel Mac build since
+    1.0.36, so an Intel Mac builds the pinned version's source instead: exporting there failed with "has no build for
+    this computer" until it did."""
+    from decompnet import toolchains
+
+    tc = toolchains.get("wabt")
+    for plat in ("macos-arm64", "macos-x86_64", "linux-x86_64", "linux-aarch64", "windows-x86_64"):
+        assert tc.parts_for(plat), plat
+    (source,) = tc.parts_for("macos-x86_64")
+    assert source["build"] == "wabt" and "1.0.42" in source["url"] and source["sha256"]

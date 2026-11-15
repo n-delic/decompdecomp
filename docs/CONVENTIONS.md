@@ -58,8 +58,11 @@ the feature easy to move.
 
 ## 2. Names
 
+This fork defaults to `~/Decomp-RetroReversing` (checkouts: `~/Decomp-RetroReversing-dev`)
+to keep its database separate from upstream. Explicit `DECOMP_HOME` settings remain supported.
+
 - The project is **decompdecomp** in everything users read. Internal names stay as decomp.wtf left them, because
-  existing installs depend on them: the `decomp` command, the `decompnet` package, `~/Decomp`, `.decomp.wtf.json`,
+  existing installs depend on them: the `decomp` command, the `decompnet` package, `.decomp.wtf.json`,
   `.decomp-wtf/`, the `decomp-wtf` branch. The decomp.wtf domain isn't ours: nothing points at it.
 - Python: `snake_case` for functions and variables, `CapWords` for classes, `UPPER_CASE` for module constants
   (`STALL_BUDGET`, `MAX_FLAG_VARIANTS`), a leading underscore for what's private to its module or class. The engine's
@@ -116,6 +119,13 @@ and returns a cleanup function. `followJob(id, log)` follows the server's job an
 `showJobError(log, message)` keeps an error visible in the panel. Do not create a separate animation or polling
 loop for a new foreground job. These helpers are already shared; extend them when another flow needs the same
 behaviour.
+
+A log box is a `<pre class="joblog">`, nothing more: `base.js` wraps every one that reaches the page (from
+`index.html`, `innerHTML` or `createElement`) in a `.joblog-frame` with a Copy button in its top-right corner, and
+hides the frame while the log is hidden or empty. Don't add a separate copy button or toolbar to a log. To put
+something beside a log, insert it next to `log._frame || log`, not `log` itself, so it lands outside the frame. Logs are
+coloured like a terminal from their text (errors, warnings, notes, file:line:col, tracebacks, success lines): keep
+writing plain text to them, never HTML. `data-plain` on a log turns the colouring off.
 
 ```javascript
 const log = $("taskLog"), button = $("taskGo");
@@ -204,21 +214,21 @@ try {
 People working on decompdecomp usually have it running too, with agents working in it. A test or an experiment must
 not touch it.
 
-- A checkout is a separate app, "decompdecomp dev" (`app/edition.py`): its own home `~/Decomp-dev`, port 6474 and
+- A checkout is a separate app, "decompdecomp dev" (`app/edition.py`): its own home `~/Decomp-RetroReversing-dev`, port 6474 and
   window class. A newer `decomp` that finds an older one running in the same home quits it and takes its place
-  (`app/cli.py`), so never point a checkout at your real `~/Decomp`. For an experiment, use a throwaway home:
+  (`app/cli.py`), so never point a checkout at your real `~/Decomp-RetroReversing`. For an experiment, use a throwaway home:
   `DECOMP_HOME=<scratch> DECOMP_TRAY=0 uv run decomp`, with a PATH without agent CLIs.
 - If your app runs from the checkout's `.venv`, run the tests in another environment, so uv doesn't rebuild the one
   your app uses: `UV_PROJECT_ENVIRONMENT=<scratch venv> uv run pytest -q`.
-- To try a change on a real project, use a copy: `sqlite3 "file:$HOME/Decomp/.decomp/decomp.db?mode=ro" ".backup
+- To try a change on a real project, use a copy: `sqlite3 "file:$HOME/Decomp-RetroReversing/.decomp/decomp.db?mode=ro" ".backup
   <copy>/.decomp/decomp.db"`, copy the project's folder, and point `projects.root` in the copy at it. Read a live
   database only with `?mode=ro`.
 
 ## 11. Commits and releases
 
 - A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`,
-  `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`). `main` is what users update from. CI
-   (`.github/workflows/labels.yml`) fails a pull request from any other branch, and labels it by the prefix.
+  `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`). `main` is what users update from. Automatic branch-name labeling
+  is currently paused in this fork; keep the branch naming convention anyway.
 - An issue gets a label for its kind (`bug`, `enhancement`, `documentation`, `question`) and for each console and
   system it's about (`gh label list`). The issue forms add them; an agent's `gh issue create` passes `--label`.
 - A commit's subject says what users (or contributors) get, in one sentence. The body says why.

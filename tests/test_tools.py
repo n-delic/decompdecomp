@@ -71,8 +71,11 @@ def test_the_rom_prompt_names_joins_only_when_the_engine_has_them(tmp_path, monk
     net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
     manager = agents.Manager(net, tmp_path, "http://127.0.0.1:1/mcp")
     session = agents.Session("1", "claude", "claude-1", "rom", "claude-1", {})
-    monkeypatch.setattr(net, "overview", lambda slug: {
-        "kind": "rom", "title": "Game", "platform": "n64", "compiler": {"toolchain": "gcc-2.7.2-kmc"}})
+    # (the prompt reads the project's own facts, agent_startup.project_facts, not the dashboard overview)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                   ("rom", "Game", "", "mips", 0, str(tmp_path), json.dumps(
+                       {"kind": "rom", "platform": "n64", "compiler": {"toolchain": "gcc-2.7.2-kmc"}})))
     assert "join_functions" not in manager._prompt(session)
     monkeypatch.setattr(tools, "FORK_ONLY", tools.FORK_ONLY - {"join_functions"})
     monkeypatch.setattr(tools.RomNetwork, "join_functions", lambda *args, **kwargs: "", raising=False)

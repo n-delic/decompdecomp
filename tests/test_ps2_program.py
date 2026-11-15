@@ -168,6 +168,7 @@ def test_check_again_suggests_what_the_symbols_say_and_overwrites_nothing(tmp_pa
         suggest=lambda agent, slug, text, compiler="", ranges="": suggested.append((compiler, ranges)),
         store=SimpleNamespace(all=lambda sql, pid, a, b: [{"vram": a}], tx=contextlib.nullcontext),
         _event=lambda db, pid, agent, kind, detail: events.append(kind))
+    net.project_store = lambda _pid: net.store
     ps2.suggest_object_compilers(net, "game")
     assert suggested == [("mwcps2-2.3.3", "0x210000-0x210100")]  # the first stretch is CodeWarrior's already
     assert cfg["compiler_ranges"][0]["toolchain"] == "mwcps2-3.0.1" and events == ["analysis"]

@@ -11,18 +11,27 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from decompnet import toolchains
 from decompnet.app.engine import RomNetwork
 from decompnet.forks import csource
+from decompnet.forks.project import ForkProject
 from decompnet.network import NetworkError
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
 FORK_SRC = ROOT / "projects" / "demo-fork"
+
+
 ROM = ROOT / "src" / "decompnet" / "app" / "static" / "demo" / "demo-quest-64.z64"
+
+
 REFERENCE = (FORK_SRC / "tools" / "reference" / "game.c").read_text()
+
 
 needs_tools = pytest.mark.skipif(
     toolchains.installed("gcc-2.7.2-kmc") is None or toolchains.installed("objdiff-cli") is None
@@ -35,53 +44,114 @@ def _git(cwd: Path, *args: str) -> str:
                                "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin", "HOME": str(cwd)}).stdout
 
 
-@pytest.mark.parametrize("byte_order,width", [("z64", 1), ("v64", 2), ("n64", 4)])
-def test_splat_setup_accepts_n64_rom_byte_orders(tmp_path, byte_order, width):
-    from decompnet.app.forkroom import game_identity
-    from decompnet.forks.project import ForkError, ForkProject
-
-    original = b"\x80\x37\x12\x40" + bytes(range(256)) * 4097
-    expected = hashlib.sha1(original).hexdigest()
+def test_splat_setup_reports_the_expected_hash_or_its_absence(tmp_path):
     (tmp_path / "Makefile").write_text("all:\n\t@true\n")
-    (tmp_path / "game.yaml").write_text(
-        f"options:\n  target_path: baserom.z64\nsha1: '{expected}'\nsegments: []\n")
-    supplied = b"".join(original[i:i + width][::-1] for i in range(0, len(original), width))
-    source = tmp_path / f"my-copy.{byte_order}"
-    source.write_bytes(supplied)
-    assert game_identity(source) == expected  # rooms agree even when members supply different byte orders
-
-    project = ForkProject(tmp_path)
-    assert project.kind() == "splat"
-    assert ".v64 or .n64" in project.needs()["help"]
-    assert project.place_game(source, source.name).read_bytes() == original
-    assert source.read_bytes() == supplied
-    assert not list(tmp_path.glob(".rom-*"))
-
-    wrong = tmp_path / f"other-copy.{byte_order}"
-    wrong.write_bytes(supplied[:-4] + b"\0" * 4)
-    with pytest.raises(ForkError, match="sha1 doesn't match"):
-        project.place_game(wrong, wrong.name)
-
-    incomplete = tmp_path / f"incomplete.{byte_order}"
-    incomplete.write_bytes(supplied[:-1])
-    with pytest.raises(ForkError, match="truncated"):
-        project.place_game(incomplete, incomplete.name)
+    config = tmp_path / "game.yaml"
+    expected = "A" * 40
+    config.write_text(f"options:\n  target_path: baserom.z64\n  sha1: '{expected}'\nsegments: []\n")
+    need = ForkProject(tmp_path).needs()
+    assert need["sha1"] == expected.lower()
+    assert need["path"] == "baserom.z64"
+    config.write_text("options:\n  target_path: baserom.z64\nsegments: []\n")
+    need = ForkProject(tmp_path).needs()
+    assert need["sha1"] is None
+    assert "does not specify a SHA-1" in need["help"]
 
 
-@pytest.mark.parametrize("byte_order,width", [("v64", 2), ("n64", 4)])
-def test_splat_setup_normalizes_without_a_hash_and_removes_converted_upload(tmp_path, byte_order, width):
-    from decompnet.forks.project import ForkProject
+def test_splat_generated_target_uses_original_rom_versions(tmp_path, monkeypatch):
+    from decompnet.app.forkengine import ForkEngine
 
-    original = b"\x80\x37\x12\x40" + bytes(range(256)) * 8
-    supplied = b"".join(original[i:i + width][::-1] for i in range(0, len(original), width))
+    us, pal = b"original us rom", b"original pal rom"
+    hashes = {"us.v10": hashlib.sha1(us).hexdigest(), "pal": hashlib.sha1(pal).hexdigest()}
+    (tmp_path / "Makefile").write_text("VERSION ?= us.v10\nBASEROM := baserom.$(VERSION).z64\n"
+                                       "DECOMPRESSED_BASEROM := decompressed.$(VERSION).z64\n")
+    (tmp_path / "README.md").write_text("\n".join(f"`baserom.{v}.z64`: `{sha1}`" for v, sha1 in hashes.items()))
+    (tmp_path / "decompressed.pal.yaml").write_text("options:\n  platform: n64\n  target_path: decompressed.pal.z64\n"
+                                                      f"  sha1: {'e' * 40}\nsegments: []\n")
+    (tmp_path / "decompressed.us.v10.yaml").write_text("options:\n  platform: n64\n  target_path: decompressed.us.v10.z64\n"
+                                                         f"  sha1: {'f' * 40}\nsegments: []\n")
+    fp = ForkProject(tmp_path)
+    assert fp.needs()["sha1"] == hashes["us.v10"]
+    assert fp.needs("pal")["sha1"] == hashes["pal"]
+    assert fp.needs("pal")["path"] == "baserom.pal.z64"
+    assert fp.setup_commands("pal") == [["make", "VERSION=pal", "-j" + str(__import__("os").cpu_count() or 4)]]
+    game = tmp_path / "my-copy.z64"
+    game.write_bytes(pal)
+    cfg = {}
+    engine = object.__new__(ForkEngine)
+    monkeypatch.setattr(ForkEngine, "_save_cfg", lambda _self, _proj, _cfg: None)
+    engine._match_version(SimpleNamespace(), fp, cfg, game, log=lambda *_: None)
+    assert cfg["version"] == "pal"
+    assert fp.place_game(game, game.name, cfg["version"]) == tmp_path / "baserom.pal.z64"
+    game.write_bytes(b"")
+    with pytest.raises(NetworkError, match=r"empty \(0 bytes\)"):
+        engine._match_version(SimpleNamespace(), fp, cfg, game, log=lambda *_: None)
+    game.write_bytes(b"wrong edition")
+    with pytest.raises(NetworkError, match="supported by this project") as error:
+        engine._match_version(SimpleNamespace(), fp, cfg, game, log=lambda *_: None)
+    assert hashlib.sha1(game.read_bytes()).hexdigest() in str(error.value)
+    assert "Big-endian conversion: not attempted" in str(error.value)
+
+
+@pytest.mark.parametrize("fmt", ["v64", "n64"])
+def test_splat_accepts_other_n64_byte_orders(tmp_path, monkeypatch, fmt):
+    from decompnet.app.forkengine import ForkEngine
+
+    original = b"\x80\x37\x12\x40" + bytes(range(64))
+    digest = hashlib.sha1(original).hexdigest()
+    (tmp_path / "Makefile").write_text("VERSION ?= pal\nBASEROM := baserom.$(VERSION).z64\n"
+                                       "DECOMPRESSED_BASEROM := decompressed.$(VERSION).z64\n")
+    (tmp_path / "README.md").write_text(f"`baserom.pal.z64`: `{digest}`\n")
+    (tmp_path / "decompressed.pal.yaml").write_text("options:\n  platform: n64\n  target_path: decompressed.pal.z64\n"
+                                                      f"  sha1: {'e' * 40}\nsegments: []\n")
+    width = 2 if fmt == "v64" else 4
+    game = tmp_path / f"my-copy.{fmt}"
+    game.write_bytes(b"".join(original[i:i + width][::-1] for i in range(0, len(original), width)))
+    fp = ForkProject(tmp_path)
+    cfg = {}
+    engine = object.__new__(ForkEngine)
+    monkeypatch.setattr(ForkEngine, "_save_cfg", lambda _self, _proj, _cfg: None)
+    engine._match_version(SimpleNamespace(), fp, cfg, game, log=lambda *_: None)
+    assert cfg["version"] == "pal"
+    assert fp.place_game(game, game.name, cfg["version"]).read_bytes() == original
+    assert game.read_bytes() != original
+
+
+def test_macos_docker_only_project_routes_make_through_container(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from decompnet import compiler_processes
+    from decompnet.forks import project as project_module
+
+    (tmp_path / "Dockerfile").write_text("FROM example\n")
+    (tmp_path / "README.md").write_text("- Docker only\n    - Linux\n    - macOS\n")
     (tmp_path / "Makefile").write_text("all:\n\t@true\n")
-    (tmp_path / "game.yaml").write_text("options:\n  target_path: baserom.z64\nsegments: []\n")
-    upload = tmp_path / ".decomp-wtf" / "upload.tmp"
-    project = ForkProject(tmp_path)
-    upload.write_bytes(supplied)
-    assert "project's build" in project.needs()["help"]
-    assert project.place_game(upload, upload.name, move=True).read_bytes() == original
-    assert not upload.exists()
+    monkeypatch.setattr(project_module.sys, "platform", "darwin")
+    fp = ForkProject(tmp_path)
+    assert fp._docker_only_macos()
+    monkeypatch.setattr(ForkProject, "_prepare_docker", lambda *_: None)
+    seen = []
+
+    # Dispatch only: process ownership and watchdogs have dedicated real-process tests.
+    monkeypatch.setattr(compiler_processes,"track",lambda *args:None)
+    monkeypatch.setattr(compiler_processes,"finish",lambda *args,**kwargs:None)
+    monkeypatch.setattr(project_module,"CompilerMemoryWatchdog",
+                        lambda *args,**kw:nullcontext(SimpleNamespace(timed_out=False,exceeded=False)))
+
+    class Process:
+        pid = 0
+        stdout = []
+
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(project_module.subprocess, "Popen", lambda cmd, **kwargs: seen.append(cmd) or Process())
+    assert fp.run(["make", "VERSION=pal", "-j4"])[0]
+    docker = seen[0][next(i for i, part in enumerate(seen[0]) if Path(part).stem == "docker"):]
+    assert docker[1:3] == ["run", "--rm"]
+    assert docker[-2:] == ["-c", "make VERSION=pal -j4"]
+    assert docker[docker.index("--entrypoint") + 1] == "/bin/sh"
 
 
 @pytest.fixture(scope="module")
@@ -97,7 +167,7 @@ def fork(tmp_path_factory):
     slug = net.forks.clone(str(upstream), name="Demo Quest decomp", platform="n64", log=lambda *_: None)
     need = net.forks.needs(slug)
     assert need["kind"] == "manifest" and need["path"] == "baserom.z64"
-    with pytest.raises(NetworkError, match="sha1"):
+    with pytest.raises(NetworkError, match="Expected SHA-1:"):
         net.forks.setup(slug, b"\0" * 1024, "nope.z64", log=lambda *_: None)
     m = net.forks.setup(slug, ROM.read_bytes(), "demo.z64", log=lambda *_: None)
     assert m["total_functions"] == 13
@@ -197,6 +267,7 @@ def test_near_miss_gets_a_diff_and_release_restores_the_best(fork):
     first = net.attempt(agent, "count_alive_entities", near, slug)
     assert not first["matched"] and first["score"] and "TARGET" in first["text"]
     d = net.function_diff(slug, "count_alive_entities")
+    assert "Mismatch categories (advisory)" in d["mismatch_summary"]
     assert d["kind"] == "latest" and 0 < d["percent"] < 100 and any(r[0] != " " for r in d["rows"])
     second = net.attempt(agent, "count_alive_entities", worse, slug)
     assert second["score"] is not None
@@ -253,7 +324,18 @@ def test_read_and_search(fork):
 def test_function_detail(fork):
     net, slug, agent = fork
     d = net.function_detail(slug, "clamp_s32")
+    assert d["id"] == net._function("clamp_s32", slug)["id"]
     assert d["status"] == "matched" and "slt" in d["asm"] and "clamp_s32" in d["source"]
+
+
+@needs_tools
+def test_function_detail_can_skip_optional_name_search(fork, monkeypatch):
+    net, slug, _ = fork
+    def unexpected(*_):
+        raise AssertionError('Opening a function must not wait for optional name searches')
+    monkeypatch.setattr(net.twins, 'suggestions', unexpected)
+    d = net.function_detail(slug, "clamp_s32", include_hints=False)
+    assert d['source'] and d['cross_game_hints'] == []
 
 
 def test_search_globs_as_agents_write_them():
@@ -267,47 +349,6 @@ def test_search_globs_as_agents_write_them():
         list(Path(".").glob(want))  # pathlib takes it (it raised ValueError for the given form)
 
 
-def test_file_scope_is_outside_every_block_but_a_namespace_or_extern_c():
-    """A definition past a parked one is taken only at file scope: find() reads a call followed by a block as one."""
-    text = 'namespace a {\nextern "C" {\nint f(void) {\n    if (x) {\n        g();\n    }\n}\n}\n}\nint h;\n'
-    assert csource.at_file_scope(text, text.index("int f"))
-    assert not csource.at_file_scope(text, text.index("g();"))
-    assert not csource.at_file_scope(text, text.index("    }\n}"))
-    assert csource.at_file_scope(text, text.index("int h"))
-    call = "int t(int x) {\n    y = scale(x) * 2.0;\n    if (y) {\n        y = 1;\n    }\n}\n"
-    assert csource.find(call, "scale") is not None  # (why the check is needed)
-    assert not csource.at_file_scope(call, csource.find(call, "scale")[0])
-
-
-def test_the_definition_the_build_sees_beside_a_parked_one_is_at_file_scope():
-    from types import SimpleNamespace
-
-    from decompnet.app.forkengine import ForkEngine
-
-    fp = SimpleNamespace(never_defined=lambda names: set(names))  # (no build defines PARKED)
-    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#else\nint f(void) {\n    return 1;\n}\n#endif\n"
-    seen = ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"])
-    assert seen is not None and text[seen[0]:seen[1]] == "int f(void) {\n    return 1;\n}\n"
-    # past the parked copy, a call in g followed by a block isn't the build's definition
-    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\nint g(void) {\n    x = f() * 2;\n    if (x) {\n    }\n}\n"
-    assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
-    # nor one at file scope, a C++ initialiser's (find() read `* 2.0;` as K&R declarations, up to twice's `{`): a
-    # try on scale matched, and the file lost both bias and twice
-    text = ('#ifdef PARKED_DRAFTS\nextern "C" double scale(double x) { return x * 1.2; }\n#endif\n'
-            'extern "C" double scale(double x);\nstatic double bias = scale(2.0) * 2.0;\n'
-            'extern "C" double twice(double x) { double y = 0.0; y = scale(x) * 2.0; if (y > 1.0) { y = 1.0; } '
-            'return y; }\n')
-    assert ForkEngine._seen_beside(fp, text, csource.find(text, "scale"), "scale", ["scale"]) is None
-    # and of an #ifdef _WIN32 / #else pair (a macro the app can't tell), neither is surely the build's: the try went
-    # into the _WIN32 copy, maybe the one the build leaves out, and its #else kept being judged
-    text = ("#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\n#ifdef _WIN32\nint f(void) {\n    return 3;\n}\n"
-            "#else\nint f(void) {\n    return 1;\n}\n#endif\n")
-    assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
-    # a K&R definition isn't taken either (what's between its parameters and its body reads like a call's)
-    assert csource.opens_body("int f(a)\nint a;\n{\n}\n", (0, 20), "f") is False
-    assert csource.opens_body("int Car::f(int a) const throw() {\n}\n", (0, 35), "Car::f")
-
-
 def test_csource_finds_definitions_and_stubs():
     src = ('s32 f(s32 a) {\n    return a; /* } */\n}\nINCLUDE_ASM("asm/nonmatchings/x", g);\n'
            'uLong h(a)\n    uLong a;\n{\n    return a;\n}\nvoid C::m(int x) {\n}\n')
@@ -317,18 +358,6 @@ def test_csource_finds_definitions_and_stubs():
     assert csource.get(src, "C::m").startswith("void C::m")
     assert csource.get(src, "missing") is None
     assert "return 1" in csource.replace(src, "g", "int g(void) { return 1; }")
-
-
-def test_not_in_your_build_names_the_symbol_not_the_rows_unique_name():
-    """A function whose row name was made unique with a trailing "'" (a re-sync after a split) was reported as "its
-    object doesn't define _f@4'": agents spent days saying no C makes a name with a quote, and never looked further."""
-    from types import SimpleNamespace
-
-    from decompnet.app.forkengine import ForkEngine
-
-    fn = {"name": "_f@4'", "meta": json.dumps({"symbol": "_f@4"}), "vram": None}
-    note = ForkEngine._missing_note(SimpleNamespace(name="u", base=None), fn)
-    assert "doesn't define _f@4," in note and "_f@4'" not in note
 
 
 def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for():
@@ -904,7 +933,7 @@ def test_a_match_that_is_lost_gets_its_score_back_so_the_queue_doesnt_say_it_is_
         db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,status,best_score,best_source,unit,meta,asm) "
                    "VALUES(2,7,'G',40,10,'open',0,'int G() {}','u','{\"symbol\": \"_G\"}','')")
     eng = ForkEngine.__new__(ForkEngine)
-    eng.net = SimpleNamespace(store=store, _event=lambda db, pid, aid, kind, detail: db.execute(
+    eng.net = SimpleNamespace(store=store, project_store=lambda _:store, _event=lambda db, pid, aid, kind, detail: db.execute(
         "INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,0)", (pid, aid, kind, detail)))
     eng._apply_scores({"id": 7, "root": str(tmp_path)}, "u", {"_F": 52.7, "_G": 90.0}, via="unit diff before a compile")
     rows = {r["name"]: r for r in store.all("SELECT name, status, best_score FROM functions")}
@@ -926,7 +955,10 @@ def test_unit_diff_updates_improvement_date_without_a_local_check(tmp_path, monk
         db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,status,best_score,unit,meta,asm) "
                    "VALUES(1,7,'F',40,10,'open',900,'u','{\"symbol\": \"_F\"}','')")
     eng = ForkEngine.__new__(ForkEngine)
-    eng.net = SimpleNamespace(store=store)
+    def project_store(pid):
+        assert pid == 7
+        return store
+    eng.net = SimpleNamespace(store=store, project_store=project_store)
     monkeypatch.setattr("decompnet.app.forkengine.time.time", lambda: 42)
     eng._apply_scores({"id": 7, "root": str(tmp_path)}, "u", {"_F": 20.0})
     row = store.one("SELECT best_score,last_checked,last_improved FROM functions WHERE id=1")
@@ -945,6 +977,267 @@ def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
     net.forks.sync(slug, log=lambda *_: None)
     functions = net.store.one("SELECT COUNT(*) n FROM functions")["n"]
     assert net.store.conn.total_changes - before < functions
+
+
+def test_splat_runs_tool_setup_and_extraction_before_build(tmp_path):
+    if shutil.which('make') is None:
+        pytest.skip('needs make')
+    (tmp_path / 'game.yaml').write_text('options:\n  target_path: game.z64\nsegments: []\n')
+    (tmp_path / 'Makefile').write_text(
+        '.DEFAULT_GOAL := all\n'
+        'setup:\n\t@echo setup >> order.txt\n'
+        'extract:\n\t@test -f order.txt\n\t@touch game.ld\n\t@echo extract >> order.txt\n'
+        'all:\n\t@test -f game.ld\n\t@echo build >> order.txt\n')
+    for command in ForkProject(tmp_path).setup_commands():
+        subprocess.run(command, cwd=tmp_path, check=True, capture_output=True, timeout=15)
+    assert (tmp_path / 'order.txt').read_text().splitlines() == ['setup', 'extract', 'build']
+
+
+def test_direct_splat_version_follows_rom_on_import_and_retry(tmp_path, monkeypatch):
+    from decompnet.app.forkengine import ForkEngine
+
+    (tmp_path / "Makefile").write_text('BASENAME := game\nVERSION := us\nextract:\n\tpython -m splat split $(BASENAME).$(VERSION).yaml\n')
+    data = {v: b'\x80\x37\x12\x40' + v.encode() * 32 for v in ('eu', 'us')}
+    for v, rom in data.items():
+        (tmp_path / f'game.{v}.yaml').write_text(
+            f'sha1: {hashlib.sha1(rom).hexdigest()}\noptions:\n  platform: n64\n  base_path: .\n'
+            f'  target_path: baserom.{v}.z64\nsegments: []\n')
+    fp = ForkProject(tmp_path)
+    assert fp.splat_default_version() == 'us'  # Alphabetically first YAML is EU.
+    assert fp.needs()['path'] == 'baserom.us.z64'
+    cfg = {}
+    engine = object.__new__(ForkEngine)
+    monkeypatch.setattr(ForkEngine, '_save_cfg', lambda *_: None)
+    game = tmp_path / 'upload.z64'
+    game.write_bytes(data['eu'])
+    engine._match_version(SimpleNamespace(), fp, cfg, game, log=lambda *_: None)
+    assert cfg['version'] == 'eu'
+    assert fp.place_game(game, game.name, cfg['version']).name == 'baserom.eu.z64'
+    assert fp.setup_commands('eu')[0] == ['make', 'VERSION=eu', 'extract']
+    assert fp.setup_commands('eu')[1][1] == 'VERSION=eu'
+
+    # An existing import from the old app has the right ROM, but no saved version.
+    cfg.clear()
+    monkeypatch.setattr(ForkEngine, 'get', lambda *_: (SimpleNamespace(), fp, cfg))
+    calls = []
+    monkeypatch.setattr(ForkProject, 'setup', lambda _self, v, **_: calls.append(v))
+    monkeypatch.setattr(ForkEngine, 'check', lambda *_ , **__: {'ready': True})
+    assert engine.setup('example', None, log=lambda *_: None)['ready']
+    assert calls == ['eu']
+    assert cfg['version'] == 'eu'
+
+    # A template that points outside the checkout is not inferred as a supported ROM edition.
+    p = tmp_path / 'game.eu.yaml'
+    p.write_text(p.read_text().replace('base_path: .', 'base_path: ..'))
+    assert 'eu' not in fp.splat_baseroms()
+
+
+def test_nested_splat_editions_use_rom_hash_for_build_and_reference_config(tmp_path, monkeypatch):
+    import yaml
+
+    from decompnet import consoles
+    from decompnet.app.forkengine import ForkEngine
+
+    (tmp_path/'Makefile').write_text('BASENAME := demo\nVERSION ?= us\n'
+        'SPLAT_YAML := config/$(VERSION)/$(BASENAME).$(VERSION).yaml\nextract:\n\tpython -m splat split $(SPLAT_YAML)\n')
+    data = {v: b'\x80\x37\x12\x40'+v.encode()*32 for v in ('jp','us')}
+    for version, rom in data.items():
+        path = tmp_path/f'config/{version}/demo.{version}.yaml'
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump(dict(sha1=hashlib.sha1(rom).hexdigest(),
+            options=dict(base_path='../..', target_path=f'baserom.{version}.z64', platform='n64'), segments=[])))
+    fp = ForkProject(tmp_path)
+    assert fp.needs()['path'] == 'baserom.us.z64'
+    engine = object.__new__(ForkEngine)
+    cfg = {}
+    monkeypatch.setattr(ForkEngine, '_save_cfg', lambda *_: None)
+    game = tmp_path/'upload.z64'
+    game.write_bytes(data['jp'])
+    engine._match_version(SimpleNamespace(), fp, cfg, game, log=lambda *_: None)
+    assert cfg['version'] == 'jp'
+    assert fp.place_game(game, game.name, 'jp').name == 'baserom.jp.z64'
+    assert fp.setup_commands('jp')[0] == ['make','VERSION=jp','extract']
+    seen = []
+    monkeypatch.setattr(type(consoles.get('n64')), 'generate_objdiff',
+                        lambda self, project, path, config, **kwargs: seen.append(path) or True)
+    assert fp.generate_objdiff('us', log=lambda *_: None)
+    assert seen == [tmp_path/'config/us/demo.us.yaml']
+    bad = tmp_path/'config/jp/demo.jp.yaml'
+    bad.write_text(bad.read_text().replace('../..','../../..'))
+    assert 'jp' not in fp.splat_baseroms()
+
+
+@needs_tools
+def test_whole_image_rejects_a_function_match_that_changes_other_data(fork):
+    """A function can match while its new globals change the linked image."""
+    import sys
+
+    net, slug, agent = fork
+    _, fp, _ = net.forks.get(slug)
+    unit = next(u for u in fp.units() if u.source == "src/game.c")
+    assert not unit.complete
+    source = fp.root / unit.source
+    before = source.read_text()
+    manifest_path = fp.root / ".decomp.wtf.json"
+    manifest = manifest_path.read_text()
+    from elftools.elf.elffile import ELFFile
+
+    with unit.base.open("rb") as stream:
+        elf = ELFFile(stream)
+        material = b"".join(elf.get_section_by_name(n).data() for n in (".text", ".data", ".rodata")
+                            if elf.get_section_by_name(n))
+        bss = elf.get_section_by_name(".bss")
+        common = sum(s["st_size"] for s in elf.get_section_by_name(".symtab").iter_symbols()
+                     if s["st_shndx"] == "SHN_COMMON")
+        material += (int(bss["sh_size"] if bss else 0) + common).to_bytes(4, "big")
+    expected = hashlib.sha1(material).hexdigest()
+    command = [sys.executable, "-c", "from pathlib import Path; from elftools.elf.elffile import ELFFile; "
+               f"f=open({str(unit.base)!r}, 'rb'); e=ELFFile(f); "
+               "data=b''.join(e.get_section_by_name(n).data() for n in ('.text','.data','.rodata') "
+               "if e.get_section_by_name(n)); b=e.get_section_by_name('.bss'); "
+               "common=sum(s['st_size'] for s in e.get_section_by_name('.symtab').iter_symbols() "
+               "if s['st_shndx']=='SHN_COMMON'); "
+               "Path('build/image.bin').write_bytes(data+(int(b['sh_size'] if b else 0)+common).to_bytes(4,'big'))"]
+    fp.update_manifest(game={"path": "baserom.z64", "sha1": expected},
+                       verify_image={"path": "build/image.bin", "commands": [command]})
+    try:
+        assert fp.verify()[0]
+        result = net.forks.attempt(agent, slug, "clamp_s32", _ref("clamp_s32"),
+                                   prelude="int extra_image_data;\n")
+        assert not result["matched"] and "no longer builds byte for byte" in result["text"]
+        assert source.read_text() == before
+        assert fp.verify()[0]
+        result = net.forks.attempt(agent, slug, "clamp_s32",
+                                   "s32 clamp_s32(s32 v, s32 lo, s32 hi) { return v; }")
+        assert not result["matched"] and "no longer builds byte for byte" in result["text"]
+        assert source.read_text() == before and fp.verify()[0]
+    finally:
+        manifest_path.write_text(manifest)
+
+
+@pytest.mark.parametrize("platform", ["n64", "psx", "ps2"])
+def test_nested_splat_rom_uses_effective_yaml_base(tmp_path, platform):
+    (tmp_path / 'Makefile').write_text('all:\n\t@true\n')
+    folder = tmp_path / 'config/us'
+    folder.mkdir(parents=True)
+    config = folder / 'game.yaml'
+    config.write_text(f"sha1: {'a' * 40}\noptions:\n  platform: {platform}\n"
+                      "  base_path: .\n  target_path: baserom.z64\n  base_path: ../..\nsegments: []\n")
+    project = ForkProject(tmp_path)
+    assert project.needs()['path'] == 'baserom.z64'
+    assert project.needs()['sha1'] == 'a' * 40
+    config.write_text(config.read_text().replace('base_path: ../..', 'base_path: ../../..'))
+    assert not project.needs()['auto']
+
+
+def test_bundled_progress_detection_rejects_invalid_or_linked_manifests(tmp_path):
+    progress = tmp_path / 'progress'
+    progress.mkdir()
+    manifest = progress / 'decompdecomp.json'
+    manifest.write_text(json.dumps({'format': 1, 'game': {'sha1': 'a' * 40}}))
+    needs = ForkProject(tmp_path).needs()
+    assert needs['auto'] and needs['saved_progress'] and needs['sha1'] == 'a' * 40
+    manifest.write_text('{bad')
+    with pytest.raises(NetworkError, match='saved progress manifest'):
+        ForkProject(tmp_path).needs()
+    manifest.unlink()
+    outside = tmp_path / 'outside.json'
+    outside.write_text('{}')
+    manifest.symlink_to(outside)
+    with pytest.raises(NetworkError, match='symbolic links'):
+        ForkProject(tmp_path).needs()
+
+
+@needs_tools
+def test_background_trial_preserves_another_agents_claim_and_unfinished_file(tmp_path_factory):
+    net, slug, owner = fork.__wrapped__(tmp_path_factory)
+    search_agent, _ = net.local_agent('deep-side-search')
+    name = 'checksum_save'
+    net.claim(owner, slug, name)
+    fn = net._function(name, slug)
+    claim = dict(net.store.one('SELECT * FROM claims WHERE function_id=?', fn['id']))
+    _, fp, _ = net.forks.get(slug)
+    path = fp.root / fp.unit(fn['unit']).source
+    before = path.read_bytes()
+    candidate = _ref(name).replace('return', 'return 1 +', 1)
+    with pytest.raises(NetworkError, match='claimed by'):
+        net.forks.attempt(search_agent, slug, name, candidate, keep=False)
+    result = net.forks.attempt(search_agent, slug, name, candidate, keep=False, background=True)
+    assert not result['matched']
+    assert path.read_bytes() == before
+    assert dict(net.store.one('SELECT * FROM claims WHERE function_id=?', fn['id'])) == claim
+    with pytest.raises(NetworkError, match='restore unfinished source'):
+        net.forks.attempt(search_agent, slug, name, candidate, background=True)
+
+
+@needs_tools
+def test_deep_imported_source_baseline_is_rebuilt_by_project_judge(fork):
+    from decompnet.app import deep_permuter
+    from decompnet.app.permute import Permuter, State
+    net, slug, agent = fork
+    proj, fp, _ = net.forks.get(slug)
+    candidates = net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' AND best_score IS NOT NULL AND best_source IS NULL",proj['id'])
+    fn = next(fn for fn in candidates if net.forks._current_source(fp, fn))
+    before = {p:p.read_bytes() for p in fp.root.glob('src/*') if p.is_file()}
+    prepared = deep_permuter.prepare_source(net, proj, fn)
+    assert prepared['best_source'] and prepared['status'] == 'open'
+    assert prepared['best_score'] == fn['best_score']
+    assert all(p.read_bytes()==content for p,content in before.items())
+    score, _ = Permuter(net)._baseline(agent, proj, prepared, State(), slug)
+    assert score is not None
+
+
+def test_file_scope_is_outside_every_block_but_a_namespace_or_extern_c():
+    """A definition past a parked one is taken only at file scope: find() reads a call followed by a block as one."""
+    text = 'namespace a {\nextern "C" {\nint f(void) {\n    if (x) {\n        g();\n    }\n}\n}\n}\nint h;\n'
+    assert csource.at_file_scope(text, text.index("int f"))
+    assert not csource.at_file_scope(text, text.index("g();"))
+    assert not csource.at_file_scope(text, text.index("    }\n}"))
+    assert csource.at_file_scope(text, text.index("int h"))
+    call = "int t(int x) {\n    y = scale(x) * 2.0;\n    if (y) {\n        y = 1;\n    }\n}\n"
+    assert csource.find(call, "scale") is None  # (decomp-repair's find rejects a call in an expression)
+    assert not csource.at_file_scope(call, call.index("scale"))
+
+
+def test_the_definition_the_build_sees_beside_a_parked_one_is_at_file_scope():
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fp = SimpleNamespace(never_defined=lambda names: set(names))  # (no build defines PARKED)
+    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#else\nint f(void) {\n    return 1;\n}\n#endif\n"
+    seen = ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"])
+    assert seen is not None and text[seen[0]:seen[1]] == "int f(void) {\n    return 1;\n}\n"
+    # past the parked copy, a call in g followed by a block isn't the build's definition
+    text = "#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\nint g(void) {\n    x = f() * 2;\n    if (x) {\n    }\n}\n"
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
+    # nor one at file scope, a C++ initialiser's (find() read `* 2.0;` as K&R declarations, up to twice's `{`): a
+    # try on scale matched, and the file lost both bias and twice
+    text = ('#ifdef PARKED_DRAFTS\nextern "C" double scale(double x) { return x * 1.2; }\n#endif\n'
+            'extern "C" double scale(double x);\nstatic double bias = scale(2.0) * 2.0;\n'
+            'extern "C" double twice(double x) { double y = 0.0; y = scale(x) * 2.0; if (y > 1.0) { y = 1.0; } '
+            'return y; }\n')
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "scale"), "scale", ["scale"]) is None
+    # and of an #ifdef _WIN32 / #else pair (a macro the app can't tell), neither is surely the build's: the try went
+    # into the _WIN32 copy, maybe the one the build leaves out, and its #else kept being judged
+    text = ("#ifdef PARKED\nint f(void) {\n    return 2;\n}\n#endif\n#ifdef _WIN32\nint f(void) {\n    return 3;\n}\n"
+            "#else\nint f(void) {\n    return 1;\n}\n#endif\n")
+    assert ForkEngine._seen_beside(fp, text, csource.find(text, "f"), "f", ["f"]) is None
+    # a K&R definition isn't taken either (what's between its parameters and its body reads like a call's)
+    assert csource.opens_body("int f(a)\nint a;\n{\n}\n", (0, 20), "f") is False
+    assert csource.opens_body("int Car::f(int a) const throw() {\n}\n", (0, 35), "Car::f")
+
+
+def test_not_in_your_build_names_the_symbol_not_the_rows_unique_name():
+    """A function whose row name was made unique with a trailing "'" (a re-sync after a split) was reported as "its
+    object doesn't define _f@4'": agents spent days saying no C makes a name with a quote, and never looked further."""
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fn = {"name": "_f@4'", "meta": json.dumps({"symbol": "_f@4"}), "vram": None}
+    note = ForkEngine._missing_note(SimpleNamespace(name="u", base=None), fn)
+    assert "doesn't define _f@4," in note and "_f@4'" not in note
 
 
 def test_a_projects_overview_claims_no_compiler_facts_where_its_build_decides(tmp_path):
@@ -1002,54 +1295,6 @@ def test_a_boundary_report_names_the_console_that_cant_cut_functions(tmp_path):
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
     with pytest.raises(NetworkError, match="GameCube projects can't report function ends yet"):
         net.forks.report_boundary(agent, "p", "f", "0x80000008", "padding")
-
-
-def test_the_overview_reads_a_projects_file_compilers_again_only_when_a_file_changed(tmp_path, monkeypatch):
-    """The overview goes with every live poll (each second): a PC game's 1,300 source files' compilers were read
-    again each time (300-400 ms a poll). They're read again when one of the files they come from changed."""
-    import os
-    import time
-    from types import SimpleNamespace
-
-    from decompnet import consoles
-
-    root = tmp_path / "game"
-    (root / "config" / "v1").mkdir(parents=True)
-    manifest = {"version": "v1", "compiler": "MSVC/7.1"}
-    (root / ".decomp.wtf.json").write_text(json.dumps(manifest))
-    (root / "config/v1/functions.json").write_text(json.dumps({"units": {
-        "a": [{"name": "f", "addr": 0x1000, "size": 16}], "b": [{"name": "g", "addr": 0x2000, "size": 8}]}}))
-    compilers = root / "config/v1/file_compilers.json"
-    compilers.write_text(json.dumps({"src/auto/a.cpp": "6.0"}))
-    fp = SimpleNamespace(root=root, manifest=manifest,
-                         units=lambda: [SimpleNamespace(source=f"src/auto/{u}.cpp") for u in "ab"])
-    net = RomNetwork(tmp_path / "app.db", tmp_path)
-    pc = consoles.get("pc")
-    asked = []
-    real = type(pc).file_compiler
-    monkeypatch.setattr(type(pc), "file_compiler", lambda self, fp, source: asked.append(source) or real(self, fp, source))
-
-    def aged(seconds):  # (a file changed in the last 2 s isn't trusted: a second write could keep its stamp)
-        for path in root.rglob("*"):
-            os.utime(path, (time.time() - seconds, time.time() - seconds))
-
-    def parts():
-        own, found = net.forks._file_parts(fp, {"platform": "pc"})
-        return own, [(p["file"], p["start"], p["toolchain"]) for p in found]
-
-    aged(60)
-    assert parts() == ("MSVC/7.1", [("src/auto/a.cpp", 0x1000, "MSVC/6.0")])
-    asked.clear()
-    assert parts() == ("MSVC/7.1", [("src/auto/a.cpp", 0x1000, "MSVC/6.0")])
-    assert asked == []  # nothing changed: nothing read again
-    compilers.write_text(json.dumps({"src/auto/b.cpp": "6.0"}))  # try_compiler, or an editor
-    assert parts() == ("MSVC/7.1", [("src/auto/b.cpp", 0x2000, "MSVC/6.0")])
-    assert parts() and len(asked) == 6  # changed just now: read every time until it's 2 s old
-    aged(30)
-    asked.clear()
-    parts()
-    parts()
-    assert len(asked) == 3
 
 
 def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):

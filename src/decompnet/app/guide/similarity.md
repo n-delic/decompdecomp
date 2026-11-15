@@ -17,6 +17,20 @@ Beyond this project: games built on the same SDK or engine share code (libultra 
 Revolution SDKs, NitroSDK on DS, PSY-Q on PS1, sead/nn on Switch, RenderWare, Havok...). Those library
 functions are usually matched already in other public decomps.
 
+In ROM projects on this computer, decompdecomp indexes C that has already matched in your other games.
+Autopilot finds identical relocated code built with the same compiler and flags, adapts referenced names,
+and compiles it against this game's bytes. The project's **Matches from other games** panel shows every
+transfer attempt and its source. A match counts only after the byte judge accepts it.
+
+The function page and `find_similar(function)` also show near matches from other games. These are leads
+for writing C, not matches: similar instructions may come from unrelated functions. A name from another
+game is a suggestion until its purpose is checked here.
+
+You may index a local SDK `.a` or `.o` object in **Settings → Local SDK signatures**. Give the corpus its
+version (for example, the SDK release). Only names and machine-code fingerprints are stored locally;
+the archive and its code are not copied into the project. An exact signature can suggest a name, but
+does not provide matching C or change this game's function name by itself.
+
 Scheduling that works: easiest functions first, then functions similar to ones already matched.
 Don't grind on one function. compile_and_diff tells you when to move on: the function's brief names
 its number, and every result shows the count ("no better in 2/6 compiles (move on at 6)"). Then

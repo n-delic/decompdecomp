@@ -26,6 +26,7 @@ def agy_settings() -> Path:
 
 
 class Antigravity(Agent):
+    alias_model_compatible = False
     id = "antigravity"
     name = "Antigravity CLI"
     command = "agy"

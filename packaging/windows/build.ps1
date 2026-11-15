@@ -5,7 +5,7 @@ param([switch]$SkipInstallSmoke, [switch]$PortableOnly)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$version = (Select-String '^version = "(.*)"' (Join-Path $repoRoot 'pyproject.toml')).Matches.Groups[1].Value
+$version = (Select-String '^__version__ = "(.*)"' (Join-Path $repoRoot 'src/decompnet/__init__.py')).Matches.Groups[1].Value
 $work = Join-Path ([IO.Path]::GetTempPath()) ("decompdecomp-build-" + [guid]::NewGuid())
 $app = Join-Path $work 'app'
 $wheelDir = Join-Path $work 'wheel'
@@ -17,6 +17,9 @@ try {
     try {
         uv export --locked --no-dev --no-emit-project --format requirements.txt --output-file $runtimeRequirements | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Could not export the locked runtime dependencies (exit code $LASTEXITCODE)" }
+        # the MCP gateway, carried in the wheel (docs/MCP_GATEWAY.md)
+        uv run --no-project --python 3.12 packaging/build_gateway.py
+        if ($LASTEXITCODE -ne 0) { throw "The MCP gateway build failed with exit code $LASTEXITCODE" }
         uv build --wheel --out-dir $wheelDir | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "uv build failed with exit code $LASTEXITCODE" }
     }
@@ -44,6 +47,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "uv pip install of locked runtime dependencies failed with exit code $LASTEXITCODE" }
     uv pip install --python (Join-Path $bundlePython 'python.exe') --target $packages --no-deps $wheel
     if ($LASTEXITCODE -ne 0) { throw "uv pip install failed with exit code $LASTEXITCODE" }
+    & (Join-Path $bundlePython 'python.exe') (Join-Path $repoRoot 'packaging/stamp_build.py') $repoRoot $packages
+    if ($LASTEXITCODE -ne 0) { throw 'Could not stamp package build identity.' }
     # uv's console-script wrappers in packages/bin hard-code this build folder's python.exe, and each dist-info's
     # direct_url.json names the build machine's temp path: both are wrong once installed or extracted elsewhere. The
     # app starts through decomp-launch.pyw and runs its tools as modules, so only ninja.exe (a real binary) stays.
@@ -73,6 +78,10 @@ raise SystemExit(main())
     if ($LASTEXITCODE -ne 0) { throw 'The bundled app failed its launch smoke check.' }
     & (Join-Path $bundlePython 'python.exe') -c "import site,sys; site.addsitedir(sys.argv[1]); import decompnet.app.server" $packages
     if ($LASTEXITCODE -ne 0) { throw 'The bundled app failed its server startup import check.' }
+    if ($env:DECOMP_BUILD_GATEWAY -ne '0') {
+        & (Join-Path $bundlePython 'python.exe') -c "import site,sys; site.addsitedir(sys.argv[1]); from decompnet.app import mcp_gateway; assert mcp_gateway.built(), 'no MCP gateway in the package'" $packages
+        if ($LASTEXITCODE -ne 0) { throw 'The package has no MCP gateway.' }
+    }
     # picker.py uses Tk's native Windows folder/file dialogs, so keep tkinter and Tcl in the installed runtime.
     foreach ($unused in @('Lib/test', 'Lib/idlelib', 'Lib/site-packages', 'Lib/turtledemo',
                            'Lib/ensurepip', 'include', 'libs')) {

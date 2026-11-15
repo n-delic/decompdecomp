@@ -1,24 +1,16 @@
-name: Windows portable build
+name: Windows portable
 on:
-  pull_request:
-    paths:
-      - .github/workflows/windows-portable.yml
-      - .github/workflows/release.yml
-      - packaging/windows/**
-      - tests/test_windows_portable.py
-      - src/decompnet/app/launcher.py
-      - pyproject.toml
-      - uv.lock
-  workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:
   portable:
-    runs-on: windows-latest
-    timeout-minutes: 20
+    runs-on: blacksmith-4vcpu-windows-2025
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
+      - uses: dtolnay/rust-toolchain@stable  # the MCP gateway (packaging/build_gateway.py)
       - name: Check native launcher argument forwarding
         run: uv run pytest tests/test_windows_portable.py -q
       - name: Build and smoke test relocated portable EXE

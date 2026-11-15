@@ -1,15 +1,68 @@
-"""SQLite persistence. One file; writes through one connection and one lock, reads on a connection of each thread's
-own. The write-ahead log (WAL) lets reads run beside a write: with everything on one connection and one lock, 16
-agents on two games made every GUI request wait behind the others (the GUI's poll took 2.2-2.7 s instead of 14 ms)."""
+"""SQLite persistence. One file; writes through one connection and one lock, reads on connections each Store keeps
+in a small pool and lends to a thread for one read. The write-ahead log (WAL) lets reads run beside a write: with
+everything on one connection and one lock, 16 agents on two games made every GUI request wait behind the others
+(the GUI's poll took 2.2-2.7 s instead of 14 ms)."""
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import sqlite3
+import sys
 import threading
-from contextlib import contextmanager
+import time
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from time import thread_time
+
+from .read_cache import ReadCache
+
+
+class CorruptDatabaseError(sqlite3.DatabaseError):
+    """An actionable failure which never removes or silently replaces damaged data."""
+    def __init__(self, path, *, project=None):
+        self.path = str(path)
+        label = f"Project {project!r}" if project else 'decompdecomp'
+        super().__init__(f"{label} cannot open a damaged SQLite database: {self.path}. "
+                         "Keep this file and its -wal and -shm files together. "
+                         "Restore a verified recovery or a consistent backup before reopening; do not delete the database.")
+
+
+def corrupt_database(error):
+    return (getattr(error, 'sqlite_errorcode', 0) & 255) in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
+
+_transactions = threading.local()
+
+
+def in_transaction() -> bool:
+    """Whether this thread holds a write transaction on any application Store.
+
+    Long file synchronization must not run inside another project's transaction:
+    acquiring a second project's locks there can invert the lock order. This is a
+    transaction fence only; project/database selection remains explicit.
+    """
+    return bool(getattr(_transactions, 'depth', 0))
+
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS variant_games(id TEXT PRIMARY KEY, primary_project TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS game_variants(
+ game TEXT NOT NULL, variant TEXT NOT NULL, project TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
+ PRIMARY KEY(game,variant));
+CREATE TABLE IF NOT EXISTS logical_functions(id TEXT PRIMARY KEY, game TEXT NOT NULL, name TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS variant_bindings(
+ game TEXT NOT NULL, logical TEXT NOT NULL, variant TEXT NOT NULL, function_id INTEGER NOT NULL,
+ relation TEXT NOT NULL, defines TEXT NOT NULL, override_source TEXT NOT NULL, target_hash TEXT NOT NULL,
+ PRIMARY KEY(logical,variant,function_id));
+CREATE TABLE IF NOT EXISTS variant_sources(
+ logical TEXT NOT NULL, revision TEXT PRIMARY KEY, source TEXT NOT NULL, header TEXT NOT NULL,
+ proofs TEXT NOT NULL, owner TEXT NOT NULL, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS variant_source_latest ON variant_sources(logical,created_at);
+CREATE TABLE IF NOT EXISTS variant_edit_locks(game TEXT PRIMARY KEY, token TEXT NOT NULL, owner TEXT NOT NULL, process_id INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS variant_jobs(
+ id TEXT PRIMARY KEY, game TEXT NOT NULL, project TEXT NOT NULL, state TEXT NOT NULL,
+ progress TEXT NOT NULL, result TEXT, error TEXT, created_at REAL NOT NULL, runtime_id TEXT);
+
 CREATE TABLE IF NOT EXISTS agents(
   id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, owner TEXT, token_hash TEXT UNIQUE NOT NULL,
   created_at REAL, last_seen REAL);
@@ -27,18 +80,58 @@ CREATE TABLE IF NOT EXISTS functions(
   matched_source TEXT, matched_agent_id INTEGER, matched_at REAL,
   attempts INTEGER NOT NULL DEFAULT 0, abandons INTEGER NOT NULL DEFAULT 0,
   UNIQUE(project_id, name));
+CREATE TABLE IF NOT EXISTS agent_selection(
+  project TEXT NOT NULL, agent TEXT NOT NULL, policy TEXT NOT NULL, PRIMARY KEY(project, agent));
 CREATE TABLE IF NOT EXISTS claims(
   function_id INTEGER PRIMARY KEY, agent_id INTEGER NOT NULL, claimed_at REAL, expires_at REAL);
 CREATE TABLE IF NOT EXISTS attempts(
   id INTEGER PRIMARY KEY, function_id INTEGER, agent_id INTEGER, score INTEGER, compiled INTEGER,
   context_version INTEGER, source TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS attempt_hints(
+  attempt_id INTEGER PRIMARY KEY, function_id INTEGER NOT NULL, summary TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_attempt_hints_fn ON attempt_hints(function_id,attempt_id);
+CREATE TABLE IF NOT EXISTS agent_variant_runs(
+  id INTEGER PRIMARY KEY, function_id INTEGER NOT NULL, family TEXT NOT NULL,
+  revision TEXT NOT NULL, trials INTEGER NOT NULL, best_score INTEGER, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_agent_variant_fn ON agent_variant_runs(function_id,id);
+CREATE TABLE IF NOT EXISTS pairings(
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, secret_hash TEXT NOT NULL, token TEXT,
+  project TEXT, state TEXT NOT NULL DEFAULT 'pending', agent_id INTEGER,
+  created_at REAL NOT NULL, decided_at REAL);
+CREATE TABLE IF NOT EXISTS agent_family_targets(
+  function_id INTEGER NOT NULL, scope TEXT NOT NULL, family TEXT NOT NULL,
+  target_hash TEXT NOT NULL, PRIMARY KEY(function_id,scope,family,target_hash));
 CREATE TABLE IF NOT EXISTS notes(
   id INTEGER PRIMARY KEY, project_id INTEGER, function_id INTEGER, agent_id INTEGER, text TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS score_commit_baselines(
+ project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,
+ score INTEGER, PRIMARY KEY(project_id,function_id));
+CREATE TABLE IF NOT EXISTS auto_match_commits(
+ id TEXT PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,
+ attempt_id INTEGER NOT NULL UNIQUE, agent_id INTEGER, created_at REAL NOT NULL, notes_after REAL NOT NULL,
+ snapshot TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', commit_sha TEXT, error TEXT,
+ retry_at REAL NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS idx_auto_match_pending ON auto_match_commits(project_id,state);
+CREATE TABLE IF NOT EXISTS polish_failures(
+    project_id INTEGER NOT NULL, function_id INTEGER NOT NULL, input_key TEXT NOT NULL,
+    candidate_key TEXT NOT NULL, result TEXT NOT NULL, created_at REAL NOT NULL, cacheable INTEGER NOT NULL,
+    PRIMARY KEY(project_id,function_id,input_key,candidate_key));
+CREATE TABLE IF NOT EXISTS polish_patterns(
+    project_id INTEGER NOT NULL, function_id INTEGER NOT NULL, shape TEXT NOT NULL,
+    plan TEXT NOT NULL, created_at REAL NOT NULL,
+    PRIMARY KEY(project_id,function_id,shape));
+CREATE INDEX IF NOT EXISTS polish_pattern_shape ON polish_patterns(project_id,shape);
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY, project_id INTEGER, agent_id INTEGER, kind TEXT, detail TEXT, created_at REAL);
 CREATE INDEX IF NOT EXISTS idx_functions_status ON functions(project_id, status, n_insns);
 CREATE INDEX IF NOT EXISTS idx_attempts_fn ON attempts(function_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_worker ON attempts(function_id,agent_id);
 CREATE INDEX IF NOT EXISTS idx_events_time ON events(created_at);
+CREATE INDEX IF NOT EXISTS idx_events_kind_id ON events(kind,id);
+-- Session completion counts one agent's recent matches, not every historical match.
+CREATE INDEX IF NOT EXISTS idx_events_agent_matches ON events(agent_id,created_at) WHERE kind='match';
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS agent_tool_usage(name TEXT PRIMARY KEY,calls INTEGER NOT NULL,last_used REAL);
 CREATE TABLE IF NOT EXISTS progress_state(
@@ -54,11 +147,6 @@ CREATE TABLE IF NOT EXISTS progress_dirty(
   functions INTEGER NOT NULL DEFAULT 0,
   headers INTEGER NOT NULL DEFAULT 0,
   metadata INTEGER NOT NULL DEFAULT 0);
--- A new random token whenever a project's counted functions change (TALLY_TRIGGERS): the project list keeps each
--- project's totals until it does (engine/gui.py, summary), instead of counting every function of every game each 5 s.
-CREATE TABLE IF NOT EXISTS tally_changes(
-  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-  token TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS progress_dirty_file(
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL, token TEXT,
@@ -88,10 +176,72 @@ CREATE TABLE IF NOT EXISTS waits(
 CREATE TABLE IF NOT EXISTS twin_misses(
   function_id INTEGER NOT NULL, source_hash TEXT NOT NULL, project_id INTEGER, at REAL, why TEXT,
   PRIMARY KEY(function_id, source_hash));
+CREATE TABLE IF NOT EXISTS reuse_trials(
+  function_id INTEGER NOT NULL, signature TEXT NOT NULL, outcome TEXT NOT NULL, reason TEXT NOT NULL,
+  PRIMARY KEY(function_id, signature));
+CREATE TABLE IF NOT EXISTS repair_cursors(project_id INTEGER PRIMARY KEY, function_id INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS iterative_runs(
+    id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, attempts INTEGER NOT NULL, matched INTEGER NOT NULL,
+    bytes INTEGER NOT NULL, seconds REAL NOT NULL, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS repair_frontiers(
+    function_id INTEGER PRIMARY KEY REFERENCES functions(id) ON DELETE CASCADE, context TEXT NOT NULL, state TEXT NOT NULL);
+
+
+CREATE TABLE IF NOT EXISTS repair_origins(
+  function_id INTEGER NOT NULL, source_hash TEXT NOT NULL, source_function_id INTEGER NOT NULL,
+  source_stamp TEXT NOT NULL, target_stamp TEXT NOT NULL, names TEXT NOT NULL,
+  PRIMARY KEY(function_id,source_hash,source_function_id));
+CREATE TABLE IF NOT EXISTS repaired_pairs(
+  function_id INTEGER NOT NULL, source_function_id INTEGER NOT NULL, source_stamp TEXT NOT NULL,
+  target_stamp TEXT NOT NULL, PRIMARY KEY(function_id,source_function_id));
+CREATE TABLE IF NOT EXISTS reuse_cursors(project_id INTEGER PRIMARY KEY, function_id INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS cross_game_index(
+  function_id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, fingerprint TEXT NOT NULL,
+  compiler TEXT NOT NULL, size INTEGER NOT NULL, matched_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_cross_game_fingerprint ON cross_game_index(fingerprint, compiler);
+CREATE TABLE IF NOT EXISTS library_transfers(
+ id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL,function_id INTEGER NOT NULL,
+ source_game TEXT NOT NULL,source_name TEXT NOT NULL,source_slug TEXT NOT NULL DEFAULT '',outcome TEXT NOT NULL,reason TEXT,created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_library_transfers_project ON library_transfers(project_id,created_at);
+CREATE TABLE IF NOT EXISTS cross_game_attempts(
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, function_id INTEGER NOT NULL,
+  source_project_id INTEGER NOT NULL, source_function_id INTEGER NOT NULL,
+  outcome TEXT NOT NULL, reason TEXT, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_cross_game_attempts_project ON cross_game_attempts(project_id, created_at);
+CREATE TABLE IF NOT EXISTS sdk_shapes(
+ corpus TEXT NOT NULL, arch TEXT NOT NULL, big_endian INTEGER NOT NULL,
+ name TEXT NOT NULL, fingerprint TEXT NOT NULL, size INTEGER NOT NULL, ops TEXT NOT NULL,
+ PRIMARY KEY(corpus,arch,big_endian,name,fingerprint));
+CREATE INDEX IF NOT EXISTS idx_sdk_shapes_size ON sdk_shapes(arch,big_endian,size);
+CREATE TABLE IF NOT EXISTS sdk_sources(
+  corpus TEXT NOT NULL, name TEXT NOT NULL, arch TEXT NOT NULL, big_endian INTEGER NOT NULL,
+  source TEXT NOT NULL, header TEXT NOT NULL, compiler TEXT NOT NULL,
+  PRIMARY KEY(corpus,name,arch,big_endian));
+CREATE TABLE IF NOT EXISTS free_match_attempts(
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, function_id INTEGER NOT NULL,
+  strategy TEXT NOT NULL, outcome TEXT NOT NULL, reason TEXT, created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS reuse_runs(
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, attempts INTEGER NOT NULL, matched INTEGER NOT NULL,
+  bytes INTEGER NOT NULL, seconds REAL NOT NULL, created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_reuse_runs_project ON reuse_runs(project_id,id);
+CREATE TABLE IF NOT EXISTS sdk_signatures(
+  id INTEGER PRIMARY KEY, corpus TEXT NOT NULL, arch TEXT NOT NULL, big_endian INTEGER NOT NULL,
+  name TEXT NOT NULL, fingerprint TEXT NOT NULL, size INTEGER NOT NULL,
+  UNIQUE(corpus, arch, big_endian, name, fingerprint));
+CREATE INDEX IF NOT EXISTS idx_sdk_signatures_fingerprint ON sdk_signatures(arch, big_endian, fingerprint);
+CREATE TABLE IF NOT EXISTS compiler_tests(
+  function_id INTEGER PRIMARY KEY, input_digest TEXT NOT NULL,
+  completed_at REAL NOT NULL, result TEXT NOT NULL);
 """
 
 # Columns added after the first release; applied in place to existing databases.
 MIGRATIONS = [
+    ("attempts", "score_before", "INTEGER"),
+    ("attempts", "score_improved", "INTEGER"),
+    ("notes", "session_id", "INTEGER"),
+    ("notes", "score_before", "INTEGER"),
+    ("notes", "score_after", "INTEGER"),
+    ("reuse_trials", "feedback", "TEXT NOT NULL DEFAULT '{}'"),
     ("agents", "trusted", "INTEGER NOT NULL DEFAULT 0"),      # operator-vetted (CLI) vs. self-registered
     ("agents", "origin", "TEXT"),                              # cli | web
     ("agents", "terms_accepted_at", "REAL"),                   # evidence of accepting the terms
@@ -104,6 +254,7 @@ MIGRATIONS = [
     ("functions", "meta", "TEXT"),                             # forks: symbol, demangled name, source file
     ("functions", "boost", "INTEGER NOT NULL DEFAULT 0"),      # claim order: >0 matching it matches that many twins
     ("functions", "readable", "INTEGER NOT NULL DEFAULT 0"),   # matched C rewritten readable, still matching (readable.py)
+    ("functions", "unpolished_source", "TEXT"),                  # saved matching C before its first accepted polish
     ("functions", "permuted", "INTEGER NOT NULL DEFAULT 0"),   # turns the permuter spent on it (app/permute.py)
     ("functions", "seed_key", "TEXT"),                         # what its machine draft was made from (engine/briefs.py)
     ("progress_state", "format", "INTEGER NOT NULL DEFAULT 1"),  # 2: disk/projected are hashes in progress_files
@@ -130,29 +281,14 @@ CREATE TRIGGER IF NOT EXISTS functions_marks_update AFTER UPDATE OF meta ON func
 BEGIN UPDATE functions SET {MARKS} WHERE id=NEW.id; END;
 """
 
-# What a project's totals read (network.PROGRESS_COLUMNS, IN_BUILD): created after the migrations, like the ones below.
-# A removed project's leftover rows mark nothing (its id may be reused later), like the progress triggers
-TALLY_TRIGGERS = """
-CREATE TRIGGER IF NOT EXISTS tally_functions_insert AFTER INSERT ON functions
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id)
-BEGIN
-  INSERT OR REPLACE INTO tally_changes(project_id, token) VALUES(NEW.project_id, lower(hex(randomblob(8))));
-END;
-CREATE TRIGGER IF NOT EXISTS tally_functions_update
-AFTER UPDATE OF project_id,size,status,meta,aside_mark,gone_mark ON functions
-BEGIN
-  INSERT OR REPLACE INTO tally_changes(project_id, token)
-    SELECT id, lower(hex(randomblob(8))) FROM projects WHERE id IN (OLD.project_id, NEW.project_id);
-END;
-CREATE TRIGGER IF NOT EXISTS tally_functions_delete AFTER DELETE ON functions
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=OLD.project_id)
-BEGIN
-  INSERT OR REPLACE INTO tally_changes(project_id, token) VALUES(OLD.project_id, lower(hex(randomblob(8))));
-END;
-"""
-
 # Created after the migrations above: they name columns older databases get from MIGRATIONS. A trigger only marks what
 # a progress folder's render actually reads (saves._render), so work that stays in the database costs nothing.
+# The update triggers also check the value changed: `UPDATE OF col` fires on any write to col, so a write of the same
+# value, or of a functions.meta key the render doesn't read (only saves.SET_ASIDE_META's), re-rendered and rewrote a
+# 27 MB manifest identical but for its stamp. DIRTY_UPDATE_TRIGGERS older databases have are replaced (_initialize).
+DIRTY_META_KEYS = ("asm_code", "not_c", "asm_twin", "verified_assembly")  # = saves.SET_ASIDE_META (a test checks)
+DIRTY_UPDATE_TRIGGERS = ("progress_dirty_functions_update", "progress_dirty_notes_update",
+                         "progress_dirty_headers_update", "progress_dirty_symbols_update", "progress_dirty_agent_rename")
 DIRTY_TRIGGERS = """
 CREATE TRIGGER IF NOT EXISTS progress_dirty_functions_insert AFTER INSERT ON functions
 WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
@@ -165,7 +301,17 @@ END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_functions_update
 AFTER UPDATE OF name,vram,size,status,matched_source,matched_agent_id,best_source,best_score,best_agent_id,readable,meta
 ON functions
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN (OLD.name IS NOT NEW.name OR OLD.vram IS NOT NEW.vram OR OLD.size IS NOT NEW.size OR OLD.status IS NOT NEW.status
+      OR OLD.matched_source IS NOT NEW.matched_source OR OLD.matched_agent_id IS NOT NEW.matched_agent_id
+      OR OLD.best_source IS NOT NEW.best_source OR OLD.best_score IS NOT NEW.best_score
+      OR OLD.best_agent_id IS NOT NEW.best_agent_id OR OLD.readable IS NOT NEW.readable
+      OR (OLD.meta IS NOT NEW.meta AND CASE WHEN json_valid(COALESCE(OLD.meta,'{}')) AND json_valid(COALESCE(NEW.meta,'{}'))
+          THEN json_extract(COALESCE(OLD.meta,'{}'),'$.asm_code') IS NOT json_extract(COALESCE(NEW.meta,'{}'),'$.asm_code')
+            OR json_extract(COALESCE(OLD.meta,'{}'),'$.not_c') IS NOT json_extract(COALESCE(NEW.meta,'{}'),'$.not_c')
+            OR json_extract(COALESCE(OLD.meta,'{}'),'$.asm_twin') IS NOT json_extract(COALESCE(NEW.meta,'{}'),'$.asm_twin')
+            OR json_extract(COALESCE(OLD.meta,'{}'),'$.verified_assembly') IS NOT json_extract(COALESCE(NEW.meta,'{}'),'$.verified_assembly')
+          ELSE 1 END))
+ AND EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), functions=1 WHERE project_id=NEW.project_id;
@@ -189,7 +335,9 @@ BEGIN
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_notes_update AFTER UPDATE OF project_id,function_id,agent_id,text ON notes
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN (OLD.project_id IS NOT NEW.project_id OR OLD.function_id IS NOT NEW.function_id OR OLD.agent_id IS NOT NEW.agent_id
+      OR OLD.text IS NOT NEW.text)
+ AND EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
@@ -207,7 +355,8 @@ BEGIN
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), headers=1 WHERE project_id=NEW.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_headers_update AFTER UPDATE OF project_id,header,unit ON context_versions
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN (OLD.project_id IS NOT NEW.project_id OR OLD.header IS NOT NEW.header OR OLD.unit IS NOT NEW.unit)
+ AND EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), headers=1 WHERE project_id=NEW.project_id;
@@ -225,7 +374,9 @@ BEGIN
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_symbols_update AFTER UPDATE OF project_id,name,address,size,kind ON symbols
-WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN (OLD.project_id IS NOT NEW.project_id OR OLD.name IS NOT NEW.name OR OLD.address IS NOT NEW.address
+      OR OLD.size IS NOT NEW.size OR OLD.kind IS NOT NEW.kind)
+ AND EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
@@ -237,7 +388,8 @@ BEGIN
   UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=OLD.project_id;
 END;
 CREATE TRIGGER IF NOT EXISTS progress_dirty_agent_rename AFTER UPDATE OF name ON agents
-WHEN EXISTS (SELECT 1 FROM projects WHERE CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+WHEN OLD.name IS NOT NEW.name
+ AND EXISTS (SELECT 1 FROM projects WHERE CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
 BEGIN
   INSERT OR IGNORE INTO progress_dirty(project_id)
     SELECT id FROM projects WHERE CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom';
@@ -250,20 +402,149 @@ END;
 # The write-ahead log is cut back to this after a checkpoint. Without a limit it never shrinks: the owner's grew to
 # 90 MB beside a 172 MB database, and every start read through it.
 WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
+# Set only by a process that reads what the app keeps (app/tool_reader.py): it opens existing files as they are, with no
+# schema upgrade, checkpoint or ANALYZE and without the writer gate, so starting it never makes the app's writers wait.
+ATTACH_ONLY = False
 IN_MEMORY = ":memory:"  # a database only its own connection sees: reads go through the writer's connection
+# Every connection: WAL makes synchronous=NORMAL durable against app crashes (only an OS crash or power loss can
+# drop the last commits, never corrupt), sorts and temporary indexes stay in memory, and pages are read through a
+# memory map instead of being copied into each connection's own 2 MB cache.
+CONNECTION_PRAGMAS = ("PRAGMA synchronous=NORMAL", "PRAGMA temp_store=MEMORY", f"PRAGMA mmap_size={256 * 1024 * 1024}")
+WRITER_CACHE_KIB = 32 * 1024
+READER_CACHE_KIB = 8 * 1024
+# Idle reading connections each Store keeps. Busier moments open more and close them when done: one connection
+# per thread for ever left ~2,700 open, each with a cold cache and its functions registered again.
+READERS_KEPT = 8
+# Bounds the statistics PRAGMA optimize gathers per index at startup (SQLite's suggested value): a project
+# that was never analyzed is analyzed approximately in milliseconds, not by reading every row.
+ANALYSIS_LIMIT = 400
+# Tables smaller than this keep no statistics: measured near-empty (a new project, a table that fills during the
+# session), the planner would scan them for the whole session even after they grow. Without statistics SQLite
+# assumes a large table and uses its indexes, as it always has.
+STATISTICS_MIN_ROWS = 10_000
 
 
-ANALYSIS_LIMIT = 400  # rows PRAGMA optimize reads per index: enough for the planner, quick on a big database
+def tune(conn, cache_kib):
+    for pragma in CONNECTION_PRAGMAS + (f"PRAGMA cache_size=-{cache_kib}",):
+        sqlite3.Connection.execute(conn, pragma).close()
+
+
+class _ThreadReader:
+    """Close a worker's SQLite reader when thread-local storage is released.
+
+    SQLite connections contain cycles; dropping the last thread-local reference
+    alone can leave their WAL/database descriptors open until cyclic GC runs.
+    """
+    def __init__(self,path,header_codec,repair_archive=None):
+        from .payload_storage import Connection
+        self.conn=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=rw' if str(path)!=':memory:' else path,uri=str(path)!=':memory:',isolation_level=None,check_same_thread=False,factory=Connection)
+        try:
+            self.conn.row_factory=sqlite3.Row
+            if repair_archive is not None:
+                self.conn.repair_archive = repair_archive
+                from .repair_archive import register
+                register(self.conn)
+            header_codec.register(self.conn)
+            tune(self.conn, READER_CACHE_KIB)
+            self.conn.execute("PRAGMA query_only=1").close()
+        except BaseException:
+            self.conn.close()
+            raise
+
+    def __del__(self):
+        # A daemon may have owned the connection's Python lock when finalization
+        # stopped it permanently. Waiting for that lock now deadlocks process exit.
+        # These are query-only readers; normal worker teardown still closes them.
+        if sys.is_finalizing():return
+        # Only its owning thread reads this connection. Allow finalization from
+        # another thread too, if the Store itself is collected after workers exit.
+        try:self.conn.close()
+        except Exception:pass
 
 
 class Store:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, repair_archive=None, project_namespace=None, stable_ids=False, require_existing=False):
         self.path = str(path)
-        self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+        self.require_existing = require_existing
+        self.repair_archive = repair_archive
+        self.project_namespace, self.stable_ids = project_namespace,stable_ids
+        self._readers = []  # idle reading connections, the most recently used last
+        self._readers_lock = threading.Lock()
+        if project_namespace is not None:
+            from .shard_ids import bounds
+            bounds(project_namespace)
+            if repair_archive is None:raise ValueError('Project storage requires the existing shared repair archive.')
+        from .writer_gate import WriterGate
+        self.writer_gate=WriterGate(self.path)
+        try:
+            if ATTACH_ONLY and self.path != IN_MEMORY and Path(self.path).is_file():
+                self._attach()
+            else:
+                with self.writer_gate.hold():
+                    self._initialize()
+        except BaseException as error:
+            if hasattr(self,'conn'):self.conn.close()
+            if isinstance(error, sqlite3.DatabaseError) and corrupt_database(error):
+                raise CorruptDatabaseError(self.path) from error
+            raise
+
+    def _attach(self):
+        """Open a database the app has already set up (ATTACH_ONLY): its connection functions, none of its DDL."""
+        from .payload_storage import Connection
+        self.conn = sqlite3.connect(Path(self.path).resolve().as_uri()+'?mode=rw', uri=True, check_same_thread=False,
+                                    isolation_level=None, factory=Connection)
         self.conn.row_factory = sqlite3.Row
+        self._migration_admin = False
+        self.conn.create_function('storage_migration_admin',0,lambda:int(self._migration_admin))
+        if self.repair_archive is not None:
+            self.conn.repair_archive = self.repair_archive
+            from .repair_archive import register
+            register(self.conn)
+        if self.project_namespace is not None:
+            marker = sqlite3.Connection.execute(self.conn,"SELECT value FROM settings WHERE key='project-id-namespace'").fetchone()
+            if not marker or marker[0]!=str(self.project_namespace):
+                raise ValueError('The project database identity is missing or incorrect. Restore a consistent backup.')
+        from .shard_ids import bind
+        bind(self.conn,self.project_namespace,self.stable_ids)
+        from .header_storage import Codec
+        self.header_codec = Codec()
+        self.header_codec.register(self.conn)
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        tune(self.conn, READER_CACHE_KIB)
+        self.read_cache = ReadCache(lambda: getattr(getattr(self, '_local', None), 'in_tx', False))
+        self._slow_queries = {}
+        self._last_writer = None  # (where, when) the last write transaction ended: named by a writer that waited
+        self._wal_watch = None  # a reader process never checkpoints (ATTACH_ONLY)
+        self.project_rows_tracked = False  # (a database an older app made may lack the revision's triggers)
+        self.lock = threading.RLock()
+        self._local = threading.local()
+
+    def _initialize(self):
+        from .payload_storage import Connection
+        location = Path(self.path).resolve().as_uri()+'?mode=rw' if self.require_existing else self.path
+        self.conn = sqlite3.connect(location, uri=self.require_existing, check_same_thread=False, isolation_level=None,factory=Connection)
+        self.conn.row_factory = sqlite3.Row
+        self._migration_admin = False
+        self.conn.create_function('storage_migration_admin',0,lambda:int(self._migration_admin))
+        if self.repair_archive is not None:
+            self.conn.repair_archive = self.repair_archive
+            from .repair_archive import register
+            register(self.conn)
+        from .shard_ids import bind
+        if self.require_existing and self.project_namespace is not None:
+            try:marker = sqlite3.Connection.execute(self.conn,"SELECT value FROM settings WHERE key='project-id-namespace'").fetchone()
+            except sqlite3.DatabaseError as error:
+                if corrupt_database(error):raise
+                raise ValueError('The project database is incomplete. Restore a consistent backup.') from error
+            if not marker or marker[0]!=str(self.project_namespace):raise ValueError('The project database identity is missing or incorrect. Restore a consistent backup.')
+        bind(self.conn,self.project_namespace,self.stable_ids)
+        from .header_storage import Codec
+        self.header_codec = Codec()
+        self.header_codec.register(self.conn)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute(f"PRAGMA journal_size_limit={WAL_SIZE_LIMIT_BYTES}")
         self.conn.execute("PRAGMA foreign_keys=ON")
+        tune(self.conn, WRITER_CACHE_KIB)
         self.conn.executescript(SCHEMA)
         added = set()
         for table, column, ddl in MIGRATIONS:
@@ -271,6 +552,10 @@ class Store:
             if column not in cols:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
                 added.add(column)
+        from .header_storage import install as install_headers
+        install_headers(self.conn)
+        from .payload_storage import install as install_payloads
+        install_payloads(self.conn)
         if "last_checked" in added or "last_improved" in added:
             # Older projects have no cached dates. Derive them once, then maintain them on each new attempt.
             self.conn.execute("""WITH measured AS (
@@ -287,11 +572,63 @@ class Store:
                 FROM measured GROUP BY function_id
             ) UPDATE functions SET last_checked=recency.checked,last_improved=recency.improved
               FROM recency WHERE functions.id=recency.function_id""")
-        self.conn.executescript(DIRTY_TRIGGERS)
-        self.conn.executescript(TALLY_TRIGGERS)
+        dirty = (DIRTY_TRIGGERS.replace("ON context_versions", "ON context_history")
+                 .replace("project_id,header,unit", "project_id,header_hash,unit")
+                 .replace("OLD.header IS NOT NEW.header", "OLD.header_hash IS NOT NEW.header_hash"))
+        # An older database's update triggers fire on writes of the same value: replace them in one transaction, so
+        # no write between the drop and the create goes unmarked.
+        stale = [row[0] for row in sqlite3.Connection.execute(self.conn,
+                 "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN (%s)" % ",".join("?" * len(DIRTY_UPDATE_TRIGGERS)),
+                 DIRTY_UPDATE_TRIGGERS).fetchall() if "IS NOT NEW." not in (row[1] or "")]
+        if stale:
+            dirty = ("BEGIN IMMEDIATE;" + "".join(f"DROP TRIGGER IF EXISTS {name};" for name in stale) + dirty + "COMMIT;")
+        self.conn.executescript(dirty)
         self.conn.executescript(MARK_TRIGGERS)
         if "aside_mark" in added:  # once: the marks of every function there is
             self.conn.execute(f"UPDATE functions SET {MARKS.replace('NEW.', '')} WHERE meta IS NOT NULL")
+        # Project-local revisions invalidate cached contributor history in constant time, including
+        # restores and score corrections that do not append a new attempt.
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS history_revisions(project_id INTEGER PRIMARY KEY, revision INTEGER NOT NULL, rewritten INTEGER NOT NULL);
+            CREATE TRIGGER IF NOT EXISTS history_attempt_insert AFTER INSERT ON attempts BEGIN
+                INSERT INTO history_revisions SELECT project_id,1,(NEW.id < (SELECT MAX(id) FROM attempts))
+                FROM functions WHERE id=NEW.function_id
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,
+                    rewritten=rewritten+(NEW.id < (SELECT MAX(id) FROM attempts));
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_attempt_delete AFTER DELETE ON attempts BEGIN
+                INSERT INTO history_revisions SELECT project_id,1,1 FROM functions WHERE id=OLD.function_id
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_attempt_update AFTER UPDATE OF
+                function_id,agent_id,score,compiled,score_improved,created_at ON attempts
+                WHEN OLD.function_id IS NOT NEW.function_id OR OLD.agent_id IS NOT NEW.agent_id
+                OR OLD.score IS NOT NEW.score OR OLD.compiled IS NOT NEW.compiled
+                OR OLD.score_improved IS NOT NEW.score_improved OR OLD.created_at IS NOT NEW.created_at BEGIN
+                INSERT INTO history_revisions SELECT project_id,1,1 FROM functions WHERE id IN (OLD.function_id,NEW.function_id)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_function_update AFTER UPDATE OF n_insns,project_id ON functions
+                WHEN OLD.n_insns IS NOT NEW.n_insns OR OLD.project_id IS NOT NEW.project_id BEGIN
+                INSERT INTO history_revisions VALUES(OLD.project_id,1,1)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+                INSERT INTO history_revisions VALUES(NEW.project_id,1,1)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_function_insert AFTER INSERT ON functions BEGIN
+                INSERT INTO history_revisions VALUES(NEW.project_id,1,1)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_function_delete AFTER DELETE ON functions BEGIN
+                INSERT INTO history_revisions VALUES(OLD.project_id,1,1)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+        """)
+        # Map recency needs scores/timestamps, never saved C. Cover the window query so opening
+        # a project does not read hundreds of MB of historical source from attempt table pages.
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_history ON "
+                          "attempts(function_id,id,agent_id,compiled,score,score_improved,created_at)")
+        self.conn.execute("DROP INDEX IF EXISTS idx_attempts_recency")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_agent_time ON attempts(agent_id, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_unit ON functions(project_id, unit, status)")
         # the room looks a function up by its address for every match, best attempt and note the host sends: without
@@ -299,12 +636,18 @@ class Store:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_vram ON functions(project_id, vram)")
         # a note the host sends is saved only when this function doesn't have it already: that look-up read every
         # note saved so far (3 ms each at 7,000 notes, so 60,000 incoming notes took over three minutes; now 0.01)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_agent_time ON attempts(agent_id,created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_lookup ON notes(project_id, function_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_page ON notes(function_id,created_at DESC,id DESC)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_session ON notes(function_id,agent_id,session_id)")
         # a function's events of one kind (polishing's tries on it: app/readable.py), without reading a game's whole feed
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_detail ON events(project_id, kind, detail)")
         # a project's last activity, for the project list and its page: read every one of its events (9 ms for ten
         # projects with 51,000 events, each sidebar ask; now 0.03)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_project_time ON events(project_id, created_at)")
+        # Incremental notification polls seek by source ID, not timestamp. The time
+        # index makes MAX(id) scan every historical event on each poll.
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_project_id ON events(project_id,id)")
         # the progress the GUI asks for every second (totals, the map's "anything new?"), answered from this narrow
         # index instead of reading every function's assembly and sources: 31 ms -> about 2 for 36,000 functions
         # (with the set-aside and gone marks, whether it's polished and who matched it: the sidebar's and the project's
@@ -318,6 +661,10 @@ class Store:
         # removing a project left its symbols behind before 0.10.3, and the next import (which may get the same id)
         # ran into them
         self.conn.execute("DELETE FROM symbols WHERE project_id NOT IN (SELECT id FROM projects)")
+        self.conn.execute("DELETE FROM cross_game_index WHERE project_id NOT IN (SELECT id FROM projects)")
+        self.conn.execute("DELETE FROM library_transfers WHERE project_id NOT IN (SELECT id FROM projects)")
+        self.conn.execute("DELETE FROM cross_game_attempts WHERE project_id NOT IN (SELECT id FROM projects) "
+                          "OR source_project_id NOT IN (SELECT id FROM projects)")
         # before 0.10.4 a twin's try left the function claimed by the autopilot for 30 minutes, and each expiry
         # counted as an agent giving up on it: thousands of functions were put last for nothing. Counted again,
         # once, from what agents actually did (releases, and their own claims that ran out)
@@ -334,14 +681,138 @@ class Store:
                 DROP TABLE gave_up;
                 INSERT INTO settings(key, value) VALUES('abandons_recounted', '1');
                 COMMIT;""")
-        # the query planner's statistics, kept up to date as projects come and grow (SQLite's advice for a connection
-        # that stays open: optimize when it opens, then now and then, Store.optimize); a bounded look per index
-        self.conn.execute(f"PRAGMA analysis_limit={ANALYSIS_LIMIT}")
-        self.conn.execute("PRAGMA optimize=0x10002")
+        from .project_views import install as install_views
+        install_views(self.conn)
         # what the last run left in the log goes into the database now, and the log starts empty
         self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS read_revisions(kind TEXT PRIMARY KEY, revision INTEGER NOT NULL)")
+        self.read_cache = ReadCache(lambda: getattr(getattr(self, '_local', None), 'in_tx', False))
+        for table, columns in (
+                ('functions', 'target,relocs,asm,seed,name,unit,vram,n_insns,size,status,best_source,best_score,matched_source,meta,project_id,gone_mark,aside_mark'),
+                ('projects', 'config,arch,big_endian,root'), ('symbols', None), ('context_versions', None)):
+            self._track_reads(table, 'inputs', columns)
+        self._track_reads('functions', 'targets', 'target,status,project_id,gone_mark,aside_mark',
+            "OLD.target IS NOT NEW.target OR OLD.project_id IS NOT NEW.project_id OR "
+            "OLD.gone_mark IS NOT NEW.gone_mark OR OLD.aside_mark IS NOT NEW.aside_mark OR "
+            "(OLD.status='asm') != (NEW.status='asm')")
+        self._track_reads('projects', 'targets', 'arch,big_endian')
+        self._track_reads('functions', 'compiler_rows', 'name,vram,size,n_insns,status,project_id')
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_deep_ready ON "
+                          "functions(project_id,status,gone_mark,(best_source IS NOT NULL),best_score)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_compiler_rows ON "
+                          "functions(project_id,vram,id,name,size,n_insns,status)")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS read_snapshots(key TEXT PRIMARY KEY, version TEXT NOT NULL, value TEXT NOT NULL)")
+        self.conn.execute('SAVEPOINT fingerprint_trigger_upgrade')
+        try:
+            # Replace the older broad config/preview triggers when upgrading an existing database.
+            for table in ('functions', 'projects', 'symbols'):
+                for event in ('insert', 'delete', 'update'):
+                    self.conn.execute(f'DROP TRIGGER IF EXISTS read_fingerprints_{table}_{event}')
+            self._track_reads('functions', 'fingerprints', 'target,relocs,status,project_id',
+                "OLD.target IS NOT NEW.target OR OLD.relocs IS NOT NEW.relocs OR OLD.project_id IS NOT NEW.project_id OR "
+                "(OLD.status='asm') != (NEW.status='asm')")
+            self._track_reads('projects', 'fingerprints', 'arch,big_endian,config',
+                "OLD.arch IS NOT NEW.arch OR OLD.big_endian IS NOT NEW.big_endian OR "
+                "json_extract(OLD.config,'$.big_endian') IS NOT json_extract(NEW.config,'$.big_endian') OR "
+                "json_extract(OLD.config,'$.kind') IS NOT json_extract(NEW.config,'$.kind')")
+            self._track_reads('symbols', 'fingerprints', 'name,address,size,kind,project_id')
+        except BaseException:
+            self.conn.execute('ROLLBACK TO fingerprint_trigger_upgrade')
+            self.conn.execute('RELEASE fingerprint_trigger_upgrade')
+            raise
+        else:
+            self.conn.execute('RELEASE fingerprint_trigger_upgrade')
+        self._track_reads('symbols', 'scope_symbols', 'name,address,size,kind,project_id')
+        self._track_reads('context_versions', 'scope_context')
+        self._track_reads('cross_game_index', 'reuse_index')
+        self._track_reads('functions', 'matched_evidence', 'name,status,matched_source,project_id')
+        self.conn.execute('CREATE INDEX IF NOT EXISTS idx_cross_game_compiler_size ON cross_game_index(compiler,size,project_id,fingerprint,function_id)')
+        self.conn.execute('CREATE INDEX IF NOT EXISTS idx_functions_matched_id ON functions(status,id)')
+        # SDK inventory is global, unlike the project-owned tables tracked above.
+        for event in ('INSERT', 'UPDATE', 'DELETE'):
+            self.conn.execute(f"CREATE TRIGGER IF NOT EXISTS read_sdk_inventory_{event} AFTER {event} ON sdk_signatures "
+                              "BEGIN INSERT INTO read_revisions VALUES('sdk_names',1) "
+                              "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
+        # Speculative lease cleanup reads shared names/owners, not token or usage
+        # history. A durable revision also observes writes from another process.
+        for event in ('INSERT', 'DELETE', 'UPDATE'):
+            clause = 'UPDATE OF id,name,owner' if event == 'UPDATE' else event
+            when = 'WHEN OLD.id IS NOT NEW.id OR OLD.name IS NOT NEW.name OR OLD.owner IS NOT NEW.owner' if event == 'UPDATE' else ''
+            self.conn.execute(f"CREATE TRIGGER IF NOT EXISTS read_lease_identities_agents_{event.lower()} AFTER {clause} ON agents {when} "
+                              "BEGIN INSERT INTO read_revisions VALUES('lease_identities',1) "
+                              "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
+        self._track_reads('projects', 'project_list', 'slug,name,root,config,arch,big_endian')
+        self._track_reads('projects', 'project_rows')  # any column: Network._project caches whole rows
+        self.project_rows_tracked = True
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_baseline ON attempts(function_id,score,id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_context ON attempts(context_version,function_id)")
+        from .history_changes import install as install_history_changes
+        install_history_changes(self.conn)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_history ON functions(project_id,id,n_insns)")
+        self._track_reads('functions', 'naming', 'name,meta,project_id')
+        from .map_changes import install as install_map_changes
+        install_map_changes(self.conn)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_context_latest ON context_history(project_id,unit,version DESC)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_named_scan ON functions(project_id,status,id,name)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_room_credit ON functions(project_id,matched_agent_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_origin_owner ON agents(origin,owner)")
+        self._track_reads('functions', 'audit_layout', 'name,vram,rom_offset,size,project_id')
+        self._slow_queries = {}
+        self._last_writer = None  # (where, when) the last write transaction ended: named by a writer that waited
+        from .db_diagnostics import WalWatch
+        self._wal_watch = None if self.path == IN_MEMORY else WalWatch(self.path)
+        from .large_text_storage import install as install_large_text
+        install_large_text(self.conn)
+        from .shard_ids import remember
+        remember(self.conn)
+        self._optimize()
         self.lock = threading.RLock()
-        self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
+        self._local = threading.local()  # per thread: the reading connection it borrowed, and whether it's inside tx()
+
+    def _optimize(self):
+        """Statistics for the query planner, gathered once when the process opens the database: no project
+        database had any (never ANALYZEd), so SQLite guessed at every index. Bounded by ANALYSIS_LIMIT, and
+        never a reason not to open: a busy or read-only file just keeps its old statistics."""
+        try:
+            self.conn.execute(f"PRAGMA analysis_limit={ANALYSIS_LIMIT}").close()
+            self.conn.execute("PRAGMA optimize=0x10002").close()
+            if sqlite3.Connection.execute(self.conn, "SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'").fetchone():
+                cursor = sqlite3.Connection.execute(self.conn, "DELETE FROM sqlite_stat1 WHERE CAST(stat AS INTEGER) < ?",
+                                                    (STATISTICS_MIN_ROWS,))
+                if cursor.rowcount:
+                    sqlite3.Connection.execute(self.conn, "ANALYZE sqlite_schema").close()  # reload what is left
+        except sqlite3.OperationalError as error:
+            logging.getLogger('decompdecomp').info('Database statistics not updated: %s', error)
+
+    def _track_reads(self, table, kind, columns=None, condition=None):
+        """Internal schema names only. Revisions commit/roll back with their source changes."""
+        if table == "context_versions":
+            table = "context_history"
+        for event in ('INSERT', 'DELETE', 'UPDATE'):
+            clause = f'UPDATE OF {columns}' if event == 'UPDATE' and columns else event
+            if event == 'UPDATE' and columns and condition is None:
+                condition_sql = ' OR '.join(f'OLD.{c} IS NOT NEW.{c}' for c in columns.split(','))
+            else:
+                condition_sql = condition if event == 'UPDATE' else None
+            when = f'WHEN {condition_sql}' if condition_sql else ''
+            records = ('NEW', 'OLD') if event == 'UPDATE' else (('NEW',) if event == 'INSERT' else ('OLD',))
+            def project(record):
+                if table == 'projects':
+                    return f'{record}.id'
+                if table == 'deep_permutation_passes':
+                    return f'(SELECT project_id FROM functions WHERE id={record}.function_id)'
+                return f'{record}.project_id'
+            affected = ' UNION '.join(f'SELECT {project(r)} AS pid' for r in records)
+            self.conn.execute(f"CREATE TRIGGER IF NOT EXISTS read_{kind}_{table}_{event.lower()} AFTER {clause} ON {table} {when} "
+                f"BEGIN INSERT INTO read_revisions VALUES('{kind}',1) "
+                "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; "
+                f"INSERT INTO read_revisions SELECT '{kind}:' || pid,1 FROM ({affected}) WHERE pid IS NOT NULL "
+                "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
+
+    def read_version(self, kind, project=None):
+        key = kind if project is None else f'{kind}:{project}'
+        row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
+        return row['revision'] if row else 0
 
     def optimize(self) -> None:
         """Refresh the planner's statistics where they went stale (cheap when nothing did): the autosave, hourly."""
@@ -349,48 +820,238 @@ class Store:
             self.conn.execute("PRAGMA optimize")
 
     @contextmanager
-    def tx(self):
-        """Serialized transaction. Never compile while holding this. One inside another joins it: they commit (or
-        roll back) together, which is how many small writes cost one commit's wait for the disk."""
-        with self.lock:
-            if getattr(self._local, "in_tx", False):
-                yield self.conn
+    def try_tx(self):
+        """Optional bookkeeping never queues behind a local or remote writer."""
+        callbacks=[]
+        with self.writer_gate.hold(blocking=False) as admitted:
+            if not admitted:
+                yield None
                 return
-            self.conn.execute("BEGIN IMMEDIATE")
-            self._local.in_tx = True
+            if not self.lock.acquire(blocking=False):
+                yield None
+                return
             try:
-                yield self.conn
-            except BaseException:
-                self.conn.execute("ROLLBACK")
-                raise
-            finally:
-                self._local.in_tx = False
-            self.conn.execute("COMMIT")
+                cursor=self.conn.execute('PRAGMA busy_timeout')
+                timeout=cursor.fetchone()[0];cursor.close()
+                self.conn.execute('PRAGMA busy_timeout=0').close()
+                try:
+                    with ExitStack() as stack:
+                        try:db=stack.enter_context(self._transaction(callbacks))
+                        except sqlite3.OperationalError as error:
+                            if getattr(error,'sqlite_errorcode',0) & 255 != sqlite3.SQLITE_BUSY:raise
+                            yield None
+                            return
+                        yield db
+                finally:self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
+            finally:self.lock.release()
+        for callback in callbacks:callback()
+
+    @contextmanager
+    def tx(self, *, wait=None):
+        """Wait outside SQLite for cooperating writers, then execute the body exactly once.
+
+        wait can report/cancel acquisition. Raw external SQLite writers retain their
+        configured busy timeout; transaction bodies and commits are never replayed.
+        """
+        callbacks=[]
+        from .db_diagnostics import caller
+        queued=(time.monotonic(),caller(1))
+        with self.writer_gate.hold(wait=wait):
+            with self._transaction(callbacks,wait=wait,queued=queued) as db:
+                yield db
+        for callback in callbacks:callback()
+
+    @contextmanager
+    def _transaction(self,callbacks,*,wait=None,queued=None):
+        from . import db_diagnostics
+        from .request_timing import timed_lock
+        deadline = None
+        while True:
+            busy=False
+            with timed_lock(self.lock,'write_lock_wait'):
+                if getattr(self._local, "in_tx", False):
+                    yield self.conn
+                    return
+                cursor=self.conn.execute('PRAGMA busy_timeout')
+                timeout=cursor.fetchone()[0];cursor.close()
+                if wait is None and deadline is None:
+                    deadline=time.monotonic()+timeout/1000
+                # Another process (including the permuter child) can own SQLite's
+                # writer. Do not pin our local writer mutex for the full busy timeout.
+                interval=100 if wait is not None else min(timeout,100,max(0,int((deadline-time.monotonic())*1000)))
+                self.conn.execute(f'PRAGMA busy_timeout={interval}').close()
+                try:
+                    self.conn.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError as error:
+                    code=getattr(error,'sqlite_errorcode',0) & 255
+                    if code not in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):raise
+                    if wait is None and (code!=sqlite3.SQLITE_BUSY or time.monotonic()>=deadline):raise
+                    busy=True
+                    busy_error=error
+                finally:
+                    self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
+                if not busy:
+                    began = time.monotonic()
+                    began_cpu = thread_time()
+                    where = queued[1] if queued else db_diagnostics.caller(1)
+                    if queued:
+                        last = self._last_writer
+                        db_diagnostics.write_waited(began-queued[0], where,
+                                                    last[0] if last and last[1] >= queued[0] else None)
+                    self._local.in_tx = True
+                    self._local.after_commit = []
+                    _transactions.depth = getattr(_transactions, 'depth', 0) + 1
+                    try:
+                        yield self.conn
+                        self.conn.execute("COMMIT")
+                    except BaseException:
+                        if self.conn.in_transaction:self.conn.execute("ROLLBACK")
+                        self._local.after_commit = []
+                        raise
+                    finally:
+                        self._local.in_tx = False
+                        _transactions.depth -= 1
+                        ended = time.monotonic()
+                        self._last_writer = (where, ended)
+                        db_diagnostics.long_write(ended-began, where, thread_cpu=thread_time()-began_cpu)
+                    callbacks.extend(self._local.after_commit)
+                    self._local.after_commit = []
+                    if self._wal_watch is not None:
+                        callbacks.append(lambda: self._wal_watch.check(self.conn, self.lock))
+            if not busy:break
+            # No transaction or process-local writer lock is held while reporting/cancelling.
+            if wait is not None:
+                wait()
+                delay=.05
+            else:
+                remaining=deadline-time.monotonic()
+                if remaining<=0:
+                    raise busy_error
+                delay=min(.05,remaining)
+            time.sleep(delay)
+
+    def after_commit(self, callback):
+        """Publish external derived evidence only after its enclosing write succeeds."""
+        if getattr(self._local, 'in_tx', False):
+            self._local.after_commit.append(callback)
+        else:
+            callback()
 
     def _reader(self) -> sqlite3.Connection | None:
-        """This thread's own connection for reading, or None: inside tx() (a read there must see what the transaction
-        wrote) and for an in-memory database, reads go through the writer's connection."""
+        """A connection for reading, borrowed by this thread until _release_reader(), or None: inside tx() (a read
+        there must see what the transaction wrote) and for an in-memory database, reads go through the writer's
+        connection. A read made while the thread already has one (a SQL function reading again) shares it."""
         if self.path == IN_MEMORY or getattr(self._local, "in_tx", False):
             return None
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self.path, isolation_level=None)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA query_only=1")  # a write here would bypass the writer's lock
-            self._local.conn = conn
-        return conn
+        reader = getattr(self._local, "reader", None)
+        if reader is None:
+            with self._readers_lock:
+                reader = self._readers.pop() if self._readers else None
+            if reader is None:
+                reader = _ThreadReader(self.path,self.header_codec,self.conn.repair_archive)
+            self._local.reader = reader
+        self._local.readers = getattr(self._local, "readers", 0) + 1
+        # Shared, not copied: detail_tables is an immutable set that connections only ever replace.
+        reader.conn.detail_tables=self.conn.detail_tables
+        return reader.conn
+
+    def _release_reader(self):
+        """Give the borrowed connection back when the thread's outermost read ends."""
+        self._local.readers -= 1
+        if self._local.readers:
+            return
+        reader = self._local.reader
+        self._local.reader = None
+        with self._readers_lock:
+            if len(self._readers) < READERS_KEPT:
+                self._readers.append(reader)
+                return
+        reader.conn.close()
+
+    def close_readers(self):
+        """Close the idle reading connections (the writer's is closed by its owner)."""
+        with self._readers_lock:
+            readers, self._readers = self._readers, []
+        for reader in readers:
+            reader.conn.close()
 
     def _read(self, sql: str, args: tuple, single: bool):
-        conn = self._reader()
-        if conn is None:
-            with self.lock:
-                cur = self.conn.execute(sql, args)
-                return cur.fetchone() if single else cur.fetchall()
-        cur = conn.execute(sql, args)
+        started = time.monotonic()
+        # Two CPU clock reads per query; finer per-phase clocks materially tax fast reads.
+        started_cpu = thread_time()
+        self._local.read_phases = {}  # durations only: request_timing.sql_read adds them up
+        self._local.read_via = 'reader'
         try:
-            return cur.fetchone() if single else cur.fetchall()
+            return self._read_rows(sql, args, single)
         finally:
-            cur.close()  # an open statement would hold its snapshot, and the log could never be checkpointed
+            elapsed = time.monotonic() - started
+            cpu_elapsed = thread_time() - started_cpu
+            from .request_timing import sql_read
+            phases = self._local.read_phases
+            sql_read(elapsed, phases)
+            if elapsed >= 0.25:
+                # Never log bindings or SQL text: either can contain private source or credentials.
+                key = hashlib.sha256(sql.encode()).hexdigest()[:12]
+                if started - self._slow_queries.get(key, float('-inf')) >= 60:
+                    if len(self._slow_queries) >= 128:
+                        self._slow_queries.clear()
+                    self._slow_queries[key] = started
+                    caller = sys._getframe(2)
+                    logging.getLogger('decompdecomp').warning(
+                        'Slow database read %.3fs [%s] at %s:%s (%s) connection=%.3fs lock_wait=%.3fs execute=%.3fs fetch=%.3fs via=%s %s thread_cpu=%.3fs', elapsed, key,
+                        Path(caller.f_code.co_filename).name, caller.f_lineno, caller.f_code.co_name,
+                        *(phases.get(k, 0) for k in ('connection', 'lock_wait', 'execute', 'fetch')),
+                        self._local.read_via, self._plan_shape(sql, args), cpu_elapsed)
+
+    def _read_rows(self, sql: str, args: tuple, single: bool):
+        started = time.perf_counter()
+        phases = self._local.read_phases
+        try:
+            conn = self._reader()
+        finally:
+            phases['connection'] = time.perf_counter() - started
+        if conn is not None and getattr(self._local, "readers", 0):
+            try:
+                return self._query(conn, sql, args, single)
+            finally:
+                self._release_reader()
+        return self._query(conn, sql, args, single)
+
+    def _query(self, conn, sql, args, single):
+        phases = self._local.read_phases
+        def query(connection):
+            executing = time.perf_counter()
+            try:
+                cur = connection.execute(sql, args)
+            finally:
+                # Failed reads can spend the entire SQLite busy timeout here.
+                phases['execute'] = time.perf_counter() - executing
+            fetching = time.perf_counter()
+            try:
+                return cur.fetchone() if single else cur.fetchall()
+            finally:
+                cur.close()
+                phases['fetch'] = time.perf_counter() - fetching
+        if conn is None:
+            # Reads inside a transaction (or of an in-memory database) share the writer's connection and its lock.
+            self._local.read_via = 'writer-transaction' if getattr(self._local, 'in_tx', False) else 'writer'
+            waiting = time.perf_counter()
+            with self.lock:
+                phases['lock_wait'] = time.perf_counter() - waiting
+                return query(self.conn)
+        return query(conn)
+
+    def _plan_shape(self, sql, args):
+        """The slow read's query plan as counts (db_diagnostics.plan_shape), read on a reading connection."""
+        from .db_diagnostics import plan_shape
+        if self.path == IN_MEMORY or getattr(self._local, 'in_tx', False):
+            with self.lock:
+                return plan_shape(self.conn, sql, args)
+        conn = self._reader()
+        try:
+            return plan_shape(conn, sql, args)
+        finally:
+            self._release_reader()
 
     def one(self, sql: str, *args) -> sqlite3.Row | None:
         return self._read(sql, args, single=True)

@@ -2,6 +2,14 @@
 /* ------------------------------------------------------------------ map */
 let colors = null, geo = null, animating = false;
 
+function resetMap() {
+  geo = null; base = null; baseDirty = true; shown = null;
+  moving = []; dirtyCells.clear(); ccIndex = new Map();
+  const canvas = $("map");
+  // Resetting dimensions clears pixels immediately, including a previous project's map.
+  canvas.width = 1; canvas.height = 1; canvas.style.height = "0px";
+}
+
 // a 1×1 canvas turns any CSS colour (oklch, color-mix, color(srgb …)) into the sRGB bytes the map is drawn with
 const swatch = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
 function cssColor(name) {
@@ -15,8 +23,8 @@ function cssColor(name) {
   return [...swatch.getImageData(0, 0, 1, 1).data.slice(0, 3)];
 }
 function readColors() {
-  colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), match: cssColor("--match"), polished: cssColor("--polished"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
-             notC: cssColor("--not-c"), cc: CC_COLORS.map(cssColor) };
+  colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), boundary: cssColor("--boundary-review"), match: cssColor("--match"), polished: cssColor("--polished"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
+             notC: cssColor("--not-c"), sdk: cssColor("--sdk"), cc: CC_COLORS.map(cssColor) };
 }
 
 /* The compiler map (MIPS ROM projects): each square in the colour of the compiler its code looks like, the game's
@@ -53,9 +61,10 @@ function renderMapView() {
 /* The compiler map's colours come in a request of their own, after the map is drawn: after a match the compiler map
    is built again, and the ROM map waited for it (GTA San Andreas: 710-800 ms). */
 async function loadMapColumns(slug) {
+  const gen = S.gen;
   let data;
   try { data = await api(`/api/mapcolumns?slug=${slug}`); } catch { return; }
-  if (slug !== S.slug || !data.rows.length) return;
+  if (gen !== S.gen || slug !== S.slug || !data.rows.length) return;
   const col = Object.fromEntries(data.keys.map((k, i) => [k, i]));
   const at = new Map(S.map.map((f, i) => [f.vram, i]));
   for (const r of data.rows) {
@@ -71,35 +80,60 @@ $("mapView").addEventListener("click", (ev) => {
   if (!b) return;
   S.mapView = b.dataset.view;
   renderMapView(); mapChanged(); drawMap();
+  if (S.mapView === "compiler" && S.slug && S.ov?.kind !== "fork") loadMapColumns(S.slug);
 });
 const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
 const rgb = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
-function layoutMap() {
-  const wrap = $("mapWrap"), canvas = $("map");
-  if (!wrap.clientWidth) return;  // not on screen: laid out when the overview shows
-  const w = Math.max(200, wrap.clientWidth - 32), n = Math.max(1, S.map.length);
+// Shared by the function map and ROM region map: equal rounded squares in reading order.
+function squareMapLayout(w, n) {
   let size = Math.floor(Math.sqrt((w * 300) / n));
   size = Math.max(5, Math.min(26, size));
   const gap = size >= 12 ? 3 : 2;
   const cols = Math.max(1, Math.floor((w + gap) / (size + gap)));
   const rows = Math.ceil(n / cols);
   const h = rows * (size + gap) - gap;
+  return {size, gap, cols, h};
+}
+function squareMapCell(ctx, layout, i) {
+  const {size, gap, cols}=layout;
+  const x=(i%cols)*(size+gap),y=Math.floor(i/cols)*(size+gap);
+  ctx.beginPath();ctx.roundRect(x,y,size,size,size>=10 ? 2.5 : size>=7 ? 1.5 : 1);ctx.fill();
+}
+
+function layoutMap() {
+  const wrap = $("mapWrap"), canvas = $("map");
+  if (!wrap.clientWidth) return;  // not on screen: laid out when the overview shows
+  const w = Math.max(200, wrap.clientWidth - 32), n = Math.max(1, S.map.length);
+  const { size, gap, cols, h } = squareMapLayout(w, n);
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
   canvas.style.height = h + "px";
   geo = { size, gap, cols, w, h, dpr };
   mapChanged();
-  applyClaims();
+  applyClaims(true, true);
 }
 
-function applyClaims(draw = true) {
+/* The claims onto the map's functions. Only the functions whose claim came, went or changed hands since the last
+   time are touched (`full`: every one, as after rows came from the server). S.claimsApplied: {map: the S.map they
+   went onto, working: name -> agent}. */
+function applyClaims(draw = true, full = false) {
   const working = new Map(S.claims.map((c) => [c.name, c.agent]));
-  S.map.forEach((f, i) => {
+  const apply = (f, i) => {
     const status = f.status === "matched" || f.status === "asm" ? f.status : working.has(f.name) ? "working" : "open";
     if (status !== f.status) { f.status = status; mapChanged(i); }
     f.agent = working.get(f.name) || null;
-  });
+  };
+  const applied = S.claimsApplied;
+  const before = !full && applied && applied.map === S.map && S.byName ? applied.working : null;
+  if (before) {
+    const names = new Set();
+    // (each claimed one is looked at, a handful: a row the server sent since may have come without its claim)
+    for (const [name, agent] of working) if (before.get(name) !== agent || S.map[S.byName.get(name)]?.status !== "working") names.add(name);
+    for (const name of before.keys()) if (!working.has(name)) names.add(name);
+    for (const name of names) { const i = S.byName.get(name); if (i != null && S.map[i]) apply(S.map[i], i); }
+  } else S.map.forEach(apply);
+  S.claimsApplied = { map: S.map, working };
   if (draw) drawMap();
 }
 
@@ -121,7 +155,9 @@ function applyAttempts(attempts) {
 function cellColor(f) {
   if (S.mapView === "compiler" && f.cc) return [colors.cc[ccIndex.get(f.cc) ?? 0], 1];
   if (f.status === "matched") return [f.polished ? colors.polished : colors.match, 1];
-  // set aside: red, as no C makes it; lighter when its shape told (assembly, a piece), full when agents agreed
+  if (f.analysis_state === "boundary_review") return [colors.boundary, 1];
+  // Set-aside assessments are not assembly provenance; incomplete extents stay yellow.
+  if (f.status === "asm" && f.sdk_verified) return [colors.sdk, 1];  // library code: done, not the game's work
   if (f.status === "asm") return [colors.notC, f.not_c ? 1 : 0.45];
   if (f.best != null) return [mix(colors.tried, colors.hi, Math.pow(pctOf(f.best, f.insns) || 0, 3)), 1];
   return [colors.open, 1];
@@ -136,7 +172,7 @@ function drawCell(ctx, i) {
   if (f.status === "working") return;
   const [c, a] = cellColor(f);
   ctx.fillStyle = rgb(c, a);
-  ctx.beginPath(); ctx.roundRect(x, y, size, size, r); ctx.fill();
+  squareMapCell(ctx, geo, i);
   if (S.mapView === "compiler" && f.ccx) {
     ctx.strokeStyle = rgb(colors.ink, 1); ctx.lineWidth = size >= 10 ? 1.5 : 1;
     ctx.beginPath(); ctx.roundRect(x + 0.75, y + 0.75, size - 1.5, size - 1.5, r); ctx.stroke();
@@ -162,8 +198,11 @@ function drawBase(cells = null) {
 /* What the canvas shows besides `base`: a frame where only working cells pulse redraws just those, not the whole
    canvas (megapixels for a big game, 30 times a second while agents work). */
 let shown = null;
+let mapTimingAt=0;
 function drawMap() {
   if (!geo || S.tab !== "overview") return;
+  const timing=typeof uiTimingEnabled==='function' && uiTimingEnabled() && performance.now()-mapTimingAt>1000 ? performance.now() : null;
+  if (timing!=null) mapTimingAt=timing;
   if (!colors) readColors();
   let whole = !shown;
   if (baseDirty || !base || base.width !== $("map").width || base.height !== $("map").height) { drawBase(); whole = true; }
@@ -193,8 +232,8 @@ function drawMap() {
   for (const i of moving) {
     const [x, y] = at(i);
     if (!whole) restore(i, 1);
-    ctx.fillStyle = rgb(colors.work, 0.55 + 0.45 * Math.sin(now / 260 + i));
-    ctx.beginPath(); ctx.roundRect(x, y, size, size, r); ctx.fill();
+    ctx.fillStyle = rgb(S.map[i].analysis_state === "boundary_review" ? colors.boundary : colors.work, 0.55 + 0.45 * Math.sin(now / 260 + i));
+    squareMapCell(ctx, geo, i);
   }
   for (const [name, fl] of S.flash) {
     const i = S.byName && S.byName.get(name), t = (now - fl) / 1600;
@@ -207,6 +246,7 @@ function drawMap() {
   }
   if (sel != null) { const [x, y] = at(sel); ctx.strokeStyle = rgb(colors.ink, 0.9); ctx.lineWidth = 1.5; ctx.strokeRect(x - 1.5, y - 1.5, size + 3, size + 3); }
   shown = { sel, flash: flashed };
+  if (timing!=null) uiTiming('map render',timing,{cells:S.map.length,whole});
   if (live && !animating) {  // about 30 frames a second is plenty for a pulse
     animating = true;
     setTimeout(() => requestAnimationFrame(() => { animating = false; drawMap(); }), 33);
@@ -227,7 +267,7 @@ $("map").addEventListener("mousemove", (ev) => {
   if (i < 0) { tip.hidden = true; return; }
   const f = S.map[i];
   const p = pctOf(f.best, f.insns);
-  const status = f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}` : f.status === "working" ? `${esc(f.agent)} is on it` : f.best != null ? `best ${pctText(p)}` : "not started";
+  const status = f.analysis_state === "boundary_review" ? "incomplete extent — boundary review" : f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}` : f.status === "working" ? `${esc(f.agent)} is on it` : f.status === "asm" ? (f.sdk_verified ? "SDK library code, set aside" : f.not_c ? "set aside by agents" : "set aside: assembly") : f.best != null ? `best ${pctText(p)}` : "not started";
   const where = S.ov && S.ov.kind === "fork" ? esc(f.unit || "") : hex8(f.vram);
   const cc = f.cc ? `<br>looks built by ${esc(f.cc)}${f.ccx ? ", not its compiler today" : ""}` : "";
   tip.innerHTML = `<b>${esc(f.name)}</b><br>${where} · ${f.insns} instructions<br>${status}${cc}`;

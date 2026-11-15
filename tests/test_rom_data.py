@@ -144,3 +144,5 @@ def test_own_data_in_another_layout_matches(game):
 def test_wrong_data_is_caught(game, change):
     for name, linked in judge(game, **change).items():
         assert not linked.exact and linked.problems, (name, change)
+        assert linked.instructions_exact, (name, change)
+        assert any('differing range 0x' in p for p in linked.problems)

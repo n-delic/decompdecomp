@@ -1,0 +1,356 @@
+"""The port's interpreter for functions with no C yet (consoles/n64/port_wasm/mips.c), run on small MIPS programs
+written here, and the bridges the build generates around it (port/wasm/interp.py)."""
+
+from __future__ import annotations
+
+import shutil
+import struct
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from decompnet.port.wasm import interp
+
+MIPS = Path(__file__).resolve().parents[1] / "src/decompnet/consoles/n64/port_wasm/mips.c"
+CODE, DATA, C_FUNCTION = 0x80001000, 0x80002000, 0x80003000
+
+HARNESS = r"""
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+static uint8_t *mem;
+uint8_t *port_memory(void) { return mem; }
+uint64_t port_io_load(uint64_t a) { return a; }
+uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
+void port_safe_point(void) {}
+int port_thread_number(void) { return -1; }
+struct w2c_env;
+uint32_t w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { (void)e; return 1234; }
+void port_mips_run(uint32_t entry, uint64_t *r, uint32_t *f);
+int port_mips_enter(uint64_t *r, uint32_t *f, int words);
+uint32_t port_mips_varargs(const uint64_t *r, int first);
+uint64_t port_mips_typed_call(uint32_t entry, const uint8_t *types, const uint64_t *vals, unsigned n, int ret);
+/* the one function "with C": returns $a0 * 10 + $a1, and says it was called */
+static int c_calls;
+static void c_function(uint64_t *r, uint32_t *f) { (void)f; c_calls++; r[2] = (uint64_t)(int64_t)(int32_t)((uint32_t)r[4] * 10 + (uint32_t)r[5]); }
+typedef void (*PortMipsCall)(uint64_t *r, uint32_t *f);
+typedef struct { uint32_t vram; PortMipsCall call; } PortMipsEntry;
+const PortMipsEntry port_mips_calls[] = {{0x%(c)08Xu, c_function}};
+const unsigned port_mips_call_count = 1;
+/* argv: the program (big-endian words) at CODE, then $a0-$a3; prints $v0 $v1, the f registers 0-3, the words at
+   DATA (8 of them), how often the C function ran, and a varargs buffer of $a2 on */
+int main(int argc, char **argv) {
+    mem = mmap(NULL, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (mem == MAP_FAILED) return 3;
+    FILE *in = fopen(argv[1], "rb");
+    size_t n = fread(mem + 0x%(code)08Xu, 1, 0x1000, in);
+    fclose(in);
+    (void)n;
+    if (argc > 2 && !strncmp(argv[2], "typed:", 6)) { /* typed:RET:CODES, then each argument's bits (hex) */
+        int ret = argv[2][6] - '0';
+        const char *codes = argv[2] + 8;
+        uint8_t t[16]; uint64_t v[16]; unsigned k = 0;
+        for (; codes[k] && k < 16; k++) { t[k] = (uint8_t)(codes[k] - '0'); v[k] = strtoull(argv[3 + k], NULL, 16); }
+        printf("%%016llX\n", (unsigned long long)port_mips_typed_call(0x%(code)08Xu, t, v, k, ret));
+        return 0;
+    }
+    uint64_t r[32]; uint32_t f[32];
+    port_mips_enter(r, f, 8);
+    for (int i = 0; i < 4 && 2 + i < argc; i++) r[4 + i] = (uint64_t)(int64_t)(int32_t)strtoul(argv[2 + i], NULL, 0);
+    port_mips_run(0x%(code)08Xu, r, f);
+    printf("%%08X %%08X %%08X %%08X %%08X %%08X", (uint32_t)r[2], (uint32_t)r[3], f[0], f[1], f[2], f[3]);
+    for (int i = 0; i < 8; i++) { uint32_t w; memcpy(&w, mem + 0x%(data)08Xu + 4 * i, 4); printf(" %%08X", __builtin_bswap32(w)); }
+    uint32_t buf = port_mips_varargs(r, 2), w0, w1;
+    memcpy(&w0, mem + buf, 4); memcpy(&w1, mem + buf + 4, 4);
+    printf(" %%d %%08X %%08X\n", c_calls, __builtin_bswap32(w0), __builtin_bswap32(w1));
+    return 0;
+}
+"""
+
+REG = {n: i for i, n in enumerate("zero at v0 v1 a0 a1 a2 a3 t0 t1 t2 t3 t4 t5 t6 t7 s0 s1 s2 s3 s4 s5 s6 s7 t8 t9 k0 k1 gp sp fp ra".split())}
+
+
+def r_type(funct, rd=0, rs=0, rt=0, sa=0, op=0):
+    return op << 26 | REG.get(rs, rs) << 21 | REG.get(rt, rt) << 16 | REG.get(rd, rd) << 11 | sa << 6 | funct
+
+
+def i_type(op, rt, rs, imm):
+    return op << 26 | REG.get(rs, rs) << 21 | REG.get(rt, rt) << 16 | (imm & 0xFFFF)
+
+
+def cop1(fmt, funct, fd=0, fs=0, ft=0):
+    return 17 << 26 | fmt << 21 | ft << 16 | fs << 11 | fd << 6 | funct
+
+
+NOP = 0
+JR_RA = r_type(8, rs="ra")
+def addiu(rt, rs, imm): return i_type(9, rt, rs, imm)
+def lui(rt, imm): return i_type(15, rt, 0, imm)
+def ori(rt, rs, imm): return i_type(13, rt, rs, imm)
+def addu(rd, rs, rt): return r_type(33, rd, rs, rt)
+def sw(rt, off, base): return i_type(43, rt, base, off)
+def lw(rt, off, base): return i_type(35, rt, base, off)
+def bne(rs, rt, off): return i_type(5, rt, rs, off)
+def beql(rs, rt, off): return i_type(20, rt, rs, off)
+def jal(target): return 3 << 26 | (target >> 2 & 0x3FFFFFF)
+def mtc1(rt, fs): return 17 << 26 | 4 << 21 | REG.get(rt, rt) << 16 | fs << 11
+
+
+@pytest.fixture(scope="module")
+def run(tmp_path_factory):
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    folder = tmp_path_factory.mktemp("interp")
+    (folder / "harness.c").write_text(HARNESS % {"c": C_FUNCTION, "code": CODE & 0xFFFFFFFF, "data": DATA})
+    program = folder / "interp"
+    done = subprocess.run([cc, "-O1", "-o", str(program), str(folder / "harness.c"), str(MIPS), "-lm"],
+                          capture_output=True, text=True, timeout=120)
+    if done.returncode:
+        pytest.skip(f"the harness doesn't build here: {done.stderr[-300:]}")
+
+    def typed(words, ret, codes, *values):
+        (folder / "code.bin").write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in words))
+        out = subprocess.run([str(program), str(folder / "code.bin"), f"typed:{ret}:{codes}", *(f"{v:X}" for v in values)],
+                             capture_output=True, text=True, timeout=30, check=True).stdout.strip()
+        return int(out, 16)
+
+    def go(words, *args):
+        (folder / "code.bin").write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in words))
+        out = subprocess.run([str(program), str(folder / "code.bin"), *(str(a) for a in args)], capture_output=True,
+                             text=True, timeout=30, check=True).stdout.split()
+        return {"v0": int(out[0], 16), "v1": int(out[1], 16), "f": [int(x, 16) for x in out[2:6]],
+                "data": [int(x, 16) for x in out[6:14]], "c_calls": int(out[14]), "varargs": [int(x, 16) for x in out[15:17]]}
+    go.typed = typed
+    return go
+
+
+def _data_base():  # $t9 = DATA
+    return [lui("t9", DATA >> 16), ori("t9", "t9", DATA & 0xFFFF)]
+
+
+def test_a_loop_with_its_delay_slots(run):
+    """Sum 1..$a0: the branch's delay slot runs every time, taken or not; the return's too."""
+    prog = [addiu("v0", "zero", 0), addiu("t0", "zero", 0),
+            addiu("t0", "t0", 1),            # loop:
+            bne("t0", "a0", -2),             #   back to loop
+            addu("v0", "v0", "t0"),          #   (delay slot) v0 += t0
+            JR_RA, addiu("v1", "zero", 7)]   # (delay slot) v1 = 7
+    out = run(prog, 10)
+    assert out["v0"] == 55 and out["v1"] == 7
+
+
+def test_a_likely_branch_runs_its_delay_slot_only_when_taken(run):
+    prog = [addiu("v0", "zero", 0),
+            beql("a0", "a1", 2), addiu("v0", "v0", 1),   # +1 only when $a0 == $a1
+            NOP,
+            JR_RA, NOP]
+    assert run(prog, 3, 3)["v0"] == 1
+    assert run(prog, 3, 4)["v0"] == 0
+
+
+def test_a_call_to_a_function_with_c_runs_the_c_and_goes_on(run):
+    """jal to an address in the table: its C with the arguments as they are after the delay slot, then the code
+    after it, at $ra; the interpreted function's own $ra (the caller's sentinel) saved and restored on its stack."""
+    prog = [addiu("sp", "sp", -16), sw("ra", 12, "sp"),
+            jal(C_FUNCTION), addiu("a1", "zero", 5),     # (delay slot) a1 = 5
+            addiu("v0", "v0", 1),
+            lw("ra", 12, "sp"), JR_RA, addiu("sp", "sp", 16)]
+    out = run(prog, 4, 9)
+    assert out["c_calls"] == 1 and out["v0"] == 4 * 10 + 5 + 1
+
+
+def test_unaligned_words_and_halves_of_memory(run):
+    """lwl/lwr read an unaligned word, swl/swr write one, big-endian as the console's memory is."""
+    prog = [*_data_base(),
+            lui("t0", 0x1122), ori("t0", "t0", 0x3344), sw("t0", 0, "t9"),
+            lui("t0", 0x5566), ori("t0", "t0", 0x7788), sw("t0", 4, "t9"),
+            i_type(34, "v0", "t9", 1), i_type(38, "v0", "t9", 4),      # lwl/lwr: the word at DATA + 1
+            lui("t1", 0xAABB), ori("t1", "t1", 0xCCDD),
+            i_type(42, "t1", "t9", 9), i_type(46, "t1", "t9", 12),     # swl/swr: it at DATA + 9
+            JR_RA, NOP]
+    out = run(prog)
+    assert out["v0"] == 0x22334455
+    assert out["data"][2:4] == [0x00AABBCC, 0xDD000000]
+
+
+def test_multiply_divide_and_64_bit_shifts(run):
+    prog = [addiu("t0", "zero", -7), addiu("t1", "zero", 3),
+            r_type(26, rs="t0", rt="t1"),                 # div: lo -2, hi -1
+            r_type(18, "v0"), r_type(16, "v1"),
+            *_data_base(),
+            r_type(24, rs="t0", rt="t1"), r_type(18, "t2"), sw("t2", 0, "t9"),   # mult: -21
+            addiu("t3", "zero", 1), r_type(60, "t3", rt="t3", sa=4),             # dsll32 1 by 36
+            r_type(62, "t4", rt="t3", sa=0), sw("t4", 4, "t9"),                  # dsrl32: the high word, 16
+            JR_RA, NOP]
+    out = run(prog)
+    assert out["v0"] == 0xFFFFFFFE and out["v1"] == 0xFFFFFFFF
+    assert out["data"][:2] == [0xFFFFFFEB, 16]
+
+
+def test_the_fpu_singles_doubles_and_its_condition(run):
+    """add.s, cvt.d.s and mul.d into an even/odd pair, trunc.w.s, and c.lt.s with bc1t."""
+    one_half, three = 0x3FC00000, 0x40400000  # 1.5, 3.0
+    prog = [lui("t0", one_half >> 16), mtc1("t0", 2), lui("t0", three >> 16), mtc1("t0", 4),
+            cop1(16, 0, fd=0, fs=2, ft=4),            # f0 = 1.5 + 3.0 = 4.5
+            cop1(16, 33, fd=2, fs=0),                 # f2/f3 = (double) 4.5
+            cop1(17, 2, fd=2, fs=2, ft=2),            # f2/f3 = 20.25
+            cop1(16, 13, fd=1, fs=0),                 # f1 = trunc.w(4.5) = 4
+            cop1(16, 60, fs=2, ft=4) & ~(31 << 6),    # c.lt.s f2, f4 (f2 as a single: not below 3.0 here? see below)
+            17 << 26 | 8 << 21 | 1 << 16 | 2,         # bc1t +2
+            addiu("v0", "zero", 1),                   # (delay slot)
+            addiu("v0", "zero", 2),
+            JR_RA, NOP]
+    out = run(prog)
+    assert out["f"][0] == 0x40900000  # 4.5
+    assert out["f"][1] == 4
+    assert struct.unpack("<d", struct.pack("<II", out["f"][2], out["f"][3]))[0] == 20.25
+    # f2 read as a single is the low word of 20.25 (0): below 3.0, so the branch is taken past v0 = 2
+    assert out["v0"] == 1
+
+
+def test_a_variadic_callees_buffer_is_the_words_after_the_fixed_ones(run):
+    """port_mips_varargs: the argument words from the given one on, big-endian, as the native build's C reads them."""
+    out = run([JR_RA, NOP], 1, 2, 0x11, 0x22)
+    assert out["varargs"] == [0x11, 0x22]
+
+
+def test_running_off_into_empty_memory_ends_the_run(run):
+    """No code where it was asked to run (no ROM there): the function returns rather than running nothing forever."""
+    assert run([NOP] * 4)["v0"] == 0
+
+
+# ---------------------------------------------------------------- the generated bridges
+
+GAME_H = """/* export: 'func_80003000' */
+u32 w2c_game_func_80003000(w2c_game*, u32, f32);
+/* export: 'func_80004000' */
+u32 w2c_game_func_80004000(w2c_game*, u32, u32, u32);
+/* export: 'dmaCopy' */
+void w2c_game_dmaCopy(w2c_game*, u32, u32);
+/* import: 'env' 'func_80005000' */
+u32 w2c_env_func_80005000(struct w2c_env*, u32, u32);
+/* import: 'env' 'func_80006000' */
+void w2c_env_func_80006000(struct w2c_env*, u32, u32);
+/* import: 'env' 'osSendMesg' */
+u32 w2c_env_osSendMesg(struct w2c_env*, u32, u32, u32);
+/* import: 'env' 'pfsRead' */
+u32 w2c_env_pfsRead(struct w2c_env*, u32);
+"""
+
+
+def test_the_bridges_say_where_o32_passes_each_argument(tmp_path):
+    host = tmp_path / "host.c"
+    host.write_text("u32 w2c_env_osSendMesg(struct w2c_env *e, u32 q, u32 m, u32 f) {\n  return 0;\n}\n")
+    fixed = ["dmaCopy 0x80007000 func", "osSendMesg 0x80008000 func", "pfsRead 0x80009000 func"]
+    text, counts = interp.generate(GAME_H, fixed, [host], {}, (), {"pfsRead"}, varargs={"func_80004000", "func_80006000"},
+                                   byval={"dmaCopy": {1: 1}})
+    assert counts == {"game": 3, "host": 1, "imports": 2}  # (osSendMesg the host's; pfsRead left out on purpose)
+    # a leading float in $f12; a variadic function's buffer from the word after its fixed ones; a structure by value
+    assert "w2c_game_func_80003000(port_game(), W(r, 0), FB(f[14]))" not in text  # (not leading: $a1's word)
+    assert "w2c_game_func_80003000(port_game(), W(r, 0), FB(W(r, 1)))" in text
+    assert "w2c_game_func_80004000(port_game(), W(r, 0), W(r, 1), port_mips_varargs(r, 2))" in text
+    assert "w2c_game_dmaCopy(port_game(), W(r, 0), port_mips_slot(r, 1))" in text
+    assert "{0x80008000u, H_80008000}" in text and "w2c_env_osSendMesg(NULL, W(r, 0), W(r, 1), W(r, 2))" in text
+    # the game's C calling what has no C: the interpreter runs it, its buffer spread into the words after
+    assert "port_mips_run(0x80005000u, r, f)" in text
+    assert "port_mips_spread(r, 1, (uint32_t)a1)" in text
+    assert "w2c_env_pfsRead" not in text and "w2c_env_osSendMesg(struct w2c_env *e" not in text
+
+
+def test_only_a_definition_or_fixed_parameters_make_a_function_variadic(tmp_path):
+    """An unprototyped declaration (`s32 taskOpen();`) is `(...)` in the IR too: taken for variadic, a racing game's
+    taskOpen got its third argument as a buffer's address and returned no queue."""
+    (tmp_path / "a.ll").write_text(
+        "define i32 @taskOpen(i32 noundef %0, i32 noundef %1, i32 noundef %2) {\n}\n"
+        "define i32 @alloc(i32 noundef %0, i32 noundef %1, ...) {\n}\n"
+        "declare i32 @printf(ptr noundef, ...)\n"
+        "declare i32 @unprototyped(...)\n")
+    (tmp_path / "b.ll").write_text("declare i32 @taskOpen(...)\n")
+    assert interp.variadic([tmp_path / "a.ll", tmp_path / "b.ll"]) == {"alloc", "printf"}
+
+
+def test_structures_passed_by_value_take_all_their_words(tmp_path):
+    """A structure by value is found by position with its size in words (from the module's type definitions), and
+    the arguments after it go in the words after all of it, as o32 passes them (a racing game's menu function takes
+    a 4-word structure, then its 5th and 6th words)."""
+    (tmp_path / "a.ll").write_text(
+        "%struct.Args = type { [4 x i32] }\n%struct.Pair = type { i8, double }\n"
+        "define void @menu(ptr noundef byval(%struct.Args) align 4 %0, i32 noundef %1, i32 noundef %2) {\n}\n"
+        "define void @pair(ptr noundef byval(%struct.Pair) align 8 %0) {\n}\n")
+    found = interp.by_value([tmp_path / "a.ll"])
+    assert found == {"menu": {0: 4}, "pair": {0: 4}}
+    game_h = "/* export: 'menu' */\nvoid w2c_game_menu(w2c_game*, u32, u32, u32);\n"
+    text, _ = interp.generate(game_h, ["menu 0x80001000 func"], [], byval=found)
+    assert "w2c_game_menu(port_game(), port_mips_slot(r, 0), W(r, 4), W(r, 5))" in text
+
+
+def _f32(x: float) -> int:
+    return struct.unpack(">I", struct.pack(">f", x))[0]
+
+
+def _f64(x: float) -> int:
+    return struct.unpack(">Q", struct.pack(">d", x))[0]
+
+
+def mfc1(rt, fs): return 17 << 26 | 0 << 21 | REG.get(rt, rt) << 16 | fs << 11
+
+
+def test_a_call_with_types_puts_floats_where_o32_does(run):
+    """A call through a pointer with its types (port_mips_typed_call): the first two arguments in $f12 and $f14
+    while they're floats, a float after a word in a word, a double in an even/odd pair, 64 bits in an aligned pair
+    of words; a float result from $f0. A float through a pointer once went in an integer word."""
+    add_s = [cop1(16, 0, fd=0, fs=12, ft=14), JR_RA, NOP]                 # f0 = f12 + f14
+    assert run.typed(add_s, 2, "22", _f32(1.5), _f32(2.25)) == _f32(3.75)
+    word_then_float = [mtc1("a1", 0), JR_RA, NOP]                          # (u32, f32): the float in $a1
+    assert run.typed(word_then_float, 2, "02", 7, _f32(-4.0)) == _f32(-4.0)
+    double_first = [cop1(17, 0, fd=0, fs=12, ft=12), JR_RA, NOP]          # f0/f1 = d12 + d12
+    assert run.typed(double_first, 3, "3", _f64(1.25)) == _f64(2.5)
+    pair = [addu("v0", "a2", "zero"), JR_RA, addu("v1", "a3", "zero")]    # (u32, u64): the pair in $a2, $a3
+    assert run.typed(pair, 1, "01", 1, 0x1122334455667788) == 0x1122334455667788
+
+
+def test_each_type_of_call_through_a_pointer_gets_an_entry():
+    """The native build's entries for the interpreter, one per C type the game calls through pointers as."""
+    c = ("x = CALL_INDIRECT(instance->w2c_0x5F_indirect_function_table, u32 (*)(void*, u32, f32), w2c_game_t3, v, (void*)instance, a, b);\n"
+         "CALL_INDIRECT(instance->w2c_0x5F_indirect_function_table, void (*)(void*), w2c_game_t1, v, (void*)instance);\n")
+    types = interp.pointer_types([c, c])
+    assert types == ["u32 (*)(void*, u32, f32)", "void (*)(void*)"]
+    text, _ = interp.generate("", [], [], pointer_types=types)
+    assert "static u32 P_0(void *g, u32 a0, f32 a1) { (void)g; static const uint8_t t_[] = {0, 2};" in text
+    assert "const uint64_t a_[] = {(uint64_t)a0, BF(a1)}" in text and "return (u32)v_;" in text
+    assert '{"u32 (*)(void*, u32, f32)", (void *)P_0}' in text and "port_mips_pointer_type_count = 2;" in text
+
+
+def test_a_structure_the_game_passes_by_value_is_copied_into_the_argument_words(tmp_path):
+    """The game's C passing a structure by value to a function with no C: its callers' declarations give its size,
+    the bridge copies its words in where o32 passes them, the arguments after it after all of it."""
+    (tmp_path / "a.ll").write_text("%struct.Args = type { [4 x i32] }\n"
+                                   "declare void @func_80005000(ptr noundef byval(%struct.Args) align 4, i32 noundef)\n")
+    calls = interp.by_value([tmp_path / "a.ll"], declared=True)
+    assert calls == {"func_80005000": {0: 4}}
+    game_h = "/* import: 'env' 'func_80005000' */\nvoid w2c_env_func_80005000(struct w2c_env*, u32, u32);\n"
+    text, counts = interp.generate(game_h, [], [], byval_calls=calls)
+    assert counts["imports"] == 1
+    assert "port_mips_enter(r, f, 5)" in text
+    assert "port_mips_copy_in(r, 0, (uint32_t)a0, 4); r[8] = S((uint32_t)(a1));" not in text  # (word 4: the stack)
+    assert "port_mips_copy_in(r, 0, (uint32_t)a0, 4); port_mips_sw((uint32_t)r[29] + 16u, (uint32_t)(a1));" in text
+    assert interp.mips_signatures([tmp_path / "a.ll"], [], [], by_value_calls=calls) == []
+
+
+def test_the_browser_build_says_each_pointer_calls_types():
+    """webir.py: a call through a pointer carries its arguments' and result's types above its count."""
+    import sys
+
+    from decompnet.port.wasm import web
+    sys.path.insert(0, str(web.HERE))
+    import webir  # (beir.py runs it as a script beside adapt.py)
+    out = []
+    ok = webir._indirect("  %r = call float %fp(i32 noundef 1, float noundef %x, double noundef %y)", webir.Fresh(), out)
+    assert ok
+    call = next(line for line in out if "@port_icall" in line)
+    count = int(call.rsplit("i32 ", 1)[1].rstrip(")")) & 0xFFFFFFFF
+    assert count & 0xFF == 3 and (count >> 8) & 0x3F == 0 | 2 << 2 | 3 << 4 and (count >> 24) & 3 == 2

@@ -2,7 +2,8 @@
 
 Colima/Docker are user-managed host infrastructure, like WSL on Windows. The
 compiler image is digest pinned; jobs have no network or host-folder mounts.
-Only explicit Setup may start the dedicated VM or download its image.
+Only explicit Setup may start the dedicated VM or download its image; the app restarts the VM by itself only when it
+died under Colima (see `_recover`).
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import os
 import platform
 import re
@@ -31,10 +33,39 @@ _tools_lock = threading.Lock()
 _setup_lock = threading.Lock()
 _prepared: set[tuple[str, str]] = set()
 _status: tuple[bool, str, float] | None = None
+_status_lock = threading.Lock()
+_worked = False  # the runner answered once in this process: a failed check after that may be a blip
+BLIP_RETRIES = 2  # looks again 1 s and 2 s later before a runner that worked counts as not ready
+FAILED_FOR = 2  # seconds a failed check is remembered (a working one: 10)
+RESTART_EVERY = 600  # seconds between restarts of a VM that died, so one that can't start isn't restarted forever
+RESTARTING = ('The Linux compiler VM stopped working, so decompdecomp is restarting it. '
+              'Compilers that run in it are back in a few minutes.')
+_restarted: float | None = None  # when the app last restarted the VM
+_restarting = threading.Lock()  # held while a restart runs
 
 
 class VMError(RuntimeError):
     pass
+
+
+def vm_cpus() -> int | None:
+    """The CPUs Docker's VM has, or None when Docker doesn't say."""
+    try:
+        result = _plain([*_docker(), 'info', '--format', '{{.NCPU}}'], 10)
+        return int(result.stdout.decode().strip()) if result.returncode == 0 else None
+    except (OSError, ValueError, VMError, subprocess.TimeoutExpired):
+        return None
+
+
+def wanted_size() -> tuple[int, int]:
+    """CPUs and GB of memory for a new VM: half this Mac's cores (2 to 8), a GB per job and two to spare, at most a
+    quarter of its memory. Setup gave every Mac 2 CPUs and 3 GB, which held PS2 compiles to 1 to 1.7 a second."""
+    cpus = max(2, min(8, (os.cpu_count() or 4) // 2))
+    try:
+        memory = int(subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, timeout=5).stdout) >> 30
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        memory = 8
+    return cpus, max(3, min(cpus + 2, memory // 4))
 
 
 def profile() -> str:
@@ -77,21 +108,110 @@ def _plain(args: list[str], timeout: float = 30, **kwargs) -> subprocess.Complet
 
 def status(refresh: bool = False) -> tuple[bool, str]:
     """Read-only readiness check: never starts a VM or pulls an image."""
-    global _status
+    global _status, _worked
     if not wanted():
         return False, 'The Linux VM runner is for macOS; Linux runs packs directly and Windows uses WSL.'
     if not executable('colima') or not executable('docker'):
         return False, INSTALL
-    if _status and not refresh and time.monotonic() - _status[2] < 10:
-        return _status[:2]
+    with _status_lock:
+        if _status and not refresh and time.monotonic() - _status[2] < (10 if _status[0] else FAILED_FOR):
+            return _status[:2]
+        # A runner that worked can miss one check while many compiles keep Docker busy: 34 polishes of an N64 game
+        # failed in bursts that way, every compile in the 10 seconds a failure was remembered. Look again first.
+        tries = BLIP_RETRIES if _worked else 0
+        for attempt in range(tries + 1):
+            ok, why, detail = _check()
+            if ok or attempt == tries:
+                break
+            time.sleep(attempt + 1)
+        if not ok and _worked:
+            logging.getLogger('decompdecomp').warning('Linux compiler runner check failed %d times: %s',
+                                                      tries + 1, detail[-300:])
+        if not ok and (_restarting.locked() or (_unreachable(detail) and _recover())):
+            why = RESTARTING
+        _worked = _worked or ok
+        _status = ok, why, time.monotonic()
+        return ok, why
+
+
+def _unreachable(detail: str) -> bool:
+    """Docker can't reach the VM at all (not: it answers without the image, which Setup fixes)."""
+    # The socket is relayed by Colima's host agent, which outlives the VM: a dead VM can also read as a dropped
+    # connection or a timeout rather than a refused one.
+    return any(sign in detail for sign in ('Cannot connect to the Docker daemon', 'error during connect', 'EOF',
+                                            'timed out', 'Timeout', 'connection refused', 'connection reset',
+                                            'no such file or directory', 'no longer running'))
+
+
+def _listed_running() -> bool:
+    """Colima still lists the VM as running. Twice in one night the VM's process died under Colima (no crash report,
+    no sleep, no memory kill on the Mac), and Colima went on listing it as running while Docker couldn't reach it. A VM
+    the user stopped is listed as stopped, and stays stopped."""
+    try:
+        result = _plain([executable('colima'), 'list', '--json', '--profile', profile()], 20)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    for line in result.stdout.decode(errors='replace').splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and entry.get('name') == profile():
+            return entry.get('status') == 'Running'
+    return False
+
+
+def _recover() -> bool:
+    """Restart a VM that died under Colima, in the background, at most once every RESTART_EVERY seconds. Until
+    then every compiler that runs in it failed until someone ran `colima restart` by hand. True: a restart started."""
+    global _restarted
+    if _restarted is not None and time.monotonic() - _restarted < RESTART_EVERY:
+        return False
+    if not _restarting.acquire(blocking=False):
+        return False
+    try:
+        if not _listed_running():
+            _restarting.release()
+            return False
+        _restarted = time.monotonic()
+        threading.Thread(target=_restart, name='linux-vm-restart', daemon=True).start()
+        return True
+    except BaseException:
+        _restarting.release()
+        raise
+
+
+def _restart() -> None:
+    global _status
+    log = logging.getLogger('decompdecomp')
+    name = profile()
+    try:
+        log.warning('The Linux compiler VM %s stopped answering while Colima lists it as running: restarting it.', name)
+        # A plain `colima restart` waited 7 minutes on the dead VM's graceful shutdown; force skips it.
+        _plain([executable('colima'), 'stop', '--force', name], 120)
+        result = _plain([executable('colima'), 'start', name, '--activate=false'], 300)
+        if result.returncode:
+            log.error('Could not restart the Linux compiler VM %s: %s', name,
+                      result.stderr.decode(errors='replace')[-1000:])
+        else:
+            log.warning('The Linux compiler VM %s is running again.', name)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        log.error('Could not restart the Linux compiler VM %s: %s', name, error)
+    finally:
+        with _status_lock:
+            _status = None
+        _restarting.release()
+
+
+def _check() -> tuple[bool, str, str]:
     try:
         result = _plain([*_docker(), 'image', 'inspect', IMAGE], 10)
-        ok = result.returncode == 0
-        why = '' if ok else 'The Linux compiler runner is not ready. Choose Prepare Linux runner in Compilers & tools.'
     except (OSError, subprocess.TimeoutExpired) as error:
-        ok, why = False, f'The Linux compiler runner is unavailable ({error}). {INSTALL}'
-    _status = ok, why, time.monotonic()
-    return ok, why
+        return False, f'The Linux compiler runner is unavailable ({error}). {INSTALL}', str(error)
+    if result.returncode == 0:
+        return True, '', ''
+    return (False, 'The Linux compiler runner is not ready. Choose Prepare Linux runner in Compilers & tools.',
+            result.stderr.decode(errors='replace').strip())
 
 
 def setup(log=print) -> dict:
@@ -102,11 +222,18 @@ def setup(log=print) -> dict:
     with _setup_lock:
         if status(refresh=True)[0]:
             log('Linux compiler runner is ready.')
+            # An existing VM keeps its size: resizing restarts it, which stops every compile running in it.
+            cpus, memory = wanted_size()
+            if (have := vm_cpus()) is not None and have < cpus:
+                log(f'Its VM has {have} CPUs; this computer can give it {cpus}, for faster compiles. With no compiles '
+                    f'running, resize it: colima stop {profile()} && colima start {profile()} --cpus {cpus} '
+                    f'--memory {memory}, then restart decompdecomp.')
             return {'ready': True}
         name = profile()
         log('Starting the dedicated Linux compiler VM (the first start downloads its OS image).')
+        cpus, memory = wanted_size()
         command = [executable('colima'), 'start', name, '--activate=false', '--vm-type', 'vz',
-                   '--cpus', '2', '--memory', '3', '--disk', '12']
+                   '--cpus', str(cpus), '--memory', str(memory), '--disk', '12']
         if platform.machine().lower() in ('arm64', 'aarch64'):
             command += ['--vz-rosetta']
         result = _plain(command, 300)

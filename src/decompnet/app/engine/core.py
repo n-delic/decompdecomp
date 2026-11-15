@@ -9,6 +9,7 @@ import json
 import re
 import secrets
 import threading
+import time
 from pathlib import Path
 
 from ... import consoles, hostenv
@@ -25,11 +26,18 @@ _settings_lock = threading.Lock()
 
 
 class Core(Network):
-    def __init__(self, db_path: str | Path, workspace: Path, claim_ttl: int = 30 * 60):
-        super().__init__(db_path, claim_ttl=claim_ttl)
+    def sdk_functions(self, proj) -> dict:
+        from ..sdk_identity import identify
+        return identify(self, proj, super().sdk_functions(proj))
+
+    def __init__(self, db_path: str | Path, workspace: Path, claim_ttl: int = 30 * 60, *, project_databases=False):
+        super().__init__(db_path, claim_ttl=claim_ttl,project_databases=project_databases)
         self.workspace = Path(workspace)
         self._syms: dict[int, SymbolTable] = {}
         self._sym_override: dict[int, SymbolTable] = {}
+        # project id -> held by one rename at a time, from reading the symbols to writing the new name: two at once
+        # replaced each other's trial symbol table and checked sources the other had just changed.
+        self._rename_locks: dict[int, threading.RLock] = {}
         self._roms: dict[int, tuple[bytes, list[split.Segment]]] = {}
         self._xrefs: dict[int, dict] = {}
         self._draft_locks: dict[int, threading.Lock] = {}  # function id -> held while its machine draft is made
@@ -46,11 +54,14 @@ class Core(Network):
         self._cmaps: dict[int, tuple] = {}  # project id -> (what it was built from, compiler map)
         self._cmap_builds: dict[int, threading.Lock] = {}  # project id -> held while its compiler map builds
         self.surveys: dict[str, dict] = {}  # slug -> the judge's compiler survey, running or last
+        self._compiler_comparison_locks: dict[str, threading.Lock] = {}
         from ..forkengine import ForkEngine  # forks build on this class's claims, attempts and live view
         from ..permute import Permuter
         from ..twins import Twins
         self.forks = ForkEngine(self)
         self.twins = Twins(self)
+        from ..match_library import Library
+        self.match_library = Library(self)
         self.permuter = Permuter(self)
         from ..rangecheck import RangeChecks
         self.rangechecks = RangeChecks(self)
@@ -62,13 +73,24 @@ class Core(Network):
         self.readability = Readability(self)
         from ..drafts import Drafter
         self.drafter = Drafter(self)
-        self.find_moved_projects()
+        from ..reuse_cascade import Cascade
+        self.cascades = Cascade(self)
+        from ... import store as storage
         from ..progress import Progress
+        if storage.ATTACH_ONLY:
+            # A reader process (app/tool_reader.py): the app moves projects, runs repair analyses and keeps the
+            # progress folders; another process doing any of it would race the app's own.
+            self.progress = Progress(self)
+            return
+        self.find_moved_projects()
         self.progress = Progress(self)
+        from .. import repair_outcomes
+        repair_outcomes.prepare(self.repair_feedback)
+        repair_outcomes.resume(self.repair_feedback)
 
     def _project(self, slug: str | None):
         row = super()._project(slug)
-        if hasattr(self, "progress") and self.project_missing(row) is None:
+        if hasattr(self, "progress") and not self.progress.viewing and self.project_missing(row) is None:
             self.progress.sync(row["slug"], background=True)  # (a look at it, not use: Progress.hot)
             row = super()._project(row["slug"])
         return row
@@ -93,10 +115,12 @@ class Core(Network):
         folder copied to another computer, user name or Linux keeps its projects (their folders were stored as
         absolute paths: /home/decomp/Decomp/... inside the old Windows install's WSL)."""
         moved = []
-        for row in self.store.all("SELECT id, slug, root FROM projects"):
+        for catalog in self.store.all("SELECT id, slug, root FROM projects"):
+            store = self.project_store(catalog['id'])
+            row = catalog if store is self.store else store.one('SELECT id,slug,root FROM projects WHERE id=?', catalog['id'])
             here = self.workspace / row["slug"]
             if row["root"] and not Path(row["root"]).exists() and here.is_dir():
-                with self.store.tx() as db:
+                with store.tx() as db:
                     cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (row["id"],)).fetchone()["config"])
                     old_root = Path(row["root"])
                     for key in ("progress_folder", "save_folder"):
@@ -144,28 +168,39 @@ class Core(Network):
         from ... import __version__
 
         row = self.project_row(slug)
-        if slug in self.links or (only_if_updated and self.cfg(row).get("checked") == __version__):
+        if slug in self.links:
             return None
+        from .. import assembly_reconsideration
+        if only_if_updated and self.cfg(row).get("checked") == __version__:
+            # Capability fixes can ship without a package-version change. Only this
+            # narrow, self-retiring review runs again; console/range work stays gated.
+            reconsidered = assembly_reconsideration.run(self, row, log)
+            return f'{reconsidered} obsolete tooling verdicts reconsidered with supported C' if reconsidered else None
         if self.is_rom(row):
             self.rangechecks.reopen(slug)
-        last = self.store.one("SELECT COALESCE(MAX(id), 0) AS id FROM events WHERE project_id=?", row["id"])["id"]
+        last = self.project_store(row['id']).one("SELECT COALESCE(MAX(id), 0) AS id FROM events WHERE project_id=?", row["id"])["id"]
         self.console(row).on_start(self, slug, log=log)
         # what the console's work did, it said in the feed ("8 pieces of functions ... joined"): in the answer too
-        done = [r["detail"] for r in self.store.all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
+        done = [r["detail"] for r in self.project_store(row['id']).all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
                                                      "kind='analysis' ORDER BY id", row["id"], last)]
-        n = self.not_c_from_notes(slug) + self.twins.set_aside_asm(self.project_row(slug))
+        reconsidered = assembly_reconsideration.run(self, self.project_row(slug), log)
+        if reconsidered:
+            done.append(f'{reconsidered} obsolete tooling verdicts reconsidered with supported C')
+        n = self.twins.set_aside_asm(self.project_row(slug)) + self.not_c_from_notes(slug)
         self._update_cfg(slug, lambda cfg: cfg.update(checked=__version__))
         if n:
             done.append(f"{n} more function{'' if n == 1 else 's'} set aside, as no C makes them")
         said = "; ".join(done) or "nothing new"
-        with self.store.tx() as db:
+        with self.project_store(row['id']).tx() as db:
             self._event(db, row["id"], None, "analysis", f"decompdecomp {__version__}: {said}")
         return said
 
     def fork_slug(self, project: str | None) -> str | None:
-        """The slug when `project` is a fork of a public decomp, else None."""
+        """The slug when `project` is a fork of a public decomp, else None. (A project's kind never changes, so this
+        reads the row without syncing its saved files: twins and the other release's code ask it on every try, and
+        each sync of a finished 2,000-function game took seconds.)"""
         try:
-            proj = self._project(project)
+            proj = Network._project(self, project)
         except NetworkError:
             return None
         return proj["slug"] if self.cfg(proj).get("kind") == "fork" else None
@@ -179,15 +214,14 @@ class Core(Network):
         if project_id in self._sym_override:
             return self._sym_override[project_id]
         if project_id not in self._syms:
-            rows = self.store.all("SELECT s.name, s.address, s.size, s.kind, f.id IS NOT NULL AS fn FROM symbols s "
-                                  "LEFT JOIN functions f ON f.project_id=s.project_id AND f.name=s.name "
-                                  "WHERE s.project_id=?", project_id)
+            rows = self.project_store(project_id).all(
+                "SELECT s.name, s.address, s.size, s.kind, f.id IS NOT NULL AS fn FROM symbols s "
+                "LEFT JOIN functions f ON f.project_id=s.project_id AND f.name=s.name "
+                "WHERE s.project_id=?", project_id)
             table = SymbolTable([Symbol(r["name"], r["address"], r["size"], r["kind"]) for r in rows])
-            # One name per address, as before; a function's own name that the address's other name hid still
-            # resolves. Function names are unique, so two at one address are overlay twins (#117 review).
-            for r in rows:
-                if r["fn"] and r["name"] not in table.by_name:
-                    table.alias(Symbol(r["name"], r["address"], r["size"], r["kind"]))
+            for row in rows:
+                if row["fn"] and row["name"] not in table.by_name:
+                    table.alias(Symbol(row["name"], row["address"], row["size"], row["kind"]))
             self._syms[project_id] = table
         return self._syms[project_id]
 
@@ -199,26 +233,47 @@ class Core(Network):
             self._roms[proj["id"]] = (rom, segs)
         return self._roms[proj["id"]]
 
-    def reader(self, proj, fn=None):
-        """Read helpers and constants from the caller's overlay, then unambiguous shared segments."""
+    def reader(self, proj, function=None):
+        """Read helpers and constants from the caller's overlay (its verified memory regions first), then the other
+        segments, then data after the code in its loaded image. #230: with a caller, an address that several other
+        overlays cover at different ROM offsets fails instead of guessing one, since a wrong read skips nothing."""
         rom, segs = self._rom(proj)
-        preferred = []
-        if fn is not None and fn["rom_offset"] is not None:
-            preferred = [s for s in segs if s.contains(fn["vram"], fn["size"]) and
-                         s.rom_start + fn["vram"] - s.vram == fn["rom_offset"]]
+        offset = None
+        if function is not None:
+            if "rom_offset" in function.keys():
+                offset = function["rom_offset"]
+            else:
+                row = self.project_store(proj["id"]).one("SELECT rom_offset FROM functions WHERE project_id=? AND name=?",
+                                     proj["id"], function["name"])
+                offset = row["rom_offset"] if row else None
+        owner = next((s for s in segs if offset is not None and s.rom_start <= offset < s.rom_end), None)
+        rooted = "root" in proj.keys()
+        extra = None
+        if owner is not None and rooted:
+            from ...rom.memory import overlay_reader
+            extra = overlay_reader(Path(proj["root"]), self.cfg(proj)["rom"]["sha1"], owner.name)
+
+        images = _load_images(self, proj) if rooted else []
 
         def read(addr: int, n: int) -> bytes | None:
-            candidates = [s for s in preferred if s.contains(addr, n)]
-            if not candidates:
+            if extra is not None and (data := extra(addr, n)) is not None:
+                return data
+            if owner is not None and owner.contains(addr, n):
+                candidates = [owner]
+            else:
                 candidates = [s for s in segs if s.contains(addr, n)]
             offsets = {s.rom_start + addr - s.vram for s in candidates}
             # None means unbacked memory to the linker and skips verification. Ambiguity must fail instead.
-            if fn is not None and len(offsets) > 1:
+            if function is not None and len(offsets) > 1:
                 raise NetworkError(f"Cannot verify bytes at 0x{addr:X}: multiple ROM overlays cover this address "
                                    "and the caller's ROM offset does not select one.")
             if candidates:
                 at = candidates[0].rom_start + addr - candidates[0].vram
                 return rom[at:at + n]
+            for start, vram, end in images:  # data after the code, in the same loaded image
+                if vram <= addr and addr + n <= end and start + addr - vram + n <= len(rom):
+                    at = start + addr - vram
+                    return rom[at:at + n]
             return None
         return read
 
@@ -230,7 +285,7 @@ class Core(Network):
         m = _ADDRESS.match(name.strip()) if name else None
         if m:
             proj = self._project(project)
-            row = self.store.one("SELECT * FROM functions WHERE project_id=? AND vram=?", proj["id"], int(m.group(1), 16))
+            row = self.project_store(proj["id"]).one("SELECT * FROM functions WHERE project_id=? AND vram=?", proj["id"], int(m.group(1), 16))
             if row is not None:
                 return row
         try:
@@ -257,7 +312,8 @@ class Core(Network):
         sym = name.strip().strip("`'\"").split("@", 1)[0].split("(", 1)[0].strip()
         if len(sym) < 3:
             return []
-        rows = self.store.all("SELECT name FROM functions WHERE project_id=? AND (name LIKE ? OR name LIKE ?) LIMIT 4000",
+        from ..metadata_rows import rows as metadata_rows
+        rows = metadata_rows(self.project_store(proj["id"]), ('name',), "SELECT name FROM functions WHERE project_id=? AND (name LIKE ? OR name LIKE ?) LIMIT 4000",
                               proj["id"], f"%{sym[-6:]}%", f"{sym[:4]}%")
         names = [r["name"] for r in rows]
         return difflib.get_close_matches(sym, names, n=n, cutoff=0.6) or [x for x in names if sym in x][:n]
@@ -266,6 +322,7 @@ class Core(Network):
         """Functions an agent may mean by a name that isn't stored as such: the plain symbol of a function whose
         name repeats across a fork's files (stored as symbol@unit), symbol@unit for one that doesn't repeat,
         Class::method, a name with its parameter list or in quotes."""
+        name, project = self._function_reference(name, project)
         try:
             proj = self._project(project)
         except NetworkError:
@@ -280,14 +337,14 @@ class Core(Network):
         # with its return type and convention (`bool __cdecl InitFog(...)`, `public: float __thiscall
         # CDriver::CalcSpeed(float)`): agents sent those and got "no function" back
         like = sym.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        rows = self.store.all(
+        rows = self.project_store(proj["id"]).all(
             "SELECT * FROM functions WHERE project_id=? AND (name=? OR substr(name,1,?)=? "
             "OR json_extract(meta,'$.symbol')=? OR json_extract(meta,'$.real')=? "  # (a PC game's: rename_symbol)
             "OR substr(json_extract(meta,'$.demangled'),1,?)=? "
             "OR json_extract(meta,'$.demangled') LIKE ? ESCAPE '\\') ORDER BY name",
             proj["id"], sym, len(sym) + 1, sym + "@", sym, sym, len(sym) + 1, sym + "(", f"% {like}(%")
         if not rows and "::" not in sym and len(sym) >= 4:  # a method by its own name: Class::sym
-            rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND json_extract(meta,'$.demangled') "
+            rows = self.project_store(proj["id"]).all("SELECT * FROM functions WHERE project_id=? AND json_extract(meta,'$.demangled') "
                                   "LIKE ? ESCAPE '\\' ORDER BY name", proj["id"], f"%::{like}(%")
         if unit:
             rows = ([r for r in rows if r["unit"] == unit] or [r for r in rows if r["unit"].endswith(unit)]
@@ -310,8 +367,13 @@ class Core(Network):
             return self._function(name, project)["name"]
         except NetworkError:
             rows = self._loose_functions(name, project) if name else []
-            held = self.store.all("SELECT f.id, f.unit FROM claims c JOIN functions f ON f.id=c.function_id "
-                                  "WHERE c.agent_id=?", agent.id) if agent else []
+            held = []
+            if agent:
+                # Loose-name candidates already identify the relevant projects.
+                for pid in {row['project_id'] for row in rows}:
+                    held.extend(self.project_store(pid).all(
+                        'SELECT f.id,f.unit FROM claims c JOIN functions f ON f.id=c.function_id '
+                        'WHERE c.agent_id=? AND f.project_id=?', agent.id, pid))
             if held and len(rows) > 1:  # one it holds, else the one in the file (or module) it works in
                 ids, units = {h["id"] for h in held}, {h["unit"] for h in held}
                 modules = {u.split("/", 1)[0] for u in units}
@@ -321,18 +383,21 @@ class Core(Network):
                         return pick[0]["name"]
             raise
 
-    def _update_cfg(self, slug: str, change) -> dict:
+    def _update_cfg(self, slug: str, change, *, synchronize=True) -> dict:
         """Change a project's config in one transaction (change(cfg) edits it in place)."""
-        proj = self._project(slug)
-        with self.store.tx() as db:
+        if synchronize:
+            proj = self._project(slug)
+        else:
+            with self.progress.view():
+                proj = self._project(slug)
+        with self.project_store(proj["id"]).tx() as db:
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             change(cfg)
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
-        self.progress.sync(slug, force=True)
+        if synchronize:self.progress.sync(slug, force=True)
         return cfg
 
-    def local_agent(self, name: str) -> tuple[Agent, str]:
-        """An agent identity for one runner on this machine (created on first use)."""
+    def _local_identity_name(self, name: str) -> str:
         row = self.store.one("SELECT id FROM agents WHERE name=?", name)
         # Saves can credit room members (@name) or older helpers with long names. Those labels aren't valid
         # new runner names; keep existing identities, and give new ones a stable name without merging credits.
@@ -340,7 +405,25 @@ class Core(Network):
             suffix = hashlib.sha256(name.encode("utf-8")).hexdigest()[:12]
             label = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._") or "restored"
             name = f"{label[:27]}-{suffix}"
-            row = self.store.one("SELECT id FROM agents WHERE name=?", name)
+        return name
+
+    def attribution_agent(self, name: str) -> Agent:
+        """Credit saved work without issuing, rotating or exposing a runner's credentials."""
+        name = self._local_identity_name(name)
+        with self.store.tx() as db:
+            row = db.execute("SELECT id,name,owner,trusted FROM agents WHERE name=?", (name,)).fetchone()
+            if row is None:
+                now = time.time()
+                # This identity has no usable bearer token. Starting a runner explicitly issues one later.
+                db.execute("INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin,terms_accepted_at) "
+                           "VALUES(?,?,?,?,?,?,?)", (name, "you", "attribution:" + secrets.token_hex(24), now, 1, "local", now))
+                row = db.execute("SELECT id,name,owner,trusted FROM agents WHERE name=?", (name,)).fetchone()
+        return Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
+
+    def local_agent(self, name: str) -> tuple[Agent, str]:
+        """Issue credentials for a runner; attribution-only callers must use attribution_agent."""
+        name = self._local_identity_name(name)
+        row = self.store.one("SELECT id FROM agents WHERE name=?", name)
         if row is not None:
             token = "dn_" + secrets.token_urlsafe(24)
             with self.store.tx() as db:
@@ -349,3 +432,28 @@ class Core(Network):
         else:
             token = self.register_agent(name, "you", trusted=True, origin="local")
         return self.authenticate(token), token
+
+    def remove_project(self, slug):
+        # Archive before deleting any records or files. An archive failure keeps the project intact.
+        self.match_library.archive_project(self.project_row(slug))
+        return super().remove_project(slug)
+
+
+def _load_images(net, proj) -> list[tuple[int, int, int]]:
+    """The ROM project's loaded images (split.load_images), from its splat config."""
+    cache = net.__dict__.setdefault("_images", {})
+    rom_entry = id(net._rom(proj))  # rebuilt with the ROM's segments (a reimport drops both)
+    key = proj["root"]  # (a project's folder: every row the reader is given has one)
+    if cache.get(key, (None,))[0] != rom_entry:
+        import yaml
+        images = []
+        for config in sorted(Path(proj["root"]).glob("*.yaml")):
+            try:
+                data = yaml.safe_load(config.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError):
+                continue
+            if isinstance(data, dict) and isinstance(data.get("segments"), list):
+                images = split.load_images(data)
+                break
+        cache[key] = (rom_entry, images)
+    return cache[key][1]
