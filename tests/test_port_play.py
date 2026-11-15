@@ -92,11 +92,12 @@ def test_play_leaves_out_the_libultra_the_project_proves_and_keeps_what_runs_as_
     ids = {}
     with net.project_store(pid).tx() as db:
         for name, status in (("func_80030000", "matched"), ("func_80031000", "matched"), ("race_update", "matched"),
-                             ("func_80032000", "open")):
+                             ("func_80032000", "open"), ("_Printf", "matched")):
             ids[name] = db.execute("INSERT INTO functions(project_id,name,size,n_insns,status) VALUES(?,?,?,?,?)",
                                    (pid, name, 64, 16, status)).lastrowid
     # osRecvMesg the host replaces, guMtxIdent the game's own C runs, and one unmatched (no file in the save)
     proven = {ids["func_80030000"]: "osRecvMesg", ids["func_80031000"]: "guMtxIdent", ids["func_80032000"]: "osSendMesg"}
     monkeypatch.setattr(net.twins, "prints", lambda p: {
         fid: SimpleNamespace(key=by_name[n][0], size=by_name[n][1], asm="") for fid, n in proven.items()})
-    assert play.library(net, "game", log=lambda line: None) == {"func_80030000.c"}
+    # _Printf: already named as the library's, with no detection to prove it (an N64 game's: IDO's va_arg C)
+    assert play.library(net, "game", log=lambda line: None) == {"func_80030000.c", "_Printf.c"}

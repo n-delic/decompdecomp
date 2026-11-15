@@ -116,15 +116,15 @@ def library(net, slug: str, log=print) -> set[str]:
     if kit is None:
         return set()
     sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
-    if not sdk:
-        return set()
     rows = net.project_store(proj["id"]).all("SELECT id, name FROM functions WHERE project_id=? AND status='matched'",
                                              proj["id"])
     out = set()
     for r in rows:
         hint = sdk.get(r["id"])
-        if hint and {"replaced", "glue"} & {kit.sdk_group(n) for n in hint.get("names")
-                                             or [display_name(hint, r["name"])]}:
+        names = (hint.get("names") or [display_name(hint, r["name"])]) if hint else [r["name"]]
+        # a function already named as the library's (an N64 game's _Printf, its IDO va_arg C beyond clang) needs
+        # no detection to say so
+        if {"replaced", "glue"} & {kit.sdk_group(n) for n in names}:
             out.add(_source_file(r["name"]))
     if out:
         log(f"leaving out {len(out)} functions of libultra the host provides (found by library detection)")

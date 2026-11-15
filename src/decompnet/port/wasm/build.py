@@ -46,7 +46,10 @@ HERE = Path(__file__).parent
 IR_FLAGS = ["-target", "wasm32-freestanding", "-std=gnu17", "-DPORT_WASM=1", "-O0", "-g0",
             # WebAssembly has no return address to read: the heap's `#ifdef PORT` branch records 0 as its caller
             "-D__builtin_return_address(n)=((void *)0)",
-            "-fno-sanitize=all", "-ffreestanding", "-fno-strict-aliasing", "-fwrapv", "-Wno-everything"]
+            "-fno-sanitize=all", "-ffreestanding", "-fno-strict-aliasing", "-fwrapv", "-Wno-everything",
+            # zig cc defines _DEBUG at -O0: the game's `#ifdef _DEBUG` code (libultra's debug heap, its thread
+            # checks) was compiled into the port, against headers without its fields
+            "-U_DEBUG"]
 # The console's C, not the native port's: memory here is the console's own 32-bit layout, where the matched C is
 # right, and a fix behind `#ifdef PORT` is for a 64-bit PC (one wrote a display list's address as 0 there: "no
 # meaning on PC", and the racing game's menu text sampled the wrong glyphs). PORT is defined only for a file that
@@ -250,6 +253,31 @@ def big_endian_bitfields(text: str) -> str:
     return "\n".join(result)
 
 
+# m2c's declaration of a function it saw called but not typed: `M2C_UNK f(arg0);`, which IDO takes and clang
+# doesn't ("a parameter list without types is only allowed in a function definition")
+UNTYPED_DECLARATION = re.compile(r"^([ \t]*(?!return\b|else\b|case\b|goto\b)[A-Za-z_][\w \t*]*?[\s*]\w+)"
+                                 r"\(\s*arg\d+(?:\s*,\s*arg\d+)*\s*\)(\s*;)", re.M)
+# `0x2be-0x174`: one preprocessing number to clang (an `e` then a sign), a subtraction to IDO
+HEX_EXPONENT_SIGN = re.compile(r"\b(0[xX][0-9a-fA-F]*[eE])([+-])(?=[0-9A-Za-z_(])")
+
+
+def ido_c(text: str) -> str:
+    """The game's C as clang reads what IDO took: m2c's untyped declarations unprototyped, and a hex constant
+    followed by a sign spaced apart."""
+    return HEX_EXPONENT_SIGN.sub(r"\1 \2 ", UNTYPED_DECLARATION.sub(r"\1()\2", text))
+
+
+_PROTOTYPE = r"^([ \t]*)((?!static\b|extern\b|typedef\b|return\b)[A-Za-z_][\w \t*]*?[\s*]{name}\s*\([^;{{}}]*\)\s*;)"
+
+
+def static_prototypes(text: str) -> str:
+    """A part's header that declares a function, then defines it `static` (an N64 game's own source: IDO takes it,
+    clang stops at "static declaration follows non-static declaration"): its declarations made static too."""
+    for name in set(re.findall(r"^[ \t]*static\b[^;{}=]*?\b(\w+)\s*\([^;{}]*\)\s*\{", text, re.M)):
+        text = re.sub(_PROTOTYPE.format(name=re.escape(name)), r"\1static \2", text, flags=re.M)
+    return text
+
+
 def kr_varargs(text: str) -> str:
     """A K&R varargs function that never reads its arguments, as an unprototyped one: callers pass what they pass."""
     if KR_VARARGS.search(text) and not re.search(r"\bva_(?:start|arg|end)\s*\(", text):
@@ -300,7 +328,7 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[s
         header = f"common_{unit}.h" if unit and f"common_{unit}.h" in headers else "common.h"
         if not re.search(r'^#include "common(_\w+)?\.h"', text, re.M):
             text = f'#include "{header}"\n' + text
-        _write(out / "src" / name, big_endian_bitfields(text))
+        _write(out / "src" / name, big_endian_bitfields(ido_c(text)))
     # By name in any case: on a case-insensitive disk (macOS, Windows) a file an old save wrote as SelectStateReset.c
     # is the one just written as selectStateReset.c, and deleting it as stale deleted that function's C
     kept = {name.casefold() for name in chosen}
@@ -309,7 +337,8 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[s
             stale.unlink()
     for folder in (progress / "include", port / "include"):
         for header in folder.glob("*.h"):
-            _write(out / "include" / header.name, big_endian_bitfields(header.read_text(encoding="utf-8")))
+            _write(out / "include" / header.name,
+                   big_endian_bitfields(static_prototypes(ido_c(header.read_text(encoding="utf-8")))))
     return chosen
 
 
