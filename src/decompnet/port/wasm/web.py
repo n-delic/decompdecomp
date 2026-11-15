@@ -39,7 +39,7 @@ MEMORY = ["--initial-memory=4294967296", "--max-memory=4294967296"]
 # The host's view of the same memory: zig's driver reads the size as 32 bits, so 64 KB short of 4 GB (the import
 # takes the page's 4 GB memory all the same, and the host's heap runs up to there)
 HOST_MEMORY = ["--initial-memory=4294901760"]
-HOST_FLAGS = ["-target", "wasm32-wasi", "-O1", "-DPORT_WEB=1", "-fno-delete-null-pointer-checks", "-Wno-everything"]
+HOST_FLAGS = ["-target", "wasm32-wasi", "-O2", "-DPORT_WEB=1", "-fno-delete-null-pointer-checks", "-Wno-everything"]
 # Game functions the host calls, besides those its C names as w2c_game_*: thread entries, the game's stack pointer
 HOST_CALLS = {"port_call1": ("void", ["u32", "u32"]), "port_sp": ("u32", []), "port_set_sp": ("void", ["u32"])}
 ASYNCIFY = "app-asyncify.wasm"

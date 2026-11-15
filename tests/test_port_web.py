@@ -175,6 +175,21 @@ def test_the_page_places_data_segments_above_2_gb_itself():
     assert done.returncode == 0, done.stderr
 
 
+def test_threads_give_way_when_the_next_retrace_is_due():
+    """The page runs the game's threads until the next retrace is due, and tells the host so (port_web_deadline),
+    which a thread that never waits gives way at (port_yield): web_runtime_retrace.mjs."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node isn't installed")
+    done = subprocess.run([node, str(Path(__file__).with_name("web_runtime_retrace.mjs"))], capture_output=True,
+                          text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    runtime = (web.RUNTIME / "runtime.js").read_text(encoding="utf-8")
+    assert runtime.count("port_web_deadline(until)") == 2  # both modules: Promise Integration and Asyncify
+    host = (web.HERE.parent.parent / "consoles" / "n64" / "port_wasm" / "host.c").read_text(encoding="utf-8")
+    assert 'export_name("port_web_deadline")' in host and 'export_name("port_preempt_flag")' in host
+
+
 def _module(*sections) -> bytes:
     return web._module(list(sections))
 
