@@ -88,6 +88,17 @@ def validate(net, slug, name, minutes, max_variants):
     return proj, fn
 
 
+def _candidate_source(fn, best):
+    """Saved rechecks can clear a candidate between search phases; never invent C or a score."""
+    row = dict(fn)
+    source = (row.get('matched_source') or row.get('best_source')) if row['status'] == 'matched' else row.get('best_source')
+    if (not isinstance(source, str) or not source.strip()
+            or row['status'] != 'matched' and (row['status'] != 'open' or best is None or row.get('best_score') is None)):
+        from .progress import ProgressMoved
+        raise ProgressMoved('Saved candidate changed during deep search. Wait for synchronization, then retry with its current C and score.')
+    return source
+
+
 class Search(Permuter):
     def __init__(self, net, minutes, max_variants, log, fn=None):
         super().__init__(net)
@@ -388,6 +399,8 @@ class Search(Permuter):
 
     def local_repairs(self, agent, proj, fn, best, fork, max_trials=None, phase_deadline=None):
         """Regenerate from each saved winner, sharing this search's deadline, cache and allowance."""
+        source = _candidate_source(fn, best)
+        if fn['status'] == 'matched':return 0, source
         ordinary_phase = self.phase
         flags = compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', []) if not fork else []
         trials = 0
@@ -400,7 +413,8 @@ class Search(Permuter):
         proj = self.net.project_row(proj['slug'])
         fn = self.net._function(fn['name'], proj['slug'])
         flags = compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', []) if not fork else []
-        source = fn['best_source']
+        source = _candidate_source(fn, best)
+        if fn['status'] == 'matched':return 0, source
         initial_rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net,fn['id'],agent.id)
         source_rows = {source:initial_rows}
         lineage = repair_sequences.Lineage(self.net,proj,fn,source,initial_rows)
@@ -420,7 +434,7 @@ class Search(Permuter):
         while best > 0:
             if phase_deadline is not None and time.monotonic() >= phase_deadline:
                 self.local_status = {'reason': 'phase_budget', **counters}
-                return best, self.net._function(fn['name'], proj['slug'])['best_source']
+                return self._saved_result(proj, fn, best)
             self.check()
             path = lineage.paths.get(source, [])
             loan=len(path)>=repair_sequences.MAX_STEPS
@@ -578,13 +592,13 @@ class Search(Permuter):
                     if phase_deadline is not None and time.monotonic() >= phase_deadline:
                         self.local_status = {'reason': 'phase_budget', **counters}
                         self.log('Local phase budget reached; reserving the remaining search for random rewrites.')
-                        return best, self.net._function(fn['name'], proj['slug'])['best_source']
+                        return self._saved_result(proj, fn, best)
                     if candidate in self.local_seen:
                         continue
                     if max_trials is not None and trials >= max_trials:
                         self.local_status = {'reason': 'burst_budget', **counters}
                         self.log(f'Local search paused at its burst budget; {trials} proposals visited.')
-                        return best, self.net._function(fn['name'], proj['slug'])['best_source']
+                        return self._saved_result(proj, fn, best)
                     lookahead=min(4,max_trials-trials) if max_trials is not None else 4
                     ahead.ensure([candidate]+queue[:max(0,lookahead-1)])
                     if candidate in allocation_lane:
@@ -621,7 +635,7 @@ class Search(Permuter):
                                 elapsed_ms=(time.monotonic()-sequence_started)*1000)
                         self.local_status = {'reason': 'matched', **counters}
                         self.log('Exact match found; stopping local repairs for this function.')
-                        return 0, self.net._function(fn['name'], proj['slug'])['best_source']
+                        return self._saved_result(proj, fn, 0)
                     measured_output=None if getattr(self,'_trial_reused',False) else getattr(self,'_trial_output',None)
                     measured_rows=(self._cached_rows if getattr(self,'_trial_reused',False) else repair_ranking.evidence(self.net,fn['id'],agent.id))
                     if not getattr(self,'_trial_reused',False):
@@ -700,7 +714,8 @@ class Search(Permuter):
                             proj = self.net.project_row(proj['slug'])
                             flags = compiler_for(self.net.cfg(proj), fn['vram'], fn).get('flags', []) if not fork else []
                         fn = self.net._function(fn['name'], proj['slug'])
-                        source = fn['best_source']
+                        source = _candidate_source(fn, best)
+                        if fn['status'] == 'matched':return 0, source
                         if best > 0 and (source != candidate or repair_sequences.profile(self.net,proj,fn) != lineage.profile):
                             # Do not credit source steps across a compiler/input change or reuse old-profile advice.
                             self.local_seen.clear()
@@ -732,7 +747,12 @@ class Search(Permuter):
                              else 'supported_variants_exhausted', **counters}
         self.log(f"Local search: {self.local_status['reason']}; {trials} proposals visited; "
                  f"{counters['compile_failed']} failed/unscored trials; {counters['frontier_pruned']} alternatives pruned by frontier bounds.")
-        return best, self.net._function(fn['name'], proj['slug'])['best_source']
+        return self._saved_result(proj, fn, best)
+
+    def _saved_result(self, proj, fn, best):
+        fresh = self.net._function(fn['name'], proj['slug'])
+        source = _candidate_source(fresh, best)
+        return (0 if fresh['status'] == 'matched' else best), source
 
     def _after_improvement(self, agent, proj, fn, state, fork, best, source):
         previous = self.phase
@@ -1056,7 +1076,8 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
     log(f'Searching {name}: {minutes} minutes, up to {max_variants:,} compiled candidates. Checking the saved baseline first.')
     log('Local repairs use at most half the remaining time and compile allowance; random rewrites receive the rest. A single in-flight compile may cross the phase time boundary.')
     from .source_diagnostics import hints
-    for hint in hints(fn['best_source'], name, fn['asm'], proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
+    source = _candidate_source(fn, fn['best_score'])
+    for hint in hints(source, name, fn['asm'], proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
         log('Source check (advisory): '+hint)
     try:
         # Explicitly configured local source carries real records/macros and original line breaks.
@@ -1071,6 +1092,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
             search.improvements += preparation['improved']
             proj, fn = net.project_row(slug), net._function(name, slug)
             search.best = fn['best_score']
+            _candidate_source(fn, search.best)
         # Reviewed alternatives have a bounded share of the same global allowance.
         # Manual ABI changes remain diagnostic; narrow generated returns need staged full-image verification.
         if lane is None or lane.index == 0:

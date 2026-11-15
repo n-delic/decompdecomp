@@ -590,11 +590,12 @@ class Sweeps:
                 stats['tested'] += result['tested']
                 stats['matched'] += int(result['matched'])
         except NetworkError as error:
-            # Claim races are temporary. A bad unchanged candidate stays visible as an error,
+            # Claim races and input resets are temporary. A bad unchanged candidate stays visible as an error,
             # not completed, and a changed source/header or an explicit repeat retries it.
             busy = self._store(slug).one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time())
             from .deep_room import unavailable
-            claim_wait = unavailable(error) or bool((busy and slug in self.net.links) or 'claim' in str(error).lower() or str(error).startswith('This function is working'))
+            from .progress import ProgressMoved
+            claim_wait = isinstance(error, ProgressMoved) or unavailable(error) or bool((busy and slug in self.net.links) or 'claim' in str(error).lower() or str(error).startswith('This function is working'))
             self.record(fn, scope, 'pending' if claim_wait else 'error', minutes, variants, error=str(error))
             activity.update(fn['name'], {'phase': 'waiting' if claim_wait else 'error', 'error': str(error)}, line=str(error), finished=True)
             log(f'{fn["name"]}: {error}')
