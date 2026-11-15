@@ -235,7 +235,7 @@ def merge_for_asyncify(host: Path, game: Path, out: Path, binaryen: Path, log, s
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), simd: bool = False,
-          library_c=None) -> Path:
+          library_c=None, library_names=None) -> Path:
     """Build the game in the save repository `repo` for the browser; returns the folder that plays it
     (port/wasm/build/web: index.html and what it loads, without the ROM, which the player chooses). `simd`: also
     the faster build for browsers with WebAssembly SIMD (SIMD), which the page plays where it can."""
@@ -244,7 +244,8 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     if kit is None or kit.wasm is None or not (Path(kit.wasm) / "web").is_dir():
         raise NetworkError(f"{consoles.get(console).name} has no browser build yet (its port kit has no web host)")
     host = Path(kit.wasm)
-    native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c)  # its IR, tables and wasm2c header; only what changed
+    native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c,
+                 library_names=library_names)  # its IR, tables and wasm2c header; only what changed
     out = repo / "port" / "wasm" / "build"
     web = out / "web"
     for name in ("gen", "obj"):
@@ -284,7 +285,8 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
 
     progress.start(STEPS[len(native.STEPS) + 2])
     log("building the host for the browser")
-    units = [p for p in sorted(host.glob("*.c")) if p.name != "live.c"] + sorted((host / "web").glob("*.c"))
+    units = ([p for p in sorted(host.glob("*.c")) if p.name != "live.c"] + native.game_host(host, repo)
+             + sorted((host / "web").glob("*.c")))
     header, exports, calls = glue((out / "c" / "game.h").read_text(encoding="utf-8"),
                                   [p.read_text(encoding="utf-8") for p in units])
     native._write(web / "gen" / "game.h", header)

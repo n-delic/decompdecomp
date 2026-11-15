@@ -453,3 +453,33 @@ def test_callers_that_disagree_on_an_unprototyped_return_get_one_signature(tmp_p
                    check=True, capture_output=True, text=True)
     rows = dict(line.split("\t", 1) for line in out.read_text().splitlines())
     assert rows == {"func_8021FCA4": "i32\t"}  # a value over none, no parameters known
+
+
+def test_library_code_with_no_c_is_called_by_its_library_name(tmp_path):
+    """A racing game's bzero kept its automatic name (`func_8003DDC0`): the host stubbed it to nothing. Library
+    detection's name goes to the host, which answers bzero by name in any game; a name another file defines wins."""
+    from decompnet.port.wasm.build import renames
+    ll = tmp_path / "a.ll"
+    ll.write_text("define void @caller() {\n}\ndeclare void @func_8003DDC0(ptr, i32)\ndeclare void @func_80001000()\n"
+                  "define void @mine() {\n}\n")
+    out = renames([ll], ["mine 0x80001000 func"], {"func_8003DDC0": "bzero", "caller": "osOther"})
+    assert out == {"func_8003DDC0": "bzero", "func_80001000": "mine"}
+
+
+def test_stubs_read_every_host_file(tmp_path):
+    """The host's functions are in host.c and in a game's own file (games/<sha1>.c): a stub for one defined in the
+    second collided with it at link."""
+    import subprocess
+    import sys
+
+    from decompnet.port.wasm import build
+    h = tmp_path / "game.h"
+    h.write_text("u32 w2c_env_osA(struct w2c_env*, u32);\nvoid w2c_env_func_80091920(struct w2c_env*, u32, u32);\n"
+                 "void w2c_env_osB(struct w2c_env*);\n")
+    (tmp_path / "host.c").write_text("u32 w2c_env_osA(struct w2c_env *e, u32 x) { return x; }\n")
+    (tmp_path / "game.c").write_text("void w2c_env_func_80091920(struct w2c_env *e, u32 p, u32 n) {}\n")
+    out = tmp_path / "stubs.c"
+    subprocess.run([sys.executable, str(build.HERE / "stubs.py"), str(h), str(out), str(tmp_path / "host.c"),
+                    str(tmp_path / "game.c")], check=True, capture_output=True)
+    text = out.read_text()
+    assert "w2c_env_osB(" in text and "w2c_env_osA(" not in text and "func_80091920" not in text

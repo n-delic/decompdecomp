@@ -45,9 +45,11 @@ def _folder(title: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "", title.title())[:32] or "Game"
 
 
-def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), library_c=None) -> Path:
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), library_c=None,
+          library_names=None) -> Path:
     """Build the game for the PC (only what changed), then its host for the Miyoo Mini: port/wasm/build/miyoo/game."""
-    native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c)
+    native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c,
+                 library_names=library_names)
     repo = Path(repo).expanduser().resolve()
     kit = consoles.get(console).port_kit
     host = Path(kit.wasm)
@@ -63,7 +65,8 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     env = {**os.environ, "ZIG_GLOBAL_CACHE_DIR": str(out / "zig-cache"), "ZIG_LOCAL_CACHE_DIR": str(out / "zig-cache")}
     rt = wabt / "share" / "wabt" / "wasm2c"
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-exceptions-impl.c",
-             *(p for p in sorted(host.glob("*.c")) if p.name != "live.c"), *sorted((host / "miyoo").glob("*.c")),
+             *(p for p in sorted(host.glob("*.c")) if p.name != "live.c"), *native.game_host(host, repo),
+             *sorted((host / "miyoo").glob("*.c")),
              out / "funcs.c", out / "stubs.c"]
     dirs = [wabt / "include", rt, out / "c"]
     includes = [a for d in dirs for a in ("-I", d)]

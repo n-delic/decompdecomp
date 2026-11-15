@@ -48,3 +48,20 @@ abs	i32	i32
 func_80091920	void	ptr, i32
 func_8008C4F0	void	
 __osSiRawStartDma	i32	i32, ptr
+bzero	void	ptr, i32
+bcopy	void	ptr, ptr, i32
+bcmp	i32	ptr, ptr, i32
+sqrtf	float	float
+osGetCount	i32	
+osMapTLBRdb	void	
+osUnmapTLBAll	void	
+osSetTLBASID	void	i32
+__osGetSR	i32	
+__osSetSR	void	i32
+__osGetCause	i32	
+__osDisableInt	i32	
+__osRestoreInt	void	i32
+__osGetFpcCsr	i32	
+__osSetFpcCsr	i32	i32
+osViGetCurrentFramebuffer	ptr	
+osViGetNextFramebuffer	ptr	

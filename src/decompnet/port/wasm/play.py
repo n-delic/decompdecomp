@@ -12,7 +12,9 @@ returns the one running.
 from __future__ import annotations
 
 import atexit
+import json
 import os
+import re
 import socket
 import subprocess
 import threading
@@ -129,6 +131,38 @@ def library(net, slug: str, log=print) -> set[str]:
     return out
 
 
+def library_names(net, slug: str) -> dict[str, str]:
+    """{a function's name: its library name} for library code with no matched C, found by library detection: its
+    calls go to the library's name, which the host answers by name in any game (a racing game's bzero kept its
+    automatic name, `func_8003DDC0`, and the host stubbed it to nothing). One name each; names already the
+    library's, and the user's confirmed identities, as they are."""
+    from ...app.sdk_identity import identify
+    from ..identities import confirmed
+
+    with net.progress.view():
+        proj = net._project(slug)
+    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
+    out = {}
+    for r in net.project_store(proj["id"]).all("SELECT id, name, meta FROM functions WHERE project_id=? AND "
+                                               "status!='matched'", proj["id"]):
+        # detection's identity, else the name it showed (`sdk_display`): an exact-bytes proof of hand-written assembly
+        # goes stale with the project's compiler setting (its fingerprint holds it), not with the bytes
+        names = (sdk.get(r["id"]) or {}).get("names") or []
+        if not names and '"sdk_display"' in (r["meta"] or ""):
+            shown = (json.loads(r["meta"]).get("sdk_display") or {}).get("name") or ""
+            names = [shown] if shown and " / " not in shown else []
+        if len(names) == 1 and names[0] != r["name"] and re.fullmatch(r"[A-Za-z_]\w*", names[0]):
+            out[r["name"]] = names[0]
+    return out
+
+
+def inputs(net, slug: str, log=print) -> dict:
+    """What the build takes from the project besides its save: the library the host provides (`leave_out`), library
+    code built from ultralib's C (`library_c`), and library code's own names (`library_names`)."""
+    return {"leave_out": library(net, slug, log), "library_c": library_c(net, slug),
+            "library_names": library_names(net, slug)}
+
+
 def library_c(net, slug: str) -> dict:
     """Library functions set aside as SDK code that the port builds from the user's ultralib (port/ultralib.units)."""
     from .. import ultralib
@@ -146,7 +180,7 @@ def play(net, slug: str, log=print) -> dict:
     repo, cfg, rom = game(net, slug)
     steps = (*build.STEPS, STARTING)
     program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps,
-                          leave_out=library(net, slug, log), library_c=library_c(net, slug))
+                          **inputs(net, slug, log))
     build.Progress(log, steps).start(STARTING)
     port = _free_port()
     out = program.parent

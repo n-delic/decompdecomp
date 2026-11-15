@@ -329,6 +329,18 @@ def _library(out: Path, units: dict, sources: dict, log) -> dict[str, list[str]]
     return library
 
 
+def game_host(host: Path, repo: Path) -> list[Path]:
+    """The game's own host file, if the console's host has one for it (games/<its ROM's SHA-1, 12 digits>.c): what
+    only that game needs, such as functions it names by its own addresses. The N64 host was written on one racing game
+    and held its bzero at 0x80091920 for every game, where another game has a function of its own."""
+    try:
+        sha1 = json.loads((repo / "progress" / "decompdecomp.json").read_text(encoding="utf-8"))["game"]["sha1"] or ""
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    own = host / "games" / f"{sha1[:12].lower()}.c"
+    return [own] if len(sha1) >= 12 and own.is_file() else []
+
+
 def linked(objects: Path, sources) -> list[Path]:
     """The objects of the files the build compiled, by name in any case: on a case-insensitive disk the object an old
     save's SelectStateReset.c made keeps that name when selectStateReset.o is written over it, and leaving it out
@@ -432,10 +444,12 @@ class Progress:
             self.report(value)
 
 
-def renames(lls: list[Path], fixed: list[str]) -> dict[str, str]:
+def renames(lls: list[Path], fixed: list[str], library_names=None) -> dict[str, str]:
     """{name a call uses: the defined function at its address}: C still calling a function by an older name (its
     automatic one, before polishing renamed it) links in the decomp through the symbol table; here it must name the
-    function wasm-ld has. Only a name that resolves to exactly one defined function is renamed."""
+    function wasm-ld has. Only a name that resolves to exactly one defined function is renamed. `library_names`:
+    {a function's name: its library name} for library code no file has C for (play.library_names): a call to it is
+    to the library's name, which the host answers (a racing game's bzero was `func_8003DDC0`, stubbed to nothing)."""
     defined, declared = set(), set()
     for ll in lls:
         for m in re.finditer(r"^(define|declare) [^@\n]*@([\w.$]+)\(", ll.read_text(encoding="utf-8"), re.M):
@@ -461,6 +475,8 @@ def renames(lls: list[Path], fixed: list[str]) -> dict[str, str]:
             address = int(auto.group(1), 16)
         if address is not None and len(at.get(address, ())) == 1:
             out[n] = next(iter(at[address]))
+        elif n not in out and (library := (library_names or {}).get(n)) and library != n:
+            out[n] = library
     return out
 
 
@@ -585,14 +601,15 @@ _builds_guard = threading.Lock()
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
-          library_c=None) -> Path:
+          library_c=None, library_names=None) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
     caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
     build of one save (Play while compare_behaviour builds) waits for the first, then finds little left to do.
     `universal`: on macOS, a program for Apple Silicon and Intel Macs alike (port/wasm/build/game-universal), its
     objects kept apart from Play's so neither build undoes the other's. `library_c`: {file name: (C, flags)} of
-    library functions built from ultralib's C (port/ultralib.units)."""
+    library functions built from ultralib's C (port/ultralib.units). `library_names`: library code's own names for
+    functions with no C (renames)."""
     repo = Path(repo).expanduser().resolve()
     with _builds_guard:
         lock = _builds.setdefault(str(repo), threading.Lock())
@@ -601,12 +618,13 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
         lock.acquire()
     try:
         return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
-                      library_c=library_c or {})
+                      library_c=library_c or {}, library_names=library_names or {})
     finally:
         lock.release()
 
 
-def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None) -> Path:
+def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,
+           library_names=None) -> Path:
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
         raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
@@ -677,7 +695,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     if done.returncode:
         raise NetworkError(f"reading the functions' signatures failed: {done.stderr.strip()[-400:]}")
 
-    _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renames(lls, fixed).items())))
+    _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renames(lls, fixed, library_names).items())))
     progress.start(STEPS[3])
     log("placing every symbol at its console address, data big-endian")
     if failed := place_all(out, lls, set(functions), zig, env, log, progress.files):
@@ -711,13 +729,14 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
         raise NetworkError(f"making memory big-endian failed: {done.stderr.strip()[-400:]}")
     _sync(fresh, out / "c")  # only the parts that changed are compiled again
     _write(out / "funcs.c", function_table((out / "c" / "game.h").read_text(encoding="utf-8"), fixed))
-    _run([py, HERE / "stubs.py", out / "c" / "game.h", host / "host.c", out / "stubs.c"], log)
+    own = game_host(host, repo)
+    _run([py, HERE / "stubs.py", out / "c" / "game.h", out / "stubs.c", *sorted(host.glob("*.c")), *own], log)
 
     progress.start(STEPS[6])
     log("building the host")
     rt = wabt / "share" / "wabt" / "wasm2c"
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-mem-impl.c",
-             rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), *sorted(host.glob("window/*.c")),
+             rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), *own, *sorted(host.glob("window/*.c")),
              out / "funcs.c", out / "stubs.c"]  # window/: PORT_WINDOW's SDL2 window, opened only when asked
     includes = ["-I", wabt / "include", "-I", rt, "-I", out / "c"]
     arch = host_arch_flags(universal)

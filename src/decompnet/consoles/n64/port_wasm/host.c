@@ -14,6 +14,7 @@
  * sharing its memory (based at 0); its threads are coroutines (port/wasm/web/co.c), the game's functions it calls
  * go through the page's table (the generated game.h), and the page drives the retrace instead of main().
  */
+#include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -25,13 +26,13 @@
 
 #include "game.h"
 #define SP_STATUS 0xA4040010u /* the RSP's status register: libultra waits for its halt bit */
-#define IMAGE_END 0xA7FE0u /* where the game's zeroed memory starts, as a ROM offset: its code and data end */
 #include "wasm-rt-exceptions.h"
 #include "wasm-rt-impl.h"
 
 struct w2c_env { int unused; };
 static struct w2c_env env;
 static w2c_game game;
+w2c_game *port_game(void) { return &game; } /* for a game's own host file (games/<its ROM's SHA-1>.c) */
 static uint8_t *M; /* the game's memory */
 static uint8_t *rom;
 static size_t rom_size;
@@ -317,9 +318,11 @@ static int32_t put(uint32_t mq, uint32_t msg, uint32_t flag, int jam) {
     pthread_mutex_unlock(&lock);
     return 0;
 }
+/* a game's DMA request queue, watched for requests to outside RAM (a game's own host file sets it; none by default) */
+__attribute__((weak)) uint32_t port_dma_watch_queue = 0;
 u32 w2c_env_osSendMesg(struct w2c_env *e, u32 mq, u32 msg, u32 flag) {
     (void)e;
-    if (mq == 0x800C7938u && be32(msg + 4) < 0x80000000u) { /* a DMA request to outside RAM: who asks */
+    if (mq && mq == port_dma_watch_queue && be32(msg + 4) < 0x80000000u) { /* a DMA request to outside RAM: who asks */
         fprintf(stderr, "DMA request ROM %08X -> %08X, %X bytes\n", be32(msg), be32(msg + 4), be32(msg + 8));
         port_trace();
     }
@@ -406,7 +409,10 @@ void w2c_env_osViSetYScale(struct w2c_env *e, f32 s) { (void)e; port_vi_yscale(s
 void w2c_env_osViBlack(struct w2c_env *e, u32 on) { (void)e; (void)on; }
 void w2c_env_osViSetSpecialFeatures(struct w2c_env *e, u32 f) { (void)e; port_vi_features(f); }
 void port_frame_shown(uint32_t fb, unsigned long n); /* render.c: saves it when asked */
-void w2c_env_viSetSwapBuffer(struct w2c_env *e, u32 fb) { (void)e; frame_buffer = fb; swaps++; port_frame_shown(fb, swaps); }
+void port_vi_swap(uint32_t fb) { frame_buffer = fb; swaps++; port_frame_shown(fb, swaps); } /* (games/: a game's own name) */
+void w2c_env_osViSwapBuffer(struct w2c_env *e, u32 fb) { (void)e; port_vi_swap(fb); }
+u32 w2c_env_osViGetCurrentFramebuffer(struct w2c_env *e) { (void)e; return frame_buffer; }
+u32 w2c_env_osViGetNextFramebuffer(struct w2c_env *e) { (void)e; return frame_buffer; }
 
 static void retrace(void) {
     vi_count++;
@@ -631,7 +637,6 @@ void w2c_env_osInvalICache(struct w2c_env *e, u32 a, u32 n) { (void)e; (void)a; 
 void w2c_env_osWritebackDCache(struct w2c_env *e, u32 a, u32 n) { (void)e; (void)a; (void)n; }
 void w2c_env_osWritebackDCacheAll(struct w2c_env *e) { (void)e; }
 u32 w2c_env_osSetIntState(struct w2c_env *e, u32 s) { (void)e; return s; }
-void w2c_env_func_8008C4F0(struct w2c_env *e) { (void)e; } /* osMapTLBRdb */
 static struct timespec start;
 u64 w2c_env_osGetTime(struct w2c_env *e) {
     (void)e;
@@ -642,32 +647,97 @@ u64 w2c_env_osGetTime(struct w2c_env *e) {
 }
 u32 w2c_env_memcpy(struct w2c_env *e, u32 d, u32 s, u32 n) { (void)e; memmove(M + d, M + s, n); return d; }
 void w2c_env_0x5F_osCopyBytes(struct w2c_env *e, u32 s, u32 d, u32 n) { (void)e; memmove(M + d, M + s, n); }
-void w2c_env_func_80091920(struct w2c_env *e, u32 p, u32 n) { (void)e; memset(M + p, 0, n); } /* bzero */
-u32 w2c_env_str_len(struct w2c_env *e, u32 s) { (void)e; return (u32)strlen((char *)M + s); }
 u32 w2c_env_abs(struct w2c_env *e, u32 x) { (void)e; return (u32)abs((int32_t)x); }
-/* A racing game's 64-bit helpers (its own hand-written MIPS, read from its ROM): 0x80099F78 unsigned 64 / 64,
-   0x8009A074 unsigned 64 / 32, 0x8009A2D0 the unsigned remainder, 0x8009A310 a double to a signed 64-bit integer
-   (__fixdfdi: toward zero, INT64_MIN when out of range) and 0x8009A430 a signed 64-bit integer to a double
-   (__floatdidf). The last two were once unsigned here: a negative double became 0 (or trapped, compiled to
-   WebAssembly) and a negative integer 1.8e19. */
-u64 w2c_env_func_80099F78(struct w2c_env *e, u64 a, u64 b) { (void)e; return b ? a / b : 0; }
-u64 w2c_env_func_8009A074(struct w2c_env *e, u64 a, u64 b) { (void)e; return b ? a / b : 0; }
-u64 w2c_env_func_8009A2D0(struct w2c_env *e, u64 a, u64 b) { (void)e; return b ? a % b : 0; }
-u64 w2c_env_func_8009A310(struct w2c_env *e, f64 x) {
-    (void)e;
-    if (!(x > -9223372036854775808.0 && x < 9223372036854775808.0)) return 0x8000000000000000ull;
-    return (u64)(int64_t)x;
-}
-f64 w2c_env_func_8009A430(struct w2c_env *e, u64 x) { (void)e; return (f64)(int64_t)x; }
-/* the game's old name for format_to_buffer: the same variadic call (its third argument points at the rest) */
-u32 w2c_env_formatString(struct w2c_env *e, u32 a, u32 b, u32 c) { (void)e; w2c_game_format_to_buffer(&game, a, b, c); return 0; }
-void w2c_env_D_8000A840(struct w2c_env *e, u32 a, u32 b, u32 c, u32 d, u32 f, u32 g) {
-    (void)e; (void)a; (void)b; (void)c; (void)d; (void)f; (void)g;
-    static int once;
-    if (!once++) LOG("D_8000A840 (a function the split missed) called: skipped");
-}
+/* What stays hand-written assembly in most games, answered by its library name: a game's C calls it by its automatic
+   name, and the build renames the call to the name library detection found (play.library_names). Without these a
+   racing game's bzero was stubbed to nothing. The TLB, the status register and interrupts are the host's own. */
+void w2c_env_bzero(struct w2c_env *e, u32 p, u32 n) { (void)e; memset(M + p, 0, n); }
+void w2c_env_bcopy(struct w2c_env *e, u32 s, u32 d, u32 n) { (void)e; memmove(M + d, M + s, n); }
+u32 w2c_env_bcmp(struct w2c_env *e, u32 a, u32 b, u32 n) { (void)e; return memcmp(M + a, M + b, n) != 0; }
+f32 w2c_env_sqrtf(struct w2c_env *e, f32 x) { (void)e; return sqrtf(x); }
+u32 w2c_env_osGetCount(struct w2c_env *e) { return w2c_env_0x5F_builtin_mips_read_count(e); }
+void w2c_env_osMapTLBRdb(struct w2c_env *e) { (void)e; }
+void w2c_env_osUnmapTLBAll(struct w2c_env *e) { (void)e; }
+void w2c_env_osSetTLBASID(struct w2c_env *e, u32 asid) { (void)e; (void)asid; }
+u32 w2c_env_0x5F_osGetSR(struct w2c_env *e) { (void)e; return cop0_status; } /* as __builtin_mips_read_status */
+void w2c_env_0x5F_osSetSR(struct w2c_env *e, u32 v) { (void)e; cop0_status = v; }
+u32 w2c_env_0x5F_osGetCause(struct w2c_env *e) { (void)e; return 0; }
+u32 w2c_env_0x5F_osDisableInt(struct w2c_env *e) { (void)e; return 1; }
+void w2c_env_0x5F_osRestoreInt(struct w2c_env *e, u32 v) { (void)e; (void)v; }
+u32 w2c_env_0x5F_osGetFpcCsr(struct w2c_env *e) { (void)e; return fcsr; }
+u32 w2c_env_0x5F_osSetFpcCsr(struct w2c_env *e, u32 v) { return w2c_env_0x5F_builtin_mips_exchange_fcsr(e, v); }
+/* What only one game needs (functions it names by its own addresses, its old names): games/<its ROM's SHA-1, 12
+   hex digits>.c, which the build compiles for that game alone (port/wasm/build.py). */
 
 /* ---------------------------------------------------------------- start */
+
+/* The boot, as the console does it, read from the ROM: so any game starts, not only the one the host was written
+   for (it named that game's first C function and where its image ends). The boot chip copies the 1 MB after the
+   header to the entry address the header names; the game's entry routine there zeroes its BSS, sets its stack and
+   jumps to its first C function. The routine is read, not run: its lui/addiu/ori constants give the BSS (the
+   address its first `sw $zero` stores at, the size its loop counts down or the end it counts up to) and the jump's
+   target. A racing game loads at 0x80000400 and is PAL; another at 0x80025C00, NTSC. */
+static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;
+static uint32_t rom32(size_t o) { return o + 4 <= rom_size ? (uint32_t)rom[o] << 24 | rom[o + 1] << 16 | rom[o + 2] << 8 | rom[o + 3] : 0; }
+static int read_boot(void) {
+    uint32_t r[32] = {0}, pre[32] = {0};
+    int base = -1;
+    boot.entry = rom32(8);
+    for (int i = 0; i < 64; i++) {
+        uint32_t w = rom32(0x1000 + 4 * (size_t)i), op = w >> 26, rs = (w >> 21) & 31, rt = (w >> 16) & 31;
+        int32_t imm = (int16_t)(w & 0xFFFF);
+        if (op == 0x0F) r[rt] = (w & 0xFFFF) << 16;                                     /* lui */
+        else if (op == 0x08 || op == 0x09) r[rt] = r[rs] + (uint32_t)imm;               /* addi, addiu */
+        else if (op == 0x0D) r[rt] = r[rs] | (w & 0xFFFF);                              /* ori */
+        else if (op == 0x2B && rt == 0 && base < 0) {                                    /* sw $zero: the BSS */
+            boot.bss = r[rs] + (uint32_t)imm; base = (int)rs; memcpy(pre, r, sizeof r);
+        } else if (op == 0x05 && base >= 0 && !boot.bss_size) {                         /* bne: the loop, back */
+            if (rt == 0 && (int)rs != base) boot.bss_size = pre[rs];                     /* a count down */
+            else if (rt) boot.bss_size = (rs == (uint32_t)base ? pre[rt] : pre[rs]) - boot.bss; /* up to an end */
+        } else if (op == 0x02 || op == 0x03) {                                           /* j, jal */
+            boot.target = (boot.entry & 0xF0000000u) | (w & 0x03FFFFFFu) << 2; break;
+        } else if (op == 0 && (w & 0x3F) == 8 && rs != 31) { boot.target = r[rs]; break; } /* jr */
+        if (op == 0x0F || op == 0x08 || op == 0x09 || op == 0x0D) r[0] = 0;
+    }
+    /* the header's region: Europe and Australia are PAL, Brazil MPAL, the rest NTSC (osTvType 0, 2, 1) */
+    char region = rom_size > 0x3E ? (char)rom[0x3E] : 'E';
+    boot.tv = strchr("DFHIPSUWXY", region) ? 0 : region == 'B' ? 2 : 1;
+    return boot.entry >= 0x80000000u && boot.target >= 0x80000000u;
+}
+/* the console's RAM as the boot leaves it: the game's image copied in, its BSS zeroed, the values libultra reads */
+static int boot_memory(void) {
+    if (!read_boot()) {
+        fprintf(stderr, "the ROM's entry routine (at 0x1000) didn't say where the game's C starts: entry %08X\n", boot.entry);
+        return 0;
+    }
+    size_t image = rom_size > 0x1000 ? rom_size - 0x1000 : 0;
+    if (image > 0x100000) image = 0x100000; /* the boot chip copies 1 MB */
+    if ((uint64_t)boot.entry + image > 0x80800000u) image = 0x80800000u - boot.entry;
+    memcpy(M + boot.entry, rom + 0x1000, image);
+    if (boot.bss_size && boot.bss >= 0x80000000u && (uint64_t)boot.bss + boot.bss_size <= 0x80800000u)
+        memset(M + boot.bss, 0, boot.bss_size);
+    else LOG("the entry routine's BSS wasn't read: memory after the image keeps the ROM's bytes");
+    wbe32(SP_STATUS, 1);              /* the RSP is halted until a task starts it */
+    wbe32(0x80000300, (uint32_t)boot.tv); /* osTvType */
+    wbe32(0x80000308, 0xB0000000);    /* osRomBase */
+    wbe32(0x8000030C, 0);             /* osResetType: cold */
+    wbe32(0x80000318, 0x400000);      /* osMemSize */
+    LOG("boot: image at %08X, BSS %08X + %X, first C function %08X, %s", boot.entry, boot.bss, boot.bss_size,
+        boot.target, boot.tv == 0 ? "PAL" : boot.tv == 2 ? "MPAL" : "NTSC");
+    return 1;
+}
+/* the game's first C function, by its console address (the table every function pointer goes through) */
+static void boot_call(void) {
+#ifdef PORT_WEB
+    w2c_game_port_call1(&game, boot.target, 0); /* as a thread's entry: through the page's table */
+#else
+    void (*first)(w2c_game *) = (void (*)(w2c_game *))port_func(boot.target);
+    if (!first) { fprintf(stderr, "no C for the game's first function, %08X: it needs matched C to boot\n", boot.target); exit(3); }
+    first(&game);
+#endif
+}
+/* the VI retrace's period: 50 a second for PAL, 60 otherwise */
+static int retrace_us(void) { return boot.tv == 0 ? 20000 : 16667; }
 
 #ifdef PORT_WEB
 /* The page's start: the ROM the player chose (in memory the page got from port_web_alloc), then the boot, as main()
@@ -710,20 +780,16 @@ __attribute__((export_name("port_web_boot"))) int port_web_boot(uint8_t *image, 
     clock_gettime(CLOCK_MONOTONIC, &start);
     M = port_web_memory_base(); /* 0, from the page: never a constant the compiler could fold */
     port_live_start();
-    memcpy(M + 0x80000400u, rom + 0x1000, IMAGE_END - 0x1000);
-    wbe32(SP_STATUS, 1);
-    wbe32(0x80000300, 0);
-    wbe32(0x80000308, 0xB0000000);
-    wbe32(0x8000030C, 0);
-    wbe32(0x80000318, 0x400000);
-    LOG("boot_start");
-    w2c_game_boot_start(&game);
-    LOG("boot_start returned; the game's threads run");
+    if (!boot_memory()) return 1;
+    boot_call();
+    LOG("the game's first function returned; its threads run");
     booted = 1;
     schedule();
     return 0;
 }
 __attribute__((export_name("port_web_retrace"))) void port_web_retrace(void) { retrace(); }
+/* the retrace's period in ms for the page (web/runtime.js), once booted: 20 for PAL, 16.67 for NTSC */
+__attribute__((export_name("port_web_retrace_ms"))) double port_web_retrace_ms(void) { return retrace_us() / 1000.0; }
 __attribute__((import_module("port_web"), import_name("trace"))) void port_web_trace(void);
 void port_trace(void) { port_web_trace(); }
 #else
@@ -858,25 +924,19 @@ int main(int argc, char **argv) {
     LOG("memory: %llu MB, ROM %zu bytes", (unsigned long long)game.w2c_memory.size >> 20, rom_size);
     /* as the console's boot does: the game's code and data from the cartridge at their addresses, and the values
        the boot leaves in low memory for libultra */
-    memcpy(M + 0x80000400u, rom + 0x1000, IMAGE_END - 0x1000);
-    wbe32(SP_STATUS, 1);           /* the RSP is halted until a task starts it */
-    wbe32(0x80000300, 0);          /* osTvType: PAL */
-    wbe32(0x80000308, 0xB0000000); /* osRomBase */
-    wbe32(0x8000030C, 0);          /* osResetType: cold */
-    wbe32(0x80000318, 0x400000);   /* osMemSize */
+    if (!boot_memory()) return 3;
     if (getenv("PORT_CALL")) return port_call((uint32_t)strtoul(getenv("PORT_CALL"), NULL, 16));
     wasm_rt_trap_t trap = wasm_rt_impl_try();
     if (trap) { fprintf(stderr, "boot stopped: %s\n", wasm_rt_strerror(trap)); return 3; }
-    LOG("boot_start");
-    w2c_game_boot_start(&game);
-    LOG("boot_start returned; the game's threads run");
+    boot_call();
+    LOG("the game's first function returned; its threads run");
     pthread_mutex_lock(&lock);
     booted = 1;
     schedule();
     pthread_mutex_unlock(&lock);
-    /* the VI retrace, PAL (50 Hz) */
-    for (int frame = 0; seconds <= 0 || frame < seconds * 50; frame++) {
-        usleep(20000);
+    /* the VI retrace: 50 a second for PAL, 60 for NTSC */
+    for (int frame = 0; seconds <= 0 || frame < seconds * 1000000 / retrace_us(); frame++) {
+        usleep((useconds_t)retrace_us());
         retrace();
         port_live_pump();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();

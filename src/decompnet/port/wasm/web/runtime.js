@@ -160,10 +160,17 @@ function wasi(memory, environment, log) {
 }
 
 /* When the threads that run after the `i`th of `due` retraces give way: once the retrace after it is due (`next`
-   is the one after the last), so that the retraces keep their 50 a second however busy the game keeps the CPU. One
-   that is late already still lets the thread it woke run a little (2 ms), as the console's would. */
-export function retraceDeadline(next, due, i) {
-  return Math.max(next - 20 * (due - 1 - i), performance.now() + 2);
+   is the one after the last), so that the retraces keep their rate however busy the game keeps the CPU. One that is
+   late already still lets the thread it woke run a little (2 ms), as the console's would. `period`: ms a retrace. */
+export function retraceDeadline(next, due, i, period = 20) {
+  return Math.max(next - period * (due - 1 - i), performance.now() + 2);
+}
+
+/* The retrace's period in ms the host read from the ROM's region (20 for PAL, 16.67 for NTSC); 20 from a host
+   older than that. */
+export function retracePeriod(exports) {
+  const ms = exports.port_web_retrace_ms ? Number(exports.port_web_retrace_ms()) : 20;
+  return ms > 0 ? ms : 20;
 }
 
 /* Start the game from `base` (the folder of the build's files) and `rom` (the player's ROM, bytes). `io`:
@@ -267,16 +274,17 @@ export async function start({ base = "", rom, io, env = {} }) {
   bytes().set(rom, at);
   host.port_web_boot(at, rom.length);
   await then(runThreads);
-  /* the VI retrace, PAL (50 a second), as the native host's main loop gives it */
+  /* the VI retrace at the game's rate (PAL 50 a second, NTSC 60), as the native host's main loop gives it */
+  const period = retracePeriod(host);
   let next = performance.now(), stopped = false;
   function tick() {
     if (stopped) return;
     const now = performance.now();
     let due = 0;
-    while (next <= now && due < 3) { next += 20; due++; }
-    if (now - next > 200) next = now + 20; /* a background tab: don't catch up for ever */
+    while (next <= now && due < 3) { next += period; due++; }
+    if (now - next > 200) next = now + period; /* a background tab: don't catch up for ever */
     for (let i = 0; i < due; i++) {
-      const until = retraceDeadline(next, due, i);
+      const until = retraceDeadline(next, due, i, period);
       then(() => { host.port_web_retrace(); return runThreads(until); });
     }
     setTimeout(tick, Math.max(1, next - performance.now()));
@@ -372,16 +380,17 @@ async function startAsyncify({ base = "", rom, io, env = {} }) {
   bytes().set(rom, at);
   ex.port_web_boot(at, rom.length);
   runThreads();
-  /* the VI retrace, PAL (50 a second), as in start() */
+  /* the VI retrace at the game's rate, as in start() */
+  const period = retracePeriod(ex);
   let next = performance.now(), stopped = false;
   function tick() {
     if (stopped) return;
     const now = performance.now();
     let due = 0;
-    while (next <= now && due < 3) { next += 20; due++; }
-    if (now - next > 200) next = now + 20;
+    while (next <= now && due < 3) { next += period; due++; }
+    if (now - next > 200) next = now + period;
     try {
-      for (let i = 0; i < due; i++) { ex.port_web_retrace(); runThreads(retraceDeadline(next, due, i)); }
+      for (let i = 0; i < due; i++) { ex.port_web_retrace(); runThreads(retraceDeadline(next, due, i, period)); }
     } catch (error) {
       stopped = true;
       io.error(error);
