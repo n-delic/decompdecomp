@@ -1523,21 +1523,32 @@ def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, sa
                         author=info.get("matched_by") or info.get("best_by") or "restored"
                         if author not in credits:credits[author]=net.attribution_agent(author)
                         credit=credits[author]
-                        if judge_agent is None:judge_agent=net.local_agent("progress-judge")[0]
+                        if judge_agent is None:
+                            # Verification runs concurrently across projects. A shared
+                            # identity lets another project's claim block this recheck.
+                            judge_agent=net.attribution_agent(f"progress-judge.{pid}")
+                            with store.tx() as db:
+                                # Only this project's serialized saved judge uses this
+                                # identity; clear its receipts left by an interrupted run.
+                                db.execute("DELETE FROM claims WHERE agent_id=?", (judge_agent.id,))
                         agent=judge_agent
+                        function_id=net._function(name, slug)['id']
                         try:
                             with net.compiled_ahead(prepared, strict=True):
                                 result = net.attempt(agent, name, text, slug)
                         except (NetworkError, toolchains.ToolchainError) as e:
                             check_cancel()  # A paused/cancelled check is not a failed match; abort and roll back instead.
-                            # A compiler that isn't here (an unknown one can never be installed) must not stop the other saved work
-                            # from coming back; the function stays open for when the user picks one (#118).
-                            log(f"{name}: {e}")
-                            result = {"matched": False}
+                            # A claim or tool failure is no verdict. Do not acknowledge
+                            # the import: its cleared rows would make the next save
+                            # delete the only remaining C. Keep disk inputs for retry.
+                            raise NetworkError(f"Could not verify saved C for {name}: {e}. "
+                                               "Saved files are retained. Resolve the error and retry synchronization.") from e
                         finally:
                             with store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
-                                db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN "
-                                           "(SELECT id FROM functions WHERE project_id=? AND name=?)", (agent.id, pid, name))
+                                # Names may change while compilation yields the project
+                                # lock. Release the receipt by its stable function ID.
+                                db.execute("DELETE FROM claims WHERE agent_id=? AND function_id=?",
+                                           (agent.id, function_id))
                         with store.tx() as db:
                             db.execute("UPDATE functions SET matched_agent_id=? WHERE project_id=? AND name=? AND matched_agent_id=?",
                                        (credit.id, pid, name, agent.id))
