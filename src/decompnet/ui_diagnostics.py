@@ -4,6 +4,7 @@ import logging
 import threading
 import time
 from collections import deque
+from contextvars import ContextVar
 from pathlib import Path
 
 from starlette.routing import Match
@@ -14,6 +15,8 @@ _clock = time.monotonic
 _lock = threading.Lock()
 _samples = deque(maxlen=100)
 _last_log = {}
+# The path of the HTTP request being served (no query string), for lane_watch's reports.
+current_route = ContextVar('current_route', default='')
 
 
 def record(kind, seconds, route=''):
@@ -68,6 +71,7 @@ class Diagnostics:
             return
         if scope['type']!='http':
             return await self.app(scope,receive,send)
+        current_route.set(scope.get('path','') if scope.get('path','').startswith('/api/') else '')
         began=_clock()
         status=None
         async def observed_send(message):
