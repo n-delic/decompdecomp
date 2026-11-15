@@ -929,6 +929,7 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
                                     (head["id"], tail["id"])).rowcount
                 db.execute("UPDATE OR IGNORE twin_misses SET function_id=? WHERE function_id=?", (head["id"], tail["id"]))
                 db.execute("DELETE FROM twin_misses WHERE function_id=?", (tail["id"],))
+                db.execute("DELETE FROM compiler_tests WHERE function_id=?", (tail["id"],))
                 db.execute("DELETE FROM claims WHERE function_id=?", (tail["id"],))
                 db.execute("DELETE FROM waits WHERE function_id=? OR needs_id=?", (tail["id"], tail["id"]))
                 db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (head["id"], tail["id"]))

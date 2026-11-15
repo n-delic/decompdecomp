@@ -1152,7 +1152,7 @@ class ForkEngine:
                         db.execute("UPDATE functions SET status='nosource', meta=json_set(COALESCE(meta, '{}'), "
                                    "'$.gone', 1) WHERE id=?", (fid,))  # (network.IN_BUILD)
                     else:
-                        for table in ("claims", "notes"):
+                        for table in ("claims", "notes", "compiler_tests"):
                             db.execute(f"DELETE FROM {table} WHERE function_id=?", (fid,))
                         db.execute("DELETE FROM functions WHERE id=?", (fid,))
             m = objdiff.game_measures(rep, set(aside))  # % of the game's own code: set-aside code doesn't count
