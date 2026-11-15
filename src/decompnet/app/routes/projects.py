@@ -462,8 +462,8 @@ def register(app: App) -> None:
             return start_reimport(slug,request,data)
 
     def start_reimport(slug, request, data):
-        if not data.get("confirmed"):
-            raise ValueError("confirm that this is your own legally obtained copy of the game")
+        # (no confirmation that it's the user's own copy: the import asked once, and nothing is imported without it;
+        # a reimport is the same game again, its console checked below)
         from ..reimport_source import stored
         path = hostenv.local_path(str(data['path'])) if data.get('path') else stored(net,slug)
         if not path.is_file():raise NetworkError('Choose a game file to reimport.')

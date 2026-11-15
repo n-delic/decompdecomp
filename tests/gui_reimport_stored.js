@@ -31,7 +31,7 @@ function setup(state={available:true,name:'rom.z64'}) {
     await $('reimportBtn').onclick();
     assert.equal(calls.filter(c=>c.url==='/api/reimport').length,1);
     assert.equal(calls.filter(c=>c.url==='/api/pick').length,0);
-    assert.deepEqual(JSON.parse(JSON.stringify(calls.find(c=>c.url==='/api/reimport').body)),{slug:'game',confirmed:true});
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.find(c=>c.url==='/api/reimport').body)),{slug:'game'}); // (no repeated own-copy confirmation)
     assert.equal($('reimportStop').hidden,false);
     followers[0].resolve({slug:'game',functions:10,matched:3});await first;
     assert.equal($('reimportBtn').disabled,false);
