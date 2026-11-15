@@ -46,13 +46,28 @@ def register(app: App) -> None:
             return bad
         try:
             if request.method == "GET":
-                return JSONResponse(await call(lambda: sdk_library.state(net, request.query_params.get('slug'))))
+                slug = request.query_params.get('slug')
+                state = await call(lambda: sdk_library.state(net, slug))
+                # a returning panel follows the check it started (a fresh window too)
+                return JSONResponse({**state, 'job': (jobs.active(('sdk-set-aside',), project=slug) or {}).get('id')} if slug else state)
             data = await body(request)
             if data.get('slug'):
                 await call(lambda: sdk_library.choose(net, str(data['slug']), data.get('selection')))
+                slug = str(data['slug']); job = None
+                if 'set_aside_c' in data:
+                    sdk_assembly, = await app.imports('decompnet.app', ('sdk_assembly',))
+                    await call(lambda: sdk_assembly.choose_c(net, slug, bool(data['set_aside_c'])))
+                    if data['set_aside_c']:
+                        def check(log):
+                            # every identified function at once, with progress and Stop: the user asked for it
+                            n = sdk_assembly.discover_c(net, net.project_row(slug), log.cancel_event, log.progress)
+                            log(f'{n} library functions your SDK archive reproduces were set aside from C matching.')
+                            return {'set_aside': n}
+                        running = jobs.active(('sdk-set-aside',), project=slug)  # a second click follows the first
+                        job = running['id'] if running else await app.control(lambda: jobs.start('sdk-set-aside', check, project=slug))
                 purpose_work, sdk_names = await app.imports('decompnet.app', ('purpose_work', 'sdk_names'))
-                await app.control(lambda: purpose_work.start('SDK function naming', str(data['slug']), sdk_names.name_functions, net, str(data['slug'])))
-                return JSONResponse(await call(lambda: sdk_library.state(net, str(data['slug']))))
+                await app.control(lambda: purpose_work.start('SDK function naming', slug, sdk_names.name_functions, net, slug))
+                return JSONResponse({**await call(lambda: sdk_library.state(net, slug)), 'job': job})
             folders = data.get('folders', [])
             return JSONResponse({'job': await app.control(lambda: jobs.start('sdk-library', lambda log: sdk_library.scan(net, folders, log)))})
         except (NetworkError, ValueError, OSError) as e:

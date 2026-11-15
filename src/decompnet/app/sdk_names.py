@@ -54,6 +54,8 @@ def _name_functions(net, slug, job=None):
         return 0
     from . import sdk_assembly
     sdk_assembly.discover(net,proj)
+    if not fork:
+        sdk_assembly.discover_c(net,proj,job.stop if job is not None else None)  # the project's choice: library C its SDK archive reproduces, set aside
     hints = identify(net, proj, {}, include_asm=True)
     if not hints:
         return 0
@@ -140,6 +142,8 @@ def _name_functions(net, slug, job=None):
         current = net.project_store(proj['id']).one('SELECT name FROM functions WHERE id=?', row['id'])
         net.add_note(agent, slug, evidence, current['name'])
         renamed += 1
+    if renamed and not fork:
+        sdk_assembly.discover_c(net, proj, job.stop if job is not None else None)  # the names just given are the leads
     return renamed
 
 

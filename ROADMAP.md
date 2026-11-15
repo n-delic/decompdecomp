@@ -746,6 +746,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Supplied assembly code/data verification | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | — | — | ✓ ROM driver | — | — own build adapter planned | — own build adapter planned | — | — own build adapter planned | — own build adapter planned |
 | Indexed SDK object assembly proof | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
+| Library C your SDK archive reproduces set aside (opt-in, Libraries for this game) | ✓ MIPS ROM; port glue and replaced only | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Built-in exact SDK assembly detection before claims | ✓ bcmp/bzero | — pack planned | — pack planned | — | — | — pack planned | — | — pack planned | — pack planned | — | — pack planned | — owned-build adapter planned |
 | Exact C / verified source assembly / verified SDK assembly / other assembly / open counts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ counts | ✓ counts | — | ✓ counts | ✓ counts |
 | Local mapped source preparation | ✓ | ✓ | ✓ | — | — | ✓ | — | body only¹ | body only¹ | — | body only¹ | body only¹ |
@@ -901,6 +902,18 @@ identified SDK code until after game code, across ROM and imported projects; exp
 still take precedence. Identification uses recorded provenance or unambiguous full-size archive signatures,
 without changing project settings or awarding matching C.
 Removing a managed folder removes its indexed references, while manual imports are preserved. The archive's source is never bundled; a signature is a hint until compiled C passes the judge.
+
+Library C that the user's own SDK archive reproduces can be set aside instead of matched (Libraries for this game,
+off by default, `sdk_assembly.SETTING`). An N64 racing game had its Controller Pak functions named from the user's
+libultra archive and still went to the agents for C that a port replaces and a rebuild needn't. The judge is the
+same as for SDK assembly: the archive's object linked at the function's address, every code and data byte
+compared. With a port kit only what it replaces or its glue supplies is set aside; its native code (libultra's
+math, the synthesizer) and names it doesn't know keep their C work. Turning it on checks every identified function
+in one run with progress and Stop; turning it off gives them back. On that game 18 of 92 identified functions
+were set aside: the rest are native, unknown to the kit, or a build no local archive has (its `osPfsInitPak`
+matches only a reconstructed 2.0I signature, with no archive to link). Archives indexed before their reference
+records existed are now found through the folder inventory. Left: the same for imported (project-mode) builds,
+which need an owned-build adapter like the assembly proof.
 
 Similar-code autopilot attempts are bounded and use the unchanged compiler/link judge on MIPS ROM projects.
 They learn unambiguous symbol correspondences, try local-permuter repairs and proven donor flags, and persist
