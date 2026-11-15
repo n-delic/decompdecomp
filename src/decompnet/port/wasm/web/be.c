@@ -21,6 +21,8 @@ IMPORT("port_io_load") u64 port_io_load(u64 addr);
 IMPORT("port_io_store") u64 port_io_store(u64 addr, u64 value);
 IMPORT("port_preempt") void port_preempt(void);
 IMPORT("port_bad_call") void port_bad_call(u32 address);
+/* a function with no C: its own instructions run from the ROM by the host's interpreter (mips.c); 0 if none there */
+IMPORT("port_mips_icall") u32 port_mips_icall(u32 pointer, u32 slots, u32 count);
 
 IMPORT("port_yield") void port_yield(void);
 
@@ -138,7 +140,11 @@ void port_icall(void *pointer, u64 *slots, u32 count) {
     if (!preempt_flag) preempt_flag = (volatile int *)(unsigned long)port_preempt_flag();
     if (*preempt_flag) port_preempt(); /* a safe point, as the native build's port_func is */
     u32 u = port_universal((u32)(unsigned long)pointer);
-    if (!u) { port_bad_call((u32)(unsigned long)pointer); __builtin_trap(); }
+    if (!u) {
+        if (port_mips_icall((u32)(unsigned long)pointer, (u32)(unsigned long)slots, count)) return;
+        port_bad_call((u32)(unsigned long)pointer);
+        __builtin_trap();
+    }
     ((Universal)(unsigned long)u)(slots, count);
 }
 

@@ -286,7 +286,7 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     progress.start(STEPS[len(native.STEPS) + 2])
     log("building the host for the browser")
     units = ([p for p in sorted(host.glob("*.c")) if p.name != "live.c"] + native.game_host(host, repo)
-             + sorted((host / "web").glob("*.c")))
+             + sorted((host / "web").glob("*.c")) + [out / "interp.c"])  # (interp.c: the interpreter's bridges)
     header, exports, calls = glue((out / "c" / "game.h").read_text(encoding="utf-8"),
                                   [p.read_text(encoding="utf-8") for p in units])
     native._write(web / "gen" / "game.h", header)

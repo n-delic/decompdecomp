@@ -7,8 +7,8 @@ build took from the project into `port/wasm/export.json` (the library code the h
 names, the functions built from ultralib's C, the game's title and version), and the workflow runs
 `python -m decompnet.port.wasm export` on it with the same decompdecomp the user exported with (its commit, or its
 release tag). What a runner can't do, it leaves out and says so: the Miyoo Mini's pack has no ROM in it (the player
-adds theirs), and the apps run the game's C alone, without the C recompiled from the ROM (functions with no C yet
-stop the game where they run).
+adds theirs), and the apps have no C recompiled from the ROM; a function with no C yet runs instead from the
+player's own ROM, interpreted as the game plays (consoles/n64/port_wasm/mips.c), as in every other build.
 
 Both files are committed to the repository (those paths only: the user's other changes stay as they are), never
 pushed: the user's next push takes them.

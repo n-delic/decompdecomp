@@ -735,15 +735,22 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     if done.returncode:
         raise NetworkError(f"reading the functions' signatures failed: {done.stderr.strip()[-400:]}")
     own = game_host(host, repo)
-    if recomp and Path(recomp["folder"], "recomp.json").is_file():  # what only recompiled C has: MIPS's own shape
-        from . import recomp as recomp_c
-        known = _rows(out / "sigs.txt", "\t")
-        extra = [n for n in recomp_c.mips_signatures(Path(recomp["folder"]), lls, fixed, [*sorted(host.glob("*.c")), *own],
-                                                      library_names) if n not in known]
-        if extra:
-            ret, params = recomp_c.MIPS_SIGNATURE
-            _write(out / "sigs.txt", (out / "sigs.txt").read_text(encoding="utf-8")
-                   + "".join(f"{n}\t{ret}\t{params}\n" for n in extra))
+    # what only recompiled C or the interpreter runs (interp.py): MIPS's own shape
+    from . import interp
+    from . import recomp as recomp_c
+    left_out = {n.removesuffix(".c") for n in _names(repo / "port" / "wasm" / "exclude.txt") | set(leave_out)}
+    replaced = (lambda n: kit.sdk_group(n) in ("replaced", "glue")) if kit and kit.sdk_group else (lambda n: False)
+    known = _rows(out / "sigs.txt", "\t")
+    extra = []
+    if recomp and Path(recomp["folder"], "recomp.json").is_file():
+        extra = recomp_c.mips_signatures(Path(recomp["folder"]), lls, fixed, [*sorted(host.glob("*.c")), *own],
+                                         library_names)
+    extra += interp.mips_signatures(lls, fixed, [*sorted(host.glob("*.c")), *own], library_names, left_out, replaced)
+    extra = sorted({n for n in extra if n not in known})
+    if extra:
+        ret, params = recomp_c.MIPS_SIGNATURE
+        _write(out / "sigs.txt", (out / "sigs.txt").read_text(encoding="utf-8")
+               + "".join(f"{n}\t{ret}\t{params}\n" for n in extra))
 
     _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renames(lls, fixed, library_names).items())))
     progress.start(STEPS[3])
@@ -788,15 +795,27 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
         except (OSError, ValueError) as error:
             raise NetworkError(f"the recompiled C couldn't be prepared for the port: {error}") from error
         recompiled = prepared["units"]
+    # the functions with no C yet, run by the host's interpreter from the player's ROM (interp.py, mips.c): what
+    # recompiled C doesn't already bridge
+    bridged = set()
+    for u in recompiled:
+        if u.name == "bridges.c":
+            bridged = set(re.findall(r"\b(w2c_env_\w+)\(struct w2c_env \*", u.read_text(encoding="utf-8")))
+    interp_c, counts = interp.generate((out / "c" / "game.h").read_text(encoding="utf-8"), fixed,
+                                       [*sorted(host.glob("*.c")), *own], library_names, bridged, left_out, replaced,
+                                       interp.variadic(lls), interp.by_value(lls))
+    _write(out / "interp.c", interp_c)
+    if counts["imports"]:
+        log(f"{counts['imports']} functions the game's C calls have no C yet: the interpreter runs them from the ROM")
     _run([py, HERE / "stubs.py", out / "c" / "game.h", out / "stubs.c", *sorted(host.glob("*.c")), *own,
-          *(u for u in recompiled if u.name == "bridges.c")], log)
+          *(u for u in recompiled if u.name == "bridges.c"), out / "interp.c"], log)
 
     progress.start(STEPS[6])
     log("building the host")
     rt = wabt / "share" / "wabt" / "wasm2c"
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-mem-impl.c",
              rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), *own, *sorted(host.glob("window/*.c")),
-             out / "funcs.c", out / "stubs.c", *recompiled]  # window/: PORT_WINDOW's SDL2 window, opened only when asked
+             out / "funcs.c", out / "stubs.c", out / "interp.c", *recompiled]  # window/: PORT_WINDOW's SDL2 window, opened only when asked
     includes = ["-I", wabt / "include", "-I", rt, "-I", out / "c"]
     quiet = ["-w", "-I", out / "recomp"]  # recompiled C: thousands of generated functions, warnings off
     arch = host_arch_flags(universal)

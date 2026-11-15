@@ -290,8 +290,8 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   `python -m decompnet.port.wasm export SAVE --kind KIND --out FOLDER` with the decompdecomp it was exported with
   (its commit, or its release tag); `--ultralib` installs libultra's source there when the save builds library code
   from it. Both files are committed (those paths alone) and never pushed. What a runner can't make it leaves out:
-  the Miyoo Mini's pack has no ROM (the player puts theirs in it), and the apps run the game's C without the C
-  recompiled from the ROM.
+  the Miyoo Mini's pack has no ROM (the player puts theirs in it), and the apps have no C recompiled from the ROM:
+  a function with no C yet runs from the player's ROM, interpreted ("Functions with no C yet", below).
   - *Standalone app for this computer*: the native program with a launcher. On macOS a universal app (`Game.app`,
     macOS 11 and up, for Apple Silicon and Intel Macs alike, whichever kind exported it) that asks for the ROM once, keeps its saves in its own Application Support folder and opens the game
     in the browser; quitting it stops the game. Its program is a small compiled universal launcher that runs
@@ -358,6 +358,49 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
 - the RSP and RDP in software (`render.c`): each graphics task's display list is drawn into the game's own frame
   buffer, F3DEX2 or S2DEX by the microcode the task loads, and `PORT_FRAMES=folder` saves the frames shown as PNG.
   2D screens draw correctly; the 3D path draws a racing game's races, textured.
+
+#### Functions with no C yet
+
+A function the game's C calls (or reaches through a pointer, or starts a thread at) that has no C yet runs from the
+player's own ROM as the game plays: the host's interpreter of the console's CPU (`consoles/n64/port_wasm/mips.c`:
+MIPS III with its FPU as libultra's games use it) runs that function's own instructions, from the console's memory,
+where the boot and the game's own loads put them. No build holds any of the game's code, so a build made from the
+save alone (a GitHub runner's, `port/wasm/workflows.py`) plays as a local one does, and the browser and Miyoo Mini
+builds, which recompiled C never reached, run these functions too.
+
+- The build's `interp.c` (`port/wasm/interp.py`) is the C between them: each such import of the game's C puts its
+  arguments where MIPS o32 passes them and runs the interpreter; `port_mips_calls` holds every function that has C,
+  the game's (through its exported function) and the host's (libultra's it replaces, by name), so interpreted code
+  jumping to one runs that C with o32's arguments and goes on at `$ra`. Interpreted code calling interpreted code is
+  only a jump. A function pointer to one goes through host.c's `port_func` (native) or `web/be.c`'s `port_icall`
+  (`port_mips_icall`), with integer arguments as recompiled C's pointer bridges take them.
+- What WebAssembly passes differently: a variadic function's extra arguments (a pointer to a buffer of them, from
+  the words o32 gives them, big-endian in both builds: `port_mips_varargs` and `port_mips_spread`; only a
+  function's own definition, or a declaration with fixed parameters before its `...`, makes it variadic: an
+  unprototyped `s32 taskOpen();` is `(...)` in the IR too), and a structure passed by value (a pointer to its words
+  where o32 put them, `port_mips_slot`, the arguments after it in the words after all of it: its size from the IR's
+  type definitions). A racing game's allocator takes its block size as an extra argument: passed the next register
+  word as the buffer, it read its size from address 8 and never returned. The functions the interpreter runs get
+  MIPS's own shape in the build's one signature per function, so callers that declare one differently still link
+  (as recompiled C's do).
+- A call through a pointer is a safe point (another thread may take over), as for the game's C; a direct call never
+  is: one was, and a thread the C had just started ran before the function starting it was done.
+- Not interpreted, as before: what the build leaves out on purpose (exclude.txt, the library code the host provides)
+  and the library code the port kit says the host replaces (libultra's hardware code: the Controller Pak's serial
+  transfers, interrupts). Those stay the logging stubs they were.
+- Each host thread interprets on a MIPS stack of its own in the console's address space (from 0x14800000, mapped on
+  the Miyoo Mini too), below whatever frames it already has. A thread spinning in interpreted code gives the others
+  their turn every 65,536 instructions.
+- `PORT_INTERP=0` turns it off; `PORT_INTERP_TRACE=1` says each function it starts, `2` each call into C; the
+  browser build takes either in its address (`?PORT_INTERP_TRACE=1`).
+
+Tried on a racing game with the C of 300 of its game functions taken out of a copy of its save (88 of them run, a
+quarter of a million calls in a minute): the native build plays the same scripted minute as the full build (its
+boot, menus and attract races; which race the attract shows is random), and the browser build boots, goes through
+the menus and races. Each bug found on the way (a variadic allocator, an unprototyped function taken for a variadic
+one, a structure by value before other arguments, safe points at direct calls) was found by taking out half of the
+functions until one alone broke the game. `tests/test_n64_port_interp.py` runs small MIPS programs and checks the
+generated bridges.
 
 #### The browser build's renderers
 
