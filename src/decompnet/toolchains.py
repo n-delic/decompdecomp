@@ -702,6 +702,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 continue
             if part.get("build") == "mips-binutils":
                 _build_mips_binutils(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "wabt":
+                _build_wabt(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "sn64-gcc":
                 _build_sn64_gcc(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "gcc-papermario":
@@ -879,6 +881,53 @@ def _build_ghidra_decompiler(ghidra: Path, log) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(built, target)
         target.chmod(0o755)
+
+
+def _build_wabt(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """WABT publishes no Intel Mac build since 1.0.36, and the port's C (port/wasm/bemem.py) is written against the
+    pinned version's wasm2c, so an Intel Mac builds that same pinned source with the pinned CMake: its wasm2c writes
+    the same C as the release's. Only the host's C++ compiler and make come from the system. What the port reads is
+    laid out as in the release: bin/wasm2c (and wat2wasm), include/wasm-rt*.h, share/wabt/wasm2c."""
+    mac = current_platform().startswith("macos")
+    tools = ("WABT's wasm2c is built from its source on this computer, which needs "
+             + ("Xcode Command Line Tools: run `xcode-select --install`, then try again." if mac else
+                "a C++17 compiler and make (on Debian or Ubuntu: `sudo apt install g++ make`), then try again."))
+    if not shutil.which("make") or not shutil.which("c++"):
+        raise ToolchainError(tools)
+    ensure("cmake", log=log)  # only Intel Macs build WABT, so the pack itself doesn't require CMake
+    cmake = str(binary("cmake"))
+    log("  building WABT's wasm2c from its pinned source (first install only, a minute or two)")
+    with tempfile.TemporaryDirectory(prefix="decomp-wabt-") as tmp:
+        source, build = Path(tmp) / "source", Path(tmp) / "build"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        configure = [cmake, "-S", str(source), "-B", str(build), "-G", "Unix Makefiles", "-DCMAKE_BUILD_TYPE=Release",
+                     "-DBUILD_TESTS=OFF", "-DBUILD_LIBWASM=OFF", "-DWITH_WASI=OFF"]
+        steps = (configure, [cmake, "--build", str(build), "--parallel", str(min(8, os.cpu_count() or 1)),
+                             "--target", "wasm2c", "wat2wasm"])
+        for argv in steps:
+            try:
+                result = subprocess.run(limits.capped(argv), cwd=tmp, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", timeout=1800, creationflags=NO_WINDOW)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ToolchainError(f"Couldn't build WABT: {error}. {tools}") from error
+            if result.returncode:
+                raise ToolchainError(f"Building WABT failed. {tools}\n" + (result.stdout + result.stderr)[-3000:])
+        (dest / "bin").mkdir(parents=True, exist_ok=True)
+        for program in ("wasm2c", "wat2wasm"):
+            if not (build / program).is_file():
+                raise ToolchainError(f"WABT's build finished without {program} in {build}. {tools}")
+            shutil.copyfile(build / program, dest / "bin" / program)
+            os.chmod(dest / "bin" / program, 0o755)
+        runtime = source / "wasm2c"
+        (dest / "include").mkdir(exist_ok=True)
+        for header in ("wasm-rt.h", "wasm-rt-exceptions.h"):
+            shutil.copyfile(runtime / header, dest / "include" / header)
+        share = dest / "share" / "wabt" / "wasm2c"
+        share.mkdir(parents=True, exist_ok=True)
+        for f in runtime.glob("wasm-rt-*"):
+            if f.suffix in (".c", ".h", ".inc") and f.name not in ("wasm-rt.h", "wasm-rt-exceptions.h"):
+                shutil.copyfile(f, share / f.name)
 
 
 def _build_mips_binutils(archive: Path, dest: Path, subdir: str | None, log) -> None:

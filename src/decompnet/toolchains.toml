@@ -1014,6 +1014,13 @@ url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-
 sha256 = "62f1eb2b51aa57cf0f0b8ba333bf2c72a049930aa9c5de01dcad271c4fe48c88"
 subdir = "wabt-1.0.42"
 platforms = ["windows-x86_64"]
+[[wabt.parts]]
+# no Intel Mac release since 1.0.36: the same version's source, built here with the pinned CMake (_build_wabt)
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42.tar.xz"
+sha256 = "a76cda3c174a43097863a07fc0b0c202f770f53e21806ea2636f167d1ffb1e30"
+subdir = "wabt-1.0.42"
+build = "wabt"
+platforms = ["macos-x86_64"]
 
 [binaryen]
 name = "Binaryen 133 (wasm-merge, wasm-opt)"
