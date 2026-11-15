@@ -38,6 +38,8 @@ const cases = [
   ["steering", '$("sourcePrepRun").onclick = async () => {', '\n};', "sourcePrepLog", "sourcePrepRun"],
   ["function", 'async function followFunctionDeep(job = null) {', '\n}\n$("fnDeepRun")', "fnDeepLog", "fnDeepRun"],
 ];
+// the banner's Install all (every compiler, then the compiler test): outside `cases`, whose places the checks below name
+const installAll = ["project", 'async function installAllCompilers(owned) {', '\n}\n', "tcAllLog", "tcInstall"];
 function setup(file, marker, end, logId, buttonId, ranges = "") {
   const elements = new Map();
   const get = (id) => { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); };
@@ -58,7 +60,7 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
     b: Object.assign(button, { dataset: { inst: "test" } }), a: { id: "test", name: "Test" }, ROOM_PORT: 6481,
     results: get("localResults"), scan: { folder: "/synthetic/collection", projects: [] }, picked: new Set(), renderList() {},
     selected: () => [{ path: "/synthetic/collection/project" }], renderLocalProjects() {}, update() {},
-    dialog: () => box, id: "test", proprietary: false, force: false, confirm: () => true, Blob, location: {},
+    dialog: () => box, owned: [], id: "test", proprietary: false, force: false, confirm: () => true, Blob, location: {},
     esc: String, plural: () => "files", toast() {}, loadNav() {}, closeDialog() {}, rerender() {}, check() {},
     fields: () => ({}), joinProblem: () => "", exportOpen: () => true, cmdBox: () => "", wireCopies() {},
     renderSdkSelection: async () => {}, renderHost() {}, renderTools() {}, renderStats() {}, renderSource() {}, renderProjectSettings() {},
@@ -87,7 +89,7 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   return { ctx, get, log, button, start, poll, polls: () => polls };
 }
 async function main() {
-  for (const [file, marker, end, logId, buttonId] of cases) {
+  for (const [file, marker, end, logId, buttonId] of [...cases, installAll]) {
     for (const outcome of ["start-error", "job-error", "cancelled", "done"]) {
       const test = setup(file, marker, end, logId, buttonId);
       const { ctx, log, button, start, poll } = test;

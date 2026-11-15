@@ -1247,16 +1247,21 @@ function openJoin(project = null) {
 /* Every compiler of the project's console, then the compiler test again with all of them (install_compilers). */
 async function installAllCompilers(owned) {
   if (owned.length && !confirm(`${owned.join(", ")} ${owned.length > 1 ? "are" : "is"} proprietary software, kept by the decomp community. Install only if you accept that. Continue?`)) return;
-  toast("Installing…");
+  // Downloading every compiler and then rerunning the compiler test takes minutes: a toast alone left the banner's
+  // button looking like it did nothing, and clicking it again started a second install
+  const body = dialog("Install the console's compilers", `<pre class="joblog tall" id="tcAllLog"></pre>`);
+  const log = body.querySelector("#tcAllLog");
+  const button = $("tcInstall");
+  const finish = beginWork(log, "Installing the compilers, then testing which one built this game", button ? [button] : [], "Compilers installed and tested.");
   try {
     const { job } = await api("/api/toolchain/all", { method: "POST", body: { slug: S.slug, accept_license: owned.length > 0 } });
-    const res = await followJob(job);
+    const res = await followJob(job, log);
     const test = Object.entries(res?.test || {}).map(([id, n]) => `${id} ${n}`).join(", ");
     toast(test ? `Installed. The compiler test: ${esc(test)} drafts matched.` : "Installed.", "match");
     await loadState();
     if (S.slug) renderStats(await api(`/api/project?slug=${S.slug}`));
     if (!$("toolsPage").hidden) renderTools();
-  } catch (e) { toast(esc(e.message), "err"); }
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
 }
 
 async function installToolchain(id, proprietary, force = false) {
