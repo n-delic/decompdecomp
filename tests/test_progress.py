@@ -97,6 +97,57 @@ def test_a_best_draft_improved_while_its_saved_draft_is_judged_is_published(proj
     assert not net.progress.sync("game", force=True)
 
 
+def _identical_saved_match(net, folder):
+    """f matched in the database, and its saved C arriving on disk outside the sync's record (a recovery, a pull of
+    the same bytes): the import would compile it only to say it matches again."""
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good local',best_source='good local',"
+                   "best_score=0,matched_at=? WHERE name='f'", (time.time(),))
+    net.progress.sync("game", force=True)
+    assert (folder / "src/f.c").read_text() == "good local\n"
+    pid = net._project("game")["id"]
+    net.progress._baseline(pid).disk.files.pop("src/f.c")
+    net.progress.signatures.pop("game", None)
+    return pid
+
+
+def _last_recheck(net, pid, when):
+    with net.project_store(pid).tx() as db:
+        db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                   (f"saved_recheck_at:{pid}", repr(when)))
+
+
+def test_unchanged_saved_matches_are_rechecked_at_most_once_an_interval(project):
+    net, folder, judged = project
+    pid = _identical_saved_match(net, folder)
+    _last_recheck(net, pid, time.time())
+    net.progress.sync("game", force=True)
+    assert judged == []  # not due: the CPU stays with new matches
+    assert net._function("f", "game")["status"] == "matched"
+    assert net._function("f", "game")["matched_source"] == "good local"
+    # A changed file is judged at once, while the unchanged one still waits.
+    (folder / "best").mkdir(exist_ok=True)
+    (folder / "best/g.c").write_text("contributed draft\n", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged == [("g", "contributed draft\n")]
+    # Once the interval has passed, the next import checks the waiting one too, once.
+    _last_recheck(net, pid, time.time() - 61 * 60)
+    (folder / "best/g.c").write_text("another draft\n", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert sorted(judged[1:]) == [("f", "good local\n"), ("g", "another draft\n")]
+    assert net._function("f", "game")["status"] == "matched"
+    assert net.project_store(pid).one("SELECT 1 FROM settings WHERE key=?", f"saved_recheck_pending:{pid}") is None
+
+
+def test_a_zero_recheck_interval_checks_unchanged_saved_matches_on_every_sync(project):
+    net, folder, judged = project
+    net.progress.recheck_minutes = 0
+    pid = _identical_saved_match(net, folder)
+    _last_recheck(net, pid, time.time())
+    net.progress.sync("game", force=True)
+    assert judged == [("f", "good local\n")]
+
+
 def test_metadata_pull_keeps_already_verified_local_matches(project):
     net, folder, judged = project
     with net.store.tx() as db:

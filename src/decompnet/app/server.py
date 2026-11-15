@@ -26,7 +26,7 @@ from starlette.responses import JSONResponse, Response
 from .. import agents as kinds
 from .. import hostenv, wine
 from ..network import NetworkError
-from . import agents, collab, maintenance, routes, saves, tools, updates, window, workers
+from . import agents, collab, maintenance, progress, routes, saves, tools, updates, window, workers
 from .engine import RomNetwork
 from .routes import (
     browser_bridge,
@@ -130,6 +130,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         window.WINDOW.through = gateway.window_url  # (its window listener: mcp_gateway.py)
     settings = Settings(home / "settings.json")
     maintenance.configure_cpu(settings.data.get("maintenance_cpu_percent", 0))
+    net.progress.recheck_minutes = settings.data.get("saved_recheck_minutes", progress.RECHECK_MINUTES)
     if hostenv.in_old_windows_install() and (settings.data.get("auto_update") or settings.data.get("check_updates", True)):
         # updated here from 1.0.2 on Windows: the way back is 1.0.2, which shares these settings and mustn't update
         # itself into this version again (README: Coming from an older version)

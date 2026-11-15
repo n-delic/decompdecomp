@@ -523,6 +523,10 @@ def affected_functions(old, new, changed, rows):
     return affected
 
 
+# Automatic syncs check saved C that is byte-identical to the database's own verdict again at most this often
+# (minutes; 0: on every sync). Settings, "Re-check unchanged saved matches" (settings.json saved_recheck_minutes).
+RECHECK_MINUTES = 60
+
 # How long tool calls leave a database-only change unpublished (see Progress.deferring).
 DEFER_SECONDS = 10
 
@@ -594,6 +598,7 @@ class Progress:
         self.states: dict[int, _State | None] = {}
         self.sync_changes: dict[str, int] = {}  # kept for restore, which drops every in-memory trace of a project
         self.adopting: set[str] = set()
+        self.recheck_minutes = RECHECK_MINUTES  # (server.py and Settings set it from settings.json)
         self.blocked: dict[str, tuple] = {}  # slug -> (folder, dirty token, settings) while a compiler waits
         self.case_checked: dict[str, tuple] = {}  # slug -> (dirty token, why saving waits for a rename, or None)
         self.refusals: dict[str, int] = {}  # slug -> syncs in a row whose write found the folder not as it read it
@@ -1787,6 +1792,61 @@ class Progress:
         ok, result = outcome[0]
         return ok, result
 
+    def _deferred_rechecks(self, store, pid: int, affected: set[str], candidate: dict[str, str],
+                           shared: set[str] | None) -> tuple[set[str], bool, set[str]]:
+        """Which affected functions an automatic sync leaves unjudged for now, whether rechecks are due, and the ones
+        left earlier that are due now.
+
+        A function whose saved files are byte-identical to the database's verdict for them (its matched C, its best
+        draft) would only be compiled to say the same again: on a busy N64 game a quarter of all compiles were such
+        rechecks. They wait until `recheck_minutes` have passed since the last recheck, then run together. A changed
+        file, a function that is not matched yet, and a shared build input (a header, a compiler) are judged at once."""
+        minutes = self.recheck_minutes
+        if minutes <= 0:
+            return set(), True, set()
+        row = store.one("SELECT value FROM settings WHERE key=?", f"saved_recheck_at:{pid}")
+        try:
+            last = float(row["value"]) if row else 0.0
+        except ValueError:
+            last = 0.0
+        if time.time() - last >= minutes * 60:
+            row = store.one("SELECT value FROM settings WHERE key=?", f"saved_recheck_pending:{pid}")
+            return set(), True, set(json.loads(row["value"])) if row else set()
+        if shared is None:
+            return set(), False, set()
+        names = sorted(affected - shared)
+        if not names:
+            return set(), False, set()
+        rows = store.all("SELECT name,status,matched_source,best_source FROM functions WHERE project_id=? "
+                         "AND name IN (SELECT value FROM json_each(?))", pid, json.dumps(names))
+        same = lambda saved, verdict: verdict is not None and saves._source_text(saved) == saves._source_text(verdict)
+        deferred = set()
+        for row in rows:
+            file = saves._source_file(row["name"])
+            source, draft = candidate.get(f"src/{file}"), candidate.get(f"best/{file}")
+            if source is None and draft is None:
+                continue
+            if source is not None and not (row["status"] == "matched" and same(source, row["matched_source"])):
+                continue
+            if draft is not None and not same(draft, row["best_source"]):
+                continue
+            deferred.add(row["name"])
+        return deferred, False, set()
+
+    @staticmethod
+    def _record_rechecks(db, pid: int, deferred: set[str], due: bool) -> None:
+        """Remember deferred rechecks durably (a restart must not drop them), or that a due recheck ran."""
+        key = f"saved_recheck_pending:{pid}"
+        if due:
+            db.execute("DELETE FROM settings WHERE key=?", (key,))
+            db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                       (f"saved_recheck_at:{pid}", repr(time.time())))
+        elif deferred:
+            row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            pending = set(json.loads(row["value"])) if row else set()
+            db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                       (key, json.dumps(sorted(pending | deferred))))
+
     def _publish_changes(self, slug: str, proj, folder: Path, baseline: _Baseline, dirty: _Dirty,
                          config_key: str) -> bool | None:
         """Publish only the files the database changed since the last sync; None means the folder moved meanwhile."""
@@ -1989,6 +2049,7 @@ class Progress:
             # loading the pull; the contributor wins if both changed the same file.
             all_code = False
             affected = None
+            deferred, recheck_due = set(), False
             judging_change = True  # Unknown import shapes conservatively invalidate in-flight results.
             pending = {}
             if projected is not None:
@@ -2052,6 +2113,11 @@ class Progress:
                     applied_changed = {path for path in applied_changed
                                        if path in input_changes or path in external_code or not path.startswith(('src/', 'best/'))
                                        or source_name(path, matched_names | known_names) not in matched_names}
+                    shared = affected_functions(json.loads(rendered[saves.MANIFEST]), merged_manifest,
+                                                {path for path in input_changes if not path.startswith(('src/', 'best/'))},
+                                                function_rows)
+                    deferred, recheck_due, pending_rechecks = self._deferred_rechecks(store, pid, affected, candidate, shared)
+                    affected = (affected - deferred) | pending_rechecks
                 all_code = affected is None
                 toolchain = (merged_manifest.get("compiler") or {}).get("toolchain")
                 if toolchain and not toolchains.known(toolchain):
@@ -2126,7 +2192,10 @@ class Progress:
                 with store.tx() as db:
                     rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?",
                                       (pid,)).fetchall()
+                    self._record_rechecks(db, pid, deferred, recheck_due)
                     for row in rows:
+                        if row["name"] in deferred:
+                            continue  # its saved C is the database's own verdict: checked again when due
                         impacted = all_code or row["name"] in (affected or set())
                         changed_source = f"src/{saves._source_file(row['name'])}" in applied_changed
                         changed_best = f"best/{saves._source_file(row['name'])}" in applied_changed
