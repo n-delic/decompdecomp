@@ -1559,20 +1559,64 @@ def test_a_first_sync_keeps_a_deliberate_rename_when_the_folder_has_the_stale_so
     assert (folder / "src" / "draw_sprite.c").exists()                        # the database's source is published
 
 
+def test_a_first_sync_keeps_a_deliberate_renames_header_and_callers(project):
+    """#174 review 1: a first sync must keep a deliberate database rename in the folder's header and callers too, not
+    only the layout. The folder, saved before the rename, still declares and calls the old name; left as they are,
+    `_apply_context` imports the old header (reverting the database's rewritten one) and the caller is judged against
+    a name the layout no longer has, losing its match. The old->new rewrite follows into the kept header and the
+    saved sources."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:              # f is matched, a caller calls it, and the shared header declares it
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                   "VALUES(?,2,'extern void f(void);',0,'')", (pid,))
+        db.execute("UPDATE functions SET status='matched',matched_source='void f(void){} good' "
+                   "WHERE project_id=? AND name='f'", (pid,))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,matched_source) VALUES"
+                   "(?,'caller',4200,4,1,'matched','','int caller(void){ f(); return 0; } good')", (pid,))
+    net._syms.pop(pid, None)
+    net.progress.sync("game", force=True)                                     # saved with the header and caller at f
+    assert (folder / "src" / "f.c").exists()
+    assert "void f(void)" in (folder / "include" / "common.h").read_text()
+    net._rename_in_code(pid, {"f": "draw_sprite"})                            # the user deliberately renamed f ->
+    with net.store.tx() as db:                                               # draw_sprite (callers + header follow)
+        db.execute("UPDATE functions SET name='draw_sprite' WHERE project_id=? AND name='f'", (pid,))
+        db.execute("UPDATE symbols SET name='draw_sprite' WHERE project_id=? AND name='f'", (pid,))
+        db.execute("DELETE FROM progress_state WHERE project_id=?", (pid,))   # no baseline: the next sync is a first sync
+    net._syms.pop(pid, None)
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)                                     # must keep the rename everywhere
+    names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert "draw_sprite" in names and "f" not in names, names                 # the deliberate name won in the layout
+    header = net._context(pid, "")["header"]                                  # the database header was not reverted
+    assert "draw_sprite" in header and "void f(void)" not in header, header
+    assert "draw_sprite" in (folder / "include" / "common.h").read_text()     # the folder header followed the rename
+    caller = net._function("caller", "game")                                  # the caller kept its match, rewritten
+    assert caller["matched_source"] is not None, "the caller lost its match"
+    assert "draw_sprite()" in caller["matched_source"] and "f()" not in caller["matched_source"]
+
+
 def test_a_later_adopt_runs_after_repair_rebuilds_a_missing_header(project):
     """#174 review 2: the later-sync pre-check validates the folder the way the sync will accept it -- after
     `_repair`. A folder an older version wrote lacking its header must still have its saved name adopted over the
-    database's auto name, not skipped because `_manifest` refused the folder before `_repair` rebuilt the header."""
+    database's auto name, not skipped because `_manifest` refused the folder before `_repair` rebuilt the header; and
+    the header `_repair` rebuilds from the project must follow that adoption, not keep the auto name and revert the
+    database's renamed header when the sync imports it back."""
     net, folder, _ = project
     pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
-    with net.store.tx() as db:              # a re-analysis reset the deliberate name back to its auto name
-        db.execute("UPDATE functions SET name='func_00001000' WHERE project_id=? AND name='f'", (pid,))
+    with net.store.tx() as db:              # a re-analysis reset the deliberate name back to its auto name, in the
+        db.execute("UPDATE functions SET name='func_00001000' WHERE project_id=? AND name='f'", (pid,))  # header too
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                   "VALUES(?,2,'extern void func_00001000(void);',0,'')", (pid,))
     net._syms.pop(pid, None)
     (folder / "include" / "common.h").unlink()                               # an older folder lost its header
     net.progress.sync("game", force=True)
     names = [e["name"] for e in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
     assert "f" in names and "func_00001000" not in names, names              # adoption ran once _repair fixed it
     assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='f'", pid)   # adopted back in the db
+    header = net._context(pid, "")["header"]                                  # the rebuilt header followed adoption:
+    assert "void f(void)" in header and "func_00001000" not in header, header  # the database was not reverted
+    assert "func_00001000" not in (folder / "include" / "common.h").read_text()   # nor the folder, on disk
 
 
 def test_a_later_sync_reads_only_the_manifest_when_the_saved_names_agree(project, monkeypatch):

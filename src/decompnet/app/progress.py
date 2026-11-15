@@ -175,6 +175,35 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     return disk
 
 
+def _missing_header_units(files: dict[str, str]) -> dict[str, str]:
+    """The header units a folder's manifest names but whose include/ file is absent: exactly the ones `_repair`
+    rebuilds from the project. Their rebuilt text predates adoption, so after adoption renames a function it must be
+    fetched again (#174 review 2)."""
+    try:
+        headers = (json.loads(files[saves.MANIFEST]).get("headers") or {})
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return {}
+    return {unit: "include/" + file for unit, file in headers.items()
+            if isinstance(unit, str) and isinstance(file, str) and Path(file).name == file
+            and file.endswith(".h") and "include/" + file not in files}
+
+
+def _refresh_rebuilt_headers(net, pid: int, folder: Path, files: dict[str, str], units: dict[str, str]) -> None:
+    """Fetch again each header `_repair` rebuilt from the project, now that adoption has renamed a function it
+    declares. The rebuilt file held the pre-adoption (auto) name; left as it was, the sync would import it and revert
+    the adoption. Rewriting it to the project's current header keeps both the folder and the database on the saved
+    name (#174 review 2)."""
+    for unit, name in units.items():
+        context = net._context(pid, unit)
+        if context is None:
+            continue
+        header = context["header"]
+        if files.get(name) != header:
+            files[name] = header
+            (folder / "include").mkdir(exist_ok=True)
+            (folder / name).write_text(header, encoding="utf-8")
+
+
 # #158: spimdisasm names a piece that starts at a jump target by its label, `.L80129B10`, and the app saves it so.
 NAME = re.compile(r"[A-Za-z_]\w*|\.L[0-9A-F]+")
 
@@ -333,6 +362,7 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
     # that entry consumes neither: both join as new functions at the shared address.
     renamed_db: set[str] = set()  # database names that are a saved (now-unknown) name renamed: their src/best files
     superseded: set[str] = set()  # saved (old) names a deliberate database rename replaces: they give way to it
+    superseded_moves: dict[str, str] = {}  # each such old name -> the deliberate database name that replaced it (#174)
     for saved in saved_layout:                                 # are the saved ones, not new, so they aren't queued
         matching = [d for d in (local.get("layout") or []) if d.get("name") not in saved_names and _renamed_from(saved, d)]
         if len(matching) != 1:
@@ -342,6 +372,7 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
             # A deliberate database rename wins; adoption only reclaims an auto name (#174 review 2). The stale
             # saved entry gives way to the deliberate database name instead of keeping the old name in the layout.
             superseded.add(saved.get("name"))
+            superseded_moves[saved.get("name")] = dbname
         else:
             renamed_db.add(dbname)  # the saved (old) name keeps its place; the database name is not added back
 
@@ -379,6 +410,23 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
     # folder would make `_manifest` refuse the save ("Add <old name> to the function layout"). Remove it with the
     # entry; the database's source under the new name is published in its place (#174 review 1).
     superseded_files = {f"{d}/{saves._source_file(n)}" for n in superseded for d in ("src", "best")} & set(disk)
+    if superseded_moves:
+        # The folder still spells each superseded name in its kept header and its callers' sources; a deliberate
+        # database rename replaced it. Rewrite them to the new name, exactly as `_rename_in_code` did in the database,
+        # so `_apply_context` does not import a header that reverts the rename and the callers still build and keep
+        # their match instead of being saved against a name the layout no longer has (#174 review 1).
+        word = re.compile(r"\b[A-Za-z_]\w*\b")
+        olds = tuple(superseded_moves)
+        swap = lambda text: word.sub(lambda m: superseded_moves.get(m.group(0), m.group(0)), text)
+        for file in (manifest.get("headers") or {}).values():
+            name = "include/" + file
+            text = pending.get(name, disk.get(name))
+            if isinstance(text, str) and any(old in text for old in olds) and swap(text) != text:
+                pending[name] = swap(text)
+        for name, text in disk.items():
+            if (name.startswith(("src/", "best/")) and name not in superseded_files
+                    and any(old in text for old in olds) and swap(text) != text):
+                pending[name] = swap(text)
     return manifest, pending, superseded_files
 
 
@@ -1002,9 +1050,11 @@ class Progress:
                     try:
                         preview = _read(folder)
                         if saves.MANIFEST in preview:
+                            rebuilt = _missing_header_units(preview)
                             preview = _repair(net, pid, folder, preview, report)
                             _manifest(preview, cfg, db_names)
                             _adopt_saved_names(net, pid, json.loads(preview[saves.MANIFEST]), auto_only=True, cfg=cfg)
+                            _refresh_rebuilt_headers(net, pid, folder, preview, rebuilt)
                     except (OSError, UnicodeError, ValueError, NetworkError):
                         pass  # a foreign, conflicted or malformed folder is left for _read/_manifest below to reject
         if baseline is not None and self.signatures.get(slug) == signature:
@@ -1029,6 +1079,7 @@ class Progress:
             raise NetworkError("Restore progress/decompdecomp.json before continuing this project.")
         if saves.MANIFEST in disk and (before is None or snapshot.files != before.files):
             report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
+            rebuilt = _missing_header_units(disk)
             disk = _repair(net, pid, folder, disk, report)
             known_names = {row["name"] for row in net.store.all(
                 "SELECT name FROM functions WHERE project_id=?", pid)}
@@ -1041,6 +1092,7 @@ class Progress:
                 # so the render, the merge and later publishes agree on the name (#174). A deliberate database rename
                 # wins, exactly as the later sync does: adoption reclaims only an auto name here too (review 2).
                 _adopt_saved_names(net, pid, json.loads(disk[saves.MANIFEST]), auto_only=True, cfg=cfg)
+                _refresh_rebuilt_headers(net, pid, folder, disk, rebuilt)
             # Preserve work on unrelated functions even if a helper finished while a contribution was pulled.
             comparison = None if before is not None else saves._render(net, slug)[0]
             comparison_manifest = before.manifest if before is not None else comparison[saves.MANIFEST]
