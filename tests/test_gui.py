@@ -73,6 +73,15 @@ def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
                    capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_deep_permuter_results_and_navigation():
+    """The function drawer's Deep permuter tab (upstream's deep-permuter.js): its scores, gain, progress and chart, a
+    stopped search's state, and an old function's search never painting another function's tab."""
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_deep_permuter.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_the_function_view_opens_on_best_and_switches_to_latest_after_a_manual_compile():
     """A DS game's function drawer had no latest/best switch: every fork's function was hidden from it. It shows
     wherever a best attempt differs from the source now, opens on the best (what someone fixing a function builds

@@ -15,7 +15,7 @@ function setup() {
     document: {querySelectorAll: () => []}, navigator: {clipboard: {}}, location: {},
     api: (url, options={}) => new Promise((resolve,reject) => calls.push({url,resolve,reject,...options})),
     show: () => {}, startLive: () => {}, stopPolling: () => {}, markNav: () => {}, showDrawer: id => {el(id).hidden=false;},
-    discoverFunctionAttempt: () => {}, giveBack: () => {}, drawMap: () => {}, toast: e => errors.push(e), esc: String, hex8: String,
+    discoverFunctionAttempt: () => {}, renderDeepSearch: () => {}, reconnectDeepSearch: () => {}, giveBack: () => {}, drawMap: () => {}, toast: e => errors.push(e), esc: String, hex8: String,
     renderFunctionFocusedAgents: () => {}, prepareProjectPeers: () => {}, renderKnownCompilerProfiles: () => {}, renderFnChart: () => {}, showFnTab: () => {},
     setEditorSourceMapping:data=>{S.sourceMap=data;},
     setEditor: source => {el('fnEdit').value=source;}, highlightAsm: String,
@@ -87,7 +87,7 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   f.ctx.beginWork = (log, label, controls) => { log._workStatus={dataset:{},remove(){}}; controls.forEach(c=>c.disabled=true); return () => {finishes++; controls.forEach(c=>c.disabled=false);}; };
   f.ctx.showJobError = () => {};
   f.ctx.followJob = (job,log,callback) => { assert.equal(log,null); update=callback; return new Promise(resolve => {finishJob=resolve;}); };
-  vm.runInContext(source.slice(source.indexOf('$("fnTestCompilers").onclick'),source.indexOf('async function followFunctionDeep(')),f.ctx);
+  vm.runInContext(source.slice(source.indexOf('$("fnTestCompilers").onclick'),source.indexOf('/* Pages contain metadata only')),f.ctx);
   const compiler=f.el('fnTestCompilers').onclick();
   f.calls.at(-1).resolve({job:1}); await flush();
   const firstPaints=compilerPaints;
@@ -98,29 +98,7 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   const other=f.ctx.openFn('other'); f.calls.at(-1).resolve(detail('other')); await other;
   update(['OLD COMPILER LOG']); finishJob({comparison:{}}); await compiler;
   assert.equal(f.el('fnCompilerLog').textContent,''); assert.equal(finishes,0); assert.equal(compilerPaints,beforeOldUpdate);
-  let progressPaints=0;
-  f.ctx.deepProgressView=()=>()=>{progressPaints++;};
-  vm.runInContext(source.slice(source.indexOf('async function followFunctionDeep('),source.indexOf('$("fnDeepStop").onclick')),f.ctx);
-  const deep=f.el('fnDeepRun').onclick(); f.calls.at(-1).resolve({job:2}); await flush();
-  const next=f.ctx.openFn('next'); f.calls.at(-1).resolve(detail('next')); await next;
-  update(['OLD DEEP LOG'],{progress:{phase:'old'}}); finishJob({reason:'finished',tested:4}); await deep;
-  assert.equal(f.el('fnDeepLog').textContent,''); assert.equal(progressPaints,1);
-  assert.equal(f.el('fnDeepMinutes').disabled,false);
-  // Reopening follows the server's existing job, without posting another start request.
-  const reopened=f.ctx.openFn('reopen');
-  const request=f.calls.at(-1);
-  request.resolve({...detail('reopen'),deep_job:'existing-job'}); await reopened;
-  assert.equal(f.calls.at(-1),request,'Reattach must not POST another search');
-  assert.equal(f.el('fnDeepRun').disabled,true);
-  assert.equal(f.el('fnDeepMinutes').disabled,true);
-  f.ctx.refreshMap=async()=>{};
-  update(['17 candidates tested'],{progress:{tested:17,phase:'random rewrites'}});
-  assert.equal(f.el('fnDeepLog').textContent,'17 candidates tested');
-  assert.match(f.el('fnDeepStatus').textContent,/random rewrites/);
-  assert.equal(f.el('fnDeepStop').hidden,false);
-  assert.equal(f.el('fnDeepStop').disabled,false);
-  finishJob({reason:'Time limit reached',tested:17}); await flush();
-  assert.match(f.el('fnDeepStatus').textContent,/17 tested/);
+  // (The drawer's deep search keeps its own per-function snapshots: tests/gui_deep_permuter.js.)
 
 
   const p=setup(), project=read('project');

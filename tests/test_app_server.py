@@ -121,6 +121,53 @@ def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monke
     assert job["state"] == "cancelled" and job["progress"]["best_score"] == 20
 
 
+def test_the_drawers_deep_permuter_tab_runs_our_search_with_its_two_limits(app, monkeypatch):
+    """The function drawer's Deep permuter tab (upstream's deep-permuter.js, /api/deep-permuter): a time and a variant
+    limit start our search with its defaults; GET finds the running search without starting one and, once it ends,
+    still gives the last run; asking again, from the tab or the older route, joins the same search."""
+    from decompnet.app import deep_permuter
+
+    client, net, _ = app
+    started, release, calls = threading.Event(), threading.Event(), []
+    monkeypatch.setattr(deep_permuter, "validate", lambda *args: None)
+
+    def run(net, slug, name, minutes, variants, log, **options):
+        calls.append((name, minutes, variants, options))
+        log.progress({"tested": 3, "starting_score": 40, "best_score": 20, "variant_limit": variants,
+                      "history": [{"tested": 0, "score": 40}, {"tested": 3, "score": 20}]})
+        started.set()
+        release.wait(2)
+        log.check_cancel()
+        return {"function": name}
+
+    monkeypatch.setattr(deep_permuter, "run", run)
+    params = {"slug": "tab-game", "name": "f"}
+    assert client.get("/api/deep-permuter", params=params).json() == {"job": None, "last": None}
+    try:
+        response = client.post("/api/deep-permuter", headers={"X-Decomp": "1"},
+                               json={"slug": "tab-game", "name": "f", "minutes": 2, "variants": 50})
+        assert response.status_code == 200, response.text
+        jid = response.json()["job"]
+        assert started.wait(1)
+        assert calls == [("f", 2, 50, {})]  # one profile, one thread, the shared pool: run()'s defaults
+        found = client.get("/api/deep-permuter", params=params).json()
+        assert found["job"] == jid and found["last"]["progress"]["history"][-1] == {"tested": 3, "score": 20}
+        assert client.post("/api/deep-permuter", headers={"X-Decomp": "1"},
+                           json={"slug": "tab-game", "name": "f"}).json()["job"] == jid
+        older = {"slug": "tab-game", "function": "f", "minutes": 1, "max_variants": 10}
+        assert client.post("/api/permuter/function", headers={"X-Decomp": "1"}, json=older).json()["job"] == jid
+        assert len(calls) == 1
+        assert client.post("/api/job/cancel", headers={"X-Decomp": "1"}, json={"id": jid}).json() == {"cancelled": True}
+    finally:
+        release.set()
+    for _ in range(100):
+        if client.get("/api/job", params={"id": jid}).json()["state"] != "running":
+            break
+        time.sleep(.01)
+    after = client.get("/api/deep-permuter", params=params).json()
+    assert after["job"] is None and after["last"]["state"] == "cancelled" and after["last"]["progress"]["best_score"] == 20
+
+
 def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp_path):
     from .test_loading import tiny_game
 

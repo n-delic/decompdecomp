@@ -138,5 +138,5 @@ function renderFunctionFocusedAgents(detail, slug) {
       if (S.slug === slug && S.fn === detail.name) renderFunctionFocusedAgents(detail,slug);
     }
   };
-  $('fnWorkPanel').hidden = panel.hidden && $('fnDeepPanel').hidden;
+  $('fnWorkPanel').hidden = panel.hidden;
 }

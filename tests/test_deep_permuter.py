@@ -65,6 +65,20 @@ def test_one_function_deep_search_uses_normal_judge_and_keeps_improvements(monke
     assert net.function()['status'] == 'matched'
     assert net.store.one('SELECT COUNT(*) n FROM claims')['n'] == 0
     assert log.updates[-1]['best_score'] == 0
+    # the drawer's run chart: the starting score, then the best each time it improved, by candidates tested
+    assert result['history'][0] == {'tested': 0, 'score': 40} and result['history'][-1]['score'] == 0
+    assert [point['score'] for point in result['history']] == sorted((p['score'] for p in result['history']), reverse=True)
+    assert result['elapsed'] >= 0 and log.updates[-1]['history'] == result['history']
+
+
+def test_the_run_chart_keeps_its_first_and_latest_points():
+    search = deep_permuter.Search.__new__(deep_permuter.Search)
+    search.history, search.tested = [{'tested': 0, 'score': 1000}], 0
+    for score in range(999, 699, -1):
+        search.tested += 1
+        search._chart(score)
+    assert len(search.history) <= 200
+    assert search.history[0] == {'tested': 0, 'score': 1000} and search.history[-1] == {'tested': 300, 'score': 700}
 
 
 def test_variant_limit_cancellation_and_duplicate_misses_release_the_lease(monkeypatch):
@@ -201,6 +215,10 @@ def test_live_metrics_count_only_verified_strict_improvements_and_keep_starting_
     metrics=search.metrics()
     efficiency=metrics.pop('efficiency')
     assert efficiency['first_exact_check']==5 and efficiency['model_tokens']==0
+    assert metrics.pop('elapsed') >= 0
+    # the run chart: the measured baseline, then each verified strict improvement (not the equal or the second baseline)
+    assert metrics.pop('history') == [{'tested':0,'score':50},{'tested':2,'score':30},{'tested':5,'score':20},
+                                      {'tested':7,'score':0}]
     assert metrics == {'starting_score':50,'starting_percent':95.0,'best_score':0,
                                 'best_percent':100.0,'improvements':3,'local_search':{},
                                 'allocation_trials':0,'allocation_diagnostic_compiles':0,'reviewed_seeds':{}}
