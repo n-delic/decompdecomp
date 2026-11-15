@@ -271,10 +271,11 @@ def own_functions(chosen: dict[str, Path], texts: dict[str, str]) -> dict[str, s
     return out
 
 
-def gather(repo: Path, out: Path, leave_out=()) -> dict[str, Path]:
+def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[str, Path]:
     """The C the build compiles, in out/src (one file per function, the shared header included) and out/include.
-    `leave_out`: more matched files to leave out than exclude.txt names (play.library). Returns {file name: where it
-    came from}."""
+    `leave_out`: more matched files to leave out than exclude.txt names (play.library). `function_headers`: the
+    project's own {function: part} (play.function_headers), over the save's, which an older save lacks. Returns
+    {file name: where it came from}."""
     progress, port = repo / "progress", repo / "port" / "wasm"
     if not (progress / "src").is_dir() or not (progress / "decompdecomp.json").is_file():
         raise NetworkError(f"{repo} has no progress/src and progress/decompdecomp.json: choose the game's save "
@@ -288,7 +289,7 @@ def gather(repo: Path, out: Path, leave_out=()) -> dict[str, Path]:
     # The decomp compiles every function with the shared header, or with its part's own when the save names one
     # (a function from the game's own source files: common_<part>.h, the manifest's function_headers).
     manifest = json.loads((progress / "decompdecomp.json").read_text(encoding="utf-8"))
-    units = manifest.get("function_headers") or {}
+    units = (manifest.get("function_headers") or {}) | (function_headers or {})
     headers = {h.name for folder in (progress / "include", port / "include") for h in folder.glob("*.h")}
     texts = own_functions(chosen, {name: kr_varargs(source.read_text(encoding="utf-8")) for name, source in chosen.items()})
     for name in chosen:
@@ -609,7 +610,7 @@ _builds_guard = threading.Lock()
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
-          library_c=None, library_names=None, recomp=None) -> Path:
+          library_c=None, library_names=None, recomp=None, function_headers=None) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
     caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
@@ -627,13 +628,14 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
         lock.acquire()
     try:
         return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
-                      library_c=library_c or {}, library_names=library_names or {}, recomp=recomp)
+                      library_c=library_c or {}, library_names=library_names or {}, recomp=recomp,
+                      function_headers=function_headers)
     finally:
         lock.release()
 
 
 def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,
-           library_names=None, recomp=None) -> Path:
+           library_names=None, recomp=None, function_headers=None) -> Path:
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
         raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
@@ -652,7 +654,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     files = _Files()
 
     log("gathering the game's C from its save")
-    sources = gather(repo, out, leave_out)
+    sources = gather(repo, out, leave_out, function_headers)
     library = _library(out, library_c or {}, sources, log)
     manifest = json.loads((repo / "progress" / "decompdecomp.json").read_text(encoding="utf-8"))
     fixed, functions = addresses(manifest)

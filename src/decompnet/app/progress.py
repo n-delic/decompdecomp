@@ -63,6 +63,11 @@ PARTIAL_FUNCTIONS = 256  # more changed functions than this: one full query beat
 VERIFICATION_PROJECTS = 2
 
 
+# "unknown": a name the reviewed-tail recovery gives an address it can't classify (reviewed_code.py); a save of a
+# project with one stopped at its own check ("symbol 'AW' has an invalid name, address, size or kind")
+SYMBOL_KINDS = ("func", "data", "string", "jtbl", "bss", "unknown")
+
+
 def verification_projects() -> int:
     try:
         requested = int(os.environ.get('DECOMP_VERIFICATION_PROJECTS', '0'))
@@ -326,7 +331,7 @@ def _manifest(files: dict[str, str], cfg: dict, known_names=()) -> dict:
         for symbol in manifest.get("symbols", []):
             if (not isinstance(symbol, dict) or not (IDENT.fullmatch(symbol.get("name", "")) or ASM_LOCAL.fullmatch(symbol.get("name", "")))
                     or not isinstance(symbol.get("address"), int) or not isinstance(symbol.get("size", 0), int)
-                    or symbol.get("kind", "data") not in ("func", "data", "string", "jtbl", "bss")):
+                    or symbol.get("kind", "data") not in SYMBOL_KINDS):
                 raise ValueError(f"symbol {symbol.get('name')!r} has an invalid name, address, size or kind")
         for note in manifest.get("notes", []):
             if (not isinstance(note, dict) or not isinstance(note.get("text"), str)

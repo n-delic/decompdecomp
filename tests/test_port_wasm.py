@@ -53,6 +53,18 @@ def test_the_build_takes_matched_c_less_what_the_host_provides_plus_the_ports_ow
     assert not (out / "src" / "func_8001E640.c").exists()
 
 
+def test_a_save_written_before_saves_named_headers_takes_the_projects_own(tmp_path):
+    """An N64 game's save from before saves named each function's header had per-part headers but no
+    function_headers: every function got the shared header and 268 files stopped at `unknown type name`. The
+    project's own mapping (play.function_headers) fills the gap."""
+    repo, manifest = save(tmp_path)
+    del manifest["function_headers"]
+    (repo / "progress" / "decompdecomp.json").write_text(json.dumps(manifest))
+    out = tmp_path / "build"
+    gather(repo, out, function_headers={"race_update": "local_source_599"})
+    assert (out / "src" / "race_update.c").read_text().startswith('#include "common_local_source_599.h"\n')
+
+
 def test_a_file_an_old_save_wrote_in_another_case_is_not_deleted_as_stale(tmp_path):
     """An old save wrote SelectStateReset.c into the build; a rename left selectStateReset.c. On a case-insensitive
     disk they are one file, and the build deleted it as stale: that function's C was gone and the build stopped."""
