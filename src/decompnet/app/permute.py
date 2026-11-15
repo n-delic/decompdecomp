@@ -26,17 +26,18 @@ import json
 import logging
 import queue
 import random
+import re
 import subprocess
 import threading
 import time
 from concurrent.futures import wait
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import decomprepair
 
-from .. import compile_timing, consoles, m2cfix, permuter_claims, scoring, seeds, toolchains
+from .. import compile_timing, consoles, m2cfix, permuter_claims, permuter_gen, scoring, seeds, toolchains
 from ..candidate_work import trial
 from ..compile_sessions import batched
 from ..forks.project import ForkError
@@ -64,6 +65,9 @@ MAX_INSNS = 400  # default size ceiling; larger functions cost more time per var
 REPAIR_MAX_INSNS = 1024  # deterministic hypotheses keep their own 32-attempt / 20-second cap
 IDLE_SECONDS = 180  # with no near misses, how long until the permuter looks again
 IDLE_LOOKS = 20  # looks in a row with nothing to do (an hour) and it's done until agents start again
+_NAME = re.compile(r"[A-Za-z_]\w*")
+_CXX = re.compile(r"::|\btemplate\s*<|\b(?:class|operator|static_cast|reinterpret_cast|this)\b")
+_COMMENT_OR_STRING = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.S)
 HOLD_SPARE_SECONDS = local_claims.HOLD_SPARE_SECONDS
 _EOF = object()
 # decomp-permuter's weights per compiler (its default_weights.toml), by the start of a toolchain's id
@@ -81,6 +85,22 @@ def weight_family(cfg: dict, vram: int | None, fork: bool, function=None) -> str
 
 def available() -> bool:
     return toolchains.installed(TOOL) is not None
+
+
+def permuter_header(header: str, source: str) -> str:
+    """The part of `header` the function's C uses (seeds.HeaderIndex), which is all decomp-permuter has to read.
+    One construct pycparser can't read anywhere in the header stopped it on every function: an x86 game's headers
+    are C++ with MSVC's words, thousands of lines of them, where one function needs a few dozen declarations.
+    MSVC's words go first (permuter_gen.msvc_as_c): `struct __declspec(align(16)) CVec4` was a struct named
+    `__declspec` to the reader, so the vector type every near miss used was left out."""
+    index = seeds.HeaderIndex(permuter_gen.msvc_as_c(header))
+    return "\n".join(d.text for d in index.used(_NAME.findall(source)))
+
+
+def is_cxx(source: str) -> bool:
+    """A function written in C++: a method or a scoped name, a template, a class, an operator, a C++ cast, `this`;
+    in its code, not in a comment or a string (`/* this adds one */` is C's)."""
+    return bool(_CXX.search(_COMMENT_OR_STRING.sub(" ", source)))
 
 
 def generator_argv() -> list[str]:
@@ -556,6 +576,23 @@ class Permuter:
         return permuter_claims.hold(self.net, agent, fn, self.seconds if seconds is None else seconds,
                                  count_turn=count_turn)
 
+    def _renew(self, agent, fn, seconds) -> bool:
+        """The turn's hold counted from now; False when it's no longer this turn's. The permuter's own workers hold
+        no claim (permuter_claims.nonexclusive: speculative work beside agents), so there's nothing to lose."""
+        if permuter_claims.nonexclusive(agent):
+            return True
+        now = time.time()
+        with self.net.project_store(fn['project_id']).tx() as db:
+            return db.execute("UPDATE claims SET expires_at=? WHERE function_id=? AND agent_id=? AND expires_at>?",
+                              (now + seconds + HOLD_SPARE_SECONDS, fn["id"], agent.id, now)).rowcount > 0
+
+    def _trial_run(self, proj, fn, fork):
+        """A fork's turn is one run of tries at its unit (ForkEngine.trial_run): built once at its end, not after
+        every variant to put the file back. Deep searches opt out (deep_permuter.Search): their one turn lasts the
+        whole search, and the unit's lock would keep agents off every function of that unit for all of it."""
+        run = getattr(self.net.forks, 'trial_run', None) if fork else None
+        return run(proj, fn["unit"]) if run else nullcontext()
+
     def _let_go(self, agent, fn) -> None:
         local_claims.release(self.net, agent, fn)
 
@@ -596,16 +633,33 @@ class Permuter:
         st.holding(fn["name"], True)
         fork = self.net.fork_slug(proj["slug"])
         from . import random_safety
+        from .progress import ProgressMoved
         rng = random.Random(f"{fn['id']}-{fn['permuted']}"+getattr(self, "random_salt", ""))
         gen = None
         header = ''
+        held = ExitStack()
         try:
             random_safety.checkpoint(self.net,fn)
+            if fork:  # its unit is held for the turn and built once at its end, not after every variant (trial_run)
+                held.enter_context(self._trial_run(proj, fn, fork))
+                # (waiting for another turn on the unit can take most of the hold: it's counted from here, and a hold
+                # that ran out meanwhile, the function an agent's now, ends the turn)
+                if not self._renew(agent, fn, seconds):
+                    return
             if available():
-                # (as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole header)
+                # (a C function's as m2c reads it: what's only for C++ made pycparser refuse a PC game's whole
+                # header; a C++ function's with its C++ branch, where its classes are)
                 header = seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
-                                      self.net._context(proj["id"], fn["unit"])["header"])
+                                      self.net._context(proj["id"], fn["unit"])["header"],
+                                      cxx=is_cxx(fn["best_source"]))
                 family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork), fn)
+                # (decomp-permuter reads only the declarations the function uses, MSVC's words rewritten: one line
+                # pycparser can't read anywhere in a PC game's header stopped it; and a PC or Xbox function's C
+                # names it as its definition does, not by its mangled symbol)
+                gen_header = permuter_header(header, fn["best_source"])
+                # (an engine without the lookup, a stand-in fork, names its functions as their C does)
+                named = getattr(self.net.forks, 'permuter_name', None) if fork else None
+                name = named(fork, fn["name"], fn["best_source"]) if named else fn["name"]
                 try:
                     gen = Generator()
                 except OSError as e:  # its environment is broken: the simple rewrites still work
@@ -632,6 +686,7 @@ class Permuter:
             frontier = self.search_frontier = Frontier()
             frontier.offer(best_src, best, rows, arch=proj['arch'])
             batches = misses = 0
+            refused, taken = None, 0  # the last refusal of a variant (NetworkError), variants the project took
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
                 if gen is not None:
                     # a batch of decomp-permuter's variants, of the C the turn started from and of the best so far in
@@ -646,7 +701,8 @@ class Permuter:
                         fn = fresh
                         fresh_proj = self.net.project_row(proj['slug'])
                         fresh_header = seeds.c_only(self.net.forks.permuter_header(fork, fn['name']) if fork else
-                                                    self.net._context(proj['id'], fn['unit'])['header'])
+                                                    self.net._context(proj['id'], fn['unit'])['header'],
+                                                    cxx=is_cxx(fn['best_source']))
                         if fresh_header != header or fresh_proj['config'] != proj['config']:
                             frontier = self.search_frontier = Frontier()
                         proj, header = fresh_proj, fresh_header
@@ -655,6 +711,7 @@ class Permuter:
                         if best is None or best == 0:
                             break
                         best_src = m2cfix.expand_macros(fn['best_source'], header)
+                        gen_header = permuter_header(header, fn['best_source'])
                         rows = repair_ranking.evidence(self.net, fn['id'], agent.id)
                         frontier.offer(best_src, best, rows, arch=proj['arch'])
                         reseed = True
@@ -668,7 +725,7 @@ class Permuter:
                         boosts = adaptive_repairs.boosts(self.net, proj, fn, rows, permuter_focus.boosts(rows))
                     # Alternate upstream defaults with focused weights: preserve an exploratory lane when
                     # the advisory mismatch category is incomplete or points at the wrong repair.
-                    job = {"header": header, "source": base, "function": fn["name"], "family": family,
+                    job = {"header": gen_header, "source": base, "function": name, "family": family,
                            "seed": rng.randrange(MAX_SEED), "count": BATCH, "weight_boosts": boosts if batches % 2 == 0 else {},
                            "trace": True}
                     if hasattr(gen, 'chunks'):
@@ -705,8 +762,21 @@ class Permuter:
                                   'lineage': lineage or [], 'base_source_sha256': hashlib.sha256(base.encode()).hexdigest(),
                                   'source_sha256': hashlib.sha256(cand.encode()).hexdigest()}
                     started = time.monotonic()
-                    with repair_trial(provenance):
-                        score = self._score(agent, proj, fn, cand, best, fork)
+                    try:
+                        with repair_trial(provenance):
+                            score = self._score(agent, proj, fn, cand, best, fork)
+                    except ProgressMoved:
+                        raise  # (stale inputs, not a refusal: _turn defers the turn)
+                    except NetworkError as e:
+                        if getattr(self.net, 'links', {}).get(proj['slug']):
+                            raise  # (a room host's answer is about the room, not this variant)
+                        # A variant the project won't take: decomp-permuter's inlining writes a helper function
+                        # beside the function, which compile_and_diff refuses in a fork. It's skipped like one that
+                        # doesn't compile; the refusal used to end the function's permuting for good (_turn) within
+                        # seconds of its first turn: 2 of 3 of an Xbox game's near misses
+                        refused = e
+                        continue
+                    taken += 1
                     if not getattr(self, 'trace_variants', False) and getattr(self, '_trial_outcome', '') != 'no_edit':
                         adaptive_repairs.record(self.net, adaptive_repairs.profile(self.net, proj, fn), focus,
                                                 provenance['family'], best, score, (time.monotonic()-started)*1000, origin="background random")
@@ -737,13 +807,18 @@ class Permuter:
                 if gen is not None and getattr(gen, 'failed', False):
                     gen.close();gen = None
                 elif gen is not None and getattr(gen, 'empty', False):break
+            if refused is not None and not taken:  # every variant refused: it's the C the turn started from
+                raise refused
         except GenerationStopped:
             pass
         finally:
-            if gen is not None:
-                gen.close()
-            st.holding(fn["name"], False)
-            self._let_go(agent, fn)
+            try:
+                if gen is not None:
+                    gen.close()
+                held.close()  # (the unit built again as its file is)
+            finally:  # (that build can fail: the function is let go all the same)
+                st.holding(fn["name"], False)
+                self._let_go(agent, fn)
 
     def _stream_variants(self, chunks, agent, proj, fn, fork):
         try:

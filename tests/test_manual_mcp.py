@@ -7,6 +7,7 @@ from decompnet.app import manual_mcp
 from decompnet.app.engine import RomNetwork
 from decompnet.app.support import Settings
 from decompnet.network import NetworkError
+from tests.test_claims import _game
 
 
 def test_credentials_are_scoped_persistent_and_revocable(tmp_path):
@@ -29,10 +30,30 @@ def test_credentials_are_scoped_persistent_and_revocable(tmp_path):
     assert manual_mcp.project_for(net, restored, second['id']) == 'two'
     manual_mcp.revoke(net, restored, agent.id)
     assert manual_mcp.project_for(net, Settings(settings.path), agent.id) is None
+    with pytest.raises(NetworkError, match='invalid API token'):
+        net.authenticate(first['token'])
+    retired = net.store.one('SELECT origin FROM agents WHERE id=?', agent.id)
+    assert retired['origin'] == 'manual-mcp:revoked'
+    replacement = manual_mcp.create(net, restored, 'one')
+    assert replacement['id'] != agent.id
     assert manual_mcp.project_for(net, restored, second['id']) == 'two'
     with net.store.tx() as db:
         db.execute('DELETE FROM projects WHERE slug=?', ('two',))
     assert manual_mcp.project_for(net, restored, second['id']) is None
+
+
+def test_revoke_releases_the_connection_claim_without_touching_other_agents(tmp_path):
+    net, _ = _game(tmp_path, [('held', 4, 'open')])
+    settings = Settings(tmp_path / 'settings.json')
+    connection = manual_mcp.create(net, settings, 'game')
+    agent = net.authenticate(connection['token'])
+    assert net.claim_row(agent, 'game', 'held')['name'] == 'held'
+    manual_mcp.revoke(net, settings, agent.id + 100)  # an unknown connection is already gone
+    assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', agent.id)
+    manual_mcp.revoke(net, settings, agent.id)
+    assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', agent.id) is None
+    with pytest.raises(NetworkError, match='invalid API token'):
+        net.authenticate(connection['token'])
 
 
 def test_server_resolves_manual_credentials_and_rejects_revoked_tokens(tmp_path, monkeypatch):
@@ -68,8 +89,13 @@ def test_server_resolves_manual_credentials_and_rejects_revoked_tokens(tmp_path,
     with pytest.raises(NetworkError):
         resolve[0](SimpleNamespace(headers={'Authorization': 'Bearer invalid'}))
     assert client.post('/api/manual-mcp', json={'action': 'revoke', 'id': agent.id}).status_code == 200
-    with pytest.raises(NetworkError, match='no longer assigned'):
+    with pytest.raises(NetworkError, match='invalid API token'):
         resolve[0](context)
+    another = client.post('/api/manual-mcp', json={'action': 'create', 'slug': 'game'}).json()
+    assert client.post('/api/delete', json={'slug': 'game'}).status_code == 200
+    assert not client.get('/api/manual-mcp').json()['connections']
+    with pytest.raises(NetworkError, match='invalid API token'):
+        net.authenticate(another['token'])
 
 
 def test_revoke_frees_only_its_connection_claims_and_keeps_attempts(tmp_path):
@@ -79,6 +105,7 @@ def test_revoke_frees_only_its_connection_claims_and_keeps_attempts(tmp_path):
         db.execute("INSERT INTO projects(id,slug,name,arch,root,config) VALUES(1,'one','one','mips',?,'{}')",(str(tmp_path),))
         for fid in (1,2):db.execute("INSERT INTO functions(id,project_id,name) VALUES(?,1,?)",(fid,'f'+str(fid)))
     own=manual_mcp.create(net,settings,'one');other=manual_mcp.create(net,settings,'one')
+    own_agent=net.authenticate(own['token'])
     with net.store.tx() as db:
         for fid,aid in ((1,own['id']),(2,other['id'])):db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fid,aid,time.time(),time.time()+1800))
         db.execute('INSERT INTO attempts(function_id,agent_id,score,source) VALUES(1,?,10,?)',(own['id'],'saved C'))
@@ -87,7 +114,7 @@ def test_revoke_frees_only_its_connection_claims_and_keeps_attempts(tmp_path):
     assert net.store.one('SELECT agent_id FROM claims WHERE function_id=2')['agent_id']==other['id']
     assert net.store.one('SELECT source FROM attempts')['source']=='saved C'
     with pytest.raises(NetworkError,match='revoked'):
-        with net.attempt_turn(net.authenticate(own['token']),net.store.one('SELECT * FROM functions WHERE id=1')):pass
+        with net.attempt_turn(own_agent,net.store.one('SELECT * FROM functions WHERE id=1')):pass
     manual_mcp.revoke(net,settings,other['id']+100)
     assert net.store.one('SELECT agent_id FROM claims WHERE function_id=2')
 

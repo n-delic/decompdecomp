@@ -78,7 +78,11 @@ NOTES_FOUND = 20  # search_notes' answer at most
 # found "nothing left to claim" among exactly the ten functions their names gave up on in earlier runs, while a new
 # Opus helper claimed at once. After that the function still comes to it last.
 SELF_RELEASE_WINDOW = RELEASE_COOLDOWN
-MACHINE_AGENTS = ("autopilot", "permuter")  # decompdecomp's own workers: their claims never mean "given up on"
+MACHINE_AGENTS = ("autopilot", "permuter", "deep-permuter")  # decompdecomp's own workers: their claims never mean "given up on"
+# (the deep permuter, the user's long search of one function, is a worker of its own, not "permuter": sharing that
+# identity let it renew or let go of the automatic permuter's claim on the same function, and a claim by one looked
+# like its own to the other, #244)
+MACHINE_AGENT_IDS = f"SELECT id FROM agents WHERE name IN ({', '.join('?' * len(MACHINE_AGENTS))})"
 # "No C makes this" (release_function's not_c): on a DS game five to seven agents in turn took each piece of another
 # function, found it couldn't be C and gave it back, saying so in a note that changed nothing. Once this many agents,
 # of this many models (one model's blind spot isn't proof), say so, it's set aside: no one is handed it again, and
@@ -408,7 +412,8 @@ def stall_line(since: int, after: int) -> str:
 def claim_query(strategy: str) -> str:
     """The automatic claim's query for one order (STRATEGIES): open functions nobody holds, the release rules'
     exclusions and preferences first, then the order. Named arguments: Network._claim_plan."""
-    # not what this agent released lately (see SELF_RELEASE_WINDOW); what it released before that last
+    # not what this agent released lately (see SELF_RELEASE_WINDOW), nor what it said no C makes (its verdict is
+    # counted: the same agent again only says it again, #181); what it released before that last
     # functions waiting for another to match come last (WAITING); the ones they wait for, and those whose
     # wait is over, first (after what the release rules put back, before model routing's escalations)
     return (f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
@@ -427,6 +432,7 @@ def claim_query(strategy: str) -> str:
             AND f.id NOT IN (SELECT value FROM json_each(:model_tried))
             AND (f.id IN (SELECT value FROM json_each(:retry_grants)) OR f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
                                AND kind='release' AND created_at > :mine))
+            AND json_extract(f.meta, '$.not_c.' || json_quote(:name)) IS NULL
             ORDER BY CASE WHEN :custom THEN 0 ELSE f.id IN (SELECT value FROM json_each(:sdk)) END,
                      CASE WHEN :custom THEN 0 ELSE f.id IN ({WAITING}) END,
                      CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
@@ -800,7 +806,7 @@ class Network:
 
     def _machine_agent_ids(self):
         """Shared identity IDs, resolved before a separate project transaction."""
-        return {row['id'] for row in self.store.all('SELECT id FROM agents WHERE name IN (?,?)', *MACHINE_AGENTS)}
+        return {row['id'] for row in self.store.all(MACHINE_AGENT_IDS, *MACHINE_AGENTS)}
 
     def _nonexclusive_agent_ids(self):
         """Resolve legacy speculative leases from the shared identity registry."""
@@ -821,7 +827,7 @@ class Network:
         clear(db, agent_ids=nonexclusive_ids)
         now = time.time()
         own = (machine_ids if machine_ids is not None else
-               {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)})
+               {r["id"] for r in db.execute(MACHINE_AGENT_IDS, MACHINE_AGENTS)})
         for row in db.execute("SELECT c.function_id, c.agent_id, f.project_id, f.name FROM claims c "
                               "JOIN functions f ON f.id=c.function_id WHERE c.expires_at < ?", (now,)).fetchall():
             if row["agent_id"] in own:  # decompdecomp's own tries (cut short by a restart): nobody gave up on it
@@ -1067,6 +1073,9 @@ class Network:
             "SELECT DISTINCT f.name FROM functions f JOIN events e ON e.project_id=f.project_id AND e.detail=f.name "
             "WHERE f.project_id=? AND f.status='open' AND e.agent_id=? AND e.kind='release' AND e.created_at > ? "
             "AND f.id NOT IN (SELECT function_id FROM claims) ORDER BY f.name", proj["id"], agent.id, cutoff)
+        waiting = self.awaiting_verdict(proj)
+        yours = [name for name, said in waiting.items() if agent.name in said]
+        mine = [r for r in mine if r["name"] not in yours]  # (said below: a release of its own it may take back)
         policy = self.selection(proj["slug"], agent.name)
         selection_note = (f" Work selection: {policy.get('strategy') or 'automatic'}"
                           + (f", below {policy['match_below']:g}% match" if policy.get("match_below") is not None else "")
@@ -1085,6 +1094,16 @@ class Network:
             lines.append(f'{len(paused)} unchanged candidates are paused after repeated releases. Quality warnings do not block work. Exhausted candidates retry when '
                          'source, build context, symbols or repair rules change. Explicit claim_function(function=name) '
                          'can still select one; do not loop on automatic claims.')
+        if yours:
+            lines.append(f"{len(yours)} you said no C makes: {', '.join(yours[:10])}{', ...' if len(yours) > 10 else ''}. "
+                         f"Your verdict is counted; each is set aside once {NOT_C_AGENTS} agents of {NOT_C_MODELS} "
+                         "models agree, or when the user sets it aside. Don't claim them again.")
+        if not held and len(yours) == n_open:  # (its own verdict on each: another's, an agent that only released
+            # them for now is still the second opinion they wait for)
+            self._tell_user_verdicts_wait(proj, waiting)
+            lines.append("Every open function is waiting on that verdict, and the user has been told: there's nothing "
+                         "left for you here. Stop working on this project.")
+            return "\n".join(lines)
         if held:
             shown = ", ".join(f"{r['name']} ({r['agent'] or '?'}, {max(0, int(r['expires_at'] - now)) // 60} min left)"
                               for r in held[:10])
@@ -1334,6 +1353,31 @@ class Network:
                               "corpora": naming.get("source_corpora", []), "evidence": "recorded SDK signature"}
         return out
 
+    def awaiting_verdict(self, proj) -> dict[str, dict]:
+        """The open functions agents said no C makes, short of the agreement that sets them aside (NOT_C_AGENTS of
+        NOT_C_MODELS): name -> their verdicts by agent."""
+        out = {}
+        for r in self.project_store(proj["id"]).all("SELECT name, meta FROM functions WHERE project_id=? AND status='open' AND "
+                                "json_extract(meta, '$.not_c') IS NOT NULL", proj["id"]):
+            out[r["name"]] = json.loads(r["meta"])["not_c"]
+        return out
+
+    def _tell_user_verdicts_wait(self, proj, waiting: dict[str, dict]) -> None:
+        """Tell the user (a notification, once per function) that agents have nothing left but functions they said no
+        C makes, which wait for the user's Set aside or another model's agreement. Agents of one model never reach
+        NOT_C_MODELS, and two such agents claimed an x86 demo's last function, a hand-written float-to-int helper, a
+        dozen times between them, each time writing the same note."""
+        with self.project_store(proj["id"]).tx() as db:
+            for name, said in waiting.items():
+                if db.execute("SELECT 1 FROM events WHERE project_id=? AND kind='not_c' AND detail LIKE ?",
+                              (proj["id"], f"{name}: waiting for you%")).fetchone():
+                    continue
+                models = sorted({v.get("model", "?") for v in said.values()})
+                self._event(db, proj["id"], None, "not_c",
+                            f"{name}: waiting for you. {len(said)} agent{'s' * (len(said) != 1)} "
+                            f"({', '.join(models)}) found no C makes it and nothing else is left: set it aside in its "
+                            f"panel, or let an agent of another model look")
+
     def claim_row(self, agent: Agent, project: str | None = None, function: str | None = None,
                   strategy: str = "easiest", *, batch_from=None):
         """Claim (or renew) a function and return its row, or None when nothing is left."""
@@ -1481,7 +1525,8 @@ class Network:
                 "batch_unit": batch_from["unit"] if batch_from is not None else None,
                 "batch_limit": batch_from["limit"] if batch_from is not None else None,
                 "model_tried": json.dumps(list(excluded)), "stalled": json.dumps(blocked), "sdk": json.dumps(list(sdk)),
-                "pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
+                "pid": proj["id"], "agent": agent.id, "name": agent.name, "kin": json.dumps(kin),
+                "cooled": now - RELEASE_COOLDOWN,
                 "overall": overall, "escalate": escalate, "weak": route == "weak", "strong": route == "strong",
                 "mine": self._own_release_cutoff(store, agent.id, now, proj), "custom": custom,
                 "below": policy.get("match_below"), "tries": policy.get("max_tries"),
@@ -1746,7 +1791,8 @@ class Network:
         """When the app starts: none of its own helpers (origin 'local') is running yet, so whatever they hold is left
         over from the last run. Agents that run elsewhere (a room's members, an agent using the MCP server) may still
         be working: theirs keep the CLAIM_TTL rule; so do the user's own claims and decompdecomp's workers'."""
-        ids = [r["id"] for r in self.store.all("SELECT id FROM agents WHERE origin='local' AND name NOT IN (?, ?, ?)",
+        ids = [r["id"] for r in self.store.all("SELECT id FROM agents WHERE origin='local' AND name NOT IN "
+                                               f"({', '.join('?' * (1 + len(MACHINE_AGENTS)))})",
                                                "you", *MACHINE_AGENTS)]
         return self.release_stopped(ids, why)
 
@@ -2105,7 +2151,10 @@ class Network:
 
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
-                prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None, exact_inputs=None):
+                prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False, prepared_assembly=False, write_wait=None, exact_inputs=None,
+                best: bool = True):
+        """An attempt. `best`: False for one whose code can't stay in the source (it breaks matched neighbours), so
+        it never becomes the best that briefs offer and a release puts back."""
         store = self.project_store(fn["project_id"])
         now = time.time()
         compiled = score is not None if compiled is None else compiled
@@ -2168,7 +2217,7 @@ class Network:
             db.execute("UPDATE functions SET attempts=attempts+1,last_checked=? WHERE id=?", (now, fn["id"]))
             from . import candidate_quality
             reported = not matched and candidate_quality.reported_source(self, current, source)
-            if score is not None and not stale and not reported:
+            if score is not None and not stale and not reported and best:
                 improved = db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=?, last_improved=CASE WHEN ? THEN ? ELSE last_improved END "
                                       "WHERE id=? AND status='open' AND (best_score IS NULL OR best_score > ?)",
                                       (score, source, agent.id, score < fn["n_insns"] * 100, now, fn["id"], score)).rowcount

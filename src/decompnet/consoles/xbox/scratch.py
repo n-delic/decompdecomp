@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import re
 import struct
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,14 +52,18 @@ CL_FLAGS = ["/nologo", "/c", "/O2", "/G6", "/GF", "/Gy", "/arch:SSE", "/W3", "/D
 
 
 def cl_flags(compiler: str, flags: list[str] = CL_FLAGS) -> list[str]:
-    """`flags` for a game's compiler: Visual C++ 7.0 and the early XDKs' builds of it have no /arch (7.1's)."""
-    return flags if compiler == "7.1" else [f for f in flags if not f.startswith("/arch:")]
+    """`flags` for a game's compiler: Visual C++ 7.0 and the early XDKs' builds of it have no /arch (7.1's, and an
+    XDK's own copy of 7.1)."""
+    is_71 = compiler == "7.1" or any(c.version == compiler and c.build.startswith(BUILD_71)
+                                     for c in kits.compilers((KIT,)))
+    return flags if is_71 else [f for f in flags if not f.startswith("/arch:")]
 # Visual C++ by the XDK build that shipped it: XDK 5849 (2003 on) is Visual C++ 7.1 (13.10.3077, the msvc pack's
 # 7.1); the XDKs before it were Visual C++ 7.0's (XDK 4627's is 13.00.9466, the pack's 7.0; the first XDKs, 3911 to
 # 4361, had earlier 13.00 builds, of which 7.0 is the nearest decompdecomp has). Later builds than 5849 are 7.1's too.
 FIRST_71 = 5233  # the first XDK whose compiler is Visual C++ 7.1
 EXACT_70 = 4627  # the XDK whose compiler is the pack's 7.0 build
 DEFAULT_COMPILER = "7.1"
+BUILD_71 = "13.10."  # Visual C++ 7.1's builds (an XDK copy's c2.dll version)
 # Data sections by name: the Xbox linker marks .rdata and .data executable too, so the flags don't tell code from data
 _DATA_NAME = re.compile(r"(?i)^(\.r?data\w*|\.bss|\.tls|\.xtlid|\$\$x\w*|\w+_RD)$")
 # Sections the XDK's big libraries link their code into (by the libraries' own names): Microsoft's code, set aside
@@ -297,6 +302,14 @@ def _xdk_compiler(build: int | None) -> kits.OwnCompiler | None:
     return next((c for at in kits.folders(KIT) if kit.build(at) == str(build) for c in kit.compilers(at)), None)
 
 
+def _own_71(build: int | None) -> kits.OwnCompiler | None:
+    """The user's XDK's own Visual C++ 7.1 (XDK `build`'s copy first, else any XDK copy's): the msvc pack's 7.1 file
+    for file, with the runtime it needs (MSVCR71.dll) beside it."""
+    kit = kits.get(KIT)
+    own = [(kit.build(at), c) for at in kits.folders(KIT) for c in kit.compilers(at) if c.build.startswith(BUILD_71)]
+    return next((c for at, c in own if at == str(build)), None) or next((c for _, c in own), None)
+
+
 def game_info(path: Path) -> dict:
     """What PC's create reads of a game (consoles/pc/scratch.py game_info), from the XBE."""
     data = program_bytes(path)
@@ -313,6 +326,15 @@ def game_info(path: Path) -> dict:
         why = (f"its libraries come from XDK {build}, whose compiler is an early Visual C++ 7.0 build: the nearest "
                f"decompdecomp has is Visual C++ 7.0 (13.00.9466), so some functions may differ by an instruction; "
                f"set up your own XDK {build} in Setup to build with its own")
+    if compiler == DEFAULT_COMPILER and sys.platform == "win32":
+        # the pack's 7.1 cl.exe doesn't start on Windows itself: its runtime (MSVCR71.dll) isn't in the pack, where
+        # wibo has it built in on Linux. The XDK's copy of the same build has it beside it (every first build of an
+        # Xbox game failed on Windows with code 4294967295)
+        if (own := _own_71(build)) is not None:
+            compiler, why = own.version, f"{why}; on Windows your XDK's own copy of it builds ({own.name})"
+        else:
+            why += ("; on Windows the msvc pack's Visual C++ 7.1 can't start (its runtime, MSVCR71.dll, isn't in the "
+                    "pack): set up your own XDK in Setup, whose copy of 7.1 has it")
     regions = ", ".join(n for bit, n in REGIONS.items() if xbe.region & bit) or "unknown region"
     title = xbe.title or path.stem
     return {"id": re.sub(r"[^a-z0-9]+", "", title.lower()) or "game", "title": title, "compiler": compiler,

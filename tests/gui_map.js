@@ -74,7 +74,7 @@ const ctx = {
 ctx.window = ctx;
 vm.createContext(ctx);
 const js = process.env.GUI_JS || path.join(__dirname, "..", "src", "decompnet", "app", "static", "js");
-for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "repository-setup", "repository-push", "steering", "pages"]) {
+for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "compiler-groups", "repository-setup", "repository-push", "steering", "pages"]) {
   vm.runInContext(fs.readFileSync(path.join(js, `${name}.js`), "utf8"), ctx, { filename: `${name}.js` });
 }
 const settle = async () => { for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r)); };
@@ -188,5 +188,16 @@ const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
   assert.equal(asked.filter((u) => u.startsWith("/api/stats")).length, 1);
   held.shift()();
   await settle();
+  // the compiler answer's survey line: a console with no compiler map says that, not "it reads MIPS code only"; a
+  // map with nothing tried yet says the survey will run
+  const evidence = document.getElementById("compilerEvidence");
+  const answer = { compiler: "gcc", flags: "", parts: [], elsewhere: [], elsewhere_count: 0, checking: false,
+    survey: {}, checks: [], unit: "source file" };
+  ctx.renderCompilerAnswer({ ...answer, compiler_map: false });
+  assert.ok(evidence.innerHTML.includes("this console has no compiler map") &&
+    !evidence.innerHTML.includes("MIPS"), evidence.innerHTML);
+  ctx.renderCompilerAnswer({ ...answer, compiler_map: true });
+  assert.ok(evidence.innerHTML.includes("not run yet: it runs once the game uses two compilers"), evidence.innerHTML);
+
   console.log("ok");
 })().catch((e) => { console.error(e); process.exit(1); });

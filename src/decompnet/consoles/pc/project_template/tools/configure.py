@@ -44,6 +44,8 @@ parser.add_argument("--wibo", default="", help="runs the Windows compilers on Li
 parser.add_argument("--own", default=[], action="append",
                     help="a compiler of the user's own (a kit: decompdecomp's kits/): VERSION=RUNNER,CL[,INCLUDE...], "
                          "RUNNER wibo, wine or none")
+parser.add_argument("--facts", action="store_true", help="only bring build/VERSION/configure.facts up to date (the "
+                                                         "build runs this, see facts())")
 args = parser.parse_args()
 WINE_FROM = 14  # without $DECOMPNET_WINE_PACKS: the first Visual C++ wibo can't run (2015 and newer), which wine runs
 # the --msvc folders whose compilers run through wine, not wibo (decompdecomp sets it from its toolchains' `wine`, as
@@ -59,6 +61,7 @@ CONFIG = Path("config") / VERSION / "functions.json"
 FILE_COMPILERS = CONFIG.parent / "file_compilers.json"  # {"src/auto/text_00401000.cpp": "7.1"}: files built with another
 FILE_FLAGS = CONFIG.parent / "file_flags.json"  # {"src/auto/text_00401000.cpp": ["/Oy-"]}: files built with more flags
 BUILD = Path("build") / VERSION
+FACTS = BUILD / "configure.facts"
 
 
 def q(argv: list[str]) -> str:
@@ -137,10 +140,30 @@ def source_of(unit: str) -> str:
     return cpp.as_posix() if cpp.exists() or not cpp.with_suffix(".c").exists() else cpp.with_suffix(".c").as_posix()
 
 
+def facts(headers: list[str], sources: list[str]) -> str:
+    """What build.ninja is made from besides this file, the config and the compiler maps: which source files and
+    headers there are, not what's in them. build.ninja depended on every one of them, so each edit of a source wrote
+    the whole build again before compiling: on a game of 1,400 units, 3 s of every compile, an agent's or each of the
+    permuter's variants (which judge in under one). Now the build brings this file up to date first (rule facts,
+    restat): it changes, and configure runs, only when a file is added or removed."""
+    return json.dumps({"headers": headers, "sources": sources}, indent=0) + "\n"
+
+
+def write_facts(text: str) -> None:
+    """Written only when it changes: its date is what tells ninja whether build.ninja is out of date."""
+    if not FACTS.is_file() or FACTS.read_text(encoding="utf-8") != text:
+        FACTS.parent.mkdir(parents=True, exist_ok=True)
+        FACTS.write_text(text, encoding="utf-8")
+
+
 def main() -> None:
+    headers = [p.as_posix() for p in files("include", (".h", ".hpp"))]
+    sources = [s.as_posix() for s in files("src", (".c", ".cpp"))]
+    write_facts(facts(headers, sources))
+    if args.facts:
+        return
     info = json.loads(CONFIG.read_text(encoding="utf-8"))
     units = info["units"]
-    headers = [p.as_posix() for p in files("include", (".h", ".hpp"))]
     # written aside and put in place whole: a configure that stops half way (a driver it can't read) leaves the last
     # build.ninja, so ninja runs this again and shows why
     with open("build.ninja.tmp", "w", encoding="utf-8") as f:
@@ -152,6 +175,8 @@ def main() -> None:
         n.rule("cl", q(compiler).replace("$", "$$") + " $runner --compiler $cl $includes --output $out "
                "--source $in -- " + q(CL_FLAGS).replace("$", "$$") + " $cflags")
         n.rule("configure", f"{PY} tools/configure.py " + q(sys.argv[1:]).replace("$", "$$"), generator=True)
+        n.rule("facts", f"{PY} tools/configure.py " + q([*sys.argv[1:], "--facts"]).replace("$", "$$"), restat=True,
+               description="configure: which files there are")
 
         targets = [(BUILD / "target" / f"{u}.obj").as_posix() for u in units]
         n.build(targets, "delink", [CONFIG.as_posix(), "tools/delink.py"])
@@ -195,8 +220,19 @@ def main() -> None:
         n.build(programs, "rebuild", [*targets, *objs],
                 implicit=[CONFIG.as_posix(), *exes, "tools/rebuild.py", "tools/delink.py"])
         n.build("rebuild", "phony", programs)
-        n.build("build.ninja", "configure", ["tools/configure.py", CONFIG.as_posix(), *headers,
-                                             *[s.as_posix() for s in files("src", (".c", ".cpp"))],
+        # The facts look again when a file they list changes, or a folder holding them does (a file added or
+        # removed changes its folder's date: one added on its own was never seen), and change only when what they
+        # say does (restat). Each is also a phony with no inputs, so one that's gone makes the facts out of date
+        # instead of stopping ninja before configure could run ("needed by configure.facts, missing"); a phony,
+        # not "always look", so a dry run (ForkProject._no_work) still says "no work to do" of a built object
+        folders = sorted({p.as_posix() for top in ("src", "include") if Path(top).is_dir()
+                          for p in (Path(top), *Path(top).rglob("*")) if p.is_dir()})
+        looked_at = list(dict.fromkeys([*headers, *sources, *folders]))
+        for p in looked_at:
+            n.build(p, "phony")
+        n.build(FACTS.as_posix(), "facts", looked_at, implicit=["tools/configure.py"])
+        # (the harness files stay: configure reads what's in them, a driver's HarnessEntry and HARNESS-LINK lines)
+        n.build("build.ninja", "configure", ["tools/configure.py", CONFIG.as_posix(), FACTS.as_posix(),
                                              *[p.as_posix() for p in (FILE_COMPILERS, FILE_FLAGS) if p.exists()],
                                              *harness_files])
         n.default(["prepare"])

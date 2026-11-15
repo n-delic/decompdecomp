@@ -53,10 +53,20 @@ class EditMixin:
                 return self._add_function(proj, fn, new, syms, agent.id, new_name)
         if inside and not by_you and (why := self._split_runs_on(proj, fn, addr)):
             raise NetworkError(why)
-        head, tail = self._cut(proj, fn, addr, new_name, syms, agent.id, "split", f"{fn['name']} / {new_name}")
+        head, tail, head_padding, tail_padding = self._cut(proj, fn, addr, new_name, syms, agent.id, "split",
+                                                            f"{fn['name']} / {new_name}")
+        if head_padding and tail_padding:
+            cont = "Both halves were pure alignment padding and are set aside; there is nothing to continue with."
+        elif head_padding:
+            cont = (f"The head was pure alignment padding and is set aside; continue with {new_name} "
+                    "(get_function shows its assembly).")
+        elif tail_padding:
+            cont = (f"The tail was pure alignment padding and is set aside; continue with {fn['name']} "
+                    "(get_function shows its new assembly).")
+        else:
+            cont = f"Continue with {fn['name']} (get_function shows its new assembly)."
         return (f"✅ split: {fn['name']} is now {console.function_insns(head)} instructions; {new_name} at "
-                f"0x{addr:08X} has {console.function_insns(tail)}. Continue with {fn['name']} "
-                "(get_function shows its new assembly).")
+                f"0x{addr:08X} has {console.function_insns(tail)}. {cont}")
 
     def _split_runs_on(self, proj, fn, addr: int) -> str | None:
         """Why an agent's cut at `addr` would leave the first part running on into the second, or None.
@@ -120,8 +130,10 @@ class EditMixin:
 
     def _cut(self, proj, fn, addr: int, new_name: str, syms: SymbolTable, agent_id: int | None, kind: str, detail: str,
              tail_meta: dict | None = None):
-        """Cut a MIPS function in two at `addr`: the head keeps its row, the tail becomes `new_name` (status 'asm'
-        with `tail_meta` when it isn't code agents should work on). Returns (head, tail)."""
+        """Cut a function in two at `addr`: the head keeps its row, the tail becomes `new_name` (status 'asm'
+        with `tail_meta` when it isn't code agents should work on). Returns (head, tail, head_padding, tail_padding),
+        where each `*_padding` flag says whether that side trimmed down to pure alignment padding and was retired
+        ('asm') rather than left open."""
         console = self.console(proj)
         try:
             head, tail = console.split_function(fn, addr, new_name)
@@ -133,20 +145,48 @@ class EditMixin:
             old.size = head.size
         th, tt = self._make_target(proj, head, syms), self._make_target(proj, tail, syms)
         with self.project_store(proj['id']).tx() as db:
-            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, best_source=NULL "
-                       "WHERE id=?", (head.size, len(head.lines), th.code, json.dumps(th.to_json()),
-                                      self._asm_source(head), fn["id"]))
+            # The head's extent changed, so its old best attempt no longer describes it (reset seed/best, not just
+            # the score). A side trimmed down to pure alignment padding (the processor's nop/filler) is not a
+            # function to match — mark it done ('asm'), with an alignment-padding reason for its page, so it leaves
+            # the open pool instead of lingering as an open sliver. Both halves are checked: splitting leading
+            # padding off a function can leave a padding head, and splitting into trailing padding leaves a padding
+            # tail. The console asks the right reader for the function's mode (GBA: ARM vs Thumb).
+            head_padding = bool(head.size) and console.is_padding(th.code, fn)
+            # a tail that starts in the head's branch delay slot is not padding: that first word belongs to the
+            # head, so don't retire the tail even when its bytes are all the processor's nop.
+            tail_padding = (bool(tail.size) and console.is_padding(tt.code, fn)
+                            and not console.ends_in_delay_branch(th.code, fn))
+            meta = console.function_meta(tail)
+            if tail_meta:
+                meta.update(tail_meta)
+            if tail_padding and not (tail_meta and tail_meta.get("asm_code")):
+                # a caller (resolve_boundary) that already gave a reason keeps it; only unexplained
+                # zero fill gets the generic alignment-padding label.
+                meta["asm_code"] = "alignment padding (all nops)"
+            head_meta = json.loads(fn["meta"] or "{}")
+            if head_padding:
+                head_meta["asm_code"] = "alignment padding (all nops)"
+            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, "
+                       "best_source=NULL, status=?, meta=? WHERE id=?",
+                       (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
+                        console.function_asm(head), "asm" if head_padding else fn["status"],
+                        json.dumps(head_meta) if head_meta else None, fn["id"]))
+            if head_padding:
+                # the head is retired (set aside as padding); an agent must not keep holding a dead
+                # sliver and get it handed back on the next claim (as set_aside_by_you also deletes it).
+                db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
                        "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (proj["id"], new_name, tail.size, console.function_insns(tail), tt.code, json.dumps(tt.to_json()),
                         console.function_asm(tail), None, fn["unit"], addr, tail.rom,
-                        "asm" if tail_meta else console.function_status(tail), json.dumps(tail_meta) if tail_meta else None))
+                        "asm" if (tail_meta or tail_padding) else console.function_status(tail),
+                        json.dumps(meta) if meta else None))
             db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=?", (head.size, proj["id"], fn["name"]))
             db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                        (proj["id"], new_name, addr, tail.size, "func"))
             self._event(db, proj["id"], agent_id, kind, detail)
         self._xrefs.pop(proj["id"], None)
-        return head, tail
+        return head, tail, head_padding, tail_padding
 
     def _bare_return(self, proj, fn) -> bool:
         """Whether matched `fn` is only a return and its delay slot that nothing calls or points at: the end of the

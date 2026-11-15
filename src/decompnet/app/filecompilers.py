@@ -5,7 +5,8 @@ project-mode side of compilermap.py and app/rangecheck.py.
 A project's source file is a run of neighbouring functions (PC: about 4 KiB) that its build gives one compiler, so
 the file is the unit of evidence here, as the function is in a ROM project:
 - what the program says: a PC program's Rich header counts the files each Visual C++ build compiled
-  (Console.program_compilers); those are the compilers the survey tries;
+  (Console.program_compilers); those are the compilers the survey tries. A DS or GameCube/Wii program doesn't say:
+  there the survey tries the project's own compilers (Console.project_compilers), nearest versions first;
 - the judge's survey: each file with C in it built with each of those compilers in turn (ForkEngine.file_scores,
   the file keeping its own): a function that matches with another compiler and not with the file's own confirms
   that compiler for the file;
@@ -33,6 +34,7 @@ from .rangecheck import MAX_TASKS, REACH, Step, evaluate
 
 log = logging.getLogger("decompdecomp")
 SURVEY_FILES = 60  # files a survey run builds (each once per compiler it tries)
+SURVEY_COMPILERS = 6  # a project's own compilers a survey tries where its program names none: nearest versions first
 STRETCHES_SHOWN = 30
 OPEN = ("checking", "waiting")
 
@@ -75,10 +77,23 @@ class FileCompilers:
         return out
 
     def candidates(self, slug: str) -> list[str]:
-        """The compilers the survey tries: what the program says built it (installed), and the files' own."""
+        """The compilers the survey tries: what the program says built it (installed), and the files' own; where it
+        says nothing (DS, GameCube/Wii), the project's compilers, nearest to its own first."""
         _, fp, cfg = self.net.forks.get(slug)
-        said = [c for c, _, _, installed in consoles.get(cfg.get("platform")).program_compilers(fp) if installed]
-        return list(dict.fromkeys([*said, *(own for *_, own in self._files(slug))]))
+        console = consoles.get(cfg.get("platform"))
+        said = [c for c, _, _, installed in console.program_compilers(fp) if installed]
+        own = [own for *_, own in self._files(slug)]
+        if said:
+            return list(dict.fromkeys([*said, *own]))
+        known = [c.id for c in console.project_compilers(fp)]
+        current = console.file_compiler(fp, "")
+        if current not in known:  # (a project whose own compiler isn't one of its build's: a file's may be)
+            current = next((c for c in own if c in known), None)
+        if current in known:
+            # the console lists its versions oldest first: walk out from the project's own, as try_compiler's "all" does
+            order = {c: k for k, c in enumerate(known)}
+            known.sort(key=lambda c: abs(order[c] - order[current]))
+        return list(dict.fromkeys([*known[:SURVEY_COMPILERS], *own]))
 
     # ------------------------------------------------------------------ the map
 

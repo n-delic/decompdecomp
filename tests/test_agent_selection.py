@@ -88,7 +88,7 @@ def test_team_claim_transmits_the_workers_policy(net):
     link.net, link.slug = net, 'game'
     requests = []
     link._req = lambda method, path, body: requests.append(body) or {'function': 'large'}
-    assert link.claim(a, None, 'easiest') == 'large'
+    assert link.claim(a, None, 'easiest') == ('large', '')
     assert requests[0]['selection'] == {'strategy': 'hardest', 'match_below': 60.0}
 
 

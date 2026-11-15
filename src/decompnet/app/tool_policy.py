@@ -155,3 +155,15 @@ def record(net, agent, slug, name, *, count=True):
         db.execute('INSERT INTO agent_tool_task_usage VALUES(?,?,1) ON CONFLICT(name,task) DO UPDATE SET calls=calls+1', (name, task))
         db.execute('INSERT INTO agent_tool_usage VALUES(?,1,?) ON CONFLICT(name) DO UPDATE SET '
                    'calls=calls+1,last_used=excluded.last_used', (name, time.time()))
+
+
+def flush(net):
+    """Nothing to write: record() counts each call in agent_tool_usage as it happens. (Kept for callers of the
+    buffered counting upstream added, so quitting can still ask for it.)"""
+
+
+def usage(net):
+    """Each tool's recorded calls and last use."""
+    ensure(net)
+    flush(net)
+    return {r['name']: dict(r) for r in net.store.all('SELECT * FROM agent_tool_usage')}

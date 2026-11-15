@@ -314,3 +314,22 @@ def test_child_python_uses_this_checkout_after_changing_directory(tmp_path):
     result = subprocess.run([sys.executable, '-c', 'import decompnet; print(decompnet.__file__)'],
                             cwd=tmp_path, capture_output=True, text=True, check=True)
     assert Path(result.stdout.strip()).resolve() == Path(__file__).resolve().parents[1] / 'src/decompnet/__init__.py'
+
+
+def test_the_database_keeps_its_planner_statistics_up_to_date(tmp_path, monkeypatch):
+    """Hundreds of projects grow the tables the planner chooses indexes for: it optimizes on opening, and the
+    autosave asks it again hourly, never failing the autosave."""
+    from decompnet.app import saves
+    from decompnet.store import ANALYSIS_LIMIT
+
+    store = Store(tmp_path / "app.db")
+    assert store.conn.execute("PRAGMA analysis_limit").fetchone()[0] == ANALYSIS_LIMIT
+    store.optimize()
+    asked = []
+    net = RomNetwork(tmp_path / "app2.db", tmp_path)
+    monkeypatch.setattr(net.store, "optimize", lambda: asked.append(1) or (_ for _ in ()).throw(OSError("busy")))
+    autosave = saves.Autosave(net)
+    autosave.optimized -= saves.Autosave.OPTIMIZE_SECONDS + 1
+    autosave.stop.wait = lambda seconds: autosave.stop.set()  # one pass
+    autosave._loop()
+    assert asked == [1]

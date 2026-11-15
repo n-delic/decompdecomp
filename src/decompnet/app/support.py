@@ -173,6 +173,11 @@ class Jobs:
         log.check_cancel = check_cancel
         log.cancel_event = cancel
 
+        def progress(values: dict) -> None:
+            job["progress"] = dict(values)
+
+        log.progress = progress
+
         def run():
             job["thread_id"] = threading.get_native_id()
             try:

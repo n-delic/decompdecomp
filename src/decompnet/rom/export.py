@@ -378,7 +378,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
             as_fallback.append((f["name"], "its C also defines other functions; split their bodies into separate source files"))
             f["kind"] = "asm"
             continue
-        linked = match.link(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), net.reader(proj))
+        linked = match.link(compiled.obj, row["name"], net._rom_target(row), net.symbols(proj["id"]), net.reader(proj, row))
         if not linked.exact:
             as_fallback.append((f["name"], "no longer matches"))
             f["kind"] = "asm"

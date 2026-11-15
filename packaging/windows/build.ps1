@@ -1,4 +1,4 @@
-# Build the Windows portable ZIP and setup bundle used by the release workflow. It installs missing Microsoft runtimes before running
+# Build the Windows setup bundle and portable ZIP used by the release workflow. Setup installs missing Microsoft runtimes before running
 # the app's MSI. WiX 3 is used because it does not require accepting the WiX 7 Open Source Maintenance Fee agreement.
 [CmdletBinding()]
 param([switch]$SkipInstallSmoke, [switch]$PortableOnly)
@@ -49,6 +49,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "uv pip install failed with exit code $LASTEXITCODE" }
     & (Join-Path $bundlePython 'python.exe') (Join-Path $repoRoot 'packaging/stamp_build.py') $repoRoot $packages
     if ($LASTEXITCODE -ne 0) { throw 'Could not stamp package build identity.' }
+    # uv's console-script wrappers in packages/bin hard-code this build folder's python.exe, and each dist-info's
+    # direct_url.json names the build machine's temp path: both are wrong once installed or extracted elsewhere. The
+    # app starts through decomp-launch.pyw and runs its tools as modules, so only ninja.exe (a real binary) stays.
+    Get-ChildItem -Path $packages -Filter 'direct_url.json' -File -Recurse | Remove-Item -Force
+    $packageBin = Join-Path $packages 'bin'
+    if (Test-Path -LiteralPath $packageBin) {
+        Get-ChildItem -LiteralPath $packageBin -Filter '*.exe' -File | Where-Object Name -ne 'ninja.exe' | Remove-Item -Force
+    }
     Copy-Item -LiteralPath (Get-Command uv).Source -Destination (Join-Path $app 'uv.exe') -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'src/decompnet/app/static/favicon.ico') -Destination (Join-Path $app 'decompdecomp.ico') -Force
 
@@ -82,7 +90,7 @@ raise SystemExit(main())
     }
     Get-ChildItem -Path $app -Filter '__pycache__' -Directory -Recurse | Remove-Item -Recurse -Force
 
-    # Build from the same runtime as the installer, then test after ZIP extraction and relocation.
+    # Build from the same runtime as Setup, then test after ZIP extraction and relocation.
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     if (-not (Test-Path -LiteralPath $compiler)) { throw 'The portable launcher needs the .NET Framework C# compiler.' }
     & $compiler /nologo /target:winexe /platform:x64 /reference:System.Windows.Forms.dll `
@@ -95,6 +103,8 @@ raise SystemExit(main())
     }
     $portable = Join-Path $dist "decompdecomp-$version-windows-x64-portable.zip"
     Compress-Archive -Path (Join-Path $app '*') -DestinationPath $portable -Force
+    # the portable README tells people to extract the ZIP; Setup's MSI is harvested from the same folder below
+    Remove-Item -LiteralPath (Join-Path $app 'README.txt') -Force
     $relocated = Join-Path $work 'relocated portable app'
     Expand-Archive -LiteralPath $portable -DestinationPath $relocated
     $portableRun = Start-Process -FilePath (Join-Path $relocated 'decompdecomp.exe') `

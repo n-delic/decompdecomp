@@ -16,7 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, Field
 
-from .. import __version__, agents, candidate_quality, claim_stalls, consoles
+from .. import __version__, agents, arch, candidate_quality, claim_stalls, consoles
 from ..network import CLAIM_ORDERS, Agent, Network, NetworkError
 from ..release_receipts import operation as release_operation
 from . import (
@@ -102,7 +102,7 @@ one claim; one function back is normal.)
 
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours with it (small
    functions mostly match on the first try): assembly, location, calls, data it uses, the likely layouts of the
-   structs it's handed (guess_struct shows one as C), the best previous attempt and notes (start from those!), a
+   structs it's handed, the best previous attempt and notes (start from those!), a
    machine draft (m2c), and identical matched code if any. The machine draft's control flow and arithmetic are
    usually right, its types and names usually wrong: start from it and fix those. redraft(function, context)
    makes it again with a struct or prototype you worked out.
@@ -117,8 +117,7 @@ one claim; one function back is normal.)
    structs you worked out, rename_symbol for functions/data whose purpose is now clear, and share_knowledge
    for a convention every agent on this game should know (it reaches them once a model other than yours agrees).
    Right C that can't match because the project's compiler or flags look wrong? search_flags(function) tries
-   its compiler's flags at once, try_compiler(...) other compilers; then suggest(...) what matches to the user. The function runs on past its end into padding, linker
-   leftovers or data? report_boundary(...) where it really ends, then work on as it is.
+   its compiler's flags at once, try_compiler(...) other compilers; then suggest(...) what matches to the user.
 5. compile_and_diff says when to move on ({budget}): then
    release_function with precise notes (what you tried, what is left) and claim the next one. Before
    that, compile the next step instead of releasing. A direct callee blocks work?
@@ -130,6 +129,13 @@ one claim; one function back is normal.)
 Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project
 (another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief in your messages: work, don't narrate.
 """
+
+# What a ROM helper is told when its processor has the reader (never a tool the game's console doesn't offer)
+WORK_STRUCTS = """\
+The brief says when a function is handed a struct: guess_struct(function, "arg0") shows one as C."""
+WORK_BOUNDARY = """\
+The function runs on past its end into padding, linker leftovers or data? report_boundary(...) where it really
+ends, then work on as it is."""
 
 # A helper started on "make matched code readable" (options task=readable), in any project (app/readable.py);
 # {names}: step 3, as the project's mode has it (READABLE_ROM, READABLE_FORK)
@@ -205,9 +211,7 @@ neighbours may come along in one claim; one function back is normal.)
 6. compile_and_diff says when to move on ({budget}): then
    release_function with precise notes (what you tried, what is left) and claim the next. Before that,
    compile the next step instead of releasing; sure that no C makes its code at all (hand-written
-   assembly): not_c=true, saying why. Part of another function the analysis cut (no prologue, registers
-   the code before set, a switch's cases in the next symbol)? join_functions(it, the other part, why), so it
-   becomes one whole function. Very large functions: get the structure right first; a near miss
+   assembly): not_c=true, saying why. Very large functions: get the structure right first; a near miss
    is worth the extra compiles. A direct callee blocks work?
    release_function(needs=that one) allows one pivot per unchanged input, respecting pauses.
 
@@ -217,6 +221,16 @@ finished decomp of this game, the internet): a match must come from your own C. 
 have written: match the file's style and names.
 Guides: {guides}. Be brief in your messages: work, don't narrate.
 """
+
+# What a fork whose console can join functions is told (the base prompt names no tool its console lacks)
+FORK_JOIN = """\
+Part of another function the analysis cut (no prologue, registers the code before set, a switch's cases in the
+next symbol)? join_functions(it, the other part, why), so it becomes one whole function."""
+
+# What a ROM helper whose engine can join functions is told (the base prompt names no tool its engine lacks)
+ROM_JOIN = """\
+Part of another function the analysis cut (no prologue, registers the code before set, a switch's cases in the
+next symbol)? join_functions(it, the other part, why), so it becomes one whole function."""
 
 
 REPAIR_GUIDANCE = """\
@@ -680,16 +694,43 @@ FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
 
 
-def tool_names(fork: bool, console=None, ltcg: bool = False) -> list[str]:
+def _rom_joins() -> bool:
+    """Whether the ROM engine can join functions. #192 adds EditMixin.join_functions, which is enough on its own;
+    an engine whose handler has another name sets RomNetwork.joins_functions."""
+    return bool(getattr(RomNetwork, "joins_functions", False)) or callable(getattr(RomNetwork, "join_functions", None))
+
+
+def _supports(console, name: str, fork: bool) -> bool:
+    """Whether `console` can do `name` in this kind of project. A tool no console lacks keeps its place."""
+    if name == "join_functions":
+        # Project mode's joins are the console's (Console.join_functions); a ROM's are the engine's (#192).
+        return console.joins_functions if fork else _rom_joins()
+    if name == "report_boundary":
+        return console.reports_boundaries if fork else arch.BOUNDARIES in console.features
+    if name == "get_class":
+        return console.reads_classes
+    if name == "guess_struct":
+        return console.reads_structs
+    if name == "compiler_map":
+        return console.file_compilers if fork else arch.COMPILER_MAP in console.features
+    return True
+
+
+def tool_names(fork: bool, console=None, ltcg: bool = False, scratch: bool = True) -> list[str]:
     """The tools that make sense for a project: forks and ROM projects share the core loop. A game started from
     scratch in project mode has those of ROM projects its console makes work there too (Console.own_tools: PC's
-    redraft and search_flags)."""
-    skip = ROM_ONLY - (console.own_tools if console is not None else frozenset()) if fork else FORK_ONLY
-    return [n for n in HANDLERS if n not in skip and (ltcg or n not in LTCG_ONLY)]
+    redraft and search_flags). A tool its console can't do (a project mode's join or boundary, a processor without
+    the reader for classes or structs, a compiler map), or a ROM join its engine can't make, isn't offered, so its
+    prompt and schema don't either."""
+    own = console.own_tools if console is not None and scratch else frozenset()
+    skip = ROM_ONLY - own if fork else FORK_ONLY
+    names = [n for n in HANDLERS if n not in skip and (ltcg or n not in LTCG_ONLY)]
+    return [n for n in names if console is None or _supports(console, n, fork)]
 
 
 def project_tools(net: RomNetwork, slug: str | None, agent=None, include_disabled=False) -> list[str]:
-    """tool_names for a project (None: no project yet)."""
+    """tool_names for a project (None: no project yet), from the console its settings name, less the optional tools
+    Agents & models turned off for every helper or for `agent` (include_disabled: all of them, for that page)."""
     # Discovery needs the project kind, not a saved-code recheck. fork_slug() uses RomNetwork._project(), which
     # synchronizes progress even for ROM projects; two slow lists can occupy both MCP metadata workers and block
     # initialization too. Actual work tools still synchronize through the ordinary project/invocation paths.
@@ -698,14 +739,20 @@ def project_tools(net: RomNetwork, slug: str | None, agent=None, include_disable
         cfg = net.cfg(proj) if proj is not None else {}
     except NetworkError:
         return []
-    fork = cfg.get('kind') == 'fork'
-    cfg = cfg if fork else {}
-    from ..forks.project import ForkProject
+    if proj is None:
+        names = tool_names(False)
+    else:
+        fork = cfg.get('kind') == 'fork'
+        console = consoles.of(cfg)
+        from ..forks.project import ForkProject
+        manifest = (ForkProject(proj['root'], create_state=False).manifest or {}) if fork and cfg.get("origin") == "scratch" else {}
+        # #256: only the tools the game's console can do (a join, a boundary report, classes, structs, a map)
+        names = tool_names(fork, console if console.id or console.arch else None, bool(manifest.get("ltcg")),
+                           scratch=cfg.get("origin") == "scratch")
+    if include_disabled:
+        return names
     from .tool_policy import visible
-    manifest = (ForkProject(proj['root'], create_state=False).manifest or {}) if fork and cfg.get("origin") == "scratch" else {}
-    names = tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None,
-                       bool(manifest.get("ltcg")))
-    return names if include_disabled else visible(net, slug, names, agent)
+    return visible(net, slug, names, agent)
 
 
 def _named(net: RomNetwork, agent: Agent, slug: str, args: dict, tool="") -> dict:
@@ -829,6 +876,8 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     _data_agents().guard(net,agent,slug,name,args)
     _port_agents().guard(net,agent,slug,name,args)
     boundary_investigations.guard(net,agent,slug,name,args)
+    if name not in project_tools(net, slug, include_disabled=True):
+        raise NetworkError(_unoffered(net, slug, name))  # #256: an old prompt or a cached tool list
     pending = getattr(net, '_pending_tool_handshakes', set())
     handshake = (agent.id, slug) in pending
     if handshake and name != 'project_info':
@@ -875,6 +924,21 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     finally:
         if budget:
             budget.end(result or '')
+
+
+def _unoffered(net: RomNetwork, slug: str, name: str) -> str:
+    """Why an old prompt or a cached tool list calling `name` is answered instead of run."""
+    console = consoles.of(net.cfg(net._project(slug)))
+    where = f"{console.name} projects" if console.name else "this project"
+    subject = "its console"
+    why = {"join_functions": "can't join functions yet", "report_boundary": "can't report function ends yet",
+           "get_class": "can't read C++ classes yet", "guess_struct": "can't read struct layouts yet",
+           "compiler_map": "can't read a compiler map yet"}.get(name)
+    if name == "join_functions" and not net.fork_slug(slug):
+        subject, why = "the ROM engine", "can't join functions yet"  # ROM joins are the engine's (#192), not a console's
+    return (f"{name} isn't offered in {where}: " + (f"{subject} {why}" if why else "use the tools you were given")
+            + " (ROADMAP.md says what's planned).")
+
 
 
 def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
@@ -1155,7 +1219,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False, move_on: bool = False, next_experiment: dict | None = None, claim_token: str = "") -> str:
         """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
         tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
-        the move-on rule), it answers once with what to try instead; call it again to release anyway.
+        the move-on rule), it answers once with what to try instead; call it again to release anyway. A release with
+        no compile since you claimed it is not taken, however often you ask: compile first, or end your session.
 
         Args:
             function: the function you hold

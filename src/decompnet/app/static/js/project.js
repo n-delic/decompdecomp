@@ -92,6 +92,7 @@ async function openProject(slug, tab = "overview") {
     showProjectLoadError(slug, e, "Reading project summary or app settings", () => openProject(slug, tab));
     return;
   }
+  if (S.ov.missing) { renderMissingProject(S.ov); return; }
   document.querySelectorAll("#ptabs [data-ptab]").forEach((a) => { a.href = `#/p/${slug}/${a.dataset.ptab}`; });
   const fork = S.ov.kind === "fork";
   $("mapTitle").textContent = fork ? "Function map" : "ROM map";
@@ -244,6 +245,23 @@ document.addEventListener("visibilitychange", () => {
   openStream();
   livePollSoon();
 });
+
+
+/* The project's folder was deleted: show why instead of a page whose polls and maps need it, with the way to remove
+   its database records (the only thing left). */
+function renderMissingProject(ov) {
+  renderHeader(ov);
+  markNav();
+  $("ptabs").hidden = true;
+  $("forkSetup").hidden = true;
+  $("phStart").hidden = $("phExport").hidden = $("phTogether").hidden = true;
+  document.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = true; });
+  const notice = $("compilerNotice");
+  notice.hidden = false;
+  notice.className = "notice bad";
+  setHtml(notice, `<span><b>This project's folder is missing.</b> ${esc(ov.missing)}</span><span class="grow"></span><button class="primary small-btn" id="missingRemove" type="button">Remove project…</button>`);
+  $("missingRemove").onclick = () => removeMissingProject(ov);
+}
 
 function setTab(tab) {
   if(tab!=='rom' && typeof stopRomAudioBrowser==='function')stopRomAudioBrowser();
@@ -828,7 +846,7 @@ function renderNext(ov) {
   if (w.n || !compilerOk || !S.st) { box.hidden = true; return; }
   const ap = ov.autopilot;
   const steps = [`<span class="ok">✓</span> ${ov.kind === "fork" ? "Project set up" : "Game analysed"}: ${plural(ov.functions, "function")}`];
-  if (ap) steps.push(ap.state === "running" ? `<span class="spin-dot"></span> Autopilot trying machine drafts` : `<span class="ok">✓</span> Autopilot: ${ap.matched.toLocaleString()} free match${ap.matched === 1 ? "" : "es"}`);
+  if (ap) steps.push(ap.state === "running" ? `<span class="spin-dot"></span> ${ap.phase === "queued" ? "Autopilot waiting for its turn" : "Autopilot trying machine drafts"}` : `<span class="ok">✓</span> Autopilot: ${ap.matched.toLocaleString()} free match${ap.matched === 1 ? "" : "es"}`);
   steps.push(`<span class="todo">○</span> Agents`, `<span class="todo">○</span> Export`);
   box.hidden = false;
   // the header's Start agents is the one place agents start from: this only points there

@@ -3391,3 +3391,25 @@ def test_a_judge_inside_a_tool_call_reads_the_folder_through_the_calls_own_check
         pass
     assert len(forced) == 2
     assert getattr(worker.local, 'checked_around', None) is None
+
+
+def test_the_autosave_skips_a_project_whose_folder_was_deleted(project, monkeypatch):
+    """#265: a project whose folder is gone has nothing to save into, only records to remove."""
+    net, _, _ = project
+    shutil.rmtree(net._project("game")["root"], ignore_errors=True)
+    monkeypatch.setattr(net, "project_missing", lambda row: "Its folder is missing.")
+    synced = []
+    monkeypatch.setattr(net.progress, "sync", lambda slug, **kw: synced.append(slug))
+    saves.Autosave(net).run_once()
+    assert synced == []
+
+
+def test_a_folder_check_that_fails_doesnt_stop_the_autosave(project, monkeypatch):
+    """Review of #279: one failing folder check mustn't end the pass; the project counts as present."""
+    net, _, _ = project
+    shutil.rmtree(net._project("game")["root"], ignore_errors=True)
+    monkeypatch.setattr(net, "project_missing", lambda row: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    synced = []
+    monkeypatch.setattr(net.progress, "sync", lambda slug, **kw: synced.append(slug))
+    saves.Autosave(net).run_once()
+    assert synced == ["game"]

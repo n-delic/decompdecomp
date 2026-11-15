@@ -296,7 +296,7 @@ async function openFn(name) {
     $("functionRetry").hidden = true;
   }
   showDrawer("drawer");
-  if (!again) { S.ftab = null; S.which = "latest"; S.diffKey = null; $("diff").innerHTML = ""; $("diffSum").textContent = ""; }
+  if (!again) { S.ftab = null; S.which = null; S.diffKey = null; $("diff").innerHTML = ""; $("diffSum").textContent = ""; }
   drawMap();
   document.querySelectorAll("#fnRows tr").forEach((tr) => tr.classList.toggle("sel", tr.dataset.fn === name));
   await refreshFn(true);
@@ -343,15 +343,24 @@ function showFnTab(tab) {
 }
 document.querySelectorAll("[data-ftab]").forEach((b) => { b.onclick = () => { S.ftab = b.dataset.ftab; showFnTab(S.ftab); }; });
 document.querySelectorAll("#diffWhich [data-which]").forEach((b) => {
-  b.onclick = () => {
-    S.which = b.dataset.which;
-    document.querySelectorAll("#diffWhich [data-which]").forEach((x) => x.classList.toggle("on", x === b));
-    loadDiff();
-  };
+  b.onclick = () => { setWhich(b.dataset.which); loadDiff(); };
 });
+// The function view can fill the window (long assembly and C side by side); the chart is redrawn at its new width.
+$("fnExpand").onclick = () => {
+  const expanded = $("drawer").classList.toggle("expanded");
+  $("fnExpand").setAttribute("aria-pressed", String(expanded));
+  $("fnExpand").setAttribute("aria-label", expanded ? "Restore function view width" : "Expand function view");
+  $("fnExpand").title = expanded ? "Restore width" : "Expand function view";
+  if (S.fnDetail) renderFnChart(S.fnDetail);
+};
 
 let fnBusy = null, fnRequest = 0;
 function cancelFunctionRead() { fnBusy?.controller?.abort(); fnBusy = null; }
+// #254: which attempt the Diff shows (Latest/Best), and the switch's button marked to match
+function setWhich(which) {
+  S.which = which;
+  document.querySelectorAll("#diffWhich [data-which]").forEach((x) => x.classList.toggle("on", x.dataset.which === which));
+}
 let compilerComparisonBusy = false, compilerComparisonTarget = null;
 let deepPermuterBusy = false, deepPermuterJob = null, deepPermuterTarget = null;
 function sdkEvidenceText(sdk) {
@@ -512,7 +521,7 @@ async function refreshFn(first) {
       } catch (e) { toast(esc(e.message), "err"); }
     };
     const pinned = (S.ov.priority || []).includes(d.name);
-    $("fnPin").hidden = S.ov.kind === "fork" || d.status !== "open";
+    $("fnPin").hidden = d.status !== "open";
     $("fnPin").classList.toggle("on", pinned);
     $("fnPin").setAttribute("aria-pressed", pinned);
     $("fnPin").textContent = pinned ? "★ Agents do this first" : "☆ Do this first";
@@ -541,7 +550,15 @@ async function refreshFn(first) {
     }
     $("copySrc").onclick = () => navigator.clipboard.writeText($("fnEdit").value).then(() => toast("Copied."));
     renderFnChart(d);
-    $("diffWhich").hidden = d.status === "matched" || S.ov.kind === "fork" || d.scores.filter((x) => x.score != null).length < 2;
+    // #254: the Latest/Best switch works for project-mode games too, and opens on the best attempt when the two differ
+    // (best_differs; a server without it: two or more compiled attempts).
+    const canSwitch = d.status !== "matched" && (d.best_differs ?? d.scores.filter((x) => x.score != null).length >= 2);
+    $("diffWhich").hidden = !canSwitch;
+    if (S.which == null) S.which = canSwitch ? "best" : "latest";
+    document.querySelectorAll("#diffWhich [data-which]").forEach((b) => {
+      if (b.dataset.which === "latest") b.textContent = S.ov.kind === "fork" ? "In the source now" : "Latest attempt";
+    });
+    setWhich(S.which);
     renderFunctionCalls(d);
     prepareProjectPeers(d);
     renderFunctionNotes(d);
@@ -642,6 +659,7 @@ async function finishFunctionAttempt(r, slug, name, active, msg, job, submittedS
       if (r.score == null) msg.textContent += "\n" + r.text.split("\n").slice(1, 12).join("\n");
     }
     if (submittedSource !== null && $("fnEdit").value === submittedSource) S.editDirty = false;
+    S.which = "latest";  // #254: show what was just compiled (refreshFn marks the switch's button)
     S.diffKey = null;
     await refreshFn(false);
     if (r.score != null) { S.ftab = "diff"; showFnTab("diff"); }
@@ -831,13 +849,14 @@ function renderDiff(d) {
   const sum = $("diffSum"), box = $("diff"), probs = $("diffProblems");
   probs.innerHTML = "";
   if (!d.rows) {
-    sum.innerHTML = d.error ? `<span class="bad">The ${d.kind === "best" ? "best" : "latest"} attempt didn't compile.</span>` : "No attempt yet. The diff appears after the first compile.";
+    sum.innerHTML = d.error ? `<span class="bad">The ${d.kind === "best" ? "best" : "latest"} attempt didn't compile.</span>`
+      : d.message ? esc(d.message) : "No attempt yet. The diff appears after the first compile.";
     box.innerHTML = d.error ? `<pre class="code errlog">${esc(d.error)}</pre>` : "";
     return;
   }
   const rows = d.rows;
   const same = rows.filter((r) => r[0] === " ").length, target = rows.filter((r) => r[1]).length;
-  const label = { matched: "Matching C", best: "Best attempt", latest: S.ov.kind === "fork" ? "The source now" : "Latest attempt" }[d.kind] || "Attempt";
+  const label = { matched: "Matching C", best: "Best attempt", latest: S.ov.kind === "fork" ? "In the source now" : "Latest attempt" }[d.kind] || "Attempt";
   sum.innerHTML = `<b>${label}</b> · ${d.percent === 100 && d.score === 0 ? `<span class="ok">byte-identical</span>` : `${d.percent}%${d.score != null ? ` · score ${d.score}` : ""}`} · ${same} of ${target} instructions identical
     <span class="diff-key"><i class="k arg"></i>operands <i class="k repl"></i>different <i class="k mov"></i>moved</span>`;
   const html = [];
@@ -872,9 +891,9 @@ function renderDiff(d) {
   probs.innerHTML = diffProblemsHTML(d);
 }
 async function loadDiff() {
-  const d0 = S.fnDetail, slug = S.slug, gen = S.gen, which = S.which, nav = S.fnNav;
+  const d0 = S.fnDetail, slug = S.slug, gen = S.gen, which = S.which || "latest", nav = S.fnNav;
   if (!d0) return;
-  const key = `${gen}|${nav}|${slug}|${d0.name}|${S.which}|${d0.scores_total ?? d0.scores.length}|${d0.status}`;
+  const key = `${gen}|${nav}|${slug}|${d0.name}|${which}|${d0.scores_total ?? d0.scores.length}|${d0.status}`;
   if (key === S.diffKey) return;
   S.diffKey = key;
   if (!$("diff").innerHTML) $("diffSum").textContent = "Compiling…";
@@ -900,9 +919,9 @@ const L = { q: "", filter: "all", sort: "i", dir: 1, limit: FUNCTION_ROWS, rows:
 const FILTERS = [["all", "All"], ["boundary", "Boundary review"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["polished", "Polished"], ["first", "★ First"], ["cross_project", "Cross project"]];
 // polished: matched, and made readable (real names, types, a comment) by polishing helpers; still counted as matched
 const polished = (f) => f.status === "matched" && !!f.polished;
-// ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM projects only
+// ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM and fork projects
 const starred = (f) => !!(S.ov && (S.ov.priority || []).includes(f.name));
-const canStar = () => !!(S.ov && S.ov.kind !== "fork");
+const canStar = () => !!(S.ov);  // star/priority works on ROM and fork projects alike (#290)
 const fnState = (f) => (f.analysis_state === "boundary_review" ? "boundary" : f.status === "matched" ? "matched" : f.status === "asm" ? "asm" : f.status === "working" ? "working" : f.best != null ? "tried" : "open");
 const STATE_RANK = { boundary: -1, working: 0, tried: 1, open: 2, matched: 3, asm: 4 };
 

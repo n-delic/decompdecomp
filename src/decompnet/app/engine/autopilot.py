@@ -24,6 +24,12 @@ from ..purpose_work import Executor
 
 _draft_pipeline=ContextVar('autopilot_draft_pipeline',default=False)
 
+# Autopilots that compile at once, across every project: importing a hundred games started a hundred, three compiles
+# each, all fighting for the same cores. The others wait their turn ("queued"), first come first served.
+MAX_RUNNING = 2
+_slots = threading.Semaphore(MAX_RUNNING)
+QUEUE_POLL_SECONDS = 0.5  # how often a queued one looks for a slot (and whether it was stopped meanwhile)
+
 
 class AutopilotMixin:
     def start_autopilot(self, slug: str, workers: int | None = None, *, foreground=False) -> dict:
@@ -38,6 +44,8 @@ class AutopilotMixin:
                 state.setdefault('_foreground',threading.Event()).set()
                 self.twins.promote(slug)
             return state
+        if missing := self.project_missing(self._project(slug)):
+            raise NetworkError(missing)
         fork = self.fork_slug(slug)
         automatic_workers = 3 if workers is None else max(1, min(32, workers))
         # Manual ROM runs can use the machine's cores. Imported builds share build
@@ -71,7 +79,7 @@ class AutopilotMixin:
         except NetworkError as e:
             ids, try_one, no_drafts = [], None, str(e)
         state = {"state": "running", "total": len(ids), "tried": 0, "matched": 0, "near": 0, "twins": 0,
-                 "phase": "twins", "no_drafts": no_drafts, "started_at": time.time(), "stop": threading.Event()}
+                 "phase": "queued", "no_drafts": no_drafts, "started_at": time.time(), "stop": threading.Event()}
         state['_foreground']=threading.Event()
         if foreground:state['_foreground'].set()
         self.autopilots[slug] = state
@@ -95,9 +103,23 @@ class AutopilotMixin:
         return {"state": "done", **last} if last else None
 
     def _autopilot_run(self, slug: str, ids: list[int], state: dict, workers: int, try_one=None) -> None:
+        """One project's autopilot, once a slot is free (MAX_RUNNING): until then its phase is "queued". A run the
+        user asked for in the foreground (or promoted to it while queued) doesn't wait behind background ones."""
         from .. import maintenance
-        with maintenance.foreground(state.setdefault('_foreground',threading.Event())):
-            self._autopilot_work(slug,ids,state,workers,try_one)
+        foreground = state.setdefault('_foreground', threading.Event())
+        acquired = False
+        while not state["stop"].is_set() and not foreground.is_set():
+            if _slots.acquire(timeout=QUEUE_POLL_SECONDS):
+                acquired = True
+                break
+        stopped_queued = state["stop"].is_set()
+        try:
+            with maintenance.foreground(foreground):
+                # stopped while queued: recorded as stopped
+                self._autopilot_work(slug, [] if stopped_queued else ids, state, workers, try_one)
+        finally:
+            if acquired:
+                _slots.release()
 
     def _autopilot_work(self, slug, ids, state, workers, try_one):
         from .. import maintenance
@@ -108,8 +130,9 @@ class AutopilotMixin:
         agent, _ = self.local_agent("autopilot")
         proj = self._project(slug)
         try_one = try_one or self._autopilot_one
+        state["phase"] = "twins"
         try:  # identical code first: free, and it takes those functions off the drafts' list
-            if slug not in self.links:  # (a room member's matches come from the host)
+            if slug not in self.links and not state["stop"].is_set():  # (a room member's matches come from the host)
                 job = self.twins.full_pass(slug,foreground_event=state['_foreground'])
                 state["twins"] = job.matched
                 state["matched"] += job.matched

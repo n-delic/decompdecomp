@@ -102,6 +102,11 @@ class Arch:
     instruction_regions: Callable[..., dict | None] | None = None
     boundary_reason: Callable[..., str | None] | None = None
     variants: dict[str, Callable[[bytes, bool], list[tuple[int, str, str]]]] = field(default_factory=dict)
+    # whether a block of code is all this processor's alignment padding — its nop/filler: (code, big_endian) -> bool
+    is_padding: Callable[[bytes, bool], bool] | None = None
+    # whether this code's last instruction has a delay slot, so the next word belongs to the function (MIPS):
+    # (code, big_endian) -> bool. Architectures without delay slots leave it None.
+    ends_in_delay_branch: Callable[[bytes, bool], bool] | None = None
 
     asset_flow: Callable[..., dict] | None = None  # block-local calls and buffer accesses for ROM Explorer
 
@@ -114,15 +119,16 @@ class Arch:
 ARCHES = [
     Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
          frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts, called_code_extent=mips_code_recovery.called_extent, padding_reason=mips.padding_reason, gcc_register_aliases=mips.gcc_register_aliases,
-         asset_flow=mips_assets.read, source_local_storage=mips_local_storage.read, source_scalar_destination=mips_local_storage.scalar_destination, initial_draft_evidence=mips_drafts.read, source_hazard_rows=mips_hazards.rows_witness, source_return_paths=mips_return_paths.read, source_return_contract=mips_returns.result, source_stack_call_store=mips_returns.stack_call_store, repair_search_hints=mips_search.read, object_functions=mips_debug.functions, object_placeholders=mips_debug.placeholders, instruction_regions=mips_regions.read, build_tool_paths=mips_tools.build_paths, stack_frame_growth=mips_stack.frame_growth, stack_layout=mips_stack.repair_layout, source_operand_changes=mips_source_recovery.operand_changes, source_extra_narrowing=mips_source_recovery.extra_narrowing, source_private_abi=mips_source_recovery.private_abi, source_pointer_lifetime=mips_pointer_lifetime.read, source_pointer_snapshot=mips_source_recovery.pointer_snapshot_order, source_switch_blocks=mips_source_recovery.blocks, source_recovery_hints=mips_source_recovery.recovery_hints, source_tail_branch=mips_source_recovery.tail_branch, source_tail_dispatch=mips_tail_dispatch.read, source_symbol_bindings=mips_source_symbols.bindings, boundary_reason=mips.boundary_reason, boundary_instruction=mips.boundary_instruction, built_floats=mips.built_floats, edit_hint=mips.edit_hint, variants={mips.ALLEGREX: mips.allegrex_lines}),
-    Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
-    Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES})),
+         asset_flow=mips_assets.read, source_local_storage=mips_local_storage.read, source_scalar_destination=mips_local_storage.scalar_destination, initial_draft_evidence=mips_drafts.read, source_hazard_rows=mips_hazards.rows_witness, source_return_paths=mips_return_paths.read, source_return_contract=mips_returns.result, source_stack_call_store=mips_returns.stack_call_store, repair_search_hints=mips_search.read, object_functions=mips_debug.functions, object_placeholders=mips_debug.placeholders, instruction_regions=mips_regions.read, build_tool_paths=mips_tools.build_paths, stack_frame_growth=mips_stack.frame_growth, stack_layout=mips_stack.repair_layout, source_operand_changes=mips_source_recovery.operand_changes, source_extra_narrowing=mips_source_recovery.extra_narrowing, source_private_abi=mips_source_recovery.private_abi, source_pointer_lifetime=mips_pointer_lifetime.read, source_pointer_snapshot=mips_source_recovery.pointer_snapshot_order, source_switch_blocks=mips_source_recovery.blocks, source_recovery_hints=mips_source_recovery.recovery_hints, source_tail_branch=mips_source_recovery.tail_branch, source_tail_dispatch=mips_tail_dispatch.read, source_symbol_bindings=mips_source_symbols.bindings, boundary_reason=mips.boundary_reason, boundary_instruction=mips.boundary_instruction, built_floats=mips.built_floats, edit_hint=mips.edit_hint, variants={mips.ALLEGREX: mips.allegrex_lines},
+         is_padding=mips.is_padding, ends_in_delay_branch=mips.ends_in_delay_branch),
+    Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason, is_padding=ppc.is_padding),
+    Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES}), is_padding=ppc.is_padding),
     Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, features=frozenset({CLASSES, STRUCTS}),
-         field_accesses=x86_fields.read_facts, float_operands=x86.float_operands, method_draft=x86.method_draft),
-    Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64),
-    Arch("arm", "ARM", arm.CAPSTONE, arm.RELOC_MASKS, arm.asm_reason, features=frozenset({BOUNDARIES})),
+         field_accesses=x86_fields.read_facts, float_operands=x86.float_operands, method_draft=x86.method_draft, is_padding=x86.is_padding),
+    Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64, is_padding=x86.is_padding),
+    Arch("arm", "ARM", arm.CAPSTONE, arm.RELOC_MASKS, arm.asm_reason, features=frozenset({BOUNDARIES}), is_padding=arm.arm_is_padding),
     Arch("thumb", "Thumb", arm.THUMB_CAPSTONE, arm.THUMB_RELOC_MASKS, arm.asm_reason,
-         features=frozenset({BOUNDARIES})),
+         features=frozenset({BOUNDARIES}), is_padding=arm.thumb_is_padding),
 ]
 _BY_ID = {a.id: a for a in ARCHES}
 UNKNOWN = Arch("", "an unknown processor", {})

@@ -1,4 +1,5 @@
 """User-created MCP credentials: one project per connection, no plaintext tokens saved."""
+import secrets
 import uuid
 from contextlib import ExitStack
 
@@ -47,3 +48,8 @@ def revoke(net, settings, agent_id):
     with ExitStack() as pending:
         for lock in locks:pending.enter_context(lock)
         net.release_stopped([agent_id], 'its manual MCP connection was revoked')
+    with net.store.tx() as db:
+        # The token stays invalid after a restart too. Retain the identity so its notes,
+        # attempts and matches cannot be attributed to a later agent if SQLite reuses the row ID.
+        db.execute('UPDATE agents SET token_hash=?, origin=? WHERE id=? AND origin=?',
+                   ('revoked:' + secrets.token_hex(16), 'manual-mcp:revoked', agent_id, 'manual-mcp'))

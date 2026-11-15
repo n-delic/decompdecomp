@@ -1663,7 +1663,12 @@ class _AutosavePaused(RuntimeError):
 
 
 class Autosave:
-    """Follow local work and contributions in progress/, including while no project window is open."""
+    """Follow local work and contributions in progress/, including while no project window is open.
+
+    Only active projects (project_activity) get a worker, so the passes don't grow with every game imported; a
+    project whose folder was deleted (#265) has nothing to save into and is skipped."""
+
+    OPTIMIZE_SECONDS = 3600  # how often the database refreshes its statistics (Store.optimize)
 
     def __init__(self, net, settings=None):
         self.net, self.settings = net, settings
@@ -1675,6 +1680,7 @@ class Autosave:
         self.workers = {}
         self.paused = set(settings.data.get('autosave_paused', [])) if settings else set()
         self.thread = None
+        self.optimized = time.monotonic()
 
     def start(self) -> None:
         with self.lock:
@@ -1755,9 +1761,9 @@ class Autosave:
         store = self.net.store
         if hasattr(store, 'read_cache'):
             rows = store.read_cache.get('autosave-projects', store.read_version('project_list'),
-                                       lambda: store.all("SELECT slug,root,config FROM projects"))
+                                       lambda: store.all("SELECT id,slug,root,config FROM projects"))
         else:
-            rows = store.all("SELECT slug,root,config FROM projects")
+            rows = store.all("SELECT id,slug,root,config FROM projects")
         projects = []
         from .project_activity import active
         for row in rows:
@@ -1778,6 +1784,7 @@ class Autosave:
             if current is None:
                 if store.one('SELECT 1 FROM projects WHERE slug=?',row['slug']) is None:continue
                 raise NetworkError(f"Project {row['slug']!r} is missing from its database. Restore it from backup.")
+            if self._missing({'id': row['id'] if 'id' in row.keys() else None, 'slug': row['slug'], 'root': current['root']}):continue
             projects.append(current)
         return projects
 
@@ -1877,6 +1884,12 @@ class Autosave:
                 if retention is not None:retention.tick()
             except Exception:
                 log.exception('Could not refresh project autosave workers')
+            if time.monotonic() - self.optimized > self.OPTIMIZE_SECONDS:
+                self.optimized = time.monotonic()
+                try:
+                    self.net.store.optimize()
+                except Exception:  # (statistics are a nicety)
+                    log.exception("refreshing the database's statistics failed")
             self.stop.wait(2)
 
     def _project_loop(self, slug, worker):
@@ -1911,6 +1924,18 @@ class Autosave:
                         worker['running'] = False
                     self.lane.release()
             self.stop.wait(1)
+
+    def _missing(self, row) -> bool:
+        """Whether a project's folder is gone (#265); a check that fails counts as present, so the pass carries on."""
+        root = str(row['root'] or '')
+        if not root or Path(root).is_dir() or row['id'] is None:
+            return False
+        check = getattr(self.net, 'project_missing', None)
+        try:
+            return bool(check(row)) if check is not None else False
+        except Exception:
+            log.exception("checking %s's folder failed", row['slug'])
+            return False
 
     def run_once(self, *, force=True, rows=None, logger=None, commits=True) -> list[str]:
         """Save dirty work each cycle; background cycles deeply inspect unchanged files every 15 seconds.

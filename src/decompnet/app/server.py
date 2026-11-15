@@ -181,6 +181,9 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     def console_start(slug, log):
         log("Checking saved project and console compatibility")
         row = net.project_row(slug)
+        if net.project_missing(row):
+            log("Its folder is missing: nothing to set up (#265)")
+            return
         cfg = json.loads(row['config'])
         if cfg.get('kind') == 'fork' and not cfg.get('platform'):
             row = net.forks.get(slug)[0]

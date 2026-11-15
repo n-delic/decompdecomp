@@ -524,9 +524,12 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
             return {'function':fn['name'] if fn['status']=='open' else None,
                     'vram':fn['vram'], 'claim_token':''}
         fn = net.claim_row(agent, room.slug, d.get("function") or None, str(d.get("strategy") or "easiest"))
+        if fn is None:  # what's left and why, as the host's own agents hear it (functions this agent said no C makes,
+            # its own releases; the user told when only verdicts are left): a guest got a bare "nothing left"
+            return {"function": None, "vram": None, "claim_token": "",
+                    "why": net.nothing_to_claim(agent, net._project(room.slug))}
         from ..release_receipts import current
-        return {"function": fn["name"] if fn else None, "vram": fn["vram"] if fn else None,
-                "claim_token":current(net,fn,agent) if fn else ''}
+        return {"function": fn["name"], "vram": fn["vram"], "claim_token": current(net, fn, agent)}
 
     def attempt(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
@@ -849,13 +852,15 @@ class Link:
 
     # -- actions, called by RomNetwork for a linked project
 
-    def claim(self, agent: Agent, function: str | None, strategy: str) -> str | None:
+    def claim(self, agent: Agent, function: str | None, strategy: str) -> tuple[str | None, str]:
+        """(the function the host handed out, or None; and then why: what the host says is left, "" from a host
+        that doesn't say)."""
         result = self._req("POST", "/collab/claim", {"agent": agent.name, "function": function, "strategy": strategy,
                                                     "selection": self.net.selection(self.slug, agent.name)})
         if result.get('function') and result.get('claim_token'):
             leases=self.__dict__.setdefault('_release_claim_tokens',{})
             leases[agent.id,result['function']]=result['claim_token']
-        return result['function']
+        return result['function'], ("" if result['function'] else str(result.get('why') or ""))
 
     def attempt(self, agent: Agent, function: str, source: str) -> dict:
         if not self.fork:

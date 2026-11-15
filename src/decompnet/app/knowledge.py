@@ -191,7 +191,8 @@ class Knowledge:
         self._support(agent, proj, kid)
         self._evidence(proj,kid,agent,evidence)
         return (f"Proposed as #{kid}. It reaches every agent once a helper running another model backs it "
-                f"(and the user accepts it, unless the project adds agreed knowledge by itself).")
+                f"(and the user accepts it, unless the project adds agreed knowledge by itself), or once the user "
+                f"gives it to agents.")
 
     def _evidence(self, proj, kid, agent, evidence):
         if evidence:

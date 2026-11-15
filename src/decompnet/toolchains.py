@@ -79,6 +79,7 @@ class Toolchain:
 
     def __post_init__(self):
         self.requires = [*self.requires, *(h for h in self.headers if h not in self.requires)]
+    native_only: bool = False  # this pack cannot run through WSL or a Linux VM
     linux_vm: bool = False  # this Linux pack may use the optional macOS VM runner
     space_free_runtime: bool = False  # an old driver embeds unquoted paths derived from its own executable
     case_sensitive: bool = False  # proxy hosts must preserve archives until extraction on Linux
@@ -100,11 +101,11 @@ class Toolchain:
     @property
     def via_wsl(self) -> bool:
         """A Linux-only toolchain on Windows: installed from its Linux build and run inside WSL 2 (see wsl.py)."""
-        return wsl.wanted() and not self.git and not self.parts_for() and bool(self.parts_for(LINUX))
+        return not self.native_only and wsl.wanted() and not self.git and not self.parts_for() and bool(self.parts_for(LINUX))
 
     @property
     def via_vm(self) -> bool:
-        return (self.linux_vm and not self.via_wsl and current_platform().startswith("macos-")
+        return (not self.native_only and self.linux_vm and not self.via_wsl and current_platform().startswith("macos-")
                 and linuxvm.wanted() and not self.parts_for() and bool(self.parts_for(LINUX)))
 
     def linux_parts(self) -> list[dict]:
@@ -149,6 +150,9 @@ def registry() -> dict[str, Toolchain]:
     return {tid: Toolchain(id=tid, **spec) for tid, spec in _registry_data().items()}
 
 
+_REGISTRY = registry
+
+
 def known(tid: str) -> bool:
     """Whether the registry has this toolchain id. A project's config can name one it doesn't: the project was made
     with another tool (#118: a Windows project named a 64-bit Visual C++ one), and it must still open."""
@@ -164,7 +168,11 @@ def _own(tid: str):
 
 
 def _registered(tid: str) -> Toolchain | None:
-    """One packaged entry, excluding dynamic compiler versions from user SDK copies."""
+    """One packaged entry, made alone (making all of them for each look-up cost the project list half its time),
+    excluding dynamic compiler versions from user SDK copies. Through registry() when something stands in for it
+    (tests give it their own toolchains)."""
+    if registry is not _REGISTRY:
+        return registry().get(tid)
     spec = _registry_data().get(tid)
     return Toolchain(id=tid, **spec) if spec is not None else None
 
@@ -173,10 +181,11 @@ def get(tid: str) -> Toolchain:
     # A compile needs one entry, not fresh objects for every compiler and SDK.
     if (tc := _registered(tid)) is not None:
         return tc
+    data = _registry_data() if registry is _REGISTRY else registry()
     if (own := _own(tid)) is not None:
         return Toolchain(id=tid, name=own.name, license="proprietary", source="your own copy: nothing is downloaded",
                          description="A compiler in your own SDK copy.", flags=list(own.flags))
-    raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(_registry_data()))}")
+    raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(data))}")
 
 
 
@@ -625,6 +634,8 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
 def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | None, vm: bool | None) -> Path:
     """Install under the per-tool lock; recursive dependencies use their own locks."""
     tc = get(tid)
+    if tc.native_only and not tc.parts_for():
+        raise ToolchainError(f"{tc.name} needs its native host build. {tc.description}")
     vm = tc.via_vm if vm is None else vm
     linux = (tc.via_wsl or vm) if linux is None else linux
     location = {'vm': True} if vm else {}

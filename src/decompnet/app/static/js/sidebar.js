@@ -45,7 +45,6 @@ function colourOf(slug) {
   }
   return navColours.map.get(slug) ?? 0;
 }
-
 /* Past NAV_FILTER_FROM projects a filter box shows above the list; the list is only rebuilt when its HTML changed
    (with hundreds of projects a rebuild every 5 s cost the page more than the ask). */
 const NAV_FILTER_FROM = 12;
@@ -66,7 +65,10 @@ function renderNav() {
     const pct = codePct(p);
     const short = p.platform_short || p.platform_name || "?";
     const state = p.working ? `<span class="dot on" title="${p.working} agent${p.working === 1 ? "" : "s"} working"></span>`
-      : p.autopilot === "running" ? `<span class="dot work" title="autopilot running"></span>` : "";
+      : p.autopilot === "running" ? `<span class="dot work" title="${p.autopilot_phase === "queued" ? "autopilot waiting for its turn" : "autopilot running"}"></span>` : "";
+    if (p.missing) return `<a class="nav-proj broken" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.missing)}">
+      <span class="np-top"><span class="np-name">${esc(p.title)}</span></span>
+      <span class="np-meta"><span>folder is missing: remove it from the home page</span></span></a>`;
     if (p.broken) return `<a class="nav-proj broken" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.broken)}">
       <span class="np-top"><span class="np-name">${esc(p.title)}</span></span>
       <span class="np-meta"><span>can't be opened: hover for why</span></span></a>`;
