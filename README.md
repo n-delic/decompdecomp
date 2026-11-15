@@ -40,6 +40,11 @@ chmod +x decompdecomp-*-x86_64.AppImage && ./decompdecomp-*-x86_64.AppImage   # 
 Download and open `decompdecomp-<version>-windows-x64-setup.exe` from the [latest release](https://github.com/n-delic/decompdecomp/releases/latest). Setup
 installs WebView2 and .NET Framework 4.8 when they are missing.
 
+For a portable copy, extract `decompdecomp-<version>-windows-x64-portable.zip` from the same release and open
+`decompdecomp.exe`. Keep the `python` and `packages` folders beside it. It does not need administrator access, but
+.NET Framework 4.8 and WebView2 must already be installed. Projects and settings stay in `%USERPROFILE%\Decomp` (or
+`DECOMP_HOME`). Copy that folder too when you move your work.
+
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers use Linux builds through WSL 2.
 > Run `wsl --install` in an administrator PowerShell before you import one, then open Ubuntu once.
