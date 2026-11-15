@@ -56,6 +56,10 @@ void port_trace(void);
 
 /* The function at a console address: a function pointer in the game is that address. */
 static void port_preempt(void);
+/* recompiled C for functions with no C yet (port/wasm/recomp.py's bridges.c, when the build has it): a function
+   pointer's bridge, and each host thread's MIPS stack for it */
+__attribute__((weak)) void *port_recomp_pointer(uint32_t address) { (void)address; return 0; }
+__attribute__((weak)) void port_recomp_thread(int number) { (void)number; }
 void *port_func(uint32_t address) {
     /* LLVM calls some functions through the table when the call's types differ from the function's only as
        pointer and integer: an index, never a console address (those are 0x80000000 and up) */
@@ -71,6 +75,8 @@ void *port_func(uint32_t address) {
         if (port_funcs[mid].address < address) lo = mid + 1; else hi = mid;
     }
     if (lo < port_func_count && port_funcs[lo].address == address) return port_funcs[lo].func;
+    void *recompiled = port_recomp_pointer(address); /* a function with no C yet, run as recompiled C */
+    if (recompiled) return recompiled;
     fprintf(stderr, "a call through a function pointer to %08X, where no function of the game's C is\n", address);
     port_trace();
     wasm_rt_trap(WASM_RT_TRAP_CALL_INDIRECT);
@@ -187,6 +193,7 @@ static void *host_entry(void *arg) {
     wait_turn(me);
     pthread_mutex_unlock(&lock);
     LOG("thread %d (id %d, pri %d) starts at table entry %u", me->number, me->id, me->pri, me->entry);
+    port_recomp_thread(me->number); /* its MIPS stack, for recompiled code it runs */
     wasm_rt_trap_t trap = wasm_rt_impl_try();
     if (trap) {
         fprintf(stderr, "thread %d stopped: %s\n", me->number, wasm_rt_strerror(trap));
@@ -728,6 +735,7 @@ static int boot_memory(void) {
 }
 /* the game's first C function, by its console address (the table every function pointer goes through) */
 static void boot_call(void) {
+    port_recomp_thread(-1);
 #ifdef PORT_WEB
     w2c_game_port_call1(&game, boot.target, 0); /* as a thread's entry: through the page's table */
 #else

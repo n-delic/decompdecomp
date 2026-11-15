@@ -370,6 +370,7 @@ def test_the_window_kind_is_offered_and_made_on_a_mac_only(tmp_path, monkeypatch
     monkeypatch.setattr(play, "library", lambda net, slug, log=print: set())
     monkeypatch.setattr(play, "library_c", lambda net, slug: {})  # (no ultralib units: port/ultralib.py)
     monkeypatch.setattr(play, "library_names", lambda net, slug: {})  # (no library names to rename)
+    monkeypatch.setattr(play, "recompiled", lambda net, slug, log=print: None)  # (no recompiled C)
     monkeypatch.setattr(build, "build", lambda *a, **k: asked.update(k) or program)
     monkeypatch.setattr(toolchains, "ensure", lambda tid, log=print: asked.setdefault("tool", tid) and tmp_path)
     monkeypatch.setattr(export, "package_app", lambda program, dest, title, sdl=None: asked.update(sdl=sdl, dest=dest)

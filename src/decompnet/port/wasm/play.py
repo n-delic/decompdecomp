@@ -158,9 +158,36 @@ def library_names(net, slug: str) -> dict[str, str]:
 
 def inputs(net, slug: str, log=print) -> dict:
     """What the build takes from the project besides its save: the library the host provides (`leave_out`), library
-    code built from ultralib's C (`library_c`), and library code's own names (`library_names`)."""
+    code built from ultralib's C (`library_c`), library code's own names (`library_names`), and the recompiled C for
+    functions with no C yet (`recomp`)."""
     return {"leave_out": library(net, slug, log), "library_c": library_c(net, slug),
-            "library_names": library_names(net, slug)}
+            "library_names": library_names(net, slug), "recomp": recompiled(net, slug, log)}
+
+
+def recompiled(net, slug: str, log=print) -> dict | None:
+    """The console's recompiler's output for the port ({"folder", "header"}), run first when there's none yet: the
+    game's every function as C (Porting → Recompile), so a function with no matched C runs as its recompiled C
+    instead of stopping the game. None when the console has no recompiler or it can't run here (the port then has
+    the game's C alone, as before)."""
+    with net.progress.view():
+        proj = net._project(slug)
+    recompiler = net.console(proj).recompiler
+    if recompiler is None or not net.is_rom(proj):
+        return None
+    root = Path(proj["root"])
+    if recompiler.load(root) is None:
+        log("recompiling the game with N64Recomp first, for the functions with no C yet (once, about a minute)")
+        from ...app import recompile
+        try:
+            recompile.run(net, slug, log)
+        except Exception as error:  # noqa: BLE001  the port still builds from the game's C alone
+            log(f"recompiling failed, so functions with no C stop the game where they run: {error}")
+            return None
+    try:
+        header = recompiler.toolchain_folder() / "include" / "recomp.h"
+    except Exception:  # noqa: BLE001
+        return None
+    return {"folder": str(recompiler.folder(root)), "header": str(header)} if header.is_file() else None
 
 
 def library_c(net, slug: str) -> dict:

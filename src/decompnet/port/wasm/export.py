@@ -253,6 +253,12 @@ def package_app(program: Path, dest: Path, title: str, platform: str = sys.platf
     return dest
 
 
+def _game_c_only(inputs: dict) -> dict:
+    """The browser and the Miyoo builds take the game's C alone: recompiled C runs in the native host only
+    (port/wasm/recomp.py)."""
+    return {k: v for k, v in inputs.items() if k != "recomp"}
+
+
 def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
     """Build the project's game (only what changed) and export it as `kind` ("app", "web" or "miyoo"): {"kind",
     "folder", "path" (what to open), "files"}. `simd`: a browser build also carries the faster build for browsers
@@ -284,7 +290,7 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
         folder = out / kind
     elif kind == "miyoo":
         steps = (*miyoo.STEPS, PACKING)
-        program = miyoo.build(repo, console=console, log=log, steps=steps, **inputs)
+        program = miyoo.build(repo, console=console, log=log, steps=steps, **_game_c_only(inputs))
         build.Progress(log, steps).start(PACKING)
         log("packing the Miyoo Mini's SD card folders")
         rom = cfg.get("rom", {})
@@ -294,7 +300,7 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
         steps_for_player = miyoo.instructions(folder, title)
     else:
         steps = (*web.STEPS, PACKING)
-        folder = web.build(repo, console=console, log=log, steps=steps, simd=simd, **inputs)
+        folder = web.build(repo, console=console, log=log, steps=steps, simd=simd, **_game_c_only(inputs))
         build.Progress(log, steps).start(PACKING)
         log("copying the browser build")
         folder = web.export(folder, out / "web")

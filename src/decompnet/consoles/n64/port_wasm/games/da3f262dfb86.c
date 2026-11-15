@@ -39,7 +39,13 @@ u64 w2c_env_func_8009A310(struct w2c_env *e, f64 x) {
 }
 f64 w2c_env_func_8009A430(struct w2c_env *e, u64 x) { (void)e; return (f64)(int64_t)x; }
 /* the game's old name for format_to_buffer: the same variadic call (its third argument points at the rest) */
-u32 w2c_env_formatString(struct w2c_env *e, u32 a, u32 b, u32 c) { (void)e; w2c_game_format_to_buffer(port_game(), a, b, c); return 0; }
+void *port_func(uint32_t address);
+/* by its address (0x80099DF8), so the game's C for it or, with none, its recompiled C (port/wasm/recomp.py) */
+u32 w2c_env_formatString(struct w2c_env *e, u32 a, u32 b, u32 c) {
+    (void)e;
+    ((void (*)(w2c_game *, u32, u32, u32))port_func(0x80099DF8u))(port_game(), a, b, c);
+    return 0;
+}
 void w2c_env_D_8000A840(struct w2c_env *e, u32 a, u32 b, u32 c, u32 d, u32 f, u32 g) {
     (void)e; (void)a; (void)b; (void)c; (void)d; (void)f; (void)g;
     static int once;
