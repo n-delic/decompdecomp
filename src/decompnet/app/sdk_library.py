@@ -75,7 +75,13 @@ def state(net, slug=None):
         libraries.append({'corpus': corpus, 'signatures': None, 'builtin': True,
                           'detected': sum(corpus in hint['corpora'] for hint in matches.values()),
                           'enabled': selection is None or corpus in selection})
-    return {'folders': saved['folders'], 'libraries': libraries, 'selection': selection}
+    out = {'folders': saved['folders'], 'libraries': libraries, 'selection': selection}
+    if slug:
+        from . import sdk_assembly
+        out['set_aside_c'] = sdk_assembly.enabled(net, proj)
+        out['set_aside_c_count'] = sdk_assembly.set_aside_c(net, proj)
+        out['set_aside_c_available'] = bool(proj['arch'] == 'mips' and net.is_rom(proj) and not net.fork_slug(slug))
+    return out
 
 
 def scan(net, folders, log=lambda *_: None):

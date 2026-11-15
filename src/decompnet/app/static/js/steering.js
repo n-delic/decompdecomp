@@ -823,16 +823,49 @@ async function renderSdkSelection() {
   $("sdkChoices").innerHTML = data.libraries.map(r => `<label class="check"><input type="checkbox" data-sdk-corpus="${esc(r.corpus)}" ${r.enabled ? "checked" : ""}><span>${esc(r.corpus.split(" / sha256:")[0])} · ${r.detected} fingerprints</span></label>`).join("");
   const toggle = () => { $("sdkChoices").hidden = $("sdkMode").value === "auto"; };
   $("sdkMode").onchange = toggle; toggle();
+  $("sdkSetAsideC").hidden = !data.set_aside_c_available;
+  if (!$("sdkSetAsideCOn")._edited) $("sdkSetAsideCOn").checked = !!data.set_aside_c;
+  $("sdkSetAsideCOn").onchange = () => { $("sdkSetAsideCOn")._edited = true; };
+  $("sdkSetAsideCCount").textContent = data.set_aside_c_count ? `${data.set_aside_c_count.toLocaleString()} set aside so far.` : "";
+  const log = $("sdkSelectionLog");
+  if (data.job && !log._following && !log._saving) followSdkSetAside(data.job, slug);  // reattach to a running check
+}
+/* The check that turning the setting on starts: every identified function in one run, with progress and Stop. */
+async function followSdkSetAside(job, slug) {
+  const log = $("sdkSelectionLog"), stop = $("sdkSetAsideCStop");
+  if (log._following === job) return;
+  log._following = job; log.hidden = false; log._showJobProgress = true;
+  const finish = beginWork(log, "Checking library functions against your SDK archive", [$("sdkSelectionSave"), $("sdkSetAsideCOn")], "Library check finished.");
+  stop.hidden = false; stop.disabled = false;
+  stop.onclick = async () => {
+    stop.disabled = true; log._workStatus.textContent = "Stopping…";
+    try { await api("/api/job/cancel", { method: "POST", body: { id: job } }); }
+    catch (e) { stop.disabled = false; showJobError(log, e.message); }
+  };
+  try {
+    await followJob(job, log, null, () => slug === S.slug);
+  } catch (e) { showJobError(log, e.message); }
+  finally {
+    finish(); stop.hidden = true; log._following = null;
+    if (slug === S.slug) await renderSdkSelection().catch(() => {});
+  }
 }
 $("sdkSelectionSave").onclick = async () => {
   const log = $("sdkSelectionLog"), button = $("sdkSelectionSave");
-  const finish = beginWork(log, "Saving this game's libraries", [button], "Library selection saved.");
+  showJobError(log, "");
+  const finish = beginWork(log, "Saving this game's libraries", [button, $("sdkSetAsideCOn")], "Library selection saved.");
+  let job = null;
+  log._saving = true;  // Save follows the check it starts once its own status is done
   try {
     const selection = $("sdkMode").value === "auto" ? null : Array.from($("sdkChoices").querySelectorAll("input:checked"), e => e.dataset.sdkCorpus);
-    await api("/api/sdk-library", { method: "POST", body: { slug: S.slug, selection } });
+    const body = { slug: S.slug, selection };
+    if (!$("sdkSetAsideC").hidden) body.set_aside_c = $("sdkSetAsideCOn").checked;
+    ({ job } = await api("/api/sdk-library", { method: "POST", body }));
+    $("sdkSetAsideCOn")._edited = false;
     S.ov = await api(`/api/project?slug=${encodeURIComponent(S.slug)}`);
     await renderProjectSettings();
-  } catch (e) { showJobError(log, e.message); } finally { finish(); }
+  } catch (e) { showJobError(log, e.message); } finally { finish(); log._saving = false; }
+  if (job) followSdkSetAside(job, S.slug);
 };
 
 $("sdkImport").onclick = async () => {
