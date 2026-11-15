@@ -1064,7 +1064,8 @@ Left:
   more slowly (4 to 9 frames a second while stages load, against 12 to 17), so JSPI stays the first choice;
 - the Linux and Windows apps run untried (the macOS app is tried end to end), and signing the macOS app. The macOS
   app is universal (arm64 and x86_64): a racing game's Intel half reaches its language menu under Rosetta with the
-  Apple Silicon half's frame counts; a physical Intel Mac is untried;
+  Apple Silicon half's frame counts, and it opens on an Intel Mac once its quarantine is cleared. The app is
+  signed ad hoc with a compiled launcher; signing with a Developer ID and notarizing it (no first-open prompt) are left;
 - the browser build for consoles other than the N64: "—" until their kits have a host.
 
 The Miyoo Mini is a third kind (Export… → For Miyoo Mini, `port/wasm/miyoo.py`): the same build's game with its

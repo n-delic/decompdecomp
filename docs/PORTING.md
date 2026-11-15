@@ -262,7 +262,10 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   the ROM; each asks the player for their own.
   - *Standalone app for this computer*: the native program with a launcher. On macOS a universal app (`Game.app`,
     macOS 11 and up, for Apple Silicon and Intel Macs alike, whichever kind exported it) that asks for the ROM once, keeps its saves in its own Application Support folder and opens the game
-    in the browser; quitting it stops the game. On Linux and Windows the program with `play.sh` / `play.bat`
+    in the browser; quitting it stops the game. Its program is a small compiled universal launcher that runs
+    `Resources/play.sh`, and the bundle has an ad-hoc signature, so a zipped or AirDropped copy stays whole; without an
+    Apple Developer ID another Mac still asks once (Control-click > Open, or Privacy & Security > Open Anyway), which
+    `How to open on a Mac.txt` beside the app tells the player. On Linux and Windows the program with `play.sh` / `play.bat`
     (they take the ROM's path and remember it).
   - *For a web browser*: the browser build (`port/wasm/web.py`), a folder with `index.html` for any static web
     server (browsers load WebAssembly only over http). It runs the game's WebAssembly itself, so what wasm2c's C

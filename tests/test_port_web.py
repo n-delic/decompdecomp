@@ -121,14 +121,17 @@ def test_an_exported_app_is_a_mac_app_without_the_rom(tmp_path):
     assert app.name == "A Racing Game 99.app"
     info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
     assert info["CFBundleExecutable"] == "play" and info["LSMinimumSystemVersion"] == "11.0"
-    launcher = (app / "Contents" / "MacOS" / "play").read_text()
+    launcher = (app / "Contents" / "Resources" / "play.sh").read_text()
     assert "choose file" in launcher and "PORT_SAVE" in launcher and "kill $game" in launcher
+    assert '"$here/game"' in launcher  # the game sits beside the script, in Resources
     assert (app / "Contents" / "MacOS" / "play").stat().st_mode & 0o111
-    assert sorted(p.name for p in app.rglob("*") if p.is_file()) == ["Info.plist", "game", "play"]
+    files = sorted(p.name for p in app.rglob("*") if p.is_file() and p.parent.name != "_CodeSignature")  # signed on a Mac
+    assert files == ["Info.plist", "game", "play", "play.sh"]
+    assert "Open Anyway" in (tmp_path / "out" / "How to open on a Mac.txt").read_text()
     if shutil.which("bash"):
-        assert subprocess.run(["bash", "-n", app / "Contents" / "MacOS" / "play"]).returncode == 0
+        assert subprocess.run(["bash", "-n", app / "Contents" / "Resources" / "play.sh"]).returncode == 0
     export.package_app(program, tmp_path / "out", "Other", platform="darwin")
-    assert [p.name for p in (tmp_path / "out").iterdir()] == ["Other.app"]  # exporting again replaces it
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["How to open on a Mac.txt", "Other.app"]  # replaced
 
 
 @pytest.mark.parametrize("platform, launcher", [("linux", "play.sh"), ("win32", "play.bat")])
@@ -244,3 +247,28 @@ def test_the_merged_module_pauses_where_the_host_suspends(tmp_path):
     assert {"thread", "co_main", "asyncify_start_unwind", "asyncify_start_rewind", "asyncify_stop_unwind",
             "asyncify_stop_rewind", "asyncify_get_state"} <= exports
     assert not (tmp_path / "app-asyncify-work").exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("xcrun") or not shutil.which("codesign"),
+                    reason="needs macOS with Xcode's Command Line Tools")
+def test_a_mac_app_has_a_compiled_launcher_for_both_macs_and_a_sealed_signature(tmp_path):
+    """#1225's app was a bash script with no signature, and an Intel Mac that got it by AirDrop called it unopenable:
+    the app's program is now a compiled universal stub and the whole bundle is signed, so a copy stays verifiable."""
+    source = tmp_path / "game.c"
+    source.write_text("int main(void) { return 0; }\n")
+    program = tmp_path / "game"
+    subprocess.run(["xcrun", "clang", "-o", str(program), str(source)], check=True)
+    app = export.package_app(program, tmp_path / "out", "Racer", platform="darwin")
+    stub = app / "Contents" / "MacOS" / "play"
+    assert sorted(subprocess.run(["lipo", "-archs", str(stub)], capture_output=True, text=True).stdout.split()) \
+        == ["arm64", "x86_64"]
+    verify = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], capture_output=True, text=True)
+    assert verify.returncode == 0, verify.stderr
+    # What a player gets: a zip of the app, unpacked again by a tool that keeps no extended attributes (a bash script
+    # as the app's program lost its signature this way).
+    copy = tmp_path / "copy.zip"
+    subprocess.run(["zip", "-qry", "-X", str(copy), "Racer.app"], cwd=app.parent, check=True)
+    subprocess.run(["unzip", "-q", str(copy), "-d", str(tmp_path / "unzipped")], check=True)
+    again = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(tmp_path / "unzipped" / "Racer.app")],
+                           capture_output=True, text=True)
+    assert again.returncode == 0, again.stderr

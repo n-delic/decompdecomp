@@ -19,7 +19,9 @@ from __future__ import annotations
 import re
 import shutil
 import stat
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from ...network import NetworkError
@@ -39,7 +41,8 @@ def _ident(title: str) -> str:
 
 
 MAC_LAUNCHER = r"""#!/bin/bash
-# {title}: the game, from your own ROM. It runs on this Mac only and shows in your browser.
+# {title}: the game, from your own ROM. It runs on this Mac only and shows in your browser. The app's own program
+# (Contents/MacOS/play, MAC_STUB) runs this script, which sits beside the game in Contents/Resources.
 here="$(cd "$(dirname "$0")" && pwd)"
 support="$HOME/Library/Application Support/{ident}"
 mkdir -p "$support"
@@ -50,7 +53,7 @@ if [ ! -f "$rom" ]; then
 fi
 port=18642
 while (echo > "/dev/tcp/127.0.0.1/$port") 2>/dev/null; do port=$((port + 1)); done
-PORT_LIVE=$port PORT_SAVE="$support/game.eep" "$here/../Resources/game" "$rom" 0 > "$support/play.log" 2>&1 &
+PORT_LIVE=$port PORT_SAVE="$support/game.eep" "$here/game" "$rom" 0 > "$support/play.log" 2>&1 &
 game=$!
 trap 'kill $game 2>/dev/null' EXIT INT TERM
 for _ in $(seq 100); do (echo > "/dev/tcp/127.0.0.1/$port") 2>/dev/null && break; sleep 0.1; done
@@ -61,6 +64,43 @@ if ! kill -0 $game 2>/dev/null; then
 fi
 open "http://127.0.0.1:$port/"
 wait $game
+"""
+
+# The app's program: a compiled stub that runs Resources/play.sh. A script can't be the app's program: macOS keeps a
+# script's signature in extended attributes, which a zip, a download or AirDrop drops, and then Gatekeeper calls the
+# app damaged. A compiled program carries its signature inside, so the signed bundle stays signed wherever it goes.
+MAC_STUB = r"""#include <libgen.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main(void) {
+    char exe[PATH_MAX], real[PATH_MAX], script[PATH_MAX + 32];
+    uint32_t size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &size) != 0 || !realpath(exe, real)) return 1;
+    snprintf(script, sizeof script, "%s/../Resources/play.sh", dirname(real));
+    char *argv[] = {"/bin/bash", script, NULL};
+    execv("/bin/bash", argv);
+    perror("/bin/bash");
+    return 1;
+}
+"""
+
+MAC_HOW_TO_OPEN = """{title} for macOS
+{underline}
+
+{name}.app runs on Apple Silicon and Intel Macs with macOS 11 or later. It holds no ROM: the first time it opens, it
+asks for your own ROM of the game.
+
+The app isn't signed by an Apple developer, so a Mac that got it by download, AirDrop or a USB stick says it can't be
+opened the first time. To open it anyway, once:
+- Control-click (or right-click) {name}.app and choose Open, then Open again; or, on macOS 15 and later, try to open
+  it, then go to System Settings > Privacy & Security and click Open Anyway beside its name.
+- Or in Terminal: xattr -dr com.apple.quarantine "/path/to/{name}.app"
+
+After that it opens like any other app.
 """
 
 PLIST = """<?xml version="1.0" encoding="UTF-8"?>
@@ -131,6 +171,28 @@ def _write(path: Path, text: str, executable: bool = False) -> None:
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _mac_stub(path: Path) -> None:
+    """Compile MAC_STUB to `path` for both kinds of Mac, with the compiler that builds the host (build.py)."""
+    from . import build
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "play.c"
+        source.write_text(MAC_STUB, encoding="utf-8")
+        done = subprocess.run([*build.host_compiler(None), *build.host_arch_flags(True), "-O2", "-o", str(path),
+                               str(source)], capture_output=True, text=True, timeout=120)
+    if done.returncode:
+        raise NetworkError(f"compiling the app's launcher failed: {done.stderr.strip()[-400:]}")
+
+
+def _sign(app: Path) -> None:
+    """Sign the game, then the app around it, with an ad-hoc signature (no Apple developer identity): the bundle is
+    sealed, so a Mac can tell it arrived whole, and Gatekeeper offers Open Anyway instead of calling it damaged."""
+    for target in (app / "Contents" / "Resources" / "game", app):
+        done = subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(target)],
+                              capture_output=True, text=True, timeout=120)
+        if done.returncode:
+            raise NetworkError(f"signing the app failed: {done.stderr.strip()[-400:]}")
+
+
 def package_app(program: Path, dest: Path, title: str, platform: str = sys.platform) -> Path:
     """The native program as an app for `platform` in `dest` (replaced): what the player opens."""
     name, ident = _name(title), _ident(title)
@@ -142,10 +204,18 @@ def package_app(program: Path, dest: Path, title: str, platform: str = sys.platf
         (app / "Contents" / "MacOS").mkdir(parents=True)
         (app / "Contents" / "Resources").mkdir()
         shutil.copy2(program, app / "Contents" / "Resources" / "game")
-        _write(app / "Contents" / "MacOS" / "play", MAC_LAUNCHER.format(title=title.replace('"', "'"), ident=ident),
-               executable=True)
+        _write(app / "Contents" / "Resources" / "play.sh",
+               MAC_LAUNCHER.format(title=title.replace('"', "'"), ident=ident), executable=True)
         _write(app / "Contents" / "Info.plist", PLIST.format(title=title.replace("&", "and").replace("<", ""),
                                                             ident=ident))
+        heading = f"{title} for macOS"
+        _write(dest / "How to open on a Mac.txt", MAC_HOW_TO_OPEN.format(title=title, name=name,
+                                                                         underline="=" * len(heading)))
+        if platform == sys.platform:
+            _mac_stub(app / "Contents" / "MacOS" / "play")
+            _sign(app)
+        else:  # packed elsewhere (tests): the script itself, which a Mac runs but can't keep signed
+            shutil.copy2(app / "Contents" / "Resources" / "play.sh", app / "Contents" / "MacOS" / "play")
         return app
     exe = program.with_suffix(".exe") if platform == "win32" and program.with_suffix(".exe").is_file() else program
     shutil.copy2(exe, dest / ("game.exe" if platform == "win32" else "game"))
@@ -207,5 +277,9 @@ def export(net, slug: str, kind: str, log=print) -> dict:
                             "browsers load WebAssembly only over http.", "The page asks the player for their ROM."]
     elif kind == "app":
         steps_for_player = [f"Open {path} to play: it asks for your ROM the first time."]
+        if sys.platform == "darwin":
+            steps_for_player.append("On another Mac, the first open needs Control-click > Open (or System Settings > "
+                                    "Privacy & Security > Open Anyway): the app isn't signed by an Apple developer. "
+                                    "\"How to open on a Mac.txt\" beside it says so for the player.")
     return {"kind": kind, "folder": str(folder), "path": str(path), "files": files, "bytes": size,
             "system": {"app": sys.platform, "web": "browser"}.get(kind, kind), "instructions": steps_for_player}
