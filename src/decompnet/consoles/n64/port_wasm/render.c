@@ -20,11 +20,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The per-pixel functions, inlined whatever the build's flags (the native host is built with -fno-inline): compiled
+   to WebAssembly, a call passes and returns each colour (four floats) through memory, on the stack in the module's
+   memory, where a native build keeps them in registers. Inlined, a racing game's frames took a fifth less. */
+#define HOT inline __attribute__((always_inline))
+
 uint8_t *port_memory(void);
 static uint8_t *R;
-static uint32_t rd32(uint32_t a) { uint32_t v; memcpy(&v, R + a, 4); return __builtin_bswap32(v); }
-static uint16_t rd16(uint32_t a) { uint16_t v; memcpy(&v, R + a, 2); return __builtin_bswap16(v); }
-static void wr16(uint32_t a, uint16_t v) { v = __builtin_bswap16(v); memcpy(R + a, &v, 2); }
+static HOT uint32_t rd32(uint32_t a) { uint32_t v; memcpy(&v, R + a, 4); return __builtin_bswap32(v); }
+static HOT uint16_t rd16(uint32_t a) { uint16_t v; memcpy(&v, R + a, 2); return __builtin_bswap16(v); }
+static HOT void wr16(uint32_t a, uint16_t v) { v = __builtin_bswap16(v); memcpy(R + a, &v, 2); }
 
 static uint32_t segments[16];
 static uint32_t phys(uint32_t a) { /* a display-list address -> the game's memory */
@@ -55,18 +60,29 @@ static int scissor[4] = {0, 0, 320, 240};
 /* Each pixel's coverage, as the RDP keeps it in the frame buffer's hidden bits: how many of a pixel's 8 sample
    points are covered, kept as 8 minus that so that memory starts fully covered. By the pixel's address in RDRAM. */
 static uint8_t cvg_hole[4u << 20];
-static int cvg_get(uint32_t a) { return 8 - cvg_hole[(a & 0x7FFFFF) >> 1]; }
-static void cvg_set(uint32_t a, int c) { cvg_hole[(a & 0x7FFFFF) >> 1] = (uint8_t)(8 - (c < 0 ? 0 : c > 8 ? 8 : c)); }
+static HOT int cvg_get(uint32_t a) { return 8 - cvg_hole[(a & 0x7FFFFF) >> 1]; }
+static HOT void cvg_set(uint32_t a, int c) { cvg_hole[(a & 0x7FFFFF) >> 1] = (uint8_t)(8 - (c < 0 ? 0 : c > 8 ? 8 : c)); }
 static uint32_t images[8][2]; /* colour images drawn to: address, width */
 static int frame_height(void) { return cimg_width > 320 ? 480 : 240; } /* 640 wide: the high-resolution mode */
 
 #define cycle_type() ((int)((mode_h >> 20) & 3)) /* 0 one, 1 two, 2 copy, 3 fill */
 
-static Color unpack5551(uint16_t c) {
-    return (Color){((c >> 11) & 31) / 31.0f, ((c >> 6) & 31) / 31.0f, ((c >> 1) & 31) / 31.0f, (c & 1) ? 1.0f : 0.0f};
+/* A channel's n bits as a fraction, by table: i / 255.0f and the like, each worked out once with the same division.
+   Divided per texel and per pixel, these were a large part of the renderer's time. make_tables() fills them; the
+   renderer's entry points (port_render_task, port_frame_shown) call it first. */
+static float by255[256], by31[32], by15[16], by7[8];
+static void make_tables(void) {
+    if (by255[255] != 0) return;
+    for (int i = 0; i < 256; i++) by255[i] = i / 255.0f;
+    for (int i = 0; i < 32; i++) by31[i] = i / 31.0f;
+    for (int i = 0; i < 16; i++) by15[i] = i / 15.0f;
+    for (int i = 0; i < 8; i++) by7[i] = i / 7.0f;
 }
-static Color unpack8888(uint32_t c) {
-    return (Color){(c >> 24) / 255.0f, ((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f};
+static HOT Color unpack5551(uint16_t c) {
+    return (Color){by31[(c >> 11) & 31], by31[(c >> 6) & 31], by31[(c >> 1) & 31], (c & 1) ? 1.0f : 0.0f};
+}
+static HOT Color unpack8888(uint32_t c) {
+    return (Color){by255[c >> 24], by255[(c >> 16) & 255], by255[(c >> 8) & 255], by255[c & 255]};
 }
 static int clamp31(float v) { int i = (int)(v * 31.0f + 0.5f); return i < 0 ? 0 : i > 31 ? 31 : i; }
 static uint16_t pack5551(Color c) { return (uint16_t)(clamp31(c.r) << 11 | clamp31(c.g) << 6 | clamp31(c.b) << 1 | 1); }
@@ -83,52 +99,73 @@ static uint16_t pack5551(Color c) { return (uint16_t)(clamp31(c.r) << 11 | clamp
 static int wrap_coord(int s, int size, int cm, int mask) { WRAP_COORD(s, size, cm, mask); return s; }
 
 /* A tile's shift on texture coordinates: 1 to 10 divide by 2^shift, 11 to 15 multiply by 2^(16 - shift). */
-#define shifted(v, shift) (!(shift) ? (v) : (shift) > 10 ? (v) * (float)(1 << (16 - (shift))) : (v) / (float)(1 << (shift)))
+#define shifted(v, shift) (!(shift) ? (v) : (shift) > 10 ? (v) * (float)(1 << (16 - (shift))) : (v) * (1.0f / (float)(1 << (shift))))
+/* (Times 2^-shift rather than divided by 2^shift: the same float, as scaling by a power of two is exact.) */
 
 /* A palette entry as other mode H's TLUT type reads it: RGBA 5551, or IA16 (intensity, alpha). A game's text drawn
    with an IA16 palette came out as solid blocks when every palette was read as RGBA. */
-static Color tlut_colour(uint16_t v) {
-    if (((mode_h >> 14) & 3) == 3) { float i = (v >> 8) / 255.0f; return (Color){i, i, i, (v & 255) / 255.0f}; }
+static HOT Color tlut_colour(uint16_t v) {
+    if (((mode_h >> 14) & 3) == 3) { float i = by255[v >> 8]; return (Color){i, i, i, by255[v & 255]}; }
     return unpack5551(v);
 }
 
-/* A texel of a tile at integer coordinates (s, t), from TMEM as the loads left it. */
-static Color texel(const Tile *tile, int s, int t) {
-    int w = (int)(tile->lrs - tile->uls) + 1, h = (int)(tile->lrt - tile->ult) + 1;
-    s -= (int)tile->uls; t -= (int)tile->ult;
-    WRAP_COORD(s, w, tile->cms, tile->masks);
-    WRAP_COORD(t, h, tile->cmt, tile->maskt);
-    if (s < 0) s = 0;
-    if (t < 0) t = 0;
+/* The palette as colours, for the type other mode H reads it as (tlut_colour): worked out again only after a load
+   changes the palette or the type changes. Every colour-indexed texel was decoded from its entry before. */
+static Color tlut_colours[256];
+static int tlut_colours_type = -1; /* -1: to work out again */
+static HOT Color palette_colour(int i) {
+    int type = (int)((mode_h >> 14) & 3) == 3;
+    if (tlut_colours_type != type) {
+        for (int k = 0; k < 256; k++) tlut_colours[k] = tlut_colour(tlut[k]);
+        tlut_colours_type = type;
+    }
+    return tlut_colours[i];
+}
+
+/* A texel coordinate from the tile's corner, wrapped as the tile asks (`size` its width or height) and never below
+   0: once each for a bilinear sample's two columns and two rows, rather than per texel. */
+static HOT int wrapped(int s, int size, int cm, int mask) {
+    WRAP_COORD(s, size, cm, mask);
+    return s < 0 ? 0 : s;
+}
+/* The texel at wrapped (s, t), from TMEM as the loads left it. */
+static HOT Color texel_wrapped(const Tile *tile, int s, int t) {
     uint32_t row = (uint32_t)(tile->tmem * 8 + t * tile->line * 8);
     uint32_t odd = (t & 1) ? 4 : 0; /* TMEM keeps odd rows' 32-bit halves swapped: read them back */
     switch (tile->siz) {
     case 0: { /* 4-bit */
         uint8_t b = tmem[((row + s / 2) ^ odd) & 4095];
         int v = (s & 1) ? b & 15 : b >> 4;
-        if (tile->fmt == 2) return tlut_colour(tlut[(tile->palette * 16 + v) & 255]);
-        if (tile->fmt == 3) { float i = (v >> 1) / 7.0f; return (Color){i, i, i, (v & 1) ? 1.0f : 0.0f}; }
-        float i = v / 15.0f;
+        if (tile->fmt == 2) return palette_colour((tile->palette * 16 + v) & 255);
+        if (tile->fmt == 3) { float i = by7[v >> 1]; return (Color){i, i, i, (v & 1) ? 1.0f : 0.0f}; }
+        float i = by15[v];
         return (Color){i, i, i, i};
     }
     case 1: { /* 8-bit */
         uint8_t v = tmem[((row + s) ^ odd) & 4095];
-        if (tile->fmt == 2) return tlut_colour(tlut[v]);
-        if (tile->fmt == 3) { float i = (v >> 4) / 15.0f; return (Color){i, i, i, (v & 15) / 15.0f}; }
-        float i = v / 255.0f;
+        if (tile->fmt == 2) return palette_colour(v);
+        if (tile->fmt == 3) { float i = by15[v >> 4]; return (Color){i, i, i, by15[v & 15]}; }
+        float i = by255[v];
         return (Color){i, i, i, i};
     }
     case 2: { /* 16-bit */
         uint32_t a = ((row + s * 2) ^ odd) & 4094;
         uint16_t v = (uint16_t)(tmem[a] << 8 | tmem[a + 1]);
-        if (tile->fmt == 3) { float i = (v >> 8) / 255.0f; return (Color){i, i, i, (v & 255) / 255.0f}; }
+        if (tile->fmt == 3) { float i = by255[v >> 8]; return (Color){i, i, i, by255[v & 255]}; }
         return unpack5551(v);
     }
     default: { /* 32-bit: red and green in TMEM's low half, blue and alpha at the same place in its high half */
         uint32_t a = ((row + s * 2) ^ odd) & 2046;
-        return (Color){tmem[a] / 255.0f, tmem[a + 1] / 255.0f, tmem[a + 2048] / 255.0f, tmem[a + 2049] / 255.0f};
+        return (Color){by255[tmem[a]], by255[tmem[a + 1]], by255[tmem[a + 2048]], by255[tmem[a + 2049]]};
     }
     }
+}
+
+/* A texel of a tile at integer coordinates (s, t). */
+static Color texel(const Tile *tile, int s, int t) {
+    int w = (int)(tile->lrs - tile->uls) + 1, h = (int)(tile->lrt - tile->ult) + 1;
+    return texel_wrapped(tile, wrapped(s - (int)tile->uls, w, tile->cms, tile->masks),
+                         wrapped(t - (int)tile->ult, h, tile->cmt, tile->maskt));
 }
 
 static uint32_t texel_raw(const Tile *tile, int s, int t) {
@@ -153,14 +190,20 @@ static uint32_t texel_raw(const Tile *tile, int s, int t) {
    The RDP's bilinear filter reads three texels, not four: the corner nearest the point and its two neighbours, from
    whichever triangle of the 2x2 square the point falls in. Copy mode never filters. A racing game asks for bilerp
    on its 3D and its menu text; drawn by point, its trees and roads were blocks of texels. */
-static Color mix(Color a, Color b, Color c, float fb, float fc) { /* a + fb (b - a) + fc (c - a) */
+static HOT Color mix(Color a, Color b, Color c, float fb, float fc) { /* a + fb (b - a) + fc (c - a) */
     return (Color){a.r + fb * (b.r - a.r) + fc * (c.r - a.r), a.g + fb * (b.g - a.g) + fc * (c.g - a.g),
                    a.b + fb * (b.b - a.b) + fc * (c.b - a.b), a.a + fb * (b.a - a.a) + fc * (c.a - a.a)};
 }
-static Color sample(const Tile *tile, float s, float t) {
+static HOT Color sample(const Tile *tile, float s, float t) {
     int filter = (int)((mode_h >> 12) & 3), s0 = (int)floorf(s), t0 = (int)floorf(t);
     if (filter == 0 || cycle_type() >= 2) return texel(tile, s0, t0);
     float fs = s - (float)s0, ft = t - (float)t0;
+    /* the two columns and two rows, wrapped once each (as texel() wraps them) for the three or four texels */
+    int w = (int)(tile->lrs - tile->uls) + 1, h = (int)(tile->lrt - tile->ult) + 1;
+    int si = s0 - (int)tile->uls, ti = t0 - (int)tile->ult;
+    int cols[2] = {wrapped(si, w, tile->cms, tile->masks), wrapped(si + 1, w, tile->cms, tile->masks)};
+    int rows[2] = {wrapped(ti, h, tile->cmt, tile->maskt), wrapped(ti + 1, h, tile->cmt, tile->maskt)};
+#define texel(tile, s_, t_) texel_wrapped(tile, cols[(s_) - s0], rows[(t_) - t0])
     Color c10 = texel(tile, s0 + 1, t0), c01 = texel(tile, s0, t0 + 1);
     if (filter == 3) { /* average: the four texels' mean */
         Color c00 = texel(tile, s0, t0), c11 = texel(tile, s0 + 1, t0 + 1);
@@ -169,6 +212,7 @@ static Color sample(const Tile *tile, float s, float t) {
     } /* bilinear reads only the corner on the point's side: the other was a quarter of the texels read for nothing */
     if (fs + ft < 1.0f) return mix(texel(tile, s0, t0), c10, c01, fs, ft);
     return mix(texel(tile, s0 + 1, t0 + 1), c01, c10, 1.0f - fs, 1.0f - ft);
+#undef texel
 }
 
 /* ---------------------------------------------------------------- the colour combiner */
@@ -181,19 +225,60 @@ static float prim_lod_frac, k4, k5;
 static int prim_min_level;
 static Color key_center, key_scale;
 static uint32_t noise_seed = 0x12345678u;
-static float noise(void) { noise_seed = noise_seed * 1664525u + 1013904223u; return (float)(noise_seed >> 24) / 255.0f; }
-
-typedef struct { Color comb, t0, t1, shade; float lod, noise; } CombIn;
+static HOT float noise(void) { noise_seed = noise_seed * 1664525u + 1013904223u; return by255[noise_seed >> 24]; }
 
 /* The combiner's selectors, decoded once per change of its settings (combiner_uses): [cycle][A, B, C, D]. */
 static int sel_rgb[2][4], sel_alpha[2][4];
 
+/* Where each selected input is read from, also once per change of the settings: a slot of `cc` (RGB) or `cca`
+   (alpha). The first slots are the pixel's own (filled per pixel, only those its settings read: `cc_need`), the
+   rest the primitive's (prim, env, the key...), filled per primitive (combiner_uses). A switch per input per pixel
+   picking them was an eighth of a racing game's frame. */
+enum { CC_COMB, CC_T0, CC_T1, CC_SHADE, CC_NOISE, CC_COMB_A, CC_T0_A, CC_T1_A, CC_SHADE_A, CC_LOD, /* per pixel */
+       CC_PRIM, CC_ENV, CC_KEY_CENTER, CC_KEY_SCALE, CC_ONE, CC_K4, CC_ZERO, CC_PRIM_A, CC_ENV_A, CC_PRIM_LOD, CC_K5,
+       CC_SLOTS };
+enum { CA_COMB, CA_T0, CA_T1, CA_SHADE, CA_LOD, /* per pixel */ CA_PRIM, CA_ENV, CA_PRIM_LOD, CA_ONE, CA_ZERO, CA_SLOTS };
+static Color cc[CC_SLOTS];
+static float cca[CA_SLOTS];
+static uint8_t cc_slot[2][4], cca_slot[2][4];
+static uint32_t cc_need[2]; /* per cycle: bit n, RGB slot n; bit 16 + n, alpha slot n */
+
+/* The RGB inputs: A (4 bits), B (4), C (5) or D (3), as G_SETCOMBINE lays them out; 6 and 7 differ by position
+   (1, the chroma key's centre or scale; noise, K4, the combined alpha, 0), and only C reaches the alphas and the
+   LOD fractions. */
+static int rgb_slot(int which, int sel) {
+    static const uint8_t c_only[16] = {[8] = CC_T0_A, [9] = CC_T1_A, [10] = CC_PRIM_A, [11] = CC_SHADE_A, [12] = CC_ENV_A,
+                                       [13] = CC_LOD, [14] = CC_PRIM_LOD, [15] = CC_K5};
+    switch (sel) {
+    case 0: return CC_COMB; case 1: return CC_T0; case 2: return CC_T1; case 3: return CC_PRIM;
+    case 4: return CC_SHADE; case 5: return CC_ENV;
+    case 6: return which == 1 ? CC_KEY_CENTER : which == 2 ? CC_KEY_SCALE : CC_ONE;
+    case 7: return which == 0 ? CC_NOISE : which == 1 ? CC_K4 : which == 2 ? CC_COMB_A : CC_ZERO;
+    }
+    return sel < 16 && which == 2 ? c_only[sel] : CC_ZERO;
+}
+/* The alpha inputs: A, B and D share one list; C has the level of detail's fractions in place of the combined
+   alpha and 1. */
+static int alpha_slot(int which, int sel) {
+    switch (sel) {
+    case 0: return which == 2 ? CA_LOD : CA_COMB; case 1: return CA_T0; case 2: return CA_T1; case 3: return CA_PRIM;
+    case 4: return CA_SHADE; case 5: return CA_ENV; case 6: return which == 2 ? CA_PRIM_LOD : CA_ONE;
+    }
+    return CA_ZERO;
+}
+
 /* What the combiner's settings read, worked out once per change of them: whether any input is TEXEL1 (or, in two
    cycles, the second cycle's TEXEL0, which is TEXEL1), and whether any is noise. Sampling a second tile and drawing
-   noise for every pixel otherwise cost a racing game a third of its frame rate. */
+   noise for every pixel otherwise cost a racing game a third of its frame rate. Each primitive (the callers of
+   this) also gets its constant inputs into their slots. */
 static uint32_t uses_key[3] = {~0u, ~0u, ~0u};
 static int uses_t1, uses_noise;
+#define grey(v) ((Color){(v), (v), (v), (v)})
 static void combiner_uses(void) {
+    cc[CC_PRIM] = prim; cc[CC_ENV] = env; cc[CC_KEY_CENTER] = key_center; cc[CC_KEY_SCALE] = key_scale;
+    cc[CC_ONE] = grey(1.0f); cc[CC_K4] = grey(k4); cc[CC_ZERO] = grey(0.0f); cc[CC_PRIM_A] = grey(prim.a);
+    cc[CC_ENV_A] = grey(env.a); cc[CC_PRIM_LOD] = grey(prim_lod_frac); cc[CC_K5] = grey(k5);
+    cca[CA_PRIM] = prim.a; cca[CA_ENV] = env.a; cca[CA_PRIM_LOD] = prim_lod_frac; cca[CA_ONE] = 1.0f; cca[CA_ZERO] = 0;
     uint32_t cyc = (uint32_t)cycle_type();
     if (uses_key[0] == combine0 && uses_key[1] == combine1 && uses_key[2] == cyc) return;
     uses_key[0] = combine0; uses_key[1] = combine1; uses_key[2] = cyc;
@@ -209,6 +294,13 @@ static void combiner_uses(void) {
         }
         sel_rgb[cycle][0] = a; sel_rgb[cycle][1] = b; sel_rgb[cycle][2] = c; sel_rgb[cycle][3] = d;
         sel_alpha[cycle][0] = aa; sel_alpha[cycle][1] = ab; sel_alpha[cycle][2] = ac; sel_alpha[cycle][3] = ad;
+        cc_need[cycle] = 0;
+        for (int w = 0; w < 4; w++) {
+            cc_slot[cycle][w] = (uint8_t)rgb_slot(w, sel_rgb[cycle][w]);
+            cca_slot[cycle][w] = (uint8_t)alpha_slot(w, sel_alpha[cycle][w]);
+            if (cc_slot[cycle][w] < CC_PRIM) cc_need[cycle] |= 1u << cc_slot[cycle][w];
+            if (cca_slot[cycle][w] < CA_PRIM) cc_need[cycle] |= 1u << (16 + cca_slot[cycle][w]);
+        }
         /* one cycle runs only the second cycle's settings, two cycles both, the second with the texels swapped */
         if (cyc == 0 ? cycle == 0 : cyc != 1) continue;
         int t0_in_second = cyc == 1 && cycle == 1 && (a == 1 || b == 1 || c == 1 || c == 8 || d == 1 || aa == 1 || ab == 1 || ac == 1 || ad == 1);
@@ -217,39 +309,24 @@ static void combiner_uses(void) {
         if (a == 7) uses_noise = 1;
     }
 }
-#define grey(v) ((Color){(v), (v), (v), (v)})
 #define clamp01(v) ((v) < 0 ? 0.0f : (v) > 1 ? 1.0f : (v)) /* macros: the host is built without inlining */
-/* The RGB inputs: A (4 bits), B (4), C (5) or D (3), as G_SETCOMBINE lays them out; 6 and 7 differ by position
-   (1, the chroma key's centre or scale; noise, K4, the combined alpha, 0), and only C reaches the alphas and the
-   LOD fractions. A macro, picking inline: the host is built without inlining, and a call per input per pixel was
-   a quarter of the renderer's time. */
-#define CC_RGB(dst, which, sel) do { switch (sel) { \
-    case 0: dst = in->comb; break; case 1: dst = in->t0; break; case 2: dst = in->t1; break; \
-    case 3: dst = prim; break; case 4: dst = in->shade; break; case 5: dst = env; break; \
-    case 6: dst = (which) == 1 ? key_center : (which) == 2 ? key_scale : grey(1.0f); break; \
-    case 7: dst = (which) == 0 ? grey(in->noise) : (which) == 1 ? grey(k4) : (which) == 2 ? grey(in->comb.a) : grey(0.0f); break; \
-    case 8: dst = (which) == 2 ? grey(in->t0.a) : grey(0.0f); break; \
-    case 9: dst = (which) == 2 ? grey(in->t1.a) : grey(0.0f); break; \
-    case 10: dst = (which) == 2 ? grey(prim.a) : grey(0.0f); break; \
-    case 11: dst = (which) == 2 ? grey(in->shade.a) : grey(0.0f); break; \
-    case 12: dst = (which) == 2 ? grey(env.a) : grey(0.0f); break; \
-    case 13: dst = (which) == 2 ? grey(in->lod) : grey(0.0f); break; \
-    case 14: dst = (which) == 2 ? grey(prim_lod_frac) : grey(0.0f); break; \
-    case 15: dst = (which) == 2 ? grey(k5) : grey(0.0f); break; \
-    default: dst = grey(0.0f); } } while (0)
-/* The alpha inputs: A, B and D share one list; C has the level of detail's fractions in place of the combined
-   alpha and 1. */
-#define CC_ALPHA(dst, which, sel) do { switch (sel) { \
-    case 0: dst = (which) == 2 ? in->lod : in->comb.a; break; case 1: dst = in->t0.a; break; \
-    case 2: dst = in->t1.a; break; case 3: dst = prim.a; break; case 4: dst = in->shade.a; break; \
-    case 5: dst = env.a; break; case 6: dst = (which) == 2 ? prim_lod_frac : 1.0f; break; \
-    default: dst = 0; } } while (0)
-static Color combine(int cycle, const CombIn *in) {
-    const int *r = sel_rgb[cycle], *al = sel_alpha[cycle];
-    Color A, B, C, D;
-    float aa, ab, ac, ad;
-    CC_RGB(A, 0, r[0]); CC_RGB(B, 1, r[1]); CC_RGB(C, 2, r[2]); CC_RGB(D, 3, r[3]);
-    CC_ALPHA(aa, 0, al[0]); CC_ALPHA(ab, 1, al[1]); CC_ALPHA(ac, 2, al[2]); CC_ALPHA(ad, 3, al[3]);
+/* One cycle of the combiner, its pixel's inputs given: (A - B) * C + D for colour and alpha. */
+static HOT Color combine(int cycle, Color comb, Color t0, Color t1, Color shade, float lod, float nz) {
+    uint32_t need = cc_need[cycle];
+    if (need & (1u << CC_COMB)) cc[CC_COMB] = comb;
+    if (need & (1u << CC_T0)) cc[CC_T0] = t0;
+    if (need & (1u << CC_T1)) cc[CC_T1] = t1;
+    if (need & (1u << CC_SHADE)) cc[CC_SHADE] = shade;
+    if (need & (1u << CC_NOISE)) cc[CC_NOISE] = grey(nz);
+    if (need & (1u << CC_COMB_A)) cc[CC_COMB_A] = grey(comb.a);
+    if (need & (1u << CC_T0_A)) cc[CC_T0_A] = grey(t0.a);
+    if (need & (1u << CC_T1_A)) cc[CC_T1_A] = grey(t1.a);
+    if (need & (1u << CC_SHADE_A)) cc[CC_SHADE_A] = grey(shade.a);
+    if (need & (1u << CC_LOD)) cc[CC_LOD] = grey(lod);
+    cca[CA_COMB] = comb.a; cca[CA_T0] = t0.a; cca[CA_T1] = t1.a; cca[CA_SHADE] = shade.a; cca[CA_LOD] = lod;
+    const uint8_t *r = cc_slot[cycle], *al = cca_slot[cycle];
+    Color A = cc[r[0]], B = cc[r[1]], C = cc[r[2]], D = cc[r[3]];
+    float aa = cca[al[0]], ab = cca[al[1]], ac = cca[al[2]], ad = cca[al[3]];
     float or_ = (A.r - B.r) * C.r + D.r, og = (A.g - B.g) * C.g + D.g, ob = (A.b - B.b) * C.b + D.b, oa = (aa - ab) * ac + ad;
     return (Color){clamp01(or_), clamp01(og), clamp01(ob), clamp01(oa)};
 }
@@ -258,26 +335,26 @@ static Color combine(int cycle, const CombIn *in) {
    mode drew with the wrong one when the first was read here. (The blender's one cycle is its first.) In two cycles
    the second sees the texels swapped: its TEXEL0 is the first cycle's TEXEL1 (and its TEXEL1 the next
    pixel's TEXEL0, taken here as this one's). */
-static Color combiner(const Texels *tx, Color shade) {
-    CombIn in = {{0, 0, 0, 0}, tx->t0, tx->t1, shade, tx->lod, uses_noise ? noise() : 0.0f};
-    if (cycle_type() != 1) return combine(cycle_type() == 0, &in);
-    in.comb = combine(0, &in);
-    in.t0 = tx->t1; in.t1 = tx->t0;
-    return combine(1, &in);
+static HOT Color combiner(const Texels *tx, Color shade) {
+    float nz = uses_noise ? noise() : 0.0f;
+    Color none = {0, 0, 0, 0};
+    if (cycle_type() != 1) return combine(cycle_type() == 0, none, tx->t0, tx->t1, shade, tx->lod, nz);
+    Color first = combine(0, none, tx->t0, tx->t1, shade, tx->lod, nz);
+    return combine(1, first, tx->t1, tx->t0, shade, tx->lod, nz);
 }
 
 /* ---------------------------------------------------------------- the frame and depth images */
 
-static int in_frame(int x, int y) {
+static HOT int in_frame(int x, int y) {
     return x >= scissor[0] && y >= scissor[1] && x < scissor[2] && y < scissor[3] && x >= 0 && y >= 0 && x < cimg_width && y < frame_height();
 }
-static uint32_t pixel_addr(int x, int y) {
+static HOT uint32_t pixel_addr(int x, int y) {
     uint32_t bytes = cimg_siz == 3 ? 4 : cimg_siz == 1 ? 1 : 2;
     return 0x80000000u | ((cimg_addr + (uint32_t)(y * cimg_width + x) * bytes) & 0x1FFFFFFF);
 }
-static Color read_pixel(uint32_t a) {
+static HOT Color read_pixel(uint32_t a) {
     if (cimg_siz == 3) return unpack8888(rd32(a));
-    if (cimg_siz == 1) return grey(R[a] / 255.0f);
+    if (cimg_siz == 1) return grey(by255[R[a]]);
     return unpack5551(rd16(a));
 }
 
@@ -286,7 +363,7 @@ static Color read_pixel(uint32_t a) {
    smooth gradients (skies, fades) showed bands the console doesn't. */
 static const uint8_t magic_square[16] = {0, 6, 1, 7, 4, 2, 5, 3, 3, 5, 2, 4, 7, 1, 6, 0};
 static const uint8_t bayer[16] = {0, 4, 1, 5, 4, 0, 5, 1, 3, 7, 2, 6, 7, 3, 6, 2};
-static int dither_at(int x, int y) {
+static HOT int dither_at(int x, int y) {
     switch ((mode_h >> 6) & 3) {
     case 0: return magic_square[(y & 3) * 4 + (x & 3)];
     case 1: return bayer[(y & 3) * 4 + (x & 3)];
@@ -296,7 +373,7 @@ static int dither_at(int x, int y) {
 }
 #define TO5(v, d) ((((int)((v) * 255.0f + 0.5f) + (d)) >> 3) < 0 ? 0 : (((int)((v) * 255.0f + 0.5f) + (d)) >> 3) > 31 ? 31 \
                    : (((int)((v) * 255.0f + 0.5f) + (d)) >> 3))
-static void write_pixel(int x, int y, uint32_t a, Color c, int dither) {
+static HOT void write_pixel(int x, int y, uint32_t a, Color c, int dither) {
     if (cimg_siz == 3) {
         uint32_t v = (uint32_t)(clamp01(c.r) * 255 + 0.5f) << 24 | (uint32_t)(clamp01(c.g) * 255 + 0.5f) << 16
                    | (uint32_t)(clamp01(c.b) * 255 + 0.5f) << 8 | (uint32_t)(clamp01(c.a) * 255 + 0.5f);
@@ -320,9 +397,11 @@ static void write_pixel(int x, int y, uint32_t a, Color c, int dither) {
 static uint8_t dz_hole[4u << 20];
 static const struct { uint32_t base; int shift; } z_ranges[8] = {
     {0x00000, 6}, {0x20000, 5}, {0x30000, 4}, {0x38000, 3}, {0x3C000, 2}, {0x3E000, 1}, {0x3F000, 0}, {0x3F800, 0}};
-static uint16_t z_encode(float z, float dz) {
-    uint32_t zi = z <= 0 ? 0 : z >= 0x3FFFF ? 0x3FFFF : (uint32_t)z, e = 0;
-    while (e < 7 && zi >= z_ranges[e + 1].base) e++;
+static HOT uint16_t z_encode(float z, float dz) {
+    uint32_t zi = z <= 0 ? 0 : z >= 0x3FFFF ? 0x3FFFF : (uint32_t)z;
+    /* the exponent: the last range whose base it reaches, which is how many of its 18 bits lead with 1 (up to 7) */
+    uint32_t e = (uint32_t)__builtin_clz(~(zi << 14));
+    if (e > 7) e = 7;
     uint32_t m = ((zi - z_ranges[e].base) >> z_ranges[e].shift) & 0x7FF;
     static float last_dz = -1; static int last_dzc;
     if (dz != last_dz) { last_dz = dz; last_dzc = 0; while (last_dzc < 15 && (float)(1 << last_dzc) < dz) last_dzc++; }
@@ -331,14 +410,14 @@ static uint16_t z_encode(float z, float dz) {
 static float zbuf_private[MAXW * MAXH];
 #define z_in_memory() (zimg_addr != 0)
 #define z_addr(x, y) (0x80000000u | ((zimg_addr + (uint32_t)((y) * cimg_width + (x)) * 2) & 0x1FFFFFFF))
-static float z_read(int x, int y, float *dz) {
+static HOT float z_read(int x, int y, float *dz) {
     if (!z_in_memory()) { *dz = 0; return zbuf_private[y * MAXW + x]; }
     uint32_t a = z_addr(x, y);
     uint16_t v = (uint16_t)(R[a] << 8 | R[a + 1]), e = v >> 13;
     *dz = (float)(1 << (((v & 3) << 2) | dz_hole[(a & 0x7FFFFF) >> 1]));
     return (float)(z_ranges[e].base + ((uint32_t)((v >> 2) & 0x7FF) << z_ranges[e].shift));
 }
-static void z_write(int x, int y, float z, float dz) {
+static HOT void z_write(int x, int y, float z, float dz) {
     if (!z_in_memory()) { zbuf_private[y * MAXW + x] = z; return; }
     uint32_t a = z_addr(x, y);
     uint16_t v = z_encode(z, dz);
@@ -356,26 +435,29 @@ static float prim_z, prim_dz; /* G_SETPRIMDEPTH, for G_ZS_PRIM */
    fog colour; A: the incoming alpha, the fog colour's, the shade's (the RSP's fog alpha under G_FOG) or 0; B: 1 - A,
    the frame buffer's alpha, 1 or 0. Alpha passes through. A racing game fogs most of a race in the first cycle
    (fog * shade alpha + in * (1 - shade alpha)); without it, every race was drawn without its haze. */
-static Color blender_cycle(int cycle, Color in, Color mem, Color shade) {
+/* P or M: the pixel coming in, the frame buffer's, the blend colour or the fog colour. (Picked, not indexed in an
+   array: compiled to WebAssembly, the array was built in memory for every pixel.) */
+#define PICK(n, in, mem) ((n) == 0 ? (in) : (n) == 1 ? (mem) : (n) == 2 ? blend : fog)
+static HOT Color blender_cycle(int cycle, Color in, Color mem, Color shade) {
     int at = cycle == 0 ? 30 : 28;
     int p = (int)(mode_l >> at) & 3, a = (int)(mode_l >> (at - 4)) & 3;
     int m = (int)(mode_l >> (at - 8)) & 3, b = (int)(mode_l >> (at - 12)) & 3;
-    Color pick[4] = {in, mem, blend, fog};
     float A = a == 0 ? in.a : a == 1 ? fog.a : a == 2 ? shade.a : 0;
     float B = b == 0 ? 1 - A : b == 1 ? mem.a : b == 2 ? 1 : 0;
     float sum = A + B > 1 ? A + B : 1;
-    Color P = pick[p], M = pick[m];
+    Color P = PICK(p, in, mem), M = PICK(m, in, mem);
+    if (sum == 1) /* nearly always: dividing by it gives the same */
+        return (Color){P.r * A + M.r * B, P.g * A + M.g * B, P.b * A + M.b * B, in.a};
     return (Color){(P.r * A + M.r * B) / sum, (P.g * A + M.g * B) / sum, (P.b * A + M.b * B) / sum, in.a};
 }
 /* Both cycles as the RDP runs them: in two-cycle mode the first always blends (fog); the last blends only with
    force blend (anti-aliasing, which would blend edges, isn't drawn here) and otherwise passes its P through. */
-static Color blender(Color in, Color mem, Color shade) {
+static HOT Color blender(Color in, Color mem, Color shade) {
     int two = cycle_type() == 1;
     Color out = two ? blender_cycle(0, in, mem, shade) : in;
     int last = two ? 1 : 0;
     if (mode_l & 0x4000) return blender_cycle(last, out, mem, shade);
-    Color pick[4] = {out, mem, blend, fog};
-    Color passed = pick[(mode_l >> (last ? 28 : 30)) & 3];
+    Color passed = PICK((mode_l >> (last ? 28 : 30)) & 3, out, mem);
     passed.a = in.a;
     return passed;
 }
@@ -396,7 +478,7 @@ static Color blender(Color in, Color mem, Color shade) {
 
    Depth: Z_CMP compares (in decal mode, only a surface at the same depth passes: a shadow or a mark on a wall), and
    Z_UPD writes; G_ZS_PRIM takes the depth from G_SETPRIMDEPTH for every pixel (2D drawn at a depth). */
-static void plot(int x, int y, float z, Color shade, const Texels *tx, int depth, int cvg, float dz) {
+static HOT void plot(int x, int y, float z, Color shade, const Texels *tx, int depth, int cvg, float dz) {
     if (!in_frame(x, y)) return;
     int zcmp = (mode_l & 0x10) != 0, zupd = (mode_l & 0x20) != 0, decal = ((mode_l >> 10) & 3) == 3;
     int aa = (mode_l & 0x8) != 0, force = (mode_l & 0x4000) != 0, same_surface = 1;
@@ -461,8 +543,17 @@ static void fill_rect(int x0, int y0, int x1, int y1) {
         if (xb > cimg_width - 1) xb = cimg_width - 1;
         if (yb > scissor[3] - 1) yb = scissor[3] - 1;
         if (yb > fh - 1) yb = fh - 1;
-        for (int y = ya; y <= yb; y++)
+        for (int y = ya; y <= yb; y++) {
+            /* a 16-bit frame's row, its pixels and coverage at consecutive addresses: as fill_pixel writes them */
+            uint32_t first = pixel_addr(xa, y), n = (uint32_t)(xb - xa + 1);
+            if (cimg_siz == 2 && xa <= xb && pixel_addr(xb, y) == first + (n - 1) * 2 && (first & 0x7FFFFF) + n * 2 <= 0x800000
+                && !(cimg_addr == zimg_addr && !z_in_memory())) {
+                for (uint32_t i = 0; i < n; i++) wr16(first + i * 2, (uint16_t)(((xa + (int)i) & 1) ? fill_color : fill_color >> 16));
+                memset(cvg_hole + ((first & 0x7FFFFF) >> 1), 0, n); /* coverage 8 */
+                continue;
+            }
             for (int x = xa; x <= xb; x++) fill_pixel(x, y);
+        }
         return;
     }
     Texels none = one_texel((Color){0, 0, 0, 0});
@@ -472,7 +563,7 @@ static void fill_rect(int x0, int y0, int x1, int y1) {
 
 /* The texels a pixel sees (TEXEL0, TEXEL1 and the level of detail's fraction), from the tile G_TEXTURE or the
    rectangle names, at (s, t) in texels before each tile's shift; `lod` is how many texels one pixel steps. */
-static Texels texels_at(int tile, float s, float t, float lod);
+static HOT Texels texels_at(int tile, float s, float t, float lod);
 
 /* Copy mode moves texels as they are, without the combiner or blender: a 16-bit frame gets the texel's 16 bits
    (a palette's entry for colour-indexed ones), an 8-bit frame the texel's byte. */
@@ -561,6 +652,7 @@ static void load_tlut(int tile, int count) {
     int base = tiles[tile].tmem - 256;
     for (int i = 0; i < count; i++)
         if (base + i >= 0 && base + i < 256) tlut[base + i] = rd16(phys(timg_addr) + i * 2);
+    tlut_colours_type = -1;
 }
 
 /* The RDP commands both microcodes send. */
@@ -714,7 +806,7 @@ static void project(Vtx *v) {
    tile for a fine texture blended in when magnified, the levels starting one tile later; sharpen (G_TD_SHARPEN)
    extrapolates past the first level. Without LOD, TEXEL0 is the tile and TEXEL1 the next one (two textures on one
    surface: scrolling water, flames, two-layer ground). */
-static Texels texels_at(int tile, float s, float t, float lod) {
+static HOT Texels texels_at(int tile, float s, float t, float lod) {
     Texels out = {{1, 1, 1, 1}, {1, 1, 1, 1}, 0};
     int t0 = tile, t1 = tile + 1;
     if (mode_h & 0x10000) { /* G_TL_LOD */
@@ -752,6 +844,35 @@ static Edge edge_of(const Vtx *p, const Vtx *q) {
    edge is the top or left of (its inside below, or to the right). Every point on a quad's diagonal was drawn by both
    its triangles, so a see-through quad showed a bright seam along it. */
 #define owns(l, gx, gy) ((l) > 0 || ((l) == 0 && ((gx) > 0 || ((gx) == 0 && (gy) > 0))))
+/* The same, with the tie's side (`tie`: owns(0, gx, gy)) worked out once per triangle, and without branches: the
+   coverage samples' tests, taken branch by branch, were a fifth of a racing game's frame. */
+#define OWNS(l, tie) (((l) > 0) | (((l) == 0) & (tie)))
+
+/* The pixels of row y (from `*from` to `*to`, within minx to maxx - 1) that might be inside a triangle: each edge's
+   weight l is linear along the row, and a pixel whose l is certainly below its limit (0, or -e with anti-aliasing:
+   the tests raster makes first) can't be drawn. Worked out in double with a margin above float's rounding of l,
+   and a pixel more each side, so only pixels raster would turn away are left out; the rest still take its exact
+   test. Three quarters of the pixels raster looked at in a racing game's frame were outside the triangle, each
+   costing three divisions. */
+static void span(const Edge *const edges[3], const float areas[3], const float limits[3], int minx, int maxx, int y,
+                 int *from, int *to) {
+    double py = y + 0.5, lo = minx, hi = maxx - 1;
+    double px_far = fmax(fabs(minx + 0.5), fabs(maxx + 0.5)) + 2048;
+    for (int k = 0; k < 3 && lo <= hi; k++) {
+        const Edge *e = edges[k];
+        double A = areas[k], row = (double)e->dx * (py - e->uy), slope = -(double)e->dy * e->sign / A;
+        if (slope == 0 || !isfinite(slope)) continue; /* the exact test decides */
+        /* l = (row - dy (px - ux)) sign / A, rounded in floats: off by at most a few ulps of its terms */
+        double terms = fabs(row) + fabs((double)e->dy) * (px_far + fabs((double)e->ux));
+        double slack = 1e-5 * (terms / fabs(A) + fabs((double)limits[k])) + 1e-30;
+        double at = ((double)limits[k] - slack - (row + (double)e->dy * e->ux) * e->sign / A) / slope; /* l = limit - slack */
+        if (!isfinite(at)) continue;
+        if (slope > 0) { double x = floor(at - 0.5) - 1; if (x > lo) lo = x; }
+        else { double x = ceil(at - 0.5) + 1; if (x < hi) hi = x; }
+    }
+    *from = lo > hi ? 1 : (int)lo;
+    *to = lo > hi ? 0 : (int)hi;
+}
 
 /* One triangle already in front of the eye, in screen space. */
 static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
@@ -783,13 +904,20 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
     float e2 = 0.5f * (fabsf(d0x + d1x) + fabsf(d0y + d1y));
     int smooth = (geometry & 0x200000) != 0, persp = (mode_h & 0x80000) != 0; /* G_TP_PERSP */
     int lod_on = (mode_h & 0x10000) != 0;
-    for (int y = miny; y < maxy; y++)
-        for (int x = minx; x < maxx; x++) {
+    int tie0 = owns(0.0f, d0x, d0y), tie1 = owns(0.0f, d1x, d1y), tie2 = owns(0.0f, d2x, d2y);
+    const Edge *edges[3] = {&E0, &E1, &E2};
+    const float areas[3] = {A0, A1, A2}, limits[3] = {aa ? -e0 : 0, aa ? -e1 : 0, aa ? -e2 : 0};
+    for (int y = miny; y < maxy; y++) {
+        int from = minx, to = maxx - 1;
+#ifndef RENDER_EVERY_PIXEL /* for the tests: every pixel of the box, which the spans must draw alike */
+        span(edges, areas, limits, minx, maxx, y, &from, &to);
+#endif
+        for (int x = from; x <= to; x++) {
             float px = x + 0.5f, py = y + 0.5f;
             float l0 = EDGE_AT(E0, px, py) / A0, l1 = EDGE_AT(E1, px, py) / A1, l2 = EDGE_AT(E2, px, py) / A2;
             int cvg = 8;
             if (!aa) {
-                if (!owns(l0, d0x, d0y) || !owns(l1, d1x, d1y) || !owns(l2, d2x, d2y)) continue;
+                if (!(OWNS(l0, tie0) & OWNS(l1, tie1) & OWNS(l2, tie2))) continue;
             } else {
                 if (l0 < -e0 || l1 < -e1 || l2 < -e2) continue; /* well outside */
                 if (l0 < e0 || l1 < e1 || l2 < e2) { /* near an edge: count the samples */
@@ -797,7 +925,7 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
                     for (int k = 0; k < 8; k++) {
                         float ox = sx8[k] - 0.5f, oy = sy8[k] - 0.5f;
                         float m0 = l0 + d0x * ox + d0y * oy, m1 = l1 + d1x * ox + d1y * oy, m2 = 1 - m0 - m1;
-                        cvg += owns(m0, d0x, d0y) && owns(m1, d1x, d1y) && owns(m2, d2x, d2y);
+                        cvg += OWNS(m0, tie0) & OWNS(m1, tie1) & OWNS(m2, tie2);
                     }
                     if (!cvg) continue;
                 }
@@ -836,6 +964,7 @@ static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
             }
             plot(x, y, z, sh, &tx, (geometry & 1) != 0, cvg, dz);
         }
+    }
 }
 
 static Vtx lerp(const Vtx *a, const Vtx *b, float f) {
@@ -1131,6 +1260,7 @@ static void s2d_load(uint32_t txtr) { /* uObjTxtr: a block, a tile or a palette 
     int tm = rd16(txtr + 8), b = rd16(txtr + 10), c = rd16(txtr + 12);
     if (type == 0x00000030) { /* a palette: its first entry (phead) and its count minus one (pnum) */
         for (int i = 0; i <= b; i++) if (tm - 256 + i >= 0 && tm - 256 + i < 256) tlut[tm - 256 + i] = rd16(src + i * 2);
+        tlut_colours_type = -1;
     } else if (type == 0x00001033) { /* a block: tsize words minus one, tline the line step (dxt) */
         uint32_t line = 0;
         for (int i = 0; i <= b && tm * 8 + i * 8 < 4096; i++) { tmem_word((uint32_t)(tm + i) * 8, src + (uint32_t)i * 8, (line >> 11) & 1); line += (uint32_t)c; }
@@ -1211,12 +1341,12 @@ static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight f
             Color c;
             switch (siz) {
             case 0: { uint8_t b = R[image + (uint32_t)(t * width + s) / 2]; int v = (s & 1) ? b & 15 : b >> 4;
-                c = fmt == 2 ? unpack5551(tlut[(pal * 16 + v) & 255]) : (Color){v / 15.0f, v / 15.0f, v / 15.0f, 1}; break; }
+                c = fmt == 2 ? unpack5551(tlut[(pal * 16 + v) & 255]) : (Color){by15[v], by15[v], by15[v], 1}; break; }
             case 1: { uint8_t v = R[image + (uint32_t)(t * width + s)];
-                c = fmt == 2 ? unpack5551(tlut[v]) : (Color){v / 255.0f, v / 255.0f, v / 255.0f, 1}; break; }
+                c = fmt == 2 ? unpack5551(tlut[v]) : (Color){by255[v], by255[v], by255[v], 1}; break; }
             case 2: c = unpack5551(rd16(image + (uint32_t)(t * width + s) * 2)); break;
             default: { uint32_t a = image + (uint32_t)(t * width + s) * 4;
-                c = (Color){R[a] / 255.0f, R[a + 1] / 255.0f, R[a + 2] / 255.0f, R[a + 3] / 255.0f}; }
+                c = (Color){by255[R[a]], by255[R[a + 1]], by255[R[a + 2]], by255[R[a + 3]]}; }
             }
             int px = (int)fx + x, py = (int)fy + y;
             if (cycle_type() == 2) {
@@ -1264,6 +1394,7 @@ static void s2dex(uint8_t op, uint32_t w0, uint32_t w1) {
 static unsigned long render_tasks;
 
 void port_render_task(uint32_t task) {
+    make_tables();
     R = port_memory();
     if (!render_tasks) for (int i = 0; i < MAXW * MAXH; i++) zbuf_private[i] = 0x3FFFF; /* the farthest depth */
     render_tasks++;
@@ -1413,18 +1544,23 @@ static void vi_filter(uint8_t *rgb, int w, int h, uint32_t base, int bytes) {
         for (int x = 1; x < w - 1; x++) {
             int cvg = cvg_get(base + (uint32_t)(y * w + x) * (uint32_t)bytes);
             if (cvg >= 8) continue;
+            int around[8], n = 0; /* the fully covered neighbours */
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++) {
+                    int i = (y + dy) * w + x + dx;
+                    if ((dx || dy) && cvg_get(base + (uint32_t)i * (uint32_t)bytes) >= 8) around[n++] = i;
+                }
+            if (n < 2) continue; /* nothing around it to go by */
             for (int ch = 0; ch < 3; ch++) {
-                int v[9], n = 0, centre = src[(y * w + x) * 3 + ch];
-                v[n++] = centre;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int i = (y + dy) * w + x + dx;
-                        if ((dx || dy) && cvg_get(base + (uint32_t)i * (uint32_t)bytes) >= 8) v[n++] = src[i * 3 + ch];
-                    }
-                if (n < 3) break; /* nothing around it to go by */
-                for (int i = 1; i < n; i++) /* sorted, for the second-largest and second-smallest */
-                    for (int j = i; j > 0 && v[j] < v[j - 1]; j--) { int t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
-                int bg = v[n - 2] + v[1] - centre;
+                /* the second-smallest and second-largest of the pixel and those neighbours, found in one pass */
+                int centre = src[(y * w + x) * 3 + ch], first = src[around[0] * 3 + ch];
+                int lo = centre < first ? centre : first, lo2 = centre < first ? first : centre, hi = lo2, hi2 = lo;
+                for (int k = 1; k < n; k++) {
+                    int v = src[around[k] * 3 + ch];
+                    if (v < lo) { lo2 = lo; lo = v; } else if (v < lo2) lo2 = v;
+                    if (v > hi) { hi2 = hi; hi = v; } else if (v > hi2) hi2 = v;
+                }
+                int bg = hi2 + lo2 - centre;
                 bg = bg < 0 ? 0 : bg > 255 ? 255 : bg;
                 int out = centre + (bg - centre) * (8 - cvg) / 8;
                 rgb[(y * w + x) * 3 + ch] = (uint8_t)out;
@@ -1497,6 +1633,7 @@ int port_live_active(void); /* live.c */
 void port_live_frame(const uint8_t *rgb, int w, int h);
 /* The frame the VI shows next (osViSwapBuffer): saved when PORT_FRAMES names a folder, and shown live (PORT_LIVE). */
 void port_frame_shown(uint32_t fb, unsigned long n) {
+    make_tables();
     static const char *dir;
     static long every = -1;
     if (every < 0) {
