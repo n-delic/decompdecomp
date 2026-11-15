@@ -10,6 +10,10 @@ A slow read or a waiting write has four usual causes, and each has its own warni
 - a slow read, with its query plan's shape (full table scans, temporary sorts, automatic indexes) and how long it
   waited for the writer's connection ("Slow database read", store.Store._read).
 
+Slow reads and long writes also report CPU seconds consumed by their current thread. A large wall/CPU gap
+points away from CPU work in that thread, but does not identify which lock, I/O or scheduler wait caused it. Child
+processes and other threads are not included.
+
 Never the SQL text, its bindings or table names: either can hold private source or credentials (the same rule as the
 slow read warning). Each warning is repeated at most once a minute per place, so a busy minute stays readable.
 """
@@ -55,10 +59,10 @@ def due(kind, key, now=None) -> bool:
         return True
 
 
-def long_write(held, where):
+def long_write(held, where, *, thread_cpu=-1.):
     if held >= LONG_WRITE_SECONDS and due('long_write', where):
-        log.warning('Long database write %.3fs at %s: other writers, and reads inside transactions, wait for it',
-                    held, where)
+        log.warning('Long database write %.3fs at %s: other writers, and reads inside transactions, wait for it; thread_cpu=%.3fs',
+                    held, where, thread_cpu)
 
 
 def write_waited(waited, where, holder):

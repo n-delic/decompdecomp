@@ -13,6 +13,7 @@ import threading
 import time
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from time import thread_time
 
 from .read_cache import ReadCache
 
@@ -891,6 +892,7 @@ class Store:
                     self.conn.execute(f'PRAGMA busy_timeout={timeout}').close()
                 if not busy:
                     began = time.monotonic()
+                    began_cpu = thread_time()
                     where = queued[1] if queued else db_diagnostics.caller(1)
                     if queued:
                         last = self._last_writer
@@ -911,7 +913,7 @@ class Store:
                         _transactions.depth -= 1
                         ended = time.monotonic()
                         self._last_writer = (where, ended)
-                        db_diagnostics.long_write(ended-began, where)
+                        db_diagnostics.long_write(ended-began, where, thread_cpu=thread_time()-began_cpu)
                     callbacks.extend(self._local.after_commit)
                     self._local.after_commit = []
                     if self._wal_watch is not None:
@@ -975,12 +977,15 @@ class Store:
 
     def _read(self, sql: str, args: tuple, single: bool):
         started = time.monotonic()
+        # Two CPU clock reads per query; finer per-phase clocks materially tax fast reads.
+        started_cpu = thread_time()
         self._local.read_phases = {}  # durations only: request_timing.sql_read adds them up
         self._local.read_via = 'reader'
         try:
             return self._read_rows(sql, args, single)
         finally:
             elapsed = time.monotonic() - started
+            cpu_elapsed = thread_time() - started_cpu
             from .request_timing import sql_read
             phases = self._local.read_phases
             sql_read(elapsed, phases)
@@ -993,10 +998,10 @@ class Store:
                     self._slow_queries[key] = started
                     caller = sys._getframe(2)
                     logging.getLogger('decompdecomp').warning(
-                        'Slow database read %.3fs [%s] at %s:%s (%s) connection=%.3fs lock_wait=%.3fs execute=%.3fs fetch=%.3fs via=%s %s', elapsed, key,
+                        'Slow database read %.3fs [%s] at %s:%s (%s) connection=%.3fs lock_wait=%.3fs execute=%.3fs fetch=%.3fs via=%s %s thread_cpu=%.3fs', elapsed, key,
                         Path(caller.f_code.co_filename).name, caller.f_lineno, caller.f_code.co_name,
                         *(phases.get(k, 0) for k in ('connection', 'lock_wait', 'execute', 'fetch')),
-                        self._local.read_via, self._plan_shape(sql, args))
+                        self._local.read_via, self._plan_shape(sql, args), cpu_elapsed)
 
     def _read_rows(self, sql: str, args: tuple, single: bool):
         started = time.perf_counter()
