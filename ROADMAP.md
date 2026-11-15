@@ -28,7 +28,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | — | ✓ Ghidra | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | ✓ Ghidra | — (no assembly to read) | by architecture |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | twins only | — | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes (32-bit); Ghidra's made compilable | ✓ as PC | twins only (no drafts yet) | — |
 | Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | ✓ Ghidra's | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ (RTTI, and classes from the vtables constructors store) | ✓ (RTTI, vtables) | — | — |
+| C++ methods drafted as `Class::method` | — | — | ✓ | — | — | ✓ | — | — | ✓ (RTTI, and classes from the vtables constructors store) | ✓ (RTTI, vtables) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (ran; no pairs in demo) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ (`sc` stubs) | — | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs (64-bit: the funclets its exception data names) | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
@@ -68,6 +68,9 @@ Where to start on a gap:
   component, but ROM exports still write the full symbol name (`rom/export_build.py`), and the save change does not
   account for Windows' 260-character path limit. Extend the same safe naming and path handling to exports and check
   complete paths on Windows.
+- **C++ method drafts on N64 and PS1 (#232).** Their packed compilers build C only, so their briefs keep m2c's C
+  instead of a `Class::method` draft that can never compile. Packing a C++-capable build (its `cc1plus`) and marking
+  it `cplusplus` in `toolchains.toml` would give them method drafts, as the PS2's compilers already do.
 - **Public project build prerequisite hints** run in `ForkProject.run` for public checkouts. The other columns
   describe starting a game from scratch and do not use public-project setup.
 - **PowerPC (GameCube, Wii) and ARM (DS) readers.** For these processors, class recovery and struct layouts would
@@ -120,6 +123,8 @@ Where to start on a gap:
 - **Agents & models controls.** Collapsible sections show installed agent apps, prompt templates, optional tool
   visibility and recorded usage, manual project-scoped MCP connections, and saved API endpoints. Global and
   per-helper prompt and tool choices take effect on new sessions; disabled tool calls are rejected immediately.
+- **Portable Windows app.** A release ZIP bundles a relocatable `decompdecomp.exe`, Python and app dependencies. It needs the Microsoft window prerequisites already installed. CI extracts the ZIP to a different path and checks the EXE, server import and isolated startup/Stop.
+
 - **64-bit Windows games (x64).** A 64-bit program (PE32+) imports like a 32-bit one and builds with Visual C++
   2017's 64-bit compiler, the packs' only one: a game built with 2015, 2019 and newer, or 2005 to 2013's 64-bit
   compilers builds with it, and the import says how near that is. Its functions come from the program, not
@@ -548,6 +553,8 @@ Where to start on a gap:
 - **A real permuter**: decomp-permuter rewrites near misses on the parse tree, weighted per compiler, on spare
   cores at a low priority. On nine near misses made from the demo ROM's functions it matched all nine, the old
   regex rewrites five. They stay as the fallback, for C decomp-permuter can't parse.
+  A user can also start a bounded deep search for one unmatched function. It shares the background worker pool,
+  honours the time and variant limits, and records only improvements that pass the normal judge.
 - **Better drafts**: m2c drafts every function in the background, from the header declarations its code uses, and
   again when they change; `redraft` runs m2c with an agent's own declarations; methods of known C++ classes are
   drafted as `Class::method`. On GTA San Andreas, 37 of 40 sampled drafts read the header (none did before).
@@ -909,4 +916,7 @@ The answer goes here: build it, build part of it, or not, and why.
   doesn't use them yet.
 - **A Flatpak** on the GNOME runtime.
 - **macOS signed/notarized** distribution and a menu bar tray icon.
-- **macOS memory, CPU and file-size caps** for compiler processes (Linux currently uses systemd scopes).
+- **macOS CPU and file-size caps** for compiler processes (Linux uses prlimit; macOS has the memory watchdog,
+  `limits.CompilerMemoryWatchdog`).
+- **Windows memory caps** for compilers and project builds: the Job Object each one already runs in (`limits.attach_job`,
+  which stops the whole tree at the time limit) can also cap its memory, as Linux's scopes and macOS's watchdog do.

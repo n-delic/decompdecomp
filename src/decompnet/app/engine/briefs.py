@@ -15,7 +15,7 @@ import re
 import struct
 import threading
 
-from ... import arch, classes, seeds, similarity
+from ... import arch, classes, kits, seeds, similarity, toolchains
 from ...network import NetworkError
 from ...project import compiler_for
 from ...rom import match
@@ -329,12 +329,29 @@ class BriefMixin:
             return None, ""
         return cls, role
 
+    def _builds_cplusplus(self, proj, vram: int) -> bool:
+        """Whether the function's own compiler builds C++ (#232): compile_source tries C++ only for a toolchain marked
+        cplusplus, so a `Class::method` draft from any other compiler can never compile. A project can name a compiler
+        this copy doesn't know (#118): that one doesn't build C++ here, and the draft stays C."""
+        tid = compiler_for(self.cfg(proj), vram)["toolchain"]
+        if tid not in toolchains.registry():
+            # A copy of the user's own compiler runs as the pack it copies (project.compiler_config): ask that pack.
+            own = kits.own_compiler(tid)
+            tid = own.like if own is not None and own.like else tid
+        try:
+            return toolchains.get(tid).cplusplus
+        except toolchains.ToolchainError:
+            return False
+
     def _draft_shown(self, fn, proj) -> str:
         """The machine draft as the brief shows it: m2c writes C, `func(void *arg0, ...)`; where the class recovery
         knows the function is a method, it's shown as `Class::func(...)` with `this` and the class's known fields
-        (seeds.method_draft). Only where that's sure: otherwise as m2c wrote it. On GTA San Andreas the class
-        recovery knows 3,086 of its 12,627 functions as methods, 2,741 of one class only."""
+        (seeds.method_draft). Only where that's sure and the function's compiler builds C++ (#232): a C-only compiler
+        keeps m2c's C. On a PS2 game with 12,627 functions the class recovery knows 3,086 as methods, 2,741 of one
+        class only."""
         try:
+            if not self._builds_cplusplus(proj, fn["vram"]):
+                return fn["seed"]
             cls, role = self._own_class(proj, fn["vram"])
             if cls is None:
                 return fn["seed"]

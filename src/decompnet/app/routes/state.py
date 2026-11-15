@@ -4,6 +4,7 @@ game, the function map (every function, sent only when it changed), the log and 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import shutil
@@ -89,7 +90,18 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/projects", methods=["GET"])
     async def api_projects(request: Request) -> Response:
-        return guard(request) or JSONResponse(await call(project_list))
+        """The project list. With `since` (the signature of the list the GUI has): {sig, projects}, or just
+        {sig, same: true} when nothing changed, so the sidebar's ask every 5 s redraws nothing for hundreds of games.
+        Without it, the list itself, as before."""
+        if (bad := guard(request)):
+            return bad
+        projects = await call(project_list)
+        if "since" not in request.query_params:
+            return JSONResponse(projects)
+        sig = hashlib.sha1(json.dumps(projects, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        if request.query_params["since"] == sig:
+            return JSONResponse({"sig": sig, "same": True})
+        return JSONResponse({"sig": sig, "projects": projects})
 
     @mcp.custom_route("/api/state", methods=["GET"])
     async def api_state(request: Request) -> Response:

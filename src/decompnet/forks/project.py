@@ -31,7 +31,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW, console_python, stop_process_tree
 
-from ..limits import capped, killed_for_memory
+from ..limits import CompilerMemoryWatchdog, attach_job, capped, default_cap, killed_for_memory, release_job, stop_group
 from ..network import NetworkError
 from . import objdiff
 
@@ -598,6 +598,7 @@ class ForkProject:
                                     creationflags=NO_WINDOW, start_new_session=os.name != "nt")
         except FileNotFoundError:
             return None, [f"{cmd[0]} isn't installed"], ""
+        attach_job(proc)  # (Windows: its commands are stopped with it, even once it's gone; elsewhere its session)
         out, seen, quiet = [], collections.Counter(), [0]
 
         def read() -> None:
@@ -615,16 +616,31 @@ class ForkProject:
 
         reader = threading.Thread(target=read, daemon=True, name="build-output")
         reader.start()
+        # (macOS: the whole build's memory, as its systemd scope caps it on Linux; limits.py's docstring)
+        watchdog = CompilerMemoryWatchdog(proc, limit=default_cap(), whole_tree=True)
         try:
-            code = proc.wait(timeout=timeout)
+            with watchdog:
+                code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            stop_group(proc, watchdog.seen)  # what's still in its session or job, its own parent gone too
             _stop_tree(proc)  # ninja and the compiler it started: killing ninja alone left the compiler running
             reader.join(OUTPUT_SECONDS)
+            release_job(proc)
             said = [ln for ln in list(out) if not _NOISE.match(ln)][-40:]
             return None, [*said, f"stopped: the build didn't finish in {timeout:.0f} seconds, so it was stopped with "
                                  "everything it started. A compiler that never finishes on this code is the usual "
                                  "cause: change the code that was just added."], ""
         reader.join(OUTPUT_SECONDS)  # (the step is over: its output ends with it, or soon after)
+        if reader.is_alive():
+            # The step ended, but something it started still holds its output: stopped, so it doesn't run on with
+            # nobody waiting for it; the step's own exit code stands (#228: a build that succeeded was waited on
+            # for the rest of its hour, then failed as out of time).
+            stop_group(proc, watchdog.seen)
+            reader.join(OUTPUT_SECONDS)
+        release_job(proc)
+        if watchdog.exceeded:
+            code = 1
+            out.append(watchdog.message())
         lines = list(out)  # (what was read: a reader still going adds to its own list, not this one)
         if quiet[0]:
             log(f"({quiet[0]} repeated lines and linker warnings not shown)")

@@ -40,6 +40,11 @@ chmod +x decompdecomp-*-x86_64.AppImage && ./decompdecomp-*-x86_64.AppImage   # 
 Download and open `decompdecomp-<version>-windows-x64-setup.exe` from the [latest release](https://github.com/n-delic/decompdecomp/releases/latest). Setup
 installs WebView2 and .NET Framework 4.8 when they are missing.
 
+For a portable copy, extract `decompdecomp-<version>-windows-x64-portable.zip` from the same release and open
+`decompdecomp.exe`. Keep the `python` and `packages` folders beside it. It does not need administrator access, but
+.NET Framework 4.8 and WebView2 must already be installed. Projects and settings stay in `%USERPROFILE%\Decomp` (or
+`DECOMP_HOME`). Copy that folder too when you move your work.
+
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers use Linux builds through WSL 2.
 > Run `wsl --install` in an administrator PowerShell before you import one, then open Ubuntu once.
@@ -88,7 +93,8 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in its own win
 2. **Start helper agents.** Click **Start agents**. Choose any API model (DeepSeek, OpenRouter, OpenAI, or a local model), or a CLI helper agent: Claude Code,
    Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI, ZCode CLI or Oh My Pi. Run several; they work on different functions at the same time.
 3. **Watch the map.** Each square is a function and turns green when it matches. The autopilot matches the easy functions at no cost before any helper agent
-   starts.
+   starts. For a difficult function with saved C, open its **Deep permuter** tab. Give a time and variant limit. It
+   tries local rewrites with the same compiler and byte check, saves each better result, and uses no AI tokens.
 4. **Export.** Use **Export** in the project header. You get a decomp project that builds your game again, byte for byte.
 
 No whole game has been decompiled yet. The export uses matched C and assembly for the rest, so it still builds the game.

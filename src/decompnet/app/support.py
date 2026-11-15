@@ -120,6 +120,11 @@ class Jobs:
 
         log.check_cancel = check_cancel
 
+        def progress(values: dict) -> None:
+            job["progress"] = dict(values)
+
+        log.progress = progress
+
         def run():
             try:
                 result = fn(log)
