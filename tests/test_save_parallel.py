@@ -183,3 +183,44 @@ def test_metadata_scan_uses_one_status_snapshot_and_no_compiler_pool(inputs, mon
     assert result == {'matched':0, 'best':4, 'lost':[]}
     assert len(lines) == 2 and len(updates) == 2
     assert updates[-1]['done'] == 4
+
+
+def test_saved_judge_releases_a_claim_even_when_the_function_is_renamed(inputs, monkeypatch, tmp_path):
+    import time
+
+    net, proj, rows, saved, files = inputs
+    monkeypatch.setattr(net, '_compile', lambda *args: None)
+    visited = []
+
+    def attempt(agent, name, source, slug):
+        fn = net._function(name, slug)
+        with net.store.tx() as db:
+            assert db.execute('SELECT 1 FROM claims WHERE agent_id=?', (agent.id,)).fetchone() is None
+            db.execute('INSERT INTO claims VALUES(?,?,?,?)', (fn['id'], agent.id, time.time(), time.time()+600))
+            db.execute('UPDATE functions SET name=? WHERE id=?', ('renamed_'+name, fn['id']))
+        visited.append(fn['id'])
+        return {'matched':False, 'score':10}
+
+    monkeypatch.setattr(net, 'attempt', attempt)
+    result = saves._judge_saved(net, proj['slug'], tmp_path, {}, rows, saved, lambda _: None, files=files)
+    assert result['best'] == 4 and len(visited) == 4
+    assert net.store.one('SELECT COUNT(*) n FROM claims')['n'] == 0
+
+
+def test_saved_judge_has_a_project_identity_and_recovers_its_interrupted_claim(inputs, monkeypatch, tmp_path):
+    import time
+
+    net, proj, rows, saved, files = inputs
+    legacy = net.local_agent('progress-judge')[0]
+    judge = net.attribution_agent(f"progress-judge.{proj['id']}")
+    with net.store.tx() as db:
+        db.execute('INSERT INTO claims VALUES(?,?,?,?)', (rows['f0']['id'], legacy.id, time.time(), time.time()+600))
+        db.execute('INSERT INTO claims VALUES(?,?,?,?)', (rows['f1']['id'], judge.id, time.time(), time.time()+600))
+    monkeypatch.setattr(net, '_compile', lambda *args: None)
+    def attempt(agent, *args):
+        assert agent.id == judge.id
+        assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', judge.id) is None
+        return {'matched':False}
+    monkeypatch.setattr(net, 'attempt', attempt)
+    saves._judge_saved(net, proj['slug'], tmp_path, {}, rows, saved, lambda _: None, files=files)
+    assert net.store.one('SELECT agent_id FROM claims')['agent_id'] == legacy.id

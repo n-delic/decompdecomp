@@ -95,7 +95,7 @@ def test_restoring_room_members_credits_does_not_reject_their_names(tmp_path, mo
     assert net.authenticate(token).id == original_agent.id
     assert net.store.one("SELECT token_hash FROM agents WHERE id=?", agent.id)["token_hash"] == original_hash
     assert result == {"matched": 0, "best": 1, "lost": []}
-    assert judged == [(net.local_agent("progress-judge")[0].id, "f", "void f(void) {}", "game")]
+    assert judged == [(net.attribution_agent("progress-judge.1").id, "f", "void f(void) {}", "game")]
     assert net.store.one("SELECT agent_id FROM notes WHERE text=?", "Try an unsigned comparison.")["agent_id"] == agent.id
 
 

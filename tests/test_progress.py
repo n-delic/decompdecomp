@@ -245,9 +245,11 @@ def test_a_header_change_keeps_the_last_match_until_rejudging_can_run(project, m
         raise NetworkError("the compiler was cancelled")
 
     monkeypatch.setattr(net, "attempt", unavailable)
-    net.progress.sync("game", force=True)
-    fn = net._function("f", "game")
+    with pytest.raises(NetworkError, match="Saved files are retained"):
+        net.progress.sync("game", force=True)
+    fn = net.store.one("SELECT * FROM functions WHERE name='f'")
     assert fn["status"] == "open" and fn["best_source"] == "known match"
+    assert (folder / "src/f.c").read_text() == "known match\n"
 
 
 def test_a_restart_reads_progress_before_writing_stale_database_sources(project):
@@ -3413,3 +3415,33 @@ def test_a_folder_check_that_fails_doesnt_stop_the_autosave(project, monkeypatch
     monkeypatch.setattr(net.progress, "sync", lambda slug, **kw: synced.append(slug))
     saves.Autosave(net).run_once()
     assert synced == ["game"]
+
+
+@pytest.mark.parametrize('failure', ['claim', 'toolchain'])
+def test_a_failed_saved_check_cannot_acknowledge_and_delete_the_only_c(project, monkeypatch, failure):
+    from decompnet import toolchains
+
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='old candidate',best_score=10 WHERE name='f'")
+    net.progress.sync('game', force=True)
+    path = folder/'best/f.c'
+    path.write_text('new candidate\n')
+    original = net.attempt
+    def fail(*args):
+        if failure == 'toolchain':raise toolchains.ToolchainError('compiler unavailable')
+        raise NetworkError('you hold another claim')
+    monkeypatch.setattr(net, 'attempt', fail)
+    with pytest.raises(NetworkError, match='Saved files are retained'):
+        net.progress.sync('game', force=True)
+    assert path.read_text() == 'new candidate\n'
+    assert 'Could not verify saved C for f' in net.progress.errors['game']
+    # A fresh app must still recover the input, rather than export the empty row
+    # left when the import invalidated its previous candidate.
+    monkeypatch.setattr(net, 'attempt', original)
+    net.progress = Progress(net)
+    net.progress.sync('game', force=True)
+    assert net._function('f', 'game')['best_source'] == 'new candidate\n'
+    assert net._function('f', 'game')['best_score'] == 10
+    net.progress.sync('game', force=True)
+    assert path.is_file()
