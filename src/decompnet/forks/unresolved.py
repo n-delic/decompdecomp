@@ -8,7 +8,8 @@ reference left unresolved and with it defined in the link):
   const, and that can change the scheduling and code around its loads. So data counts as "may matter": define it
   with its real type in the unit or a harness file before tuning the code. Steering codegen instead (a `volatile`
   in the harness) is never the fix. (An unresolved D_<address> isn't checked either: one that names the wrong
-  address only shows once something defines it.)
+  address only shows once something defines it.) A float in the original's .rdata is the exception: a literal
+  the compiler pooled, written as the literal or an `extern const`, never defined in harness/ (constant).
 - A callee the original calls with a standard convention (__cdecl, __stdcall, __thiscall: `ecx` and the stack):
   no difference. The call is the same, and its target is written as the original's.
 - A callee the original passes arguments in other registers (LTCG's own convention): the caller's code differs
@@ -25,6 +26,7 @@ reference left unresolved and with it defined in the link):
 from __future__ import annotations
 
 import re
+import struct
 from dataclasses import dataclass
 
 from .convention import Program
@@ -94,6 +96,20 @@ def address_of(prog: Program | None, symbol: str) -> int | None:
     return int(m.group(1), 16) if m else None
 
 
+def constant(prog: Program | None, addr: int | None) -> str | None:
+    """The original's float at `addr` when it's in read-only data (.rdata), as a brief says it, else None (a string
+    or a table there is data like any other). On an Xbox racing game the D_ names agents defined in harness drivers
+    (as const, non-const, then with a volatile seed so LTCG wouldn't fold them) were all .rdata floats, 60.0 and
+    1/60 among them: pooled literals, which got closer written as literals; its globals are in .data."""
+    section_at = getattr(getattr(prog, "pe", None), "section_at", None)
+    section = section_at(addr) if section_at is not None and addr is not None else None
+    if section is None or section.code or section.name.lstrip(".").lower() not in ("rdata", "rodata"):
+        return None
+    raw = prog.pe.read(addr, 4)
+    f = struct.unpack("<f", raw)[0] if len(raw) == 4 else None
+    return f"{f:.9g} as a float" if f is not None and (f == 0 or 1e-6 <= abs(f) <= 1e7) else None
+
+
 def classify(prog: Program | None, caller: int | None, symbol: str, library: set[int] = frozenset()) -> Unresolved:
     """Whether the unresolved `symbol` can change the code of the original function at `caller` (see the module)."""
     name = identifier(symbol)
@@ -102,6 +118,12 @@ def classify(prog: Program | None, caller: int | None, symbol: str, library: set
     if data is None and re.match(r"(?:D|g|s|DAT|dat)_", name):
         data = True  # the D_<address> / g_ names data gets
     function = prog is not None and addr is not None and addr in prog.functions
+    if (data or (data is None and addr is not None and not function)) and (value := constant(prog, addr)):
+        return Unresolved(symbol, name, "data", None, f"a constant in the original's read-only data ({value}), most "
+                          "likely a literal the compiler pooled: write the literal (the judge takes it for the pool "
+                          "constant) or declare it `extern const`, and keep the better score; don't define it in "
+                          "harness/: a /GL definition folds into the code, and a volatile or seeded one isn't the "
+                          "original's", addr)
     if data or (data is None and addr is not None and not function):
         return Unresolved(symbol, name, "data", None, "data: may change this function's code under LTCG (the "
                           "compiler can't see its definition or type); define it with its real type in the unit or "

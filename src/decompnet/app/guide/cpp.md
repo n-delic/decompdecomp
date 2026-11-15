@@ -39,6 +39,13 @@ Matching tips
   its virtual functions by slot, and `get_function` says which fields the function uses. A method's machine draft
   is written as `Class::func_<address>(...)` with `this`. Field types are what the instructions say (fld or movss:
   float, movsx word: s16, a word used as an address: a pointer); the names are yours to give.
+- Xbox projects, and PC ones built with link-time code generation, get `get_class` from structs with member
+  functions too: functions that use `this` (ecx under __thiscall; under LTCG the register the linker chose) as
+  the base of field accesses, grouped by the object they share (a vtable, a global object they're called on,
+  `this` passed on). The brief says "Looks like a member function of ...": write it as one
+  (`int Struct_00011570::func_000115A0(int edx)`), with `struct` for plain data and `class` only when there's a
+  vtable, a constructor/destructor pair or a base class. When the symbol gives the real signature, the brief
+  gives that instead: use it.
 <!-- end -->
 - Member initialisation order in constructors follows declaration order in the class, not the
   initialiser list order.

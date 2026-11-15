@@ -1,13 +1,14 @@
 """Link-time code generation (LTCG): games built with /GL and /LTCG, judged through a harness link.
 
 A /GL object holds the compiler's intermediate code, so the project links each unit with a driver and stand-ins into
-a DLL with /LTCG (the template's tools/ltcg.py, Visual C++'s linker through wine), and tools/dll2coff.py cuts the
-unit's functions back out into the object objdiff compares, with an address mapping check objdiff doesn't make. The
-unit tests here run dll2coff on a hand-made DLL; the end-to-end tests import the LTCG build of the Xbox demo
-(projects/demo-xbox, `build.py ltcg`), where the linker passes arguments in registers, and run only where Visual C++,
-wibo, wine, Ghidra and objdiff are installed.
+a DLL with /LTCG (the template's tools/ltcg.py), and tools/dll2coff.py cuts the unit's functions back out into the
+object objdiff compares, with an address mapping check objdiff doesn't make. The unit tests here run dll2coff on a
+hand-made DLL; the end-to-end tests import the Xbox demo built with /GL and /LTCG (projects/demo-xbox, `build.py
+ltcg`), where the linker passes an argument in a register, and run only where Visual C++, wibo, wine, Ghidra and
+objdiff are set up.
 """
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -15,7 +16,9 @@ import struct
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import capstone
 import pytest
 
 from decompnet import toolchains, wine
@@ -25,7 +28,6 @@ from decompnet.consoles.pc.scratch import DIR32, REL32
 from decompnet.forks import ltcg, objdiff
 
 TOOLS = scratch_pe.TEMPLATE / "tools"
-DEMO = Path(__file__).resolve().parent.parent / "projects" / "demo-xbox"
 
 
 def _tool(name: str):
@@ -36,10 +38,8 @@ def _tool(name: str):
     return mod
 
 
-
 dll2coff = _tool("dll2coff")
 template_ltcg = _tool("ltcg")
-
 
 BASE = 0x10000000
 # Ours (the harness DLL): F1 reads g_a twice and calls F2; F2 reads a D_ global and switches through a jump table.
@@ -137,7 +137,6 @@ def _coff(data: bytes) -> tuple[list[tuple[int, list[tuple[int, int, int]]]], li
     return sections, names
 
 
-
 def test_functions_are_cut_from_the_dll_by_their_annotations_with_the_originals_layout(tmp_path):
     src, _ = _project(tmp_path)
     data, report = _run_dll2coff(tmp_path, src)
@@ -181,6 +180,306 @@ def test_swapped_globals_keep_the_mapping_but_fail_the_data_check(tmp_path):
     assert d.why_not().endswith("refers to other globals or callees than the original")
 
 
+def test_real_names_find_a_function_and_check_a_global_as_their_addresses(tmp_path):
+    """A function and a global given real names (functions.json's "names": rename_symbol on PC and Xbox) are found in
+    the harness link's map and checked as the addresses they name: a renamed global left unchecked would have
+    weakened the judge."""
+    src, info = _project(tmp_path)
+    info["names"] = {"func_00011020": "Lookup", "D_00030004": "g_table"}
+    (tmp_path / "functions.json").write_text(json.dumps(info))
+    # (and library code with a method of the same name: the unit's own object's is the one)
+    (tmp_path / "u.map").write_text(MAP.replace("?F1@@YAHXZ", "?func_00011000@@YAHXZ")
+                                    .replace("?F2@@YAHH@Z                10001020 f   a.obj",
+                                             "?Lookup@@YAHH@Z            10001020 f   00_u.obj")
+                                    .replace("_D_00030004", "?g_table@@3HA")
+                                    + " 0001:00000038       ?Lookup@CLib@@QAEHH@Z      10001038 f   xapilib:lib.obj\n")
+    src.write_text("int func_00011000()\n{ return 0; }\n\nint Lookup(int x)\n{ return x; }\n")  # no annotations
+    data, report = _run_dll2coff(tmp_path, src)
+    sections, names = _coff(data)
+    assert names[:2] == ["?F1@@YAHXZ", "?F2@@YAHH@Z"] and report["problems"] == []  # the original's, for objdiff
+    assert [(off, names[i]) for off, i, _ in sections[1][1]][0] == (2, "_D_00030004")
+    assert report["functions"]["?F2@@YAHH@Z"]["data_checked"] == 1 and report["functions"]["?F2@@YAHH@Z"]["data"] == []
+    info["names"] = {"func_00011020": "Lookup", "D_00030008": "g_table"}  # g_table is another address than F2 reads
+    (tmp_path / "functions.json").write_text(json.dumps(info))
+    _, report = _run_dll2coff(tmp_path, src)
+    (said,) = report["functions"]["?F2@@YAHH@Z"]["data"]
+    assert "(0x30008) where the original refers to 0x30004" in said
+
+
+def test_an_xbox_function_is_renamed_in_its_unit_and_its_harness_driver(tmp_path, monkeypatch):
+    """An LTCG unit's driver (harness/) calls its functions by name: renamed only in src/, the harness link would
+    have lost them. The row keeps the report's name (the original's symbol) and gets the real one."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.forks.project import ForkProject, Unit
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    (root / "config" / "v").mkdir(parents=True)
+    (root / "config" / "v" / "functions.json").write_text(json.dumps(
+        {"units": {"u": [{"name": "_func_00011000", "addr": 0x11000, "relocs": []}]}}, indent=1))
+    (root / "src" / "auto").mkdir(parents=True)
+    (root / "src" / "auto" / "u.cpp").write_text("int func_00011000(int x)\n{\n    return x;\n}\n")
+    (root / "harness").mkdir()
+    (root / "harness" / "u.drv.cpp").write_text("int func_00011000(int x);\nint HarnessEntry() { return func_00011000(1); }\n")
+    (root / ".decomp.wtf.json").write_text(json.dumps({"version": "v", "platform": "xbox"}))
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "origin": "scratch", "version": "v",
+                                                  "platform": "xbox", "ready": True}, "x")
+    report = {"units": [{"name": "u", "functions": [{"name": "_func_00011000", "size": "8", "fuzzy_match_percent": 100.0,
+                                                     "metadata": {"virtual_address": str(0x11000)}}]}]}
+    monkeypatch.setattr(ForkProject, "report", lambda self: report)
+    monkeypatch.setattr(ForkProject, "units", lambda self: [Unit("u", None, None, "src/auto/u.cpp", False, None)])
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version: [])
+    monkeypatch.setattr(ForkProject, "git", lambda self, *args: "")
+    net.forks.sync("p", log=lambda *_: None)
+    agent, _ = net.local_agent("claude-1")
+    assert net.rename_symbol(agent, "p", "_func_00011000", "Update").startswith("✅")
+    assert "Update(1)" in (root / "harness" / "u.drv.cpp").read_text()
+    assert "int Update(int x)" in (root / "src" / "auto" / "u.cpp").read_text()
+    assert json.loads((root / "config" / "v" / "functions.json").read_text())["names"] == {"func_00011000": "Update"}
+    fn = net._function("_func_00011000", "p")
+    assert fn["status"] == "matched" and json.loads(fn["meta"])["real"] == "Update"
+
+
+def test_a_global_annotation_says_which_original_address_a_named_global_is(tmp_path):
+    src, _ = _project(tmp_path)
+    src.write_text("// GLOBAL: 0x30000\nextern int g_a;\n" + src.read_text())
+    _, report = _run_dll2coff(tmp_path, src)
+    f1 = report["functions"]["?F1@@YAHXZ"]
+    assert f1["data"] == [] and f1["data_checked"] == 3  # g_a twice, and F2 (one of the unit's own functions)
+    src.write_text(src.read_text().replace("0x30000", "0x30010"))
+    _, report = _run_dll2coff(tmp_path, src)
+    assert report["functions"]["?F1@@YAHXZ"]["data"] == [
+        "+0x1: yours refers to ?g_a@@3HA (0x30010) where the original refers to 0x30000",
+        "+0x7: yours refers to ?g_a@@3HA (0x30010) where the original refers to 0x30000"]
+    assert report["functions"]["?F2@@YAHH@Z"]["data"] == []
+    # a run of annotations naming their globals, and one before a declaration with a comment in between
+    p = tmp_path / "g.cpp"
+    p.write_text("// GLOBAL: 0x10 g_x\n// GLOBAL: 0x20 g_y\n\n// GLOBAL: 0x30\n// the table\nfloat g_t[4];\n")
+    assert dll2coff.global_annotations([p]) == {"g_x": 0x10, "g_y": 0x20, "g_t": 0x30}
+    assert dll2coff.global_symbol({"?g_t@@3PAMA": 1, "_g_x": 2}, "g_t") == "?g_t@@3PAMA"
+    # a reference just past a float isn't the float (the map doesn't name what's there); arrays and structs have
+    # no size in their names
+    assert [dll2coff.scalar_size(s) for s in ("?g_k@@3MB", "?g_n@@3_JA", "?g_t@@3PAMA", "?g_s@@3US@@A", "_D_1")] == \
+        [4, 8, None, None, None]
+
+
+def test_an_address_where_one_global_starts_may_end_the_one_before(tmp_path):
+    # the original loops up to the end of table A (0x30010), which in ours is where B starts
+    src, _ = _project(tmp_path)
+    (tmp_path / "u.map").write_text(MAP.replace("?g_a@@3HA ", "?g_a@@3PAHA").replace(
+        "0002:00000004       _D_00030004                10002004",
+        "0002:00000004       _D_00030010                10002004"))
+    src.write_text("// GLOBAL: 0x30000 g_a\n" + src.read_text())
+    _, report = _run_dll2coff(tmp_path, src)
+    assert report["functions"]["?F2@@YAHH@Z"]["data"] == []  # 0x30004: g_a + 4, as the original says
+    assert report["functions"]["?F2@@YAHH@Z"]["data_checked"] == 1
+
+
+def test_compiler_literals_are_compared_by_value():
+    class Orig:
+        def read(self, va, n):
+            return {0x30000: struct.pack("<f", 0.5), 0x30010: b"hi\0"}.get(va, b"\0" * n)[:n]
+
+    fn = {"addr": 0x11000, "offset": 0, "relocs": [[1, DIR32, "_D_00030000", 0], [6, DIR32, "_D_00030010", 0]]}
+    exe = bytes.fromhex("a1 00000300" "68 10000300")
+    lits = {0x10002000: ("__real@3f000000", struct.pack("<f", 0.5)), 0x10002010: ("??_C@_02hi@", b"ho\0")}
+    out = dll2coff.data_check(fn, exe, Orig(), [(1, DIR32, 0x10002000), (6, DIR32, 0x10002010)], 0x10001000,
+                              0x10001010, lambda va: None, lits.get)
+    assert out == {"data_checked": 2, "data": ['+0x6: yours loads "ho" (??_C@_02hi@) where the original loads "hi" '
+                                               "(0x30010)"]}
+    # a global's own address where the original has another is a finding, except as what `cmp` compares with (an
+    # end pointer: one past an array, where ours may have put another global)
+    wrong = lambda va: ([("?g_b@@3HA", 0x30020)], True)  # noqa: E731
+    found = dll2coff.data_check(fn, exe, Orig(), [(1, DIR32, 0x10002000)], 0x10001000, 0x10001010, wrong, lits.get)
+    assert found["data"] == ["+0x1: yours refers to ?g_b@@3HA (0x30020) where the original refers to 0x30000"]
+    assert dll2coff.data_check(fn, exe, Orig(), [(1, DIR32, 0x10002000)], 0x10001000, 0x10001010, wrong, lits.get,
+                               loose={1}) == {"data_checked": 0, "data": []}
+    img = dll2coff.Image(_pe([(".text", 0x1000, bytes.fromhex("3dd0e83900" "a100200010" "c3"))], []))
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    assert dll2coff.bounds(md, img, BASE + 0x1000, BASE + 0x100B) == {1}  # cmp eax, imm: yes; mov eax, [mem]: no
+
+
+def test_the_progress_report_counts_functions_failing_the_ltcg_checks_as_not_matched(tmp_path):
+    (tmp_path / "objdiff.json").write_text(json.dumps({"units": [{"name": "u", "base_path": "build/u.obj"}]}))
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "u.obj").write_bytes(b"object")
+    (tmp_path / "build" / "u.ltcg.json").write_text(json.dumps({"functions": {
+        "_a": {"conflicts": [], "data": ["+0x2: yours refers to ..."]}, "_b": {"conflicts": [], "data": []}},
+        "object_sha1": hashlib.sha1(b"object").hexdigest()}))
+    rep = {"measures": {"total_code": "40", "matched_code": "40", "matched_code_percent": 100.0, "total_functions": 2,
+                        "matched_functions": 2, "matched_functions_percent": 100.0},
+           "units": [{"name": "u", "measures": {"total_code": "40", "matched_code": "40", "total_functions": 2,
+                                                "matched_functions": 2},
+                      "functions": [{"name": "_a", "size": "30", "fuzzy_match_percent": 100.0},
+                                    {"name": "_b", "size": "10", "fuzzy_match_percent": 100.0}]}]}
+    out = objdiff.subtract_conflicts(tmp_path, rep)
+    assert [f["fuzzy_match_percent"] for f in out["units"][0]["functions"]] == [99.99, 100.0]
+    assert out["units"][0]["measures"]["matched_functions"] == 1 and out["units"][0]["measures"]["matched_code"] == "10"
+    assert out["measures"]["matched_code_percent"] == 25.0 and out["measures"]["matched_functions_percent"] == 50.0
+
+
+def test_a_checks_file_that_cant_be_read_confirms_no_100_percent_of_its_unit(tmp_path, monkeypatch):
+    """dll2coff rewrites a unit's checks file as the unit builds (an agent's compile, the permuter's): read then, it
+    once counted as "no conflicts", and the report matched a function with two swapped globals, twice."""
+    monkeypatch.setattr(objdiff, "SIDECAR_WAIT", 0)
+    (tmp_path / "objdiff.json").write_text(json.dumps({"units": [{"name": "u", "base_path": "build/u.obj"},
+                                                                {"name": "v", "base_path": "build/v.obj"}]}))
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "u.ltcg.json").write_text('{"functions": {"_a": {"conf')  # half written
+    unit = lambda name: {"name": name, "measures": {"total_code": "10", "matched_code": "10", "total_functions": 1,  # noqa: E731
+                                                     "matched_functions": 1},
+                         "functions": [{"name": "_a", "size": "10", "fuzzy_match_percent": 100.0}]}
+    rep = {"measures": {"total_code": "20", "matched_code": "20", "matched_code_percent": 100.0, "total_functions": 2,
+                        "matched_functions": 2, "matched_functions_percent": 100.0}, "units": [unit("u"), unit("v")]}
+    out = objdiff.subtract_conflicts(tmp_path, rep)
+    assert out["units"][0]["functions"][0]["fuzzy_match_percent"] == 99.99  # u: unknown, so unconfirmed
+    # v has no checks file, and its build makes none (it isn't built in harness mode): as before
+    assert out["units"][1]["functions"][0]["fuzzy_match_percent"] == 100.0
+    found = objdiff.mapping_conflicts(tmp_path / "build" / "u.obj", "_a")
+    assert len(found) == 1 and "couldn't be read" in found[0].describe() and "compile again" in found[0].describe()
+    assert objdiff.mapping_conflicts(tmp_path / "build" / "v.obj", "_a") == []
+
+
+def test_missing_checks_of_a_harness_unit_and_checks_naming_no_object_confirm_nothing(tmp_path, monkeypatch):
+    """A unit that left harness mode before checks named their object kept `{"functions": {"_a": {"conflicts":
+    []}}}`, which confirmed its 100%; and a harness unit whose checks are gone confirmed it too."""
+    monkeypatch.setattr(objdiff, "SIDECAR_WAIT", 0)
+    (tmp_path / "objdiff.json").write_text(json.dumps({"units": [{"name": "u", "base_path": "build/u.obj"},
+                                                                {"name": "v", "base_path": "build/v.obj"}]}))
+    (tmp_path / "build").mkdir()
+    for name in ("u", "v"):
+        (tmp_path / "build" / f"{name}.obj").write_bytes(b"object")
+    (tmp_path / "build" / "u.ltcg.json").write_text(json.dumps({"functions": {"_a": {"conflicts": []}}}))
+    # v is built in harness mode (tools/ltcg.py names its checks as an output of its build), and has none
+    (tmp_path / "build.ninja").write_text("build build/v.obj | build/v.ltcg.json: ltcg_coff build/v/v.dll\n")
+    unit = lambda name: {"name": name, "measures": {"total_code": "10", "matched_code": "10", "total_functions": 1,  # noqa: E731
+                                                     "matched_functions": 1},
+                         "functions": [{"name": "_a", "size": "10", "fuzzy_match_percent": 100.0}]}
+    rep = {"measures": {"total_code": "20", "matched_code": "20", "matched_code_percent": 100.0, "total_functions": 2,
+                        "matched_functions": 2, "matched_functions_percent": 100.0}, "units": [unit("u"), unit("v")]}
+    out = objdiff.subtract_conflicts(tmp_path, rep)
+    assert [u["functions"][0]["fuzzy_match_percent"] for u in out["units"]] == [99.99, 99.99]
+    for name in ("u", "v"):
+        found = objdiff.mapping_conflicts(tmp_path / "build" / f"{name}.obj", "_a")
+        assert len(found) == 1 and "isn't confirmed" in found[0].describe()
+    assert not objdiff.checked(tmp_path / "build" / "u.obj")  # u's build makes none: only its old file counts
+
+
+def test_checks_of_another_object_confirm_nothing_and_a_plain_build_drops_them(tmp_path, monkeypatch):
+    """dll2coff wrote the object, then its checks: a report in between read the new object's 100% by the old
+    checks, and a unit that left harness mode kept its old checks. The checks now name their object and come first,
+    and a plain compile that succeeds removes them (one that fails leaves the old object, and its checks with it:
+    removed first, the unit's 99.99% read 100)."""
+    monkeypatch.setattr(objdiff, "SIDECAR_WAIT", 0)
+    obj = tmp_path / "build" / "u.obj"
+    obj.parent.mkdir()
+    obj.write_bytes(b"new object")
+    checks = {"functions": {"_a": {"conflicts": [], "data": []}}}
+    obj.with_suffix(".ltcg.json").write_text(json.dumps({**checks, "object_sha1": hashlib.sha1(b"old").hexdigest()}))
+    assert "another build" in objdiff.mapping_conflicts(obj, "_a")[0].describe()
+    obj.with_suffix(".ltcg.json").write_text(json.dumps({**checks, "object_sha1": hashlib.sha1(b"new object").hexdigest()}))
+    assert objdiff.mapping_conflicts(obj, "_a") == []
+    # a plain compile of the unit (tools/compile.py): failed, the checks stay; done, they go
+    compile_py = Path(dll2coff.__file__).with_name("compile.py")
+
+    def compile_with(code: int) -> None:
+        subprocess.run([sys.executable, str(compile_py), "--compiler", sys.executable, "--include", ".", "--config",
+                        "c.json", "--output", str(obj), "--source", "u.cpp", "--", "-c", f"import sys; sys.exit({code})"],
+                       cwd=tmp_path, capture_output=True, timeout=60)
+
+    compile_with(1)
+    assert obj.with_suffix(".ltcg.json").exists() and objdiff.mapping_conflicts(obj, "_a") == []
+    compile_with(0)
+    assert not obj.with_suffix(".ltcg.json").exists()
+
+
+def test_a_missing_checks_file_is_unconfirmed_at_once(tmp_path, monkeypatch):
+    """A harness unit's missing checks waited out every retry (nothing half-written to wait for): 10 such units took
+    10 s, a game of 1,400 units 23 minutes a report, and before the first harness build every unit is one."""
+    slept = []
+    monkeypatch.setattr(objdiff.time, "sleep", slept.append)
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build.ninja").write_text("".join(f"build build/u{i}.obj | build/u{i}.ltcg.json: ltcg_coff x\n"
+                                                  for i in range(10)))
+    for i in range(10):
+        (tmp_path / "build" / f"u{i}.obj").write_bytes(b"object")
+        assert "isn't confirmed" in objdiff.mapping_conflicts(tmp_path / "build" / f"u{i}.obj", "_a")[0].describe()
+    assert slept == []
+
+
+def test_dll2coff_writes_the_object_and_its_checks_whole(tmp_path, monkeypatch):
+    """Readers never see a half-written file; Windows refusing the replace while a reader has the file open is
+    waited out."""
+    monkeypatch.setattr(dll2coff, "REPLACE_WAIT", 0)
+    target = tmp_path / "u.ltcg.json"
+    target.write_text("old")
+    real, refused = dll2coff.os.replace, []
+
+    def replace(src, dst):
+        if not refused:
+            refused.append(dst)
+            raise PermissionError("in use")
+        real(src, dst)
+
+    monkeypatch.setattr(dll2coff.os, "replace", replace)
+    dll2coff.write_whole(target, b'{"functions": {}}')
+    assert target.read_text() == '{"functions": {}}' and refused == [target]
+    assert [p.name for p in tmp_path.iterdir()] == ["u.ltcg.json"]  # no temporary file left
+
+
+def test_a_function_the_map_lacks_is_reported_and_left_out(tmp_path):
+    src, _ = _project(tmp_path)
+    src.write_text(src.read_text().replace("int F2(int x)", "int Missing(int x)"))
+    data, report = _run_dll2coff(tmp_path, src)
+    assert len(_coff(data)[0]) == 1
+    assert report["problems"] == ["0x00011020 ?Missing@@ isn't in the map (not called from the driver, or inlined "
+                                  "everywhere)"]
+
+
+def test_annotations_name_map_symbols_and_constructors_need_an_explicit_one(tmp_path):
+    p = tmp_path / "a.cpp"
+    p.write_text("// FUNCTION: 0x100\nvoid Car::Drive(int)\n{}\n// FUNCTION: 0x200\nCar::Car()\n{}\n"
+                 "// FUNCTION: 0x300 ??0Car@@QAE@XZ\nCar::Car(int)\n{}\n// TARGET 0x400 _Free\n")
+    hints, problems = dll2coff.annotations([p])
+    assert hints == {0x100: "?Drive@Car@@", 0x300: "??0Car@@QAE@XZ", 0x400: "_Free"}
+    assert len(problems) == 1 and "FUNCTION 0x200" in problems[0]
+
+
+def test_an_annotation_giving_the_source_name_finds_the_map_symbol(tmp_path):
+    # An imported project writes `// FUNCTION: <address> Class::method (NONMATCHING ...)`. The name was taken for a
+    # map symbol, which no decorated name contains, so two member functions were never in their unit's object.
+    p = tmp_path / "a.cpp"
+    p.write_text("// FUNCTION: 0x100 Mode::Tick (NONMATCHING one register copy)\nvoid Mode::Tick(Car *car)\n{}\n"
+                 "// FUNCTION: 0x200 Car::Car\nCar::Car(int)\n{}\n")
+    hints, problems = dll2coff.annotations([p])
+    assert hints == {0x100: "?Tick@Mode@@"}
+    assert len(problems) == 1 and "FUNCTION 0x200" in problems[0]  # a constructor still needs its map symbol
+    syms = {"?Tick@Mode@@UAEXPAUCar@@@Z": 0x10001000, "?Tick@Base@@UAEXXZ": 0x10001100}
+    assert dll2coff.find_symbol(syms, hints[0x100]) == ("?Tick@Mode@@UAEXPAUCar@@@Z", "")
+
+
+def test_declarations_between_an_annotation_and_its_definition_are_skipped(tmp_path):
+    # The app places the externs an agent sends right before the definition, after its annotation and comments.
+    # The annotation once took a comment line with a "(" in it for the definition (`?latch@@`), so the function
+    # fell out of the unit's object and its match was lost at the next measurement.
+    p = tmp_path / "a.cpp"
+    p.write_text("// FUNCTION: 0x001734c0 (NONMATCHING the count (in ESI))\n"
+                 "// resets its catch-up latch (m_a04/m_a31) instead.\n"
+                 "extern const float D_003B16C0;\n"
+                 "extern \"C\" int Proto(int a);\n"
+                 "#pragma optimize(\"\", off)\n"
+                 "struct CTmp { int f(int); };\n"
+                 "float CRacer::CalcSpeed(float speed)\n{ return speed; }\n"
+                 "// FUNCTION: 0x500\n"
+                 "extern \"C\" int CFn(\n    int a)\n{ return a; }\n"
+                 "// FUNCTION: 0x600\nextern int g_only;\n")
+    hints, problems = dll2coff.annotations([p])
+    assert hints == {0x1734C0: "?CalcSpeed@CRacer@@"}
+    assert len(problems) == 2 and "FUNCTION 0x500" in problems[0] and "no function definition" in problems[1]
+
+
 def test_a_unit_joins_harness_mode_once_its_driver_defines_harness_entry(tmp_path):
     h = tmp_path / "harness"
     h.mkdir()
@@ -193,6 +492,365 @@ def test_a_unit_joins_harness_mode_once_its_driver_defines_harness_entry(tmp_pat
     driver.write_text('extern "C" __declspec(dllexport) void HarnessEntry(int *p)\n{\n}\n')
     assert template_ltcg.has_entry(driver)
     assert template_ltcg.link_flags([driver, *extras]) == ["d3d8ltcg.lib", "/d2:-inlT56"]
+
+
+def test_one_listing_finds_each_units_files_as_a_glob_per_unit_did(tmp_path):
+    # configure globbed harness/ and src/auto once per unit: 2.3 s of 3.9 on a game of 1,400 units
+    h = tmp_path / "harness"
+    h.mkdir()
+    for name in ("u.drv.cpp", "u.standins.cpp", "u.a.nogl.cpp", "u2.drv.cpp", "u_b.drv.cpp", "u.cpp", "u.drv.h",
+                 "v.u.x.cpp"):
+        (h / name).write_text("")
+    listing = template_ltcg.by_prefix(h, ".cpp")
+    for unit in ("u", "u2", "u_b", "v", "v.u", "w"):
+        want = sorted(p for p in h.glob(f"{unit}.*.cpp") if p != h / f"{unit}.drv.cpp")
+        assert template_ltcg.harness_files(unit, h, listing)[1] == want == template_ltcg.harness_files(unit, h)[1]
+    src = tmp_path / "u.cpp"
+    (tmp_path / "u.scores.cpp").write_text("")
+    assert template_ltcg.unit_parts(src, template_ltcg.by_prefix(tmp_path, ".cpp")) == [tmp_path / "u.scores.cpp"]
+
+
+def test_an_ltcg_build_configures_again_only_for_what_configure_reads(tmp_path):
+    # build.ninja depended on every source, so each compile wrote the whole build again first (3 s of a 4 s
+    # compile on a game of 1,400 units); it now depends on configure.facts, which changes only with these
+    root = tmp_path / "p"
+    shutil.copytree(TOOLS, root / "tools")
+    cfg = root / "tools" / "configure.py"
+    cfg.write_text(cfg.read_text().replace("\nLTCG = False\n", "\nLTCG = True\n"))
+    (root / "config" / "v").mkdir(parents=True)
+    (root / "config" / "v" / "functions.json").write_text(json.dumps({"exe": "orig/game.exe", "units": {"u": []}}))
+    (root / "include").mkdir()
+    (root / "src" / "auto").mkdir(parents=True)
+    source = root / "src" / "auto" / "u.cpp"
+    source.write_text("int f(int x)\n{\n    return x;\n}\n")
+    (root / "harness").mkdir()
+    driver = root / "harness" / "u.drv.cpp"
+    driver.write_text('extern "C" __declspec(dllexport) void HarnessEntry(int *p)\n{\n}\n')
+    (tmp_path / "msvc" / "6.0" / "Bin").mkdir(parents=True)
+    (tmp_path / "msvc" / "6.0" / "Bin" / "CL.EXE").write_bytes(b"")  # (configure names it; nothing compiles here)
+    tools = [str(tmp_path / "msvc")]
+    subprocess.run([sys.executable, "tools/configure.py", "v", "--msvc", *tools], cwd=root, check=True,
+                   capture_output=True, timeout=60)
+    facts = root / "build" / "v" / "configure.facts"
+    assert facts.is_file() and "build/v/configure.facts: facts" in (root / "build.ninja").read_text()
+
+    def after(change) -> bool:
+        before = facts.read_text()
+        change()
+        subprocess.run([sys.executable, "tools/configure.py", "v", "--msvc", *tools, "--facts"], cwd=root, check=True,
+                       capture_output=True, timeout=60)
+        return facts.read_text() != before
+
+    assert not after(lambda: source.write_text("int f(int x)\n{\n    return x + 1;\n}\n"))  # a body: nothing
+    assert not after(lambda: driver.write_text(driver.read_text() + "// a comment\n"))
+    assert after(lambda: source.write_text(source.read_text() + "// LINK-ORDER: u.b.cpp u.cpp\n"))
+    assert after(lambda: (root / "src" / "auto" / "u.b.cpp").write_text("int g(void) { return 1; }\n"))
+    assert after(lambda: driver.write_text(driver.read_text() + "// HARNESS-LINK: d3d8ltcg.lib\n"))
+    assert after(lambda: driver.write_text("// the entry taken out\n"))
+    assert after(lambda: (root / "include" / "u.h").write_text("int f(int x);\n"))
+
+
+def test_a_units_own_objects_are_its_files_in_link_order_and_not_the_harness():
+    sources = [Path("src/auto/u.scores.cpp"), Path("src/auto/u.cpp"), Path("harness/u.drv.cpp"),
+               Path("harness/u.x.nogl.cpp")]
+    assert dll2coff.own_objects(sources) == {"00_u_scores.obj", "01_u.obj"}
+    objects = {"?f@@YAXXZ": "01_u.obj", "?g@@YAXXZ": "02_u_drv.obj"}
+    syms = {"?f@@YAXXZ": 0x10001000, "?g@@YAXXZ": 0x10001010}
+    own = dll2coff.own_objects(sources)
+    assert dll2coff.own_symbol(syms, objects, "?f@@YAXXZ", own) == "?f@@YAXXZ"
+    assert dll2coff.own_symbol(syms, objects, "?g@@YAXXZ", own) is None  # a stand-in's, not the unit's
+
+
+def test_an_ltcg_units_parts_belong_to_it_and_a_function_is_rewritten_where_it_is(tmp_path):
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    (root / "src" / "auto").mkdir(parents=True)
+    (root / ".decomp.wtf.json").write_text(json.dumps({"ltcg": True}))
+    (root / "objdiff.json").write_text(json.dumps({"units": [{
+        "name": "u", "target_path": "build/target/u.obj", "base_path": "build/src/auto/u.obj",
+        "metadata": {"source_path": "src/auto/u.cpp"}}]}))
+    (root / "src" / "auto" / "u.cpp").write_text("int func_00011000(int x)\n{\n    return x;\n}\n")
+    scores = "int func_00011210(int x)\n{\n    return x * 3;\n}\n"
+    (root / "src" / "auto" / "u.scores.cpp").write_text(scores)
+    (root / "src" / "auto" / "u.main.cpp").write_text("void func_000117F0(void)\n{\n}\n")
+    (root / "harness").mkdir()
+    drv = 'extern "C" __declspec(dllexport) void HarnessEntry(void)\n{\n}\n'
+    (root / "harness" / "u.drv.cpp").write_text(drv)
+    fp = ForkProject(root)
+    unit = fp.unit("u")
+    assert [u.name for u in fp.units_for("src/auto/u.scores.cpp")] == ["u"]
+    assert fp.units_for("harness/u.drv.cpp") == []
+    assert fp.unit_files(unit) == ["src/auto/u.cpp", "src/auto/u.main.cpp", "src/auto/u.scores.cpp"]
+    engine = ForkEngine.__new__(ForkEngine)  # (_home reads files, nothing of the engine's state)
+    assert engine._home(fp, unit, ["func_00011210"]) == ("src/auto/u.scores.cpp", scores)
+    assert engine._home(fp, unit, ["func_00099999"])[0] == "src/auto/u.cpp"  # a new function: the source file
+    assert "func_000117F0" in engine._unit_text(fp, unit) and "x * 3" not in engine._unit_text(
+        fp, unit, "src/auto/u.scores.cpp", "")
+    # a unit built plain (its driver has no HarnessEntry) builds its source alone: a part beside it isn't its code
+    # (the app wrote its functions there, and the build never compiled them into the unit)
+    (root / "harness" / "u.drv.cpp").write_text("// " + drv.replace("\n", "\n// "))
+    assert fp.units_for("src/auto/u.scores.cpp") == [] and fp.unit_files(unit) == ["src/auto/u.cpp"]
+    (root / "harness" / "u.drv.cpp").write_text(drv)
+    # without LTCG a file named like a part is no unit's: every file builds on its own there
+    (root / ".decomp.wtf.json").write_text(json.dumps({"ltcg": False}))
+    assert fp.units_for("src/auto/u.scores.cpp") == [] and fp.unit_files(unit) == ["src/auto/u.cpp"]
+
+
+def test_an_edit_rebuilds_the_units_that_compile_the_file_and_only_a_header_rebuilds_them_all(tmp_path):
+    """On an Xbox game built with LTCG every harness edit built all 1,420 units twice, every agent waiting: a harness
+    file is its unit's; and a unit's source that other units' drivers include is theirs too, so its edit checks them."""
+    from decompnet.forks import project
+    from decompnet.forks.project import ForkProject
+
+    root = tmp_path / "p"
+    for d in ("src/auto", "harness", "include"):
+        (root / d).mkdir(parents=True)
+    (root / ".decomp.wtf.json").write_text(json.dumps({"ltcg": True}))
+    names = ["u", "v", "w"]
+    (root / "objdiff.json").write_text(json.dumps({"units": [{
+        "name": n, "target_path": f"build/target/{n}.obj", "base_path": f"build/src/auto/{n}.obj",
+        "metadata": {"source_path": f"src/auto/{n}.cpp"}} for n in names]}))
+    for n in names:
+        (root / "src" / "auto" / f"{n}.cpp").write_text(f'#include "common.h"\nint {n}_f(void) {{ return 1; }}\n')
+    (root / "include" / "common.h").write_text("typedef int s32;\n")
+    (root / "harness" / "u.drv.cpp").write_text('#include "u.state.cpp"\n')
+    (root / "harness" / "u.state.cpp").write_text("int state;\n")
+    (root / "harness" / "v.drv.cpp").write_text('#include "../src/auto/u.cpp"\n#include "u.state.cpp"\n')
+    (root / "harness" / "w.drv.cpp").write_text("void HarnessEntry(void) {}\n")
+    fp = ForkProject(root)
+    built = lambda rel: sorted(u.name for u in fp.units_built_from(rel))  # noqa: E731
+    assert built("harness/w.drv.cpp") == ["w"]  # its own unit only
+    assert built("harness/u.state.cpp") == ["u", "v"]  # u's, and v's driver includes it
+    assert built("src/auto/u.cpp") == ["u", "v"]  # v's driver includes u's source
+    assert built("src/auto/w.cpp") == ["w"]
+    assert built("include/common.h") == []  # a header: the whole project
+    (root / "include" / "state.h").write_text('#include "../harness/u.state.cpp"\n')
+    assert built("harness/u.state.cpp") == []  # a header includes it: it could be anywhere
+    (root / "include" / "state.h").unlink()
+    # `#include <...>` counts like "...": w's driver including u's source with it builds w too
+    (root / "harness" / "w.drv.cpp").write_text("#include <../src/auto/u.cpp>\nvoid HarnessEntry(void) {}\n")
+    assert built("src/auto/u.cpp") == ["u", "v", "w"]
+    (root / "harness" / "w.drv.cpp").write_text("void HarnessEntry(void) {}\n")
+    # but only "..." is looked for beside the including file: <...> is in the include folders only
+    (root / "src" / "auto" / "w.cpp").write_text("#include <u.cpp>\n")
+    assert built("src/auto/u.cpp") == ["u", "v"]
+    (root / "src" / "auto" / "w.cpp").write_text('#include "u.cpp"\n')
+    assert built("src/auto/u.cpp") == ["u", "v", "w"]
+    # and a file including what a macro names could include anything: the whole project
+    (root / "harness" / "w.drv.cpp").write_text("#include STATE_FILE\nvoid HarnessEntry(void) {}\n")
+    assert built("src/auto/u.cpp") == []
+    (root / "harness" / "w.drv.cpp").write_text("void HarnessEntry(void) {}\n")
+    project.EDIT_UNITS_MAX = 1
+    try:
+        assert built("src/auto/u.cpp") == []  # too many to be quicker than all of them
+    finally:
+        project.EDIT_UNITS_MAX = 16
+    (root / ".decomp.wtf.json").write_text(json.dumps({"ltcg": False}))
+    assert built("harness/w.drv.cpp") == [] and built("src/auto/u.cpp") == ["u"]  # without LTCG: as before
+
+
+# A program for the convention evidence: C takes `this` in ESI (LTCG's choice) and one stack argument (ret 4); A
+# loads ESI and pushes before calling it, and reads a global; S is a __thiscall method that saves ESI.
+CONV_CODE = {
+    0x1000: bytes.fromhex("8b4604" "03442404" "c20400"),  # C: mov eax, [esi+4]; add eax, [esp+4]; ret 4
+    0x1010: bytes.fromhex("be00200010" "6a05" "e8e4ffffff" "a104200010" "c3"),  # A: mov esi, D; push 5; call C
+    0x1030: bytes.fromhex("56" "8bf1" "8b06" "5e" "c3"),  # S: push esi; mov esi, ecx; mov eax, [esi]; pop esi
+    0x1040: bytes.fromhex("b900200010" "e8e6ffffff" "c3"),  # B: mov ecx, D; call S
+    0x1050: bytes.fromhex("e8abffffff" "c3"),  # W: call C (passes its own ESI on)
+}
+
+
+def _conv_program(tmp_path: Path) -> tuple[Path, dict]:
+    text = bytearray(b"\xcc" * 0x60)
+    for at, code in CONV_CODE.items():
+        text[at - 0x1000:at - 0x1000 + len(code)] = code
+    (tmp_path / "orig").mkdir()
+    (tmp_path / "orig" / "game.exe").write_bytes(_pe([(".text", 0x1000, bytes(text)), (".data", 0x2000, bytes(8))], []))
+    fn = lambda name, at, relocs: {"name": name, "addr": BASE + at, "size": len(CONV_CODE[at]), "relocs": relocs}  # noqa: E731
+    info = {"units": {"u": [fn("_func_10001010", 0x1010, [[1, DIR32, "_D_10002000", 0], [8, REL32, "_C", 0],
+                                                        [13, DIR32, "_D_10002004", 0]]),
+                            fn("_func_10001040", 0x1040, [[1, DIR32, "_D_10002000", 0], [6, REL32, "_S", 0]])],
+                      "v": [fn("_C", 0x1000, []), fn("_S", 0x1030, [])],
+                      "w": [fn("_W", 0x1050, [[1, REL32, "_C", 0]])]}}
+    (tmp_path / "config" / "game").mkdir(parents=True)
+    (tmp_path / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    manifest = {"platform": "win32", "version": "game", "game": {"path": "orig/game.exe"}, "ltcg": True}
+    return tmp_path, manifest
+
+
+def test_the_brief_shows_a_functions_register_parameters_and_how_its_callers_set_them_up(tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.forks import convention
+
+    root, manifest = _conv_program(tmp_path)
+    prog = convention.load(root, manifest)
+    c = prog.convention(BASE + 0x1000)
+    assert (c.reads, c.stack, c.ret, c.register_params()) == (["esi"], [4], 4, ["esi"])
+    s = prog.convention(BASE + 0x1030)
+    assert (s.reads, s.saves, s.ret, s.register_params()) == (["ecx"], ["esi"], 0, [])
+    assert prog.convention(BASE + 0x1050).reads == ["esi"]  # W only passes ESI on to C
+    assert c.clobbers == ["eax"] and s.clobbers == ["eax"]  # (S saves ESI)
+    # a register the callee leaves alone is still the caller's after the call: an argument read there
+    code = bytes.fromhex("e8 0b000000" "8b02" "c3") + b"\xcc" * 8 + bytes.fromhex("8b01" "c3")  # call G; mov eax, [edx]
+    got = convention.analyse(code[:8], 0x1000, lambda a: ({"ecx"}, {"eax"}) if a == 0x1010 else None)
+    assert got.reads == ["ecx", "edx"]
+    assert convention.analyse(code[:8], 0x1000).reads == []  # (not knowing G: EAX, ECX and EDX are gone after it)
+    lines = ForkEngine._convention_brief(SimpleNamespace(root=root, manifest=manifest), {"symbol": "_C"}, {"name": "C"})
+    text = "\n".join(lines)
+    assert "- reads before writing: esi; stack arguments: [esp+4]; ret 4" in text
+    assert "register parameters of LTCG's choosing: esi" in text
+    assert "  _func_10001010+0x7 (u): mov esi, 0x10002000; push 5 -> call" in text
+    # only LTCG projects get it
+    assert ForkEngine._convention_brief(SimpleNamespace(root=root, manifest={**manifest, "ltcg": False}),
+                                        {"symbol": "_C"}, {"name": "C"}) == []
+    # a heuristic: one that fails on an odd call site leaves the brief out, never the function's brief itself
+    fp = SimpleNamespace(root=root, manifest=manifest)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(convention, "evidence", lambda prog, addr: [][0])
+        assert ForkEngine._convention_brief(fp, {"symbol": "_C"}, {"name": "C"}) == []
+        # and nothing found says nothing (it listed no registers under its heading)
+        mp.setattr(convention, "evidence", lambda prog, addr: [])
+        assert ForkEngine._convention_brief(fp, {"symbol": "_C"}, {"name": "C"}) == []
+
+
+def test_ltcg_is_detected_from_call_sites_that_load_registers_no_standard_convention_uses(tmp_path, monkeypatch):
+    from decompnet.forks import convention
+
+    root, manifest = _conv_program(tmp_path)
+    prog = convention.load(root, manifest)
+    monkeypatch.setattr(convention, "MIN_CONFIRMED", 1)
+    found = convention.detect(prog)
+    # C (ESI, loaded by its caller) counts; S's ECX is __thiscall's own
+    assert (found["ltcg"], found["confirmed"], found["sampled"]) == (True, 1, 2)
+    assert "_C reads esi before writing it, and _func_10001010+0x7 sets it up: mov esi, 0x10002000" in found["examples"][0]
+    assert convention.detect(prog, skip={BASE + 0x1000})["ltcg"] is False  # S alone: a plain program
+
+
+def test_standins_are_written_from_the_units_references_with_their_conventions(tmp_path):
+    from decompnet.forks import convention, standins
+
+    root, manifest = _conv_program(tmp_path)
+    prog = convention.load(root, manifest)
+    s = standins.skeleton(prog, "u")
+    assert "u8 D_10002000[4];  // only its address is used; used by _func_10001010, _func_10001040" in s["standins"]
+    assert "int D_10002004;  // 4 bytes; used by _func_10001010" in s["standins"]
+    assert "// C (v): reads before writing: esi; stack arguments: [esp+4]; ret 4" in s["standins"]
+    assert "int C(int esi, int arg1) { return 0; }" in s["standins"]
+    assert "int S(int arg0" not in s["standins"] and "int S(void)" in s["standins"]
+    assert "extern int D_10002004;" in s["externs"]
+    drv = standins.skeleton(prog, "v")["driver"]
+    assert drv.startswith('extern "C" __declspec(dllexport) void HarnessEntry(void)')
+    assert "//   _func_10001010+0x7 (u): mov esi, 0x10002000; push 5 -> call" in drv
+    assert "harness/v.standins.cpp" in standins.render(prog, "v")
+
+
+LINK_A = bytes.fromhex("be00200010" "6a05" "e814000000" "a104200010" "c3")  # A, its call to 0x10001020
+LINK_C_LIKE = CONV_CODE[0x1000]  # C as the original: this in ESI, a stack argument, ret 4
+LINK_C_STUB = bytes.fromhex("8b4104" "c3")  # a stand-in for C: mov eax, [ecx+4]; ret (ECX, nothing on the stack)
+
+
+def _link(tmp_path: Path, callee: bytes, own: bytes = LINK_A) -> tuple[SimpleNamespace, SimpleNamespace]:
+    """The project of _conv_program with unit u built: its harness DLL holding A (src/auto/u.cpp) and a C
+    (harness/u.standins.cpp), its map and dll2coff's checks file."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    root, manifest = _conv_program(tmp_path)
+    text = own.ljust(0x20, b"\xcc") + callee.ljust(0x10, b"\xcc")
+    build = root / "build"
+    build.mkdir()
+    (build / "u.dll").write_bytes(_pe([(".text", 0x1000, text)], []))
+    (build / "u.map").write_text(" Address         Publics by Value              Rva+Base       Lib:Object\n\n"
+                                 " 0001:00000000       _func_10001010             10001000 f   00_u.obj\n"
+                                 " 0001:00000020       _C                         10001020 f   02_u_standins.obj\n")
+    (build / "u.ltcg.json").write_text(json.dumps({"dll": "build/u.dll", "functions": {
+        "_func_10001010": {"ours": "0x10001000", "size": len(own)}}}))
+    for rel in ("src/auto/u.cpp", "harness/u.drv.cpp", "harness/u.standins.cpp"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("")
+    return SimpleNamespace(root=root, manifest=manifest), SimpleNamespace(name="u", base=build / "u.obj")
+
+
+def test_a_compile_says_which_conventions_in_the_harness_link_differ_from_the_originals(tmp_path):
+    """Of an Xbox racing game's near misses, the ones whose link gave them (or a callee) another convention than the
+    original's had the most left to fix, and nothing said so; the rest were left "for a harness pass" when their calls
+    were already right."""
+    from decompnet.app.forkengine import ForkEngine
+
+    fp, unit = _link(tmp_path, LINK_C_STUB)
+    text = "\n".join(ForkEngine._link_check_lines(fp, {"symbol": "_func_10001010"}, {"name": "_func_10001010"}, unit))
+    assert "Conventions in your link that differ from the original's" in text
+    assert ("- _C (in harness/u.standins.cpp): the original reads esi; stack arguments [esp+4]; ret 4; the one in "
+            "your link reads ecx; no stack arguments; ret.") in text
+    assert "func_10001010 itself" not in text  # A takes its arguments as the original's A
+    assert "change them now with edit_file and compile again. Don't release the function for them" in text
+
+    fp, unit = _link(tmp_path / "alike", LINK_C_LIKE)
+    text = "\n".join(ForkEngine._link_check_lines(fp, {"symbol": "_func_10001010"}, {"name": "_func_10001010"}, unit))
+    assert ("Conventions: func_10001010 takes its arguments as the original does, and so does the 1 function it calls "
+            "in your link.") in text and "not from the calls" in text
+
+    # only LTCG projects get it
+    fp.manifest = {**fp.manifest, "ltcg": False}
+    assert ForkEngine._link_check_lines(fp, {"symbol": "_func_10001010"}, {"name": "_func_10001010"}, unit) == []
+
+
+def test_a_functions_own_convention_in_the_link_is_checked_by_how_it_takes_arguments(tmp_path):
+    from decompnet.forks import convention
+
+    root, manifest = _conv_program(tmp_path)
+    prog = convention.load(root, manifest)
+    c = BASE + 0x1000
+    dll = SimpleNamespace(read=lambda a, n: (LINK_C_STUB + b"\xcc" * 16)[a - BASE - 0x1000:][:n])
+    found = convention.check_link(prog, c, dll, BASE + 0x1000, len(LINK_C_STUB), {})
+    assert found.own_differs and not found.callees and not found.absent
+    lines = convention.link_lines(found, "C", str)
+    assert "- C itself: the original reads esi; stack arguments [esp+4]; ret 4; your link gives it reads ecx" in lines[2]
+    # reading another stack slot (half an argument, or not one it ignores) isn't another convention; nor is a tail
+    # jump in place of the ret
+    a = convention.Convention(["esi"], [4, 8], 4)
+    assert convention.same_interface(a, convention.Convention(["esi"], [6], 4))
+    assert convention.same_interface(a, convention.Convention(["esi"], [8], None))
+    assert not convention.same_interface(a, convention.Convention(["esi"], [], 4))
+    assert not convention.same_interface(a, convention.Convention(["esi"], [4], 8))
+    assert not convention.same_interface(a, convention.Convention(["eax", "esi"], [4], 4))
+
+
+def test_a_reference_the_link_left_unresolved_is_named_by_what_the_function_uses(tmp_path):
+    """An Xbox game's diffs showed `mulss xmm0, [$A10000000]` (the DLL's image base, where /FORCE:UNRESOLVED puts every
+    unresolved reference) against the original's `[_D_003A1248]`: the agent couldn't tell which name it was. The
+    link's LNK2019 lines say which function uses which name."""
+    said = ('u.obj : error LNK2019: unresolved external symbol _D_003A1248 referenced in function "public: void '
+            '__thiscall A::f(float)" (?f@A@@QAEXM@Z)\n'
+            'u.obj : error LNK2019: unresolved external symbol "float g_scale" (?g_scale@@3MA) referenced in function '
+            '"public: void __thiscall A::f(float)" (?f@A@@QAEXM@Z)\n'
+            "u.obj : error LNK2019: unresolved external symbol _func_00011130@8 referenced in function _G\n")
+    by_fn = dll2coff.unresolved_by_function(said)
+    assert by_fn == {"?f@A@@QAEXM@Z": ["_D_003A1248", "?g_scale@@3MA"], "_G": ["_func_00011130@8"]}
+    assert dll2coff.unresolved_name(by_fn["?f@A@@QAEXM@Z"]) == "$unresolved:D_003A1248|g_scale"
+    assert dll2coff.unresolved_name(by_fn["_G"]) == "$unresolved:func_00011130"
+    assert dll2coff.unresolved_name([]) == "$unresolved"
+    # a $ name never reads as an original address for the export
+    assert not dll2coff.ADDRESS_NAME.match("$unresolved:D_003A1248")
+
+
+def test_an_unresolved_reference_in_a_cut_function_carries_that_name(tmp_path):
+    src, info = _project(tmp_path)
+    # where the original has no reference at the same place (so it isn't written as the original's)
+    info["units"]["u"][0]["relocs"] = [r for r in info["units"]["u"][0]["relocs"] if r[0] != 1]
+    (tmp_path / "functions.json").write_text(json.dumps(info))
+    dll = bytearray(_dll())
+    struct.pack_into("<I", dll, 0x400 + 1, BASE + 0x10)  # F1's first load: left unresolved, inside the headers
+    (tmp_path / "u.dll").write_bytes(bytes(dll))
+    (tmp_path / "u.map.link.txt").write_text("error LNK2019: unresolved external symbol _D_00030000 referenced in "
+                                             "function ?F1@@YAHXZ\n")
+    data, _ = _run_dll2coff(tmp_path, src)
+    sections, names = _coff(data)
+    first = sections[0][1][0]
+    assert first[0] == 1 and names[first[1]] == "$unresolved:D_00030000"
+    assert not any(n.startswith("$A") for n in names)
 
 
 def test_an_ltcg_project_gets_the_setting_and_a_driver_per_game_unit(tmp_path):
@@ -220,46 +878,8 @@ def test_tools_brought_up_to_date_keep_a_projects_ltcg_setting(tmp_path):
     assert "\nLTCG = True\n" in cfg.read_text()
 
 
-# A program for the detection: C takes `this` in ESI (LTCG's choice) and one stack argument (ret 4); A loads ESI and
-# pushes before calling it; S is a __thiscall method that saves ESI.
-CONV_CODE = {
-    0x1000: bytes.fromhex("8b4604" "03442404" "c20400"),  # C: mov eax, [esi+4]; add eax, [esp+4]; ret 4
-    0x1010: bytes.fromhex("be00200010" "6a05" "e8e4ffffff" "a104200010" "c3"),  # A: mov esi, D; push 5; call C
-    0x1030: bytes.fromhex("56" "8bf1" "8b06" "5e" "c3"),  # S: push esi; mov esi, ecx; mov eax, [esi]; pop esi
-    0x1040: bytes.fromhex("b900200010" "e8e6ffffff" "c3"),  # B: mov ecx, D; call S
-}
-
-
-def test_ltcg_is_detected_from_call_sites_that_load_registers_no_standard_convention_uses(tmp_path, monkeypatch):
-    from decompnet.forks import convention
-
-    text = bytearray(b"\xcc" * 0x60)
-    for at, code in CONV_CODE.items():
-        text[at - 0x1000:at - 0x1000 + len(code)] = code
-    (tmp_path / "orig").mkdir()
-    (tmp_path / "orig" / "game.exe").write_bytes(_pe([(".text", 0x1000, bytes(text)), (".data", 0x2000, bytes(8))], []))
-
-    def fn(name, at, relocs):
-        return {"name": name, "addr": BASE + at, "size": len(CONV_CODE[at]), "relocs": relocs}
-
-    info = {"units": {"u": [fn("_func_10001010", 0x1010, [[1, DIR32, "_D_10002000", 0], [8, REL32, "_C", 0],
-                                                          [13, DIR32, "_D_10002004", 0]]),
-                            fn("_func_10001040", 0x1040, [[1, DIR32, "_D_10002000", 0], [6, REL32, "_S", 0]])],
-                      "v": [fn("_C", 0x1000, []), fn("_S", 0x1030, [])]}}
-    (tmp_path / "config" / "game").mkdir(parents=True)
-    (tmp_path / "config" / "game" / "functions.json").write_text(json.dumps(info))
-    prog = convention.load(tmp_path, {"version": "game", "game": {"path": "orig/game.exe"}})
-    monkeypatch.setattr(convention, "MIN_CONFIRMED", 1)
-    found = convention.detect(prog)
-    # C (ESI, loaded by its caller) counts; S's ECX is __thiscall's own
-    assert (found["ltcg"], found["confirmed"], found["sampled"]) == (True, 1, 2)
-    assert "_C reads esi before writing it, and _func_10001010+0x7 sets it up: mov esi, 0x10002000" in found["examples"][0]
-    assert convention.detect(prog, skip={BASE + 0x1000})["ltcg"] is False  # S alone: a plain program
-    assert "register parameters of LTCG's choosing: esi" in "\n".join(convention.evidence(prog, BASE + 0x1000))
-
-
-# ------------------------------------------------------------------------ the demo, built with /GL and /LTCG
-
+# The LTCG demo (projects/demo-xbox, `build.py ltcg`), imported and worked as an agent would
+DEMO = Path(__file__).resolve().parent.parent / "projects" / "demo-xbox"
 ABS_S32 = "_abs_s32"  # a function of the demo whose argument the linker passes in EAX
 DRIVER = """#include "common.h"
 

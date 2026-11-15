@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 import capstone
 from capstone import x86
 
-from .convention import _ANALYSE_LOCK, _PARENT, ARGS, SCRATCH, Program, _rw, _setup, instructions
+from .convention import _PARENT, ARGS, SCRATCH, Program, _rw, _setup, instructions
 
 FLOAT = {"fld", "fst", "fstp", "fadd", "fsub", "fsubr", "fmul", "fdiv", "fdivr", "fcom", "fcomp", "fild", "fist",
          "fistp", "fadd", "fsubp", "faddp", "fmulp", "fdivp", "fdivrp", "fsubrp", "movss", "addss", "subss", "mulss",
@@ -299,7 +299,7 @@ def recover(prog: Program, ltcg: bool, skip: set[int] = frozenset()) -> Objects:
     """Every function of the program that looks like a member function, grouped by the object type it belongs to.
     `ltcg`: the program was built with link-time code generation (`this` can arrive in any register the convention
     reads); else only ECX (__thiscall). `skip`: library code."""
-    with _ANALYSE_LOCK:  # once per program, not once per agent claiming at the same moment
+    with prog.lock:  # once per program, not once per agent claiming at the same moment
         memo = prog.__dict__.setdefault("_objects", {})
         key = (ltcg, frozenset(skip))
         if key not in memo:
@@ -551,6 +551,37 @@ def declaration(prog: Program, g: Group) -> str:
     return "\n".join(lines)
 
 
+def describe(prog: Program, g: Group, focus: int | None = None) -> str:
+    """A group as get_class shows it: why, the fields by offset, the member functions, a declaration."""
+    lines = [f"{g.keyword} {g.name}: {len(g.methods)} member function{'s' * (len(g.methods) != 1)}; "
+             + "; ".join(g.why)]
+    if g.parent:
+        lines.append(f"base class: {g.parent} (a constructor stores its vtable before this one's)")
+    lines.append(f"size: at least 0x{g.size_seen():X} bytes (the furthest field its functions touch)")
+    if g.fields:
+        lines += ["", "fields (offset: type, the functions that use it):"]
+        for off in sorted(g.fields):
+            fl = g.fields[off]
+            users = sorted(fl.users)
+            names = ", ".join(_c_name(prog.functions[u]["name"]) for u in users[:4])
+            lines.append(f"  +0x{off:02X}: {fl.ctype()}, {len(users)} function{'s' * (len(users) != 1)} ({names}"
+                         f"{', ...' if len(users) > 4 else ''})" + (" ← this function" if focus in fl.users else ""))
+    lines += ["", "member functions (this arrives in):"]
+    for a in sorted(g.methods):
+        role = " (constructor or destructor: stores the vtable)" if a in g.ctors else ""
+        lines.append(f"  {_c_name(prog.functions[a]['name'])}: {g.methods[a]}{role}"
+                     + (" ← this function" if a == focus else ""))
+    for t in g.vtables[:2]:
+        lines += ["", f"virtual functions (vtable 0x{t.addr:08X}; a virtual call loads [this], then calls [vtable+4*slot]):"]
+        lines += [f"  {k} (+0x{4 * k:X}): {_c_name(prog.functions[f]['name'])}" + (" ← this function" if f == focus else "")
+                  for k, f in enumerate(t.slots[:64])]
+    if g.vcalls:
+        lines.append("virtual calls through this: " + ", ".join(f"+0x{o:X} (slot {o // 4})" for o in sorted(g.vcalls)))
+    lines += ["", "A declaration to start from (put it in a header with edit_file; the names are yours to give):",
+              "```cpp", declaration(prog, g), "```"]
+    return "\n".join(lines)
+
+
 def brief(prog: Program, objs: Objects, addr: int, ltcg: bool, demangled: str | None = None) -> list[str]:
     """For get_function and claims: whether the function looks like a member function, of what, and how to write it.
     `demangled`: the function's undecorated name, when its symbol has one: then its real class and signature."""
@@ -581,5 +612,6 @@ def brief(prog: Program, objs: Objects, addr: int, ltcg: bool, demangled: str | 
     if addr in g.ctors:
         lines.append("- it stores the vtable into this: a constructor or a destructor")
     lines.append(f"- write it as a member function, `int {g.name}::{name}({params(prog, addr, r)})`, with the "
-                 f"{g.keyword} declared in a header (edit_file); name the {g.keyword} as you like. A starting point:")
+                 f"{g.keyword} declared in a header (edit_file). Name the {g.keyword} as you like; get_class({name}) "
+                 f"has its fields, its other functions and a declaration to start from.")
     return lines

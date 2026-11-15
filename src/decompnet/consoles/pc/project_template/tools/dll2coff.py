@@ -32,9 +32,11 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import os
 import re
 import struct
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -61,40 +63,155 @@ def _blank(text: str) -> str:
     return _COMMENT_OR_STRING.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), text)
 
 
-def definition(text: str, clean: str, pos: int, bound: int) -> str | None:
-    """The first line of the first function definition in text[pos:bound], up to its "(" (a declaration, a type or
-    a brace initialiser before it is skipped), or None."""
-    start_pos = pos
+_INLINE_HEAD = re.compile(r"\b(?:inline|__inline|__forceinline)\b")
+# what's written before a declaration with parentheses of its own (`__declspec(noinline)`, `MY_ATTR(1)`), alone on a line
+_ONLY_CALLS = re.compile(r"\s*(?:\w+\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)\s*)+")  # a line of `NAME(...)`s alone
+
+# Which `NAME(` is a definition's parameter list: as the app's csource.parameter_list takes it (the same rules, kept in
+# step by tests/test_ltcg_judge.py), which writes a try where this then cuts the function out
+_NAME_THEN_PAREN = re.compile(
+    r"(?<![\w~:<>])((?:[\w~<>]+::)*operator\s*(?:\(\)|[^\s(]+)|(?:[\w~<>]+::)*~?\w+)\s*\((?!\s*[*&^])")
+_GROUP = r"\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"
+_AFTER_PARAMETERS = re.compile(rf"(?:\s|&&?|\w+\b(?:\s*{_GROUP})?)*(?:(?::(?!:)|->|\)).*)?", re.S)
+_KR_DECLARATIONS = re.compile(r"[^(]*;")
+_KEYWORDS = frozenset({"__declspec", "__attribute__", "alignas", "_Alignas", "__pragma", "_Pragma", "decltype",
+                       "throw", "noexcept", "sizeof", "typeof", "__typeof__", "asm", "__asm", "__asm__"})
+_ARGUMENTS = re.compile(r"\(\s*(?:[\d\"'-]|\.\d)")
+_PARAMETERS = re.compile(r"\(\s*void\s*\)|\(.*(?:\w[\s*&]+\w|[*&]|\.\.\.)", re.S)
+
+
+def _parameter_list(head: str) -> re.Match | None:
+    """The `NAME(` whose parentheses are the parameter list the body after `head` follows (past qualifiers, `throw()`,
+    macros before the name or after the list, initialisers, K&R declarations), or None. Of `NAME(...)`s side by side
+    (`MY_ATTR(1) int F(void)`, `int F(void) THROW_SPEC()`), a list that can only be parameters wins, then a name with
+    a type before it; never a keyword or a group starting with a literal. Cut up to the last "(" of its line, a
+    definition `int Car::H(void) const THROW_SPEC() {` was `?THROW_SPEC@@`, and one with `throw()` `?throw@@`."""
+    best, rank = None, None
+    for m in _NAME_THEN_PAREN.finditer(head):
+        if m.group(1) in _KEYWORDS or not _in_declarator(head, m.start()):
+            continue
+        depth, k = 0, m.end() - 1
+        while k < len(head):
+            depth += (head[k] == "(") - (head[k] == ")")
+            k += 1
+            if depth == 0:
+                break
+        group, rest = head[m.end() - 1:k], head[k:]
+        if _ARGUMENTS.match(group) or not (_KR_DECLARATIONS.match(rest) or _AFTER_PARAMETERS.fullmatch(rest)):
+            continue
+        typed = re.search(r"[\w*&>]\s*$", head[:m.start()]) is not None
+        if rank is None or (_PARAMETERS.match(group) is not None, typed) > rank:
+            best, rank = m, (_PARAMETERS.match(group) is not None, typed)
+    return best
+
+
+def _in_declarator(head: str, at: int) -> bool:
+    """True when `at` isn't inside another call's parentheses (`align` in `__declspec(align(16))`): at the top, or only
+    in a declarator's own (`(*`), as `Pick` is in `int (*Pick(int a))(int b)`."""
+    opened = []
+    for k, c in enumerate(head[:at]):
+        if c == "(":
+            opened.append(re.match(r"\(\s*[*&^]", head[k:]) is not None)
+        elif c == ")" and opened:
+            opened.pop()
+    return all(opened)
+
+
+def _past(clean: str, brace: int) -> int:
+    """Just past the block that opens at `brace`."""
+    depth, k = 0, brace
+    while k < len(clean):
+        depth += (clean[k] == "{") - (clean[k] == "}")
+        k += 1
+        if depth == 0:
+            break
+    return k
+
+
+def definition(text: str, clean: str, pos: int, bound: int, names: tuple[str, ...] | list[str] = ()) -> str | None:
+    """The first line of the annotated function's definition in text[pos:bound], up to its "(" (a declaration, a type
+    or a brace initialiser before it is skipped), or None. Of the definitions there: the one of the original's names
+    for the address (`names`: functions.json's symbol, `?G@@YAXXZ` or `_G@8`, and the real name the project gave it
+    in "names", `G` or `Town::Update`), when one says; else the first that isn't inline, else the first, as the app's
+    csource finds it. An inline helper before the function (`static inline int Tail(...)`) was judged as the
+    function, with no problem said; and an annotated `inline void G()` is G, not the `void H()` after it."""
+    found = list(_definition_lines(text, clean, pos, bound))
+    for exact in (True, False):  # (as the app's csource takes it: a name as it is first, then any class's)
+        named = [d for d, _ in found if any(_is_named(d, n, exact) for n in names if n)]
+        if named:
+            return named[0]
+    return next((d for d, inline in found if not inline), found[0][0] if found else None)
+
+
+def _is_named(decl: str, name: str, exact: bool) -> bool:
+    """True when a definition line (`inline bool Car::IsFast(`) is of the function the original calls `name`: a
+    decorated C++ symbol (`?IsFast@Car@@QAE_NXZ`), a C one (`_IsFast`, `_IsFast@8`, `@IsFast@8`, `_func_00011000`),
+    or a real name (`Car::IsFast`; not `exact`, `IsFast` for any class's)."""
+    declared = _declared(decl)
+    if not declared:
+        return False
+    if name.startswith("?"):
+        return (hint := symbol_hint(decl)) is not None and hint in name
+    if (c := re.fullmatch(r"[_@](\w+?)(?:@\d+)?", name)) and "::" not in declared and declared == c.group(1):
+        return True
+    return declared == name or (not exact and "::" not in name and declared.rsplit("::", 1)[-1] == name)
+
+
+def _declared(decl: str) -> str:
+    """The name a definition line gives its function: `Car::IsFast` for `inline bool Car::IsFast(`."""
+    return re.split(r"[\s*&]+", decl[:decl.rindex("(")].strip())[-1]
+
+
+def _definition_lines(text: str, clean: str, pos: int, bound: int):
+    """Each function definition's first line in text[pos:bound], up to its "(", and whether it's inline."""
+    start_pos, any_found = pos, False
     while True:
         brace = clean.find("{", pos, bound)
+        if brace < 0 and any_found:
+            return
         if brace < 0:  # no body here: a definition a macro writes (`HEADER_INLINE(void F(int a))`), the first line
             at = start_pos  # with a "(" that isn't a declaration (`;`) or a preprocessor line
             for ln in clean[start_pos:bound].split("\n"):
                 s = ln.strip()
                 if "(" in s and not s.startswith("#") and not s.endswith(";"):
                     lead = at + len(ln) - len(ln.lstrip())
-                    return text[lead:at + ln.rindex("(") + 1]
+                    yield text[lead:at + ln.rindex("(") + 1], False
+                    return
                 at += len(ln) + 1
-            return None
+            return
         head_at = max(clean.rfind(";", pos, brace), clean.rfind("}", pos, brace), pos - 1) + 1
         head = "\n".join(ln for ln in clean[head_at:brace].split("\n") if not ln.lstrip().startswith("#"))
         if "(" not in head or re.match(r"\s*(?:typedef\s+)?(?:struct|class|union|enum|namespace)\b", head):
-            depth, k = 0, brace
-            while k < len(clean):  # past the type (or initialiser)
-                depth += (clean[k] == "{") - (clean[k] == "}")
-                k += 1
-                if depth == 0:
-                    break
-            pos = k
+            pos = _past(clean, brace)  # past the type (or initialiser)
             continue
-        at = head_at
-        for ln in clean[head_at:brace].split("\n"):  # its first line: the one with the "(" (not a #pragma)
+        # from the line of the name whose parameter list the body follows, up to that list's "(" (the real text:
+        # extern "C" keeps its "C"), with preprocessor lines left out
+        flat = "\n".join(" " * len(ln) if ln.lstrip().startswith("#") else ln for ln in clean[head_at:brace].split("\n"))
+        if (m := _parameter_list(flat)) is not None:
+            start = head_at + flat.rfind("\n", 0, m.start(1)) + 1
+            start += len(text[start:head_at + m.start(1)]) - len(text[start:head_at + m.start(1)].lstrip())
+            yield text[start:head_at + m.end()], bool(_INLINE_HEAD.search(head))
+            any_found = True
+            pos = _past(clean, brace)
+            continue
+        at, lines = head_at, []  # none: as before it, the first line with a "(" that isn't only macro calls
+        for ln in clean[head_at:brace].split("\n"):  # its lines with a "(" (not a #pragma)
             if "(" in ln and not ln.lstrip().startswith("#"):
-                start = at + len(ln) - len(ln.lstrip())
-                # up to its last "(" (`__declspec(noinline) bool A::F(`); the real text: extern "C" keeps its "C"
-                return text[start:at + ln.rindex("(") + 1]
+                lines.append((at, ln))
             at += len(ln) + 1
-        return None
+        # its first line: the first of them that isn't only macro calls (`__declspec(noinline)`, `MY_ATTR(1)` on a line
+        # of its own: a definition written over two lines was cut as `?__declspec@@`), else the last (`main(void)`)
+        at, ln = next(((a, s) for a, s in lines if not _ONLY_CALLS.fullmatch(s)), lines[-1] if lines else (0, ""))
+        found = None
+        if lines:
+            start = at + len(ln) - len(ln.lstrip())
+            # up to its last "(" (`__declspec(noinline) bool A::F(`); the real text: extern "C" keeps its "C"
+            found = text[start:at + ln.rindex("(") + 1]
+        if found is None:
+            return
+        yield found, bool(_INLINE_HEAD.search(head))
+        any_found = True
+        pos = _past(clean, brace)
 TARGET = re.compile(r"//[ \t]*TARGET[ \t]+(0x[0-9a-fA-F]+)[ \t]+(\S+)")
 # "// GLOBAL: 0x<va> [map symbol]" then a declaration or definition of the global at that original address
 GLOBAL = re.compile(r"//[ \t]*GLOBAL:[ \t]*(0x[0-9a-fA-F]+)(?:[ \t]+(\S+))?[^\n]*\n"
@@ -177,6 +294,24 @@ class Program:
         return None
 
 
+REPLACE_TRIES, REPLACE_WAIT = 50, 0.1  # Windows refuses to replace a file another process has open
+
+
+def write_whole(path: Path, data: bytes) -> None:
+    """Write a file in one step: the app reads the object and its checks while units build, and a half-written
+    checks file once read as "no conflicts", which matched a function with two swapped globals."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_WAIT)
+
+
 def unresolved_by_function(link_said: str) -> dict[str, list[str]]:
     """What the harness link said, as each function of ours (its decorated name) -> the names it left unresolved
     that the function uses."""
@@ -220,20 +355,24 @@ def map_objects(path: Path) -> dict[str, str]:
     return out
 
 
-def own_symbol(syms: dict[str, int], objects: dict[str, str], name: str, source: Path) -> str | None:
-    """`name` (a unit function's original, decorated name) when the map has it from the unit's own source's object
-    (ltcg.py's 00_<source>.obj), not from a stand-in: the function an annotation means when the definition right
-    after the annotation is something else, such as an inline helper written between the two."""
-    own = f"00_{source.stem.replace('.', '_')}.obj"
-    return name if name in syms and objects.get(name, "").endswith(own) else None
+def own_objects(sources: list[Path]) -> set[str]:
+    """The objects of the unit's own code in its harness link: ltcg.py's <NN>_<file>.obj of every source that isn't in
+    harness/ (the unit's source and the files its code is split into), numbered in link order as ltcg.py numbers them."""
+    return {f"{i:02d}_{p.stem.replace('.', '_')}.obj" for i, p in enumerate(sources)
+            if not p.parts or p.parts[0] != "harness"}
+
+
+def own_symbol(syms: dict[str, int], objects: dict[str, str], name: str, own: set[str]) -> str | None:
+    """`name` (a unit function's original, decorated name) when the map has it from one of the unit's own objects
+    (own_objects), not from a stand-in: the function an annotation means when the definition right after the
+    annotation is something else, such as an inline helper written between the two."""
+    return name if name in syms and any(objects.get(name, "").endswith(o) for o in own) else None
 
 
 def symbol_hint(decl: str) -> str | None:
     """The map symbol substring for a definition line: `bool Car::IsFast(` -> `?IsFast@Car@@` (MSVC mangles A::B::f
     as ?f@B@A@@ and a free function f as ?f@@). Operators, constructors and destructors need an explicit one."""
-    head = decl[:decl.rindex("(")].strip()
-    name = re.split(r"[\s*&]+", head)[-1]
-    parts = name.split("::")
+    parts = _declared(decl).split("::")
     last = parts[-1]
     if not last or last.startswith("operator") or last.startswith("~") or (len(parts) > 1 and last == parts[-2]):
         return None
@@ -242,8 +381,10 @@ def symbol_hint(decl: str) -> str | None:
     return "?" + "@".join([last] + parts[-2::-1]) + "@@"
 
 
-def annotations(paths: list[Path]) -> tuple[dict[int, str], list[str]]:
-    """original address -> map symbol substring, from the sources' FUNCTION and TARGET annotations; and problems."""
+def annotations(paths: list[Path], named: dict[int, list[str]] | None = None) -> tuple[dict[int, str], list[str]]:
+    """original address -> map symbol substring, from the sources' FUNCTION and TARGET annotations; and problems.
+    `named`: the original's names by address (functions.json's symbol and real name), which say which definition an
+    annotation is of."""
     out, problems = {}, []
     for p in paths:
         text = p.read_text(encoding="utf-8", errors="replace")
@@ -253,8 +394,10 @@ def annotations(paths: list[Path]) -> tuple[dict[int, str], list[str]]:
         found = list(FUNCTION.finditer(text))
         for n, m in enumerate(found):
             va, sym = m.group(1), m.group(2)
-            bound = found[n + 1].start() if n + 1 < len(found) else len(text)
-            decl = None if sym else definition(text, clean, m.end(), bound)
+            if sym and "::" in sym:  # `// FUNCTION: 0x29080 Mode::Tick (NONMATCHING ...)`: the source's name, which
+                sym = symbol_hint(sym + "(")  # no decorated map symbol contains; looked for as "Mode::Tick" it never
+            bound = found[n + 1].start() if n + 1 < len(found) else len(text)  # was found, and never compiled in
+            decl = None if sym else definition(text, clean, m.end(), bound, (named or {}).get(int(va, 16), ()))
             if not sym and decl is None:
                 problems.append(f"{p}: FUNCTION {va}: no function definition follows it")
                 continue
@@ -594,13 +737,21 @@ def main() -> None:
     syms = map_symbols(Path(mapf))
     objects = map_objects(Path(mapf))
     wanted = names.wanted(info)
-    starts = sorted({a for a in syms.values() if img.section(a) is not None})
+    real = names.real_names(info)  # functions.json's "names": a real name stands for its address, as in names.py
+
+    def key_of(s: str) -> bytes | None:
+        """func_XXXXXXXX / D_XXXXXXXX a map symbol stands for, by the address in its name or its real name."""
+        return names.address_of(s.encode(), real)
+
+    starts =sorted({a for a in syms.values() if img.section(a) is not None})
     by_addr = sorted((a, s) for s, a in syms.items())
     addrs = [a for a, _ in by_addr]
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
 
-    hints, problems = annotations(sources)
+    given = info.get("names") or {}  # func_<address> -> the real name the project gave it
+    hints, problems = annotations(sources, {a: [fn["name"], given.get(f"func_{a:08X}", "")]
+                                            for a, fn in functions.items()})
     for va in sorted(hints):
         if va not in functions:
             where = f"it is in unit {unit_of[va]}" if va in unit_of else "no function starts there"
@@ -609,13 +760,21 @@ def main() -> None:
     for addr, fn in functions.items():
         want = hints.get(addr)
         if want is None:
-            m = [s for s in syms if re.search(f"func_{addr:08X}(?![0-9A-Fa-f])", s, re.I)]
+            m = [s for s in syms if key_of(s) == f"func_{addr:08X}".encode()]
+            if len(m) > 1:  # a real name library code has too (an XDK class's Add): the unit's own object's
+                own = own_objects(sources)
+                m = [s for s in m if any(objects.get(s, "").endswith(o) for o in own)]
             if len(m) == 1:
                 found[addr] = (m[0], syms[m[0]])
             continue
         sym, why = find_symbol(syms, want)
+        if (sym is not None and (obj := objects.get(sym)) and re.match(r"\d\d_", obj.rsplit(":", 1)[-1])
+                and not any(obj.endswith(o) for o in own_objects(sources))):
+            # another object of the harness link (tools/ltcg.py's <NN>_<file>.obj): a stand-in from harness/, not the
+            # unit's own code, which the build left out or inlined
+            sym, why = None, f"is only in {obj}, a stand-in from harness/, not in the unit's own code"
         if sym is None:  # `// FUNCTION:`, then a helper inlined into the function, then the function itself
-            sym = own_symbol(syms, objects, fn["name"], sources[0]) if sources else None
+            sym = own_symbol(syms, objects, fn["name"], own_objects(sources))
         if sym is None:
             problems.append(f"0x{addr:08X} {want} {why}")
         else:
@@ -636,9 +795,10 @@ def main() -> None:
         if i < 0:
             return f"$A{va:08X}", 0
         a, s = by_addr[i]
-        m = names.REF.search(s.encode())
-        if m:
-            s = wanted.get(m.group(1) + b"_" + m.group(2).upper(), s.encode()).decode()
+        if names.REF.search(s.encode()):
+            s = wanted.get(key_of(s), s.encode()).decode()
+        elif (key := key_of(s)) is not None:  # a real name: as names.py names it, the original's or _D_<address>
+            s = wanted.get(key, b"_" + key).decode()
         return s, va - a
 
     program = Program(exe)
@@ -658,8 +818,8 @@ def main() -> None:
         shown = s if not delta else f"{s}+0x{delta:X}"
         if s in annotated:
             return shown, annotated[s] + delta
-        m = names.REF.search(s.encode())
-        return (shown, int(m.group(2), 16) + delta) if m else None
+        key = key_of(s)  # (a real name too: a renamed global is checked as its address was)
+        return (shown, int(key.split(b"_", 1)[1], 16) + delta) if key else None
 
     def claim(va: int) -> tuple[list[tuple[str, int]], bool]:
         if va in orig_of:
@@ -728,8 +888,11 @@ def main() -> None:
     data = delink.coff(cuts, img.data)
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-    path.with_suffix(".ltcg.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+    # the checks first, naming the object they're of (objdiff.py reads them only with that object): a report read
+    # between the object and its checks once counted the new object's 100% by the old checks
+    report["object_sha1"] = hashlib.sha1(data).hexdigest()
+    write_whole(path.with_suffix(".ltcg.json"), json.dumps(report, indent=1).encode("utf-8"))
+    write_whole(path, data)
     bad = {n: f["conflicts"] for n, f in report["functions"].items() if f["conflicts"]}
     for p in problems:
         print(f"{unit}: {p}")
