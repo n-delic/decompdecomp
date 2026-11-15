@@ -100,8 +100,12 @@ def register(app: App) -> None:
             share['restore_errors'].pop(args[0], None)
             return link
 
-    if any((json.loads(p['config']).get('collab') or {}).get('open')
-           for p in (net.project_row(row['slug']) for row in net.store.all('SELECT slug FROM projects'))):
+    # Read without synchronizing each project's save folder: one save another stop left half written (a function's
+    # file without its layout entry) stopped the whole app at startup, and idle projects mustn't sync just to start
+    with net.progress.view():
+        rooms_open = any((json.loads(p['config']).get('collab') or {}).get('open')
+                         for p in (net.project_row(row['slug']) for row in net.store.all('SELECT slug FROM projects')))
+    if rooms_open:
         from ..hosted_rooms import restore
         def reopen(log):
             # Serialize startup with explicit stop/rotate so a closed room cannot reopen behind the user.

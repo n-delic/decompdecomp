@@ -3568,3 +3568,21 @@ def test_play_refuses_a_runtime_it_cant_build_on_yet(app):
     response = client.post("/api/play", headers={"X-Decomp": "1"}, json={"slug": slug, "runtime": "libultraship"})
     assert response.status_code == 400 and "WebAssembly build only" in response.json()["error"]
     net.remove_project(slug)
+
+
+def test_startup_does_not_stop_at_one_projects_half_written_save(tmp_path, monkeypatch):
+    from decompnet.network import NetworkError
+    """A save a stop left half written (an N64 game's: a function's file without its layout entry) raised from the
+    progress sync the rooms check started for every project, and the app never came up."""
+    home = tmp_path / "home"
+    (home / ".decomp").mkdir(parents=True)
+    net = RomNetwork(home / ".decomp" / "decomp.db", home)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)",
+                   ("game", "game", "mips", 1, str(tmp_path), json.dumps({"kind": "rom", "platform": "n64"})))
+
+    def broken(*args, **kwargs):
+        raise NetworkError("Add func_80192670 to the function layout in progress/decompdecomp.json before continuing.")
+    monkeypatch.setattr(net.progress, "sync", broken)
+    build(net, home / ".decomp", PORT, SECRET)
+    net.autosave.close()
