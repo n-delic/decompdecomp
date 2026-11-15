@@ -35,21 +35,26 @@ def read(path: Path) -> tuple[str, list[tuple[str, int, str]]]:
     return corpus, rows
 
 
+def tables():
+    """(console, table, settings key) of every table the consoles ship: the first under the console's id (as before
+    there could be more), the others under `<console>:<file name>`."""
+    for console in consoles.CONSOLES:
+        for i, table in enumerate(t for t in (console.sdk_table, *console.sdk_tables) if t):
+            yield console, Path(table), console.id if i == 0 else f"{console.id}:{Path(table).stem}"
+
+
 def ensure(net) -> None:
     """Load every console's table into the shared index once, and again only when the table changes."""
     seen = net.__dict__.setdefault("_sdk_builtin", set())
-    for console in consoles.CONSOLES:
-        if not console.sdk_table:
-            continue
-        path = Path(console.sdk_table)
+    for console, path, key in tables():
         try:
             data = path.read_bytes()
         except OSError:
             continue  # (a copy of the app without the table: detection keeps the user's own SDK folders)
         digest = hashlib.sha256(data).hexdigest()
-        if (console.id, digest) in seen:
+        if (key, digest) in seen:
             continue
-        row = net.store.one("SELECT value FROM settings WHERE key=?", KEY + console.id)
+        row = net.store.one("SELECT value FROM settings WHERE key=?", KEY + key)
         stored = json.loads(row["value"]) if row else {}
         corpus, rows = read(path)
         if stored.get("digest") != digest or not net.store.one("SELECT 1 FROM sdk_signatures WHERE corpus=? LIMIT 1",
@@ -62,8 +67,8 @@ def ensure(net) -> None:
                                [(corpus, console.arch, int(console.big_endian), name, fingerprint, size)
                                 for fingerprint, size, name in rows])
                 db.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
-                           (KEY + console.id, json.dumps({"digest": digest, "corpus": corpus})))
-        seen.add((console.id, digest))
+                           (KEY + key, json.dumps({"digest": digest, "corpus": corpus})))
+        seen.add((key, digest))
 
 
 def corpora(net) -> set[str]:

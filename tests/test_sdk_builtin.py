@@ -55,6 +55,7 @@ def test_the_table_loads_once_as_its_own_corpus_and_reloads_when_it_changes(tmp_
     table.write_text("# decompals/ultralib 0123456789abcdef, test\n# fingerprint\tsize\tname\tbuilds\n"
                      f"{'a' * 40}\t64\tosOne\t2.0L/libgultra\n{'b' * 40}\t48\tosTwo\t2.0L/libgultra\n")
     monkeypatch.setattr(consoles.get("n64"), "sdk_table", str(table))
+    monkeypatch.setattr(consoles.get("n64"), "sdk_tables", ())  # (the n_audio table: tests/test_naudio_signatures.py)
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     sdk_builtin.ensure(net)
     sdk_builtin.ensure(net)

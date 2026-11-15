@@ -13,6 +13,7 @@ def _only_indexed_libraries(monkeypatch):
     """These tests are about the libraries the user indexes; the N64's built-in table (test_sdk_builtin.py) stays out."""
     from decompnet import consoles
     monkeypatch.setattr(consoles.get("n64"), "sdk_table", "")
+    monkeypatch.setattr(consoles.get("n64"), "sdk_tables", ())
 
 
 @pytest.mark.parametrize('strategy', ['easiest', 'closest', 'finish'])
