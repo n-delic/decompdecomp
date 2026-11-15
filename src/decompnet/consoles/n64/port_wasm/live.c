@@ -1,5 +1,7 @@
-/* PORT_LIVE=port: the game played in a browser. PORT_WINDOW=1: in a window of its own instead, through SDL2
- * (window/sdl.c), with the browser view as the fallback where SDL2 can't open (and PORT_LIVE is set).
+/* PORT_LIVE=port: the game played in a browser. PORT_WINDOW=1: in a window of its own instead, through SDL3
+ * (window/sdl.c), with the browser view as the fallback where SDL3 can't open (and PORT_LIVE is set). An exported
+ * app's game, opened with no ROM named, takes its settings from beside it (port_live_app) and asks for the ROM in its
+ * window (port_live_rom).
  *
  * PORT_LIVE=port: the game played in a browser. The host serves http://127.0.0.1:port/ (this machine only): a page
  * that shows each frame as the game shows it and sends the keyboard to the first controller.
@@ -13,6 +15,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 
 #include <pthread.h>
 #ifdef _WIN32 /* Winsock: the same calls, with sockets of their own type and a start-up */
@@ -43,6 +48,7 @@ static uint8_t *frame; /* 8 bytes (width, height, little-endian u32) then RGB */
 static size_t frame_size;
 static int window; /* PORT_WINDOW: window/sdl.c has the calls below */
 int port_sdl_start(void);
+const char *port_sdl_rom(void);
 void port_sdl_pump(void);
 void port_sdl_frame(const uint8_t *rgb, int w, int h);
 int port_sdl_input(uint16_t *buttons, int8_t *x, int8_t *y);
@@ -178,7 +184,49 @@ static void *serve(void *arg) {
     return NULL;
 }
 
+/* An app's own program, opened with no ROM named (an exported app, opened from the Finder): its settings are
+   KEY=VALUE lines in ../Resources/port.env beside it (PORT_WINDOW, PORT_TITLE, PORT_APP), none overriding the
+   environment. PORT_APP names the app's own folder for what it keeps (on a Mac ~/Library/Application Support/<it>):
+   the saves (PORT_SAVE), the ROM chosen (PORT_ROM_MEMORY) and the log (stderr), which is also where it runs. */
+void port_live_app(const char *argv0) {
+#ifdef _WIN32 /* no exported app with its own window on Windows yet (ROADMAP.md) */
+    (void)argv0;
+}
+#else
+    char exe[4096], path[4200], line[1024];
+    if (!argv0 || !realpath(argv0, exe)) return;
+    char *slash = strrchr(exe, '/');
+    if (!slash) return;
+    *slash = 0;
+    snprintf(path, sizeof path, "%s/../Resources/port.env", exe);
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        char *eq = strchr(line, '=');
+        if (eq && eq != line) { *eq = 0; setenv(line, eq + 1, 0); }
+    }
+    fclose(f);
+    const char *app = getenv("PORT_APP"), *home = getenv("HOME");
+    if (!app || !*app || strchr(app, '/') || !home) return;
+#ifdef __APPLE__
+    snprintf(path, sizeof path, "%s/Library/Application Support/%s", home, app);
+#else
+    snprintf(path, sizeof path, "%s/.local/share/%s", home, app);
+#endif
+    mkdir(path, 0755);
+    if (chdir(path) != 0) return;
+    setenv("PORT_SAVE", "game.eep", 0);
+    setenv("PORT_ROM_MEMORY", "rom-path", 0);
+    if (!freopen("play.log", "w", stderr)) return;
+    fprintf(stderr, "settings from %s/../Resources/port.env; keeping its files in %s\n", exe, path);
+}
+#endif
+
 void port_live_start(void) {
+    static int started;
+    if (started) return;
+    started = 1;
     const char *p = getenv("PORT_LIVE");
     if (getenv("PORT_WINDOW")) {
         if (port_sdl_start()) { window = 1; return; }
@@ -209,6 +257,13 @@ void port_live_start(void) {
 }
 
 int port_live_active(void) { return active || window; }
+
+/* The ROM to play when none was named: with PORT_WINDOW, the one the player chooses in the window (window/sdl.c). */
+const char *port_live_rom(void) {
+    if (!getenv("PORT_WINDOW")) return NULL;
+    port_live_start();
+    return window ? port_sdl_rom() : NULL;
+}
 
 /* The host's main thread, every retrace: the window's events and drawing (window/sdl.c); nothing for the browser. */
 void port_live_pump(void) {
