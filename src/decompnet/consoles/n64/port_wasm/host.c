@@ -59,6 +59,10 @@ static void port_preempt(void);
 /* recompiled C for functions with no C yet (port/wasm/recomp.py's bridges.c, when the build has it): a function
    pointer's bridge, and each host thread's MIPS stack for it */
 __attribute__((weak)) void *port_recomp_pointer(uint32_t address) { (void)address; return 0; }
+/* a call through a pointer in recompiled code is a safe point too, as port_func is for the game's C: a racing game's
+   boot thread loops forever calling its frame hook through a pointer, and recompiled, it never let the threads the
+   retrace woke run (nothing was drawn) */
+void port_safe_point(void) { port_preempt(); }
 __attribute__((weak)) void port_recomp_thread(int number) { (void)number; }
 void *port_func(uint32_t address) {
     /* LLVM calls some functions through the table when the call's types differ from the function's only as

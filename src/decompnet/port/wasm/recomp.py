@@ -477,7 +477,9 @@ void pause_self(uint8_t *rdram) { (void)rdram; fprintf(stderr, "recompiled code 
 '''
 
 LOOKUPS = r'''
+void port_safe_point(void); /* the host's (host.c): a thread the retrace woke that outranks this one takes over */
 recomp_func_t *get_function(int32_t vram) {
+    port_safe_point();
     unsigned lo = 0, hi = %(tables)d;
     while (lo < hi) { unsigned mid = (lo + hi) / 2; if (port_recomp_table[mid].vram < (uint32_t)vram) lo = mid + 1; else hi = mid; }
     if (lo < %(tables)du && port_recomp_table[lo].vram == (uint32_t)vram) return port_recomp_table[lo].func;
