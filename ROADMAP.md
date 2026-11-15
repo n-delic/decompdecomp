@@ -800,6 +800,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
 | Set up as a project folder (import checkbox or Export panel; guessed `units.json`; edits to `src/<segment>/<function>.c` judged by the ROM judge on Refresh) | ✓ demo: 14 of 16 files found | ✓ demo: 1 of 18 files found (no padding between objects) | ✓ demo: 1 of 18 files found (functions padded like files) | — | — | — offered; demo not run (no PSP compiler build for Apple Silicon) | — | the project | the project | — | the project | the project |
 | The reversing emulator for agents (`watch_in_emulator`: which code writes an address, what a function is called with, on the user's ROM) | ✓ mupenRE (Linux, macOS) | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
+| Code the game loads, found by running it (import and Reimport, consoles/n64/loaded_code.py) | ✓ when mupenRE is installed | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
 | Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS) | — no recompiler pinned | — no recompiler pinned | — | — | — no recompiler pinned | — | — no recompiler pinned | — no recompiler pinned | — | — no recompiler pinned | — no ROM to recompile |
 | Behaviour checked against the original (`compare_behaviour`, docs/N64RECOMP.md phase 1) | ✓ (recorded in mupenRE, run through N64Recomp's C and the WebAssembly port's) | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no ROM to run |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — | — | — no kit yet | — | — project mode not read yet | — project mode not read yet | — | — project mode not read yet | — |
@@ -2072,6 +2073,16 @@ Phases:
 - functions swapped to decompiled C as they match and pass their tests.
 
 ### The reversing emulator for agents, ports and other platforms
+
+The N64 import runs the game too, when the emulator is installed (consoles/n64/loaded_code.py): 20 seconds of it in
+about two, pressing Start and A, with RAM written five times. A function the known code calls that's in no segment
+and is code in RAM byte for byte as a stretch of the ROM gives its segment exactly, ROM range and load address; the
+stretch the split has some of comes in as its gaps, a leaf function before the first frame starts it, and each one
+found is followed for its own calls. A racing game whose small overlays each load at their own address had 48
+functions its code calls in no segment (its main thread's code among them): its old split had 1,125 functions, a new
+one 1,269, 39 KiB of code found only by running it. Left: code the game decodes as it loads (counted, not added),
+a known segment the game runs elsewhere (reported, not moved), leaf functions just before a known segment's start,
+and overlays a 20-second run doesn't reach.
 
 - Other consoles: a pinned emulator each with write and execution breakpoints (`Console.emulator`, whose N64
   part is `consoles/n64/emulator`), PS1 and PS2 first.

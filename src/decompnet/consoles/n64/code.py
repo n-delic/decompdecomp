@@ -246,7 +246,8 @@ def unpack_code(rom: bytes) -> list[tuple[int, bytes]]:
 def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     """An N64 game's code outside the main segment (n64code.py), added to splat's config as code segments of their
     own. Compressed code (Rare's, Yaz0, RNC method 1) is unpacked first and appended to a working copy of the ROM, which splat then
-    reads instead (and an export rebuilds). Returns the image splat reads."""
+    reads instead (and an export rebuilds). Code the search can't place is then found by running the game, when the
+    reversing emulator is installed (loaded_code.py). Returns the image splat reads."""
     import hashlib
 
     import yaml
@@ -274,6 +275,11 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     known = split.segments_from_config(config)
     found = find_segments(rom, taken, tuple(s.rom_end for s in known), log=log,
                           declared=tuple((s.rom_start, s.rom_end, s.vram) for s in known)) if taken else []
+    if taken:  # what the game loads that the search couldn't place: found by running it (when the emulator's here)
+        from .loaded_code import find as run_and_find
+
+        loaded = run_and_find(workdir / original, rom, taken, found, log=log)
+        found = sorted(found + loaded["segments"])
     from .boot_mapping import recover
 
     recover(config, rom, found, log)
