@@ -4,8 +4,10 @@ A homemade object, never SDK or game code: an N64 racing game had its Controller
 user's libultra archive and still went to the agents for matching C, which a port replaces and a rebuild needn't.
 """
 import json
+import shutil
 import subprocess
 import threading
+from pathlib import Path
 
 import pytest
 from elftools.elf.elffile import ELFFile
@@ -178,3 +180,23 @@ def test_code_the_port_builds_from_c_is_never_a_lead(example):
         assert sdk_assembly._lead(net, proj, fn, {'names': [name], 'corpora': ['Toy SDK']}) is None
     assert sdk_assembly._lead(net, proj, fn, {'names': ['osPfsInitPak', 'osOther'], 'corpora': ['Toy SDK']}) is None
     assert sdk_assembly._lead(net, proj, fn, {'names': ['osPfsInitPak'], 'corpora': ['Toy SDK']}) == ('osPfsInitPak', ['Toy SDK'])
+
+
+def test_sdk_code_is_its_own_event_and_map_state(example):
+    """The activity log said "assembly-verified" for library code, the same as the game's own assembly."""
+    net, fid = example
+    sdk_assembly.choose_c(net, 'game', True)
+    assert sdk_assembly.discover_c(net, net.project_row('game'), threading.Event()) == 1
+    kinds = [(r['kind'], r['detail']) for r in net.project_store(1).all('SELECT kind,detail FROM events')]
+    assert ('sdk-verified', 'osToyRead: osToyRead (linked against your SDK)') in kinds
+    assert not any(k == 'assembly-verified' for k, _ in kinds)
+    row = next(f for f in net.function_map('game') if f['id'] == fid)
+    assert row['status'] == 'asm' and row['sdk_verified']
+
+
+def test_the_gui_shows_sdk_apart_from_assembly():
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node unavailable')
+    subprocess.run([node, str(Path(__file__).with_name('gui_sdk_category.js'))], check=True, capture_output=True,
+                   text=True, timeout=60)

@@ -452,6 +452,9 @@ class GuiMixin:
                  "analysis_state":"boundary_review" if r["name"] in incomplete else None,
                  "boundary_review":incomplete.get(r["name"]) or (json.loads(r["meta"] or "{}").get("boundary_review") if r["status"]!="matched" else None),
                  "not_c": r["status"] == "asm" and '"not_c"' in (r["meta"] or ""),
+                 # library code set aside on its SDK proof: its own colour and filter, apart from the game's assembly
+                 "sdk_verified": r["status"] == "asm" and bool((proofs.get(r["id"]) or {}).get("verified"))
+                                 and (proofs.get(r["id"]) or {}).get("kind") == "sdk",
                  "polished": r["status"] == "matched" and bool(r["readable"])} for r in rows]
 
     def map_columns(self, slug: str) -> list[list]:

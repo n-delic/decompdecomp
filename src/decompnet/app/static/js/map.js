@@ -24,7 +24,7 @@ function cssColor(name) {
 }
 function readColors() {
   colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), boundary: cssColor("--boundary-review"), match: cssColor("--match"), polished: cssColor("--polished"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
-             notC: cssColor("--not-c"), cc: CC_COLORS.map(cssColor) };
+             notC: cssColor("--not-c"), sdk: cssColor("--sdk"), cc: CC_COLORS.map(cssColor) };
 }
 
 /* The compiler map (MIPS ROM projects): each square in the colour of the compiler its code looks like, the game's
@@ -157,6 +157,7 @@ function cellColor(f) {
   if (f.status === "matched") return [f.polished ? colors.polished : colors.match, 1];
   if (f.analysis_state === "boundary_review") return [colors.boundary, 1];
   // Set-aside assessments are not assembly provenance; incomplete extents stay yellow.
+  if (f.status === "asm" && f.sdk_verified) return [colors.sdk, 1];  // library code: done, not the game's work
   if (f.status === "asm") return [colors.notC, f.not_c ? 1 : 0.45];
   if (f.best != null) return [mix(colors.tried, colors.hi, Math.pow(pctOf(f.best, f.insns) || 0, 3)), 1];
   return [colors.open, 1];
@@ -266,7 +267,7 @@ $("map").addEventListener("mousemove", (ev) => {
   if (i < 0) { tip.hidden = true; return; }
   const f = S.map[i];
   const p = pctOf(f.best, f.insns);
-  const status = f.analysis_state === "boundary_review" ? "incomplete extent — boundary review" : f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}` : f.status === "working" ? `${esc(f.agent)} is on it` : f.best != null ? `best ${pctText(p)}` : "not started";
+  const status = f.analysis_state === "boundary_review" ? "incomplete extent — boundary review" : f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}` : f.status === "working" ? `${esc(f.agent)} is on it` : f.status === "asm" ? (f.sdk_verified ? "SDK library code, set aside" : f.not_c ? "set aside by agents" : "set aside: assembly") : f.best != null ? `best ${pctText(p)}` : "not started";
   const where = S.ov && S.ov.kind === "fork" ? esc(f.unit || "") : hex8(f.vram);
   const cc = f.cc ? `<br>looks built by ${esc(f.cc)}${f.ccx ? ", not its compiler today" : ""}` : "";
   tip.innerHTML = `<b>${esc(f.name)}</b><br>${where} · ${f.insns} instructions<br>${status}${cc}`;

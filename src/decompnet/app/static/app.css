@@ -23,6 +23,8 @@
   --work: var(--color-status-warning-text); --work-bg: var(--color-status-warning-surface);
   --miss: var(--color-status-danger-text); --miss-bg: var(--color-status-danger-surface);
   --not-c: var(--color-status-danger-fill);
+  /* SDK library code set aside: good like a match, a shade darker so it reads apart from the game's own matches */
+  --sdk: color-mix(in oklch, var(--color-status-success-fill) 82%, black);
   --boundary-review: color-mix(in oklch, var(--color-status-warning-fill) 65%, var(--color-status-danger-fill));
   /* polished, on the map: matched green toward the text colour, away from close's (toward the page): lighter in dark */
   --polished: color-mix(in oklch, var(--color-status-success-fill) 50%, var(--color-text-primary));
@@ -327,7 +329,7 @@ a.ghost, a.primary { text-decoration: none; }
 .progress .line { fill: none; stroke: var(--match); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .stack { display: flex; height: 8px; border-radius: var(--r-sm); overflow: hidden; background: var(--open); }
 .stack i { display: block; height: 100%; }
-.s-match { background: var(--match); } .s-work { background: var(--hl); } .s-tried { background: var(--tried); } .s-asm { background: var(--not-c); opacity: .45; } .s-open { background: var(--todo); }
+.s-match { background: var(--match); } .s-sdk { background: var(--sdk); } .s-work { background: var(--hl); } .s-tried { background: var(--tried); } .s-asm { background: var(--not-c); opacity: .45; } .s-open { background: var(--todo); }
 .bars { width: 100%; height: 28px; display: block; }
 .bars rect { fill: var(--open); }
 .bars rect.on { fill: var(--match); }
@@ -369,7 +371,7 @@ a.ghost, a.primary { text-decoration: none; }
 .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 10px; height: 10px; border-radius: 2.5px; display: inline-block; }
-.sw.asm { background: var(--not-c); opacity: .45; } .sw.not-c { background: var(--not-c); } .sw.open { background: var(--todo); } .sw.tried { background: var(--tried); } .sw.work { background: var(--hl); } .sw.boundary { background: var(--boundary-review); } .sw.match { background: var(--match); } .sw.close { background: var(--match-hi); } .sw.polished { background: var(--polished); }
+.sw.asm { background: var(--not-c); opacity: .45; } .sw.not-c { background: var(--not-c); } .sw.open { background: var(--todo); } .sw.tried { background: var(--tried); } .sw.work { background: var(--hl); } .sw.boundary { background: var(--boundary-review); } .sw.match { background: var(--match); } .sw.sdk { background: var(--sdk); } .sw.close { background: var(--match-hi); } .sw.polished { background: var(--polished); }
 .map-hint { padding: 12px 16px 0; }
 .map-tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
@@ -430,6 +432,7 @@ a.ghost, a.primary { text-decoration: none; }
 .st.matched { background: var(--match-bg); color: var(--match-ink); border-color: transparent; }
 .session-group { grid-column: 1 / -1; margin: 6px 0 0; font: 600 12px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 .st.polished { background: var(--polished); color: var(--bg); }
+.st.sdk { background: var(--match-bg); color: var(--match-ink); border-color: var(--sdk); }
 .task-tag { margin-left: 4px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; color: var(--muted); }
 .st.working { background: var(--hl); color: var(--hl-ink); border-color: transparent; }
 .st.tried { color: var(--ink-2); }

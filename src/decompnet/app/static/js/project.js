@@ -743,7 +743,7 @@ function renderCompilerNotice(ov) {
 }
 
 function fnCounts() {
-  const c = { matched: 0, working: 0, tried: 0, open: 0, asm: 0, boundary: 0 };
+  const c = { matched: 0, working: 0, tried: 0, open: 0, sdk: 0, asm: 0, boundary: 0 };
   for (const f of S.map) c[fnState(f)]++;
   return c;
 }
@@ -752,11 +752,11 @@ function fnCounts() {
 function renderOverview() {
   if (!S.ov || S.tab !== "overview") return;
   const c = fnCounts(), total = Math.max(1, S.map.length);
-  const seg = (k, cls) => (c[k] ? `<i class="${cls}" data-w="${(100 * c[k]) / total}" title="${c[k]} ${k === "open" ? "to do" : k}"></i>` : "");
-  $("fnStack").innerHTML = seg("matched", "s-match") + seg("working", "s-work") + seg("tried", "s-tried") + seg("asm", "s-asm") + seg("boundary", "s-work") + seg("open", "s-open");
+  const seg = (k, cls) => (c[k] ? `<i class="${cls}" data-w="${(100 * c[k]) / total}" title="${c[k]} ${k === "open" ? "to do" : k === "sdk" ? "SDK library code" : k}"></i>` : "");
+  $("fnStack").innerHTML = seg("matched", "s-match") + seg("sdk", "s-sdk") + seg("working", "s-work") + seg("tried", "s-tried") + seg("asm", "s-asm") + seg("boundary", "s-work") + seg("open", "s-open");
   setWidths($("fnStack"));
   const togo = cFunctions(S.ov) - S.ov.matched;
-  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}${S.ov.left_out ? ` · ${plural(S.ov.left_out, "function")} left out: library code (see Settings)` : ""}`;
+  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.sdk ? ` · ${c.sdk} SDK library code` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}${S.ov.left_out ? ` · ${plural(S.ov.left_out, "function")} left out: library code (see Settings)` : ""}`;
   if (S.ov.status_breakdown) {
     const b=S.ov.status_breakdown;
     $("fnSub").textContent = `${b.exact_c.toLocaleString()} exact C · ${b.verified_source_assembly.toLocaleString()} verified source assembly · ${(b.verified_sdk_assembly || 0).toLocaleString()} verified SDK assembly · ${b.other_assembly.toLocaleString()} other set-aside entries · ${b.open.toLocaleString()} open${c.boundary ? ` · ${c.boundary} require boundary review (included in saved counts)` : ""}${c.working ? ` · ${c.working} working` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable` : ""}`;
