@@ -33,7 +33,7 @@ async function refreshRepositoryPush(force = false) {
     $("repositoryPushStop").hidden = true;
     renderRepositoryPush(null);
   }
-  if (repositoryPushPending || repositoryPushBusy || repositoryForkFollowing || (!force && Date.now() - repositoryPushChecked < 10000)) return;
+  if (repositoryPushPending || repositoryPushBusy || repositoryForkFollowing || (!force && Date.now() - repositoryPushChecked < 60000)) return;
   const request = ++repositoryPushRequest;
   repositoryPushPending = true;
   try {
@@ -110,8 +110,9 @@ $("repositoryPushGo").onclick = async () => {
   repositoryPushRequest++; repositoryPushPending = false;
   return followRepositoryPush(key, null, {slug, folder});
 };
-// A hidden window (minimised, another tab) skips the check; it runs again within 10 s of being shown.
-setInterval(() => { if (!globalThis.document?.hidden) refreshRepositoryPush(); }, 10000);
+// Once a minute: every 10 s was more git reads than this panel needs. Push itself fetches first, so it never acts on
+// a stale count. A hidden window (minimised, another tab) skips the check; it runs again within 60 s of being shown.
+setInterval(() => { if (!globalThis.document?.hidden) refreshRepositoryPush(); }, 60000);
 
 
 let repositoryAutoPushBusy = false, repositoryAutoPushSlug = "", repositoryAutoPushState = {};
