@@ -1,4 +1,7 @@
-/* PORT_LIVE=port: the game played in a browser. The host serves http://127.0.0.1:port/ (this machine only): a page
+/* PORT_LIVE=port: the game played in a browser. PORT_WINDOW=1: in a window of its own instead, through SDL2
+ * (window/sdl.c), with the browser view as the fallback where SDL2 can't open (and PORT_LIVE is set).
+ *
+ * PORT_LIVE=port: the game played in a browser. The host serves http://127.0.0.1:port/ (this machine only): a page
  * that shows each frame as the game shows it and sends the keyboard to the first controller.
  *
  * Keys: arrows steer (the stick and the d-pad), X is A, Z (or C) is B, Enter is Start, Space is Z, Q and W are L and
@@ -38,6 +41,12 @@ static void sleep_ms(int ms) { usleep((useconds_t)ms * 1000); }
 static pthread_mutex_t live_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t *frame; /* 8 bytes (width, height, little-endian u32) then RGB */
 static size_t frame_size;
+static int window; /* PORT_WINDOW: window/sdl.c has the calls below */
+int port_sdl_start(void);
+void port_sdl_pump(void);
+void port_sdl_frame(const uint8_t *rgb, int w, int h);
+int port_sdl_input(uint16_t *buttons, int8_t *x, int8_t *y);
+void port_sdl_audio(const int16_t *lr, int frames, int hz);
 static unsigned long frame_number;
 static uint16_t live_buttons;
 static int8_t live_x, live_y;
@@ -171,6 +180,11 @@ static void *serve(void *arg) {
 
 void port_live_start(void) {
     const char *p = getenv("PORT_LIVE");
+    if (getenv("PORT_WINDOW")) {
+        if (port_sdl_start()) { window = 1; return; }
+        if (!p) { fprintf(stderr, "PORT_WINDOW: the game can't open its window\n"); exit(5); } /* never run unseen */
+        fprintf(stderr, "PORT_WINDOW: playing in the browser instead\n");
+    }
     if (!p) return;
 #ifdef _WIN32
     WSADATA wsa;
@@ -194,9 +208,15 @@ void port_live_start(void) {
     fprintf(stderr, "playing at http://127.0.0.1:%s/\n", p);
 }
 
-int port_live_active(void) { return active; }
+int port_live_active(void) { return active || window; }
+
+/* The host's main thread, every retrace: the window's events and drawing (window/sdl.c); nothing for the browser. */
+void port_live_pump(void) {
+    if (window) port_sdl_pump();
+}
 
 void port_live_frame(const uint8_t *rgb, int w, int h) {
+    if (window) { port_sdl_frame(rgb, w, h); return; }
     size_t n = 8 + (size_t)w * h * 3;
     pthread_mutex_lock(&live_lock);
     if (frame_size != n) { free(frame); frame = malloc(n); frame_size = n; }
@@ -208,6 +228,7 @@ void port_live_frame(const uint8_t *rgb, int w, int h) {
 }
 
 int port_live_input(uint16_t *buttons, int8_t *x, int8_t *y) {
+    if (window) return port_sdl_input(buttons, x, y);
     if (!active) return 0;
     pthread_mutex_lock(&live_lock);
     *buttons = live_buttons; *x = live_x; *y = live_y;
@@ -216,6 +237,7 @@ int port_live_input(uint16_t *buttons, int8_t *x, int8_t *y) {
 }
 
 void port_live_audio(const int16_t *lr, int frames, int hz) {
+    if (window) { port_sdl_audio(lr, frames, hz); return; }
     if (!active) return;
     pthread_mutex_lock(&live_lock);
     ring_hz = (uint32_t)hz;

@@ -4,6 +4,9 @@
   for Apple Silicon and Intel Macs) that asks for the player's ROM once, keeps the saves in its own Application
   Support folder and opens the game in the browser; on Linux and Windows a folder with the program and play.sh /
   play.bat.
+- "window": on macOS, the same app with the game in a window of its own (SDL2, consoles/n64/port_wasm/window/sdl.c)
+  instead of the browser: SDL2 travels in the app (Contents/Frameworks, toolchains.toml `sdl2`), and the game is the
+  app's own process (Contents/MacOS/game), so it has the app's name and icon in the Dock and its menu.
 - "web": the browser build (web.py): a folder with index.html and what it loads, to put on any web server (it
   needs http, not a file: page); the player chooses their ROM in the page.
 - "miyoo": the native build for the Miyoo Mini family (miyoo.py): the folders to copy to its SD card (App/ for the
@@ -26,7 +29,7 @@ from pathlib import Path
 
 from ...network import NetworkError
 
-KINDS = {"app": "a standalone app", "web": "a browser build", "miyoo": "a Miyoo Mini SD card folder"}
+KINDS = {"app": "a standalone app", "window": "a standalone app with its own window", "web": "a browser build", "miyoo": "a Miyoo Mini SD card folder"}
 PACKING = "Packing the export"
 
 
@@ -64,6 +67,27 @@ if ! kill -0 $game 2>/dev/null; then
 fi
 open "http://127.0.0.1:$port/"
 wait $game
+"""
+
+MAC_WINDOW_LAUNCHER = r"""#!/bin/bash
+# {title}: the game, from your own ROM, in a window of its own. The app's program (Contents/MacOS/play, MAC_STUB) runs
+# this script, which asks for the ROM once and then becomes the game (exec), so the game is the app's own process.
+here="$(cd "$(dirname "$0")" && pwd)"
+support="$HOME/Library/Application Support/{ident}"
+mkdir -p "$support"
+rom="$(cat "$support/rom-path" 2>/dev/null)"
+if [ ! -f "$rom" ]; then
+  rom="$(osascript -e 'POSIX path of (choose file with prompt "Choose your ROM of {title}")' 2>/dev/null)" || exit 0
+  printf '%s' "$rom" > "$support/rom-path"
+fi
+case "$(head -c 4 "$rom" | od -An -tx1 | tr -d ' \n')" in
+  80371240|37804012|40123780) ;;  # .z64, .v64, .n64
+  *) rm -f "$support/rom-path"
+     osascript -e 'display alert "That file isn'"'"'t an N64 ROM" message "Next time you open {title}, it asks for your ROM again."'
+     exit 1 ;;
+esac
+cd "$support"
+PORT_WINDOW=1 PORT_TITLE="{title}" PORT_SAVE="$support/game.eep" exec "$here/../MacOS/game" "$rom" 0 2> "$support/play.log"
 """
 
 # The app's program: a compiled stub that runs Resources/play.sh. A script can't be the app's program: macOS keeps a
@@ -186,15 +210,18 @@ def _mac_stub(path: Path) -> None:
 def _sign(app: Path) -> None:
     """Sign the game, then the app around it, with an ad-hoc signature (no Apple developer identity): the bundle is
     sealed, so a Mac can tell it arrived whole, and Gatekeeper offers Open Anyway instead of calling it damaged."""
-    for target in (app / "Contents" / "Resources" / "game", app):
+    code = [app / "Contents" / "Frameworks" / "libSDL2-2.0.0.dylib", app / "Contents" / "MacOS" / "game",
+            app / "Contents" / "Resources" / "game"]
+    for target in [*(c for c in code if c.is_file()), app]:  # inside out: what the bundle holds, then the bundle
         done = subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(target)],
                               capture_output=True, text=True, timeout=120)
         if done.returncode:
             raise NetworkError(f"signing the app failed: {done.stderr.strip()[-400:]}")
 
 
-def package_app(program: Path, dest: Path, title: str, platform: str = sys.platform) -> Path:
-    """The native program as an app for `platform` in `dest` (replaced): what the player opens."""
+def package_app(program: Path, dest: Path, title: str, platform: str = sys.platform, sdl: Path | None = None) -> Path:
+    """The native program as an app for `platform` in `dest` (replaced): what the player opens. With `sdl` (the
+    `sdl2` toolchain's folder, macOS only) the game plays in a window of its own, SDL2 inside the app."""
     name, ident = _name(title), _ident(title)
     if dest.exists():
         shutil.rmtree(dest)
@@ -203,9 +230,16 @@ def package_app(program: Path, dest: Path, title: str, platform: str = sys.platf
         app = dest / f"{name}.app"
         (app / "Contents" / "MacOS").mkdir(parents=True)
         (app / "Contents" / "Resources").mkdir()
-        shutil.copy2(program, app / "Contents" / "Resources" / "game")
+        launcher = MAC_WINDOW_LAUNCHER if sdl else MAC_LAUNCHER
+        if sdl:  # the game is the app's own process, its library beside it with its licence
+            shutil.copy2(program, app / "Contents" / "MacOS" / "game")
+            (app / "Contents" / "Frameworks").mkdir()
+            shutil.copy2(sdl / "libSDL2-2.0.0.dylib", app / "Contents" / "Frameworks" / "libSDL2-2.0.0.dylib")
+            shutil.copy2(sdl / "LICENSE.txt", app / "Contents" / "Resources" / "SDL2-LICENSE.txt")
+        else:
+            shutil.copy2(program, app / "Contents" / "Resources" / "game")
         _write(app / "Contents" / "Resources" / "play.sh",
-               MAC_LAUNCHER.format(title=title.replace('"', "'"), ident=ident), executable=True)
+               launcher.format(title=title.replace('"', "'"), ident=ident), executable=True)
         _write(app / "Contents" / "Info.plist", PLIST.format(title=title.replace("&", "and").replace("<", ""),
                                                             ident=ident))
         heading = f"{title} for macOS"
@@ -229,6 +263,7 @@ def package_app(program: Path, dest: Path, title: str, platform: str = sys.platf
 def export(net, slug: str, kind: str, log=print) -> dict:
     """Build the project's game (only what changed) and export it as `kind` ("app", "web" or "miyoo"): {"kind",
     "folder", "path" (what to open), "files"}."""
+    from ... import toolchains
     from . import build, miyoo, play, web
 
     if kind not in KINDS:
@@ -240,15 +275,19 @@ def export(net, slug: str, kind: str, log=print) -> dict:
     out = repo / "port" / "wasm" / "export"
     out.mkdir(parents=True, exist_ok=True)
     build._write(out / ".gitignore", "*\n")  # built from the game: never committed
-    if kind == "app":
+    if kind == "window" and sys.platform != "darwin":
+        raise NetworkError("An app with its own window is made on a Mac for now; on Linux and Windows, export the "
+                           "standalone app (it plays in the browser)")
+    if kind in ("app", "window"):
+        sdl = toolchains.ensure("sdl2", log=log) if kind == "window" else None
         steps = (*build.STEPS, PACKING)
         # On macOS the app runs on Apple Silicon and Intel Macs alike, whichever kind exported it.
         program = build.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=True)
         build.Progress(log, steps).start(PACKING)
         log(f"packing {title} as an app for " + ("Apple Silicon and Intel Macs" if sys.platform == "darwin"
-                                                  else "this computer"))
-        path = package_app(program, out / "app", title)
-        folder = out / "app"
+                                                  else "this computer") + (", in a window of its own" if sdl else ""))
+        path = package_app(program, out / kind, title, sdl=sdl)
+        folder = out / kind
     elif kind == "miyoo":
         steps = (*miyoo.STEPS, PACKING)
         program = miyoo.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
@@ -275,11 +314,14 @@ def export(net, slug: str, kind: str, log=print) -> dict:
     if kind == "web":
         steps_for_player = [f"Serve {folder} over http and open it in Chrome or Edge (its README.txt says how): "
                             "browsers load WebAssembly only over http.", "The page asks the player for their ROM."]
-    elif kind == "app":
+    elif kind in ("app", "window"):
         steps_for_player = [f"Open {path} to play: it asks for your ROM the first time."]
+        if kind == "window":
+            steps_for_player.append("Keys: arrows steer, X is A, Z is B, Enter is Start, Space is Z, Q/W are L/R, "
+                                    "I/J/K/L the C buttons; a gamepad works too. F toggles full screen.")
         if sys.platform == "darwin":
             steps_for_player.append("On another Mac, the first open needs Control-click > Open (or System Settings > "
                                     "Privacy & Security > Open Anyway): the app isn't signed by an Apple developer. "
                                     "\"How to open on a Mac.txt\" beside it says so for the player.")
     return {"kind": kind, "folder": str(folder), "path": str(path), "files": files, "bytes": size,
-            "system": {"app": sys.platform, "web": "browser"}.get(kind, kind), "instructions": steps_for_player}
+            "system": {"app": sys.platform, "window": sys.platform, "web": "browser"}.get(kind, kind), "instructions": steps_for_player}
