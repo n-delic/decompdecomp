@@ -13,6 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from .. import __version__, agents, arch, consoles
 from ..network import CLAIM_ORDERS, Agent, NetworkError
+from . import compile_tools
 from .engine import RomNetwork
 
 # The guides every console shares (app/guide/); each console's own are in its package (consoles/<id>/guides/)
@@ -144,7 +145,10 @@ neighbours may come along in one claim; one function back is normal.)
 2. The brief usually has what you need. When it doesn't: read_file on the source file and its headers,
    search_code for the types, structs and helpers it uses. Reuse what exists; never redefine it.
    find_similar(function) finds look-alike functions: start from a matched one.
-3. compile_and_diff(function, source) with the complete definition (plus any #include "...", prototypes
+3. For a definition already in the source, function_brief gives its revision. compile_patch sends exact
+   old/new replacements; try_recipes previews up to eight named edit sets and restores the source.
+   Set apply=true to rejudge and keep a strictly better recipe. Refresh stale revisions.
+   compile_and_diff(function, source) with the complete definition (plus any #include "...", prototypes
    or #pragma lines it needs); several at once: function="a, b, c" with all definitions in source. Each
    goes into the source file in place of the old one, the file is built with the project's compiler and
    diffed. Fix structure first (control flow, calls), then types and expressions, registers last.
@@ -312,6 +316,12 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "claim_function": lambda net, agent, slug, function="", strategy="", count=1:
         _claim(net, agent, slug, function, strategy, count),
     "get_function": lambda net, agent, slug, function: net.get_function(function, slug, agent),
+    "function_brief": lambda net, agent, slug, function:
+        compile_tools.brief(net, agent, _fork(net, slug, "function_brief"), function),
+    "compile_patch": lambda net, agent, slug, function, revision, edits:
+        compile_tools.compile_patch(net, agent, _fork(net, slug, "compile_patch"), function, revision, edits),
+    "try_recipes": lambda net, agent, slug, function, revision, recipes, apply=False:
+        compile_tools.try_recipes(net, agent, _fork(net, slug, "try_recipes"), function, revision, recipes, apply),
     "compile_and_diff": lambda net, agent, slug, function, source: _compile(net, agent, slug, function, source),
     "last_diff": lambda net, agent, slug, function, context=2: net.last_diff(agent, function, slug, context),
     "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False:
@@ -361,11 +371,11 @@ HANDLERS: dict[str, Callable[..., str]] = {
 
 READ_ONLY = frozenset({"project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
-                       "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
+                       "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for", "function_brief"})
 
 ROM_ONLY = {"get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done",
-             "standins_for"}
+             "standins_for", "function_brief", "compile_patch", "try_recipes"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
 
 
@@ -512,6 +522,21 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         """Show any function (by name or address): assembly, status, best attempt, notes. Read matched
         functions to learn how this codebase is written."""
         return await run(ctx, "get_function", function=function)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def function_brief(ctx: Context, function: str) -> str:
+        """Current definition, score and revision for source-tree patches and recipes. Assembly: get_function."""
+        return await run(ctx, "function_brief", function=function)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def compile_patch(ctx: Context, function: str, revision: str, edits: list[dict[str, str]]) -> str:
+        """Apply up to 16 unique old/new replacements to function_brief's revision, through the normal judge."""
+        return await run(ctx, "compile_patch", function=function, revision=revision, edits=edits)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def try_recipes(ctx: Context, function: str, revision: str, recipes: list[dict], apply: bool = False) -> str:
+        """Preview up to eight named edit sets from one baseline. apply=true rejudges and keeps a better winner."""
+        return await run(ctx, "try_recipes", function=function, revision=revision, recipes=recipes, apply=apply)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def compile_and_diff(ctx: Context, function: str, source: str) -> str:
