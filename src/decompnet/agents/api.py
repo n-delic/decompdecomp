@@ -577,7 +577,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "last_diff": ("A page of rows from your last compile diff; start is zero-based and limit is at most 200. "
                       "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"), start=it("zero-based row"), limit=it("up to 200 rows"))),
         "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
-                             "on (before that it answers once with what to try; call again to release anyway).",
+                             "on (before that it answers once with what to try; call again to release anyway). A "
+                             "release with no compile since you claimed it is pushed back: compile first, pass move_on "
+                             "with your reasons, or end your session.",
                              s(claim_token=st("Always pass the current claim token from the claim, continuation state or get_candidate on the first release and retries; stale tokens cannot release a newer claim"), function=st("function", True), notes=st("what you tried, what is left", True),
                                not_c=bo("True only with evidence of handwritten assembly or non-function code. Unsupported compiler extensions, asm-register restrictions, return-address builtins or build flags are blockers, not no-C proof; release normally with notes."),
                                move_on=bo("Explicitly release now with precise notes explaining why; bypasses the one-time pushback"),
@@ -676,6 +678,8 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                       s(path=st("source/header path", True))),
         "make_readable": ("A readable rewrite of a matched function (names, types, a comment); kept only if it still "
                           "matches byte for byte.", s(function=st("function", True), source=st("readable C", True))),
+        "tidy_done": ("The source file claim_readable gave you to tidy is done: say what you changed.",
+                      s(unit=st("the file claim_readable gave you", True), summary=st("what you changed", True))),
         "share_knowledge": ("Propose evidence-backed reusable discoveries now; do not wait for a second model before proposing. Reusable matching tips for the game/compiler across functions. NOT function-specific notes: use release_function(notes=...) or add_note(function=...). "
                             "Back independently verified tips with supports=N. The user can accept one proposal; automatic acceptance needs two models. "
                             "Compiler identity/profile changes use compiler_map, try_compiler/search_flags or suggest.",

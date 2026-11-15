@@ -79,23 +79,26 @@ _CONDITIONAL = re.compile(r"\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)")
 _CPLUSPLUS = re.compile(r"^\s*(?:defined\s*\(?\s*)?__cplusplus\b\s*\)?\s*$")
 
 
-def c_only(header: str) -> str:
+def c_only(header: str, cxx: bool = False) -> str:
     """The header as a C compiler sees it, as far as m2c needs: what's only for C++ (`#ifdef __cplusplus` blocks,
-    which drafts are C, and `#if 0` blocks) taken out. Other conditionals keep both their branches, as before. GTA San
-    Andreas's header keeps its classes in an `#ifdef __cplusplus` block: kept, every draft's context failed to parse
-    and m2c ran a second time without any of it (October 2026: none of its drafts had the header)."""
+    which drafts are C, and `#if 0` blocks) taken out. Other conditionals keep both their branches, as before. A PC
+    game's header kept its classes in an `#ifdef __cplusplus` block: kept, every draft's context failed to parse and
+    m2c ran a second time without any of it (October 2026: none of its drafts had the header).
+    `cxx`: as a C++ compiler sees it instead, for a C++ function (decomp-permuter reads its classes' data)."""
     out = []
     open_: list[list[bool]] = []  # per open conditional: [this branch is left out, the #else branch is]
     for line in header.splitlines():
         m = _CONDITIONAL.match(line)
         if m:
             kind, cond = m.group(1), m.group(2).strip()
-            cxx = bool(_CPLUSPLUS.match(cond))
+            is_cxx = bool(_CPLUSPLUS.match(cond))
             if kind in ("if", "ifdef"):
-                left_out = cxx or (kind == "if" and cond == "0")
-                open_.append([left_out, False])
+                if is_cxx:
+                    open_.append([not cxx, cxx])
+                else:
+                    open_.append([kind == "if" and cond == "0", False])
             elif kind == "ifndef":
-                open_.append([False, cxx])  # `#ifndef __cplusplus`: its #else is the C++ branch
+                open_.append([is_cxx and cxx, is_cxx and not cxx])  # `#ifndef __cplusplus`: #else is C++'s
             elif kind in ("else", "elif") and open_:
                 open_[-1][0] = open_[-1][1]
             elif kind == "endif" and open_:

@@ -1,6 +1,7 @@
 """PlayStation 2 overlays (consoles/ps2/overlays.py): code in other files of a disc, placed at the address it's loaded at
 from its own calls, and split with the program, as a segment of its own."""
 
+import io
 import struct
 import subprocess
 import sys
@@ -135,6 +136,48 @@ def _iso(files: dict[str, bytes]) -> bytes:
     for name, data in files.items():
         image += data + bytes(-len(data) % 2048)
     return bytes(image)
+
+
+def _raw(iso: bytes) -> bytes:
+    """The same disc image with raw 2352-byte sectors (a .bin file): each sector has 24 bytes before its 2048 bytes
+    of data (sync pattern and headers), and 280 bytes after them (error detection and correction). Here, the bytes
+    before and after the data are zero: the reader does not read them."""
+    return b"".join(bytes(24) + iso[at:at + 2048] + bytes(280) for at in range(0, len(iso), 2048))
+
+
+class _ImageFile(io.BytesIO):
+    """A disc image file for a test. A reader that continues to read after the end of the disc image fails the
+    test. Without this limit, such a reader stops the test run, because its read never ends."""
+    empty_reads = 0  # the reads that gave no bytes
+
+    def read(self, size=-1):
+        data = super().read(size)
+        if not data:
+            self.empty_reads += 1
+            assert self.empty_reads < 1000, "the reader does not stop at the end of the disc image"
+        return data
+
+
+def test_a_file_that_goes_past_the_end_of_the_image_is_read_to_the_end_of_the_image():
+    """A file entry of a disc can point past the end of the disc image (`_Disc.read` gives the cause). The reader
+    gives the bytes that the disc image has. With raw sectors, the read of such a file never ended."""
+    from decompnet.consoles.ps2 import disc
+
+    last = bytes(range(256)) * 40  # 5 sectors
+    image = _raw(_iso({"LAST.DAT": last}))[:-2 * 2352]  # the disc image has only the first 3 of them
+    assert disc._Disc(_ImageFile(image)).find("LAST.DAT") == last[:3 * 2048]
+
+
+def test_overlays_are_found_on_an_image_that_ends_before_its_last_file_ends():
+    """The search for overlays reads the files of the disc. When a file entry points past the end of the disc image,
+    the search completes, and it finds the code in the part of the file that the disc image has."""
+    from decompnet.consoles.ps2 import disc
+
+    filler = bytes(range(256)) * 512  # 128 KiB of other data: no code
+    code = _overlay(OVERLAY_AT, 80)
+    image = _raw(_iso({"SLUS_999.99": b"\x7fELF", "AREAS.DAT": filler + code + filler}))[:-8 * 2352]
+    found = overlays.find(disc._Disc(_ImageFile(image)), "SLUS_999.99", (0x00100000, 0x00150000))
+    assert [(name, at, data) for name, data, at, _ in found] == [("areas_20000", OVERLAY_AT, code)]
 
 
 @needs_demo

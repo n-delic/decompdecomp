@@ -78,7 +78,8 @@ def register(app: App) -> None:
                     # The per-function publisher uses current DB inputs with exact/revision
                     # guards. Let autosave export it rather than blocking the response on a full import.
                     function_profile = request.url.path == '/api/compiler' and data.get('function')
-                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/rom-explorer/preview", "/api/rom-explorer/loaders", "/api/rom-explorer/inspect", "/api/rom-explorer/discovery", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    if request.method == "POST" and not function_profile and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/rom-explorer", "/api/rom-explorer/annotation", "/api/rom-explorer/preview", "/api/rom-explorer/loaders", "/api/rom-explorer/inspect", "/api/rom-explorer/discovery", "/api/knowledge/verify") and not comparison_started and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") in ("apply", "apply-all")) and (project := net.store.one("SELECT * FROM projects WHERE slug=?", slug)) \
+                            and not net.project_missing(project):
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if (request.url.path == '/api/compilermap' and request.query_params.get('view') == 'comparison') or (request.url.path == '/api/project' and request.query_params.get('quick') == '1') or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
@@ -161,7 +162,8 @@ def register(app: App) -> None:
         settings.data["last_project"] = slug
         settings.save()
         overview = net.overview(slug, quick=True) if request.query_params.get("quick") == "1" else net.overview(slug)
-        net.warm_briefs_soon(slug)  # the project is open: agents' first briefs come next
+        if not overview.get("missing"):
+            net.warm_briefs_soon(slug)  # the project is open: agents' first briefs come next
         return overview
 
     def p_live(slug, request, data):
@@ -222,19 +224,20 @@ def register(app: App) -> None:
             if not str(data.get("ranges") or "").strip():  # the whole game: every file, one at a time
                 return {"job": jobs.start("compiler", lambda log: net.forks.set_compiler_everywhere(slug, tc, log))}
             said = net.forks.set_compiler_ranges(slug, parse_ranges(str(data["ranges"])), None if data.get("remove") else tc)
-            return net.overview(slug) | {"said": said}
+            return net.overview(slug) | {"said": said, "reopened": []}
+        reopened = []
         if "auto" in data:  # this project's suggestions apply by themselves once proven, or wait for the user
             net.set_auto_adjust(slug, bool(data["auto"]))
         elif str(data.get("ranges") or "").strip():  # these address ranges only (or back to the project's: remove)
-            net.set_compiler_ranges(slug, parse_ranges(str(data["ranges"])),
-                                    None if data.get("remove") else str(data.get("toolchain", "")), data.get("flags") or None,
-                                    reopen=bool(data.get("reopen")))
+            reopened = net.set_compiler_ranges(slug, parse_ranges(str(data["ranges"])),
+                                               None if data.get("remove") else str(data.get("toolchain", "")),
+                                               data.get("flags") or None, reopen=bool(data.get("reopen")))
         else:
             def change_compiler(log):
                 net.set_compiler(slug, str(data.get("toolchain", "")), data.get("flags") or None, log=log)
                 return {"said": "Compiler settings saved; all affected matches checked."}
             return {"job": jobs.start("compiler", change_compiler)}
-        return net.overview(slug)
+        return net.overview(slug) | {"reopened": reopened}
 
     def p_export(slug, request, data):
         def work(log):
@@ -551,8 +554,11 @@ def register(app: App) -> None:
         manager.forget_project(slug)  # (it stopped every project's helpers)
         proj = net.project_row(slug)
         net.knowledge.forget(slug)
-        net.remove_project(slug)
         from .. import manual_mcp
+        for connection in list(manual_mcp.connections(settings)):
+            if connection['slug'] == slug:
+                manual_mcp.revoke(net, settings, connection['id'])
+        net.remove_project(slug)
         settings.data['manual_mcp'] = [c for c in manual_mcp.connections(settings) if c['slug'] != slug]
         settings.save()
         if data.get("files"):

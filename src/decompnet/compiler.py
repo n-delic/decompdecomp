@@ -250,6 +250,7 @@ def _exec_driver(cfg: CompilerConfig, work: Path, argv: list[str], timeout: floa
             from .spawn_diagnostics import record
             record(error, 'compiler', active_compiles=_SLOTS.active, compile_limit=_SLOTS.limit)
             raise
+    limits.attach_job(proc)  # (Windows: so what the compiler starts is stopped with it)
     from . import compiler_processes
     compiler_processes.track(proc.pid)
     started = time.monotonic()
@@ -271,10 +272,15 @@ def _exec_driver(cfg: CompilerConfig, work: Path, argv: list[str], timeout: floa
                         raise subprocess.TimeoutExpired(proc.args, timeout)
     except BaseException:
         failed = True
+        # what the compiler started in groups of its own, or left behind in its session (#228); the group itself
+        # and the pipes are compiler_processes.finish's
+        limits.stop_group(proc)
         raise
     finally:
-        compiler_processes.finish(proc, failed=failed)
-
+        try:
+            compiler_processes.finish(proc, failed=failed)
+        finally:
+            limits.release_job(proc)
 
 
 def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 300, *,

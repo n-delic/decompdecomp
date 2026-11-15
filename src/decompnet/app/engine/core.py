@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-from ... import consoles
+from ... import consoles, hostenv
 from ...network import Agent, Network, NetworkError, hash_token
 from ...rom import split
 from ...rom.symbols import Symbol, SymbolTable
@@ -90,8 +90,8 @@ class Core(Network):
 
     def _project(self, slug: str | None):
         row = super()._project(slug)
-        if hasattr(self, "progress") and not self.progress.viewing:
-            self.progress.sync(row["slug"])
+        if hasattr(self, "progress") and not self.progress.viewing and self.project_missing(row) is None:
+            self.progress.sync(row["slug"], background=True)  # (a look at it, not use: Progress.hot)
             row = super()._project(row["slug"])
         return row
 
@@ -130,6 +130,23 @@ class Core(Network):
                     db.execute("UPDATE projects SET root=? WHERE id=?", (str(here), row["id"]))
                 moved.append(row["slug"])
         return moved
+
+    def project_missing(self, proj) -> str | None:
+        """Why the project's folder isn't on disk, in a sentence, or None when it is there.
+
+        Its folder holds the game and everything made from it, so a project without one can't be opened; its database
+        records are all that is left, and removing the project is the way out. A folder that moved within this
+        workspace is found again by its name first (find_moved_projects): that project isn't missing any more."""
+        root = str(proj["root"] or "")
+        if root and Path(root).is_dir():
+            return None
+        if root and self.find_moved_projects():
+            row = self.store.one("SELECT root FROM projects WHERE id=?", proj["id"])
+            if row is not None and row["root"] and Path(row["root"]).is_dir():
+                return None
+        where = f": {hostenv.shown_path(root)}" if root else ""
+        return (f"Its folder is missing{where}. Put it back where it was (with the game in it), or remove the project "
+                "from decompdecomp: its matches and notes go with its database records.")
 
     def is_rom(self, proj) -> bool:
         return self.cfg(proj).get("kind") == "rom"
@@ -217,30 +234,42 @@ class Core(Network):
         return self._roms[proj["id"]]
 
     def reader(self, proj, function=None):
+        """Read helpers and constants from the caller's overlay (its verified memory regions first), then the other
+        segments, then data after the code in its loaded image. #230: with a caller, an address that several other
+        overlays cover at different ROM offsets fails instead of guessing one, since a wrong read skips nothing."""
         rom, segs = self._rom(proj)
         offset = None
         if function is not None:
-            offset = function["rom_offset"] if "rom_offset" in function.keys() else None
-            if offset is None:
+            if "rom_offset" in function.keys():
+                offset = function["rom_offset"]
+            else:
                 row = self.project_store(proj["id"]).one("SELECT rom_offset FROM functions WHERE project_id=? AND name=?",
                                      proj["id"], function["name"])
                 offset = row["rom_offset"] if row else None
         owner = next((s for s in segs if offset is not None and s.rom_start <= offset < s.rom_end), None)
+        rooted = "root" in proj.keys()
         extra = None
-        if owner is not None:
+        if owner is not None and rooted:
             from ...rom.memory import overlay_reader
             extra = overlay_reader(Path(proj["root"]), self.cfg(proj)["rom"]["sha1"], owner.name)
-        ordered = ([owner] + [s for s in segs if s is not owner]) if owner else segs
 
-        images = _load_images(self, proj)
+        images = _load_images(self, proj) if rooted else []
 
         def read(addr: int, n: int) -> bytes | None:
             if extra is not None and (data := extra(addr, n)) is not None:
                 return data
-            for seg in ordered:
-                if seg.contains(addr, n):
-                    at = seg.rom_start + addr - seg.vram
-                    return rom[at:at + n]
+            if owner is not None and owner.contains(addr, n):
+                candidates = [owner]
+            else:
+                candidates = [s for s in segs if s.contains(addr, n)]
+            offsets = {s.rom_start + addr - s.vram for s in candidates}
+            # None means unbacked memory to the linker and skips verification. Ambiguity must fail instead.
+            if function is not None and len(offsets) > 1:
+                raise NetworkError(f"Cannot verify bytes at 0x{addr:X}: multiple ROM overlays cover this address "
+                                   "and the caller's ROM offset does not select one.")
+            if candidates:
+                at = candidates[0].rom_start + addr - candidates[0].vram
+                return rom[at:at + n]
             for start, vram, end in images:  # data after the code, in the same loaded image
                 if vram <= addr and addr + n <= end and start + addr - vram + n <= len(rom):
                     at = start + addr - vram

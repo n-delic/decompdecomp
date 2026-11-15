@@ -378,6 +378,12 @@ function renderSessions(sessions, refreshCosts = true) {
   act("[data-stop]", "/api/agents/stop", (b) => ({ id: b.dataset.stop }));
   act("[data-remove]", "/api/agents/stop", (b) => ({ id: b.dataset.remove, remove: true }));
   act("[data-again]", "/api/agents/restart", (b) => ({ id: b.dataset.again }));
+  box.querySelectorAll('[data-agent-prompts]').forEach((b) => {
+    b.onclick = () => showAgentPrompts(sessions.find((s) => s.id === b.dataset.agentPrompts));
+  });
+  box.querySelectorAll('[data-agent-tools]').forEach((b) => {
+    b.onclick = () => showAgentTools(sessions.find((s) => s.id === b.dataset.agentTools));
+  });
   box.querySelectorAll("[data-log]").forEach((b) => {
     b.onclick = () => { S.logFor = S.logFor === b.dataset.log ? null : b.dataset.log; renderLog(); renderSessions(S.sessions || []); };
   });
@@ -1024,7 +1030,7 @@ function eventHtml(ev) {
     case "link": return `<span class="ok">🔗</span> ${esc(d)} is linked: the game builds from its C, byte for byte`;
     case "release": return `${who} set ${fnLink(d)} aside, with notes for the next agent`;
     // (#55: a release before compile_and_diff's move-on rule says so is refused, with what to try instead)
-    case "release_pushed": return `${who} wanted to give up ${fnLink(d)} too early, and was told to keep trying`;
+    case "release_pushed": return `${who} wanted to give up ${fnLink(d)} too early, and was told to compile it or stop`;
     case "expired": return `${fnLink(d)} was left unfinished`;
     case "freed": return d ? `${fnLink(d)} is free again: ${who} stopped` : `${who} stopped`;
     case "context": return `${who} updated ${ev.agent ? "shared code" : "context"}: ${esc(d)}`;
@@ -1096,7 +1102,7 @@ function matchedBy(agent, fn) {
 const AUTO = "autopilot";
 /* #99: the app's own workers, not helpers anyone started: their claims outlive a stopped helper (the permuter's by
    half an hour) and a room host's are named with "@" in front. */
-const APP_WORKERS = new Set([AUTO, "permuter", "decompdecomp"]);
+const APP_WORKERS = new Set([AUTO, "permuter", "deep-permuter", "decompdecomp"]);
 function autopilotLine(t, first, done) {
   const a = S.apFeed || (S.apFeed = { tried: 0, matched: 0, li: null });
   const html = `<span class="who">autopilot</span> ${done ? esc(done) : `tried ${plural(a.tried, "machine draft")}${a.matched ? ` · <span class="ok">${a.matched} matched</span>` : ""}`}`;

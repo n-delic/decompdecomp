@@ -57,7 +57,8 @@ def _xiso(xbe: bytes) -> bytes:
     return bytes(img)
 
 
-def test_an_xbe_reads_and_its_pe_view_is_the_same_program(demo):
+def test_an_xbe_reads_and_its_pe_view_is_the_same_program(demo, monkeypatch):
+    monkeypatch.setattr(xbox.sys, "platform", "linux")  # (on Windows an XDK's own 7.1 may be chosen: below)
     game, symbols = demo
     data = game.read_bytes()
     xbe = xbox.read_xbe(data)
@@ -118,7 +119,8 @@ def test_the_xdks_library_sections_are_set_aside(demo, tmp_path):
 
 
 @pytest.mark.parametrize("build, compiler", [(5849, "7.1"), (5933, "7.1"), (4627, "7.0"), (3911, "7.0")])
-def test_the_xdk_build_names_the_compiler(demo, tmp_path, build, compiler):
+def test_the_xdk_build_names_the_compiler(demo, tmp_path, build, compiler, monkeypatch):
+    monkeypatch.setattr(xbox.sys, "platform", "linux")  # (on Windows an XDK's own 7.1 may be chosen: below)
     data = bytearray(demo[0].read_bytes())
     libs = xbox._u32(data, 0x164) - xbox.BASE
     for i in range(xbox._u32(data, 0x160)):  # every library of the version table from that XDK
@@ -186,3 +188,21 @@ def test_an_early_game_builds_with_its_own_xdks_compiler(demo, tmp_path, monkeyp
 def test_only_visual_cpp_71_builds_with_arch_sse():
     assert "/arch:SSE" in xbox.cl_flags("7.1")
     assert "/arch:SSE" not in xbox.cl_flags("7.0") and "/arch:SSE" not in xbox.cl_flags("xdk-3911")
+
+
+def test_on_windows_a_71_game_builds_with_the_xdks_own_copy_of_71(demo, tmp_path, monkeypatch):
+    """The msvc pack's 7.1 cl.exe doesn't start on Windows itself (its runtime, MSVCR71.dll, isn't in the pack; wibo
+    has it built in on Linux): every first build of an Xbox game failed there. The XDK's copy of the same build has
+    the runtime beside it, so on Windows the game builds with it, with 7.1's flags; without one, the import says why
+    the build will fail and what to set up."""
+    monkeypatch.setattr(xbox.sys, "platform", "win32")
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    info = xbox.game_info(demo[0])
+    assert info["compiler"] == "7.1" and "MSVCR71.dll" in info["compiler_why"]  # (no XDK set up yet)
+    toolchains.install("xdk", folder=make_xdk(tmp_path / "xdk5849", 5849, "13.10.3077.0"), accept_license=True,
+                       log=lambda *_: None)
+    info = xbox.game_info(demo[0])
+    assert info["compiler"] == "xdk-5849" and "your XDK's own copy" in info["compiler_why"]
+    assert "/arch:SSE" in xbox.cl_flags("xdk-5849")
+    monkeypatch.setattr(xbox.sys, "platform", "linux")
+    assert xbox.game_info(demo[0])["compiler"] == "7.1"  # (the pack's, through wibo, elsewhere)

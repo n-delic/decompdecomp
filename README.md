@@ -1060,6 +1060,7 @@ game's code is its rights holder's: keep it to yourself.
 | PlayStation (PS1) | Beta |
 | PlayStation 2 | Beta |
 | PlayStation 3 | Beta (from your decrypted EBOOT.ELF; the free ps3dev GCC, or your own SDK's compiler) |
+| PlayStation 4 | Beta (from your decrypted `eboot.elf`; Linux x86-64 app only, including inside WSL 2) |
 | PSP | Beta |
 | GameCube, Wii | Beta |
 | Windows PC games | Beta |
@@ -1078,6 +1079,10 @@ package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/ma
 so when you install that pack. The older Visual C++ run without it. A game built with a Visual C++ the packs don't
 have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder (it's
 read where it is, never copied).
+
+PS4 projects need the Linux x86-64 app, including inside WSL 2; the native Windows and macOS apps cannot build them. They use the free pinned
+Clang 5.0.2 pack and strict objdiff, tested on leaf functions and same-file, cross-file and import calls. decompdecomp includes no Sony SDK
+and no game files. Many other features are still gaps; encrypted SELF, PKG and PRX modules are not supported.
 
 ## Questions people ask
 

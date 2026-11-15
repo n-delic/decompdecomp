@@ -166,7 +166,7 @@ def run(net, slug, log, *, include_all=False, threads=0):
         if link:
             # Each concurrent function has its own room lease; a local draft never steals a host claim.
             stage(fid, 'Requesting host claim')
-            name = link.claim(worker,fn['name'],'easiest')
+            name, _ = link.claim(worker,fn['name'],'easiest')
             if name != fn['name']:
                 if name:
                     link.call('/collab/release',worker,function=name,notes='')

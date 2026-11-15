@@ -568,6 +568,8 @@ class Progress:
         self.verification_holders: dict[str, dict] = {}
         from .progress_file_cache import FileCache
         self.file_cache = FileCache()
+        # (every file's text of every project synced was kept here, never read again: with hundreds of games that was
+        # all their sources in memory. Kept empty, for the callers that drop a project's state)
         self.disk: dict[str, dict[str, str]] = {}
         self.projected: dict[str, dict[str, str]] = {}
         self.checked: dict[str, float] = {}
@@ -596,6 +598,19 @@ class Progress:
         self.case_checked: dict[str, tuple] = {}  # slug -> (dirty token, why saving waits for a rename, or None)
         self.refusals: dict[str, int] = {}  # slug -> syncs in a row whose write found the folder not as it read it
         self.failed: dict[str, tuple] = {}  # slug -> ((dirty token, settings, folder), when) of the last failed sync
+
+    def _folder_gone(self, slug: str, project_id) -> bool:
+        """Whether the project's folder was deleted (engine.project_missing), read from its own store's row so a
+        catalog root left stale doesn't count; a check that fails counts as present."""
+        try:
+            row = self.net.project_store(slug).one("SELECT root FROM projects WHERE slug=?", slug)
+            root = str(row["root"] or "") if row is not None else ""
+            if not root or Path(root).is_dir() or project_id is None:
+                return False
+            check = getattr(self.net, "project_missing", None)
+            return bool(check({"id": project_id, "slug": slug, "root": root})) if check is not None else False
+        except Exception:
+            return False
 
     @staticmethod
     @phase('progress_stat')
@@ -994,10 +1009,8 @@ class Progress:
                 if not saves._publish(folder, rendered, baseline.disk.files if baseline else None,
                                       chosen=bool(self.net.cfg(proj).get("progress_folder"))):
                     raise NetworkError("Progress changed while the project was being rebuilt. Read it again and retry.")
-                self.disk[slug] = _read(folder)
-                self.projected[slug] = rendered
                 saves._remember_revision(self.net, slug, json.loads(rendered[saves.MANIFEST]))
-                self._remember(project_id, self.disk[slug], rendered,
+                self._remember(project_id, _read(folder), rendered,
                                _config_key(proj, self.net.cfg(proj)), dirty.token, dirty_tokens)
                 self.revisions[slug] = self.revisions.get(slug, 0) + 1
             finally:
@@ -1223,8 +1236,9 @@ class Progress:
     def flush(self, *, notify=None) -> dict[str, str]:
         """Publish pending ROM changes without rereading untouched projects on shutdown."""
         failures = {}
-        stores = {}
-        for row in self.net.store.all('SELECT slug FROM projects'):
+        stores, ids = {}, {}
+        for row in self.net.store.all('SELECT id, slug FROM projects'):
+            ids[row['slug']] = row['id']
             stores.setdefault(self.net.project_store(row['slug']), []).append(row['slug'])
         pending = set(self.failed) | set(self.blocked)
         for store, slugs in stores.items():
@@ -1235,6 +1249,8 @@ class Progress:
                 "(d.functions OR d.headers OR d.metadata OR d.token IS NOT s.dirty_token)", json.dumps(slugs))
             pending.update(row['slug'] for row in rows)
         for slug in sorted(pending):
+            if self._folder_gone(slug, ids.get(slug)):
+                continue  # nothing to write (#265): its folder is gone, and only its records can be removed
             if notify:notify(slug)
             try:
                 self.sync(slug, force=True)
@@ -1413,8 +1429,12 @@ class Progress:
         if lease is not None and lease[0] == slug:
             lease[1]()
 
-    def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
+    def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None,
+             background: bool = False) -> bool:
         """See _sync_checked. Inside a tool call (deferring) only the first ordinary sync of a project runs.
+
+        `background` (a lookup's own look, upstream's Progress.hot) changes nothing here: which projects count as in
+        use is project_activity's to say.
 
         A forced sync another forced sync of the project already covers is skipped: one that took the project's lock
         after this one was asked for read every edit made before it and published every change committed before it.
@@ -1728,8 +1748,6 @@ class Progress:
             saves._remember_revision(net, slug, json.loads(changes[saves.MANIFEST]))
         disk = _read(folder)
         proj = net._project(slug)
-        self.disk[slug] = disk
-        self.projected[slug] = rendered
         self.published[slug] = set(changes) | set(removed)
         self._remember(proj["id"], disk, rendered, _config_key(proj, net.cfg(proj)),
                        dirty.token, dirty_tokens)
@@ -1860,8 +1878,6 @@ class Progress:
             return None
         if saves.MANIFEST in changes:
             saves._remember_revision(net, slug, json.loads(changes[saves.MANIFEST]))
-        self.disk[slug] = dict(baseline.disk.files)
-        self.projected[slug] = files
         self.published[slug] = set(changes) | set(removed)
         self._remember_changes(pid, {**changes, **removed}, files[saves.MANIFEST], config_key,
                                dirty.token, dirty_tokens)
@@ -2231,8 +2247,6 @@ class Progress:
                 self.results[slug] = self.results[slug] | {
                     "matched": sum(name.startswith("src/") for name in rendered),
                     "best": sum(name.startswith("best/") for name in rendered)}
-            self.projected[slug] = rendered
-            self.disk[slug] = disk
             self._remember(pid, disk, rendered, _config_key(proj, net.cfg(proj)),
                            applied_dirty.token, applied_tokens)
             if baseline is not None and net.cfg(proj).get('auto_commit_matches'):

@@ -35,9 +35,11 @@ from .purpose_work import Executor
 
 log = logging.getLogger("decompdecomp")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
-_MACHINE = {"EM_PPC": ("ppc", "big"), "EM_PPC64": ("ppc64", "big"), "EM_MIPS": ("mips", None), "EM_ARM": ("arm", "little")}
-_CACHE_VERSION = 6  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
-# system instructions, 5 COFF objects (PC) and the C names of their symbols, 6 MIPS NOP-only targets
+_MACHINE = {"EM_PPC": ("ppc", "big"), "EM_PPC64": ("ppc64", "big"), "EM_MIPS": ("mips", None), "EM_ARM": ("arm", "little"),
+            "EM_X86_64": ("x86_64", "little")}
+_CACHE_VERSION = 7  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
+# system instructions, 5 COFF objects (PC) and the C names of their symbols, 6 MIPS NOP-only targets, 7 x86-64 ELF
+# objects (PS4)
 # A twin's code that didn't match isn't tried again for this long while neither function's code changes (the
 # same source gives the same result): every agent start's pass would otherwise redo hundreds of compiles (Mario
 # Party 6: about 900, 15 minutes beside the agents). After a while it's tried again: a header can have changed.

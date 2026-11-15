@@ -81,6 +81,46 @@ def app(tmp_path_factory):
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
 
 
+def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monkeypatch):
+    """The function's view finds its running deep search (`deep_job`), asking again joins it, and Stop cancels it
+    with what it found kept in the job's progress."""
+    from decompnet.app import deep_permuter
+
+    client, net, _ = app
+    started = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(deep_permuter, "validate", lambda *args: None)
+    monkeypatch.setattr(net, "function_detail", lambda slug, name, **kwargs: {"name": name})
+
+    def run(net, slug, name, minutes, variants, log, compiler_profiles=1, threads_per_function=1, **throughput):
+        log.progress({"tested": 2, "starting_score": 40, "best_score": 20})
+        started.set()
+        release.wait(2)
+        log.check_cancel()
+        return {"function": name}
+
+    monkeypatch.setattr(deep_permuter, "run", run)
+    payload = {"slug": "stop-game", "function": "f", "minutes": 1, "max_variants": 10}
+    try:
+        response = client.post("/api/permuter/function", headers={"X-Decomp": "1"}, json=payload)
+        assert response.status_code == 200, response.text
+        jid = response.json()["job"]
+        assert started.wait(1)
+        assert client.get("/api/function", params={"slug": "stop-game", "name": "f"}).json()["deep_job"] == jid
+        assert client.get("/api/job", params={"id": jid}).json()["progress"]["tested"] == 2
+        assert client.post("/api/permuter/function", headers={"X-Decomp": "1"}, json=payload).json()["job"] == jid
+        assert client.post("/api/job/cancel", headers={"X-Decomp": "1"}, json={"id": jid}).json() == {"cancelled": True}
+    finally:
+        release.set()
+    for _ in range(100):
+        state = client.get("/api/job", params={"id": jid}).json()["state"]
+        if state != "running":
+            break
+        time.sleep(.01)
+    job = client.get("/api/job", params={"id": jid}).json()
+    assert job["state"] == "cancelled" and job["progress"]["best_score"] == 20
+
+
 def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp_path):
     from .test_loading import tiny_game
 
@@ -355,6 +395,22 @@ def test_the_home_page_waits_for_no_agent_and_no_projects_files(tmp_path, monkey
     assert ran == []
     (game,) = client.get("/api/projects").json()
     assert game["slug"] == "game" and game["functions"] == 4 and game["compiler"]["name"] and "broken" not in game
+    # hundreds of projects: the sidebar's ask every 5 s gets just "the same" when nothing changed, and no project's
+    # functions are counted for it: its totals are a row the database's triggers keep (project_views.py)
+    first = client.get("/api/projects?since=").json()
+    assert first["projects"] == [game]
+    assert client.get(f"/api/projects?since={first['sig']}").json() == {"sig": first["sig"], "same": True}
+    counted = []
+    real_one = net.store.one
+    monkeypatch.setattr(net.store, "one", lambda sql, *a: (counted.append(sql) if "COUNT(*) AS total" in sql else None)
+                        or real_one(sql, *a))
+    client.get("/api/projects")
+    assert counted == []
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE project_id=(SELECT id FROM projects WHERE slug='game') "
+                   "AND id=(SELECT MIN(id) FROM functions)")
+    again = client.get(f"/api/projects?since={first['sig']}").json()
+    assert counted == [] and again["projects"][0]["matched"] == game["matched"] + 1
 
 
 def test_helpers_started_to_polish_matched_code_get_that_task(tmp_path, monkeypatch):

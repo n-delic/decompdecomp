@@ -51,7 +51,7 @@ VERDICTS_KEPT = 4096  # judge verdicts remembered: the same C with the same comp
 # every column (`SELECT *`) for each of the 62 checks was 14 of the 17 seconds.
 ROW_COLUMNS = "id, name, vram, size, n_insns, status"
 # what the judge needs, read only for the few neighbours a check gives a verdict
-JUDGE_COLUMNS = "id, project_id, name, unit, vram, size, n_insns, status, target, relocs, matched_source, best_source"
+JUDGE_COLUMNS = "id, project_id, name, unit, vram, rom_offset, size, n_insns, status, target, relocs, matched_source, best_source"
 # why checks were dismissed when the suggested compiler's flags didn't count (RangeChecks.reopen)
 WRONG_QUIRK = "matches the game with today's compiler too"
 log = logging.getLogger("decompdecomp")

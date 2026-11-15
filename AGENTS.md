@@ -188,7 +188,8 @@ tools helpers get and their prompt; MCP is only the app's private wiring to the 
 + `app/gtkwindow.py` + `app/macwindow.py` + `app/tray.py` (the window: Linux uses system GTK/WebKitGTK, macOS uses
 Cocoa/WebKit through the app's Python; the page answers only a window with the secret in its user agent; Linux and
 Windows have a tray icon; tests set `DECOMP_WINDOW=0` and
-`DECOMP_TRAY=0`), `app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a
+`DECOMP_TRAY=0`), `app/prompt_settings.py` (global and per-helper prompt overrides), `app/tool_policy.py` (which
+MCP tools helpers may use), `app/manual_mcp.py` (project-scoped credentials for manual MCP clients), `app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a
 project restored from them), `app/readable.py` (polishing matched code), `app/knowledge.py` (what agents learn,
 shared once two models agree), `app/drafts.py` + `app/permute.py` (background drafts and the permuter),
 `structs.py` (struct layouts from loads and stores), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, plain scripts loaded in order; `js/base.js` says which is which).

@@ -132,6 +132,7 @@ CREATE INDEX IF NOT EXISTS idx_events_kind_id ON events(kind,id);
 -- Session completion counts one agent's recent matches, not every historical match.
 CREATE INDEX IF NOT EXISTS idx_events_agent_matches ON events(agent_id,created_at) WHERE kind='match';
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_tool_usage(name TEXT PRIMARY KEY,calls INTEGER NOT NULL,last_used REAL);
 CREATE TABLE IF NOT EXISTS progress_state(
   project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   disk TEXT NOT NULL, projected TEXT NOT NULL, updated_at REAL NOT NULL);
@@ -811,6 +812,11 @@ class Store:
         key = kind if project is None else f'{kind}:{project}'
         row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
         return row['revision'] if row else 0
+
+    def optimize(self) -> None:
+        """Refresh the planner's statistics where they went stale (cheap when nothing did): the autosave, hourly."""
+        with self.lock:
+            self.conn.execute("PRAGMA optimize")
 
     @contextmanager
     def try_tx(self):

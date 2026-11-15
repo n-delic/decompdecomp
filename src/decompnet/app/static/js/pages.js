@@ -198,7 +198,15 @@ function openAgentAccount(kind, id = "") {
     add.onclick = () => save(add);
   }
 }
-$("agRefresh").onclick = showAgentsPage;
+$("agRefresh").onclick = async event => {
+  event.preventDefault();
+  event.stopPropagation();
+  const button = $("agRefresh");
+  button.disabled = true;
+  try { await showAgentsPage(); }
+  catch (error) { toast(esc(error.message), 'err'); }
+  finally { button.disabled = false; }
+};
 
 /* ------------------------------------------------------------------ compilers & tools page */
 let toolFilter = "";
@@ -759,7 +767,7 @@ async function loadManualMcp() {
       wireCopies($("mcpConfig"));
       await refreshManualMcp();
     } catch(e) { showJobError(log,e.message); }
-    finally { finish(); button.disabled = !select.value; }
+    finally { finish(); button.disabled = !select.value || select.disabled; }
   };
   await refreshManualMcp();
 }

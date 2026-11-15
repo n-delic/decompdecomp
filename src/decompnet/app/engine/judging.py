@@ -30,6 +30,10 @@ def search_evaluation():
     try:yield
     finally:_search_evaluation.reset(token)
 
+# Releases with no compile pushed back per claim with the full advice; then the agent is told to stop (_push_back)
+UNCOMPILED_PUSH_BACKS = 2
+
+
 class JudgeMixin:
     def _compile(self, proj, header: str, source: str, fn=None):
         if fn is not None and self.is_rom(proj):
@@ -82,10 +86,16 @@ class JudgeMixin:
         update('checking', fn['name'])
         if not self.is_rom(proj):
             return super()._evaluate(fn, proj, obj)
-        link_scope=self._diagnostic_scope(fn,proj)
+        # The verdict needs only the link. The advisory diagnostics and their search cache belong to the full engine;
+        # an engine without them (a bare Core, as tests/test_overlay_reader.py judges with) gets the verdict alone.
+        diagnose = getattr(self, '_link_diagnostics', None)
+        link_scope = self._diagnostic_scope(fn, proj) if diagnose is not None else None
         with compile_timing.phase('link'):
             target = self._rom_target(fn)
-            res = match.link(obj, fn["name"], target, self.symbols(proj["id"]), self.reader(proj, fn))
+            # the console links it (GBA: ARM/Thumb, PS3: PPC64; the rest: rom.match), against the caller's overlay (#230)
+            res = self.console(proj).link_function(obj, fn["name"], target, self.symbols(proj["id"]), self.reader(proj, fn))
+        if diagnose is None:
+            return res.candidate, res.exact if res.candidate is not None else None, res.problems
         if _search_evaluation.get():
             # The exact verdict always comes from the full linker. Only advisory diagnostics wait.
             local = self.__dict__.setdefault('_search_link_local', threading.local())
@@ -94,7 +104,7 @@ class JudgeMixin:
             return res.candidate, res.exact if res.candidate is not None else None, res.problems
         local = self.__dict__.get('_search_link_local')
         if local is not None and hasattr(local, 'last'):del local.last
-        return self._link_diagnostics(fn,proj,obj,res,target)
+        return diagnose(fn,proj,obj,res,target)
 
     def _diagnostic_scope(self,fn,proj):
         if not hasattr(self,'project_store'):return None
@@ -214,9 +224,9 @@ class JudgeMixin:
             return super().claim(agent, project, function, strategy)
         if function:
             function = self._function(function, project)["name"]
-        name = link.claim(agent, function, strategy)
-        if name is None:
-            return "Nothing left to claim in this room — every open function is matched or someone is on it. 🎉"
+        name, why = link.claim(agent, function, strategy)
+        if name is None:  # (the host's word: what's left and why, as its own agents hear it)
+            return why or "Nothing left to claim in this room — every open function is matched or someone is on it. 🎉"
         link.sync()
         fn = self._room_claim_row(agent, project, name, strategy)
         return self._brief(fn, agent, header="CLAIMED")
@@ -512,16 +522,22 @@ class JudgeMixin:
         (stall_status: the same count, the same number): a release goes through once the function's move-on count is
         reached, with no compile more. Before that it's pushed back once per claim, with where the agent stands; asked
         again, it goes through. A release with no compile at all is always pushed back (agents called
-        release_function twice to get past it untried). It used to let a pushed-back release through after exactly one
-        more compile, which agents then spent on nothing (446 push-backs, 36 improved after it)."""
+        release_function twice to get past it untried). An agent whose own instructions said it was out of tries
+        wouldn't compile and asked again and again, 7 times in 90 seconds, each answer the full advice, until the
+        user's quota ran out: after UNCOMPILED_PUSH_BACKS it's told in one line to end its session instead (the
+        function stays held until the claim lapses, so it still isn't passed around untried). A function compiling
+        can't help with (release_exempt, _rom_release_exempt) goes through whenever it's asked, also after those: a
+        boundary report filed after two push-backs says itself to release it. It used to let a
+        pushed-back release through after exactly one more compile, which agents then spent on nothing (446
+        push-backs, 36 improved after it)."""
         if fn["status"] != "open" or agent.name in MACHINE_AGENTS:
             return None
         n, streak, after = progress["compiles"], progress["no_better"], progress["after"]
         if n and streak >= after:
             return None  # compile_and_diff said to move on
-        pushed = self.project_store(fn['project_id']).one("SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND "
-                                "created_at >= ?", agent.id, fn["name"], progress["claimed_at"])
-        if n and pushed is not None:
+        pushed = self.project_store(fn['project_id']).one("SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='release_pushed' AND "
+                                "detail=? AND created_at >= ?", agent.id, fn["name"], progress["claimed_at"])["n"]
+        if n and pushed:
             return None  # asked again after the push-back, having tried it: it goes through
         fork = self.fork_slug(project)
         try:
@@ -530,7 +546,12 @@ class JudgeMixin:
         except (NetworkError, OSError, ValueError, KeyError):
             exempt, hints = None, []
         if exempt:
-            return None
+            return None  # compiling can't help with it (it may have become so since the last ask)
+        if not n and pushed >= UNCOMPILED_PUSH_BACKS:  # it won't compile it: asking again only spends the user's quota
+            with self.project_store(fn['project_id']).tx() as db:
+                self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
+            return (f"Not released yet: you haven't compiled {fn['name']} since you claimed it, and asking again "
+                    f"won't release it. Compile it now, or end your session here: don't call release_function again.")
         with self.project_store(fn['project_id']).tx() as db:
             self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
         head = (f"Not released yet: you haven't compiled {fn['name']} since you claimed it." if not n else
@@ -611,7 +632,8 @@ class JudgeMixin:
     def claim_row(self, agent: Agent, project: str | None = None, function: str | None = None, strategy: str = "easiest"):
         function = self.focus_target(agent,project,function)
         policy = self.selection(project, agent.name) if project else {}
-        if function is None and project and not any(v is not None and v != "" for v in policy.values()) and not self.fork_slug(project):
+        # a starred function goes first on ROM and fork projects alike (#290)
+        if function is None and project and not any(v is not None and v != "" for v in policy.values()):
             proj = self._project(project)
             for name in self.cfg(proj).get("priority", []):
                 row = self.project_store(proj['id']).one("SELECT f.id, f.status FROM functions f WHERE f.project_id=? AND f.name=?", proj["id"], name)

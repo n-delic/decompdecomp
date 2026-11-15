@@ -150,6 +150,12 @@ class Search(Permuter):
         # Release only a legacy lease owned by this worker, never another agent's work.
         super()._let_go(agent, fn)
 
+    def _trial_run(self, proj, fn, fork):
+        # A deep search's random phase is one turn as long as the search (up to two hours). Holding the unit for it
+        # (Permuter._trial_run) would keep agents and the other lanes off every function in the unit; each try
+        # rebuilds instead, as before trial_run.
+        return nullcontext()
+
     def _score_work(self, agent, proj, fn, source, best, fork):
         link = self.net.links.get(proj['slug'])
         if link and fork:

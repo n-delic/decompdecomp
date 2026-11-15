@@ -312,6 +312,34 @@ def test_a_function_agents_of_two_models_agree_no_c_makes_is_set_aside(tmp_path)
         assert "why" in str(e)
 
 
+def test_an_agent_isnt_handed_back_what_it_said_no_c_makes_and_the_user_hears_when_only_that_is_left(tmp_path):
+    """Two agents of one model claimed an x86 demo's last function, a hand-written float-to-int helper, a dozen times
+    between them, each time writing that no C makes it: one model never reaches NOT_C_MODELS, and once an agent's
+    run started again its own release no longer kept it off. Its verdict does now; when every open function is
+    waiting on such a verdict, the agent is told to stop and the user is told (once) to set it aside."""
+    net = _one_function_game(tmp_path)
+    first, _ = net.local_agent("claude-opus-5-5-1")
+    second, _ = net.local_agent("claude-opus-5-5-2")
+    for agent in (first, second):
+        net.claim_row(agent, "game", "piece")
+        net.release(agent, "piece", "fistp on an st(0) it never loads: hand-written", "game", not_c=True)
+        with net.store.tx() as db:  # (its run starts again: its own recent releases no longer keep it off)
+            net._event(db, 1, agent.id, "freed", "")
+    assert net.claim_row(first, "game", None, "easiest") is None
+    said = net.nothing_to_claim(first, net.project_row("game"))
+    assert "1 you said no C makes: piece" in said and "Stop working on this project" in said
+    net.nothing_to_claim(second, net.project_row("game"))  # (asked again: told once)
+    told = net.store.all("SELECT detail FROM events WHERE kind='not_c'")
+    assert len(told) == 1 and told[0]["detail"].startswith("piece: waiting for you. 2 agents (claude-opus-5-5)")
+    other, _ = net.local_agent("claude-sonnet-5-5-1")  # another model can still look
+    assert net.claim_row(other, "game", None, "easiest")["name"] == "piece"
+    # and when it released the function for now, it isn't told to stop: its verdict is the one they wait for
+    net.release(other, "piece", "", "game")
+    assert net.claim_row(other, "game", None, "easiest") is None
+    said = net.nothing_to_claim(other, net.project_row("game"))
+    assert "Stop working on this project" not in said and "you released yourself" in said, said
+
+
 def test_a_set_aside_function_the_user_gives_back_stays_open(tmp_path, monkeypatch):
     """Reopen: the agents' verdicts are forgotten, and no later check sets it aside again."""
     from decompnet.app import twins
@@ -576,3 +604,20 @@ def test_no_compiling_c_excludes_successful_compiles_even_without_a_score(tmp_pa
         net.claim_row(third, None, 'compiled', 'no_compiling_c')
     net.set_selection('game', third.name, {'strategy': 'no_compiling_c'})
     assert net.claim_row(third, 'game', None) is None
+
+
+def test_a_starred_function_on_a_fork_is_handed_out_first(tmp_path):
+    """A fork/PC project: a function the user stars (set_priority) is the next an agent claims, ahead of the usual
+    smallest-first order -- the same star-steering ROM projects already had. Regression guard for the fork-only gate
+    in claim_row that silently ignored stars on forks."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "x86", 0, str(tmp_path), json.dumps({"kind": "fork"}))).lastrowid
+        for name, n in [("tiny", 4), ("small", 8), ("big", 400)]:
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,abandons) VALUES(?,?,?,?,?,?,?)",
+                       (pid, name, n * 4, n, "open", "a", 0))
+    # The starred function is the largest, so "easiest" alone would never pick it: only priority can put it first.
+    net.set_priority("game", "big", True)
+    agent, _ = net.local_agent("a0")
+    assert net.claim_row(agent, "game", None, "easiest")["name"] == "big"

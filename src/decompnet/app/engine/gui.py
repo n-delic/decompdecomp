@@ -34,6 +34,12 @@ EVENT_ROWS = ("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent, p.s
 from ..boundary_repairs import reason as boundary_reason
 
 
+def _same_source(a: str | None, b: str | None) -> bool:
+    """Whether two pieces of C are the same text, whitespace aside."""
+    return (a is not None and b is not None
+            and re.sub(r"\s+", " ", a).strip() == re.sub(r"\s+", " ", b).strip())
+
+
 class GuiMixin:
     def export_rom(self, slug: str, log=print, *, layout: bool | None = None) -> dict:
         """Write a rebuildable source tree (the base for ports and mods) and prove it rebuilds the game. `layout`:
@@ -182,12 +188,13 @@ class GuiMixin:
     def overview(self, slug: str, *, room_members=True, quick=False) -> dict:
         from .. import auto_push, match_commits, score_commits
         proj = self._project(slug)
+        missing = self.project_missing(proj)
         if quick:
             cfg = self.cfg(proj)
             base = self._overview(slug, proj, room_members=False, quick=True)
             return base | {'overview_pending':True, 'instructions':cfg.get('instructions') or '',
                            'priority':cfg.get('priority',[]), 'spend':cfg.get('spend'),
-                           'save_folder':str(saves.save_folder(self, slug)),
+                           'save_folder':str(saves.save_folder(self, slug)), 'missing':missing,
                            'suggestions':[], 'boundaries':[], 'compiler_ranges':base.get('compiler_ranges') or self._range_rows(cfg),
                            'auto_commit':match_commits.status(self, proj), 'auto_push':auto_push.status(self, proj), 'score_commits':score_commits.status(self, proj),
                            'auto_compiler':self.auto_adjusts(proj), 'progress_syncing':self.progress.syncing(slug),
@@ -222,6 +229,7 @@ class GuiMixin:
                        "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
                        "claim_order": cfg.get("claim_order") if cfg.get("claim_order") in CLAIM_ORDERS else "",
                        "priority": cfg.get("priority", []), "save_folder": str(saves.save_folder(self, slug)),
+                       "missing": missing,
                        # (a suggestion its own check disproved isn't one: older ones were filed)
                        "suggestions": [function_profile_suggestions.public(s) for s in cfg.get("suggestions", []) if s["status"] == "open"
                                        and not re.search(r"does not match|doesn't compile", s["check"] or "")
@@ -367,6 +375,7 @@ class GuiMixin:
         agg = proj if batch is not None and slug in batch else self.project_store(proj['id']).one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
             ('total','matched','bytes','matched_bytes','set_aside','set_aside_bytes'), 0)
         console = self.console(proj)
+        missing = self.project_missing(proj)
         if cfg.get("kind") == "fork":
             about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),
                      "ready": bool(cfg.get("ready")), "rom": {"game_code": cfg.get("version") or "", "region": console.name},
@@ -381,8 +390,9 @@ class GuiMixin:
                 "last_activity": proj['last_activity'] if batch is not None and slug in batch else self.project_store(proj['id']).one(
                     "SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj['id'])['t'],
                 "room": 'guest' if slug in self.links else 'host' if slug in self.rooms else None,
-                "autopilot": (self.autopilots.get(slug) or {}).get("state") or ("done" if cfg.get("autopilot") else None),
-                "progress_error": self.progress.errors.get(slug)} | about
+                "autopilot": (ap := self.autopilots.get(slug) or {}).get("state") or ("done" if cfg.get("autopilot") else None),
+                "autopilot_phase": ap.get("phase"),
+                "progress_error": self.progress.errors.get(slug), "missing": missing} | about
 
     def _room_info(self, slug: str, *, refresh=True) -> dict | None:
         if slug in self.links:
@@ -489,7 +499,7 @@ class GuiMixin:
         """The target next to an attempt, instruction by instruction, for the GUI: the matched C, else the latest
         (or best) attempt, compiled and linked like the judge does. Cached, so watching an agent costs nothing."""
         if (fork := self.fork_slug(slug)):
-            return self.forks.function_diff(fork, name)
+            return self.forks.function_diff(fork, name, which)
         fn = self._function(name, slug)
         proj = self.project_store(fn['project_id']).one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         latest = self.project_store(fn['project_id']).one("SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) "
@@ -582,12 +592,20 @@ class GuiMixin:
             fn = self._function(fn["name"], slug)
         from ..source_assembly import detail as assembly_detail
         initial_report = draft_report(self,fn['id'],project_id=fn['project_id'])
+        # #254: the latest/best switch is offered only when the best attempt isn't also the newest one
+        best_differs = False
+        if fn["status"] != "matched" and fn["best_source"] is not None:
+            newest = latest or self.project_store(fn['project_id']).one(
+                "SELECT source FROM attempts WHERE function_id=? AND (source_hash IS NOT NULL OR source IS NOT NULL) "
+                "ORDER BY id DESC LIMIT 1", fn['id'])
+            best_differs = not _same_source(fn["best_source"], newest["source"] if newest else None)
         return {
             **polish_detail(self.project_store(fn['project_id']),fn),
             "sdk": sdk, "display_name":display_name(sdk,fn["name"]), "assembly_verification":assembly_detail(proj,fn),
             "machine_draft_report": initial_report,
             **name_state(fn), "id":fn["id"], "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
-            "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),
+            "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"],
+            "best_differs": best_differs, **set_aside(fn),
             "boundary_review": boundary_reason(self.console(proj),fn),
             "boundary_override": bool(json.loads(fn["meta"] or "{}").get("boundary_override")),
             "deep_pass": deep_pass, "verification": bundle_status(self,fn), "baseline_status": baseline_status(self,proj,fn),
