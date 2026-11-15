@@ -26,13 +26,14 @@ says how to send a change. Examples point at real code by file and name: search 
 | Polishing matched code (names, types, comments that still match) | `app/readable.py` |
 | What agents learn, shared once two models agree | `app/knowledge.py` |
 | Saving a ROM project as plain files, and restoring one | `app/saves.py` |
-| Helper agents: starting and restarting them, their records | `app/agents.py`; their prompt: `WORK_PROMPT` in `app/tools.py` |
+| Helper agents: starting and restarting them, their records | `app/agents.py`; default prompts in `app/tools.py`, overrides in `app/prompt_settings.py`, tool access in `app/tool_policy.py` |
+| Manual MCP clients and their project-scoped credentials | `app/manual_mcp.py` |
 | One agent (its command line, reading what it prints, its models; the API helper's own loop) | `agents/<id>.py`: `claude`, `codex`, `antigravity`, `opencode`, `cursor`, `kimi`, `zcode`, `ohmy`, `api` |
 | What every agent has to say, and the list of agents | `agents/__init__.py`, the connector |
 | Look-alikes (`find_similar`) | `similarity.py` |
 | Decompiling together | `app/collab.py`, `app/engine/rooms.py`, `app/routes/rooms.py` |
 | The GUI's API | `app/routes/<part>.py` (`app/routes/__init__.py` lists the parts); what they share `app/support.py` (jobs, settings) |
-| The GUI | `app/static/`: `index.html`, `app.css`, and `js/` (nine plain scripts loaded in order, one per part of the GUI; `js/base.js` lists them; no build step). The notification centre is in `js/sidebar.js` |
+| The GUI | `app/static/`: `index.html`, `app.css`, and `js/` (twelve plain scripts loaded in order; `js/base.js` lists them; no build step). The notification centre is in `js/sidebar.js` |
 | Know-how agents read | `app/guide/*.md` (shared), `consoles/<id>/guides/*.md` (one console's), served by `guide(topic)` |
 | Compilers and tools themselves | `toolchains.toml` (pinned, with checksums), `toolchains.py` |
 | The app's window, tray, updates | `app/window.py` + `app/gtkwindow.py` + `app/macwindow.py` + `app/winwindow.py`, `app/tray.py`, `app/updates.py`; dev or release: `app/edition.py`; the `decomp` command `app/cli.py`; the apps-menu entry `app/launcher.py`; what the first start removes from older versions `app/cleanup.py` |
