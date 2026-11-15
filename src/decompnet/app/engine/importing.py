@@ -346,6 +346,7 @@ class ImportMixin:
                 for cache in (self._roms, self._syms, self._sym_override, self._xrefs, self._asm_names,
                               self._ops, self._warmed, self._cmaps, self._scan_cache, self._facts_cache):
                     cache.pop(pid, None)
+                self._layout_gen[pid] = self._layout_gen.get(pid, 0) + 1  # like split/rename: an in-flight structs compute cannot write pre-reimport facts into the fresh cache
             self._headers = {key: value for key, value in self._headers.items() if key[0] != pid}
             self._diffs.clear()
             self.surveys.pop(slug, None)
