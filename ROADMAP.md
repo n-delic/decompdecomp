@@ -2626,7 +2626,9 @@ phase uses its existing budget; agent local trials require measured evidence for
 processors still use padding removal/shrinking until they have a corresponding frame reader.
 
 A function drawer can launch a bounded deep permuter job for one saved, scored candidate in ROM or imported
-projects. It bypasses the background queue's size and turn filters, visits the generated local repair list,
+projects, from its Deep permuter tab (upstream's design, `js/deep-permuter.js`, kept as upstream has it): a time and
+a variant limit, the starting and best match, the gain, a progress bar and a run chart of each improvement, and the
+last run after it ends. Compiler profiles, threads and maximum throughput stay with the project's Deep permuter. It bypasses the background queue's size and turn filters, visits the generated local repair list,
 then uses ordinary random rewrites. Time/compile limits, progress, cancellation, normal judges and immediate
 saving remain mandatory. Scoped misses survive another deep run; failed compiles stay retryable and cached
 improvements must be rejudged. This does not claim to exhaust all possible C programs or compiler options.

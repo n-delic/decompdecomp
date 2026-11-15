@@ -114,6 +114,9 @@ class Search(Permuter):
         self.efficiency = Measurements()
         self.starting_score = fn['best_score'] if fn is not None else None
         self.best = self.starting_score
+        # The function drawer's run chart: the best score each time it improved, by candidates tested (upstream's
+        # deep-permuter.js reads `history`)
+        self.history = [{'tested': 0, 'score': self.starting_score}] if self.starting_score is not None else []
         self.max_score = max(1, fn['n_insns'] or 0) * scoring.PENALTY_INSERTION if fn is not None else None
         self.improvements = 0
         self.baseline_measured = False
@@ -200,6 +203,12 @@ class Search(Permuter):
         if self.tested >= self.limit:
             raise SearchLimit('Variant limit reached')
 
+    def _chart(self, score):
+        """A point on the run chart; past 200 every other middle point goes, the first and latest stay."""
+        self.history.append({'tested': self.tested, 'score': score})
+        if len(self.history) > 200:
+            self.history = self.history[:1] + self.history[2:-1:2] + self.history[-1:]
+
     def metrics(self, *, detail=True):
         """Use the ordinary score scale; a near miss must never round up to a displayed 100%."""
         def percent(score):
@@ -212,7 +221,8 @@ class Search(Permuter):
                 'local_search': self.local_status, 'reviewed_seeds':self.reviewed_seed_result,
                 'allocation_trials':self.allocation_trials,
                 'allocation_diagnostic_compiles':self.allocation_diagnostic_compiles,
-                'efficiency':self.efficiency.snapshot(detail=detail)}
+                'efficiency':self.efficiency.snapshot(detail=detail),
+                'history': list(self.history), 'elapsed': round(time.monotonic()-self.started_at)}
 
     def report(self, *, force=False):
         if self.best is not None and (self.recorded_best is None or self.best < self.recorded_best):
@@ -982,11 +992,13 @@ class Search(Permuter):
             if self.measuring_baseline and not self.baseline_measured:
                 self.starting_score = self.best = score
                 self.baseline_measured = True
+                self.history = [{'tested': 0, 'score': score}]
                 winner = True
             elif not reused and not self.measuring_baseline and (self.best is None or score < self.best):
                 if self.best is not None:
                     self.improvements += 1
                 self.best = score
+                self._chart(score)
                 winner = True
             if winner:
                 self.winner_diff = getattr(self.net, '_last_diffs', {}).get((agent.id, fn['id']))

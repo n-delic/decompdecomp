@@ -848,7 +848,6 @@ def register(app: App) -> None:
         return detail
 
     def p_deep_permuter(slug, request, data):
-        from .. import deep_permuter
         name = str(data.get('function') or '')
         minutes, variants = data.get('minutes', 30), data.get('max_variants', 100000)
         from .. import deep_profiles
@@ -857,15 +856,33 @@ def register(app: App) -> None:
         function_threads = validate_threads(data.get('threads_per_function', 1))
         from ..deep_throughput import options
         throughput = options(data.get('maximum_throughput', False), data.get('compile_slots', 0))
+        return {'job': start_search(slug, name, minutes, variants, compiler_profiles=profiles,
+                                    threads_per_function=function_threads, **throughput)}
+
+    def start_search(slug, name, minutes, variants, **options):
+        """One deep search per function, however it was asked for: a second ask joins the running one."""
+        from .. import deep_permuter
         with jobs._lock:
             previous = function_searches.get((slug, name))
             if previous and jobs.jobs.get(previous, {}).get('state') == 'running':
-                return {'job': previous}
+                return previous
             deep_permuter.validate(net, slug, name, minutes, variants)
-            job = jobs.start('deep-permuter', lambda log: deep_permuter.run(net, slug, name, minutes, variants, log, compiler_profiles=profiles, threads_per_function=function_threads, **throughput),
+            job = jobs.start('deep-permuter', lambda log: deep_permuter.run(net, slug, name, minutes, variants, log, **options),
                              cancel_message='Deep permuter stopped. Verified improvements are saved.')
+            jobs.jobs[job].update({'slug': slug, 'function': name})
             function_searches[slug, name] = job
-            return {'job': job}
+            return job
+
+    def p_deep_search(slug, request, data):
+        """The function drawer's Deep permuter tab (upstream's deep-permuter.js): GET gives the running search and
+        the last one, POST starts one with a time and a variant limit. The search is ours (deep_permuter.run) with its
+        defaults: one compiler profile, one thread, the shared compile pool."""
+        if request.method == 'GET':
+            name = request.query_params.get('name', '')
+            with jobs._lock:
+                last = jobs.jobs.get(function_searches.get((slug, name)))
+            return {'job': last['id'] if last and last['state'] == 'running' else None, 'last': last}
+        return {'job': start_search(slug, str(data.get('name', '')), data.get('minutes', 10), data.get('variants', 500))}
 
     def p_finish_near(slug, request, data):
         from .. import finish_near
@@ -1194,6 +1211,7 @@ def register(app: App) -> None:
         "/api/permuter": (p_permuter, ["POST"]),
         "/api/permuter/pass": (p_deep_sweep, ["GET", "POST"]),
         "/api/permuter/function": (p_deep_permuter, ["POST"]),
+        "/api/deep-permuter": (p_deep_search, ["GET", "POST"]),
         "/api/source-preparation": (p_source_preparation, ["GET", "POST"]),
         "/api/drafts": (p_machine_drafts, ["GET", "POST"]), "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
         "/api/cross-game": (lambda s, r, d: {"results": net.twins.cross_game_results(s, all_matches=r.query_params.get("all_matches") == "1"),

@@ -256,7 +256,6 @@ async function openFn(name) {
     S.fnDetail = null; S.fnLoading = true;
     $("functionDetailsLoading").hidden = true;
     compilerComparisonBusy = false; compilerComparisonTarget = null;
-    deepPermuterBusy = false; deepPermuterTarget = null; deepPermuterJob = null;
     $("fnName").textContent = name;
     $("fnAddr").textContent = "";
     $("fnNaming").hidden = true;
@@ -271,15 +270,7 @@ async function openFn(name) {
     $("fnCompilerLog").textContent = "";
     $("fnCompilerLog").hidden = true;
     $("fnWorkPanel").hidden = true;
-    $("fnDeepMetrics").hidden = true;
-    $("fnDeepThroughput").hidden = true; $("fnDeepThroughput").textContent = "";
-    $("fnDeepStatus").textContent = "";
-    $("fnDeepLog").textContent = ""; $("fnDeepLog").hidden = true;
-    $("fnDeepNow").textContent = "";
-    $("fnDeepWork").replaceChildren();
-    $("fnDeepRun").disabled = false; $("fnDeepStop").hidden = true;
-    $("fnDeepMinutes").disabled = false; $("fnDeepVariants").disabled = false; $("fnDeepProfiles").disabled = false; $("fnDeepThreads").disabled = false; $("fnDeepMaximum").disabled = false; $("fnDeepCompileSlots").disabled = false;
-    for (const id of ["fnCompilerSummary", "fnCompilerLog", "fnDeepLog"]) {
+    for (const id of ["fnCompilerSummary", "fnCompilerLog"]) {
       const log = $(id); if (log._workStatus) { log._workStatus.remove(); log._workStatus = null; }
     }
     document.querySelectorAll("#fnCompilerTest .workbar").forEach(bar => bar.remove());
@@ -339,20 +330,14 @@ function showFnTab(tab) {
   document.querySelectorAll("[data-ftab]").forEach((b) => b.classList.toggle("on", b.dataset.ftab === tab));
   $("fnDiffView").hidden = tab !== "diff";
   $("fnCodeView").hidden = tab !== "code";
+  $("deepPermuterPanel").hidden = tab !== "deep";
   if (tab === "diff" || tab === "code") loadDiff();
+  if (tab === "deep") renderDeepSearch();
 }
 document.querySelectorAll("[data-ftab]").forEach((b) => { b.onclick = () => { S.ftab = b.dataset.ftab; showFnTab(S.ftab); }; });
 document.querySelectorAll("#diffWhich [data-which]").forEach((b) => {
   b.onclick = () => { setWhich(b.dataset.which); loadDiff(); };
 });
-// The function view can fill the window (long assembly and C side by side); the chart is redrawn at its new width.
-$("fnExpand").onclick = () => {
-  const expanded = $("drawer").classList.toggle("expanded");
-  $("fnExpand").setAttribute("aria-pressed", String(expanded));
-  $("fnExpand").setAttribute("aria-label", expanded ? "Restore function view width" : "Expand function view");
-  $("fnExpand").title = expanded ? "Restore width" : "Expand function view";
-  if (S.fnDetail) renderFnChart(S.fnDetail);
-};
 
 let fnBusy = null, fnRequest = 0;
 function cancelFunctionRead() { fnBusy?.controller?.abort(); fnBusy = null; }
@@ -362,7 +347,6 @@ function setWhich(which) {
   document.querySelectorAll("#diffWhich [data-which]").forEach((x) => x.classList.toggle("on", x.dataset.which === which));
 }
 let compilerComparisonBusy = false, compilerComparisonTarget = null;
-let deepPermuterBusy = false, deepPermuterJob = null, deepPermuterTarget = null;
 function sdkEvidenceText(sdk) {
   if (!sdk) return "";
   const lines = [`Library identity: ${(sdk.names || []).join(", ")}`, sdk.evidence || "SDK signature", "Identification is not a verified C match."];
@@ -399,10 +383,6 @@ async function refreshFn(first) {
       ? `${d.unit} · ${d.insns} instructions${d.match_percent != null ? ` · ${d.match_percent >= 100 ? "100" : (Math.floor(d.match_percent * 10) / 10).toFixed(1)}% now` : ""}`
       : `${hex8(d.vram)} · ROM 0x${d.rom_offset.toString(16).toUpperCase()} · ${d.insns} instructions`;
     if ($("fnName").textContent !== (d.display_name || d.name)) {
-      if (!deepPermuterBusy) {
-        $("fnDeepMetrics").hidden = true;
-        $("fnDeepStatus").textContent = "";
-      }
       $("fnSdkNameLog").textContent = "";
       $("fnSdkNameLog").hidden = true;
       $("fnCompilerMatches").replaceChildren();
@@ -465,13 +445,9 @@ async function refreshFn(first) {
     }
 
     renderFunctionFocusedAgents(d, slug);
-    if (d.deep_job && !deepPermuterTarget) followFunctionDeep(d.deep_job);
-    $("fnDeepPanel").hidden = !deepPermuterBusy && (d.status !== "open" || d.best == null);
-    $("fnWorkPanel").hidden = $("fnFocusPanel").hidden && $("fnDeepPanel").hidden;
-    const pass = d.deep_pass || {};
-    if (d.details_pending) $("fnDeepRun").disabled = true;
-    else if (!deepPermuterBusy) $("fnDeepRun").disabled = false;
-    $("fnDeepHistory").textContent = d.details_pending ? "Checking saved deep-search status…" : deepPermuterBusy ? "Following this function’s deep search. Improvements save immediately." : pass.completed ? `Deep pass completed · ${pass.minutes} min / ${Number(pass.max_variants).toLocaleString()} variants budget` : pass.stale ? "Previous pass saved; inputs changed, so this function is eligible again." : pass.state === "error" ? `Deep pass needs attention: ${pass.error}` : `Deep pass: ${pass.state || "not tried"}`;
+    $("fnWorkPanel").hidden = $("fnFocusPanel").hidden;
+    renderDeepSearch();
+    if (!d.details_pending) reconnectDeepSearch(d.name);
     $("fnCompilerTest").hidden = !!d.details_pending || S.ov.kind === "fork" || !S.ov.compilers?.length;
     if (!d.details_pending && S.ov.kind !== "fork" && !compilerComparisonBusy) renderKnownCompilerProfiles(d);
     $("fnTestCompilers").disabled = !d.source || d.source_kind === "draft";
@@ -1163,59 +1139,6 @@ $("fnTestCompilers").onclick = async () => {
   finally { if (compilerComparisonTarget === target) { compilerComparisonBusy = false; compilerComparisonTarget = null; } if (active()) { finish(); await refreshFn(false); } }
 };
 
-async function followFunctionDeep(job = null) {
-  const slug = S.slug, name = S.fn, gen = S.gen, nav = S.fnNav;
-  const target = deepPermuterTarget = {};
-  const active = () => deepPermuterTarget === target && S.gen === gen && S.fnNav === nav && S.slug === slug && S.fn === name && !$("drawer").hidden;
-  const log = $("fnDeepLog"), status = $("fnDeepStatus"), stop = $("fnDeepStop");
-  const controls = [$("fnDeepRun"), $("fnDeepMinutes"), $("fnDeepVariants"), $("fnDeepProfiles"), $("fnDeepThreads"), $("fnDeepMaximum"), $("fnDeepCompileSlots")];
-  const minutes = Number($("fnDeepMinutes").value), maxVariants = Number($("fnDeepVariants").value);
-  const renderProgress = deepProgressView();
-  renderProgress();
-  log._followTail = false;
-  deepPermuterBusy = true;
-  log.hidden = false; stop.hidden = false; stop.disabled = true;
-  showJobError(log, "");
-  status.textContent = job ? `Reconnecting to deep search for ${name}…` : `Starting deep search for ${name}…`;
-  const done = beginWork(log, "Searching this function locally", controls, "Deep search finished.");
-  const bar = log._workBar;
-  $("fnDeepWork").append(log._workStatus);
-  $("fnDeepWork").append(bar);
-  try {
-    if (!job) ({ job } = await api("/api/permuter/function", { method: "POST", body: { slug, function: name, minutes, max_variants: maxVariants, compiler_profiles:Number($("fnDeepProfiles").value), threads_per_function:Number($("fnDeepThreads").value), maximum_throughput:$("fnDeepMaximum").checked, compile_slots:Number($("fnDeepCompileSlots").value) || 0 } }));
-    if (active()) { deepPermuterJob = job; stop.disabled = false; }
-    const result = await followJob(job, null, (lines, state) => {
-      if (!active()) return;
-      log.textContent = lines.join("\n");
-      const p = state.progress;
-      if (p) { renderProgress(p); status.textContent = `${name} · ${p.phase}`; }
-    }, active);
-    if (!active()) return;
-    renderProgress(result);
-    status.textContent = `${name} · ${result.reason} · ${result.tested.toLocaleString()} tested. Improvements saved.`;
-    if (S.slug === slug && S.fn === name) { await refreshMap(true); await refreshFn(false); }
-  } catch (error) {
-    if (!active()) return;
-    if (error.job?.state === "cancelled") {
-      status.textContent = `${name} · Stopped. Verified improvements are saved.`;
-      log._workStatus.dataset.state = "cancelled"; log._workStatus.textContent = "Stopped";
-    }
-    else { status.textContent = error.message; $("fnDeepOutput").open = true; showJobError(log, error.message); }
-  } finally {
-    const visible = active();
-    if (deepPermuterTarget === target) { deepPermuterBusy = false; deepPermuterJob = null; }
-    if (visible) { stop.hidden = true; done(); }
-  }
-}
-$("fnDeepRun").onclick = () => followFunctionDeep();
-$("fnDeepStop").onclick = async () => {
-  if (!deepPermuterJob) return;
-  const button = $("fnDeepStop"); button.disabled = true;
-  try {
-    await api("/api/job/cancel", { method: "POST", body: { id: deepPermuterJob } });
-    $("fnDeepStatus").textContent = "Stopping after the current compiler or generator finishes. Improvements are saved.";
-  } catch (error) { showJobError($("fnDeepLog"), error.message); button.disabled = false; }
-};
 
 /* Pages contain metadata only; fetch a single candidate's source when requested. */
 async function browseAttemptHistory(slug,name) {
