@@ -1375,9 +1375,9 @@ $("reimportBtn").onclick = async () => {
         ({path}=await api("/api/pick",{method:"POST",body:{kind:"file",title:"Choose your original copy of the game"}}));
         if(!active() || !path)return;
       }
-      if(!confirm(`Reimport this project using ${path ? "the selected game" : "the saved game"}?\n\nMatched C is kept where target bytes are unchanged. Changed functions reopen. Notes, settings and saved progress are kept. Helpers working on this project will stop.${path ? "\n\nConfirm that this is your own legally obtained copy." : ""}`))return;
+      if(!confirm(`Reimport this project using ${path ? "the selected game" : "the saved game"}?\n\nMatched C is kept where target bytes are unchanged. Changed functions reopen. Notes, settings and saved progress are kept. Helpers working on this project will stop.`))return;
       if(!active())return;
-      ({job}=await api("/api/reimport",{method:"POST",body:{slug,...(path ? {path} : {}),confirmed:true}}));
+      ({job}=await api("/api/reimport",{method:"POST",body:{slug,...(path ? {path} : {})}}));
     }
   } catch(e) { if(active())showJobError(log,e.message); }
   finally { if(token===reimportView){finish();reimportPreparation=null;reimportStarting=false;} }

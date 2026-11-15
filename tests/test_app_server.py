@@ -381,11 +381,8 @@ def test_reimport_runs_as_a_background_project_job(app, tmp_path, monkeypatch):
 
     monkeypatch.setattr(net, "reimport_rom", reimport)
     headers = {"X-Decomp": "1"}
-    assert client.post("/api/reimport", json={"slug": "reimport-game", "path": str(game)},
-                       headers=headers).status_code == 400
-    response = client.post("/api/reimport", json={
-        "slug": "reimport-game", "path": str(game), "confirmed": True,
-    }, headers=headers)
+    # no repeated confirmation that it's the user's own copy: the import asked once
+    response = client.post("/api/reimport", json={"slug": "reimport-game", "path": str(game)}, headers=headers)
     assert response.status_code == 200
     job_id = response.json()["job"]
     for _ in range(100):
