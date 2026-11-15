@@ -892,14 +892,14 @@ $("fnNext").onclick = () => stepFn(1);
 /* ------------------------------------------------------------------ function list */
 const FUNCTION_ROWS = 200, MORE_ROWS = 500;  // rows the list shows at first, and "Show more" adds: a big game has tens of thousands
 const L = { q: "", filter: "all", sort: "i", dir: 1, limit: FUNCTION_ROWS, rows: [] };
-const FILTERS = [["all", "All"], ["boundary", "Boundary review"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["polished", "Polished"], ["first", "★ First"], ["cross_project", "Cross project"]];
+const FILTERS = [["all", "All"], ["boundary", "Boundary review"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["polished", "Polished"], ["sdk", "SDK"], ["first", "★ First"], ["cross_project", "Cross project"]];
 // polished: matched, and made readable (real names, types, a comment) by polishing helpers; still counted as matched
 const polished = (f) => f.status === "matched" && !!f.polished;
 // ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM and fork projects
 const starred = (f) => !!(S.ov && (S.ov.priority || []).includes(f.name));
 const canStar = () => !!(S.ov);  // star/priority works on ROM and fork projects alike (#290)
-const fnState = (f) => (f.analysis_state === "boundary_review" ? "boundary" : f.status === "matched" ? "matched" : f.status === "asm" ? "asm" : f.status === "working" ? "working" : f.best != null ? "tried" : "open");
-const STATE_RANK = { boundary: -1, working: 0, tried: 1, open: 2, matched: 3, asm: 4 };
+const fnState = (f) => (f.analysis_state === "boundary_review" ? "boundary" : f.status === "matched" ? "matched" : f.status === "asm" ? (f.sdk_verified ? "sdk" : "asm") : f.status === "working" ? "working" : f.best != null ? "tried" : "open");
+const STATE_RANK = { boundary: -1, working: 0, tried: 1, open: 2, matched: 3, sdk: 4, asm: 5 };
 
 /* The functions a search (lowercase) finds: by name or address. A fork's list shows each function's source file, so
    the file counts there too; a ROM's segment only when no name or address has the text ("ma" found every function of
@@ -927,7 +927,7 @@ function functionAge(stamp, now = Date.now() / 1000) {
 function renderList() {
   if (!S.map.length || S.tab !== "functions") return;
   listShownAt = Date.now();
-  const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, asm: 0, boundary: 0, polished: 0, first: 0, cross_project: 0 };
+  const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, sdk: 0, asm: 0, boundary: 0, polished: 0, first: 0, cross_project: 0 };
   for (const f of S.map) { counts[fnState(f)]++; if (starred(f)) counts.first++; if (polished(f)) counts.polished++; if (f.cross_project) counts.cross_project++; }
   const star = canStar();
   if (!star && L.filter === "first") L.filter = "all";
@@ -947,7 +947,7 @@ function renderList() {
   setHtmlIfChanged($("fnRows"), rows.slice(0, L.limit).map((f) => {
     const st = fnState(f), p = pctOf(f.best, f.insns);
     const best = st === "matched" ? `<span class="ok">100%</span>` : p == null ? `<span class="dim">–</span>` : pctText(p);
-    const status = st === "boundary" ? `<span class="st boundary" title="Incomplete extent; saved classification requires review">incomplete</span>` : st === "matched" ? (polished(f) ? `<span class="st matched polished" title="matched, and polished: real names, types and a comment">polished</span>` : `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>`) : st === "asm" ? (f.assembly_verification?.verified ? `<span class="st" title="Exact linked assembly; not matching C">${f.assembly_verification.kind === "sdk" ? "SDK assembly · verified" : "verified assembly"}</span>` : f.not_c ? `<span class="st not-c" title="Agent assessment only, not verified assembly provenance">agent set-aside</span>` : `<span class="st" title="Set aside by classification; this does not establish original assembly provenance">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
+    const status = st === "boundary" ? `<span class="st boundary" title="Incomplete extent; saved classification requires review">incomplete</span>` : st === "matched" ? (polished(f) ? `<span class="st matched polished" title="matched, and polished: real names, types and a comment">polished</span>` : `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>`) : st === "sdk" ? `<span class="st sdk" title="Library code from the SDK, set aside: a port replaces it. Not matching C">SDK</span>` : st === "asm" ? (f.assembly_verification?.verified ? `<span class="st" title="Exact linked assembly; not matching C">${f.assembly_verification.kind === "sdk" ? "SDK assembly · verified" : "verified assembly"}</span>` : f.not_c ? `<span class="st not-c" title="Agent assessment only, not verified assembly provenance">agent set-aside</span>` : `<span class="st" title="Set aside by classification; this does not establish original assembly provenance">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
       : st === "tried" ? `<span class="st tried">tried</span>` : `<span class="st">to do</span>`;
     const on = starred(f), open = f.status !== "matched" && f.status !== "asm";
     const starCell = !star ? "" : `<td class="star-col">${open || on ? `<button type="button" class="star-btn${on ? " on" : ""}" data-star="${esc(f.name)}" aria-pressed="${on}" aria-label="${on ? "Agents take it first: click to stop" : "Agents take it first"}" title="${on ? "Agents take it first (click to stop)" : "Agents take it first"}">${on ? "★" : "☆"}</button>` : ""}</td>`;

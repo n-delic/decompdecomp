@@ -191,7 +191,11 @@ def save(net,proj,fn,proof):
                            else 'Library C your SDK archive reproduces byte for byte')+'; set aside from C matching by '
                           'this project\'s library setting.' if proof.get('from_c') else 'Verified SDK assembly; excluded from C matching.')
         db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?",(json.dumps(meta),fn['id']))
-        net._event(db,proj['id'],None,'assembly-verified',fn['name']+': '+proof['name'])
+        # SDK code is its own event, never "assembly-verified": that is the game's own hand-written assembly, still
+        # the user's to look at, where this is library code a port replaces
+        how=('found by library detection' if proof.get('verification_method') in (*SIGNATURE_METHODS,'builtin-sdk-digest')
+             else 'linked against your SDK')
+        net._event(db,proj['id'],None,'sdk-verified',f"{fn['name']}: {proof['name']} ({how})")
     return True
 
 
