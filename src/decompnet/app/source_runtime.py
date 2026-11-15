@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -11,6 +12,33 @@ from pathlib import Path
 from ..hostenv import NO_WINDOW, find_uv
 from ..network import NetworkError
 from . import edition, window
+
+KEEP_RUNTIMES = 2
+
+
+def prune(root: Path, keep=()) -> list[Path]:
+    """Delete old staged runtimes: every source update cloned main and built a Python environment (~140 MB) in
+    source-runtimes and never removed it, so a home that updated often held 79 of them, 11 GB. Keeps the runtime this
+    process runs from, any in `keep`, and the newest KEEP_RUNTIMES (a launched development app may run from one)."""
+    if not root.is_dir():
+        return []
+    running = Path(sys.prefix).resolve()
+    kept = {Path(k).resolve() for k in keep}
+    staged = sorted((p for p in root.glob('main-*') if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True)
+    removed = []
+    for path in staged[KEEP_RUNTIMES:]:
+        resolved = path.resolve()
+        if resolved in kept or running.is_relative_to(resolved) or Path.cwd().resolve().is_relative_to(resolved):
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        removed.append(path)
+    return removed
+
+
+def discard(staged) -> None:
+    """A staged runtime the app didn't restart into (cancelled, failed, already current, worker-only update)."""
+    if staged is not None and Path(staged).is_dir():
+        shutil.rmtree(staged, ignore_errors=True)
 
 
 def command(argv, cwd):
@@ -142,15 +170,20 @@ class Runtime:
         # Neither the active checkout nor its environment may change under lazy imports/compiles.
         root = self.app.home / 'source-runtimes'
         root.mkdir(parents=True, exist_ok=True)
+        prune(root)
         staged = Path(tempfile.mkdtemp(prefix='main-', dir=root))
         steps = [([git, 'clone', '--depth', '1', '--single-branch', '--branch', 'main', '--',
                    f'https://github.com/{repo}.git', str(staged)], folder),
                  ([uv, 'sync', '--locked', '--python', '3.12'], staged),
                  ([uv, 'run', '--no-sync', 'python', '-c', 'import decompnet.app.cli'], staged)]
-        for argv, cwd in steps:
-            if self.cancel.is_set():
-                break
-            command(argv, cwd)
+        try:
+            for argv, cwd in steps:
+                if self.cancel.is_set():
+                    break
+                command(argv, cwd)
+        except BaseException:
+            discard(staged)
+            raise
         return staged
 
     def update_worker_source(self, folder, staged, git, repo):
@@ -230,12 +263,13 @@ class Runtime:
         return self.status()
 
     def run(self,folder,git,uv,target,repo):
+        staged = None  # deleted unless the app (or a development app) runs from it
         try:
             if self.cancel.is_set():
                 self.job.update(state='cancelled',message='Update cancelled. Work continues normally.')
                 return
             source_folder = folder
-            folder = self.prepare(folder, git, uv, repo)
+            folder = staged = self.prepare(folder, git, uv, repo)
             if self.cancel.is_set():
                 self.job.update(state='cancelled',message='Update cancelled. Work continues normally.')
                 return
@@ -248,6 +282,7 @@ class Runtime:
                     env.pop(key,None)
                 subprocess.Popen([uv,'run','--project',str(folder),'--no-sync','python','-m','decompnet.app.cli'],
                                  cwd=folder,env=env,stdin=subprocess.DEVNULL,creationflags=NO_WINDOW)
+                staged = None
                 self.job.update(state='done',message=f'Development app launched with separate data at {target}. This app keeps its current data and continues running.')
                 return
             if self.update_worker_source(source_folder, folder, git, repo):
@@ -263,9 +298,11 @@ class Runtime:
             for key in ('PYTHONHOME','PYTHONPATH','VIRTUAL_ENV','DECOMP_PACKAGE','UV_PROJECT_ENVIRONMENT','UV_PROJECT'):
                 env.pop(key,None)
             os.chdir(folder)
+            staged = None
             os.execve(uv,[uv,'run','--project',str(folder),'--no-sync','python','-m','decompnet.app.cli','--port',str(self.app.port)],env)
         except (OSError,ValueError,NetworkError,subprocess.SubprocessError) as error:
             self.job.update(state='error',message=str(error) + (' Restart failed after shutdown; reopen decompdecomp from the checkout.' if self.job['state']=='restarting' else ' Current app has not been restarted.'))
         finally:
+            discard(staged)
             self.hold(False)
             self.app.jobs.source_update_preparing=False
