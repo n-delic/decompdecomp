@@ -57,6 +57,10 @@ const codePct = (p) => (codeBytes(p) ? (100 * (p.matched_bytes || 0)) / codeByte
 const cFunctions = (p) => (p.functions || 0) - (p.set_aside || 0);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
+// An open function with no best score: "not started" only when nobody compiled it (every compile failing to build left
+// a function with 12 compiles saying "not started"). Not "none built": a fork's compile that built and scored but broke
+// a matched neighbour is undone and never becomes the best.
+const noBest = (compiles) => (compiles ? `${plural(compiles, "compile")}, no best yet` : "not started");
 const MINUTE = 60, HOUR = 3600, DAY = 86400;  // seconds
 const KIB = 1024, MIB = 1024 * 1024;
 function since(t) {

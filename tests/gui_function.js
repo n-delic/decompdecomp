@@ -126,6 +126,20 @@ const which = () => vm.runInContext("S.which", ctx);
   await settle();
   assert.equal(get("diffWhich").hidden, true);
   assert.equal(which(), "latest");
+  // its badge says it was tried, not "not started" (a report: 12 compiles, none built, said "not started")
+  assert.equal(get("fnStatus").textContent, "1 compile, no best yet");
+
+  // Nor is one whose compile built and scored but was undone for breaking a matched neighbour: it has no best either.
+  detail = { ...detail, name: "f5", scores: [{ score: 40, t: 0, agent: "claude" }] };
+  await ctx.openFn("f5");
+  await settle();
+  assert.equal(get("fnStatus").textContent, "1 compile, no best yet");
+
+  // A function nobody compiled is not started.
+  detail = { ...detail, name: "f4", scores: [] };
+  await ctx.openFn("f4");
+  await settle();
+  assert.equal(get("fnStatus").textContent, "not started");
 
   console.log("ok");
 })().catch((e) => { console.error(e); process.exit(1); });
