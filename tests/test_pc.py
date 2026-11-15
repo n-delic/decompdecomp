@@ -2957,6 +2957,27 @@ def test_a_new_file_check_is_not_said_to_have_restarted_before_its_recheck(tmp_p
     assert check["status"] == "checking" and "restarted" not in check.get("said", "")
 
 
+def test_a_file_check_whose_run_cannot_start_undoes_its_working_mark(tmp_path, monkeypatch):
+    """#260 review: threading.Thread.start() can fail ("can't start new thread"), and then the run's finally never
+    gives the count back: working() stayed true and the panel said "checking…" forever."""
+    import threading
+
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, {})
+    net._update_cfg("p", lambda cfg: cfg.__setitem__("file_checks", [
+        {"id": 1, "suggestion": None, "toolchain": "MSVC/7.1", "origin": "src/auto/text_00401020.cpp",
+         "spans": [[0x401020, 0x401030]], "status": "checking", "evidence": {}, "tasks": [], "range": None, "t": 0}]))
+    net.filecompilers.background = True
+
+    def cannot_start(_thread):
+        raise RuntimeError("can't start new thread")
+    monkeypatch.setattr(threading.Thread, "start", cannot_start)
+    net.filecompilers.recheck("p")
+    assert net.filecompilers.working("p") is False
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "waiting" and "could not start" in check["said"]
+    assert "Check again now" in check["said"] and "try_compiler" in check["said"]
+
+
 def test_a_file_check_with_nothing_left_to_test_names_try_compiler_not_a_match(tmp_path, monkeypatch):
     """#260 review: in project mode no match rechecks a file check, so an unsettled one with no task left says what
     really moves it."""

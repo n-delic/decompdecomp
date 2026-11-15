@@ -417,10 +417,29 @@ class FileCompilers:
         if checks:
             with self._running_lock:
                 self._running[slug] = self._running.get(slug, 0) + 1
-            if self.background:
-                threading.Thread(target=run, daemon=True, name=f"file-check-{slug}").start()
-            else:
+            if not self.background:
                 run()
+            else:
+                try:
+                    threading.Thread(target=run, daemon=True, name=f"file-check-{slug}").start()
+                except RuntimeError:  # #260 review: "can't start new thread": run() never runs, nor its finally
+                    with self._running_lock:
+                        left = self._running.get(slug, 1) - 1
+                        if left:
+                            self._running[slug] = left
+                        else:
+                            self._running.pop(slug, None)
+                    log.exception("the file range check for %s could not start", slug)
+                    for c in checks:
+                        if c["status"] != "checking":
+                            continue  # (a check already waiting keeps the reason it waits for)
+                        try:
+                            self._wait_stored(slug, c["id"], "waiting: the app could not start the check; press "
+                                                               "Check again now, or have an agent try the compiler "
+                                                               "with try_compiler, to try again")
+                        except Exception:  # noqa: BLE001  the failure to start is the one to report
+                            log.exception("file range check #%s could not be marked waiting", c["id"])
+                    return 0
         return len(checks)
 
     def _weigh(self, slug: str, c: dict) -> None:
@@ -466,18 +485,15 @@ class FileCompilers:
             return self._finish(slug, c, "confirmed", start, end)
         if status == "quirk":
             return self._finish(slug, c, "quirk", start, end)
-        if nxt is not None and nxt.vram in c["tasks"]:
+        if nxt is not None:
             source = next(s for s0, _, s, _ in files if s0 == nxt.vram)
             fn = next((f for f in self._rows_by_file(self.net.project_row(slug)).get(source, ())
                        if f["status"] == "open"), None)
-            said = (f"waiting: {fn['name']} in {source} is next (first in line for an agent)" if fn is not None else
-                    "waiting: an agent has the next file's task; its answer moves the check on")
-            return self._wait(slug, c, said)  # (its answer moves it on)
-        if nxt is not None and len(c["tasks"]) < MAX_TASKS:
-            source = next(s for s0, _, s, _ in files if s0 == nxt.vram)
-            fn = next((f for f in self._rows_by_file(self.net.project_row(slug)).get(source, ())
-                       if f["status"] == "open"), None)
-            if fn is not None:
+            if nxt.vram in c["tasks"]:
+                said = (f"waiting: {fn['name']} in {source} is next (first in line for an agent)" if fn is not None else
+                        "waiting: an agent has the next file's task; its answer moves the check on")
+                return self._wait(slug, c, said)  # (its answer moves it on)
+            if len(c["tasks"]) < MAX_TASKS and fn is not None:
                 c["tasks"] = c["tasks"] + [nxt.vram]
                 self.net.set_priority(slug, fn["name"], True)
                 self.net.add_note(self.net.local_agent("autopilot")[0], slug, self.task_text(c, fn["name"], source),

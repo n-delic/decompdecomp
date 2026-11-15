@@ -232,7 +232,22 @@ class RangeChecks:
             if slug in self._draining:
                 return
             self._draining.add(slug)
-        threading.Thread(target=self._drain, args=(slug,), daemon=True, name=f"range-check-{slug}").start()
+        try:
+            threading.Thread(target=self._drain, args=(slug,), daemon=True, name=f"range-check-{slug}").start()
+        except RuntimeError:  # #260 review: "can't start new thread": _drain never runs, nor its finally
+            with self._queue_lock:
+                wanted = self._pending.pop(slug, set())
+                self._draining.discard(slug)
+            log.exception("the range check for %s could not start", slug)
+            try:
+                proj = self.net._project(slug)
+                for c in self._open(proj):
+                    if c["status"] != "checking" or not (None in wanted or c["id"] in wanted):
+                        continue  # (a check already waiting keeps the reason it waits for)
+                    self._wait_stored(proj, c["id"], "waiting: the app could not start the check; the next match "
+                                                     "tries again")
+            except Exception:  # noqa: BLE001  the failure to start is the one to report
+                log.exception("the range checks for %s could not be marked waiting", slug)
 
     def _drain(self, slug: str) -> None:
         try:

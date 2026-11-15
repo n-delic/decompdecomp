@@ -264,6 +264,27 @@ def test_a_rom_check_left_checking_does_not_spin_after_a_restart(tmp_path):
     assert check["status"] == "waiting" and "restarted" in check["said"]
 
 
+def test_a_rom_check_whose_run_cannot_start_undoes_its_working_mark(monkeypatch):
+    """#260 review: threading.Thread.start() can fail ("can't start new thread"); _drain then never runs its
+    finally, so working() stayed true and the panel said "checking…" forever."""
+    import threading
+
+    net = FakeNet(functions(9), {})
+    check = {"id": 1, "suggestion": None, "toolchain": CW[0], "flags": CW[1], "origin": 0x100000,
+             "origin_source": None, "spans": [[0x100000, 0x100010]], "status": "checking", "evidence": {},
+             "tasks": [], "given_up": [], "range": None, "t": 0}
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("range_checks", [check]))
+    net.rangechecks.background = True
+
+    def cannot_start(_thread):
+        raise RuntimeError("can't start new thread")
+    monkeypatch.setattr(threading.Thread, "start", cannot_start)
+    net.rangechecks.recheck("game", 1)
+    assert net.rangechecks.working("game") is False
+    (check,) = net.cfg(net.proj)["range_checks"]
+    assert check["status"] == "waiting" and "could not start" in check["said"] and "next match" in check["said"]
+
+
 def test_a_rom_check_whose_range_no_longer_holds_a_function_waits_with_a_reason():
     """#260: the early way out of a weigh used to leave the check as "checking" with no work behind it."""
     net = FakeNet(functions(9), {})
