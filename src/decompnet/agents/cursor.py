@@ -17,6 +17,46 @@ from pathlib import Path
 
 from . import SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool_name, usage_item
 
+SHARED = '.cursor-shared'  # beside the helpers' folders: one copy of the CLI's self-updates for all of them
+KEEP_VERSIONS = 2
+KEEP_CHATS = 3
+
+
+def share_updates(home: Path, shared: Path) -> None:
+    """The CLI updates itself into HOME/.local/share/cursor-agent. With a private HOME per helper, every helper
+    downloaded its own ~600 MB copy (245 helper folders took 5.4 GB): all of them now use one shared folder, never the
+    user's own install. A helper's old copy is replaced by the link."""
+    target = shared / 'cursor-agent'
+    target.mkdir(parents=True, exist_ok=True)
+    link = home / '.local/share/cursor-agent'
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        if link.resolve() == target.resolve():
+            return
+        link.unlink()
+    elif link.exists():
+        shutil.rmtree(link, ignore_errors=True)
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:  # (Windows without symlink rights: a private copy, as before)
+        return
+    versions = target / 'versions'
+    if versions.is_dir():
+        old = sorted((v for v in versions.iterdir() if v.is_dir()), key=lambda v: v.stat().st_mtime, reverse=True)
+        for version in old[KEEP_VERSIONS:]:
+            shutil.rmtree(version, ignore_errors=True)
+
+
+def prune_chats(chats: Path) -> None:
+    """Each run is a new headless session that is never resumed, yet the CLI keeps every transcript (up to ~470 MB
+    per helper): keep the latest few for diagnosis."""
+    if not chats.is_dir():
+        return
+    for workspace in (w for w in chats.iterdir() if w.is_dir()):  # chats/<workspace hash>/<chat id>/
+        entries = sorted((c for c in workspace.iterdir() if c.is_dir()), key=lambda c: c.stat().st_mtime, reverse=True)
+        for entry in entries[KEEP_CHATS:]:
+            shutil.rmtree(entry, ignore_errors=True)
+
 
 def config_home() -> Path:
     return Path(os.environ.get('CURSOR_CONFIG_DIR') or
@@ -60,6 +100,8 @@ class Cursor(Agent):
         private = home / '.cursor'
         private.mkdir(parents=True, exist_ok=True, mode=0o700)
         home.chmod(0o700)
+        share_updates(home, workdir.parent / SHARED)
+        prune_chats(private / 'chats')
         # Only login material is carried over, never global rules, plugins or MCP servers.
         login_files = [(Path.home() / relative, relative) for relative in [
                          '.cursor/auth.json', '.cursor-agent/auth.json', '.config/cursor/auth.json',
