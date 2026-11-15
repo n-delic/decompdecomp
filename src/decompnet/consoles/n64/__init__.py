@@ -97,7 +97,7 @@ class Nintendo64(Console):
         return n64.scene(image, asset, selection, assets)
 
     def asset_decode(self, data):
-        from .textures import decode
+        from decompassets.n64.textures import decode
         return decode(data)
 
     def bss_start(self, image: bytes) -> int | None:
