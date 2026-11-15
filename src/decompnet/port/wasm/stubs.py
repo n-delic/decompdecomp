@@ -1,9 +1,10 @@
-"""stubs.py game.h host.c out.c: a logging stub for each import the host doesn't define."""
+"""stubs.py game.h out.c host.c [more host files]: a logging stub for each import the host doesn't define (in host.c, its
+other files, or the game's own, games/<sha1>.c)."""
 import re
 import sys
 
-h, host, out = sys.argv[1:]
-defined = set(re.findall(r"\b(w2c_env_\w+)\(struct w2c_env \*", open(host).read()))
+h, out, hosts = sys.argv[1], sys.argv[2], sys.argv[3:]
+defined = {name for host in hosts for name in re.findall(r"\b(w2c_env_\w+)\(struct w2c_env \*", open(host).read())}
 lines = ['#include <stdio.h>', '#include "game.h"', "/* imports the host doesn't implement yet (generated): each logs its first call */"]
 for m in re.finditer(r"^(u32|u64|f32|f64|void) (w2c_env_\w+)\(struct w2c_env\*((?:, \w+)*)\);", open(h).read(), re.M):
     ret, name, params = m.groups()

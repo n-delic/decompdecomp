@@ -224,6 +224,17 @@ and written big-endian, with every symbol at its console address:
 So data stays as the ROM has it (no phase 1), pointers need no fixes (no phase 4's 64-bit work), and a call through
 a pointer finds its function by console address.
 
+The host boots any game as the console does, from the ROM: the boot chip's copy of the 1 MB after the header to the
+entry address the header names, then what the game's entry routine at 0x1000 does, read rather than run (its BSS,
+zeroed, from its first `sw $zero` and the loop's count or end; its first C function, from its jump, called by
+address; host.c `read_boot`). The header's region sets osTvType and the retrace: PAL 50 a second, NTSC and MPAL 60.
+The hand-written library code most games keep in assembly (`bzero`, `bcopy`, `bcmp`, the TLB, status-register and
+interrupt helpers, `osGetCount`) is the host's by its library name: the build renames a call by a function's
+automatic name to the name library detection found (`play.library_names`). What only one game needs, such as
+functions it names by its own addresses, goes in `consoles/n64/port_wasm/games/<the ROM's SHA-1, 12 digits>.c`,
+compiled for that game alone (V-Rally's, where the host was written). A function a game runs with no C stops it
+there, named: matched C, or C only the port has (`port/wasm/src/`), lets it go on.
+
 What the matched C gets away with on the console, the build adapts to:
 - arguments left in registers become explicit (`adapt.py`'s thunks, with MIPS register words for the rest);
 - one signature per function (`sigs.py`);

@@ -936,6 +936,14 @@ functions are set aside this way (`guLookAt`, `guPerspective`, `guMtxXFML`, libu
 units compile with the build's flags; `guTranslate` follows once an agent's claim on it ends. Left: the native
 libultraship build (Compile for PC) reading the same units, and a check that runs the port with them.
 
+The WebAssembly port's N64 host boots any game, not only the racing game it was written on: it read that game's
+first C function by name (`boot_start`), its image end (0xA7FE0) and PAL, and held its own functions (its bzero at
+0x80091920, its 64-bit helpers, its names) for every game. The boot is now read from the ROM (the header's entry
+and region, the entry routine's BSS and jump), library assembly reaches the host by its detected name, and the
+racing game's own functions are in its own file (`port_wasm/games/`). A second racing game (another studio, loaded
+at 0x80025C00, NTSC) now builds, boots into `main` and starts its first thread, whose code has no C yet. Left: the
+tiny hand-written assembly detection can't name yet (under 32 bytes, as `__osGetSR`), stubbed and logged.
+
 Similar-code autopilot attempts are bounded and use the unchanged compiler/link judge on MIPS ROM projects.
 They learn unambiguous symbol correspondences, try local-permuter repairs and proven donor flags, and persist
 trial results and a resume cursor. Compiler-flag hits are saved as evidence for review, not silently applied.

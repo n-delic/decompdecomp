@@ -14,3 +14,9 @@ const late = retraceDeadline(now + 5, 3, 0);
 assert.ok(late >= now + 2 && late < now + 50, `a late retrace's threads get a little time (${late - now} ms)`);
 near(retraceDeadline(now + 45, 3, 2), now + 45);
 near(retraceDeadline(now + 45, 3, 1), now + 25);
+
+// the period the host read from the ROM's region: NTSC's 16.67 ms, PAL's 20, and 20 from an older host
+import { retracePeriod } from "../src/decompnet/port/wasm/web/runtime.js";
+near(retracePeriod({ port_web_retrace_ms: () => 16.667 }), 16.667);
+near(retracePeriod({}), 20);
+near(retraceDeadline(now + 45, 3, 1, 16.667), now + 45 - 16.667);
