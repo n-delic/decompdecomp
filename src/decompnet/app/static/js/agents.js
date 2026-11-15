@@ -724,7 +724,7 @@ function matchedBy(agent, fn) {
 const AUTO = "autopilot";
 /* #99: the app's own workers, not helpers anyone started: their claims outlive a stopped helper (the permuter's by
    half an hour) and a room host's are named with "@" in front. */
-const APP_WORKERS = new Set([AUTO, "permuter", "decompdecomp"]);
+const APP_WORKERS = new Set([AUTO, "permuter", "deep-permuter", "decompdecomp"]);
 function autopilotLine(t, first, done) {
   const a = S.apFeed || (S.apFeed = { tried: 0, matched: 0, li: null });
   const html = `<span class="who">autopilot</span> ${done ? esc(done) : `tried ${plural(a.tried, "machine draft")}${a.matched ? ` · <span class="ok">${a.matched} matched</span>` : ""}`}`;

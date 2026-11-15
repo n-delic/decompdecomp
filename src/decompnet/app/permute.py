@@ -255,15 +255,22 @@ class Permuter:
         except Exception as e:  # one odd function must not stop the rest
             log.info("permuter: %s: %s", fn["name"], e, exc_info=True)
 
-    def _hold(self, agent, fn) -> bool:
+    def _hold(self, agent, fn, *, count_turn: bool = True) -> bool:
         now = time.time()
         with self.net.store.tx() as db:
             self.net._expire_claims(db)
             if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                 return False
             db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + SECONDS + HOLD_SPARE_SECONDS))
-            db.execute("UPDATE functions SET permuted = permuted + 1 WHERE id=?", (fn["id"],))
+            if count_turn:
+                db.execute("UPDATE functions SET permuted = permuted + 1 WHERE id=?", (fn["id"],))
         return True
+
+    def _random_seed(self, fn):
+        return f"{fn['id']}-{fn['permuted']}"
+
+    def _turn_deadline(self):
+        return time.monotonic() + SECONDS
 
     def _renew(self, agent, fn) -> bool:
         """The turn's hold counted from now; False when it's no longer this turn's."""
@@ -282,7 +289,7 @@ class Permuter:
         st.add(tried=1)
         st.holding(fn["name"], True)
         fork = self.net.fork_slug(proj["slug"])
-        rng = random.Random(f"{fn['id']}-{fn['permuted']}")
+        rng = random.Random(self._random_seed(fn))
         gen = None
         held = ExitStack()
         try:
@@ -306,7 +313,7 @@ class Permuter:
                     log.info("permuter: decomp-permuter didn't start: %s", e)
             start_src = best_src = cur_src = fn["best_source"]
             best = cur = fn["best_score"]
-            deadline = time.monotonic() + SECONDS
+            deadline = self._turn_deadline()
             batches = misses = 0
             refused, taken = None, 0  # the last refusal of a variant (NetworkError), variants the project took
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():

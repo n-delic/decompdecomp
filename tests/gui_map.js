@@ -74,7 +74,7 @@ const ctx = {
 ctx.window = ctx;
 vm.createContext(ctx);
 const js = process.env.GUI_JS || path.join(__dirname, "..", "src", "decompnet", "app", "static", "js");
-for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "steering", "pages"]) {
+for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "deep-permuter", "steering", "pages"]) {
   vm.runInContext(fs.readFileSync(path.join(js, `${name}.js`), "utf8"), ctx, { filename: `${name}.js` });
 }
 const settle = async () => { for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r)); };

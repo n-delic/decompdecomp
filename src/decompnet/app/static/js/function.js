@@ -41,7 +41,15 @@ function showFnTab(tab) {
   document.querySelectorAll("[data-ftab]").forEach((b) => b.classList.toggle("on", b.dataset.ftab === tab));
   $("fnDiffView").hidden = tab !== "diff";
   $("fnCodeView").hidden = tab !== "code";
+  $("deepPermuterPanel").hidden = tab !== "deep";
+  $("fnHistoryView").hidden = tab !== "history";
+  document.querySelectorAll("[data-ftab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.ftab === tab)));
+  const d = S.fnDetail;
+  // The Latest/Best switch sits above every tab, so only the Diff tab shows it, and only when the two differ.
+  $("diffWhich").hidden = tab !== "diff" || !d || d.status === "matched" || !d.best_differs;
   if (tab === "diff") loadDiff();
+  if (tab === "history" && d) renderFnChart(d);
+  if (tab === "deep") renderDeepSearch();
 }
 function setWhich(which) {
   S.which = which;
@@ -66,7 +74,9 @@ async function refreshFn(first) {
     $("fnName").textContent = d.name;
     fnBadge(d);
     $("fnSetAside").hidden = d.status !== "open";
+    $("fnActionsMenu").hidden = d.status !== "open";
     $("fnSetAside").onclick = async () => {
+      $("fnActionsMenu").open = false;
       const why = prompt(`Why does no C make ${d.name}? (optional: agents and you read it on its page)`, "hand-written assembly");
       if (why === null) return;
       try {
@@ -106,6 +116,8 @@ async function refreshFn(first) {
     const kinds = { matched: "Matching C", best: "Best attempt so far", latest: S.ov.kind === "fork" ? "In the source now" : "Latest attempt", draft: "Machine draft (m2c)" };
     $("fnSrcKind").textContent = kinds[d.source_kind] || "No C yet";
     if (!S.editDirty || first) setEditor(d.source || "", d);
+    renderDeepSearch();
+    reconnectDeepSearch(d.name);
     $("copySrc").onclick = () => navigator.clipboard.writeText($("fnEdit").value).then(() => toast("Copied."));
     renderFnChart(d);
     const canSwitch = d.status !== "matched" && !!d.best_differs;
@@ -157,6 +169,7 @@ $("fnEdit").addEventListener("keydown", (e) => {
   }
 });
 $("tryBtn").onclick = () => tryIt();
+
 
 async function tryIt() {
   const name = S.fn, source = $("fnEdit").value, msg = $("tryMsg");

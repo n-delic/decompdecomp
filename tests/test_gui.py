@@ -13,6 +13,13 @@ NODE = shutil.which("node")
 GUI_TIMEOUT_SECONDS = 60
 
 
+def test_deep_permuter_results_and_navigation():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_deep_permuter.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_the_game_picker_stays_above_existing_project_cards():
     """Returning users need to see the new game's details without scrolling past their projects."""
     static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
