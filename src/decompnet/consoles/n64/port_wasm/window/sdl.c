@@ -66,6 +66,8 @@ static struct {
     bool (*Init)(uint32_t); /* bool, as SDL3 returns it: only its low byte is defined */
     bool (*SetHint)(const char *, const char *);
     void *(*CreateWindow)(const char *, int, int, uint64_t);
+    bool (*SetWindowTitle)(void *, const char *);
+    uint64_t (*GetTicksNS)(void);
     void *(*CreateRenderer)(void *, const char *);
     bool (*SetRenderLogicalPresentation)(void *, int, int, int);
     void *(*CreateTexture)(void *, uint32_t, int, int, int);
@@ -111,6 +113,7 @@ static int load_sdl(void) {
         if (names[i]) lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
     if (!lib) return 0;
 #define SYM(name) if (!(*(void **)&sdl.name = dlsym(lib, "SDL_" #name))) return 0
+    SYM(SetWindowTitle); SYM(GetTicksNS);
     SYM(Init); SYM(SetHint); SYM(CreateWindow); SYM(CreateRenderer); SYM(SetRenderLogicalPresentation);
     SYM(CreateTexture); SYM(SetTextureScaleMode); SYM(DestroyTexture); SYM(UpdateTexture); SYM(SetRenderDrawColor);
     SYM(RenderClear); SYM(RenderTexture); SYM(RenderPresent); SYM(PollEvent); SYM(WaitEventTimeout);
@@ -127,6 +130,8 @@ static int load_sdl(void) {
 
 static void *window, *renderer, *texture, *pad;
 static int texture_w, texture_h;
+static uint64_t fps_since;
+static unsigned fps_frames;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t *frame; /* the newest frame, RGB, from a game thread */
 static int frame_w, frame_h, frame_new;
@@ -159,6 +164,8 @@ int port_sdl_start(void) {
     sdl.SetRenderDrawColor(renderer, 0, 0, 0, 255);
     sdl.RenderClear(renderer);
     sdl.RenderPresent(renderer);
+    fps_since = sdl.GetTicksNS();
+    fps_frames = 0;
     fprintf(stderr, "playing in a window of its own (SDL3)\n");
     return 1;
 }
@@ -292,6 +299,7 @@ void port_sdl_pump(void) {
         }
     }
     read_controls();
+    int fresh = 0;
     pthread_mutex_lock(&lock);
     if (frame_new) {
         if (!texture || texture_w != frame_w || texture_h != frame_h) {
@@ -300,13 +308,23 @@ void port_sdl_pump(void) {
             if (texture) sdl.SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST); /* sharp, as the browser's */
             texture_w = frame_w; texture_h = frame_h;
         }
-        if (texture) sdl.UpdateTexture(texture, NULL, frame, frame_w * 3);
+        if (texture) fresh = sdl.UpdateTexture(texture, NULL, frame, frame_w * 3);
         frame_new = 0;
     }
     pthread_mutex_unlock(&lock);
     sdl.RenderClear(renderer);
     if (texture) sdl.RenderTexture(renderer, texture, NULL, NULL);
-    sdl.RenderPresent(renderer);
+    bool presented = sdl.RenderPresent(renderer);
+    /* Count new pictures, not the retraces that redraw the previous picture. Window calls stay on this thread. */
+    if (fresh && presented) fps_frames++;
+    uint64_t now = sdl.GetTicksNS(), elapsed = now - fps_since;
+    if (elapsed >= 1000000000ULL) {
+        char caption[1024];
+        snprintf(caption, sizeof caption, "%s — %.1f FPS", title(), fps_frames * 1e9 / elapsed);
+        sdl.SetWindowTitle(window, caption);
+        fps_since = now;
+        fps_frames = 0;
+    }
 }
 
 /* ---------------------------------------------------------------- what the game's threads leave */

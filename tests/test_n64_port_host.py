@@ -227,3 +227,60 @@ def test_the_host_names_no_one_games_functions(tmp_path):
     assert game_host(host, repo) == [host / "games" / "da3f262dfb86.c"]
     (repo / "progress" / "decompdecomp.json").write_text('{"game": {"sha1": "0123456789abcdef"}}')
     assert game_host(host, repo) == []
+
+
+@pytest.mark.skipif(shutil.which("cc") is None, reason="needs a C compiler")
+def test_window_fps_counts_new_presented_frames_and_decays_when_idle(tmp_path):
+    """Exercise the real pump with SDL stubs: repeated retraces aren't new game frames."""
+    source = tmp_path / "fps.c"
+    source.write_text('#include "' + str(KIT / "window" / "sdl.c") + r'''"
+#include <assert.h>
+static uint64_t ticks;
+static int captions, fail_present;
+static char caption[1024];
+static uint64_t clock_ns(void) { return ticks; }
+static bool set_title(void *w, const char *text) {
+    (void)w; captions++; snprintf(caption, sizeof caption, "%s", text); return true;
+}
+static bool poll(SdlEvent *e) { (void)e; return false; }
+static const uint8_t *keys(int *n) { static uint8_t k[256]; (void)n; return k; }
+static bool clear(void *r) { (void)r; return true; }
+static bool draw(void *r, void *t, const void *a, const void *b) {
+    (void)r; (void)t; (void)a; (void)b; return true;
+}
+static bool present(void *r) { (void)r; return !fail_present; }
+static bool update(void *t, const void *r, const void *p, int pitch) {
+    (void)t; (void)r; (void)p; (void)pitch; return true;
+}
+int main(void) {
+    setenv("PORT_TITLE", "Demo", 1);
+    sdl.GetTicksNS = clock_ns; sdl.SetWindowTitle = set_title;
+    sdl.PollEvent = poll; sdl.GetKeyboardState = keys; sdl.RenderClear = clear;
+    sdl.RenderTexture = draw; sdl.RenderPresent = present; sdl.UpdateTexture = update;
+    texture = (void *)1; texture_w = texture_h = 1;
+    uint8_t rgb[3] = {0};
+    for (int i = 1; i <= 50; i++) {
+        ticks = i * 20000000ULL;
+        if (i % 2 == 0) port_sdl_frame(rgb, 1, 1);
+        port_sdl_pump();
+        if (i < 50) assert(captions == 0);
+    }
+    assert(captions == 1 && strcmp(caption, "Demo — 25.0 FPS") == 0);
+    ticks += 2000000000ULL; port_sdl_pump();
+    assert(captions == 2 && strcmp(caption, "Demo — 0.0 FPS") == 0);
+    /* Divide by actual elapsed time, even when the host stalls. */
+    port_sdl_frame(rgb, 1, 1); port_sdl_pump();
+    ticks += 2000000000ULL; port_sdl_pump();
+    assert(strcmp(caption, "Demo — 0.5 FPS") == 0);
+    fail_present = 1; port_sdl_frame(rgb, 1, 1); port_sdl_pump();
+    ticks += 1000000000ULL; port_sdl_pump();
+    assert(strcmp(caption, "Demo — 0.0 FPS") == 0);
+    return 0;
+}
+''')
+    program = tmp_path / "fps"
+    done = subprocess.run(["cc", "-o", str(program), str(source), "-lpthread",
+                           *([] if sys.platform == "darwin" else ["-ldl"])], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    done = subprocess.run([str(program)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
