@@ -760,7 +760,9 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "project_folder": bool(cfg.get("project_layout")),  # set up again by Open a saved project (restore)
         "headers": {u: _header_file(u) for u in sorted(units)},
         "functions": functions,
-        "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith(PRIVATE_HEADERS)},
+        # only parts with a header of their own: one without is compiled with the shared header (_effective_unit), and
+        # naming it sent the port's build looking for a header the save never wrote
+        "function_headers": {r["name"]: r["unit"] for r in rows if r["unit"].startswith(PRIVATE_HEADERS) and r["unit"] in units},
         "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
                     "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
         "symbols": net.layout_symbols(pid),

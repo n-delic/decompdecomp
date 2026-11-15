@@ -14,6 +14,7 @@ def save(tmp_path):
     (repo / "progress" / "src").mkdir(parents=True)
     (repo / "progress" / "include").mkdir()
     (repo / "progress" / "include" / "common.h").write_text("typedef int s32;\n")
+    (repo / "progress" / "include" / "common_local_source_599.h").write_text('#include "common.h"\n')
     for name, text in {"race_update.c": "void race_update(void) {}\n", "osCreateThread.c": "void osCreateThread(void) {}\n",
                        "tokenize.c": "void tokenize(void) { /* console stack layout */ }\n"}.items():
         (repo / "progress" / "src" / name).write_text(text)
@@ -46,7 +47,7 @@ def test_the_build_takes_matched_c_less_what_the_host_provides_plus_the_ports_ow
     assert built["race_update.c"].startswith('#include "common_local_source_599.h"\n')  # its part's header
     assert built["func_8001E640.c"].count('#include "common') == 1  # the shared header, included once
     assert "&tokens[n]" in built["tokenize.c"]
-    assert {p.name for p in (out / "include").glob("*.h")} == {"common.h", "gap.h"}
+    assert {p.name for p in (out / "include").glob("*.h")} == {"common.h", "common_local_source_599.h", "gap.h"}
     (repo / "port" / "wasm" / "src" / "func_8001E640.c").unlink()  # a file that went goes from the build too
     gather(repo, out)
     assert not (out / "src" / "func_8001E640.c").exists()
@@ -396,3 +397,59 @@ def test_a_function_is_called_from_a_recorded_state_as_mips_passed_its_arguments
     table = function_table(header, ["start_yaw 0x80002000 func"])
     assert "const PortCall port_calls[] = {\n    {0x80001000u, port_i_w2c_game_func_80001000},\n" \
            "    {0x80002000u, port_i_w2c_game_start_yaw}," in table
+
+
+def test_a_part_header_the_save_never_wrote_falls_back_to_the_shared_one(tmp_path):
+    """A racing game's save named alEvtqNextEvent's part (local_source_<id>) with no header for it: the app compiles
+    such a function with the shared header, and the build stopped at the missing file."""
+    repo, manifest = save(tmp_path)
+    (repo / "progress" / "include" / "common_local_source_599.h").unlink()
+    gather(repo, tmp_path / "build")
+    assert (tmp_path / "build" / "src" / "race_update.c").read_text().startswith('#include "common.h"\n')
+
+
+def test_an_unused_kr_varargs_stub_compiles_as_an_unprototyped_function():
+    from decompnet.port.wasm.build import kr_varargs
+    stub = ("#define va_alist __builtin_va_alist\n#define va_dcl int __builtin_va_alist; ...\n\n"
+            "void func_8003DE60(va_alist)\nva_dcl\n{\n}\n")
+    assert "void func_8003DE60()\n{" in kr_varargs(stub)
+    reads = stub.replace("{\n}", "{ va_list ap; va_start(ap); va_end(ap); }")
+    assert kr_varargs(reads) == reads  # one that reads its arguments is left for the port's own C
+
+
+def test_a_file_defining_other_functions_keeps_only_its_own_when_they_have_theirs(tmp_path):
+    """A racing game's three sound-player setters were each matched with C defining all three: the port compiles
+    whole files, so the copies collided at link."""
+    repo, _ = save(tmp_path)
+    both = ("static int helper(void) { return 1; }\n"
+            "void race_update(void) { helper(); }\n"
+            "void tokenize(void) { /* not race_update's */ }\n"
+            "void elsewhere(void) {}\n")
+    (repo / "progress" / "src" / "race_update.c").write_text(both)
+    gather(repo, tmp_path / "build")
+    built = (tmp_path / "build" / "src" / "race_update.c").read_text()
+    assert "void race_update(void)" in built and "static int helper" in built
+    assert "void tokenize" not in built  # tokenize.c has its own
+    assert "void elsewhere" in built  # no file of its own: kept
+
+
+def test_callers_that_disagree_on_an_unprototyped_return_get_one_signature(tmp_path):
+    """A racing game's callers declared a function outside its layout `s32 f();` in one file and `void f();` in
+    another: neither defines it, sigs.py skipped declarations with no prototype, and the link refused the two. One
+    declared only one way keeps its call sites as they are (the host's builtins take the argument the C passes)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from decompnet.port.wasm import build
+    one = tmp_path / "a.ll"
+    one.write_text("declare i32 @func_8021FCA4(...)\ndeclare i32 @__builtin_mips_exchange_fcsr(...)\n")
+    two = tmp_path / "b.ll"
+    two.write_text("declare void @func_8021FCA4(...)\n")
+    known = tmp_path / "known.sigs"
+    known.write_text("")
+    out = tmp_path / "sigs.txt"
+    subprocess.run([sys.executable, str(Path(build.HERE) / "sigs.py"), str(out), str(known), str(one), str(two)],
+                   check=True, capture_output=True, text=True)
+    rows = dict(line.split("\t", 1) for line in out.read_text().splitlines())
+    assert rows == {"func_8021FCA4": "i32\t"}  # a value over none, no parameters known
