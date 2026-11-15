@@ -207,16 +207,34 @@ def enabled(net,proj):
 
 
 def _lead(net,proj,fn,hint):
-    """(name, corpora) of an open function library detection found (`hint`: one name), or None. With a port kit only
-    what it replaces or its glue supplies (`PortKit.sdk_group`): the N64 port compiles libultra's math and
-    synthesizer for the PC ("native"), and a name it doesn't know (a racing game's `_n_loadBuffer`, `read32`) is the
-    game's own code to it, so both keep their C work."""
-    if json.loads(fn['meta'] or '{}').get('reopened'):return None
+    """(name, corpora, the port's source or None) of an open function library detection found (`hint`: one name),
+    or None. With a port kit only what it replaces or its glue supplies (`PortKit.sdk_group`), or what it compiles
+    as the game's C ("native": the N64 port's libultra math and synthesizer) when the user's ultralib has that C for
+    the build detection matched (port/ultralib.source): the port then compiles ultralib's C in its place. A name the
+    kit doesn't know (a racing game's `_n_loadBuffer`, `read32`) is the game's own code to it and keeps its C work."""
+    meta=json.loads(fn['meta'] or '{}')
+    if meta.get('reopened'):return None
     names=hint.get('names') or []
     if len(names)!=1 or not names[0] or ' / ' in names[0]:return None
     kit=net.console(proj).port_kit
-    if kit is not None and kit.sdk_group(names[0]) not in ('replaced','glue'):return None
-    return names[0],list(hint.get('corpora') or [])
+    group=kit.sdk_group(names[0]) if kit is not None else 'replaced'
+    if group in ('replaced','glue'):return names[0],list(hint.get('corpora') or []),None
+    if group!='native':return None
+    from ..port import ultralib
+    found=ultralib.source(names[0],hint,(meta.get('naming') or {}).get('fingerprint'))
+    if found is None:return None
+    path,build=found
+    return names[0],list(hint.get('corpora') or []),{'ultralib':path.relative_to(ultralib.root()).as_posix(),'build':build}
+
+
+def ultralib_set_aside(net,proj):
+    """{function: (ultralib's file, build)} of the functions set aside for the port to build from ultralib's C."""
+    out={}
+    for row in net.project_store(proj['id']).all("SELECT name,meta FROM functions WHERE project_id=? AND status='asm' AND "
+                                                  "json_extract(meta,'$.verified_assembly.port_source.ultralib') IS NOT NULL",proj['id']):
+        found=json.loads(row['meta'])['verified_assembly']['port_source']
+        out[row['name']]=(found['ultralib'],found['build'])
+    return out
 
 
 def detected(net,proj):
@@ -269,6 +287,8 @@ def discover_c(net,proj,stop=None,progress=None):
         if not lead or store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):continue
         proof=(verify(net,proj,fn,{'names':[lead[0]],'corpora':lead[1]},publish=False,from_c=True)
                or signature_proof(proj,fn,lead[0],hint))
+        if proof and lead[2]:
+            proof['port_source']=lead[2]  # the port builds ultralib's C for it (port/ultralib.units)
         if proof:count+=int(save(net,proj,fn,proof))
     if stop is None:
         with store.tx() as db:

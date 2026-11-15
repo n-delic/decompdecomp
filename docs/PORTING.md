@@ -234,6 +234,15 @@ What it can't adapt goes in the game's save repository, `port/wasm/`:
 - `src/`: C only the port has;
 - `overrides/`: the port's version of a matched file, until its fix is in the matched C behind `#ifdef PORT`.
 
+Library code the port compiles as C (libultra's math and synthesizer: `PortKit.sdk_group` "native") needn't be the
+game's own matched C. With libultra source (decompals/ultralib, a proprietary pack the user accepts in Compilers &
+tools) installed and the project's library setting on, a function library detection finds as ultralib's own build is
+set aside as SDK code, and the build compiles ultralib's C for it (`port/ultralib.py`, `build.py`'s `library_c`):
+one function a unit, cut from ultralib's file with its directives and static helpers, built with ultralib's headers
+and the defines of the build the game's copy matched. The units go to `port/wasm/build/ultralib/`, which git ignores:
+ultralib's C is SGI's and Nintendo's and never part of a save. The game's own matched C for a function wins. The link
+check lists these as their own group (`ultralib`).
+
 The game's C is the console's: `PORT` is defined only for a file that needs it in WebAssembly (one using
 `<stdarg.h>`, `__builtin_next_arg` or inline assembly), because the native port's `#ifdef PORT` fixes are for a
 64-bit PC and some drop what the console needs (a display list's address written as 0, "no meaning on PC").

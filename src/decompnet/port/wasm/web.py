@@ -234,7 +234,8 @@ def merge_for_asyncify(host: Path, game: Path, out: Path, binaryen: Path, log, s
     shutil.rmtree(work, ignore_errors=True)
 
 
-def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), simd: bool = False) -> Path:
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), simd: bool = False,
+          library_c=None) -> Path:
     """Build the game in the save repository `repo` for the browser; returns the folder that plays it
     (port/wasm/build/web: index.html and what it loads, without the ROM, which the player chooses). `simd`: also
     the faster build for browsers with WebAssembly SIMD (SIMD), which the page plays where it can."""
@@ -243,7 +244,7 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     if kit is None or kit.wasm is None or not (Path(kit.wasm) / "web").is_dir():
         raise NetworkError(f"{consoles.get(console).name} has no browser build yet (its port kit has no web host)")
     host = Path(kit.wasm)
-    native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)  # its IR, tables and wasm2c header; only what changed
+    native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c)  # its IR, tables and wasm2c header; only what changed
     out = repo / "port" / "wasm" / "build"
     web = out / "web"
     for name in ("gen", "obj"):

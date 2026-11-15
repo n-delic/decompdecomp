@@ -264,6 +264,7 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
         raise NetworkError(f"export as one of: {', '.join(KINDS)}")
     repo, cfg, rom_file = play.game(net, slug)
     leave_out = play.library(net, slug, log)
+    library_c = play.library_c(net, slug)
     console = cfg.get("platform", "n64")
     title = cfg.get("rom", {}).get("title") or slug
     out = repo / "port" / "wasm" / "export"
@@ -276,7 +277,8 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
         sdl = toolchains.ensure("sdl3", log=log) if kind == "window" else None
         steps = (*build.STEPS, PACKING)
         # On macOS the app runs on Apple Silicon and Intel Macs alike, whichever kind exported it.
-        program = build.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=True)
+        program = build.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=True,
+                              library_c=library_c)
         build.Progress(log, steps).start(PACKING)
         log(f"packing {title} as an app for " + ("Apple Silicon and Intel Macs" if sys.platform == "darwin"
                                                   else "this computer") + (", in a window of its own" if sdl else ""))
@@ -284,7 +286,7 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
         folder = out / kind
     elif kind == "miyoo":
         steps = (*miyoo.STEPS, PACKING)
-        program = miyoo.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
+        program = miyoo.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c)
         build.Progress(log, steps).start(PACKING)
         log("packing the Miyoo Mini's SD card folders")
         rom = cfg.get("rom", {})
@@ -294,7 +296,8 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
         steps_for_player = miyoo.instructions(folder, title)
     else:
         steps = (*web.STEPS, PACKING)
-        folder = web.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, simd=simd)
+        folder = web.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, simd=simd,
+                           library_c=library_c)
         build.Progress(log, steps).start(PACKING)
         log("copying the browser build")
         folder = web.export(folder, out / "web")
