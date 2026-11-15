@@ -82,8 +82,9 @@ Where to start on a gap:
   arguments are guessed (a draft fed the project's headers, through a Ghidra script that applies them, is the next
   step). Games built with Visual C++ 6.0 to 2010 and 2017 can match; 2015's and 2019 and newer's build with 2017's,
   2012-2013's with 2010's, a 64-bit game with 2017's 64-bit compiler or, for any other build, your own x64 copy: Newer
-  Windows games, below, is the plan for the packs' own compilers. A class’s constructors are one real name (`CFoo::CFoo`), so of two at two addresses (a copy
-  constructor) only one can be written as a constructor: names.py would need the mangled signature in "names". A
+  Windows games, below, is the plan for the packs' own compilers. A class’s constructors are one real name
+  (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor:
+  names.py would need the mangled signature in "names". A
   game's own DLLs come along when its folder or .exe is given by path; a dropped .exe comes alone (a browser doesn't
   hand over the folder), a project made before can't take its DLLs in yet (Reimport analyses the programs
   a project has), a project restored or cloned asks only for the .exe (`ForkProject.needs` names one file: the DLLs go in
@@ -120,7 +121,8 @@ Where to start on a gap:
 - **64-bit Windows games (x64).** A 64-bit program (PE32+) imports like a 32-bit one and builds with Visual C++
   2017's 64-bit compiler, the packs' only one: a game built with 2015, 2019 and newer, or 2005 to 2013's 64-bit
   compilers builds with it, and the import says how near that is; a build the pack doesn't have exactly reaches
-  your own x64 Visual C++ copy (kits/visualcpp.py) when you've added one, as a 32-bit game reaches your x86 copy. Its functions come from the program, not
+  your own x64 Visual C++ copy (kits/visualcpp.py) when you've added one, as a 32-bit game reaches your x86 copy. Its
+  functions come from the program, not
   Ghidra's guesses: the exception directory (`.pdata`) has the start and end of every function that uses the stack
   (a function's chained parts joined to it, its jump tables in it), and the leaf functions between them are read
   from the code, one after another (on the 64-bit demo Ghidra finds 7 of 18 functions; a test compares the two).

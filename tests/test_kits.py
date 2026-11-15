@@ -217,7 +217,7 @@ def test_a_cross_hosted_cl_puts_its_mspdb_folder_and_common7_on_the_path(tmp_pat
 
 
 def test_the_installed_vc9_cross_cl_finds_its_mspdb_in_the_parent_bin():
-    cross = Path.home() / ".local/share/decompnet/toolchains/msvc2005/9.0/Bin/x86_amd64/cl.exe"
+    cross = toolchains.root() / "msvc2005/9.0/Bin/x86_amd64/cl.exe"
     if not cross.exists():
         pytest.skip("the Visual C++ 2008 (VC9) x86_amd64 cross copy isn't installed")
     dirs = _pc_compile_module()._dll_dirs(str(cross))
@@ -230,9 +230,9 @@ def test_a_pre_2015_x64_cross_compiles(tmp_path):
     PATH the compile fails. Point DECOMPNET_MSVC2005_X64_TEST at a VC 2005/2008 copy's version root to run this on a
     copy installed elsewhere."""
     root = Path(os.environ.get("DECOMPNET_MSVC2005_X64_TEST")
-                or Path.home() / ".local/share/decompnet/toolchains/msvc2005/9.0")
+                or toolchains.root() / "msvc2005/9.0")
     cross = root / "Bin" / "x86_amd64" / "cl.exe"
-    wibo = Path.home() / ".local/share/decompnet/toolchains/wibo/wibo"
+    wibo = toolchains.path("wibo") / "wibo"
     if not cross.exists():
         pytest.skip("no Visual C++ 2005-2013 x86_amd64 cross cl.exe (set DECOMPNET_MSVC2005_X64_TEST)")
 
@@ -260,7 +260,7 @@ def test_a_pre_2015_x64_cross_compiles(tmp_path):
         assert not made_object(wibo, {"PATH": os.pathsep.join([*dirs, os.environ.get("PATH", "")])}), \
             "mspdb*.dll on the unix PATH should not be found -- it must be on WINEPATH"
     wine = os.environ.get("DECOMPNET_WINE") or shutil.which("wine")
-    prefix = os.environ.get("DECOMPNET_WINE_PREFIX") or str(Path.home() / ".local/share/decompnet/toolchains/.wine")
+    prefix = os.environ.get("DECOMPNET_WINE_PREFIX") or str(toolchains.root() / ".wine")
     if wine and Path(prefix).is_dir():
         ran = True
         assert made_object(wine, {"WINEPATH": winepath, "WINEPREFIX": prefix}), \
