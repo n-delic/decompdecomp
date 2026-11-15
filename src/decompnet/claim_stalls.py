@@ -1,12 +1,35 @@
 """Keep automatic workers from passing an unchanged failed candidate around indefinitely."""
 import hashlib
 import json
-from functools import lru_cache
+import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import lru_cache, wraps
 from pathlib import Path
 
 VERSION = 'local-repairs-v21'
 RELEASES = 3
 PREFIX = 'agent-stall:'
+_rule_snapshot = ContextVar('repair_rule_snapshot', default=None)
+
+
+@contextmanager
+def rule_snapshot():
+    """One foreground operation's advisory implementation stamp, never its game inputs or verdicts."""
+    active = _rule_snapshot.get()
+    if active is not None and active['owner'] == threading.get_ident():
+        yield
+        return
+    token = _rule_snapshot.set({'owner': threading.get_ident()})
+    try:yield
+    finally:_rule_snapshot.reset(token)
+
+
+def snapshot_rules(function):
+    @wraps(function)
+    def run(*args, **kwargs):
+        with rule_snapshot():return function(*args, **kwargs)
+    return run
 
 
 def common_state(net, proj):
@@ -22,7 +45,14 @@ def repair_rules():
     """
     from .compile_sessions import current
     session = current()
-    if session is None:return _repair_rules()
+    if session is None:
+        active = _rule_snapshot.get()
+        if active is None or active['owner'] != threading.get_ident():return _repair_rules()
+        identity = (repair_rules, _repair_rules)
+        snapshot = active.get('snapshot')
+        if snapshot is None or snapshot[0] != identity:
+            snapshot = active['snapshot'] = (identity, tuple(_repair_rules()))
+        return list(snapshot[1])
     identity = (repair_rules, _repair_rules)
     snapshot = getattr(session, 'repair_implementations', None)
     if snapshot is None or snapshot[0] != identity:
