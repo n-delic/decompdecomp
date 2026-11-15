@@ -56,13 +56,13 @@ function renderRepositorySetup(state) {
   renderRepositoryControls();
   refreshRepositoryPush(true);
 }
-/* The overview poll rechecks the repository every 10 s. Only the first check of a project and an explicit retry show
+/* The overview poll rechecks the repository at most once a minute. Only the first check of a project and an explicit retry show
    the bar: flashing it on each recheck pushed the Settings column down and back up 22 px while the user scrolled. */
 async function refreshRepositorySetup(shown = false) {
   const slug = S.slug;
   if (!slug) return;
   if (repositorySetupSlug === slug && repositorySetupLoading) return;
-  if (repositorySetupSlug === slug && Date.now() - repositorySetupChecked < 10000) return;
+  if (repositorySetupSlug === slug && Date.now() - repositorySetupChecked < 60000) return;
   if (repositorySetupSlug !== slug) {
     repositorySetupAbort?.abort();
     repositorySetupLoading = false;

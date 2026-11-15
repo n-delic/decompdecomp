@@ -244,10 +244,12 @@ async function stalePathAndTimeoutRegression() {
   assert.equal(get('repositorySetupState').textContent,'Git repository: /v-rally');
   assert.equal(get('repositorySetupRetry').hidden,true);
   // A background recheck keeps the layout still; the bar shows only for a first check or an explicit retry.
-  context.Date={now:()=>Date.now()+60000};
+  context.Date={now:()=>Date.now()+61000};
   const recheck=context.refreshRepositorySetup();
   assert.equal(get('repositorySetupLoading').hidden,true,'a background recheck must not shift the Settings page');
   requests.shift()(state('v-rally'));await recheck;
+  // Rechecks come at most once a minute: 30 s later the poll asks nothing.
+  context.Date={now:()=>Date.now()+91000};await context.refreshRepositorySetup();assert.equal(requests.length,0);
   context.Date=Date;
   late(state('old'));await Promise.resolve();
   context.renderRepositorySetup(state('old'));
