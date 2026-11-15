@@ -98,6 +98,8 @@ def test_each_function_runs_as_the_games_c_the_hosts_or_recompiled(tmp_path):
     # the game's C calling the recompiled function: its import, typed, arguments as o32 passes them
     assert "u32 w2c_env_func_80003000(struct w2c_env *e, u32 a0, f32 a1)" in bridges and "port_rb32(a1)" in bridges
     assert "{0x80003000u, (void *)G_func_80003000}" in bridges  # through a pointer, or as a thread's entry
+    # a call through a pointer gives way to a thread the retrace woke, as the game's C does at port_func
+    assert "recomp_func_t *get_function(int32_t vram) {\n    port_safe_point();" in bridges
     assert "R___osSiRawStartDma_recomp(uint8_t* rdram" in (out / "funcs.h").read_text()
     # into the game's C: $a0-$a3 in adapt.py's register words, for a callee that passes on what it doesn't declare
     assert "for (int i = 0; i < 4; i++) STORE_W(4 * i, 0x90000u, w[i]);" in bridges
