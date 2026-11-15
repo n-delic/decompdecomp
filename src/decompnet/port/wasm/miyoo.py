@@ -46,10 +46,10 @@ def _folder(title: str) -> str:
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), library_c=None,
-          library_names=None) -> Path:
+          library_names=None, function_headers=None) -> Path:
     """Build the game for the PC (only what changed), then its host for the Miyoo Mini: port/wasm/build/miyoo/game."""
     native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c,
-                 library_names=library_names)
+                 library_names=library_names, function_headers=function_headers)
     repo = Path(repo).expanduser().resolve()
     kit = consoles.get(console).port_kit
     host = Path(kit.wasm)

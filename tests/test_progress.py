@@ -1424,6 +1424,17 @@ def test_exported_assembly_local_symbols_can_be_verified_again(project,platform)
     assert (folder/saves.MANIFEST).read_bytes()==saved
 
 
+def test_a_name_whose_kind_recovery_left_unknown_saves(project):
+    """Reviewed-tail recovery names an address it can't classify with kind 'unknown' (reviewed_code.py); an N64
+    game's save then stopped at its own check ("symbol 'AW' has an invalid name, address, size or kind")."""
+    net,folder,_=project
+    pid=net._project('game')['id']
+    with net.store.tx() as db:
+        db.execute('INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)',(pid,'AW',0x100390,0,'unknown'))
+    net.progress.sync('game',force=True)
+    assert {'name':'AW','address':0x100390,'size':0,'kind':'unknown'} in json.loads((folder/saves.MANIFEST).read_bytes())['symbols']
+
+
 @pytest.mark.parametrize('name',['../bad','.L../bad','.Lbad/name','bad-name','label:','a;evil',''])
 def test_assembly_label_support_does_not_allow_paths_or_invalid_symbols(project,name):
     net,folder,_=project

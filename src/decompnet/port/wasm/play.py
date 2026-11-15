@@ -161,7 +161,20 @@ def inputs(net, slug: str, log=print) -> dict:
     code built from ultralib's C (`library_c`), library code's own names (`library_names`), and the recompiled C for
     functions with no C yet (`recomp`)."""
     return {"leave_out": library(net, slug, log), "library_c": library_c(net, slug),
-            "library_names": library_names(net, slug), "recomp": recompiled(net, slug, log)}
+            "library_names": library_names(net, slug), "recomp": recompiled(net, slug, log),
+            "function_headers": function_headers(net, slug)}
+
+
+def function_headers(net, slug: str) -> dict[str, str]:
+    """Which part's own header each function compiles with ({function: part}), from the project as it is now, as a
+    save names them (saves.py). A save written before saves named them (1da025c3) has none, so its WebAssembly build
+    gave every function the shared header and 268 files of an N64 game stopped at `unknown type name`."""
+    from ...app.saves import PRIVATE_HEADERS
+    with net.progress.view():
+        proj = net._project(slug)
+    units = net._unit_contexts(proj["id"])
+    rows = net.project_store(proj["id"]).all("SELECT name,unit FROM functions WHERE project_id=?", proj["id"])
+    return {r["name"]: r["unit"] for r in rows if r["unit"].startswith(PRIVATE_HEADERS) and r["unit"] in units}
 
 
 def recompiled(net, slug: str, log=print) -> dict | None:
