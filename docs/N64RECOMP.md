@@ -1,6 +1,6 @@
 # N64Recomp in decompdecomp: a port before the decomp is done, and a reference for every function
 
-Status: phases 0 and 1 are built (Porting → Recompile with N64Recomp, and the `compare_behaviour` tool; `consoles/n64/recomp.py`, `app/recompile.py`, `app/behaviour.py`); the rest is a plan. ROADMAP.md, "N64Recomp: a playable game from day one", tracks it.
+Status: phases 0 and 1 are built (Porting → Recompile with N64Recomp, and the `compare_behaviour` tool; `consoles/n64/recomp.py`, `app/recompile.py`, `app/behaviour.py`), and phase 2 for the native build (Play and the app export: `port/wasm/recomp.py`); the rest is a plan. ROADMAP.md, "N64Recomp: a playable game from day one", tracks it.
 
 ## Why
 
@@ -119,6 +119,31 @@ run takes about a minute and a half (recording, Recompile, the port's build); la
 - The emulator records calls once; the comparison then runs natively, thousands of calls a second.
 
 ### 2. The WebAssembly port with recomp where the decomp isn't done
+
+Built for the native build (Play, the app export, the behaviour check), not yet the browser or the Miyoo build.
+Play runs Recompile first when a project has none. The recompiled C runs in the host, natively, rather than in the
+WebAssembly module: the game's C already imports what it has no C for (`env.func_X`), and funcs.c's invokers already
+call the game's C from o32's words, so both directions needed only generated C (`port/wasm/recomp.py`):
+
+- each function by its console address: the game's C if the module exports it, else the host's by name (or library
+  detection's name for it: recompiled libultra would drive what the host emulates), else N64Recomp's C renamed
+  `R_<name>`, else a stub that names it (one N64Recomp refused, which it writes as an empty function, or whose C
+  branches to a label it doesn't have);
+- recomp.h rewritten for the port's memory (big-endian loads; N64Recomp's `MEM_W(o, r) = v` stores rewritten as
+  calls; uncached RAM and registers through port_io_load/port_io_store);
+- the game's C calling recompiled C: its import, typed, fills a register context as o32 passes those types, the
+  $a0-$a3 it doesn't declare from the register words (adapt.py's REGS), and leaves $v0 there. A function only
+  recompiled C has and no prototype describes gets MIPS's own signature (eight words in, a word out), so adapt.py
+  fills what a call leaves out from the caller's arguments, as MIPS leaves them: a racing game's matched alInit calls
+  `alSynNew()` with none, its $a0 and $a1 still alInit's;
+- calls through pointers and threads' entries: port_func falls back to a bridge with integer arguments;
+- a MIPS stack per host thread for recompiled code (0x14000000 up), handed down across nested calls both ways;
+- `PORT_RECOMP_TRACE=1` logs every call from recompiled C into the game's.
+
+On that racing game, with half its matched C (1,003 functions) left out of the build so recompiled C runs in its
+place, the game boots and draws as the all-matched build does (479 graphics tasks and 96 frames in 4 s). A second
+racing game, with 545 matched functions, runs 350 more as recompiled C through its NuSystem threads up to its main
+thread, whose code calls into an overlay its split doesn't have.
 
 - The port's build takes, for each function, the matched C if there is one, else the recompiled function. A table
   saved with the port records which (`recomp` or `decomp`), and Play shows the split ("62% decompiled C, 38%

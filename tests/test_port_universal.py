@@ -27,6 +27,7 @@ def test_the_app_export_asks_for_a_universal_build_and_play_does_not(tmp_path, m
     monkeypatch.setattr(play, "library", lambda net, slug, log=print: set())
     monkeypatch.setattr(play, "library_c", lambda net, slug: {})  # (no ultralib units: port/ultralib.py)
     monkeypatch.setattr(play, "library_names", lambda net, slug: {})  # (no library names to rename)
+    monkeypatch.setattr(play, "recompiled", lambda net, slug, log=print: None)  # (no recompiled C)
     monkeypatch.setattr(build, "build", lambda *a, **k: asked.update(k) or program)
     export.export(None, "rally", "app", log=lambda *a: None)
     assert asked["universal"] is True

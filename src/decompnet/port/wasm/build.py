@@ -601,7 +601,7 @@ _builds_guard = threading.Lock()
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
-          library_c=None, library_names=None) -> Path:
+          library_c=None, library_names=None, recomp=None) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
     caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
@@ -609,7 +609,8 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     `universal`: on macOS, a program for Apple Silicon and Intel Macs alike (port/wasm/build/game-universal), its
     objects kept apart from Play's so neither build undoes the other's. `library_c`: {file name: (C, flags)} of
     library functions built from ultralib's C (port/ultralib.units). `library_names`: library code's own names for
-    functions with no C (renames)."""
+    functions with no C (renames). `recomp`: {"folder", "header"} of the console's recompiler's output, whose C the
+    host runs for functions with no C yet (port/wasm/recomp.py)."""
     repo = Path(repo).expanduser().resolve()
     with _builds_guard:
         lock = _builds.setdefault(str(repo), threading.Lock())
@@ -618,13 +619,13 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
         lock.acquire()
     try:
         return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
-                      library_c=library_c or {}, library_names=library_names or {})
+                      library_c=library_c or {}, library_names=library_names or {}, recomp=recomp)
     finally:
         lock.release()
 
 
 def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,
-           library_names=None) -> Path:
+           library_names=None, recomp=None) -> Path:
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
         raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
@@ -694,6 +695,16 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     done = _run([py, HERE / "sigs.py", out / "sigs.txt", host / "libultra.sigs", *lls], log)
     if done.returncode:
         raise NetworkError(f"reading the functions' signatures failed: {done.stderr.strip()[-400:]}")
+    own = game_host(host, repo)
+    if recomp and Path(recomp["folder"], "recomp.json").is_file():  # what only recompiled C has: MIPS's own shape
+        from . import recomp as recomp_c
+        known = _rows(out / "sigs.txt", "\t")
+        extra = [n for n in recomp_c.mips_signatures(Path(recomp["folder"]), lls, fixed, [*sorted(host.glob("*.c")), *own],
+                                                      library_names) if n not in known]
+        if extra:
+            ret, params = recomp_c.MIPS_SIGNATURE
+            _write(out / "sigs.txt", (out / "sigs.txt").read_text(encoding="utf-8")
+                   + "".join(f"{n}\t{ret}\t{params}\n" for n in extra))
 
     _write(out / "renames.txt", "".join(f"{a} {b}\n" for a, b in sorted(renames(lls, fixed, library_names).items())))
     progress.start(STEPS[3])
@@ -729,16 +740,26 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
         raise NetworkError(f"making memory big-endian failed: {done.stderr.strip()[-400:]}")
     _sync(fresh, out / "c")  # only the parts that changed are compiled again
     _write(out / "funcs.c", function_table((out / "c" / "game.h").read_text(encoding="utf-8"), fixed))
-    own = game_host(host, repo)
-    _run([py, HERE / "stubs.py", out / "c" / "game.h", out / "stubs.c", *sorted(host.glob("*.c")), *own], log)
+    recompiled = []
+    if recomp and Path(recomp["folder"], "recomp.json").is_file():  # recompiled C for the functions with no C yet
+        from . import recomp as recomp_c
+        try:
+            prepared = recomp_c.prepare(Path(recomp["folder"]), out / "recomp", (out / "c" / "game.h").read_text(
+                encoding="utf-8"), fixed, [*sorted(host.glob("*.c")), *own], Path(recomp["header"]), library_names, log)
+        except (OSError, ValueError) as error:
+            raise NetworkError(f"the recompiled C couldn't be prepared for the port: {error}") from error
+        recompiled = prepared["units"]
+    _run([py, HERE / "stubs.py", out / "c" / "game.h", out / "stubs.c", *sorted(host.glob("*.c")), *own,
+          *(u for u in recompiled if u.name == "bridges.c")], log)
 
     progress.start(STEPS[6])
     log("building the host")
     rt = wabt / "share" / "wabt" / "wasm2c"
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-mem-impl.c",
              rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), *own, *sorted(host.glob("window/*.c")),
-             out / "funcs.c", out / "stubs.c"]  # window/: PORT_WINDOW's SDL2 window, opened only when asked
+             out / "funcs.c", out / "stubs.c", *recompiled]  # window/: PORT_WINDOW's SDL2 window, opened only when asked
     includes = ["-I", wabt / "include", "-I", rt, "-I", out / "c"]
+    quiet = ["-w", "-I", out / "recomp"]  # recompiled C: thousands of generated functions, warnings off
     arch = host_arch_flags(universal)
     cc = [*host_compiler(zig), *arch]
     host_flags = ["-O1", "-g", "-fno-inline"]
@@ -747,11 +768,12 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
 
     def compile_unit(unit: Path) -> str | None | bool:
         obj = objs / (unit.stem + ".o")
-        key = files.key(unit, [wabt / "include", rt, out / "c"], *cc, *host_flags)
+        extra = quiet if unit.parent == out / "recomp" else []
+        key = files.key(unit, [wabt / "include", rt, out / "c", out / "recomp"], *cc, *host_flags, *extra)
         if _fresh(obj, key):
             return False
         _unstamp(obj)
-        done = _run([*cc, *host_flags, *includes, "-c", unit, "-o", obj], log, env=env)
+        done = _run([*cc, *host_flags, *extra, *includes, "-c", unit, "-o", obj], log, env=env)
         if done.returncode:
             return (done.stderr.strip().splitlines() or ["failed"])[0]
         _stamp(obj, key)

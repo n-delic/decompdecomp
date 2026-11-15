@@ -2059,6 +2059,10 @@ instructions do:
 - **Reference:** the same functions are a reference beside the reversing emulator. Recorded calls, run through the
   recompiled and the decompiled C, show where the port's C behaves differently even though its bytes match (the
   backwards race start's lost `$v0` would have shown on its first call).
+- **Built:** the fallback in the native build (Play, the app export): a function with no matched C runs as its
+  recompiled C, natively in the host, bridged both ways (docs/N64RECOMP.md, phase 2). Left: the browser and Miyoo
+  builds, float arguments through function pointers into recompiled C, and code N64Recomp refuses (a tail call it
+  doesn't follow, code the split doesn't have).
 
 Phases:
 - pin and build N64Recomp, and write its configuration from the split;
