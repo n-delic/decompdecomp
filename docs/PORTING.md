@@ -280,6 +280,18 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
 - the app's **Export…** (Porting, beside Play; `port/wasm/export.py`): the game as something to keep and share,
   into the save repository's `port/wasm/export/` (git ignores it: it's built from the game). Neither export holds
   the ROM; each asks the player for their own.
+  Each export also adds a GitHub Actions workflow to the project's repository (`port/wasm/workflows.py`) that makes
+  the same export again on every published release, never on pull requests or pushes: the browser build
+  (`export-web.yml`) is deployed to the repository's GitHub Pages (Settings > Pages > Source: GitHub Actions, once),
+  the others (`export-app-<system>.yml` on that system's runner, `export-window-macos.yml`, `export-miyoo.yml`)
+  are attached to the release. A runner has the save alone, so the export writes what its build took from the
+  project into `port/wasm/export.json` (the library code the host provides, library code's own names, the functions
+  built from ultralib's C, the game's title and version) and the workflow runs
+  `python -m decompnet.port.wasm export SAVE --kind KIND --out FOLDER` with the decompdecomp it was exported with
+  (its commit, or its release tag); `--ultralib` installs libultra's source there when the save builds library code
+  from it. Both files are committed (those paths alone) and never pushed. What a runner can't make it leaves out:
+  the Miyoo Mini's pack has no ROM (the player puts theirs in it), and the apps run the game's C without the C
+  recompiled from the ROM.
   - *Standalone app for this computer*: the native program with a launcher. On macOS a universal app (`Game.app`,
     macOS 11 and up, for Apple Silicon and Intel Macs alike, whichever kind exported it) that asks for the ROM once, keeps its saves in its own Application Support folder and opens the game
     in the browser; quitting it stops the game. Its program is a small compiled universal launcher that runs

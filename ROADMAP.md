@@ -1156,6 +1156,13 @@ Left:
   sound in the window are untried by hand;
 - the browser build for consoles other than the N64: "—" until their kits have a host.
 
+Each export also adds a workflow to the project's repository that makes it again on GitHub for every published
+release (never pull requests): the browser build to GitHub Pages, the apps and the Miyoo Mini's pack attached to the
+release (`port/wasm/workflows.py`, `python -m decompnet.port.wasm export`). Left: the browser build's workflow run
+end to end on GitHub (the command it runs is tried from a fresh clone of a racing game's save); the apps on a
+runner have no recompiled C (it comes from the ROM), so a game that still needs it stops where it runs; caching
+the toolchains between releases.
+
 ### The browser build's WebGL renderer
 
 The browser build's page can draw on the GPU (Renderer: WebGL, at 1x to 4x the console's resolution) as well as in

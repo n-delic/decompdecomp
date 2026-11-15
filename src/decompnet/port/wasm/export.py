@@ -259,22 +259,15 @@ def _game_c_only(inputs: dict) -> dict:
     return {k: v for k, v in inputs.items() if k != "recomp"}
 
 
-def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
-    """Build the project's game (only what changed) and export it as `kind` ("app", "web" or "miyoo"): {"kind",
-    "folder", "path" (what to open), "files"}. `simd`: a browser build also carries the faster build for browsers
-    with WebAssembly SIMD (web.SIMD), which the page plays where it can."""
+def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: dict, rom_file: Path | None,
+         inputs: dict, simd: bool = False, log=print) -> tuple[Path, Path]:
+    """Build the game in the save `repo` (only what changed) and pack it as `kind` into `dest` (replaced): (the
+    folder, what to open in it). `inputs`: what the build takes besides the save (play.inputs); `rom`: the game's
+    title, region and SHA-1, for the Miyoo Mini's README; `rom_file`: the ROM the Miyoo Mini's pack carries, or
+    None (the player adds theirs)."""
     from ... import toolchains
-    from . import build, miyoo, play, web
+    from . import build, miyoo, web
 
-    if kind not in KINDS:
-        raise NetworkError(f"export as one of: {', '.join(KINDS)}")
-    repo, cfg, rom_file = play.game(net, slug)
-    inputs = play.inputs(net, slug, log)
-    console = cfg.get("platform", "n64")
-    title = cfg.get("rom", {}).get("title") or slug
-    out = repo / "port" / "wasm" / "export"
-    out.mkdir(parents=True, exist_ok=True)
-    build._write(out / ".gitignore", "*\n")  # built from the game: never committed
     if kind == "window" and sys.platform != "darwin":
         raise NetworkError("An app with its own window is made on a Mac for now; on Linux and Windows, export the "
                            "standalone app (it plays in the browser)")
@@ -286,38 +279,56 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
         build.Progress(log, steps).start(PACKING)
         log(f"packing {title} as an app for " + ("Apple Silicon and Intel Macs" if sys.platform == "darwin"
                                                   else "this computer") + (", in a window of its own" if sdl else ""))
-        path = package_app(program, out / kind, title, sdl=sdl)
-        folder = out / kind
-    elif kind == "miyoo":
+        return dest, package_app(program, dest, title, sdl=sdl)
+    if kind == "miyoo":
         steps = (*miyoo.STEPS, PACKING)
         program = miyoo.build(repo, console=console, log=log, steps=steps, **_game_c_only(inputs))
         build.Progress(log, steps).start(PACKING)
         log("packing the Miyoo Mini's SD card folders")
-        rom = cfg.get("rom", {})
         version = " ".join(x for x in (rom.get("title"), rom.get("region"), rom.get("sha1") and f"SHA-1 {rom['sha1']}") if x)
-        folder = miyoo.package(program, out / "miyoo", title, version, rom_file)
-        path = folder / "README.txt"
-        steps_for_player = miyoo.instructions(folder, title)
-    else:
-        steps = (*web.STEPS, PACKING)
-        folder = web.build(repo, console=console, log=log, steps=steps, simd=simd, **_game_c_only(inputs))
-        build.Progress(log, steps).start(PACKING)
-        log("copying the browser build")
-        folder = web.export(folder, out / "web")
-        _write(folder / "README.txt", README_WEB.format(title=title) + (README_WEB_SIMD if simd else ""))
-        path = folder / "index.html"
+        folder = miyoo.package(program, dest, title, version, rom_file)
+        return folder, folder / "README.txt"
+    steps = (*web.STEPS, PACKING)
+    folder = web.build(repo, console=console, log=log, steps=steps, simd=simd, **_game_c_only(inputs))
+    build.Progress(log, steps).start(PACKING)
+    log("copying the browser build")
+    folder = web.export(folder, dest)
+    _write(folder / "README.txt", README_WEB.format(title=title) + (README_WEB_SIMD if simd else ""))
+    return folder, folder / "index.html"
+
+
+def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
+    """Build the project's game (only what changed) and export it as `kind` ("app", "web" or "miyoo"): {"kind",
+    "folder", "path" (what to open), "files"}. `simd`: a browser build also carries the faster build for browsers
+    with WebAssembly SIMD (web.SIMD), which the page plays where it can. The project's repository also gets the
+    workflow that makes the same export on GitHub for each release (workflows.py)."""
+    from . import build, miyoo, play, workflows
+
+    if kind not in KINDS:
+        raise NetworkError(f"export as one of: {', '.join(KINDS)}")
+    repo, cfg, rom_file = play.game(net, slug)
+    inputs = play.inputs(net, slug, log)
+    console = cfg.get("platform", "n64")
+    title = cfg.get("rom", {}).get("title") or slug
+    out = repo / "port" / "wasm" / "export"
+    out.mkdir(parents=True, exist_ok=True)
+    build._write(out / ".gitignore", "*\n")  # built from the game: never committed
+    folder, path = make(repo, kind, out / kind, console=console, title=title, rom=cfg.get("rom", {}),
+                        rom_file=rom_file, inputs=inputs, simd=simd, log=log)
     files = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file())
     size = sum((folder / f).stat().st_size for f in files)
     log(f"exported {KINDS[kind]} to {path} ({len(files)} files, {size / 1e6:.1f} MB)"
         + ("; your ROM is in it" if kind == "miyoo" and any(f.endswith("/rom.z64") for f in files)
            else "; the ROM isn't in it: the player chooses their own"))
-    if kind == "web":
+    if kind == "miyoo":
+        steps_for_player = miyoo.instructions(folder, title)
+    elif kind == "web":
         steps_for_player = [f"Serve {folder} over http and open it in Chrome or Edge (its README.txt says how): "
                             "browsers load WebAssembly only over http.", "The page asks the player for their ROM."]
         if simd:
             steps_for_player.append("Browsers with WebAssembly SIMD (Chrome 91, Firefox 89, Safari 16.4 and later) play "
                                     "the faster build in it; older ones the plain build, also in it.")
-    elif kind in ("app", "window"):
+    else:
         steps_for_player = [f"Open {path} to play: it asks for your ROM the first time."]
         if kind == "window":
             steps_for_player.append("Keys: arrows steer, X is A, Z is B, Enter is Start, Space is Z, Q/W are L/R, "
@@ -326,5 +337,51 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
             steps_for_player.append("On another Mac, the first open needs Control-click > Open (or System Settings > "
                                     "Privacy & Security > Open Anyway): the app isn't signed by an Apple developer. "
                                     "\"How to open on a Mac.txt\" beside it says so for the player.")
+    github = None
+    try:
+        github = workflows.write(repo, kind, sys.platform, workflows.manifest(net, slug, cfg, inputs, simd), log)
+    except Exception as error:  # noqa: BLE001  the export itself is done; only its workflow is missing
+        log(f"the export is done, but its GitHub workflow wasn't added: {error}")
+    if github:
+        steps_for_player.append(
+            f"On GitHub, each published release makes this export again ({Path(github['workflow']).name}"
+            + (", committed: push it" if github["committed"] else "") + ")"
+            + ("; the repository's Settings > Pages > Source must be GitHub Actions, once."
+               if kind == "web" else ", attached to the release."))
     return {"kind": kind, "folder": str(folder), "path": str(path), "files": files, "bytes": size,
-            "system": {"app": sys.platform, "window": sys.platform, "web": "browser"}.get(kind, kind), "instructions": steps_for_player}
+            "system": {"app": sys.platform, "window": sys.platform, "web": "browser"}.get(kind, kind),
+            "instructions": steps_for_player, "github": github}
+
+
+def export_from_save(repo: Path, kind: str, out: Path, ultralib: bool = False, log=print) -> Path:
+    """The export of `kind` made from a save repository alone, as a GitHub runner makes it (workflows.py): what the
+    build took from the project comes from the save's port/wasm/export.json, which an export from decompdecomp
+    wrote. No ROM: the Miyoo Mini's pack asks the player for theirs, and the apps run the game's C alone.
+    `ultralib`: install libultra's source (proprietary) when the save builds library code from it, as the user
+    accepted in Setup where they exported. Returns the folder."""
+    from .. import ultralib as ul
+    from . import workflows
+
+    if kind not in KINDS:
+        raise NetworkError(f"export as one of: {', '.join(KINDS)}")
+    repo = Path(repo).resolve()
+    data = workflows.read_manifest(repo)
+    wanted = {name: tuple(found) for name, found in (data.get("ultralib") or {}).items()}
+    library_c = {}
+    if wanted:
+        folder = ul.root()
+        if folder is None:
+            if not ultralib:
+                raise NetworkError(f"{len(wanted)} library functions build from ultralib's C: pass --ultralib to "
+                                   "install libultra's source (its license is SGI's and Nintendo's)")
+            from ... import toolchains
+            toolchains.install(ul.PACK, accept_license=True, log=log)  # (--ultralib: the user accepts it)
+            folder = ul.root()
+        library_c = ul.units_from(wanted, folder)
+    inputs = {"leave_out": set(data.get("leave_out") or ()), "library_c": library_c,
+              "library_names": dict(data.get("library_names") or {}), "recomp": None}
+    title = data.get("title") or repo.name
+    folder, path = make(repo, kind, Path(out).resolve(), console=data.get("console") or "n64", title=title,
+                        rom=data.get("rom") or {}, rom_file=None, inputs=inputs, simd=bool(data.get("simd")), log=log)
+    log(f"exported {KINDS[kind]} to {path}")
+    return folder
