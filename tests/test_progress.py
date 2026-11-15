@@ -3564,3 +3564,37 @@ def test_a_failed_saved_check_cannot_acknowledge_and_delete_the_only_c(project, 
     assert net._function('f', 'game')['best_score'] == 10
     net.progress.sync('game', force=True)
     assert path.is_file()
+
+
+def test_a_saved_folder_the_sync_refuses_does_not_fail_agents_tool_calls(project, monkeypatch, caplog):
+    """An N64 game's folder lacked layout entries; every sync refused it, and since each tool call syncs before and
+    after (and every lookup inside it), every helper's every tool failed and no work was possible. The tool now runs
+    on the database; the folder's error stays where the app shows it, and nothing is written over the folder."""
+    from decompnet.app import tools
+    net, folder, _ = project
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/f.c").write_text("good code", encoding="utf-8")
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    data["layout"][0]["name"] = "renamed"  # a layout edit that renamed f: still refused, it's the folder's to fix
+    (folder / saves.MANIFEST).write_text(json.dumps(data), encoding="utf-8")
+    before = (folder / saves.MANIFEST).read_bytes()
+    agent, _ = net.local_agent("you")
+    monkeypatch.setattr(tools, "_dispatch", lambda net, agent, slug, name, args: net._project(slug)["slug"] + " worked")
+    with caplog.at_level("WARNING", logger="decompdecomp"):
+        for _ in range(3):
+            assert tools._invoke(net, agent, "game", "compile_and_diff", {"function": "f"}) == "game worked"
+    assert "function layout" in net.progress.errors["game"]
+    assert sum("tool calls continue with the database" in r.getMessage() for r in caplog.records) == 1
+    assert (folder / saves.MANIFEST).read_bytes() == before
+    with pytest.raises(NetworkError, match="function layout"):  # (outside a tool call the refusal still stands)
+        net.progress.sync("game", force=True)
+
+
+def test_a_pause_the_user_chose_still_holds_agents_tool_calls(project, monkeypatch):
+    from decompnet.app import tools
+    net, _, _ = project
+    agent, _ = net.local_agent("you")
+    monkeypatch.setattr(tools, "_dispatch", lambda *args: pytest.fail("ran while paused"))
+    net.progress.pause("game")
+    with pytest.raises(NetworkError, match="paused"):
+        tools._invoke(net, agent, "game", "compile_and_diff", {"function": "f"})
