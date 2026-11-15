@@ -347,6 +347,36 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   buffer, F3DEX2 or S2DEX by the microcode the task loads, and `PORT_FRAMES=folder` saves the frames shown as PNG.
   2D screens draw correctly; the 3D path draws a racing game's races, textured.
 
+#### The browser build's renderers
+
+The browser build's page offers two renderers (its **Renderer** choice, kept in the browser; `?renderer=webgl` or
+`?renderer=software` chooses for one visit), and the player can switch while the game plays:
+
+- **Software** (the default): `render.c` as above, every pixel as the console draws it, the frame read from RDRAM
+  and filtered as the VI shows it.
+- **WebGL**: the display lists are read, transformed, lit and clipped by `render.c` as for software, then each
+  primitive goes to the page with the RDP's state (`render_gpu.h`) and `web/gl.js` draws it with WebGL 2, at 1x to
+  4x the console's resolution (**Resolution**). Textures are decoded from TMEM in C (as the software sampler reads
+  them), each sent once by the hash of what made it; the shader per setting does the combiner, the blender (its
+  frame-buffer reads as GL blending), alpha compare, the samplers' wrap, mirror, clamp and filters (the RDP's
+  three-texel bilinear), levels of detail and the fog the RSP gives; depth is a depth buffer per z image, cleared
+  when the game fills it. Each frame buffer the game draws to is a texture of its own, shown when the VI is given
+  its address.
+
+What the WebGL renderer doesn't do yet, which software does (ROADMAP.md, "The browser build's WebGL renderer"):
+- frame-buffer effects: the GPU's frames aren't in RDRAM, so a game that reads its frame buffer back (a frame as a
+  texture, a pause screen's copy, a motion blur) reads what the CPU last wrote there. A frame the CPU writes itself
+  (a logo, a movie) is still shown: the GPU's frame is shown only while the frame buffer's RDRAM is as it was when
+  the GPU last drew it, otherwise RDRAM's, as software shows it;
+- the RDP's coverage anti-aliasing and dither, and the VI's filters other than gamma (anti-aliasing, dedither,
+  divot); 8-bit and 32-bit frame buffers are drawn as colour like the 16-bit ones;
+- a blender whose first cycle reads the frame buffer (rare) takes the pixel itself in its place.
+
+A racing game's boot, menus (2D backgrounds, sprites, a 3D car), attract races and a race were checked against
+software in Chrome, switching between the two on the same frames. `tests/test_n64_port_render_gpu.py` runs display
+lists through the GPU path and checks what the page is sent; `tests/web_gl_shaders.mjs` the shaders' combiner and
+blender.
+
 On macOS the host is built by the system's clang, because Zig 0.14.1 can't link against macOS 27's system library.
 
 Found on the first game, all things the judge can't see:

@@ -173,9 +173,25 @@ export function retracePeriod(exports) {
   return ms > 0 ? ms : 20;
 }
 
+/* The GPU renderer's imports (the N64 host's render_gpu.h): `io.gpu`, when the page draws on the GPU, takes the
+   renderer's commands and shows its frames; without it the host draws every frame in software. */
+function gpuImports(io, memory) {
+  // (the player may switch renderers between a task and its frame: then there's no GPU to draw on, and the host
+  // shows the frame from RDRAM)
+  const gpu = () => (io.gpu ? io.gpu() : null);
+  return {
+    gpu_ready: () => gpu()?.id || 0, // which renderer: a new one is sent everything again
+    gpu_run: (ptr, words, draws, vertices, pixels) => {
+      gpu()?.run(memory.buffer, ptr >>> 0, words, draws >>> 0, vertices >>> 0, pixels >>> 0);
+    },
+    gpu_present: (addr, w, h, flags) => gpu()?.present(addr >>> 0, w, h, flags) || 0,
+  };
+}
+
 /* Start the game from `base` (the folder of the build's files) and `rom` (the player's ROM, bytes). `io`:
    {frame(rgb, w, h), audio(lr, frames, hz), input() -> buttons<<16 | x<<8 | y, eepromLoad() -> bytes,
-   eepromSave(bytes), log(line, stream), error(error)}; `env`: the host's PORT_* options. Resolves once it runs. */
+   eepromSave(bytes), log(line, stream), error(error), gpu() -> the GPU renderer drawing now, or null (optional)};
+   `env`: the host's PORT_* options. Resolves once it runs. */
 export async function start({ base = "", rom, io, env = {} }) {
   if (!supported()) throw new Error("This browser can't run the game: it has no WebAssembly.");
   if (!promiseIntegration() || new URLSearchParams(globalThis.location?.search || "").has("asyncify")) {
@@ -217,6 +233,7 @@ export async function start({ base = "", rom, io, env = {} }) {
     frame: (ptr, w, h) => io.frame(bytes().subarray(ptr >>> 0, (ptr >>> 0) + w * h * 3), w, h),
     audio: (ptr, frames, hz) => io.audio(new Int16Array(memory.buffer, ptr >>> 0, frames * 2), frames, hz),
     input: () => io.input(),
+    ...gpuImports(io, memory),
   };
   const hostCodePlaced = placeDataOurselves(hostCode), gameCodePlaced = placeDataOurselves(gameCode);
   const hostModule = await WebAssembly.instantiate(hostCodePlaced.module, {
@@ -338,6 +355,7 @@ async function startAsyncify({ base = "", rom, io, env = {} }) {
       frame: (ptr, w, h) => io.frame(bytes().subarray(ptr >>> 0, (ptr >>> 0) + w * h * 3), w, h),
       audio: (ptr, frames, hz) => io.audio(new Int16Array(memory.buffer, ptr >>> 0, frames * 2), frames, hz),
       input: () => io.input(),
+      ...gpuImports(io, memory),
     },
   })).instance;
   ex = instance.exports;

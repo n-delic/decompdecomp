@@ -13,6 +13,7 @@
   canvas:fullscreen { width: auto; height: 100vh; margin: auto; object-fit: contain; }
   p { text-align: center; margin: 6px 0; }
   .muted { color: var(--muted); }
+  select { background: #222; color: var(--fg); border: 1px solid #444; border-radius: 6px; padding: 5px 8px; font: inherit; }
   button, label.button { background: #222; color: var(--fg); border: 1px solid #444; border-radius: 6px; padding: 6px 12px;
                          font: inherit; cursor: pointer; }
   button.primary, label.button { background: var(--accent); color: #111; border-color: var(--accent); }
@@ -36,6 +37,13 @@
     <p><button id="sound" type="button">Sound on</button> <button id="full" type="button">Full screen</button>
       <span class="muted" id="rate"></span></p>
   </section>
+  <p id="video"><label>Renderer <select id="renderer">
+      <option value="software">Software: as the console draws</option>
+      <option value="webgl">WebGL: on the GPU, sharper and faster</option></select></label>
+    <label id="scale-choice">Resolution <select id="scale">
+      <option value="1">1× (the console's)</option><option value="2">2×</option><option value="3">3×</option>
+      <option value="4">4×</option></select></label></p>
+  <p class="muted" id="video-note"></p>
   <p id="error" role="alert"></p>
 </main>
 <script type="module" src="play.js"></script>

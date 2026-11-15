@@ -15,6 +15,7 @@
  * PORT_DLTRACE=n: the display lists of tasks n to n+5 printed.
  */
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,6 +67,13 @@ static uint32_t images[8][2]; /* colour images drawn to: address, width */
 static int frame_height(void) { return cimg_width > 320 ? 480 : 240; } /* 640 wide: the high-resolution mode */
 
 #define cycle_type() ((int)((mode_h >> 20) & 3)) /* 0 one, 1 two, 2 copy, 3 fill */
+
+/* The GPU path (render_gpu.h): on when the page draws on the GPU (the browser build's WebGL), where each primitive
+   goes with the RDP's state instead of through the raster below. */
+static int gpu;
+static uint32_t gpu_gen = 1; /* bumped by every load into TMEM or the palette: the GPU's textures are made again */
+static void gpu_fill_rect(int x0, int y0, int x1, int y1);
+static void gpu_tex_rect(int tile, float x0, float y0, float x1, float y1, float s, float t, float dsdx, float dtdy, int flip);
 
 /* A channel's n bits as a fraction, by table: i / 255.0f and the like, each worked out once with the same division.
    Divided per texel and per pixel, these were a large part of the renderer's time. make_tables() fills them; the
@@ -532,6 +540,7 @@ static void fill_pixel(int x, int y) {
     if (cimg_addr == zimg_addr && !z_in_memory()) zbuf_private[y * MAXW + x] = 1e30f;
 }
 static void fill_rect(int x0, int y0, int x1, int y1) {
+    if (gpu) { gpu_fill_rect(x0, y0, x1, y1); return; }
     combiner_uses();
     if (cycle_type() == 3) { /* fill mode: edges inclusive, cut to the frame once (in_frame) rather than per pixel */
         int xa = x0, xb = x1, ya = y0, yb = y1, fh = frame_height();
@@ -572,6 +581,7 @@ static uint32_t texel_raw(const Tile *tile, int s, int t);
 /* A textured rectangle from (x0, y0) to (x1, y1) in pixels, texture coordinates s, t at its corner and their steps
    per pixel. */
 static void tex_rect(int tile, float x0, float y0, float x1, float y1, float s, float t, float dsdx, float dtdy, int flip) {
+    if (gpu) { gpu_tex_rect(tile, x0, y0, x1, y1, s, t, dsdx, dtdy, flip); return; }
     combiner_uses();
     int copy = cycle_type() == 2;
     if (copy) { dsdx /= 4.0f; x1 += 1; y1 += 1; }
@@ -613,6 +623,7 @@ static void tmem_texel32(uint32_t at, uint32_t src, int odd) {
 }
 static void load_block(int tile, int uls, int ult, int lrs, int dxt) {
     Tile *tl = &tiles[tile];
+    gpu_gen++;
     if (timg_siz == 3) { /* each 64-bit word two texels; the line counter as below */
         uint32_t src = phys(timg_addr) + (uint32_t)((ult * timg_width + uls) * 4), line = 0;
         uint32_t words = (uint32_t)(lrs - uls + 2) / 2;
@@ -633,6 +644,7 @@ static void load_block(int tile, int uls, int ult, int lrs, int dxt) {
 }
 static void load_tile(int tile, int uls, int ult, int lrs, int lrt) {
     Tile *tl = &tiles[tile];
+    gpu_gen++;
     int bpp4 = timg_siz == 0, bytes = bpp4 ? 1 : 1 << (timg_siz - 1);
     if (timg_siz == 3) {
         for (int t = ult; t <= lrt; t++)
@@ -650,6 +662,7 @@ static void load_tile(int tile, int uls, int ult, int lrs, int lrt) {
 }
 static void load_tlut(int tile, int count) {
     int base = tiles[tile].tmem - 256;
+    gpu_gen++;
     for (int i = 0; i < count; i++)
         if (base + i >= 0 && base + i < 256) tlut[base + i] = rd16(phys(timg_addr) + i * 2);
     tlut_colours_type = -1;
@@ -709,6 +722,7 @@ static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
    when G_MODIFYVTX gave its screen place directly. */
 typedef struct { float x, y, z, w, sx, sy, sz, s, t; Color shade; int clip, fixed_xy, fixed_z; float fx, fy, fz; } Vtx;
 static Vtx vtx[64];
+static void gpu_triangle(const Vtx *a, const Vtx *b, const Vtx *c);
 static float mv[10][16], proj[16], mvp[16];
 static int mv_depth;
 static float vp_scale[3] = {640, 480, 511}, vp_trans[3] = {640, 480, 511};
@@ -876,6 +890,7 @@ static void span(const Edge *const edges[3], const float areas[3], const float l
 
 /* One triangle already in front of the eye, in screen space. */
 static void raster(const Vtx *a, const Vtx *b, const Vtx *c) {
+    if (gpu) { gpu_triangle(a, b, c); return; }
     combiner_uses();
     Edge E0 = edge_of(b, c), E1 = edge_of(c, a), E2 = edge_of(a, b);
     float A0 = EDGE_AT(E0, a->sx, a->sy), A1 = EDGE_AT(E1, b->sx, b->sy), A2 = EDGE_AT(E2, c->sx, c->sy);
@@ -1257,6 +1272,7 @@ static void gbi1(uint8_t op, uint32_t w0, uint32_t w1) {
 
 static void s2d_load(uint32_t txtr) { /* uObjTxtr: a block, a tile or a palette into TMEM */
     uint32_t type = rd32(txtr), src = phys(rd32(txtr + 4));
+    gpu_gen++;
     int tm = rd16(txtr + 8), b = rd16(txtr + 10), c = rd16(txtr + 12);
     if (type == 0x00000030) { /* a palette: its first entry (phead) and its count minus one (pnum) */
         for (int i = 0; i <= b; i++) if (tm - 256 + i >= 0 && tm - 256 + i < 256) tlut[tm - 256 + i] = rd16(src + i * 2);
@@ -1283,6 +1299,8 @@ static Sprite s2d_sprite_tile(uint32_t sp) {
     tiles[7] = t;
     return o;
 }
+
+#include "render_gpu.h"
 static void s2d_sprite(uint32_t sp) { /* an unrotated rectangle from TMEM */
     Sprite o = s2d_sprite_tile(sp);
     tex_rect(7, o.x, o.y, o.x + o.iw / o.sw, o.y + o.ih / o.sh, 0, 0, 1.0f / o.sw, 1.0f / o.sh, 0);
@@ -1310,6 +1328,7 @@ static void s2d_sprite_rotated(uint32_t sp) {
     float A = obj_mtx[0], B = obj_mtx[1], C = obj_mtx[2], D = obj_mtx[3], X = obj_mtx[4], Y = obj_mtx[5];
     float det = A * D - B * C, w = o.iw / o.sw, h = o.ih / o.sh;
     if (fabsf(det) < 1e-6f || w <= 0 || h <= 0) return;
+    if (gpu) { gpu_sprite_rotated(&o, obj_mtx); return; }
     float cx[4] = {o.x, o.x + w, o.x, o.x + w}, cy[4] = {o.y, o.y, o.y + h, o.y + h};
     float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
     for (int i = 0; i < 4; i++) {
@@ -1335,6 +1354,7 @@ static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight f
     if (scw == 0) scw = 1;
     if (sch == 0) sch = 1;
     if (width <= 0 || height <= 0) return;
+    if (gpu && ((int)fw > 1024 || (int)fh > 1024)) return;
     for (int y = 0; y < (int)fh; y++)
         for (int x = 0; x < (int)fw; x++) {
             int s = (int)(ix + x * scw) % width, t = (int)(iy + y * sch) % height;
@@ -1349,10 +1369,12 @@ static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight f
                 c = (Color){by255[R[a]], by255[R[a + 1]], by255[R[a + 2]], by255[R[a + 3]]}; }
             }
             int px = (int)fx + x, py = (int)fy + y;
+            if (gpu) { gpu_scratch[y * (int)fw + x] = gpu_rgba(c); continue; }
             if (cycle_type() == 2) {
                 if (in_frame(px, py) && c.a > 0) { uint32_t a = pixel_addr(px, py); write_pixel(px, py, a, c, 0); cvg_set(a, 8); }
             } else { Texels tx = one_texel(c); plot(px, py, 0, (Color){1, 1, 1, 1}, &tx, 0, 8, 0); }
         }
+    if (gpu) gpu_bg((int)fx, (int)fy, (int)fw, (int)fh, gpu_scratch);
 }
 /* S2DEX 1.x (GBI 1) numbers its object commands differently: each mapped to S2DEX2's; the rest are GBI 1's. */
 static int s2dex1_op(uint8_t op) {
@@ -1396,6 +1418,7 @@ static unsigned long render_tasks;
 void port_render_task(uint32_t task) {
     make_tables();
     R = port_memory();
+    gpu_use(port_gpu_ready());
     if (!render_tasks) for (int i = 0; i < MAXW * MAXH; i++) zbuf_private[i] = 0x3FFFF; /* the farthest depth */
     render_tasks++;
     ucode = identify_ucode(rd32(task + 24)); /* the microcode's data names it */
@@ -1450,6 +1473,7 @@ void port_render_task(uint32_t task) {
         else f3dex2(op, w0, w1);
         if (branch_to) { pc = phys(branch_to); branch_to = 0; } /* G_BRANCH_Z taken: the rest of the list replaced */
     }
+    if (gpu) gpu_flush();
 }
 
 /* ---------------------------------------------------------------- frames saved as PNG */
@@ -1655,6 +1679,7 @@ void port_frame_shown(uint32_t fb, unsigned long n) {
     if (h > MAXH) h = MAXH;
     if (h < 1) h = 1;
     if ((size_t)addr + (size_t)w * h * bytes > 0x800000) h = (int)((0x800000 - addr) / ((uint32_t)w * bytes));
+    if (gpu && gpu_present(addr, w, h, vi.gamma)) return; /* the GPU's frame, shown by the page */
     uint8_t *rgb = malloc((size_t)w * h * 3);
     uint32_t base = 0x80000000u | addr;
     static uint8_t of5[32], of8[256]; /* each channel's value as unpack5551 and unpack8888 give it, times 255 */
