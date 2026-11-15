@@ -566,6 +566,11 @@ RECHECK_MINUTES = 60
 DEFER_SECONDS = 10
 
 
+class ProgressPaused(NetworkError):
+    """The user paused saved-progress verification: their choice, so a tool call that would change the project waits
+    for them (Progress.tolerating doesn't pass over it)."""
+
+
 class ProgressMoved(NetworkError):
     """The saved files changed under a call (a save, a pull, a recheck) before it changed anything. Nothing was recorded, so
     the call is safe to run again once the project settles: tools do that for the agent (tools._invoke)."""
@@ -621,6 +626,7 @@ class Progress:
         self.publishing: dict[Path, list[_Publication]] = {}
         saves.publish_watchers.add(self)
         self.errors: dict[str, str] = {}
+        self._tolerated_logged: dict[str, str] = {}  # slug -> the folder error a tool call last passed over (logged once)
         self.signatures: dict[str, tuple] = {}  # slug -> every file's stat after the last acknowledged sync
         # slug -> the folder's change watch (folder_watch), and the watch's mark from just before the stat that gave
         # (or last confirmed) the acknowledged signature: no change since, and that signature is still the folder's
@@ -1025,7 +1031,7 @@ class Progress:
             self.baselines.pop(project_id, None)
             self.states.pop(project_id, None)
             for cache in (self.disk, self.projected, self.checked, self.results, self.revisions,
-                          self.signatures, self.stamps, self.published, self.sync_changes, self.errors, self.blocked,
+                          self.signatures, self.stamps, self.published, self.sync_changes, self.errors, self._tolerated_logged, self.blocked,
                           self.failed, self.case_checked, self.refusals, self.signature_marks, self.unwatchable):
                 cache.pop(slug, None)
             if (watch := self.watches.pop(slug, None)) is not None:
@@ -1098,6 +1104,34 @@ class Progress:
         finally:
             self.local.deferring = previous
             self.local.synced = previous_synced
+
+    @contextmanager
+    def tolerating(self):
+        """An agent's tool call: a saved folder the sync can't read or accept doesn't fail it.
+
+        The database is what tools work on; the folder is its saved copy. An N64 game's folder lacked nine functions'
+        layout entries, every sync refused it, and as each tool call syncs before and after (and every lookup inside
+        it), every helper's every tool failed with the folder's error and no work was possible. Inside this, the error
+        is kept where the app shows it (`errors`, the project's saved-progress status) and logged once, the call
+        carries on with the database, and what it changes stays pending: it's published once the folder is put right.
+        A pause the user chose (ProgressPaused) and a folder that moved under the call (ProgressMoved, retried by
+        tools._undisturbed) still reach the caller."""
+        previous = getattr(self.local, "tolerating", False)
+        self.local.tolerating = True
+        try:
+            yield
+        finally:
+            self.local.tolerating = previous
+
+    def _tolerated(self, slug: str, error: NetworkError) -> bool:
+        if (not getattr(self.local, "tolerating", False) or isinstance(error, (ProgressMoved, ProgressPaused))):
+            return False
+        self.errors.setdefault(slug, str(error))
+        message = str(error)
+        if self._tolerated_logged.get(slug) != message:
+            self._tolerated_logged[slug] = message
+            log.warning("%s: saved progress not synced; tool calls continue with the database: %s", slug, message)
+        return True
 
     def _defer_publish(self, slug: str, config_changed: bool) -> bool:
         # Counted from the last try, not only the last success: while agents keep changing the database a
@@ -1363,7 +1397,7 @@ class Progress:
 
     def _check_paused(self, slug: str):
         if slug in self.paused:
-            raise NetworkError("Saved-progress verification is paused. Resume it before changing this project.")
+            raise ProgressPaused("Saved-progress verification is paused. Resume it before changing this project.")
 
     def syncing(self, slug: str) -> bool:
         # Judging and edits also hold the project lock; they are not a saved-progress check.
@@ -1487,7 +1521,13 @@ class Progress:
         if synced is not None and not force and slug in synced:
             return False
         if synced is None or self._batching(slug) or self.applying or in_transaction():
-            changed = self._sync_checked(slug, force=force, logger=logger, retry=retry, asked=asked if force else None)
+            try:
+                changed = self._sync_checked(slug, force=force, logger=logger, retry=retry,
+                                             asked=asked if force else None)
+            except NetworkError as error:
+                if not self._tolerated(slug, error):
+                    raise
+                return False
             self._covered(slug, force)
             return changed
         first = slug not in synced
@@ -1496,6 +1536,12 @@ class Progress:
             changed = self._sync_checked(slug, force=force, logger=logger, retry=retry, asked=asked if force else None)
             self._covered(slug, force)
             return changed
+        except NetworkError as error:
+            if self._tolerated(slug, error):
+                return False  # (slug stays in synced: the call's lookups don't try the refused folder again)
+            if first:
+                synced.discard(slug)
+            raise
         except BaseException:
             if first:
                 synced.discard(slug)
@@ -1733,6 +1779,7 @@ class Progress:
                         self.signature_marks.pop(slug, None)
                 if not self.blocked.get(slug):
                     self.errors.pop(slug, None)
+                self._tolerated_logged.pop(slug, None)
                 self.failed.pop(slug, None)
                 return result
             except _StillFailing:

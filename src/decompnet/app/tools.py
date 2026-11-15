@@ -830,7 +830,9 @@ def _undisturbed(net: RomNetwork, agent: Agent, slug: str, run: Callable[[], str
     progress = getattr(net, 'progress', None)
     while True:
         try:
-            with progress.deferring() if progress is not None else nullcontext():
+            # tolerating: a saved folder the sync refuses is the app's to report, not every tool's to fail on
+            with (progress.deferring() if progress is not None else nullcontext(),
+                  progress.tolerating() if progress is not None else nullcontext()):
                 return run()
         except ProgressMoved:
             if time.monotonic() >= deadline:
