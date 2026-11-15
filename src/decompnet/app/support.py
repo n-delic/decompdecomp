@@ -23,6 +23,7 @@ from ..network import NetworkError
 from ..rom import RomError
 from . import workers
 from .agents import PER_SESSION
+from .progress import RECHECK_MINUTES
 
 MAX_DISC = 16 * 1024 * 1024 * 1024  # dual-layer DVD and then some
 
@@ -387,6 +388,7 @@ class Settings:
                 "permuter_seconds": self.data.get("permuter_seconds", 60),
                 "permuter_max_turns": self.data.get("permuter_max_turns", 4),
                 "maintenance_cpu_percent": self.data.get("maintenance_cpu_percent", 0),
+                "saved_recheck_minutes": self.data.get("saved_recheck_minutes", RECHECK_MINUTES),
                 "worker_threads": self.data.get("worker_threads", 0), "worker_threads_default": workers.default_workers(),
                 "iterative_enabled": self.data.get("iterative_enabled", False),
                 "iterative_seconds": self.data.get("iterative_seconds", 120),

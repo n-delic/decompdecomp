@@ -382,6 +382,9 @@ async function showSettingsPage() {
     <label class="field"><span>Seconds per function per turn (1–3,600)</span><input id="permuterSeconds" type="number" min="1" max="3600" value="${st.settings.permuter_seconds ?? 60}"></label>
     <label class="field"><span>Background worker threads for the permuter and machine drafts (no limit; empty = automatic, ${st.settings.worker_threads_default ?? 1} on this computer). More threads match faster and leave the app slower to respond.</span><input id="workerThreads" type="number" min="1" placeholder="${st.settings.worker_threads_default ?? 1}" value="${st.settings.worker_threads || ""}"></label>
     <label class="field"><span>Maximum turns per function (1–1,000)</span><input id="permuterMaxTurns" type="number" min="1" max="1000" value="${st.settings.permuter_max_turns ?? 4}"></label>
+    <h3>Saved progress</h3>
+    <p class="small muted">Saved C that is byte-identical to a match or draft the app already judged is compiled again only this often, so the CPU goes to finding new matches. Changed files, new matches and changed headers or compilers are still checked at once, and Check again checks everything.</p>
+    <label class="field"><span>Re-check unchanged saved matches at most every (minutes, 0–10,080; 0 = on every change)</span><input id="savedRecheckMinutes" type="number" min="0" max="10080" value="${st.settings.saved_recheck_minutes ?? 60}"></label>
     <label class="check"><input type="checkbox" id="autopilotSet" ${st.settings.autopilot !== false ? "checked" : ""}><span><b>Autopilot after each import</b>: try every function's machine draft first, so free matches cost no agent time.</span></label>`;
   const theme = savedTheme();
   $("setComputer").innerHTML = `
@@ -504,6 +507,10 @@ async function showSettingsPage() {
   for (const [id, key] of [["permuterMaxInsns", "permuter_max_insns"], ["permuterSeconds", "permuter_seconds"], ["permuterMaxTurns", "permuter_max_turns"]]) {
     $(id).onchange = () => save({ [key]: Number($(id).value) }, "Permuter limit saved.");
   }
+  $("savedRecheckMinutes").onchange = () => {
+    const minutes = Number($("savedRecheckMinutes").value);
+    save({ saved_recheck_minutes: Number.isFinite(minutes) && minutes >= 0 ? minutes : 60 }, "Re-check interval saved.");
+  };
   $("workerThreads").onchange = () => save({ worker_threads: Number($("workerThreads").value) || 0 }, "Worker threads saved.");
   $("perSession").onchange = () => save({ per_session: Number($("perSession").value) }, "Saved.");
   $("autopilotSet").onchange = () => save({ autopilot: $("autopilotSet").checked }, "Saved.");

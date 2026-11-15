@@ -65,6 +65,22 @@ def test_maintenance_cpu_setting_is_validated_saved_and_applied_live(app):
         client.post('/api/settings', json={'maintenance_cpu_percent':0}, headers=headers)
 
 
+def test_saved_recheck_interval_is_validated_saved_and_applied_live(app):
+    client, net, *_ = app
+    headers = {'X-Decomp':'1'}
+    assert net.progress.recheck_minutes == 60
+    for value in (-1, 10081, 2.5, True, '60', None):
+        assert client.post('/api/settings', json={'saved_recheck_minutes':value}, headers=headers).status_code == 400
+    try:
+        response = client.post('/api/settings', json={'saved_recheck_minutes':15}, headers=headers)
+        assert response.json()['saved_recheck_minutes'] == 15
+        assert net.progress.recheck_minutes == 15
+        saved = json.loads((net.workspace / '.decomp' / 'settings.json').read_text())
+        assert saved['saved_recheck_minutes'] == 15
+    finally:
+        client.post('/api/settings', json={'saved_recheck_minutes':60}, headers=headers)
+
+
 @pytest.fixture(scope="module")
 def app(tmp_path_factory):
     home = tmp_path_factory.mktemp("home")

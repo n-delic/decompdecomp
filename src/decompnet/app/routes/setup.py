@@ -459,6 +459,9 @@ def register(app: App) -> None:
             if "maintenance_cpu_percent" in data and (type(data["maintenance_cpu_percent"]) is not int
                     or not 0 <= data["maintenance_cpu_percent"] <= 100):
                 return fail(ValueError("Enter a whole CPU percentage from 1 to 100, or 0 for unlimited."))
+            if "saved_recheck_minutes" in data and (type(data["saved_recheck_minutes"]) is not int
+                    or not 0 <= data["saved_recheck_minutes"] <= 10080):
+                return fail(ValueError("Enter whole minutes from 0 to 10,080 (a week); 0 checks unchanged saved matches on every change."))
             if any(key in data for key in ('agent_local_enabled','agent_local_trials','agent_local_seconds')):
                 from ..agent_local_pass import configure
                 if 'agent_local_enabled' in data and not isinstance(data['agent_local_enabled'],bool):
@@ -503,6 +506,9 @@ def register(app: App) -> None:
                     settings.data[key] = max(1, min(maximum, int(data[key])))
             if any(key in data for key in ('permuter_max_insns', 'permuter_seconds', 'permuter_max_turns')):
                 net.permuter.configure(settings.data)
+            if "saved_recheck_minutes" in data:  # 0: check unchanged saved matches again on every sync
+                settings.data["saved_recheck_minutes"] = data["saved_recheck_minutes"]
+                net.progress.recheck_minutes = settings.data["saved_recheck_minutes"]
             if "maintenance_cpu_percent" in data:
                 maintenance.configure_cpu(data["maintenance_cpu_percent"])
                 settings.data["maintenance_cpu_percent"] = data["maintenance_cpu_percent"]
