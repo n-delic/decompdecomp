@@ -672,16 +672,27 @@ void w2c_env_D_8000A840(struct w2c_env *e, u32 a, u32 b, u32 c, u32 d, u32 f, u3
 __attribute__((import_module("port_web"), import_name("memory_base"))) uint8_t *port_web_memory_base(void);
 __attribute__((export_name("port_web_alloc"))) void *port_web_alloc(uint32_t size) { return malloc(size); }
 __attribute__((export_name("port_preempt"))) void port_web_preempt(void) { port_preempt(); }
-/* A game thread that spins on memory asks this every so often (web/be.c): once it has had 10 ms, the page gets a
-   turn for the retrace, and the thread goes on where it was. Only that: a thread the retrace wakes that outranks it
-   still takes over at the next safe point (port_preempt, a call through a pointer), as natively, never in the
-   middle of whatever the running thread was doing between two of them. */
+/* Where `preempt` is, which the game's calls through pointers read themselves (web/be.c), calling port_preempt only
+   when it's set */
+__attribute__((export_name("port_preempt_flag"))) uint32_t port_web_preempt_flag(void) {
+    return (uint32_t)(uintptr_t)&preempt;
+}
+/* When the page's next retrace is due (performance.now(), in ms: the host's monotonic clock, runtime.js's WASI),
+   which the page sets before it runs the threads: a thread still running then gives way (port_yield). */
+static double page_deadline;
+__attribute__((export_name("port_web_deadline"))) void port_web_deadline(double ms) { page_deadline = ms / 1000; }
+/* A game thread that spins on memory asks this every so often (web/be.c): once the page's next retrace is due (or,
+   without a deadline, once it has had 10 ms), the page gets its turn, and the thread goes on where it was. Only
+   that: a thread the retrace wakes that outranks it still takes over at the next safe point (port_preempt, a call
+   through a pointer), as natively, never in the middle of whatever the running thread was doing between two of
+   them. A fixed slice alone overran the retrace: a game whose low-priority thread never waits held the page for
+   22 ms of every 20, so a PAL racing game had 44 retraces a second, and drew 22 frames where it draws 25. */
 __attribute__((export_name("port_yield"))) void port_web_yield(void) {
     static double slice;
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     double now = t.tv_sec + t.tv_nsec / 1e9;
-    if (now - slice < 0.010) return;
+    if (page_deadline ? now < page_deadline : now - slice < 0.010) return;
     slice = now;
     if (self && running == self) {
         self->sp = GAME_SP; /* (the page doesn't keep the game's stack pointer: the host does, as in wait_turn) */

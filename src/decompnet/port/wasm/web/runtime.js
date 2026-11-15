@@ -144,6 +144,13 @@ function wasi(memory, environment, log) {
   };
 }
 
+/* When the threads that run after the `i`th of `due` retraces give way: once the retrace after it is due (`next`
+   is the one after the last), so that the retraces keep their 50 a second however busy the game keeps the CPU. One
+   that is late already still lets the thread it woke run a little (2 ms), as the console's would. */
+export function retraceDeadline(next, due, i) {
+  return Math.max(next - 20 * (due - 1 - i), performance.now() + 2);
+}
+
 /* Start the game from `base` (the folder of the build's files) and `rom` (the player's ROM, bytes). `io`:
    {frame(rgb, w, h), audio(lr, frames, hz), input() -> buttons<<16 | x<<8 | y, eepromLoad() -> bytes,
    eepromSave(bytes), log(line, stream), error(error)}; `env`: the host's PORT_* options. Resolves once it runs. */
@@ -227,9 +234,10 @@ export async function start({ base = "", rom, io, env = {} }) {
       }
     });
   }
-  /* Every thread that can run, in the order the host says, until none can: what the CPU does between retraces. */
-  async function runThreads() {
-    const until = performance.now() + 15; /* then the retrace's turn, if one is due (a thread that gave way) */
+  /* Every thread that can run, in the order the host says, until none can or the next retrace is due (`until`):
+     what the CPU does between retraces. */
+  async function runThreads(until = performance.now() + 15) {
+    host.port_web_deadline(until); /* a thread still running then gives way (port_yield) */
     while (performance.now() < until) {
       const id = host.co_next();
       if (id < 0) return;
@@ -252,7 +260,10 @@ export async function start({ base = "", rom, io, env = {} }) {
     let due = 0;
     while (next <= now && due < 3) { next += 20; due++; }
     if (now - next > 200) next = now + 20; /* a background tab: don't catch up for ever */
-    for (let i = 0; i < due; i++) then(() => { host.port_web_retrace(); return runThreads(); });
+    for (let i = 0; i < due; i++) {
+      const until = retraceDeadline(next, due, i);
+      then(() => { host.port_web_retrace(); return runThreads(until); });
+    }
     setTimeout(tick, Math.max(1, next - performance.now()));
   }
   tick();
@@ -332,8 +343,8 @@ async function startAsyncify({ base = "", rom, io, env = {} }) {
     }
   }
   /* Every thread that can run, in the order the host says, until none can: what the CPU does between retraces. */
-  function runThreads() {
-    const until = performance.now() + 15;
+  function runThreads(until = performance.now() + 15) {
+    ex.port_web_deadline(until);
     while (performance.now() < until) {
       const id = ex.co_next();
       if (id < 0) return;
@@ -355,7 +366,7 @@ async function startAsyncify({ base = "", rom, io, env = {} }) {
     while (next <= now && due < 3) { next += 20; due++; }
     if (now - next > 200) next = now + 20;
     try {
-      for (let i = 0; i < due; i++) { ex.port_web_retrace(); runThreads(); }
+      for (let i = 0; i < due; i++) { ex.port_web_retrace(); runThreads(retraceDeadline(next, due, i)); }
     } catch (error) {
       stopped = true;
       io.error(error);

@@ -161,13 +161,14 @@ static Color sample(const Tile *tile, float s, float t) {
     int filter = (int)((mode_h >> 12) & 3), s0 = (int)floorf(s), t0 = (int)floorf(t);
     if (filter == 0 || cycle_type() >= 2) return texel(tile, s0, t0);
     float fs = s - (float)s0, ft = t - (float)t0;
-    Color c00 = texel(tile, s0, t0), c10 = texel(tile, s0 + 1, t0), c01 = texel(tile, s0, t0 + 1);
-    Color c11 = texel(tile, s0 + 1, t0 + 1);
-    if (filter == 3) /* average: the four texels' mean */
+    Color c10 = texel(tile, s0 + 1, t0), c01 = texel(tile, s0, t0 + 1);
+    if (filter == 3) { /* average: the four texels' mean */
+        Color c00 = texel(tile, s0, t0), c11 = texel(tile, s0 + 1, t0 + 1);
         return (Color){(c00.r + c10.r + c01.r + c11.r) / 4, (c00.g + c10.g + c01.g + c11.g) / 4,
                        (c00.b + c10.b + c01.b + c11.b) / 4, (c00.a + c10.a + c01.a + c11.a) / 4};
-    if (fs + ft < 1.0f) return mix(c00, c10, c01, fs, ft);
-    return mix(c11, c01, c10, 1.0f - fs, 1.0f - ft);
+    } /* bilinear reads only the corner on the point's side: the other was a quarter of the texels read for nothing */
+    if (fs + ft < 1.0f) return mix(texel(tile, s0, t0), c10, c01, fs, ft);
+    return mix(texel(tile, s0 + 1, t0 + 1), c01, c10, 1.0f - fs, 1.0f - ft);
 }
 
 /* ---------------------------------------------------------------- the colour combiner */
@@ -450,9 +451,18 @@ static void fill_pixel(int x, int y) {
 }
 static void fill_rect(int x0, int y0, int x1, int y1) {
     combiner_uses();
-    if (cycle_type() == 3) { /* fill mode: edges inclusive */
-        for (int y = y0; y <= y1; y++)
-            for (int x = x0; x <= x1; x++) if (in_frame(x, y)) fill_pixel(x, y);
+    if (cycle_type() == 3) { /* fill mode: edges inclusive, cut to the frame once (in_frame) rather than per pixel */
+        int xa = x0, xb = x1, ya = y0, yb = y1, fh = frame_height();
+        if (xa < scissor[0]) xa = scissor[0];
+        if (xa < 0) xa = 0;
+        if (ya < scissor[1]) ya = scissor[1];
+        if (ya < 0) ya = 0;
+        if (xb > scissor[2] - 1) xb = scissor[2] - 1;
+        if (xb > cimg_width - 1) xb = cimg_width - 1;
+        if (yb > scissor[3] - 1) yb = scissor[3] - 1;
+        if (yb > fh - 1) yb = fh - 1;
+        for (int y = ya; y <= yb; y++)
+            for (int x = xa; x <= xb; x++) fill_pixel(x, y);
         return;
     }
     Texels none = one_texel((Color){0, 0, 0, 0});
@@ -1424,26 +1434,35 @@ static void vi_filter(uint8_t *rgb, int w, int h, uint32_t base, int bytes) {
 }
 
 /* The VI's dedither filter (on fully covered pixels of a 16-bit frame): each 5-bit channel given back the 3 bits the
-   RDP's dither cut, from how many of its eight neighbours are above or below it. */
+   RDP's dither cut, from how many of its eight neighbours are above or below it. The three channels are compared
+   at once, one per byte of a word (their 5 bits, under a guard bit that keeps one byte's borrow from the next):
+   compared one by one, this filter took a racing game's 640x480 frames 6 ms each in the browser. */
 static void vi_dedither(uint8_t *rgb, int w, int h, uint32_t base) {
-    uint8_t *src = malloc((size_t)w * h * 3);
-    memcpy(src, rgb, (size_t)w * h * 3);
+    size_t n = (size_t)w * h;
+    uint32_t *pk = malloc(n * 4);
+    for (size_t i = 0; i < n; i++) pk[i] = (uint32_t)(rgb[i * 3] >> 3) | (uint32_t)(rgb[i * 3 + 1] >> 3) << 8
+                                          | (uint32_t)(rgb[i * 3 + 2] >> 3) << 16;
+    const uint32_t guard = 0x808080u, one = 0x010101u;
     for (int y = 1; y < h - 1; y++)
         for (int x = 1; x < w - 1; x++) {
-            if (cvg_get(base + (uint32_t)(y * w + x) * 2) < 8) continue;
+            int i = y * w + x;
+            if (cvg_get(base + (uint32_t)i * 2) < 8) continue;
+            uint32_t c = pk[i], c1 = c + one, above = 0, at_least = 0; /* per byte: neighbours above, and not below */
+            const uint32_t nb[8] = {pk[i - w - 1], pk[i - w], pk[i - w + 1], pk[i - 1], pk[i + 1], pk[i + w - 1],
+                                    pk[i + w], pk[i + w + 1]};
+            for (int k = 0; k < 8; k++) {
+                uint32_t v = nb[k] | guard;
+                above += ((v - c1) & guard) >> 7;
+                at_least += ((v - c) & guard) >> 7;
+            }
             for (int ch = 0; ch < 3; ch++) {
-                int c = src[(y * w + x) * 3 + ch] >> 3, sum = 0;
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++) {
-                        if (!dx && !dy) continue;
-                        int n = src[((y + dy) * w + x + dx) * 3 + ch] >> 3;
-                        sum += n > c ? 1 : n < c ? -1 : 0;
-                    }
-                int out = (c << 3) + (c << 3 >> 5) + sum;
-                rgb[(y * w + x) * 3 + ch] = (uint8_t)(out < 0 ? 0 : out > 255 ? 255 : out);
+                int cc = (int)(c >> (8 * ch)) & 31;
+                int sum = (int)(above >> (8 * ch) & 15) + (int)(at_least >> (8 * ch) & 15) - 8;
+                int out = (cc << 3) + (cc << 3 >> 5) + sum;
+                rgb[i * 3 + ch] = (uint8_t)(out < 0 ? 0 : out > 255 ? 255 : out);
             }
         }
-    free(src);
+    free(pk);
 }
 
 /* The divot filter: a partly covered pixel takes the median of itself and its two neighbours on the line, which
@@ -1466,8 +1485,10 @@ static void vi_divot(uint8_t *rgb, int w, int h, uint32_t base, int bytes) {
 /* Gamma: the VI's square-root curve, with its dither (a random step of up to one level before it). Space and fades
    that games leave a dark grey on the console were black without it. */
 static void vi_gamma(uint8_t *rgb, int w, int h) {
+    static float curve[256];
+    if (curve[255] == 0) for (int i = 0; i < 256; i++) curve[i] = sqrtf(i / 255.0f) * 255.0f;
     for (int i = 0; i < w * h * 3; i++) {
-        float v = sqrtf(rgb[i] / 255.0f) * 255.0f + (vi.gamma_dither ? noise() : 0.0f);
+        float v = curve[rgb[i]] + (vi.gamma_dither ? noise() : 0.0f);
         rgb[i] = (uint8_t)(v > 255 ? 255 : v);
     }
 }
@@ -1499,9 +1520,19 @@ void port_frame_shown(uint32_t fb, unsigned long n) {
     if ((size_t)addr + (size_t)w * h * bytes > 0x800000) h = (int)((0x800000 - addr) / ((uint32_t)w * bytes));
     uint8_t *rgb = malloc((size_t)w * h * 3);
     uint32_t base = 0x80000000u | addr;
+    static uint8_t of5[32], of8[256]; /* each channel's value as unpack5551 and unpack8888 give it, times 255 */
+    if (!of5[31]) {
+        for (int i = 0; i < 32; i++) of5[i] = (uint8_t)(i / 31.0f * 255);
+        for (int i = 0; i < 256; i++) of8[i] = (uint8_t)(i / 255.0f * 255);
+    }
     for (int i = 0; i < w * h; i++) {
-        Color c = bytes == 4 ? unpack8888(rd32(base + (uint32_t)i * 4)) : unpack5551(rd16(base + (uint32_t)i * 2));
-        rgb[i * 3] = (uint8_t)(c.r * 255); rgb[i * 3 + 1] = (uint8_t)(c.g * 255); rgb[i * 3 + 2] = (uint8_t)(c.b * 255);
+        if (bytes == 4) {
+            uint32_t c = rd32(base + (uint32_t)i * 4);
+            rgb[i * 3] = of8[c >> 24]; rgb[i * 3 + 1] = of8[(c >> 16) & 255]; rgb[i * 3 + 2] = of8[(c >> 8) & 255];
+        } else {
+            uint16_t c = rd16(base + (uint32_t)i * 2);
+            rgb[i * 3] = of5[(c >> 11) & 31]; rgb[i * 3 + 1] = of5[(c >> 6) & 31]; rgb[i * 3 + 2] = of5[(c >> 1) & 31];
+        }
     }
     if (vi.dedither && bytes == 2) vi_dedither(rgb, w, h, base);
     vi_filter(rgb, w, h, base, bytes);

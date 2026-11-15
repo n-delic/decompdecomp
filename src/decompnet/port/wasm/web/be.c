@@ -109,15 +109,34 @@ static u32 find(void *table, u32 n, u32 key) {
     return lo < n && a[lo].key == key ? a[lo].universal : 0;
 }
 
+/* The pointers called lately and their universal entries: a racing game calls through a pointer a million times a
+   second, and the two binary searches each time were a fifth of its CPU. Emptied when a file registers. */
+#define CACHE 4096
+static struct { u32 key, universal; } cache[CACHE];
+
 /* The universal entry of the function a pointer names: a console address, else a table index; 0 for none. */
 u32 port_universal(u32 pointer) {
-    if (!sorted) build_tables();
+    if (!sorted) {
+        build_tables();
+        for (u32 i = 0; i < CACHE; i++) cache[i].key = cache[i].universal = 0;
+    }
+    u32 slot = (pointer ^ pointer >> 12) >> 2 & (CACHE - 1);
+    if (cache[slot].key == pointer && cache[slot].universal) return cache[slot].universal;
     u32 u = pointer >= 0x80000000u ? find(by_address, address_count, pointer) : 0;
-    return u ? u : find(by_index, index_count, pointer);
+    if (!u) u = find(by_index, index_count, pointer);
+    if (u) { cache[slot].key = pointer; cache[slot].universal = u; }
+    return u;
 }
 
+/* The host's flag that a thread woken from outside outranks the running one (host.c's `preempt`), read here in the
+   memory both modules share: calling into the host at every call through a pointer only to find it clear cost more
+   than the call. */
+IMPORT("port_preempt_flag") u32 port_preempt_flag(void);
+static volatile int *preempt_flag;
+
 void port_icall(void *pointer, u64 *slots, u32 count) {
-    port_preempt(); /* a safe point, as the native build's port_func is */
+    if (!preempt_flag) preempt_flag = (volatile int *)(unsigned long)port_preempt_flag();
+    if (*preempt_flag) port_preempt(); /* a safe point, as the native build's port_func is */
     u32 u = port_universal((u32)(unsigned long)pointer);
     if (!u) { port_bad_call((u32)(unsigned long)pointer); __builtin_trap(); }
     ((Universal)(unsigned long)u)(slots, count);

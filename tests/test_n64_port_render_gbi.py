@@ -550,6 +550,35 @@ def test_the_vis_gamma_brightens_as_the_console_does(renderer, tmp_path):
     assert 64 <= off[0] <= 68, off[0]
 
 
+def test_the_vis_dedither_gives_back_what_the_dither_cut(renderer, tmp_path):
+    """The VI's dedither, on a frame of random 16-bit pixels, all fully covered: each channel's 5 bits widened, then
+    moved by how many of its eight neighbours are above it less how many are below, as the filter's definition says.
+    The renderer compares the three channels at once now (the browser build's costliest step was this filter, one
+    channel and one neighbour at a time): this holds it to the definition."""
+    import random
+
+    def f32(v):
+        return struct.unpack("<f", struct.pack("<f", v))[0]
+
+    widened = [int(f32(f32(i / 31) * 255)) for i in range(32)]  # (uint8_t)(i / 31.0f * 255), as the VI reads it
+    rnd = random.Random(7)
+    mem = Memory()
+    frame = [[rnd.randrange(0x10000) | 1 for _ in range(W)] for _ in range(H)]
+    for y, row in enumerate(frame):
+        for x, v in enumerate(row):
+            mem.w16(FB + (y * W + x) * 2, v)
+    _, (w, h, rgb) = run(renderer, mem, tmp_path, "features:62", f"show:{FB:x}")  # dedither on, gamma and divot off
+    assert (w, h) == (W, H)
+    for y in range(1, H - 1, 7):
+        for x in range(1, W - 1, 5):
+            for ch, shift in enumerate((11, 6, 1)):
+                c = widened[(frame[y][x] >> shift) & 31] >> 3
+                around = [widened[(frame[y + dy][x + dx] >> shift) & 31] >> 3
+                          for dy in (-1, 0, 1) for dx in (-1, 0, 1) if dx or dy]
+                out = (c << 3) + (c << 3 >> 5) + sum(n > c for n in around) - sum(n < c for n in around)
+                assert rgb[(y * W + x) * 3 + ch] == max(0, min(255, out)), (x, y, ch)
+
+
 def test_one_cycle_mode_runs_the_combiners_second_cycle(renderer, tmp_path):
     """In one cycle the RDP runs the second cycle's combiner settings (angrylion's renderer does, from the
     hardware): here the first cycle says the shade (green) and the second the primitive colour (red)."""
