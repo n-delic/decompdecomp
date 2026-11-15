@@ -2228,7 +2228,17 @@ class Progress:
                                 if ((name.startswith(('src/', 'best/')) and name.split('/', 1)[1][:-2] in foreground_names)
                                     or (name.startswith('include/') and recheck is not None and recheck.foreground))
                                 and text != disk.get(name)}
-            if promoted or demoted or (recheck is not None and recheck.foreground):
+            # The database can move past a judged file while the judge runs (the permuter improves the best draft
+            # meanwhile). The final render then holds the newer C, but the folder kept the judged file, and the
+            # baseline below records the render as published: every later import compared them, found them
+            # different and compiled the same old draft again, hundreds of times an hour. The judged file's verdict
+            # is recorded, so publish the database's newer C over it.
+            judged_files = ({f"{kind}/{saves._source_file(name)}" for name in saved for kind in ("src", "best")}
+                            if needs_judging else set())
+            moved = {name: text for name, text in rendered.items()
+                     if name in judged_files and name in disk and saves._source_text(disk[name]) != saves._source_text(text)}
+            foreground_files.update(moved)
+            if promoted or demoted or moved or (recheck is not None and recheck.foreground):
                 obsolete = {"best/"+name[4:]: disk["best/"+name[4:]] for name in promoted}
                 obsolete.update({"src/"+name[5:]: disk["src/"+name[5:]] for name in demoted})
                 obsolete.update({name: text for name, text in disk.items()

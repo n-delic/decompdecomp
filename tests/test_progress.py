@@ -60,6 +60,43 @@ def manifest(folder, **changes):
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def test_a_best_draft_improved_while_its_saved_draft_is_judged_is_published(project, monkeypatch):
+    """The permuter improved a best draft while the saved judge compiled the folder's older one. The folder kept the
+    older draft while the baseline recorded the newer one as published, so every later import (any other file
+    changing) compiled the old draft again: hundreds of identical compiles an hour on an N64 game."""
+    net, folder, judged = project
+    pid = net._project("game")["id"]
+
+    def attempt(agent, name, source, slug):
+        judged.append((name, source))
+        matched = "good" in source
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status=?,matched_source=?,best_source=?,best_score=? "
+                       "WHERE project_id=? AND name=?", ("matched" if matched else "open", source if matched else None,
+                                                        source, 0 if matched else 10, pid, name))
+            if name == "g":  # meanwhile a local search found a better draft
+                db.execute("UPDATE functions SET best_source='better draft',best_score=5 WHERE project_id=? AND name='g'",
+                           (pid,))
+        return {"matched": matched}
+    monkeypatch.setattr(net, "attempt", attempt)
+
+    (folder / "best").mkdir(exist_ok=True)
+    (folder / "best/g.c").write_text("older draft\n", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged == [("g", "older draft\n")]
+    assert net._function("g", "game")["best_source"] == "better draft"
+    assert (folder / "best/g.c").read_text() == "better draft\n"
+
+    # Another contribution starts an import pass: only its own function is judged.
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/f.c").write_text("good f\n", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged == [("g", "older draft\n"), ("f", "good f\n")]
+    assert net._function("f", "game")["status"] == "matched"
+    assert net._function("g", "game")["best_source"] == "better draft"
+    assert not net.progress.sync("game", force=True)
+
+
 def test_metadata_pull_keeps_already_verified_local_matches(project):
     net, folder, judged = project
     with net.store.tx() as db:
