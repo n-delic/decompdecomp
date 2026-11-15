@@ -211,14 +211,34 @@ def test_repair_keeps_a_shortened_file_for_a_known_long_symbol(tmp_path):
     import sqlite3
     with sqlite3.connect(':memory:') as connection:
         connection.row_factory = sqlite3.Row
-        connection.execute('CREATE TABLE functions(project_id INTEGER, name TEXT)')
-        connection.execute('INSERT INTO functions VALUES(1,?)', (name,))
+        connection.execute('CREATE TABLE functions(project_id INTEGER, name TEXT, vram INTEGER, size INTEGER, status TEXT)')
+        connection.execute('INSERT INTO functions VALUES(1,?,NULL,NULL,NULL)', (name,))
         store = SimpleNamespace(one=lambda query, pid: connection.execute(query, (pid,)).fetchone())
         disk = {saves.MANIFEST: json.dumps({"layout": [{"name": "g"}]}), f"src/{file}": "edited source"}
         repaired = _repair(SimpleNamespace(store=store), 1, tmp_path, disk, lambda *_: None)
 
     assert f"src/{file}" in repaired
     assert not (tmp_path / "unlisted" / "src" / file).exists()
+
+
+def test_saved_c_of_a_function_the_layout_lacks_is_added_to_the_layout(project):
+    """An N64 game's split function had its C saved to src/ while the folder's layout kept the entries from before
+    the split: every sync refused the folder ("Add func_… to the function layout"), and since each tool call syncs
+    first, every helper's every tool failed. The database knows the function: the folder's layout gets it."""
+    net, folder, judged = project
+    pid = net._project("game")["id"]
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'h',4104,8,2,'open','')", (pid,))
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/h.c").write_text("good C for h", encoding="utf-8")
+    net.progress.sync("game", force=True)  # (no "Add h to the function layout")
+    layout = json.loads((folder / saves.MANIFEST).read_text())["layout"]
+    assert {"name": "h", "vram": 4104, "size": 8, "status": "open"} in layout
+    assert [entry["name"] for entry in layout] == ["f", "g", "h"]
+    assert ("h", "good C for h") in judged and net._function("h", "game")["status"] == "matched"
+    assert (folder / saves.NOTES_FILE).exists()
+    assert not net.progress.sync("game", force=True)
 
 
 def test_unlisted_shortened_filename_error_names_the_full_function(project):

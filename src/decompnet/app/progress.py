@@ -224,7 +224,8 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     - a header its manifest names but include/ lacks is written again from the project: it's the app's own output;
     - a source in src/ or best/ of no function in its layout nor in the project (a function's file under a name it
       no longer has) moves to unlisted/, kept as it is and not judged, so it stops the project no more. One the
-      project still has (a layout edit renamed it) is left: `_manifest` refuses that edit.
+      project still has is added to the layout from the database, unless another layout entry holds its address
+      (a layout edit renamed it): that one is left, and `_manifest` refuses that edit.
     A manifest it can't read, or one with no layout, is left to `_manifest` to say what's wrong."""
     store = net.project_store(pid) if hasattr(net, "project_store") else net.store
     try:
@@ -246,8 +247,37 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
             report(f"{name} was missing: written again from the project")
     left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).name not in layout)
     if left:
-        known = {row["name"] for row in metadata_rows(store, ("name",), "SELECT name FROM functions WHERE project_id=?", pid)}
-        left = [name for name in left if Path(name).name not in {saves._source_file(function) for function in known}]
+        rows = metadata_rows(store, ("name", "vram", "size", "status"),
+                             "SELECT name,vram,size,status FROM functions WHERE project_id=?", pid)
+        by_file = {saves._source_file(row["name"]): row for row in rows}
+        left = [name for name in left if Path(name).name not in by_file]
+        # A function the project has whose C was saved but whose layout entry never reached the folder (an N64
+        # game's split function: its src/ file was written, the manifest kept the layout from before the split).
+        # `_manifest` refused the folder, and since every tool call syncs first, every helper's every tool failed
+        # with "Add func_… to the function layout". The database knows where it is: add it, when no entry of the
+        # layout holds its address (one that does is a layout edit that renamed it, which `_manifest` refuses).
+        taken = {entry.get("vram") for entry in manifest.get("layout") or [] if isinstance(entry, dict)}
+        missing = sorted({Path(name).name for name in disk if name.startswith(("src/", "best/"))
+                          and Path(name).name not in layout and Path(name).name in by_file})
+        added = []
+        for file in missing:
+            row = by_file[file]
+            if isinstance(row["vram"], int) and isinstance(row["size"], int) and row["size"] > 0 \
+                    and row["vram"] not in taken:
+                manifest["layout"].append({"name": row["name"], "vram": row["vram"], "size": row["size"],
+                                           "status": "asm" if row["status"] == "asm" else "open"})
+                taken.add(row["vram"])
+                layout.add(file)
+                added.append(row["name"])
+        if added:
+            manifest["layout"].sort(key=lambda entry: (entry.get("vram") if isinstance(entry.get("vram"), int)
+                                                       else -1, str(entry.get("name"))))
+            disk[saves.MANIFEST] = (saves.manifest_text(manifest) if manifest.get("format") == saves.FORMAT
+                                    else json.dumps(manifest, indent=1) + "\n")
+            for name, text in saves.split_manifest(disk[saves.MANIFEST]).items():
+                (folder / name).write_text(text, encoding="utf-8")
+            shown = ", ".join(added[:5]) + (f" and {len(added) - 5} more" if len(added) > 5 else "")
+            report(f"{shown}: saved C of the project's function(s) the folder's layout lacked; added to the layout")
     if _ignores_case(folder):
         # A file spelled like a former name that differs only in capitals from a current function's (a rename after
         # two names clashed) is that function's file on this disk: it would hide the function's real C forever.
