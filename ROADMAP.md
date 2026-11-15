@@ -1155,6 +1155,21 @@ Left:
   sound in the window are untried by hand;
 - the browser build for consoles other than the N64: "—" until their kits have a host.
 
+### The browser build's WebGL renderer
+
+The browser build's page can draw on the GPU (Renderer: WebGL, at 1x to 4x the console's resolution) as well as in
+software (docs/PORTING.md, "The browser build's renderers"): `render.c` reads the display lists as for software and
+sends each primitive with the RDP's state (`render_gpu.h`); `web/gl.js` draws it with WebGL 2. A racing game's boot,
+menus and races draw as in software, and the player can switch while it plays.
+
+Left:
+- frame-buffer effects: a frame buffer read back as a texture or by the CPU (copied to RDRAM when a texture load or
+  the CPU reads it, as GLideN64 does), and a frame buffer drawn as a texture without the copy;
+- the RDP's coverage anti-aliasing (WebGL's multisampling in its place), the dither and the VI's filters besides
+  gamma;
+- a games-wide check: only one racing game has been played with it; Firefox and Safari untried;
+- the native window (`window/sdl.c`) on the GPU: the same `render_gpu.h` drawn by OpenGL or SDL_GPU.
+
 The Miyoo Mini is a third kind (Export… → For Miyoo Mini, `port/wasm/miyoo.py`): the same build's game with its
 host compiled for the handheld's 32-bit ARM by the pinned Zig, the game's memory mapped at its own addresses
 (`miyoo/mem32.c`), the screen, buttons and sound through the device's SDL 1.2 (`miyoo/miyoo.c`), packed for the

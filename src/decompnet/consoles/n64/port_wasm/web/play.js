@@ -1,6 +1,7 @@
 /* The N64 browser build's page (port/wasm/web.py): the player's ROM, the frames on a canvas, the sound through Web
    Audio and the keyboard or a gamepad as the first controller, as the native build's live view (live.c) does. */
 import { start, supported } from "./runtime.js";
+import { GpuRenderer, gpuSupported } from "./gl.js";
 
 const $ = (id) => document.getElementById(id);
 const status = (text) => { $("status").textContent = text; };
@@ -67,16 +68,60 @@ function input() {
 }
 
 /* ---------------------------------------------------------------- frames and sound */
-const canvas = $("screen"), g = canvas.getContext("2d");
+/* The renderer: software (render.c draws every pixel, as the console does) or WebGL (gl.js draws them on the GPU,
+   at a chosen resolution). The choice is kept for next time, and can change while the game plays: the canvas is
+   made again for the other kind of drawing. ?renderer=webgl or ?renderer=software chooses for one visit. */
+const VIDEO = `${STORE}-video`;
+const video = (() => {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(VIDEO) || "{}"); } catch {}
+  const asked = new URLSearchParams(location.search).get("renderer");
+  const renderer = [asked, saved.renderer].find((r) => r === "software" || r === "webgl") || "software";
+  return { renderer, scale: [1, 2, 3, 4].includes(Number(saved.scale)) ? Number(saved.scale) : 2 };
+})();
+let g = null, gpu = null;
 let shown = 0, since = performance.now();
+function counted() {
+  shown++;
+  const now = performance.now();
+  if (now - since > 1000) { $("rate").textContent = `${Math.round(shown * 1000 / (now - since))} frames a second`; shown = 0; since = now; }
+}
+function useRenderer(renderer, scale) {
+  const old = $("screen"), canvas = old.cloneNode(false);
+  old.replaceWith(canvas);
+  g = gpu = null;
+  $("video-note").textContent = "";
+  if (renderer === "webgl") {
+    try {
+      if (!gpuSupported()) throw new Error("This browser has no WebGL 2");
+      gpu = new GpuRenderer(canvas, scale);
+      gpu.onShow = counted;
+      globalThis.n64Gpu = gpu; // its stats, for the console (frames drawn on the GPU, from RDRAM)
+    } catch (error) {
+      $("video-note").textContent = `${error.message || error}: drawing in software instead.`;
+      renderer = "software";
+    }
+  }
+  if (!gpu) g = canvas.getContext("2d");
+  canvas.style.imageRendering = gpu ? "auto" : "";
+  video.renderer = renderer;
+  video.scale = scale;
+  $("renderer").value = renderer;
+  $("scale").value = String(scale);
+  $("scale-choice").hidden = renderer !== "webgl";
+  try { localStorage.setItem(VIDEO, JSON.stringify(video)); } catch {}
+}
+$("renderer").onchange = (e) => useRenderer(e.target.value, video.scale);
+$("scale").onchange = (e) => useRenderer(video.renderer, Number(e.target.value));
+useRenderer(video.renderer, video.scale);
 function frame(rgb, w, h) {
+  if (gpu) { gpu.showRGB(rgb, w, h); return; } // a frame from RDRAM (one the CPU wrote), on the GPU's canvas
+  const canvas = $("screen");
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   const image = g.createImageData(w, h), p = image.data;
   for (let i = 0, j = 0; i < w * h; i++, j += 3) { p[i * 4] = rgb[j]; p[i * 4 + 1] = rgb[j + 1]; p[i * 4 + 2] = rgb[j + 2]; p[i * 4 + 3] = 255; }
   g.putImageData(image, 0, 0);
-  shown++;
-  const now = performance.now();
-  if (now - since > 1000) { $("rate").textContent = `${Math.round(shown * 1000 / (now - since))} frames a second`; shown = 0; since = now; }
+  counted();
 }
 let audio = null, next = 0;
 $("sound").onclick = (e) => { if (!audio) { audio = new AudioContext(); e.target.textContent = "Sound playing"; } };
@@ -91,7 +136,7 @@ function sound(lr, frames, hz) {
   src.start(next);
   next += frames / hz;
 }
-$("full").onclick = () => canvas.requestFullscreen && canvas.requestFullscreen();
+$("full").onclick = () => $("screen").requestFullscreen && $("screen").requestFullscreen();
 
 /* ---------------------------------------------------------------- the game's save (its EEPROM), per ROM */
 let saveKey = "";
@@ -112,7 +157,8 @@ async function play(bytes) {
     const rom = asZ64(bytes);
     saveKey = `${STORE}-save-` + Array.from(rom.subarray(0x10, 0x18), (b) => b.toString(16).padStart(2, "0")).join("");
     await start({ rom, env: { PORT_VERBOSE: new URLSearchParams(location.search).get("verbose") || "0" },
-      io: { frame, audio: sound, input, eepromLoad, eepromSave, log: (line) => console.log(line), error: fail } });
+      io: { frame, audio: sound, input, eepromLoad, eepromSave, gpu: () => gpu, log: (line) => console.log(line),
+        error: fail } });
     $("start").hidden = true;
     $("play").hidden = false;
   } catch (error) {

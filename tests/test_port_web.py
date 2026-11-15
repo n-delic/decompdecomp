@@ -153,12 +153,12 @@ def test_the_browser_export_copies_the_build_and_never_a_rom(tmp_path):
     own files, whatever else lies in the build folder."""
     built = tmp_path / "web"
     (built / "obj").mkdir(parents=True)
-    for name in ("index.html", "play.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm",
+    for name in ("index.html", "play.js", "gl.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm",
                  "app-asyncify.wasm", "game.z64", "obj/be.o", "app-asyncify-work/merged.wasm"):
         (built / name).parent.mkdir(exist_ok=True)
         (built / name).write_text("x")
     out = web.export(built, tmp_path / "export")
-    assert sorted(p.name for p in out.iterdir()) == ["app-asyncify.wasm", "build.json", "game-web.wasm",
+    assert sorted(p.name for p in out.iterdir()) == ["app-asyncify.wasm", "build.json", "game-web.wasm", "gl.js",
                                                      "host-web.wasm", "index.html", "play.js", "runtime.js"]
     kit = web.HERE.parent.parent / "consoles" / "n64" / "port_wasm" / "web"
     assert "indexedDB" in (kit / "play.js").read_text() and 'type="file"' in (kit / "index.html").read_text()
