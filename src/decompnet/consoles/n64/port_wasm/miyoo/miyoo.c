@@ -116,6 +116,8 @@ void port_live_start(void) {
 
 int port_live_active(void) { return active; }
 
+void port_live_pump(void) {} /* the Mini's SDL 1.2 is driven from the game's threads, as it always was */
+
 /* The frame (RGB, w x h) scaled to fill the screen's height at the console's 4:3, nearest pixel, and centred. */
 void port_live_frame(const uint8_t *rgb, int w, int h) {
     if (!active || w <= 0 || h <= 0) return;

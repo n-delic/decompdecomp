@@ -654,7 +654,8 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     log("building the host")
     rt = wabt / "share" / "wabt" / "wasm2c"
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-mem-impl.c",
-             rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), out / "funcs.c", out / "stubs.c"]
+             rt / "wasm-rt-exceptions-impl.c", *sorted(host.glob("*.c")), *sorted(host.glob("window/*.c")),
+             out / "funcs.c", out / "stubs.c"]  # window/: PORT_WINDOW's SDL2 window, opened only when asked
     includes = ["-I", wabt / "include", "-I", rt, "-I", out / "c"]
     arch = host_arch_flags(universal)
     cc = [*host_compiler(zig), *arch]
@@ -677,6 +678,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
         raise NetworkError("building the host failed: " + "; ".join(failed[:3]))
     program = out / ("game-universal" if arch else "game")
     libs = ["-lpthread"] + (["-lws2_32"] if sys.platform == "win32" else [])  # Winsock, for the live view (live.c)
+    libs += ["-ldl"] if sys.platform.startswith("linux") else []  # dlopen, for SDL2 (window/sdl.c)
     done = _run([*cc, "-o", program, *(objs / (u.stem + ".o") for u in units), *libs], log, env=env)
     if done.returncode:
         raise NetworkError(f"linking the host failed: {done.stderr.strip()[-600:]}")

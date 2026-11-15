@@ -426,8 +426,8 @@ async function stopGame() {
 /* Export (port/wasm/export.py): the game as a standalone app for this computer, or a browser build (a folder with
    index.html), from the last save. Its bar counts the build's steps; Stop cancels it; Show the folder opens it. */
 let exportJob = null;
-const EXPORTS = { app: "a standalone app", web: "a browser build", miyoo: "a Miyoo Mini SD card folder" };
-const EXPORT_NEXT = { app: "Next: open the app", web: "Next: put it on a web server", miyoo: "Next: copy it to your Miyoo's SD card" };
+const EXPORTS = { app: "a standalone app", window: "a standalone app with its own window", web: "a browser build", miyoo: "a Miyoo Mini SD card folder" };
+const EXPORT_NEXT = { app: "Next: open the app", window: "Next: open the app", web: "Next: put it on a web server", miyoo: "Next: copy it to your Miyoo's SD card" };
 
 /* What to do with the export, as numbered steps under the log (not in it: they're what the user acts on). */
 function showExportNext(result) {
@@ -457,7 +457,7 @@ async function exportGame(kind, existing = null) {
   $("portExportActions").hidden = false; show.hidden = true; stop.hidden = false; stop.disabled = false;
   showExportNext(null);
   stop.textContent = "Stop the export";
-  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWeb"), $("portExportMiyoo")],
+  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWindow"), $("portExportWeb"), $("portExportMiyoo")],
     "Exported.");
   if (existing?.progress) updateWorkProgress(log, existing.progress);
   try {
@@ -510,6 +510,7 @@ if ($("portPanel")) {
   $("portPlay").onclick = () => playGame();
   $("portStop").onclick = stopGame;
   $("portExportApp").onclick = () => exportGame("app");
+  if ($("portExportWindow")) $("portExportWindow").onclick = () => exportGame("window");
   $("portExportWeb").onclick = () => exportGame("web");
   if ($("portExportMiyoo")) $("portExportMiyoo").onclick = () => exportGame("miyoo");
   $("portExportStop").onclick = stopExport;

@@ -704,6 +704,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 _build_mips_binutils(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "wabt":
                 _build_wabt(archive, dest, part.get("subdir"), log)
+            elif part.get("build") == "sdl2":
+                _build_sdl2(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "sn64-gcc":
                 _build_sn64_gcc(archive, dest, part.get("subdir"), log)
             elif part.get("build") == "gcc-papermario":
@@ -881,6 +883,41 @@ def _build_ghidra_decompiler(ghidra: Path, log) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(built, target)
         target.chmod(0o755)
+
+
+def _build_sdl2(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """SDL2 as one shared library for both kinds of Mac (arm64 and x86_64, macOS 11 and up), from the source the
+    reversing emulator pins: what an exported app with its own window ships in Contents/Frameworks and opens at run
+    time (consoles/n64/port_wasm/window/sdl.c). Only make and the C compiler come from the system (Xcode's Command Line
+    Tools). Laid out as dest/libSDL2-2.0.0.dylib and dest/LICENSE.txt (zlib: the notice travels with the app)."""
+    tools = "SDL2 is built from its source on this computer, which needs Xcode Command Line Tools: run " \
+            "`xcode-select --install`, then try again."
+    if not shutil.which("make") or not shutil.which("cc"):
+        raise ToolchainError(tools)
+    ensure("cmake", log=log)
+    cmake = str(binary("cmake"))
+    log("  building SDL2 from its pinned source for Apple Silicon and Intel Macs (first use only, a minute or two)")
+    with tempfile.TemporaryDirectory(prefix="decomp-sdl2-") as tmp:
+        source, build = Path(tmp) / "source", Path(tmp) / "build"
+        source.mkdir()
+        _extract(archive, source, subdir)
+        configure = [cmake, "-S", str(source), "-B", str(build), "-G", "Unix Makefiles", "-DCMAKE_BUILD_TYPE=Release",
+                     "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64", "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0",
+                     "-DSDL_SHARED=ON", "-DSDL_STATIC=OFF", "-DSDL_TEST=OFF"]
+        for argv in (configure, [cmake, "--build", str(build), "--parallel", str(min(8, os.cpu_count() or 1))]):
+            try:
+                result = subprocess.run(limits.capped(argv), cwd=tmp, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", timeout=1800, creationflags=NO_WINDOW)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ToolchainError(f"Couldn't build SDL2: {error}. {tools}") from error
+            if result.returncode:
+                raise ToolchainError(f"Building SDL2 failed. {tools}\n" + (result.stdout + result.stderr)[-3000:])
+        built = build / "libSDL2-2.0.0.dylib"
+        if not built.is_file():
+            raise ToolchainError(f"SDL2's build finished without libSDL2-2.0.0.dylib in {build}. {tools}")
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(built.resolve(), dest / built.name)
+        shutil.copyfile(source / "LICENSE.txt", dest / "LICENSE.txt")
 
 
 def _build_wabt(archive: Path, dest: Path, subdir: str | None, log) -> None:

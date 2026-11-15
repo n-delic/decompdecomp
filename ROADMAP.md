@@ -1066,6 +1066,10 @@ Left:
   app is universal (arm64 and x86_64): a racing game's Intel half reaches its language menu under Rosetta with the
   Apple Silicon half's frame counts, and it opens on an Intel Mac once its quarantine is cleared. The app is
   signed ad hoc with a compiled launcher; signing with a Developer ID and notarizing it (no first-open prompt) are left;
+- the app with its own window (SDL2, `window/sdl.c`, Export… → Standalone app with its own window) on Linux and
+  Windows: "—" for now. The window code already builds on Linux (it opens the system's SDL2); the export would ship or
+  require SDL2 there, and Windows needs SDL2.dll and LoadLibrary in place of dlopen. Play inside decompdecomp could
+  offer the SDL window too. On the Mac, a gamepad and the sound in the window are untried by hand;
 - the browser build for consoles other than the N64: "—" until their kits have a host.
 
 The Miyoo Mini is a third kind (Export… → For Miyoo Mini, `port/wasm/miyoo.py`): the same build's game with its

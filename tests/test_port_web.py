@@ -144,7 +144,7 @@ def test_an_exported_app_elsewhere_is_the_program_and_a_launcher(tmp_path, platf
 
 
 def test_export_says_what_it_can_make(tmp_path):
-    with pytest.raises(NetworkError, match="app, web"):
+    with pytest.raises(NetworkError, match="app, window, web"):
         export.export(None, "game", "zip")
 
 
@@ -287,3 +287,66 @@ def test_a_mac_app_has_a_compiled_launcher_for_both_macs_and_a_sealed_signature(
     again = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(tmp_path / "unzipped" / "Racer.app")],
                            capture_output=True, text=True)
     assert again.returncode == 0, again.stderr
+
+
+def _sdl_folder(tmp_path):
+    """A stand-in for the `sdl2` toolchain's folder: a real library on a Mac (it gets signed), bytes elsewhere."""
+    sdl = tmp_path / "sdl2"
+    sdl.mkdir()
+    (sdl / "LICENSE.txt").write_text("zlib licence\n")
+    if sys.platform == "darwin":
+        source = tmp_path / "lib.c"
+        source.write_text("int SDL_Init(unsigned flags) { return (int)flags; }\n")
+        subprocess.run(["xcrun", "clang", "-dynamiclib", "-o", str(sdl / "libSDL2-2.0.0.dylib"), str(source)],
+                       check=True)
+    else:
+        (sdl / "libSDL2-2.0.0.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
+    return sdl
+
+
+@pytest.mark.skipif(sys.platform == "darwin" and not shutil.which("xcrun"), reason="needs Xcode's Command Line Tools")
+def test_an_app_with_its_own_window_is_the_game_itself_with_sdl2_inside(tmp_path):
+    """The window kind: the game is the app's own process (Contents/MacOS/game, exec'd by the launcher), so the Dock
+    shows the app; SDL2 and its licence travel in the app; a file that isn't an N64 ROM is refused."""
+    source = tmp_path / "game.c"
+    program = tmp_path / "game"
+    if sys.platform == "darwin":
+        source.write_text("int main(void) { return 0; }\n")
+        subprocess.run(["xcrun", "clang", "-o", str(program), str(source)], check=True)
+    else:
+        program.write_text("#!/bin/sh\n")
+    app = export.package_app(program, tmp_path / "out", "Racer", platform="darwin", sdl=_sdl_folder(tmp_path))
+    files = sorted(str(p.relative_to(app)) for p in app.rglob("*") if p.is_file() and "_CodeSignature" not in p.parts)
+    assert files == ["Contents/Frameworks/libSDL2-2.0.0.dylib", "Contents/Info.plist", "Contents/MacOS/game",
+                     "Contents/MacOS/play", "Contents/Resources/SDL2-LICENSE.txt", "Contents/Resources/play.sh"]
+    script = (app / "Contents" / "Resources" / "play.sh").read_text()
+    assert "PORT_WINDOW=1" in script and 'exec "$here/../MacOS/game"' in script and "80371240" in script
+    assert "open http" not in script  # no browser
+    if shutil.which("bash"):
+        assert subprocess.run(["bash", "-n", app / "Contents" / "Resources" / "play.sh"]).returncode == 0
+    if sys.platform == "darwin":
+        verify = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], capture_output=True, text=True)
+        assert verify.returncode == 0, verify.stderr
+
+
+def test_the_window_kind_is_offered_and_made_on_a_mac_only(tmp_path, monkeypatch):
+    from decompnet import toolchains
+    from decompnet.port.wasm import build, play
+    assert "window" in export.KINDS
+    repo, program, asked = tmp_path / "save", tmp_path / "game", {}
+    repo.mkdir()
+    program.write_bytes(b"x")
+    monkeypatch.setattr(play, "game", lambda net, slug: (repo, {"platform": "n64", "rom": {"title": "RALLY"}}, None))
+    monkeypatch.setattr(play, "library", lambda net, slug, log=print: set())
+    monkeypatch.setattr(build, "build", lambda *a, **k: asked.update(k) or program)
+    monkeypatch.setattr(toolchains, "ensure", lambda tid, log=print: asked.setdefault("tool", tid) and tmp_path)
+    monkeypatch.setattr(export, "package_app", lambda program, dest, title, sdl=None: asked.update(sdl=sdl, dest=dest)
+                        or (dest.mkdir(parents=True), dest)[1])
+    monkeypatch.setattr(export.sys, "platform", "linux")
+    with pytest.raises(NetworkError, match="on a Mac"):
+        export.export(None, "rally", "window", log=lambda *a: None)
+    monkeypatch.setattr(export.sys, "platform", "darwin")
+    result = export.export(None, "rally", "window", log=lambda *a: None)
+    assert asked["tool"] == "sdl2" and asked["sdl"] == tmp_path and asked["universal"] is True
+    assert asked["dest"].name == "window" and result["kind"] == "window"
+    assert any("full screen" in step for step in result["instructions"])

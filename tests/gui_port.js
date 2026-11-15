@@ -199,6 +199,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    const exporting=t.run('exportGame("web")');for(let i=0;i<5;i++)await Promise.resolve();
    assert.equal(t.c.$('portExportMenu').open,false,'choosing closes the menu');
    assert.equal(t.c.$('portExportWeb').disabled,true,'no second export while one runs');
+   assert.equal(t.c.$('portExportWindow').disabled,true,'nor one with its own window');
    assert.equal(t.c.$('portExportStop').hidden,false);
    await t.run('exportGame("app")');assert.equal(bodies.length,1,'a second choice starts nothing');
    follow.resolve({kind:'web',path:'/save/port/wasm/export/web/index.html',folder:'/save/port/wasm/export/web'});await exporting;

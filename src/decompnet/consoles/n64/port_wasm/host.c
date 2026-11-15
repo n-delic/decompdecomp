@@ -492,6 +492,7 @@ u32 w2c_env_osContStartReadData(struct w2c_env *e, u32 mq) { (void)e; si_done(mq
 static int8_t stick_x, stick_y;
 int port_live_input(uint16_t *buttons, int8_t *x, int8_t *y); /* live.c: the keyboard, with PORT_LIVE */
 void port_live_start(void);
+void port_live_pump(void); /* live.c: the main thread's turn at the window (PORT_WINDOW), every retrace */
 static void script_input(void);
 static void scripted_input(void) {
     uint16_t b; int8_t x, y;
@@ -843,7 +844,7 @@ int main(int argc, char **argv) {
     rom = read_file(argv[1], &rom_size);
     if (!rom) { fprintf(stderr, "can't read %s\n", argv[1]); return 2; }
     rom_byte_order(rom, rom_size);
-    double seconds = argc > 2 ? atof(argv[2]) : getenv("PORT_LIVE") ? 0 : 5; /* 0: until it's stopped */
+    double seconds = argc > 2 ? atof(argv[2]) : getenv("PORT_LIVE") || getenv("PORT_WINDOW") ? 0 : 5; /* 0: until stopped */
     port_live_start();
     if (getenv("PORT_VERBOSE")) verbose = atoi(getenv("PORT_VERBOSE"));
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -873,6 +874,7 @@ int main(int argc, char **argv) {
     for (int frame = 0; seconds <= 0 || frame < seconds * 50; frame++) {
         usleep(20000);
         retrace();
+        port_live_pump();
         if (getenv("PORT_SAMPLE") && frame % 10 == 5) sample();
     }
     if (getenv("PORT_DUMPBIN")) { /* addr,len,file: memory as bytes at the end, for comparing with the ROM's */

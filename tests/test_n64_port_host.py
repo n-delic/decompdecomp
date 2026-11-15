@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -46,3 +48,31 @@ int main(void) {
     out = subprocess.run([str(program)], check=True, capture_output=True, text=True, timeout=30).stdout.split("\n")
     assert out[0] == "-1 2 -9223372036854775808 -9223372036854775808"
     assert out[1] == "-1.0 -123456789012.0"
+
+
+KIT = HOST.parent
+
+
+@pytest.mark.skipif(shutil.which("cc") is None, reason="needs a C compiler")
+def test_the_native_host_compiles_with_its_sdl2_window_and_only_opens_it_when_asked(tmp_path):
+    """live.c hands its calls to window/sdl.c only with PORT_WINDOW: without it nothing opens, and with it but no
+    SDL2 to be found (and no PORT_LIVE to fall back to) the game refuses to run unseen."""
+    main = tmp_path / "main.c"
+    main.write_text(r"""#include <stdint.h>
+#include <stdio.h>
+void port_live_start(void);
+int port_live_active(void);
+void port_live_pump(void);
+int main(void) { port_live_start(); port_live_pump(); printf("active %d\n", port_live_active()); return 0; }
+""")
+    program = tmp_path / "host"
+    libs = ["-lpthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
+    done = subprocess.run(["cc", "-O1", "-o", str(program), str(main), str(KIT / "live.c"), str(KIT / "window" / "sdl.c"),
+                           *libs], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    env = {"PATH": os.environ.get("PATH", ""), "PORT_SDL": str(tmp_path / "missing.dylib"), "HOME": str(tmp_path)}
+    plain = subprocess.run([str(program)], capture_output=True, text=True, env=env, timeout=30)
+    assert plain.stdout == "active 0\n"
+    alone = subprocess.run([str(program)], capture_output=True, text=True, env={**env, "PORT_WINDOW": "1"}, timeout=30)
+    if "SDL2 isn't here" in alone.stderr:  # (a system SDL2 would open a real window: not here)
+        assert alone.returncode == 5 and "can't open its window" in alone.stderr
