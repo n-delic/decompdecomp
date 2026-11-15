@@ -48,6 +48,8 @@ from .support import Jobs, Settings, session_options
 
 def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool = False, mcp_url: str | None = None,
           reader=None, gateway=None):
+    from .startup_steps import begin, end
+    begin("Preparing the helpers, jobs and queues")
     from .permuter_worker import PermuterWorker
     net.permuter = PermuterWorker(net)
     # The helpers' address: the MCP gateway's when it runs (app/mcp_gateway.py), else this server's own /mcp.
@@ -175,7 +177,9 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
 
     threading.Thread(target=collab.local_addresses, daemon=True).start()  # `tailscale status` can take seconds
     # rooms this computer belongs to reconnect (members keep their place; their agents wait while the host is away)
+    begin("Reconnecting rooms")
     net.restore_links()
+    begin("Starting background maintenance, autosave and hosted sync")
 
     from .routes import pairing
     from .sdk_names import name_functions
@@ -249,6 +253,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
 
     threading.Thread(target=resume_work, daemon=True, name="resume-work").start()
 
+    begin("Building the agents' tools and the window's pages")
     mcp = tools.build_mcp(net, agent_of, observe=manager.record_agent)
     # Read-only tools answered outside this process: by the gateway itself (gateway/src/native.rs) and the reader
     # process (app/tool_reader.py). Both learn which helper works which project, and report what they answered.
@@ -401,4 +406,5 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
 
     security = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=sorted(allowed_hosts),
                                          allowed_origins=[f"http://{h}" for h in sorted(allowed_hosts)])
+    end()
     return mcp, manager, security, quit_app

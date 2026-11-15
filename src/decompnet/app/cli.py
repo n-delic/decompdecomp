@@ -173,6 +173,7 @@ def run(args) -> int:
     log = file_log(internal / "logs" / "decomp.log")  # from the first line on: whatever stops the app is in it
     from . import build_info
     log.info("%s %s starting (%s)", edition.NAME, build_info.label(), sys.executable)
+    print(f"Starting {edition.NAME} {__import__('decompnet').__version__}…", flush=True)
     if sys.platform == "win32" and not os.environ.get("DECOMP_HOME"):  # a test or experiment leaves the user's alone
         from .launcher import update_windows_command
         try:
@@ -218,10 +219,12 @@ def run(args) -> int:
 
 
 def _start(args,home,internal,state_file,log,restarted,headless):
-    from . import cleanup
-    from .engine import RomNetwork
-    from .runtime_server import Server
-    from .server import build
+    from .startup_steps import ready, step
+    with step("Loading the app"):
+        from . import cleanup
+        from .engine import RomNetwork
+        from .runtime_server import Server
+        from .server import build
 
     sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted) or headless)
     port = sock.getsockname()[1]
@@ -233,7 +236,8 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     compiler_processes.configure(internal / "compiler-processes")
     from ..store import CorruptDatabaseError
     try:
-        net = RomNetwork(internal / "decomp.db", home,project_databases=True)
+        with step("Opening the projects' databases (upgrades them first when needed)"):
+            net = RomNetwork(internal / "decomp.db", home,project_databases=True)
     except CorruptDatabaseError as error:
         sock.close()
         state_file.unlink(missing_ok=True)
@@ -245,10 +249,11 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     # The window's pages go through the gateway too, a few read-only ones answered by the reader (window_reads.py);
     # the reader checks the window's secret as the app does.
     window_reads = not headless and mcp_gateway.window_wanted()
-    reader = tool_reader.start(net, internal, {"secret": secret, "port": port} if window_reads else None) \
-        if mcp_gateway.program() else None
-    gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port", reader=reader,
-                                window=window_reads)
+    with step("Starting the agents' MCP gateway"):
+        reader = tool_reader.start(net, internal, {"secret": secret, "port": port} if window_reads else None) \
+            if mcp_gateway.program() else None
+        gateway = mcp_gateway.start(port, internal / "logs" / "mcp-gateway.log", internal / "mcp-gateway.port",
+                                    reader=reader, window=window_reads)
     if gateway is None and reader is not None:
         reader.stop()
         reader = None
@@ -272,6 +277,7 @@ def _start(args,home,internal,state_file,log,restarted,headless):
         print(f"Server: http://127.0.0.1:{port}/\nWeb sign-in code: {net.web_login.code}\nStop with Ctrl-C or `decomp stop`.", flush=True)
     elif not restarted or restarted.get("window", True):
         _open_when_ready(port)
+    ready()
     try:
         Server(server_config(app), quit_app).run(sockets=[sock])
     except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
