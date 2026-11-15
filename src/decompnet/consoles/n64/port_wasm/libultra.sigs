@@ -65,3 +65,7 @@ __osGetFpcCsr	i32
 __osSetFpcCsr	i32	i32
 osViGetCurrentFramebuffer	ptr	
 osViGetNextFramebuffer	ptr	
+osCartRomInit	ptr	
+osEPiStartDma	i32	ptr, ptr, i32
+osEPiReadIo	i32	ptr, i32, ptr
+osEPiWriteIo	i32	ptr, i32, i32

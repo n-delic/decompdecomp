@@ -483,3 +483,13 @@ def test_stubs_read_every_host_file(tmp_path):
                     str(tmp_path / "game.c")], check=True, capture_output=True)
     text = out.read_text()
     assert "w2c_env_osB(" in text and "w2c_env_osA(" not in text and "func_80091920" not in text
+
+
+def test_an_old_name_for_a_function_with_no_c_goes_to_its_name_now(tmp_path):
+    """A racing game's matched C called libultra's osCreateMesgQueue by its automatic name, func_80033A90. The build
+    leaves libultra the host provides out, so no C defined it, and the call reached the host under the old name:
+    stubbed, the game's threads never got their queue."""
+    from decompnet.port.wasm.build import renames
+    ll = tmp_path / "a.ll"
+    ll.write_text("define void @caller() {\n}\ndeclare void @func_80033A90(ptr, ptr, i32)\n")
+    assert renames([ll], ["osCreateMesgQueue 0x80033A90 func"]) == {"func_80033A90": "osCreateMesgQueue"}
