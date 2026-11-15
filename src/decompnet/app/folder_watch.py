@@ -56,6 +56,8 @@ class FolderWatch:
     def mark(self) -> int | None:
         """The moment a reading of the folder starts; None when this watch can't vouch for anything. Changes from
         before it are taken in first (the app's own writes just made), so they don't count as later ones."""
+        if self.broken:
+            return None
         self._settle()
         return None if self.broken else self.changes
 
