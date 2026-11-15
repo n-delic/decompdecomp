@@ -314,7 +314,8 @@ def register(app: App) -> None:
             return {"ok": why is None, "message": why}
         if (running := jobs.active(("play-export",), project=slug)):  # another click, or another window
             return {"job": running["id"]}
-        return {"job": jobs.start("play-export", lambda log: export.export(net, slug, kind, log), project=slug)}
+        simd = bool(data.get("simd")) and kind == "web"  # the browser build's faster modules, as well (web.SIMD)
+        return {"job": jobs.start("play-export", lambda log: export.export(net, slug, kind, log, simd=simd), project=slug)}
 
     def p_asset_map(slug, request, data):
         """Write the ROM's data as the kit's extractor config into the project's folder (port/asset_map.py)."""

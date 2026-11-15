@@ -16,6 +16,21 @@ export function promiseIntegration() {
   return typeof WebAssembly.Suspending === "function" && typeof WebAssembly.promising === "function";
 }
 
+/* Whether this browser has WebAssembly SIMD (Chrome 91, Firefox 89, Safari 16.4 and later): a function returning
+   a v128, which a browser without it refuses to validate. */
+const SIMD_PROBE = Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0,
+  253, 15, 253, 98, 11);
+export function simdSupported() {
+  try { return WebAssembly.validate(SIMD_PROBE); } catch { return false; }
+}
+/* The module to load: the build's SIMD one (web.py's SIMD, an export made with it) where the browser has SIMD, else
+   the plain one, which every browser with WebAssembly plays. `?nosimd` in the page's address chooses the plain one
+   anywhere, to compare. */
+export function moduleFor(name, build, search = globalThis.location?.search || "") {
+  const simd = build && build.simd && simdSupported() && !new URLSearchParams(search).has("nosimd");
+  return simd ? name.replace(/\.wasm$/, "-simd.wasm") : name;
+}
+
 /* Whether this browser can play the build at all: one with WebAssembly, through either module. */
 export function supported() {
   return typeof WebAssembly === "object" && typeof WebAssembly.instantiate === "function";
@@ -161,9 +176,9 @@ export async function start({ base = "", rom, io, env = {} }) {
   }
   const memory = new WebAssembly.Memory({ initial: 65536, maximum: 65536 });
   const bytes = () => new Uint8Array(memory.buffer);
-  const [build, hostCode, gameCode] = await Promise.all([
-    fetch(base + "build.json").then((r) => r.json()),
-    fetch(base + "host-web.wasm").then((r) => r.arrayBuffer()),
+  const build = await fetch(base + "build.json").then((r) => r.json());
+  const [hostCode, gameCode] = await Promise.all([
+    fetch(base + moduleFor("host-web.wasm", build)).then((r) => r.arrayBuffer()),
     fetch(base + "game-web.wasm").then((r) => r.arrayBuffer()),
   ]);
 
@@ -279,9 +294,9 @@ async function startAsyncify({ base = "", rom, io, env = {} }) {
   const memory = new WebAssembly.Memory({ initial: 65536, maximum: 65536 });
   const bytes = () => new Uint8Array(memory.buffer);
   const view = () => new DataView(memory.buffer);
-  const [build, code] = await Promise.all([
-    fetch(base + "build.json").then((r) => r.json()),
-    fetch(base + "app-asyncify.wasm").then((r) => {
+  const build = await fetch(base + "build.json").then((r) => r.json());
+  const [code] = await Promise.all([
+    fetch(base + moduleFor("app-asyncify.wasm", build)).then((r) => {
       if (!r.ok) {
         throw new Error("This browser needs the build's Asyncify module (app-asyncify.wasm), which this copy of the "
           + "game doesn't have: export it again, or play in Chrome, Edge or Safari 27.");

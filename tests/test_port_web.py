@@ -190,6 +190,36 @@ def test_threads_give_way_when_the_next_retrace_is_due():
     assert 'export_name("port_web_deadline")' in host and 'export_name("port_preempt_flag")' in host
 
 
+def test_the_page_plays_the_simd_build_only_where_it_can():
+    """An export "faster where it can" carries the host built with WebAssembly SIMD as well; the page loads it only
+    where the browser validates SIMD (web_runtime_simd.mjs), as Safari before 16.4 can't load it at all."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node isn't installed")
+    done = subprocess.run([node, str(Path(__file__).with_name("web_runtime_simd.mjs"))], capture_output=True,
+                          text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+
+
+@pytest.mark.parametrize("simd", [False, True])
+def test_the_browser_export_carries_simd_modules_only_when_built_with_them(tmp_path, simd):
+    """The build folder keeps an earlier build's SIMD modules (they're its cache); an export takes them only when its
+    build.json says this build made them, so a plain export never ships stale ones."""
+    import json
+
+    build = tmp_path / "web"
+    build.mkdir()
+    for name in ("index.html", "play.js", "runtime.js", "game-web.wasm", "host-web.wasm", web.ASYNCIFY,
+                 *web.SIMD.values()):
+        (build / name).write_text(name)
+    (build / "build.json").write_text(json.dumps({"slots": [], "simd": simd}))
+    dest = web.export(build, tmp_path / "out")
+    names = {p.name for p in dest.iterdir()}
+    assert ("host-web-simd.wasm" in names) is simd and ("app-asyncify-simd.wasm" in names) is simd
+    assert {"host-web.wasm", web.ASYNCIFY, "build.json"} <= names
+    assert web.SIMD_FLAGS == ["-msimd128"]
+
+
 def _module(*sections) -> bytes:
     return web._module(list(sections))
 

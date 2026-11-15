@@ -169,6 +169,12 @@ start "" http://127.0.0.1:18642/
 "%here%game.exe" "%rom%" 0
 """
 
+README_WEB_SIMD = """
+The files ending in -simd.wasm are a faster copy of the game for browsers with WebAssembly SIMD (Chrome 91, Firefox
+89, Safari 16.4 and later): the page plays them there, and the plain ones in older browsers. Add ?nosimd to the
+page's address to play the plain ones anyway.
+"""
+
 README_WEB = """{title}, for a web browser
 ======================
 
@@ -260,9 +266,10 @@ def package_app(program: Path, dest: Path, title: str, platform: str = sys.platf
     return dest
 
 
-def export(net, slug: str, kind: str, log=print) -> dict:
+def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
     """Build the project's game (only what changed) and export it as `kind` ("app", "web" or "miyoo"): {"kind",
-    "folder", "path" (what to open), "files"}."""
+    "folder", "path" (what to open), "files"}. `simd`: a browser build also carries the faster build for browsers
+    with WebAssembly SIMD (web.SIMD), which the page plays where it can."""
     from ... import toolchains
     from . import build, miyoo, play, web
 
@@ -300,11 +307,11 @@ def export(net, slug: str, kind: str, log=print) -> dict:
         steps_for_player = miyoo.instructions(folder, title)
     else:
         steps = (*web.STEPS, PACKING)
-        folder = web.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
+        folder = web.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, simd=simd)
         build.Progress(log, steps).start(PACKING)
         log("copying the browser build")
         folder = web.export(folder, out / "web")
-        _write(folder / "README.txt", README_WEB.format(title=title))
+        _write(folder / "README.txt", README_WEB.format(title=title) + (README_WEB_SIMD if simd else ""))
         path = folder / "index.html"
     files = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file())
     size = sum((folder / f).stat().st_size for f in files)
@@ -314,6 +321,9 @@ def export(net, slug: str, kind: str, log=print) -> dict:
     if kind == "web":
         steps_for_player = [f"Serve {folder} over http and open it in Chrome or Edge (its README.txt says how): "
                             "browsers load WebAssembly only over http.", "The page asks the player for their ROM."]
+        if simd:
+            steps_for_player.append("Browsers with WebAssembly SIMD (Chrome 91, Firefox 89, Safari 16.4 and later) play "
+                                    "the faster build in it; older ones the plain build, also in it.")
     elif kind in ("app", "window"):
         steps_for_player = [f"Open {path} to play: it asks for your ROM the first time."]
         if kind == "window":
