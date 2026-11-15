@@ -466,6 +466,9 @@ def renames(lls: list[Path], fixed: list[str], library_names=None) -> dict[str, 
             address = int(auto.group(1), 16)
         if address is not None:
             at.setdefault(address, set()).add(n)
+    named = {}  # the project's name for each function's address (the layout's)
+    for n, address in where.items():
+        named.setdefault(address, set()).add(n)
     out = {}
     for n in declared - defined:
         address = where.get(n)
@@ -477,6 +480,11 @@ def renames(lls: list[Path], fixed: list[str], library_names=None) -> dict[str, 
             out[n] = next(iter(at[address]))
         elif n not in out and (library := (library_names or {}).get(n)) and library != n:
             out[n] = library
+        elif address is not None and address not in at and len(named.get(address, ())) == 1 and n not in named[address]:
+            # no C for it in the build, but the project names it now: a racing game's matched C still called
+            # libultra's osCreateMesgQueue and osSpTaskStartGo by their automatic names, the host answers them by
+            # name, and they were stubbed (its threads never got their queue, nothing was drawn)
+            out[n] = next(iter(named[address]))
     return out
 
 

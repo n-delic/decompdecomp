@@ -447,6 +447,31 @@ u32 w2c_env_osPiStartDma(struct w2c_env *e, u32 mb, u32 pri, u32 dir, u32 dev, u
     if (mq) put(mq, mb, 0, 0);
     return 0;
 }
+/* libultra's newer cartridge API (2.0F on): a game asks osCartRomInit for the cartridge's handle, then sends each
+   transfer as an OSIoMesg (its dramAddr at +8, devAddr at +12, size at +16, its queue at +4) to osEPiStartDma. A
+   racing game's main thread waited for ever on the reply the stub never sent. The handle is the host's, in low
+   memory below the game's data: its domain 0 and base 0xB0000000, as libultra's own handle has them. */
+#define CART_HANDLE 0x000A1000u
+u32 w2c_env_osCartRomInit(struct w2c_env *e) {
+    (void)e;
+    if (!be32(CART_HANDLE + 12)) {
+        memset(M + CART_HANDLE, 0, 0x74);
+        M[CART_HANDLE + 4] = 2;            /* type: DEVICE_TYPE_INIT, the cartridge */
+        wbe32(CART_HANDLE + 12, 0xB0000000u); /* baseAddress */
+    }
+    return CART_HANDLE;
+}
+u32 w2c_env_osEPiStartDma(struct w2c_env *e, u32 handle, u32 mb, u32 dir) {
+    (void)handle;
+    return w2c_env_osPiStartDma(e, mb, 0, dir, be32(mb + 12) & 0x0FFFFFFFu, be32(mb + 8), be32(mb + 16), be32(mb + 4));
+}
+u32 w2c_env_osEPiReadIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) {
+    (void)e; (void)handle;
+    uint32_t at = dev & 0x0FFFFFFCu;
+    wbe32(data, at + 4 <= rom_size ? (uint32_t)rom[at] << 24 | rom[at + 1] << 16 | rom[at + 2] << 8 | rom[at + 3] : 0);
+    return 0;
+}
+u32 w2c_env_osEPiWriteIo(struct w2c_env *e, u32 handle, u32 dev, u32 data) { (void)e; (void)handle; (void)dev; (void)data; return 0; }
 u32 w2c_env_osVirtualToPhysical(struct w2c_env *e, u32 a) { (void)e; return a & 0x1FFFFFFF; }
 
 /* ---------------------------------------------------------------- RSP tasks: graphics (render.c) and audio (audio.c) */
