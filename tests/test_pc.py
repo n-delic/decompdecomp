@@ -3442,6 +3442,26 @@ def test_the_64_bit_sweep_stops_where_the_loaded_code_ends():
     assert [(f.addr - X64_BASE, f.size) for f in scratch_pe.analyse(pe, [])] == [(0x1000, 3), (0x1020, 5)]
 
 
+def test_the_32_bit_sweep_stops_where_the_loaded_code_ends():
+    """Review of #277: the 32-bit path ran to the end of .text in the file (SizeOfRawData, rounded up to the file
+    alignment), so a prologue's bytes in that padding became a function the loader never maps. It stops at
+    VirtualSize: .text 0x20 bytes of 0x200 in the file, a `push ebp; mov ebp, esp; pop ebp; ret` at +0x20."""
+    code = bytearray(0x200)
+    code[:0x20] = bytes.fromhex("31c0c3").ljust(0x20, b"\xcc")  # xor eax, eax; ret
+    code[0x20:0x25] = bytes.fromhex("558bec5dc3")
+    exe = bytearray(_tiny_exe(bytes(code)))
+    text = 0x40 + 24 + 0xE0  # (its section header, after the PE header and PE32's optional header)
+    struct.pack_into("<I", exe, text + 8, 0x20)  # VirtualSize
+    pe = scratch_pe.read_pe(bytes(exe))
+    assert [(s.vsize, s.size, s.loaded_size) for s in pe.sections[:1]] == [(0x20, 0x200, 0x20)]
+    assert [(f.addr, f.size) for f in scratch_pe.analyse(pe, [_row(TEXT, TEXT + 3)])] == [(TEXT, 3)]
+    struct.pack_into("<I", exe, text + 8, 0)  # (no VirtualSize: the file's size, and the sweep reads all of it)
+    pe = scratch_pe.read_pe(bytes(exe))
+    assert pe.sections[0].loaded_size == 0x200
+    assert [(f.addr, f.size) for f in scratch_pe.analyse(pe, [_row(TEXT, TEXT + 3)])] == \
+        [(TEXT, 3), (TEXT + 0x20, 5)]
+
+
 @pytest.mark.parametrize("shape", ["rvas", "offsets", "a constant"])
 def test_data_past_a_64_bit_functions_pdata_end_is_not_a_function(shape):
     """A function's .pdata entry can end before data its code reads (code a compiler other than Visual C++ made, or

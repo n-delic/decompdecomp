@@ -1471,10 +1471,10 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
         rows[r["entry"]] = r if not r.get("thunk") else {**r, "end": r["entry"] + THUNK_BYTES}
     # (an incrementally linked program's thunk table, _thunk_table_end: no function, nor are Ghidra's rows in it,
     # the thunks it didn't mark as thunks included)
-    tables = {sec.va: _thunk_table_end(pe, sec.va, sec.va + sec.size) for sec in pe.sections if sec.code}
+    tables = {sec.va: _thunk_table_end(pe, sec.va, sec.va + sec.loaded_size) for sec in pe.sections if sec.code}
     rows = {a: r for a, r in rows.items() if not _in_table(tables, a)}
     for sec in pe.sections:  # code before the first function of a section is looked for as gaps after one are
-        first = min((s for s in rows if sec.va <= s < sec.va + sec.size), default=None)
+        first = min((s for s in rows if sec.va <= s < sec.va + sec.loaded_size), default=None)
         begin = tables.get(sec.va, sec.va)  # (from after its thunk table)
         if sec.code and first is not None and (rest := pe.read(begin, first - begin).lstrip(b"\x90\xcc\x00")):
             if rest.strip(b"\x90\xcc\x00"):
@@ -1486,7 +1486,7 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
     while i < len(starts):
         start = starts[i]
         sec = pe.section_at(start)
-        limit = min(starts[i + 1] if i + 1 < len(starts) else sec.va + sec.size, sec.va + sec.size)
+        limit = min(starts[i + 1] if i + 1 < len(starts) else sec.va + sec.loaded_size, sec.va + sec.loaded_size)
         code_end = _code_end(md, pe, start, max(start + 1, min(rows[start].get("end", limit), limit)), limit)
         code_end, end, entries = _tables(md, pe, start, code_end, limit)
         if traps and end == code_end < limit and pe.read(end, 1) == b"\xcc" and \
@@ -1502,8 +1502,9 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
             starts.insert(i + 1, missed)
             limit = missed
             gap = pe.read(end, limit - end)
-        if gap and gap.strip(b"\x90") == b"":
-            end = limit  # Visual C++ 6's own padding: part of the compiled function's section too
+        if gap and gap.strip(b"\x90") == b"" and i + 1 < len(starts):
+            end = limit  # Visual C++ 6's own padding: part of the compiled function's section too, up to the next
+            # function of the section: past the code the loader maps is the file's padding, no function's own
         extents[start] = (code_end, end, entries)
         i += 1
 
