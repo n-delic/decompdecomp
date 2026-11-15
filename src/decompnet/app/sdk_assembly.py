@@ -14,6 +14,7 @@ from ..rom.symbols import Symbol
 from .source_assembly import fingerprint, verified
 
 PREFIX='sdk-object-reference:'
+SIGNATURE_METHODS=('sdk-signature','user-confirmed')  # set aside on detection, no archive linked (signature_proof)
 
 
 def index(db, path, corpus):
@@ -186,51 +187,72 @@ def save(net,proj,fn,proof):
         if db.execute('SELECT 1 FROM claims WHERE function_id=?',(fn['id'],)).fetchone():return False
         meta=json.loads(fresh['meta'] or '{}');meta['verified_assembly']=proof
         meta['sdk_display']={'name':proof['name'],'names':proof.get('names',[proof['name']]),'corpora':[proof['corpus']]}
-        meta['asm_code']=('Library C your SDK archive reproduces byte for byte; set aside from C matching by this '
-                          'project\'s library setting.' if proof.get('from_c') else 'Verified SDK assembly; excluded from C matching.')
+        meta['asm_code']=(('Library code found by library detection' if proof.get('verification_method') in SIGNATURE_METHODS
+                           else 'Library C your SDK archive reproduces byte for byte')+'; set aside from C matching by '
+                          'this project\'s library setting.' if proof.get('from_c') else 'Verified SDK assembly; excluded from C matching.')
         db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?",(json.dumps(meta),fn['id']))
         net._event(db,proj['id'],None,'assembly-verified',fn['name']+': '+proof['name'])
     return True
 
 
-SETTING='sdk_set_aside_c'  # project config: identified library C that the user's SDK archive reproduces is set aside
+SETTING='sdk_set_aside_c'  # project config: library C that library detection finds is set aside, not matched
 
 
 def enabled(net,proj):
     return bool(net.cfg(proj).get(SETTING))
 
 
-def _lead(net,proj,fn):
-    """(name, corpora) an open function was identified by, or None: a unique full-size signature name (sdk_names),
-    from libraries this game allows, that a port doesn't build from the game's own C. With a port kit only what it
-    replaces or its glue supplies (`PortKit.sdk_group`): the N64 port compiles libultra's math and synthesizer for
-    the PC ("native"), and a name it doesn't know (a racing game's `_n_loadBuffer`, `read32`) is the game's own
-    code to it, so both keep their C work."""
-    from .sdk_library import allowed
-    meta=json.loads(fn['meta'] or '{}')
-    if meta.get('reopened'):return None
-    display=meta.get('sdk_display') or {};naming=meta.get('naming') or {}
-    name=display.get('name') if display.get('name') else naming.get('name') if naming.get('method')=='sdk_signature' else None
-    corpora=display.get('corpora') or naming.get('source_corpora') or []
-    if not name or ' / ' in name:return None
+def _lead(net,proj,fn,hint):
+    """(name, corpora) of an open function library detection found (`hint`: one name), or None. With a port kit only
+    what it replaces or its glue supplies (`PortKit.sdk_group`): the N64 port compiles libultra's math and
+    synthesizer for the PC ("native"), and a name it doesn't know (a racing game's `_n_loadBuffer`, `read32`) is the
+    game's own code to it, so both keep their C work."""
+    if json.loads(fn['meta'] or '{}').get('reopened'):return None
+    names=hint.get('names') or []
+    if len(names)!=1 or not names[0] or ' / ' in names[0]:return None
     kit=net.console(proj).port_kit
-    if kit is not None and kit.sdk_group(name) not in ('replaced','glue'):return None
-    corpora=[c for c in corpora if allowed(net,proj,c)]
-    return (name,corpora) if corpora else None
+    if kit is not None and kit.sdk_group(names[0]) not in ('replaced','glue'):return None
+    return names[0],list(hint.get('corpora') or [])
+
+
+def detected(net,proj):
+    """{function id: hint} for the library code the project's detection finds, the same Play leaves out of a build
+    (port/wasm/play.library): full-size signatures from the console's built-in table (the N64's ultralib rebuild) and
+    the SDK folders the user indexed, and identities the user confirmed for the port."""
+    from ..port.identities import confirmed
+    return net.sdk_functions(proj)|confirmed(net,proj)
+
+
+def signature_proof(proj,fn,name,hint):
+    """Set aside on detection alone, when no local archive links the bytes: the target's full-size
+    relocation-normalised fingerprint is one library function's, now or when it was named from one (a recorded
+    identity, `Network.sdk_functions`), or the user confirmed it. Weaker than linking, and said so: it's never a
+    match, and a changed target undoes it (`source_assembly.verified`)."""
+    confirmed=hint.get('corpora')==['confirmed by the user']
+    if not confirmed and not hint.get('fingerprint') and hint.get('evidence')!='recorded SDK signature':return None
+    return {'verified':True,'kind':'sdk','from_c':True,'alias_schema':1,'name':name,'names':[name],
+            'corpus':(hint.get('corpora') or ['library detection'])[0],'corpora':list(hint.get('corpora') or []),
+            'verification_method':'user-confirmed' if confirmed else 'sdk-signature','signature':hint.get('fingerprint'),
+            'fingerprint':fingerprint(proj,fn),'target_sha256':hashlib.sha256(bytes(fn['target'] or b'')).hexdigest(),
+            'evidence':(hint.get('evidence') or 'confirmed by the user')+'; set aside from C matching by this '
+                       'project\'s library setting. Bytes not linked against an SDK archive; not matching C.',
+            'at':time.time()}
 
 
 def discover_c(net,proj,stop=None,progress=None):
-    """Set aside the open functions named from library signatures whose code the user's own SDK archive links to the
-    same bytes, when the project chose that (`SETTING`). The judge is the same as for SDK assembly: the archive's
-    object linked at the function's address, every code and data byte compared. Background runs take 3 seconds a
-    turn and resume; a user-started run (`stop`, an Event) does them all, reports `progress` and stops when asked."""
+    """Set aside the open functions library detection finds (`detected`), when the project chose that (`SETTING`).
+    Where the user's own SDK archive has the function, its object is linked at the function's address and every
+    code and data byte compared, as for SDK assembly; otherwise the detection is the evidence (`signature_proof`).
+    Background runs take 3 seconds a turn and resume; a user-started run (`stop`, an Event) does them all, reports
+    `progress` and stops when asked."""
     if not enabled(net,proj) or proj['arch']!='mips' or not net.is_rom(proj) or net.fork_slug(proj['slug']):return 0
     store=net.project_store(proj['id']);cursor_key='sdk-c-cursor:'+str(proj['id'])
     saved=store.one('SELECT value FROM settings WHERE key=?',cursor_key)
     cursor=0 if stop is not None or not saved else int(saved['value'])
-    rows=store.all("SELECT * FROM functions WHERE project_id=? AND status='open' AND id>? AND "
-                   "(json_extract(meta,'$.sdk_display.name') IS NOT NULL OR json_extract(meta,'$.naming.method')='sdk_signature') ORDER BY id",
-                   proj['id'],cursor)
+    hints=detected(net,proj)
+    if not hints:return 0
+    rows=store.all("SELECT * FROM functions WHERE project_id=? AND status='open' AND id>? AND id IN (SELECT value FROM json_each(?)) ORDER BY id",
+                   proj['id'],cursor,json.dumps(sorted(hints)))
     count=0;started=time.monotonic();examined=cursor;finished=True
     for done,fn in enumerate(rows):
         from .maintenance import checkpoint
@@ -238,10 +260,11 @@ def discover_c(net,proj,stop=None,progress=None):
         if stop is not None and stop.is_set() or stop is None and time.monotonic()-started>3:
             finished=False;break
         if progress:progress({'done':done,'total':len(rows),'set_aside':count,'function':fn['name']})
-        examined=fn['id']
-        lead=_lead(net,proj,fn)
+        examined=fn['id'];hint=hints[fn['id']]
+        lead=_lead(net,proj,fn,hint)
         if not lead or store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):continue
-        proof=verify(net,proj,fn,{'names':[lead[0]],'corpora':lead[1]},publish=False,from_c=True)
+        proof=(verify(net,proj,fn,{'names':[lead[0]],'corpora':lead[1]},publish=False,from_c=True)
+               or signature_proof(proj,fn,lead[0],hint))
         if proof:count+=int(save(net,proj,fn,proof))
     if stop is None:
         with store.tx() as db:

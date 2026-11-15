@@ -840,7 +840,7 @@ async function followSdkSetAside(job, slug) {
   const log = $("sdkSelectionLog"), stop = $("sdkSetAsideCStop");
   if (log._following === job) return;
   log._following = job; log.hidden = false; log._showJobProgress = true;
-  const finish = beginWork(log, "Checking library functions against your SDK archive", [$("sdkSelectionSave"), $("sdkSetAsideCOn")], "Library check finished.");
+  const finish = beginWork(log, "Setting aside library functions", [$("sdkSelectionSave"), $("sdkSetAsideCOn")], "Library check finished.");
   stop.hidden = false; stop.disabled = false;
   stop.onclick = async () => {
     stop.disabled = true; log._workStatus.textContent = "Stopping…";

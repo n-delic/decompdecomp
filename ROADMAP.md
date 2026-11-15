@@ -746,7 +746,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | — | — | ✓ ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Supplied assembly code/data verification | ✓ ROM driver | ✓ ROM driver | ✓ ROM driver | — | — | ✓ ROM driver | — | — own build adapter planned | — own build adapter planned | — | — own build adapter planned | — own build adapter planned |
 | Indexed SDK object assembly proof | ✓ MIPS ROM | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
-| Library C your SDK archive reproduces set aside (opt-in, Libraries for this game) | ✓ MIPS ROM; port glue and replaced only | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
+| Library C that library detection finds set aside (opt-in, Libraries for this game; linked when your SDK has it) | ✓ MIPS ROM, built-in ultralib table; port glue and replaced only | ✓ MIPS ROM | ✓ MIPS ROM | — | — | ✓ MIPS ROM | — | — owned-build adapter planned | — owned-build adapter planned | — | — owned-build adapter planned | — owned-build adapter planned |
 | Built-in exact SDK assembly detection before claims | ✓ bcmp/bzero | — pack planned | — pack planned | — | — | — pack planned | — | — pack planned | — pack planned | — | — pack planned | — owned-build adapter planned |
 | Exact C / verified source assembly / verified SDK assembly / other assembly / open counts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ counts | ✓ counts | — | ✓ counts | ✓ counts |
 | Local mapped source preparation | ✓ | ✓ | ✓ | — | — | ✓ | — | body only¹ | body only¹ | — | body only¹ | body only¹ |
@@ -914,6 +914,16 @@ were set aside: the rest are native, unknown to the kit, or a build no local arc
 matches only a reconstructed 2.0I signature, with no archive to link). Archives indexed before their reference
 records existed are now found through the folder inventory. Left: the same for imported (project-mode) builds,
 which need an owned-build adapter like the assembly proof.
+
+It now reads the same library detection Play uses to leave libultra out of a build (`sdk_assembly.detected`: the
+console's built-in signatures, the SDK folders, identities the user confirmed), so it works with no SDK at all.
+Where a local archive has the function its bytes are still linked and compared; otherwise the proof says it is a
+signature match (`verification_method` `sdk-signature`), and a changed target undoes it. On that racing game 32
+functions are set aside, the same 32 with the SDK folders removed, `osPfsInitPak` among them. Measured across six
+N64 games, every libultra function named from the SDK folders is in the built-in table except n_audio
+(`libgn_audio.a` 2.0J-2.0L, 50 functions on one game), which ultralib doesn't rebuild, and one
+`__osRepairPackId` build no SDK release has. Left: fingerprints of n_audio rebuilt from public matching C (several
+N64 decomps carry it), checked against the original archives like tools/ultralib_signatures.py's `--compare-db`.
 
 Similar-code autopilot attempts are bounded and use the unchanged compiler/link judge on MIPS ROM projects.
 They learn unambiguous symbol correspondences, try local-permuter repairs and proven donor flags, and persist

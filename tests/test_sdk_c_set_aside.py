@@ -94,15 +94,21 @@ def test_on_sets_aside_linked_library_c_and_off_gives_it_back(example):
     assert row['status'] == 'open' and 'verified_assembly' not in json.loads(row['meta'])
 
 
-def test_wrong_bytes_reopened_and_claimed_functions_keep_their_c_work(example, monkeypatch):
+def test_bytes_that_dont_link_are_never_called_linked(example, monkeypatch):
+    """The archive's build differs: what sets the function aside is its signature identity, said as such."""
+    net, fid = example
+    sdk_assembly.choose_c(net, 'game', True)
+    monkeypatch.setattr(net, '_rom_target', lambda f: match.RomTarget(f['name'], f['vram'], b'nope' + bytes(f['target'])[4:],
+                                                                      json.loads(f['relocs']), True))
+    assert sdk_assembly.discover_c(net, net.project_row('game'), threading.Event()) == 1
+    proof = json.loads(status(net, fid)['meta'])['verified_assembly']
+    assert proof['verification_method'] == 'sdk-signature' and 'object_sha256' not in proof
+
+
+def test_reopened_and_claimed_functions_keep_their_c_work(example):
     net, fid = example
     sdk_assembly.choose_c(net, 'game', True)
     proj = net.project_row('game')
-    original = net._rom_target
-    monkeypatch.setattr(net, '_rom_target', lambda f: match.RomTarget(f['name'], f['vram'], b'nope' + bytes(f['target'])[4:],
-                                                                      json.loads(f['relocs']), True))
-    assert sdk_assembly.discover_c(net, proj, threading.Event()) == 0
-    monkeypatch.setattr(net, '_rom_target', original)
     agent, _ = net.local_agent('other')
     assert net.permuter._hold(agent, net._function('osToyRead', 'game'), count_turn=False, seconds=60)
     assert sdk_assembly.discover_c(net, proj, threading.Event()) == 0
@@ -136,13 +142,39 @@ def test_changed_archive_is_parsed_again_and_never_linked(example, tmp_path):
     assert not list(sdk_assembly.objects(net, {'names': ['osToyRead'], 'corpora': ['Toy SDK']}))
 
 
+def test_detection_alone_sets_aside_without_any_archive(example):
+    """A user with no SDK: the console's built-in signatures find the function, and nothing can be linked."""
+    net, fid = example
+    with net.store.tx() as db:
+        db.execute('DELETE FROM settings WHERE key=?', (sdk_assembly.PREFIX + 'Toy SDK',))
+    assert sdk_assembly.reference(net, 'Toy SDK') is None
+    sdk_assembly.choose_c(net, 'game', True)
+    proj = net.project_row('game')
+    assert sdk_assembly.discover_c(net, proj, threading.Event()) == 1
+    fn = net._function('osToyRead', 'game')
+    proof = json.loads(fn['meta'])['verified_assembly']
+    assert fn['status'] == 'asm' and proof['verification_method'] == 'sdk-signature' and proof['from_c']
+    assert 'not linked' in proof['evidence'] and proof['corpora'] == ['Toy SDK']
+    assert source_assembly.verified(proj, fn)
+    assert source_assembly.breakdown(net, proj)['exact_c'] == 0
+    changed = dict(fn); changed['target'] = b'bad!' + bytes(fn['target'])[4:]
+    assert not source_assembly.verified(proj, changed)
+
+
+def test_linked_bytes_are_preferred_to_the_signature(example):
+    net, fid = example
+    sdk_assembly.choose_c(net, 'game', True)
+    assert sdk_assembly.discover_c(net, net.project_row('game'), threading.Event()) == 1
+    proof = json.loads(net._function('osToyRead', 'game')['meta'])['verified_assembly']
+    assert 'verification_method' not in proof and proof['object_sha256']
+
+
 def test_code_the_port_builds_from_c_is_never_a_lead(example):
     net, fid = example
     proj = net.project_row('game')
-    fn = dict(net._function('osToyRead', 'game'))
+    fn = net._function('osToyRead', 'game')
     # libultra's math and synthesizer, which the N64 port compiles from the game's C, and names the kit doesn't know
     for name in ('guMtxF2L', 'alSynNew', '_n_loadBuffer', 'read32'):
-        fn['meta'] = json.dumps({'sdk_display': {'name': name, 'corpora': ['Toy SDK']}})
-        assert sdk_assembly._lead(net, proj, fn) is None
-    fn['meta'] = json.dumps({'sdk_display': {'name': 'osPfsInitPak', 'corpora': ['Toy SDK']}})
-    assert sdk_assembly._lead(net, proj, fn) == ('osPfsInitPak', ['Toy SDK'])
+        assert sdk_assembly._lead(net, proj, fn, {'names': [name], 'corpora': ['Toy SDK']}) is None
+    assert sdk_assembly._lead(net, proj, fn, {'names': ['osPfsInitPak', 'osOther'], 'corpora': ['Toy SDK']}) is None
+    assert sdk_assembly._lead(net, proj, fn, {'names': ['osPfsInitPak'], 'corpora': ['Toy SDK']}) == ('osPfsInitPak', ['Toy SDK'])
