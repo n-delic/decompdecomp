@@ -61,7 +61,7 @@ def register(app: App) -> None:
                         def check(log):
                             # every identified function at once, with progress and Stop: the user asked for it
                             n = sdk_assembly.discover_c(net, net.project_row(slug), log.cancel_event, log.progress)
-                            log(f'{n} library functions your SDK archive reproduces were set aside from C matching.')
+                            log(f'{n} library functions found by library detection were set aside from C matching.')
                             return {'set_aside': n}
                         running = jobs.active(('sdk-set-aside',), project=slug)  # a second click follows the first
                         job = running['id'] if running else await app.control(lambda: jobs.start('sdk-set-aside', check, project=slug))
