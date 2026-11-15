@@ -47,21 +47,49 @@ def object_prints(data):
     return out
 
 
-def objects(net, hint):
+def reference(net, corpus):
+    """Where an indexed corpus's archive is: its own record, or the SDK folder inventory's entry for it. Folders
+    indexed before the records existed were never indexed again (an unchanged file is skipped), so on a user's N64
+    setup with every 2.0H archive indexed no SDK object could be found to link."""
+    row=net.store.one('SELECT value FROM settings WHERE key=?',PREFIX+corpus)
+    if row:return json.loads(row['value'])
+    from .sdk_library import inventory
+    return next(({'path':path,'sha256':record['sha256']} for path,record in sorted(inventory(net)['files'].items())
+                 if record.get('corpus')==corpus and record.get('sha256')),None)
+
+
+_PARSED={}  # (path, sha256, mtime, size) -> [(member, prints)]: a libultra archive parsed once, not per function
+
+
+def _members(path, record):
+    """An archive's objects and their fingerprints, or None when it's gone or changed. Parsing a whole libultra
+    archive for every function made checking a racing game's 92 library functions take three minutes."""
     from .twins import _ar_members
-    for corpus in hint.get('corpora',[])[:4]:
-        row=net.store.one('SELECT value FROM settings WHERE key=?',PREFIX+corpus)
-        if not row:continue
-        record=json.loads(row['value']);path=Path(record['path'])
-        if not path.is_file() or path.stat().st_size>100*1024*1024:continue
+    try:stat=path.stat()
+    except OSError:return None
+    if not path.is_file() or stat.st_size>100*1024*1024:return None
+    key=(str(path),record['sha256'],stat.st_mtime_ns,stat.st_size)
+    if key not in _PARSED:
         try:data=path.read_bytes()
-        except OSError:continue
-        if hashlib.sha256(data).hexdigest()!=record['sha256']:continue
-        stat=path.stat();record={**record,'stamp':[stat.st_mtime_ns,stat.st_size]}
-        members=_ar_members(data) if path.suffix.lower()=='.a' else [data]
-        for member in members:
-            try:prints=object_prints(member)
+        except OSError:return None
+        if hashlib.sha256(data).hexdigest()!=record['sha256']:return None
+        parsed=[]
+        for member in (_ar_members(data) if path.suffix.lower()=='.a' else [data]):
+            try:parsed.append((member,object_prints(member)))
             except (ELFError,ValueError,KeyError):continue
+        if len(_PARSED)>=8:_PARSED.pop(next(iter(_PARSED)))
+        _PARSED[key]=parsed
+    return [stat.st_mtime_ns,stat.st_size],_PARSED[key]
+
+
+def objects(net, hint):
+    for corpus in hint.get('corpora',[])[:4]:
+        record=reference(net,corpus)
+        if not record:continue
+        found=_members(Path(record['path']),record)
+        if found is None:continue
+        stamp,members=found;record={**record,'stamp':stamp}
+        for member,prints in members:
             for name in hint.get('names',[]):
                 if name in prints:yield member,name,prints[name],record,corpus
 
@@ -104,8 +132,10 @@ def link(net, proj, fn, obj, name):
     return result if result.exact and not result.problems else None
 
 
-def verify(net, proj, fn, hint, *, publish=True):
-    if fn['status']!='asm' or len(hint.get('names',[]))!=1:return False
+def verify(net, proj, fn, hint, *, publish=True, from_c=False):
+    """`from_c`: an open function (C library code the agents would otherwise match), set aside only by the project's
+    choice (`SETTING`); without it only assembly is checked."""
+    if fn['status']!=('open' if from_c else 'asm') or len(hint.get('names',[]))!=1:return False
     candidates=list(objects(net,hint))
     if not candidates:return False
     expected=fingerprint(proj,fn)
@@ -121,6 +151,9 @@ def verify(net, proj, fn, hint, *, publish=True):
                'entry':list(entries(ELFFile(BytesIO(obj)))[name]),
                'target_sha256':hashlib.sha256(bytes(fn['target'])).hexdigest(),
                'bytes':len(result.linked_code),'evidence':'Exact linked SDK code and referenced data; not matching C.', 'at':time.time()}
+        if from_c:
+            proof.update(from_c=True,evidence='Exact linked SDK code and referenced data from your local SDK archive; '
+                                              'set aside from C matching by this project\'s library setting, not matching C.')
         proof=combine([proof])
         if not publish:return proof
         return save(net,proj,fn,proof)
@@ -146,15 +179,97 @@ def save(net,proj,fn,proof):
     with net.project_store(proj['id']).tx() as db:
         fresh=db.execute('SELECT * FROM functions WHERE id=?',(fn['id'],)).fetchone()
         current=net.project_row(proj['slug'])
-        if fresh['status'] not in (('open','asm') if proof.get('verification_method')=='builtin-sdk-digest' else ('asm',)) or fingerprint(current,fresh)!=proof['fingerprint']:return False
+        statuses=('open','asm') if proof.get('verification_method')=='builtin-sdk-digest' else ('open',) if proof.get('from_c') else ('asm',)
+        if fresh['status'] not in statuses or fingerprint(current,fresh)!=proof['fingerprint']:return False
+        if proof.get('from_c') and not enabled(net,current):return False
         if json.loads(fresh['meta'] or '{}').get('reopened'):return False
         if db.execute('SELECT 1 FROM claims WHERE function_id=?',(fn['id'],)).fetchone():return False
         meta=json.loads(fresh['meta'] or '{}');meta['verified_assembly']=proof
         meta['sdk_display']={'name':proof['name'],'names':proof.get('names',[proof['name']]),'corpora':[proof['corpus']]}
-        meta['asm_code']='Verified SDK assembly; excluded from C matching.'
+        meta['asm_code']=('Library C your SDK archive reproduces byte for byte; set aside from C matching by this '
+                          'project\'s library setting.' if proof.get('from_c') else 'Verified SDK assembly; excluded from C matching.')
         db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?",(json.dumps(meta),fn['id']))
         net._event(db,proj['id'],None,'assembly-verified',fn['name']+': '+proof['name'])
     return True
+
+
+SETTING='sdk_set_aside_c'  # project config: identified library C that the user's SDK archive reproduces is set aside
+
+
+def enabled(net,proj):
+    return bool(net.cfg(proj).get(SETTING))
+
+
+def _lead(net,proj,fn):
+    """(name, corpora) an open function was identified by, or None: a unique full-size signature name (sdk_names),
+    from libraries this game allows, that a port doesn't build from the game's own C. With a port kit only what it
+    replaces or its glue supplies (`PortKit.sdk_group`): the N64 port compiles libultra's math and synthesizer for
+    the PC ("native"), and a name it doesn't know (a racing game's `_n_loadBuffer`, `read32`) is the game's own
+    code to it, so both keep their C work."""
+    from .sdk_library import allowed
+    meta=json.loads(fn['meta'] or '{}')
+    if meta.get('reopened'):return None
+    display=meta.get('sdk_display') or {};naming=meta.get('naming') or {}
+    name=display.get('name') if display.get('name') else naming.get('name') if naming.get('method')=='sdk_signature' else None
+    corpora=display.get('corpora') or naming.get('source_corpora') or []
+    if not name or ' / ' in name:return None
+    kit=net.console(proj).port_kit
+    if kit is not None and kit.sdk_group(name) not in ('replaced','glue'):return None
+    corpora=[c for c in corpora if allowed(net,proj,c)]
+    return (name,corpora) if corpora else None
+
+
+def discover_c(net,proj,stop=None,progress=None):
+    """Set aside the open functions named from library signatures whose code the user's own SDK archive links to the
+    same bytes, when the project chose that (`SETTING`). The judge is the same as for SDK assembly: the archive's
+    object linked at the function's address, every code and data byte compared. Background runs take 3 seconds a
+    turn and resume; a user-started run (`stop`, an Event) does them all, reports `progress` and stops when asked."""
+    if not enabled(net,proj) or proj['arch']!='mips' or not net.is_rom(proj) or net.fork_slug(proj['slug']):return 0
+    store=net.project_store(proj['id']);cursor_key='sdk-c-cursor:'+str(proj['id'])
+    saved=store.one('SELECT value FROM settings WHERE key=?',cursor_key)
+    cursor=0 if stop is not None or not saved else int(saved['value'])
+    rows=store.all("SELECT * FROM functions WHERE project_id=? AND status='open' AND id>? AND "
+                   "(json_extract(meta,'$.sdk_display.name') IS NOT NULL OR json_extract(meta,'$.naming.method')='sdk_signature') ORDER BY id",
+                   proj['id'],cursor)
+    count=0;started=time.monotonic();examined=cursor;finished=True
+    for done,fn in enumerate(rows):
+        from .maintenance import checkpoint
+        checkpoint()
+        if stop is not None and stop.is_set() or stop is None and time.monotonic()-started>3:
+            finished=False;break
+        if progress:progress({'done':done,'total':len(rows),'set_aside':count,'function':fn['name']})
+        examined=fn['id']
+        lead=_lead(net,proj,fn)
+        if not lead or store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id']):continue
+        proof=verify(net,proj,fn,{'names':[lead[0]],'corpora':lead[1]},publish=False,from_c=True)
+        if proof:count+=int(save(net,proj,fn,proof))
+    if stop is None:
+        with store.tx() as db:
+            db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',(cursor_key,str(0 if finished else examined)))
+    return count
+
+
+def choose_c(net,slug,on):
+    """Save the project's choice. Turning it off gives every function it set aside back to C matching."""
+    proj=net.project_row(slug);reopened=0
+    with net.project_store(proj['id']).tx() as db:
+        row=db.execute('SELECT id,config FROM projects WHERE slug=?',(slug,)).fetchone()
+        cfg=json.loads(row['config']);cfg[SETTING]=bool(on)
+        db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),row['id']))
+        if not on:
+            for fn in db.execute("SELECT id,name,meta FROM functions WHERE project_id=? AND status='asm' AND "
+                                 "json_extract(meta,'$.verified_assembly.from_c')=1",(row['id'],)).fetchall():
+                meta={k:v for k,v in json.loads(fn['meta']).items() if k not in ('verified_assembly','asm_code')}
+                db.execute("UPDATE functions SET status='open',meta=? WHERE id=?",(json.dumps(meta),fn['id']))
+                reopened+=1
+            if reopened:
+                net._event(db,row['id'],None,'reopen',f'{reopened} library functions open for C matching again (library setting turned off)')
+    return reopened
+
+
+def set_aside_c(net,proj):
+    return net.project_store(proj['id']).one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='asm' AND "
+                                             "json_extract(meta,'$.verified_assembly.from_c')=1",proj['id'])['n']
 
 
 def discover(net,proj,limit=32):
