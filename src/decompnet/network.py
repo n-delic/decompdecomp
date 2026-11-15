@@ -72,7 +72,11 @@ NOTES_FOUND = 20  # search_notes' answer at most
 # found "nothing left to claim" among exactly the ten functions their names gave up on in earlier runs, while a new
 # Opus helper claimed at once. After that the function still comes to it last.
 SELF_RELEASE_WINDOW = RELEASE_COOLDOWN
-MACHINE_AGENTS = ("autopilot", "permuter")  # decompdecomp's own workers: their claims never mean "given up on"
+MACHINE_AGENTS = ("autopilot", "permuter", "deep-permuter")  # decompdecomp's own workers: their claims never mean "given up on"
+# (the deep permuter, the user's long search of one function, is a worker of its own, not "permuter": sharing that
+# identity let it renew or let go of the automatic permuter's claim on the same function, and a claim by one looked
+# like its own to the other, #244)
+MACHINE_AGENT_IDS = f"SELECT id FROM agents WHERE name IN ({', '.join('?' * len(MACHINE_AGENTS))})"
 # "No C makes this" (release_function's not_c): on a DS game five to seven agents in turn took each piece of another
 # function, found it couldn't be C and gave it back, saying so in a note that changed nothing. Once this many agents,
 # of this many models (one model's blind spot isn't proof), say so, it's set aside: no one is handed it again, and
@@ -400,7 +404,7 @@ class Network:
     # ------------------------------------------------------------------ agents
 
     def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli") -> str:
-        """Mint an agent token for one of the app's helpers (`trusted` stays on the record for older databases)."""
+        """Mint an agent token for a managed helper or manual MCP connection (`trusted` stays on the record for older databases)."""
         name = name.strip()
         if not name or len(name) > 40 or not all(c.isalnum() or c in "-_." for c in name):
             raise NetworkError("agent name must be 1-40 chars of [A-Za-z0-9-_.]")
@@ -419,7 +423,7 @@ class Network:
     def authenticate(self, token: str | None) -> Agent:
         """The agent a token belongs to (helpers get theirs from the app when it starts them)."""
         if not token:
-            raise NetworkError("missing token: only helpers decompdecomp starts can work on its projects")
+            raise NetworkError("missing token: connect an agent in Agents & models to work on a project")
         row = self.store.one("SELECT id,name,owner,trusted FROM agents WHERE token_hash=?", hash_token(token))
         if row is None:
             raise NetworkError("invalid API token")
@@ -480,7 +484,7 @@ class Network:
 
     def _expire_claims(self, db) -> None:
         now = time.time()
-        own = {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)}
+        own = {r["id"] for r in db.execute(MACHINE_AGENT_IDS, MACHINE_AGENTS)}
         for row in db.execute("SELECT c.function_id, c.agent_id, f.project_id, f.name FROM claims c "
                               "JOIN functions f ON f.id=c.function_id WHERE c.expires_at < ?", (now,)).fetchall():
             if row["agent_id"] in own:  # decompdecomp's own tries (cut short by a restart): nobody gave up on it
@@ -941,7 +945,7 @@ class Network:
         keeps it off those functions (SELF_RELEASE_WINDOW). Returns the functions released."""
         now, freed = time.time(), []
         with self.store.tx() as db:
-            own = {r["id"] for r in db.execute("SELECT id FROM agents WHERE name IN (?, ?)", MACHINE_AGENTS)}
+            own = {r["id"] for r in db.execute(MACHINE_AGENT_IDS, MACHINE_AGENTS)}
             for aid in agent_ids:
                 rows = db.execute("SELECT f.id, f.project_id, f.name FROM claims c JOIN functions f ON f.id=c.function_id "
                                   "WHERE c.agent_id=?", (aid,)).fetchall()
@@ -961,7 +965,8 @@ class Network:
         """When the app starts: none of its own helpers (origin 'local') is running yet, so whatever they hold is left
         over from the last run. Agents that run elsewhere (a room's members, an agent using the MCP server) may still
         be working: theirs keep the CLAIM_TTL rule; so do the user's own claims and decompdecomp's workers'."""
-        ids = [r["id"] for r in self.store.all("SELECT id FROM agents WHERE origin='local' AND name NOT IN (?, ?, ?)",
+        ids = [r["id"] for r in self.store.all("SELECT id FROM agents WHERE origin='local' AND name NOT IN "
+                                               f"({', '.join('?' * (1 + len(MACHINE_AGENTS)))})",
                                                "you", *MACHINE_AGENTS)]
         return self.release_stopped(ids, why)
 

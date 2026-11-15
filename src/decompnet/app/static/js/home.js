@@ -29,7 +29,9 @@ async function showHome() {
   const box = $("projects");
   box.innerHTML = "";
   $("recent").hidden = !projects.length;
-  $("home").classList.toggle("returning", projects.length > 0);
+  $("home").classList.toggle("returning", projects.length > 0);  // your projects first once you have some
+  // hundreds of games: the cards go in at once, and their meters are set in one frame, not one frame per card
+  const cards = [], meters = [];
   for (const p of projects) {
     const pct = codePct(p);
     if (p.missing) {
@@ -37,7 +39,7 @@ async function showHome() {
       card.className = "card missing";
       card.innerHTML = missingProjectHtml(p);
       card.querySelector("[data-remove-project]").onclick = () => removeMissingProject(p);
-      box.append(card);
+      cards.push(card);
       continue;
     }
     const a = document.createElement("a");
@@ -46,7 +48,7 @@ async function showHome() {
     if (p.broken) {
       a.innerHTML = `<div class="cc-top"><span class="plat">?</span></div><div><h4>${esc(p.title)}</h4>
         <p class="meta err-text">Can't be opened: ${esc(p.broken)}</p></div>`;
-      box.append(a);
+      cards.push(a);
       continue;
     }
     const meta = p.kind === "fork"
@@ -56,9 +58,11 @@ async function showHome() {
     a.innerHTML = `<div class="cc-top"><span class="plat">${esc(p.platform_name || "?")}</span><span class="grow"></span><span class="meta">${esc(since(p.last_activity))}</span><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span></div>
       <div><h4>${esc(p.title)}</h4><p class="meta ${p.progress_error ? "err-text" : ""}">${p.progress_error ? "Progress needs attention: " + esc(p.progress_error) : meta}</p></div>
       <div class="meter"><i></i></div><p class="meta"><b>${pctNum(pct)}%</b> of code · ${(p.matched || 0).toLocaleString()} / ${cFunctions(p).toLocaleString()} functions</p>`;
-    box.append(a);
-    requestAnimationFrame(() => { a.querySelector(".meter i").style.width = pct + "%"; });
+    cards.push(a);
+    meters.push([a, pct]);
   }
+  box.append(...cards);
+  requestAnimationFrame(() => { for (const [a, pct] of meters) a.querySelector(".meter i").style.width = pct + "%"; });
 }
 
 /* A project whose folder was deleted from the computer: its database records can still be removed here. */
