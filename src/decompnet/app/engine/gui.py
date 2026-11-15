@@ -119,7 +119,7 @@ class GuiMixin:
         agents at work the list took 2.5-3.7 s."""
         proj = self._project(slug)
         cfg = self.cfg(proj)
-        agg = self.store.one(f"SELECT {PROGRESS_COLUMNS} FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
+        agg = self.tally(proj["id"])
         console = self.console(proj)
         missing = self.project_missing(proj)
         if cfg.get("kind") == "fork":
@@ -136,8 +136,28 @@ class GuiMixin:
                 "last_activity": self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?",
                                                 proj["id"])["t"],
                 "room": (self._room_info(slug) or {}).get("role"),
-                "autopilot": (self.autopilot_status(slug) or {}).get("state"),
+                "autopilot": (ap := self.autopilot_status(slug) or {}).get("state"), "autopilot_phase": ap.get("phase"),
                 "progress_error": self.progress.errors.get(slug), "missing": missing} | about
+
+    def tally(self, project_id: int) -> dict:
+        """A project's totals (network.PROGRESS_COLUMNS), counted again only when its functions changed
+        (store.TALLY_TRIGGERS): the project list asks for every project every 5 s, and counting a 29,000-function
+        game takes 7 ms, so a few hundred games took seconds each time."""
+        cache = self.__dict__.setdefault("_tallies", {})
+        row = self.store.one("SELECT token FROM tally_changes WHERE project_id=?", project_id)
+        token = row["token"] if row else None
+        kept = cache.get(project_id)
+        if kept is not None and token is not None and kept[0] == token:
+            return kept[1]
+        agg = dict(self.store.one(f"SELECT {PROGRESS_COLUMNS} FROM functions WHERE project_id=? AND {IN_BUILD}",
+                                  project_id))
+        if token is None:  # (a project from before the table: give it a token, so the next ask is answered from here)
+            with self.store.tx() as db:
+                db.execute("INSERT OR IGNORE INTO tally_changes(project_id, token) VALUES(?, lower(hex(randomblob(8))))",
+                           (project_id,))
+            return agg
+        cache[project_id] = (token, agg)
+        return agg
 
     def _room_info(self, slug: str) -> dict | None:
         if slug in self.links:

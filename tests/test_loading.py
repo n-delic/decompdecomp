@@ -271,3 +271,22 @@ def test_the_counts_marks_follow_meta_and_come_to_an_older_database_once(tmp_pat
                              "ALTER TABLE functions DROP COLUMN gone_mark")
     store.conn.close()
     assert marks(Store(tmp_path / "app.db")) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
+
+
+def test_the_database_keeps_its_planner_statistics_up_to_date(tmp_path, monkeypatch):
+    """Hundreds of projects grow the tables the planner chooses indexes for: it optimizes on opening, and the
+    autosave asks it again hourly, never failing the autosave."""
+    from decompnet.app import saves
+    from decompnet.store import ANALYSIS_LIMIT
+
+    store = Store(tmp_path / "app.db")
+    assert store.conn.execute("PRAGMA analysis_limit").fetchone()[0] == ANALYSIS_LIMIT
+    store.optimize()
+    asked = []
+    net = RomNetwork(tmp_path / "app2.db", tmp_path)
+    monkeypatch.setattr(net.store, "optimize", lambda: asked.append(1) or (_ for _ in ()).throw(OSError("busy")))
+    autosave = saves.Autosave(net)
+    autosave.optimized -= saves.Autosave.OPTIMIZE_SECONDS + 1
+    autosave.stop.wait = lambda seconds: autosave.stop.set()  # one pass
+    autosave._loop()
+    assert asked == [1]

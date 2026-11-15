@@ -240,6 +240,22 @@ def test_the_home_page_waits_for_no_agent_and_no_projects_files(tmp_path, monkey
     assert ran == []
     (game,) = client.get("/api/projects").json()
     assert game["slug"] == "game" and game["functions"] == 4 and game["compiler"]["name"] and "broken" not in game
+    # hundreds of projects: the sidebar's ask every 5 s gets just "the same" when nothing changed, and each project's
+    # totals are counted again only when its functions change
+    first = client.get("/api/projects?since=").json()
+    assert first["projects"] == [game]
+    assert client.get(f"/api/projects?since={first['sig']}").json() == {"sig": first["sig"], "same": True}
+    counted = []
+    real_one = net.store.one
+    monkeypatch.setattr(net.store, "one", lambda sql, *a: (counted.append(sql) if "COUNT(*) AS total" in sql else None)
+                        or real_one(sql, *a))
+    client.get("/api/projects")
+    assert counted == []
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE project_id=(SELECT id FROM projects WHERE slug='game') "
+                   "AND id=(SELECT MIN(id) FROM functions)")
+    again = client.get(f"/api/projects?since={first['sig']}").json()
+    assert len(counted) == 1 and again["projects"][0]["matched"] == game["matched"] + 1
 
 
 def test_helpers_started_to_polish_matched_code_get_that_task(tmp_path, monkeypatch):

@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS progress_dirty(
   functions INTEGER NOT NULL DEFAULT 0,
   headers INTEGER NOT NULL DEFAULT 0,
   metadata INTEGER NOT NULL DEFAULT 0);
+-- A new random token whenever a project's counted functions change (TALLY_TRIGGERS): the project list keeps each
+-- project's totals until it does (engine/gui.py, summary), instead of counting every function of every game each 5 s.
+CREATE TABLE IF NOT EXISTS tally_changes(
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  token TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS progress_dirty_file(
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL, token TEXT,
@@ -122,6 +127,27 @@ CREATE TRIGGER IF NOT EXISTS functions_marks_insert AFTER INSERT ON functions WH
 BEGIN UPDATE functions SET {MARKS} WHERE id=NEW.id; END;
 CREATE TRIGGER IF NOT EXISTS functions_marks_update AFTER UPDATE OF meta ON functions
 BEGIN UPDATE functions SET {MARKS} WHERE id=NEW.id; END;
+"""
+
+# What a project's totals read (network.PROGRESS_COLUMNS, IN_BUILD): created after the migrations, like the ones below.
+# A removed project's leftover rows mark nothing (its id may be reused later), like the progress triggers
+TALLY_TRIGGERS = """
+CREATE TRIGGER IF NOT EXISTS tally_functions_insert AFTER INSERT ON functions
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id)
+BEGIN
+  INSERT OR REPLACE INTO tally_changes(project_id, token) VALUES(NEW.project_id, lower(hex(randomblob(8))));
+END;
+CREATE TRIGGER IF NOT EXISTS tally_functions_update
+AFTER UPDATE OF project_id,size,status,meta,aside_mark,gone_mark ON functions
+BEGIN
+  INSERT OR REPLACE INTO tally_changes(project_id, token)
+    SELECT id, lower(hex(randomblob(8))) FROM projects WHERE id IN (OLD.project_id, NEW.project_id);
+END;
+CREATE TRIGGER IF NOT EXISTS tally_functions_delete AFTER DELETE ON functions
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=OLD.project_id)
+BEGIN
+  INSERT OR REPLACE INTO tally_changes(project_id, token) VALUES(OLD.project_id, lower(hex(randomblob(8))));
+END;
 """
 
 # Created after the migrations above: they name columns older databases get from MIGRATIONS. A trigger only marks what
@@ -226,6 +252,9 @@ WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 IN_MEMORY = ":memory:"  # a database only its own connection sees: reads go through the writer's connection
 
 
+ANALYSIS_LIMIT = 400  # rows PRAGMA optimize reads per index: enough for the planner, quick on a big database
+
+
 class Store:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -258,6 +287,7 @@ class Store:
             ) UPDATE functions SET last_checked=recency.checked,last_improved=recency.improved
               FROM recency WHERE functions.id=recency.function_id""")
         self.conn.executescript(DIRTY_TRIGGERS)
+        self.conn.executescript(TALLY_TRIGGERS)
         self.conn.executescript(MARK_TRIGGERS)
         if "aside_mark" in added:  # once: the marks of every function there is
             self.conn.execute(f"UPDATE functions SET {MARKS.replace('NEW.', '')} WHERE meta IS NOT NULL")
@@ -303,10 +333,19 @@ class Store:
                 DROP TABLE gave_up;
                 INSERT INTO settings(key, value) VALUES('abandons_recounted', '1');
                 COMMIT;""")
+        # the query planner's statistics, kept up to date as projects come and grow (SQLite's advice for a connection
+        # that stays open: optimize when it opens, then now and then, Store.optimize); a bounded look per index
+        self.conn.execute(f"PRAGMA analysis_limit={ANALYSIS_LIMIT}")
+        self.conn.execute("PRAGMA optimize=0x10002")
         # what the last run left in the log goes into the database now, and the log starts empty
         self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
+
+    def optimize(self) -> None:
+        """Refresh the planner's statistics where they went stale (cheap when nothing did): the autosave, hourly."""
+        with self.lock:
+            self.conn.execute("PRAGMA optimize")
 
     @contextmanager
     def tx(self):
