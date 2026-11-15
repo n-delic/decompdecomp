@@ -103,7 +103,8 @@ class Jobs:
 
     def start(self, kind: str, fn) -> str:
         jid = uuid.uuid4().hex[:JOB_ID_CHARS]
-        job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
+        job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None,
+               "progress": None, "t": time.time()}
         cancel = self.cancel_events[jid] = threading.Event()
         self.jobs[jid] = job
         logger = self.logger
@@ -124,6 +125,11 @@ class Jobs:
 
         log.progress = progress
         log.check_cancel = check_cancel
+
+        def progress(values: dict) -> None:
+            job["progress"] = dict(values)
+
+        log.progress = progress
 
         def run():
             try:

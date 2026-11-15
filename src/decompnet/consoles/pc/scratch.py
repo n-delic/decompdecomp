@@ -146,6 +146,12 @@ class Section:
     size: int  # bytes in the file
     code: bool
 
+    @property
+    def loaded_size(self) -> int:
+        """How many of its bytes the loader maps: its VirtualSize, up to its bytes in the file. SizeOfRawData is
+        rounded up to the file alignment (0x200 where the code is 0x20), and the rest is padding, not code."""
+        return min(self.vsize or self.size, self.size)
+
 
 @dataclass
 class PE:
@@ -1157,8 +1163,8 @@ def _analyse_x64(pe: PE, found: list[dict]) -> list[Function]:
             extents[start] = _tables_x64(md, pe, start, end, sweep=False)
     # (an incrementally linked program's thunk table, _thunk_table_end: up to the first function .pdata has, the
     # rest of the section if none; no function, nor are Ghidra's rows in it, the entry point's included)
-    tables = {sec.va: _thunk_table_end(pe, sec.va, min([sec.va + sec.size, *(
-        a for a in extents if sec.va <= a < sec.va + sec.size)])) for sec in pe.sections if sec.code}
+    tables = {sec.va: _thunk_table_end(pe, sec.va, min([sec.va + sec.loaded_size, *(
+        a for a in extents if sec.va <= a < sec.va + sec.loaded_size)])) for sec in pe.sections if sec.code}
     rows = {a: r for a, r in rows.items() if not _in_table(tables, a)}
     starts = {a for a in set(rows) | funclets_x64(pe) | {pe.entry} if not _in_table(tables, a)}
     data: dict[int, int] = {}
@@ -1166,9 +1172,9 @@ def _analyse_x64(pe: PE, found: list[dict]) -> list[Function]:
         _code_references_x64(md, pe, start, code_end, starts, data)
     data = {at: end for at, end in data.items() if at not in starts}  # (a call or jump says it's code)
     ordered = sorted(starts | set(data))  # (the next start after an address, by bisect: a game has tens of thousands)
-    for sec in (s for s in pe.sections if s.code):
-        known = sorted((a, e) for a, (_, e, _) in extents.items() if sec.va <= a < sec.va + sec.size)
-        bounds = [tables[sec.va], *(x for a, e in known for x in (a, e)), sec.va + sec.size]
+    for sec in (s for s in pe.sections if s.code):  # (up to what the loader maps: the file's alignment is no code)
+        known = sorted((a, e) for a, (_, e, _) in extents.items() if sec.va <= a < sec.va + sec.loaded_size)
+        bounds = [tables[sec.va], *(x for a, e in known for x in (a, e)), sec.va + sec.loaded_size]
         for lo, hi in zip(bounds[::2], bounds[1::2]):
             _sweep(md, pe, lo, hi, ordered, extents, data)
     names = {}

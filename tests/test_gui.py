@@ -13,6 +13,13 @@ NODE = shutil.which("node")
 GUI_TIMEOUT_SECONDS = 60
 
 
+def test_deep_permuter_results_and_navigation():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_deep_permuter.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_the_game_picker_stays_above_existing_project_cards():
     """Returning users need to see the new game's details without scrolling past their projects."""
     static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
@@ -29,14 +36,14 @@ def test_foreground_progress_covers_delayed_starts_and_clears_on_every_outcome()
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_progress.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_saved_project_dialog_preserves_state_and_cancels_pending_requests():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_restore.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_a_removed_compiler_range_can_be_reverted_where_it_was_listed():
@@ -45,14 +52,14 @@ def test_a_removed_compiler_range_can_be_reverted_where_it_was_listed():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_compiler.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_launcher.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
@@ -63,7 +70,7 @@ def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_map.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 def test_the_function_view_opens_on_best_and_switches_to_latest_after_a_manual_compile():
@@ -73,7 +80,7 @@ def test_the_function_view_opens_on_best_and_switches_to_latest_after_a_manual_c
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_function.js"))], check=True,
-                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
 
 
 @pytest.fixture(scope="module")
@@ -84,6 +91,7 @@ def gui():
 
     env = {**os.environ, "GUI_CONSOLES": json.dumps([c.describe() for c in CONSOLES])}  # (/api/state's)
     out = subprocess.run([NODE, str(Path(__file__).with_name("gui_polls.js"))], capture_output=True, text=True,
+                         encoding="utf-8",  # node writes UTF-8; Windows' default (cp1252) garbled "Stopping…"
                          timeout=GUI_TIMEOUT_SECONDS, check=True, env=env)
     result = json.loads(out.stdout)
     assert result["errors"] == []
@@ -115,6 +123,20 @@ def test_a_ps3_program_is_taken_and_its_encrypted_eboot_says_what_to_do(gui):
     ps3 = gui["checks"]["ps3"]
     assert ps3["good"] == ["ps3", "ELF program", 0x13000] and ps3["self"] is None
     assert "SELF" in ps3["said"] and "decrypt your own copy" in ps3["said"] and "EBOOT.ELF" in ps3["said"]
+
+
+def test_compiler_comparison_is_available_on_all_rom_consoles(gui):
+    assert gui['checks']['compilerComparisonConsoles'] == [
+        ['gba', False], ['ps3', False], ['n64', False], ['pc', True]]
+
+
+def test_a_running_compiler_comparison_can_be_stopped(gui):
+    """#241: the start disabled the button until the job existed, and only the job's end enabled it again, so its
+    Stop comparison couldn't be clicked while a comparison ran."""
+    stop = gui['checks']['compilerStop']
+    assert stop['whileStarting'] is True  # a second click can't start a second job
+    assert stop['running'] == {'disabled': False, 'text': 'Stop comparison'}
+    assert stop['stopping'] == 'Stopping…' and stop['cancels'] == 1
 
 
 def test_a_gba_rom_is_told_by_its_header_as_the_server_tells_it(gui):
@@ -354,3 +376,24 @@ def test_compiler_profiles_group_sort_and_route_all_profile_actions():
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name("gui_compiler_groups.js"))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_agent_prompt_editor_inherits_previews_and_reports_errors():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_prompt_settings.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_agent_tool_controls_save_and_revert_failed_changes():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_tool_settings.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_manual_mcp_connections_handle_failed_project_loads():
+    if NODE is None:
+        pytest.skip('needs node')
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_manual_mcp.js'))], check=True,
+                   capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)

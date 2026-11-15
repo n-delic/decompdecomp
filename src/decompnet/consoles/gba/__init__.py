@@ -127,9 +127,11 @@ class GameBoyAdvance(Console):
 
     def target_from_row(self, fn: dict, cfg: dict):
         from ...arch.arm import ArmTarget
+        from .split import _stored_mode
 
-        meta = json.loads(fn["meta"] or "{}")
-        return ArmTarget(fn["name"], fn["vram"], fn["target"], meta.get("thumb", True),
+        # Resolve the mode the same way target_arch does (_stored_mode: meta, else the asm func-start macro). A
+        # meta-less ARM row must not fall back to Thumb here, or its ARM bytes get disassembled as Thumb downstream.
+        return ArmTarget(fn["name"], fn["vram"], fn["target"], _stored_mode(dict(fn)),
                          ArmTarget.relocs_from_json(json.loads(fn["relocs"] or "[]")))
 
     def target_object(self, fn: dict, cfg: dict, symbols):
@@ -140,8 +142,9 @@ class GameBoyAdvance(Console):
     def target_arch(self, fn) -> str:
         if hasattr(fn, "thumb"):
             return "thumb" if fn.thumb else "arm"
-        meta = json.loads((fn.get("meta") if isinstance(fn, dict) else "") or "{}")
-        return "thumb" if meta.get("thumb", True) else "arm"
+        from .split import _stored_mode
+
+        return "thumb" if _stored_mode(dict(fn)) else "arm"
 
     def link_function(self, obj: bytes, name: str, target, symbols, read):
         from ...arch import arm

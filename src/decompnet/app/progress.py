@@ -343,6 +343,8 @@ class Progress:
         self.net = net
         self.lock = threading.RLock()
         self.local = threading.local()
+        # (every file's text of every project synced was kept here, never read again: with hundreds of games that was
+        # all their sources in memory. Kept empty, for the callers that drop a project's state)
         self.disk: dict[str, dict[str, str]] = {}
         self.projected: dict[str, dict[str, str]] = {}
         self.checked: dict[str, float] = {}
@@ -359,6 +361,17 @@ class Progress:
         self.adopting: set[str] = set()
         self.blocked: dict[str, tuple] = {}  # slug -> (folder, dirty token, settings) while a compiler waits
         self.failed: dict[str, tuple] = {}  # slug -> ((dirty token, settings, folder), when) of the last failed sync
+        # slug -> when someone last used the project (a route, a tool call, the judge: any sync but the autosave's),
+        # or a sync found work in it. The autosave reads only these projects' every file each second (saves.Autosave)
+        self.used: dict[str, float] = {}
+
+    def touch(self, slug: str) -> None:
+        """The project is in use (its page is open): the autosave watches its every file."""
+        self.used[slug] = time.monotonic()
+
+    def hot(self, slug: str, seconds: float) -> bool:
+        """Whether the project was used, or its progress changed, in the last `seconds`."""
+        return time.monotonic() - self.used.get(slug, float("-inf")) < seconds
 
     @staticmethod
     def _signature(folder: Path, *, deep: bool = True) -> tuple:
@@ -579,6 +592,13 @@ class Progress:
         self.baselines[project_id] = baseline
         self.states[project_id] = _State(dirty_token, config_key)
 
+    def release(self, slug: str, project_id: int) -> bool:
+        """Let go of a quiet project's baseline (every file's hashes, twice): the database has it (_remember writes it
+        first), and _baseline reads it again when a sync needs it. With hundreds of games, keeping each one's was most
+        of the app's memory. Whether there was one to let go of."""
+        with self._project_lock(slug):
+            return self.baselines.pop(project_id, None) is not None
+
     def forget(self, slug: str, project_id: int) -> None:
         """Drop in-memory state with the database row so a later project can safely reuse its slug or ID."""
         with self._project_lock(slug):
@@ -586,7 +606,7 @@ class Progress:
             self.states.pop(project_id, None)
             for cache in (self.disk, self.projected, self.checked, self.results, self.revisions,
                           self.signatures, self.stamps, self.published, self.sync_changes, self.errors, self.blocked,
-                          self.failed):
+                          self.failed, self.used):
                 cache.pop(slug, None)
 
     @contextmanager
@@ -607,10 +627,8 @@ class Progress:
                 if not saves._publish(folder, rendered, baseline.disk.files if baseline else None,
                                       chosen=bool(self.net.cfg(proj).get("progress_folder"))):
                     raise NetworkError("Progress changed while the project was being rebuilt. Read it again and retry.")
-                self.disk[slug] = _read(folder)
-                self.projected[slug] = rendered
                 saves._remember_revision(self.net, slug, json.loads(rendered[saves.MANIFEST]))
-                self._remember(project_id, self.disk[slug], rendered,
+                self._remember(project_id, _read(folder), rendered,
                                _config_key(proj, self.net.cfg(proj)), dirty.token, dirty_tokens)
                 self.revisions[slug] = self.revisions.get(slug, 0) + 1
             finally:
@@ -652,13 +670,17 @@ class Progress:
     def applying(self) -> bool:
         return getattr(self.local, "busy", False)
 
-    def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
+    def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None,
+             background: bool = False) -> bool:
         """Read contributions first, then publish only work changed locally since the last synchronization.
 
         A no-op non-forced check stats the manifest and the three folders; a forced check stats every file too, so an
         in-place edit an editor made (which leaves a directory's mtime alone) is never missed by judging, a tool call,
         the routes or the autosave. Nothing is rendered or written unless the folder or a column the render reads
-        changed. `retry` (forced syncs by default): try again after a failure even when nothing it reads changed."""
+        changed. `retry` (forced syncs by default): try again after a failure even when nothing it reads changed.
+        `background`: the autosave's own check, which doesn't count as using the project (Progress.hot)."""
+        if not background:
+            self.used[slug] = time.monotonic()
         if self.applying or getattr(self.net.store._local, "in_tx", False):
             return False
         with self._project_lock(slug):
@@ -722,6 +744,8 @@ class Progress:
                 if not self.blocked.get(slug):
                     self.errors.pop(slug, None)
                 self.failed.pop(slug, None)
+                if result:  # work arrived: watch the folder closely for a while
+                    self.used[slug] = time.monotonic()
                 return result
             except _StillFailing:
                 raise  # (when it failed stays when it first did: a read every second mustn't put the next try off)
@@ -766,8 +790,6 @@ class Progress:
             saves._remember_revision(net, slug, json.loads(changes[saves.MANIFEST]))
         disk = _read(folder)
         proj = net._project(slug)
-        self.disk[slug] = disk
-        self.projected[slug] = rendered
         self.published[slug] = set(changes) | set(removed)
         self._remember(proj["id"], disk, rendered, _config_key(proj, net.cfg(proj)),
                        dirty.token, dirty_tokens)
@@ -823,8 +845,6 @@ class Progress:
             return None
         if saves.MANIFEST in changes:
             saves._remember_revision(net, slug, json.loads(changes[saves.MANIFEST]))
-        self.disk[slug] = dict(baseline.disk.files)
-        self.projected[slug] = files
         self.published[slug] = set(changes) | set(removed)
         self._remember_changes(pid, {**changes, **removed}, files[saves.MANIFEST], config_key,
                                dirty.token, dirty_tokens)
@@ -1060,8 +1080,6 @@ class Progress:
             applied_dirty = self._dirty(pid)
             applied_tokens = [r["token"] for r in self._dirty_files(pid)]
             rendered, _ = saves._render(net, slug)
-            self.projected[slug] = rendered
-            self.disk[slug] = disk
             self._remember(pid, disk, rendered, _config_key(proj, net.cfg(proj)),
                            applied_dirty.token, applied_tokens)
             return True

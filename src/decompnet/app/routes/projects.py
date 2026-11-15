@@ -15,7 +15,7 @@ from starlette.responses import JSONResponse, Response
 from ... import consoles, hostenv, toolchains
 from ...forks.project import SCOPES
 from ...network import NetworkError
-from .. import saves
+from .. import deep_permuter, saves
 from ..engine import parse_ranges
 from . import App
 
@@ -23,6 +23,7 @@ from . import App
 def register(app: App) -> None:
     net, mcp, manager, jobs = app.net, app.mcp, app.manager, app.jobs
     settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
+    comparison_jobs: dict[str, str] = {}
 
     def with_project(fn):
         async def handler(request: Request) -> Response:
@@ -45,6 +46,7 @@ def register(app: App) -> None:
 
     def p_overview(slug, request, data):
         settings.data["last_project"] = slug
+        net.progress.touch(slug)  # its page is open: an editor's edit in its folder is saved within a second
         settings.save()
         overview = net.overview(slug)
         if not overview.get("missing"):
@@ -53,6 +55,7 @@ def register(app: App) -> None:
 
     def p_live(slug, request, data):
         q = request.query_params
+        net.progress.touch(slug)  # its page is open (this is its poll): Progress.hot
         out = net.live(slug, int(q.get("e", 0) or 0), int(q.get("a", 0) or 0))
         try:
             since = json.loads(q.get("s") or "{}")
@@ -149,6 +152,29 @@ def register(app: App) -> None:
     def p_compilermap(slug, request, data):
         """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
         answer is old. POST: check again now (the survey and the applied ranges)."""
+        if request.method == "POST" and data.get("apply_compiler_result"):
+            fn, tc, flags = data.get("function"), data.get("toolchain"), data.get("flags")
+            if not isinstance(fn, str) or not isinstance(tc, str) or not isinstance(flags, list) or not all(
+                    isinstance(flag, str) for flag in flags):
+                raise NetworkError("Choose a tested function and compiler profile.")
+            return net.apply_compiler_test_result(slug, fn, tc, flags)
+        if request.method == "POST" and data.get("find_better_settings"):
+            options = {key: data.get(key, default) for key, default in (
+                ("flags_only", False), ("used_profiles_only", False),
+                ("untested_only", True), ("auto_apply", False))}
+            with jobs._lock:
+                existing = comparison_jobs.get(slug)
+                if existing and jobs.jobs.get(existing, {}).get("state") == "running":
+                    return {"job": existing}
+                jid = jobs.start("compiler settings comparison", lambda log:
+                                 net.find_better_compiler_settings(slug, log=log, **options))
+                comparison_jobs[slug] = jid
+            return {"job": jid}
+        if request.query_params.get("compiler_results") == "1":
+            active = comparison_jobs.get(slug)
+            results = net.compiler_comparison_results(slug)
+            return {"results": results, "ran": bool(results) or active is not None,
+                    "job": active if active and jobs.jobs.get(active, {}).get("state") == "running" else None}
         return net.compiler_answer(slug, check_now=request.method == "POST",
                                    include_functions=request.query_params.get("summary") != "1")
 
@@ -160,6 +186,10 @@ def register(app: App) -> None:
         manager.forget_project(slug)  # (it stopped every project's helpers)
         proj = net.project_row(slug)
         net.knowledge.forget(slug)
+        from .. import manual_mcp
+        for connection in list(manual_mcp.connections(settings)):
+            if connection['slug'] == slug:
+                manual_mcp.revoke(net, settings, connection['id'])
         net.remove_project(slug)
         if data.get("files"):
             shutil.rmtree(proj["root"], ignore_errors=True)
@@ -260,6 +290,31 @@ def register(app: App) -> None:
             net.start_autopilot(slug)
         return net.overview(slug)
 
+    def p_deep_permuter(slug, request, data):
+        if request.method == "GET":
+            name = request.query_params.get("name", "")
+            latest = next((job for job in reversed(list(jobs.jobs.values())) if job["kind"] == "deep-permuter"
+                           and job.get("slug") == slug and job.get("function") == name), None)
+            return {"job": latest["id"] if latest and latest["state"] == "running" else None, "last": latest}
+        name = str(data.get("name", ""))
+        minutes = data.get("minutes", 10)
+        variants = data.get("variants", 500)
+        with jobs._lock:
+            running = [job for job in jobs.jobs.values() if job["kind"] == "deep-permuter"
+                       and job["state"] == "running"]
+            active = next((job for job in running if job.get("slug") == slug and job.get("function") == name), None)
+            if active:
+                return {"job": active["id"]}
+            if any(job.get("slug") == slug for job in running):
+                raise NetworkError("Another function is being deep permuted in this project; stop it or wait for it to finish.")
+            if len(running) >= deep_permuter.max_searches():
+                raise NetworkError(f"{len(running)} deep {'search is' if len(running) == 1 else 'searches are'} "
+                                   "already running, as many as this computer runs at once. Wait for one to finish.")
+            deep_permuter.validate(net, slug, name, minutes, variants)
+            jid = jobs.start("deep-permuter", lambda log: deep_permuter.run(net, slug, name, minutes, variants, log))
+            jobs.jobs[jid].update({"slug": slug, "function": name})
+        return {"job": jid}
+
     def p_save(slug, request, data):
         """Save the project's work as plain files (app/saves.py): to its progress/ folder, or one the user picks."""
         return saves.save(net, slug, hostenv.local_path(data["folder"]) if data.get("folder") else None)
@@ -291,6 +346,7 @@ def register(app: App) -> None:
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
         "/api/recheck": (p_recheck, ["POST"]),
         "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
+        "/api/deep-permuter": (p_deep_permuter, ["GET", "POST"]),
         "/api/claim-order": (p_claim_order, ["POST"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]), "/api/scope": (p_scope, ["POST"]),
         "/api/unanalysed": (p_unanalysed, ["POST"]),
