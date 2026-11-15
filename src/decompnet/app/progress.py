@@ -630,6 +630,10 @@ class Progress:
         from . import folder_watch
         watch = self.watches.get(slug)
         if watch is not None and (watch.folder != folder or watch.broken or not folder_watch.worth(files)):
+            if watch.broken:
+                # A failed stream already requires full checks. Reopening it on every
+                # sync would pay another fence timeout before doing those same checks.
+                self.unwatchable[slug] = watch.folder
             self.watches.pop(slug, None)
             self.signature_marks.pop(slug, None)
             watch.close()

@@ -103,3 +103,76 @@ def test_a_quiet_watched_save_is_not_read_file_by_file_and_an_in_place_edit_stil
     os.utime(path.parent, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
     net.progress.sync('game', force=True)
     assert judged[-1] == ('f', 'good edited!!')
+
+
+class FailingWatch(folder_watch.FolderWatch):
+    def __init__(self, folder):
+        super().__init__(folder)
+        self.settles = 0
+        self.closed = 0
+
+    def _settle(self):
+        self.settles += 1
+        self.broken = True  # a timed-out fence or failed OS notification stream
+
+    def close(self):
+        self.closed += 1
+        super().close()
+
+
+def test_failed_watch_is_not_reopened_and_file_edits_are_still_seen(project, monkeypatch):  # noqa: F811
+    net, folder, _ = project
+    opened = []
+    monkeypatch.setattr(folder_watch, 'worth', lambda files: True)
+
+    def open_failed(path, fences):
+        watch = FailingWatch(path)
+        opened.append(watch)
+        return watch
+
+    monkeypatch.setattr(folder_watch, 'open_watch', open_failed)
+    (folder / 'src').mkdir(exist_ok=True)
+    path = folder / 'src' / 'probe.c'
+    path.write_text('first')
+    first = net.progress._folder_signature('game', folder)
+    net.progress.signatures['game'] = first
+    # Every failed watch must fall back to actual file stats, including later edits.
+    for text in ('later content', 'another longer edit', 'final edit with more bytes'):
+        path.write_text(text)
+        current = net.progress._folder_signature('game', folder)
+        assert current != first
+        assert current == Progress._signature(folder)
+    assert len(opened) == 1
+    assert opened[0].settles == 1
+    assert opened[0].closed == 1
+    assert 'game' not in net.progress.signature_marks
+
+
+def test_failed_watch_does_not_disable_a_relocated_save(project, monkeypatch, tmp_path):  # noqa: F811
+    net, folder, _ = project
+    broken = FailingWatch(folder)
+    broken.broken = True
+    net.progress.watches['game'] = broken
+    net.progress.signature_marks['game'] = 42
+    monkeypatch.setattr(folder_watch, 'worth', lambda files: True)
+    opened = []
+
+    def open_healthy(path, fences):
+        opened.append(path)
+        return folder_watch.FolderWatch(path)
+
+    monkeypatch.setattr(folder_watch, 'open_watch', open_healthy)
+    assert net.progress._watch('game', folder, 1000) is None
+    other = tmp_path / 'moved-save'
+    other.mkdir()
+    assert net.progress._watch('game', other, 1000).folder == other
+    assert opened == [other]
+    assert broken.closed == 1
+    assert 'game' not in net.progress.unwatchable
+
+
+def test_mark_never_waits_for_a_broken_watch(tmp_path):
+    watch = FailingWatch(tmp_path)
+    assert watch.mark() is None
+    assert watch.mark() is None
+    assert watch.settles == 1
