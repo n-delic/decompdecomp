@@ -39,6 +39,8 @@ _JUMPS = {"jal", "j"}
 _WIDTH = {0x20: 1, 0x24: 1, 0x28: 1, 0x21: 2, 0x25: 2, 0x29: 2, 0x23: 4, 0x27: 4, 0x2B: 4, 0x31: 4, 0x39: 4, 0x32: 4,
           0x3A: 4, 0x35: 8, 0x3D: 8, 0x37: 8, 0x3F: 8, 0x1E: 16, 0x1F: 16, 0x36: 16, 0x3E: 16}
 
+SHF_EXECINSTR = 0x4  # an executable section: its load opcodes say how wide a read is (address() uses this for .text)
+
 ReadFn = Callable[[int, int], "bytes | None"]
 
 
@@ -335,11 +337,18 @@ class _Linker:
                     dest = ((pc + 4) & 0xF0000000) | ((linked[k]["value"] & 0x03FFFFFF) << 2)
                 else:
                     dest = section_target("mips", linked, k) & 0xFFFFFFFF
-                if rtype == R_MIPS_GPREL16:  # the $gp load says how much of the datum it reads; keep the widest, as address() does
-                    w = _WIDTH.get(linked[k]["value"] >> 26)
+                # How much of the datum the reference reads, as address() does for the function's own code: a $gp
+                # or %lo load in an executable helper body reads just the load's width (skip the HI16; the %lo
+                # after it carries the width); a pointer word, a jal, or a %lo stored in data uses the whole datum.
+                if rtype == R_MIPS_HI16:
+                    pass  # the %lo that follows records the width
+                elif rtype == R_MIPS_GPREL16 or (rtype == R_MIPS_LO16 and sec["sh_flags"] & SHF_EXECINSTR):
+                    insn = linked[k]["value"] if rtype == R_MIPS_GPREL16 else \
+                        int.from_bytes(data[r["off"]:r["off"] + 4], self.target.order)
+                    w = _WIDTH.get(insn >> 26)
                     prev = self.widths.get(own, 0)
                     self.widths[own] = None if w is None or prev is None else max(prev, w)
-                else:  # its address is used, so all of it matters
+                else:  # a pointer word, a jal target, or a %lo stored in data: the whole datum is used
                     self.widths[own] = None
                 if own in self.data:
                     if self.data[own] != dest:

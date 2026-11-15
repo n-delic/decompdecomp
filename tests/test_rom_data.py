@@ -217,7 +217,8 @@ def test_gp_rel_in_a_defined_region_is_relocated(tmp_path):
 _EE = pytest.mark.skipif(toolchains.installed("ee-gcc-2.96") is None, reason="needs ee-gcc-2.96")
 
 
-def _defined_region_oracle(tmp_path, src, named_ext=(), gp=0x80018000, base=0x80010000, gp_datum=None):
+def _defined_region_oracle(tmp_path, src, named_ext=(), gp=0x80018000, base=0x80010000, gp_datum=None,
+                           rom_patch=None):
     """Compile `src` (its entry point is `caller`, at .text+0) with ee-gcc and build an oracle ROM for it.
 
     Returns (obj, RomTarget, SymbolTable, read). `named_ext` is (name, addr, bytes, kind) for symbols the game
@@ -296,6 +297,14 @@ def _defined_region_oracle(tmp_path, src, named_ext=(), gp=0x80018000, base=0x80
                 if typ == match.R_MIPS_GPREL16 and off + 4 <= len(applied):
                     imm = int.from_bytes(applied[off:off + 4], "little") & 0xFFFF
                     image[(imm - 0x10000 if imm & 0x8000 else imm) + gp] = gp_datum
+
+    # Serve ROM bytes that differ from the clone's own copy of a placed section (the oracle lays each section in
+    # its own 0x2000 slot): splice the override into the ROM-side image, so a datum the helper does not fully read
+    # can differ in the elements it skips.
+    for _nm, _patch in (rom_patch or {}).items():
+        _b = bytearray(image[sec_base[_nm]])
+        _b[:len(_patch)] = _patch
+        image[sec_base[_nm]] = bytes(_b)
 
     def read(a, n):
         for b, data in image.items():
@@ -402,5 +411,24 @@ def test_gp_rel_load_width_takes_the_widest_reference(tmp_path):
     obj, target, table, read = _defined_region_oracle(tmp_path, src, gp_datum=rom_datum)
     res = match.link(obj, "caller", target, table, read)
     assert not res.exact
-    assert res.problems, "the datum must be compared (served at the judge's dest), not skipped"
+    # The datum must be byte-compared at the judge's dest, not skipped (would be exact) or left unplaced (a
+    # different problem, as on origin/main): the clone's 0x11223344 (44 33 22 11) must appear in the mismatch.
+    assert any("44 33 22 11" in p for p in res.problems), res.problems
 
+
+@_EE
+def test_lo16_helper_load_width_ignores_later_array_elements(tmp_path):
+    """A .fclone helper that loads only g[0] from `static int g[3]` in .data (read with lui/lw %lo, not
+    $gp-relative) must match even when the ROM's unused g[1]/g[2] differ: place_pointees takes the %lo load's
+    4-byte width from the executable helper body, as address() does for the function's own .text. Without the
+    width the whole datum is compared, and the differing tail is a false rejection of a clone this PR lets
+    through (the same read in the function's own .text already matches, because address() records the lw width)."""
+    src = ("static int g[3] = {0x11223344, 0x55667788, 0x99aabbcc};\n"
+           "static int helper(void) __attribute__((noinline, section(\".fclone\")));\n"
+           "static int helper(void){ return g[0]; }\n"
+           "int caller(void){ return helper(); }\n")
+    # The ROM's .data: g[0] equal to the clone, the unused g[1]/g[2] different. Only g[0] is read, so it matches.
+    rom_data = (0x11223344).to_bytes(4, "little") + b"\xde\xad\xbe\xef\x01\x02\x03\x04"
+    obj, target, table, read = _defined_region_oracle(tmp_path, src, rom_patch={".data": rom_data})
+    res = match.link(obj, "caller", target, table, read)
+    assert res.exact, res.problems
