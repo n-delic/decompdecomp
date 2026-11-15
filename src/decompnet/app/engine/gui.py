@@ -24,8 +24,16 @@ NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "not_c", "kn
 EVENTS_PER_ASK = 200  # events the notification centre gets per ask (it asks again for more)
 # what the project's page gets on each poll (about once a second): the newest since its last ask, at most
 LIVE_EVENTS, LIVE_ATTEMPTS = 60, 80
-# Rechecking retained source is verification activity, not a new matcher contribution.
-MATCHER_ACTIVITY = "COALESCE(a.name, '') NOT IN ('progress-judge', '@progress-judge')"
+# Rechecking retained source is verification activity, not a new matcher contribution. Each project's saved judge
+# has its own identity, progress-judge.<project id> (saves._judge_saved), so another project's claim cannot block it;
+# the older shared names stay hidden for history recorded before that.
+def progress_judge(column: str) -> str:
+    """SQL that is true for a saved-progress judge's identity in `column`."""
+    return (f"(COALESCE({column}, '') IN ('progress-judge', '@progress-judge') "
+            f"OR COALESCE({column}, '') LIKE 'progress-judge.%')")
+
+
+MATCHER_ACTIVITY = f"NOT {progress_judge('a.name')}"
 EVENT_ROWS = ("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent, p.slug, p.name AS project FROM events e "
               "JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id "
               f"WHERE {MATCHER_ACTIVITY} AND e.kind IN ({', '.join(repr(k) for k in NOTIFY_KINDS)})")
@@ -711,7 +719,7 @@ class GuiMixin:
         from ..project_labels import label
         store = self.project_store(proj['id'])
         hidden = json.dumps([r['id'] for r in self.store.all(
-            "SELECT id FROM agents WHERE name IN ('progress-judge','@progress-judge')")])
+            "SELECT id FROM agents WHERE "+progress_judge('name'))])
         # the GUI asks every second: the writer's lock only when a claim really ran out, not on every poll
         if store.one("SELECT 1 FROM claims WHERE expires_at < ? LIMIT 1", time.time()):
             identities = expiry_ids(self, store)

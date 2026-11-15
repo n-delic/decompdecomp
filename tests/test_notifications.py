@@ -1,6 +1,7 @@
 """One notification centre for the whole app: the feed of every project's news, helpers that pause in it, and the
 compiler as one answer that checks itself."""
 
+import pytest
 from starlette.testclient import TestClient
 
 from decompnet.app import agents
@@ -121,10 +122,13 @@ def test_notification_dialog_renders_before_loading_and_shares_request():
     subprocess.run([node,str(Path(__file__).with_name('gui_notifications_loading.js'))],check=True,capture_output=True,text=True,timeout=30)
 
 
-def test_progress_rechecks_stay_out_of_matcher_feeds_and_notifications(tmp_path):
+@pytest.mark.parametrize('name', ['progress-judge', 'project'])
+def test_progress_rechecks_stay_out_of_matcher_feeds_and_notifications(tmp_path, name):
+    # 'project': each project's own judge, progress-judge.<id>, which the exact-name filter showed as matches.
     net=RomNetwork(tmp_path/'quiet.db',tmp_path)
     tiny_game(net,'a')
-    judge,_=net.local_agent('progress-judge')
+    judge=(net.local_agent('progress-judge')[0] if name=='progress-judge'
+           else net.attribution_agent(f"progress-judge.{net._project('a')['id']}"))
     matcher,_=net.local_agent('real-matcher')
     start=net.events_after(None)['last']
     net.record_event('a','match','real_function',matcher.name)

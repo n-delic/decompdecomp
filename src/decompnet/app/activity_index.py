@@ -90,11 +90,12 @@ def selected(net):
 
 
 def _rows(net, after, last, limit, recent=False):
+    from .engine.gui import MATCHER_ACTIVITY  # saved-progress judges' rechecks are not matcher news
     # Shared identity labels remain current, and removed projects leave the feed.
     direction = 'DESC' if recent else 'ASC'
     rows = net.store.all('SELECT e.id,e.project_id,e.kind,e.detail,e.created_at,a.name AS agent,p.slug,p.name AS project '
         'FROM activity_events e JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id '
-        "WHERE e.id>? AND e.id<=? AND COALESCE(a.name,'') NOT IN ('progress-judge','@progress-judge') "
+        f"WHERE e.id>? AND e.id<=? AND {MATCHER_ACTIVITY} "
         f'ORDER BY e.id {direction} LIMIT ?',after,last,limit)
     titles = {}
     for pid in {row['project_id'] for row in rows}:
