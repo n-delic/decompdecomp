@@ -22,11 +22,26 @@ KEEP_VERSIONS = 2
 KEEP_CHATS = 3
 
 
+def installed_root(exe) -> Path | None:
+    """The user's own install that `exe` runs from: ~/.local/bin/cursor-agent links to
+    <root>/versions/<version>/cursor-agent. None for any other layout."""
+    try:
+        program = Path(exe).resolve()
+    except (OSError, TypeError):
+        return None
+    root = program.parent.parent.parent
+    if program.parent.parent.name == 'versions' and root.name == 'cursor-agent' and root.is_dir():
+        return root
+    return None
+
+
 def share_updates(home: Path, shared: Path) -> None:
-    """The CLI updates itself into HOME/.local/share/cursor-agent. With a private HOME per helper, every helper
-    downloaded its own ~600 MB copy (245 helper folders took 5.4 GB): all of them now use one shared folder, never the
-    user's own install. A helper's old copy is replaced by the link."""
-    target = shared / 'cursor-agent'
+    """The CLI looks for its install, and updates itself, under HOME/.local/share/cursor-agent. With a private HOME
+    per helper, every helper downloaded its own copy of a CLI already installed (~600 MB each; 245 helper folders took
+    5.4 GB). Helpers link there to the user's own install (`installed_root`: an update a helper makes is the one the
+    user's CLI would make itself), else to one folder shared by all helpers. A helper's old copy is replaced."""
+    own = shared.name == 'cursor-agent' and (shared / 'versions').is_dir()
+    target = shared if own else shared / 'cursor-agent'
     target.mkdir(parents=True, exist_ok=True)
     link = home / '.local/share/cursor-agent'
     link.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +56,7 @@ def share_updates(home: Path, shared: Path) -> None:
     except OSError:  # (Windows without symlink rights: a private copy, as before)
         return
     versions = target / 'versions'
-    if versions.is_dir():
+    if not own and versions.is_dir():  # the user's install cleans up its own versions
         old = sorted((v for v in versions.iterdir() if v.is_dir()), key=lambda v: v.stat().st_mtime, reverse=True)
         for version in old[KEEP_VERSIONS:]:
             shutil.rmtree(version, ignore_errors=True)
@@ -100,7 +115,7 @@ class Cursor(Agent):
         private = home / '.cursor'
         private.mkdir(parents=True, exist_ok=True, mode=0o700)
         home.chmod(0o700)
-        share_updates(home, workdir.parent / SHARED)
+        share_updates(home, installed_root(exe) or workdir.parent / SHARED)
         prune_chats(private / 'chats')
         # Only login material is carried over, never global rules, plugins or MCP servers.
         login_files = [(Path.home() / relative, relative) for relative in [
