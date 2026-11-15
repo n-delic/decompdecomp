@@ -28,6 +28,7 @@ import os
 import struct
 import sys
 import threading
+import uuid
 from pathlib import Path
 
 log = logging.getLogger('decompdecomp')
@@ -249,10 +250,12 @@ class FSEventsWatch(FolderWatch):
         super().__init__(folder)
         lib = self.lib = _mac_libraries()
         fence_folder.mkdir(parents=True, exist_ok=True)
-        self.fence = Path(os.path.realpath(fence_folder)) / f'{os.getpid()}-{id(self)}'
-        self.fence_prefix = os.fsencode(self.fence)
+        self.fence = Path(os.path.realpath(fence_folder)) / f'{os.getpid()}-{uuid.uuid4().hex}'
         self.fence_folder = os.fsencode(self.fence.parent) + b'/'  # (other watches' fences are there too)
-        self.fences = 0  # fence events seen
+        self.fence_number = 0
+        self.pending_fence = None
+        self.fence_arrived = False
+        self.settle_lock = threading.Lock()
         # Writes from just before the stream started arrive twice, replayed and live, and may follow the first fence:
         # until the replay is over the watch vouches for nothing.
         self.history_done = False
@@ -287,8 +290,8 @@ class FSEventsWatch(FolderWatch):
                     self.history_done = True
                     continue
                 name = names[index] or b''
-                if name.startswith(self.fence_prefix):
-                    self.fences += 1
+                if name == self.pending_fence:
+                    self.fence_arrived = True
                 elif not name.startswith(self.fence_folder):
                     self.changes += 1
             self.arrived.notify_all()
@@ -297,20 +300,38 @@ class FSEventsWatch(FolderWatch):
         return files >= WORTH_FILES
 
     def _settle(self):
-        """Write the fence and wait for its event: the changes made before it have arrived by then."""
-        with self.lock:
-            target = self.fences + 1
-        try:
-            self.fence.write_bytes(str(target).encode())
-        except OSError:
-            self.broken = True
-            return
-        with self.lock:
-            if not self.arrived.wait_for(lambda: (self.fences >= target and self.history_done) or self.broken,
-                                         timeout=FENCE_SECONDS):
-                self.broken = True
-                log.info('Save folder watch stopped: the fence took over %ss; changes are checked file by file',
-                         FENCE_SECONDS)
+        """Wait for this check's unique fence; a delayed earlier event cannot vouch for it.
+
+        Rewriting one filename can be coalesced without another native event. Each
+        check creates a fresh filename, and acknowledges only that exact token.
+        """
+        with self.settle_lock:
+            if self.broken:
+                return
+            with self.lock:
+                self.fence_number += 1
+                fence = self.fence.with_name(f'{self.fence.name}-{self.fence_number}')
+                self.pending_fence = os.fsencode(fence)
+                self.fence_arrived = False
+            try:
+                try:
+                    fence.write_bytes(b'')
+                except OSError:
+                    self.broken = True
+                    return
+                with self.lock:
+                    if not self.arrived.wait_for(lambda: (self.fence_arrived and self.history_done) or self.broken,
+                                                 timeout=FENCE_SECONDS):
+                        self.broken = True
+                        log.info('Save folder watch stopped: the fence took over %ss; changes are checked file by file',
+                                 FENCE_SECONDS)
+            finally:
+                with self.lock:
+                    self.pending_fence = None
+                try:
+                    fence.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def close(self):
         super().close()
@@ -323,10 +344,7 @@ class FSEventsWatch(FolderWatch):
         self.lib.streams.discard(self)
         with self.lock:
             self.arrived.notify_all()
-        try:
-            self.fence.unlink(missing_ok=True)
-        except OSError:
-            pass
+
 
 
 def worth(files: int) -> bool:
