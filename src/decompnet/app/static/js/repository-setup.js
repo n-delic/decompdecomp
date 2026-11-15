@@ -56,7 +56,9 @@ function renderRepositorySetup(state) {
   renderRepositoryControls();
   refreshRepositoryPush(true);
 }
-async function refreshRepositorySetup() {
+/* The overview poll rechecks the repository every 10 s. Only the first check of a project and an explicit retry show
+   the bar: flashing it on each recheck pushed the Settings column down and back up 22 px while the user scrolled. */
+async function refreshRepositorySetup(shown = false) {
   const slug = S.slug;
   if (!slug) return;
   if (repositorySetupSlug === slug && repositorySetupLoading) return;
@@ -92,7 +94,7 @@ async function refreshRepositorySetup() {
   repositorySetupChecked = Date.now();
   const request = ++repositorySetupRequest;
   repositorySetupLoading = true;
-  $("repositorySetupLoading").hidden = false;
+  $("repositorySetupLoading").hidden = !shown && !!repositorySetupState;
   $("repositorySetupRetry").hidden = true;
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   repositorySetupAbort = controller;
@@ -127,7 +129,7 @@ async function refreshRepositorySetup() {
     }
   }
 }
-$("repositorySetupRetry").onclick = () => { repositorySetupChecked = 0; return refreshRepositorySetup(); };
+$("repositorySetupRetry").onclick = () => { repositorySetupChecked = 0; return refreshRepositorySetup(true); };
 async function setupRepository(action, existingJob = null) {
   if (repositorySetupBusy) return;
   const slug = S.slug, log = $("repositorySetupLog");
