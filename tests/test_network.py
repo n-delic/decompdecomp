@@ -258,3 +258,17 @@ def test_a_note_is_found_by_its_function_and_text_from_an_index(tmp_path):
     store = Store(tmp_path / "s.db")
     plan = store.all("EXPLAIN QUERY PLAN SELECT 1 FROM notes WHERE project_id=? AND text=? AND function_id IS ?", 1, "x", 5)
     assert "idx_notes_lookup" in " ".join(str(r[3]) for r in plan)
+
+
+def test_regression_test_tolerates_overlay_ambiguity(net, monkeypatch):
+    """A rename/header edit re-verifies every matched function. One that reads an address ambiguous across ROM
+    overlays (#230) raises on read-back; a rename changes no bytes, so that must be tolerated, not abort the whole
+    edit (otherwise every rename fails on a game with overlapping overlays)."""
+    proj = net._project("demo")
+    fn = {"id": 1, "name": "any_fn", "matched_source": "void any_fn(void){}"}
+    monkeypatch.setattr(net, "_compile", lambda *a, **k: type("R", (), {"ok": True, "obj": b"", "log": ""})())
+    def boom(*a, **k):
+        raise NetworkError("Cannot verify bytes at 0x4D30D0: multiple ROM overlays cover this address "
+                           "and the callers ROM offset does not select one.")
+    monkeypatch.setattr(net, "_evaluate", boom)
+    assert net.regression_test(proj, None, only=[fn]) == []

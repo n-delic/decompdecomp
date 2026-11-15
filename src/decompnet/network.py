@@ -1369,10 +1369,18 @@ class Network:
                                 (sources or {}).get(fn["id"], fn["matched_source"]), fn)
             if not res.ok:
                 return fn["name"], "no longer compiles: " + res.log.strip().splitlines()[0][:200] if res.log.strip() else "compile failed"
-            cand, verdict, _ = self._evaluate(fn, proj, res.obj)
-            if verdict is None and cand is not None:
-                want = self._target_obj(fn, proj).fingerprint()
-                verdict = cand.fingerprint() == want
+            try:
+                cand, verdict, _ = self._evaluate(fn, proj, res.obj)
+                if verdict is None and cand is not None:
+                    want = self._target_obj(fn, proj).fingerprint()
+                    verdict = cand.fingerprint() == want
+            except NetworkError as e:
+                # #230 raises when a function reads an address ambiguous across ROM overlays. A rename or
+                # header edit changes none of these functions' bytes, so that un-verifiable read must not
+                # reject the edit (it would block every rename on a game with overlapping overlays).
+                if "multiple ROM overlays cover" in str(e):
+                    return None
+                raise
             if cand is None or not verdict:
                 return fn["name"], "compiles but no longer matches"
             return None
