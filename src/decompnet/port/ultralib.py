@@ -22,75 +22,17 @@ from functools import lru_cache
 from pathlib import Path
 
 from .. import consoles, toolchains
+from .csource import items as _items
 
 PACK = "ultralib-source"
 CORPUS = "built in / decompals/ultralib"  # (sdk_builtin: the ultralib table's corpus starts so)
 BUILD = re.compile(r"2\.0([A-L])/(lib(g?)ultra(_d|_rom)?)")
-_DEFINITION = re.compile(r"^(?!\s*(?:if|for|while|switch|return|else)\b)[A-Za-z_][\w\s\*]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*$",
-                         re.S)
-
-
 def root() -> Path | None:
     """The installed ultralib, or None: it's installed only from Setup, never fetched in the background."""
     try:
         return toolchains.path(PACK) if toolchains.installed(PACK) else None
     except toolchains.ToolchainError:
         return None
-
-
-def _items(text: str) -> list[tuple[str, str | None, bool]]:
-    """The file's top-level items in order: (text, the function it defines or None, static). Preprocessor lines
-    and declarations are items with no function."""
-    items, i, n = [], 0, len(text)
-    while i < n:
-        if text[i] == "#" and (i == 0 or text[i - 1] == "\n"):
-            end = i
-            while True:  # a directive, with its continuation lines
-                end = text.find("\n", end)
-                if end < 0:
-                    end = n
-                    break
-                if text[end - 1] != "\\":
-                    break
-                end += 1
-            items.append((text[i:end + 1], None, False))
-            i = end + 1
-            continue
-        start, depth = i, 0
-        while i < n:
-            c = text[i]
-            if text.startswith("/*", i):
-                end = text.find("*/", i + 2)
-                i = n if end < 0 else end + 2
-                continue
-            if text.startswith("//", i):
-                i = text.find("\n", i)
-                i = n if i < 0 else i
-                continue
-            if c in "\"'":
-                j = i + 1
-                while j < n and text[j] != c:
-                    j += 2 if text[j] == "\\" else 1
-                i = j + 1
-                continue
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    i += 1
-                    break
-            elif c == ";" and depth == 0:
-                i += 1
-                break
-            elif c == "#" and depth == 0 and text[i - 1] == "\n":
-                break  # (a directive between items)
-            i += 1
-        chunk = text[start:i]
-        head = re.sub(r"/\*.*?\*/|//[^\n]*", "", chunk.split("{", 1)[0], flags=re.S).strip()
-        found = _DEFINITION.match(head) if "{" in chunk and chunk.rstrip().endswith("}") and "=" not in head else None
-        items.append((chunk, found[1] if found else None, bool(found) and re.match(r"\s*static\b", head) is not None))
-    return items
 
 
 @lru_cache(maxsize=1)

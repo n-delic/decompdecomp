@@ -63,16 +63,19 @@ def signature(line):
 
 
 def main():
-    defs, decls = {}, {}
+    defs, decls, loose = {}, {}, {}
     global TYPES
     sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
     from beir import Types
     for f in sys.argv[3:]:
         TYPES = Types(open(f).read())
         for line in open(f):
-            if line.startswith(("define", "declare")) and (s := signature(line)) and s[3] is not None:
+            if line.startswith(("define", "declare")) and (s := signature(line)):
                 kind, name, ret, ps = s
-                if kind == "define":
+                if ps is None:  # declared with no prototype (`s32 f();`): only its return type is known
+                    if kind == "declare":
+                        loose.setdefault(name, Counter())[ret] += 1
+                elif kind == "define":
                     defs[name] = (ret, ps)
                 else:
                     decls.setdefault(name, Counter())[(ret, ps)] += 1
@@ -81,11 +84,20 @@ def main():
         n, r, ps = row.split("\t")
         known[n] = (r, ps)
     with open(sys.argv[1], "w") as out:
-        for name in sorted(set(defs) | set(decls) | set(known)):
+        # only where unprototyped declarations disagree on what it returns: one declared only `u32 f();` keeps being
+        # called as each call site has it (a builtin the host answers takes the argument the C passes)
+        loose = {n: rets for n, rets in loose.items() if len(rets) > 1}
+        for name in sorted(set(defs) | set(decls) | set(known) | set(loose)):
             if name in defs:
                 ret, ps = defs[name]
             elif name in known:
                 ret, ps = known[name]
+            elif name not in decls:
+                # only unprototyped declarations, of a function no file defines (a racing game's callers declared one
+                # outside its layout `s32 f();` and `void f();`, and the link refused the two): one return type for
+                # all of them, a value over none, and no parameters known
+                ret = max(loose[name], key=lambda r: (r != "void", loose[name][r]))
+                ps = ""
             else:
                 ret, ps = max(decls[name], key=lambda rp: (len(split(rp[1])), rp[0] != "void", decls[name][rp]))
             out.write(f"{name}\t{ret}\t{ps}\n")

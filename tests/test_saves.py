@@ -46,6 +46,20 @@ def test_restore_notes_preserves_measurements_without_scanning_history(tmp_path,
     assert proj["id"] == pid
 
 
+def test_a_part_with_no_header_of_its_own_is_not_named(tmp_path, monkeypatch):
+    """A racing game's save named alEvtqNextEvent's part though the part had no header (the app compiles it with the
+    shared one), and the port's build stopped at the missing file."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,'{}')",
+                         (str(tmp_path),)).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'f',4096,4,1,'open','local_source_9')", (pid,))
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    manifest = json.loads(saves._render(net, "game")[0][saves.MANIFEST])
+    assert manifest["function_headers"] == {} and "local_source_9" not in manifest["headers"]
+
+
 @pytest.mark.parametrize("unit", ["local_source_1", "exact_match_1_2"])
 def test_a_function_keeps_its_own_header_through_a_save(tmp_path, monkeypatch, unit):
     """Source preparation gives a function a header of its own (local_source_<id>). Saves kept only an exact match's

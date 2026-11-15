@@ -53,6 +53,9 @@ IR_FLAGS = ["-target", "wasm32-freestanding", "-std=gnu17", "-DPORT_WASM=1", "-O
 # needs it here: one using <stdarg.h> (its console branch walks the MIPS stack for its arguments with
 # `__builtin_next_arg`), inline assembly, or one that doesn't compile without it. The other MIPS builtins
 # (`__builtin_mips_read_status`, `__builtin_mips_debug_break`...) stay calls the host answers (port_wasm/host.c).
+# An empty debug-print stub in K&R varargs (`void f(va_alist) va_dcl {}`, as GCC 2.7.2 takes it): clang refuses the
+# `...` its va_dcl declares, so one that never reads its arguments is compiled as `void f()` (`kr_varargs`)
+KR_VARARGS = re.compile(r"\(\s*va_alist\s*\)\s*va_dcl\b")
 NEEDS_PORT = re.compile(r"\bva_start\b|\b__builtin_next_arg\b|\b__asm__\b|\basm\s*\(")
 # The console's memory (4 GB, so every console address is in it), its data placed by the C's own addresses, a
 # stack per thread below it (the host's), and every function exported: the host finds them by address.
@@ -247,6 +250,27 @@ def big_endian_bitfields(text: str) -> str:
     return "\n".join(result)
 
 
+def kr_varargs(text: str) -> str:
+    """A K&R varargs function that never reads its arguments, as an unprototyped one: callers pass what they pass."""
+    if KR_VARARGS.search(text) and not re.search(r"\bva_(?:start|arg|end)\s*\(", text):
+        return KR_VARARGS.sub("()", text)
+    return text
+
+
+def own_functions(chosen: dict[str, Path], texts: dict[str, str]) -> dict[str, str]:
+    """Each file's text without the functions another file of the build is for: a save's file of matched C can define
+    more than its own function (a racing game's three sound-player setters were each matched with C defining all
+    three), and the port compiles whole files, so the copies collided at link. The other file's is that function's
+    own matched C. Static helpers and the file's own function stay."""
+    from ..csource import defined, only
+    files = {name.casefold() for name in chosen}
+    out = {}
+    for name, text in texts.items():
+        extra = {f for f in defined(text) if f != name[:-2] and f"{f}.c".casefold() in files}
+        out[name] = only(text, extra) if extra else text
+    return out
+
+
 def gather(repo: Path, out: Path, leave_out=()) -> dict[str, Path]:
     """The C the build compiles, in out/src (one file per function, the shared header included) and out/include.
     `leave_out`: more matched files to leave out than exclude.txt names (play.library). Returns {file name: where it
@@ -265,10 +289,14 @@ def gather(repo: Path, out: Path, leave_out=()) -> dict[str, Path]:
     # (a function from the game's own source files: common_<part>.h, the manifest's function_headers).
     manifest = json.loads((progress / "decompdecomp.json").read_text(encoding="utf-8"))
     units = manifest.get("function_headers") or {}
-    for name, source in chosen.items():
-        text = source.read_text(encoding="utf-8")
+    headers = {h.name for folder in (progress / "include", port / "include") for h in folder.glob("*.h")}
+    texts = own_functions(chosen, {name: kr_varargs(source.read_text(encoding="utf-8")) for name, source in chosen.items()})
+    for name in chosen:
+        text = texts[name]
         unit = units.get(name[:-2])
-        header = f"common_{unit}.h" if unit else "common.h"
+        # a part the save has no header for compiles with the shared one, as the app compiles it (_effective_unit):
+        # older saves named such a part anyway, and the build stopped at the missing header
+        header = f"common_{unit}.h" if unit and f"common_{unit}.h" in headers else "common.h"
         if not re.search(r'^#include "common(_\w+)?\.h"', text, re.M):
             text = f'#include "{header}"\n' + text
         _write(out / "src" / name, big_endian_bitfields(text))
