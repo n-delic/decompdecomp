@@ -272,3 +272,62 @@ def test_regression_test_tolerates_overlay_ambiguity(net, monkeypatch):
                            "and the callers ROM offset does not select one.")
     monkeypatch.setattr(net, "_evaluate", boom)
     assert net.regression_test(proj, None, only=[fn]) == []
+
+
+def test_rename_only_reverifies_rewritten_functions(net, agents, monkeypatch):
+    """A rename to a fresh identifier can only change the bytes of functions whose source is actually
+    rewritten -- names don't affect codegen and the rename preserves every type's layout, so a matched
+    function with an untouched source still matches. regression_test must therefore be handed only that
+    affected subset: on a large project (thousands of matched functions) re-verifying every
+    matched function per rename exceeds the tool timeout, so the rename never commits."""
+    alice, _ = agents
+    net.compile_and_diff(alice, "player_take_damage", SOLUTIONS["player_take_damage"])  # source uses unk_1C
+    net.compile_and_diff(alice, "entity_update_physics", SOLUTIONS["entity_update_physics"])  # uses neither unk_1C nor the new name
+
+    seen = {}
+    real = net.regression_test
+
+    def spy(proj, header, **kw):
+        seen["only"] = [f["name"] for f in (kw.get("only") or [])]
+        return real(proj, header, **kw)
+
+    monkeypatch.setattr(net, "regression_test", spy)
+
+    out = net.rename_symbol(alice, "demo", "unk_1C", "player_life_points", "fresh name")
+    assert "renamed" in out, out
+    # only the function whose source was rewritten is re-verified; the untouched one is not
+    assert seen["only"] == ["player_take_damage"], seen["only"]
+
+
+def test_rename_to_existing_name_reverifies_everything(net, agents, monkeypatch):
+    """If the new name already occurs in a header it could redefine an identifier and break a function
+    whose source never mentioned the old name, so the narrowing must fall back to the full matched set."""
+    alice, _ = agents
+    net.compile_and_diff(alice, "player_take_damage", SOLUTIONS["player_take_damage"])
+    net.compile_and_diff(alice, "entity_update_physics", SOLUTIONS["entity_update_physics"])
+
+    seen = {}
+    real = net.regression_test
+
+    def spy(proj, header, **kw):
+        seen["only"] = [f["name"] for f in (kw.get("only") or [])]
+        return real(proj, header, **kw)
+
+    monkeypatch.setattr(net, "regression_test", spy)
+
+    # `hp` already exists as an Entity field in the demo header -> redefinition risk -> verify all matched
+    net.rename_symbol(alice, "demo", "unk_1C", "hp", "collides with existing field")
+    assert set(seen["only"]) == {"player_take_damage", "entity_update_physics"}, seen["only"]
+
+
+def test_rename_affected_scopes_to_rewritten_sources(net):
+    """_rename_affected (shared by the ROM and non-ROM rename paths) returns only the matched rows whose source
+    the rename rewrites, or None (= every matched function) when a new name already occurs in a header and could
+    redefine an identifier. This is the narrowing that keeps a rename from re-verifying every matched function."""
+    matched = [{"id": 1, "matched_source": "int a(void){ return foo; }"},
+               {"id": 2, "matched_source": "int b(void){ return bar; }"}]
+    rewritten = {1: "int a(void){ return renamed; }", 2: "int b(void){ return bar; }"}  # only #1 is rewritten
+    aff = net._rename_affected(matched, rewritten, ["renamed"], ["struct S { int foo; };"])  # fresh name
+    assert [r["id"] for r in aff] == [1]  # the untouched function #2 is not re-verified
+    # a new name that already occurs in a header -> fall back to all (redefinition risk)
+    assert net._rename_affected(matched, rewritten, ["foo"], ["int foo;"]) is None

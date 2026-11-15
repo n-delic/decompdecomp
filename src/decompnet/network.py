@@ -1318,7 +1318,9 @@ class Network:
             matched = self.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
             rewritten = {r["id"]: word.sub(new, r["matched_source"]) for r in matched}
             header_for = lambda fn: changed.get(self._effective_unit(fn, units), current[self._effective_unit(fn, units)]["header"])  # noqa: B023  called within this pass of the loop
-            broken = self.regression_test(proj, None, sources=rewritten, only=matched, header_for=header_for)
+            affected = self._rename_affected(matched, rewritten, [new], [current[u]["header"] for u in current])
+            broken = self.regression_test(proj, None, sources=rewritten,
+                                          only=matched if affected is None else affected, header_for=header_for)
             if broken:
                 listing = "\n".join(f"- {name}: {why}" for name, why in broken[:10])
                 return f"❌ REJECTED: renaming breaks {len(broken)} matched function(s).\n{listing}"
@@ -1342,6 +1344,18 @@ class Network:
             return (f"✅ renamed `{old}` -> `{new}` in {len(changed)} header(s) and in {len(rewritten)} matched "
                     f"sources; all still match.")
         raise NetworkError("headers are being edited heavily right now; retry")
+
+    def _rename_affected(self, matched, rewritten, new_names, headers):
+        """The matched rows a rename can actually change: those whose source the rename rewrites. Names do not
+        affect codegen and a rename preserves every type's layout, so a matched function with an untouched source
+        still matches -- re-verifying it only risks timing the rename out (a large project has thousands of matched functions;
+        re-checking all of them per rename is why renames stopped landing). Returns None -- meaning every matched
+        function -- when one of the new names already occurs in a header, where it could redefine an identifier."""
+        new_word = re.compile(r"\b(" + "|".join(re.escape(n) for n in new_names) + r")\b")
+        if any(new_word.search(h) for h in headers):
+            return None
+        return [r for r in matched
+                if rewritten[r["id"]] != r["matched_source"] or new_word.search(r["matched_source"])]
 
     def _latest_version(self, db, project_id: int, unit: str) -> int | None:
         row = db.execute("SELECT MAX(version) AS v FROM context_versions WHERE project_id=? AND unit=?",
