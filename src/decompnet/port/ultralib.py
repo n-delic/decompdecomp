@@ -110,6 +110,11 @@ def units(net, slug: str) -> dict[str, tuple[str, list[str]]]:
         from ..network import NetworkError
         raise NetworkError(f"{len(wanted)} library functions are set aside for ultralib's C (the project's library "
                            "setting): install libultra source (ultralib) in Compilers & tools to build the port")
+    return units_from(wanted, folder)
+
+
+def units_from(wanted: dict, folder: Path) -> dict[str, tuple[str, list[str]]]:
+    """units() for {function: (ultralib's file, build)} (a save's port/wasm/export.json keeps them for a runner)."""
     out = {}
     for name, (file, build) in sorted(wanted.items()):
         path = folder / file
