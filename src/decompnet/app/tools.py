@@ -16,7 +16,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, Field
 
-from .. import __version__, agents, candidate_quality, consoles
+from .. import __version__, agents, candidate_quality, claim_stalls, consoles
 from ..network import CLAIM_ORDERS, Agent, Network, NetworkError
 from ..release_receipts import operation as release_operation
 from . import (
@@ -823,6 +823,7 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
         return result
 
 
+@claim_stalls.snapshot_rules
 def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     asset_agents.guard(net,agent,slug,name,args)
     _data_agents().guard(net,agent,slug,name,args)
