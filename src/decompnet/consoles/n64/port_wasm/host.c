@@ -64,6 +64,7 @@ __attribute__((weak)) void *port_recomp_pointer(uint32_t address) { (void)addres
    retrace woke run (nothing was drawn) */
 void port_safe_point(void) { port_preempt(); }
 __attribute__((weak)) void port_recomp_thread(int number) { (void)number; }
+void *port_mips_pointer(uint32_t address); /* mips.c: a function with no C, run from the ROM by the interpreter */
 void *port_func(uint32_t address) {
     /* LLVM calls some functions through the table when the call's types differ from the function's only as
        pointer and integer: an index, never a console address (those are 0x80000000 and up) */
@@ -81,6 +82,8 @@ void *port_func(uint32_t address) {
     if (lo < port_func_count && port_funcs[lo].address == address) return port_funcs[lo].func;
     void *recompiled = port_recomp_pointer(address); /* a function with no C yet, run as recompiled C */
     if (recompiled) return recompiled;
+    void *interpreted = port_mips_pointer(address); /* or its own instructions, interpreted */
+    if (interpreted) return interpreted;
     fprintf(stderr, "a call through a function pointer to %08X, where no function of the game's C is\n", address);
     port_trace();
     wasm_rt_trap(WASM_RT_TRAP_CALL_INDIRECT);
@@ -119,6 +122,8 @@ static _Thread_local PortThread *self;
 #define GAME_SP game.w2c_0x5F_stack_pointer0x2E1
 #define SET_GAME_SP(v) (game.w2c_0x5F_stack_pointer0x2E1 = (v))
 #endif
+/* the running game thread's number (-1 before any: the boot), for the interpreter's stack of its own (mips.c) */
+int port_thread_number(void) { return self ? self->number : -1; }
 static unsigned long long ticks;
 static int thread_count;
 static int booted; /* the boot code runs on the host's main thread: no game thread runs until it returns */

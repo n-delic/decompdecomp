@@ -26,6 +26,7 @@
 static const struct { uint32_t start, size; const char *what; } regions[] = {
     {0x00001000u, 0x00400000u - 0x1000u, "the module's low memory"},
     {0x10000000u, 0x02000000u, "the threads' shadow stacks"},
+    {0x14800000u, 0x00840000u, "the interpreter's MIPS stacks (mips.c)"},
     {0x80000000u, 0x00800000u, "the console's RAM"},
     /* the RCP's and the interfaces' registers the host doesn't answer itself (port_io_load returns their address):
        plain memory there, as in the 4 GB build */

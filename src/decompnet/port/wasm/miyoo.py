@@ -67,7 +67,7 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-exceptions-impl.c",
              *(p for p in sorted(host.glob("*.c")) if p.name != "live.c"), *native.game_host(host, repo),
              *sorted((host / "miyoo").glob("*.c")),
-             out / "funcs.c", out / "stubs.c"]
+             out / "funcs.c", out / "stubs.c", out / "interp.c"]
     dirs = [wabt / "include", rt, out / "c"]
     includes = [a for d in dirs for a in ("-I", d)]
     files = native._Files()

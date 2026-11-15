@@ -172,7 +172,11 @@ async function play(bytes) {
   try {
     const rom = asZ64(bytes);
     saveKey = `${STORE}-save-` + Array.from(rom.subarray(0x10, 0x18), (b) => b.toString(16).padStart(2, "0")).join("");
-    await start({ rom, env: { PORT_VERBOSE: new URLSearchParams(location.search).get("verbose") || "0" },
+    // ?verbose=1 says more; any PORT_ option of the host's can be given the same way (?PORT_INTERP_TRACE=1)
+    const params = new URLSearchParams(location.search);
+    const env = { PORT_VERBOSE: params.get("verbose") || "0" };
+    for (const [k, v] of params) if (/^PORT_[A-Z_]+$/.test(k)) env[k] = v;
+    await start({ rom, env,
       io: { frame, audio: sound, input, eepromLoad, eepromSave, gpu: () => gpu, log: (line) => console.log(line),
         error: fail } });
     $("start").hidden = true;
