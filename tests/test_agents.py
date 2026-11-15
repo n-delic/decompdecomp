@@ -500,6 +500,7 @@ def test_hermes_ends_what_its_session_left_running(tmp_path, monkeypatch):
     session's HERMES_HOME, and no other session's. (The cross-platform `gateway stop` is skipped here so the test
     doesn't shell out to a real Hermes; test_hermes_end_leftovers_runs_gateway_stop covers that.)"""
     monkeypatch.setattr(shutil, "which", lambda _cmd: None)
+    monkeypatch.setattr(hermes.HERMES, "resolve_exe", lambda: None)  # and no off-PATH install either
     home = str(tmp_path / "h1" / ".hermes")
     left = subprocess.Popen(["sleep", "60"], env=dict(os.environ, HERMES_HOME=home), start_new_session=True)
     other = subprocess.Popen(["sleep", "60"], env=dict(os.environ, HERMES_HOME=home + "2"))
@@ -519,10 +520,11 @@ def test_hermes_end_leftovers_runs_gateway_stop(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(shutil, "which", lambda _cmd: "/fake/hermes")
     monkeypatch.setattr(hermes.subprocess, "run",
-                        lambda argv, **kw: calls.append((argv, kw.get("env", {}).get("HERMES_HOME"))))
+                        lambda argv, **kw: calls.append(
+                            (argv, kw.get("env", {}).get("HERMES_HOME"), kw.get("creationflags"))))
     home = str(tmp_path / "h1" / ".hermes")
     hermes.HERMES.end_leftovers({"HERMES_HOME": home})
-    assert (["/fake/hermes", "gateway", "stop"], home) in calls
+    assert (["/fake/hermes", "gateway", "stop"], home, hermes.NO_WINDOW) in calls  # no console flash on Windows
 
 
 def _manager(tmp_path, monkeypatch, kind):

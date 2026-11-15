@@ -28,6 +28,8 @@ import sys
 import urllib.parse
 from pathlib import Path
 
+from decompnet.hostenv import NO_WINDOW
+
 from . import SAID_CHARS, Agent, args_brief, error_text, number, tool_name, usage_item
 
 MCP_TIMEOUT = 900  # seconds a tool call may take: edit_context recompiles the unit's matched functions (300 by default)
@@ -157,7 +159,8 @@ class Hermes(Agent):
         if exe:
             try:
                 subprocess.run([exe, "gateway", "stop"], env={**os.environ, **env}, timeout=STOP_TIMEOUT,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+                               creationflags=NO_WINDOW)
             except (OSError, subprocess.SubprocessError):
                 pass
         # Belt and braces on Linux: SIGTERM any process still carrying this HERMES_HOME (a gateway that
