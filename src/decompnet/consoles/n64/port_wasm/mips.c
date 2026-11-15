@@ -10,7 +10,7 @@
  * - the game's C calling a function it has no C for: the build's interp.c (port/wasm/interp.py) defines that
  *   import, which puts its arguments where o32 passes them and runs the function here (port_mips_run);
  * - a call through a function pointer, or a thread's entry, to one (host.c's port_func; in the browser, web/be.c's
- *   port_icall through port_mips_icall): its integer arguments, its $v0 (as recompiled C's bridges take them).
+ *   port_icall through port_mips_icall): its arguments with their types (port_mips_typed_call), floats included.
  *
  * Where it leaves: a jump to a function that has C (the game's or the host's: interp.c's table, by console address)
  * calls that C with o32's arguments and goes on at $ra with what it returned; the return to the caller's
@@ -461,19 +461,68 @@ int port_mips_enter(uint64_t *r, uint32_t *f, int words) {
 /* After it: a void function's $v0 where the game's C reads it (adapt.py's register words). */
 void port_mips_leave(const uint64_t *r) { sw(REGS + 16u, (uint32_t)r[2]); }
 
-/* A call through a pointer (or a thread's entry) to a function with no C: its integer arguments in `slots` ($a0-$a3,
-   then the stack's), `count` of them; its $v0 back. */
-uint64_t port_mips_pointer_call(uint32_t entry, const uint64_t *slots, unsigned count) {
+/* A call into interpreted code with its arguments' types: `types[i]` 0 a word, 1 64 bits, 2 a float, 3 a double, and
+   `vals[i]` its bits; `ret` the result's type the same way (0 also for none). The arguments go where o32 passes
+   them (as recomp.py's o32: the first two in $f12 and $f14 while they're floats, 64 bits in an aligned pair of
+   words, high word first; a float after anything else in a word), the result comes back as its bits from $v0 (and
+   $v1), or $f0 (and $f1). A float through a pointer once went in an integer word and the function read $f12. */
+uint64_t port_mips_typed_call(uint32_t entry, const uint8_t *types, const uint64_t *vals, unsigned n, int ret) {
+    int slot = 0, fpr = 12, floats = 1, where[16], kind[16]; /* kind: 0 a word, 1 a pair of words, 2 $f, 3 $f pair */
+    if (n > 16) n = 16;
+    for (unsigned i = 0; i < n; i++) {
+        int t = types[i] & 3;
+        if (floats && i < 2 && t >= 2) {
+            if (t == 3) slot += slot % 2;
+            kind[i] = t == 3 ? 3 : 2;
+            where[i] = fpr;
+            slot += t == 3 ? 2 : 1;
+            fpr += 2;
+            continue;
+        }
+        floats = 0;
+        if (t == 1 || t == 3) { slot += slot % 2; kind[i] = 1; where[i] = slot; slot += 2; }
+        else { kind[i] = 0; where[i] = slot; slot += 1; }
+    }
     uint64_t r[32];
     uint32_t f[32];
-    if (!port_mips_enter(r, f, count > 4 ? (int)count : 4)) return 0;
-    for (unsigned i = 0; i < count; i++) {
-        if (i < 4) r[4 + i] = sx32((uint32_t)slots[i]);
-        else sw((uint32_t)r[29] + 4u * i, (uint32_t)slots[i]);
+    if (!port_mips_enter(r, f, slot > 4 ? slot : 4)) return 0;
+    uint32_t sp = (uint32_t)r[29];
+#define WORD(s, v) do { if ((s) < 4) r[4 + (s)] = sx32((uint32_t)(v)); else sw(sp + 4u * (uint32_t)(s), (uint32_t)(v)); } while (0)
+    for (unsigned i = 0; i < n; i++) {
+        uint64_t v = vals[i];
+        switch (kind[i]) {
+        case 0: WORD(where[i], v); break;
+        case 1: WORD(where[i], v >> 32); WORD(where[i] + 1, v); break;
+        case 2: f[where[i]] = (uint32_t)v; break;
+        case 3: f[where[i]] = (uint32_t)v; f[where[i] + 1] = (uint32_t)(v >> 32); break;
+        }
     }
+#undef WORD
     port_mips_run(entry, r, f);
     port_mips_leave(r);
+    switch (ret & 3) {
+    case 1: return (uint64_t)(uint32_t)r[2] << 32 | (uint32_t)r[3];
+    case 2: return f[0];
+    case 3: return (uint64_t)f[1] << 32 | f[0];
+    }
     return (uint32_t)r[2];
+}
+/* The same with integer arguments only: what a thread's entry or a pointer call of unknown types passes. */
+uint64_t port_mips_pointer_call(uint32_t entry, const uint64_t *slots, unsigned count) {
+    static const uint8_t words[16];
+    return port_mips_typed_call(entry, words, slots, count, 0);
+}
+
+/* A structure the game's C passes by value to a function run here (as a pointer to it, WebAssembly's byval): its
+   `words` copied into the argument words from `slot` on, where o32 passes it. */
+void port_mips_copy_in(uint64_t *r, int slot, uint32_t from, int words) {
+    if (!M) M = port_memory();
+    for (int i = 0; i < words; i++) {
+        uint32_t v = lw(from + 4u * (uint32_t)i);
+        int s = slot + i;
+        if (s < 4) r[4 + s] = sx32(v);
+        else sw((uint32_t)r[29] + 4u * (uint32_t)s, v);
+    }
 }
 
 /* Whether `address` has the game's code to interpret: in the console's RAM, an instruction there. */
@@ -484,27 +533,65 @@ int port_mips_has_code(uint32_t address) {
 }
 
 #ifndef PORT_WEB
-/* host.c's port_func, for a pointer to a function with no C: what the game's C calls through it takes six integer
-   arguments (recompiled C's bridges' shape), and the function it means is the one port_func was asked for. */
+/* host.c's port_func, for a pointer to a function with no C. The game's C calls it as its own type says (wasm2c's
+   CALL_INDIRECT casts to it: floats in float registers), so each type of call through a pointer the game makes has
+   an entry of that type (interp.c's port_mips_pointer_types, by the type's text as bemem.py's CALL_INDIRECT names
+   it), which hands its arguments to the interpreter with their types. The function it means is the one port_func
+   was asked for, just before (port_mips_target). Without the type (a thread's entry): six integer arguments. */
 typedef struct w2c_game w2c_game;
+typedef struct { const char *type; void *entry; } PortMipsPointerType;
+__attribute__((weak)) const PortMipsPointerType port_mips_pointer_types[1] = {{0, 0}};
+__attribute__((weak)) const unsigned port_mips_pointer_type_count = 0;
 static _Thread_local uint32_t pointer_target;
+uint32_t port_mips_target(void) { return pointer_target; }
 static uint64_t pointer_entry(w2c_game *g, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)g;
     const uint64_t slots[6] = {a0, a1, a2, a3, a4, a5};
     return port_mips_pointer_call(pointer_target, slots, 6);
 }
-void *port_mips_pointer(uint32_t address) {
+static int same_type(const char *a, const char *b) { /* the types' texts, their spaces aside */
+    for (;;) {
+        while (*a == ' ') a++;
+        while (*b == ' ') b++;
+        if (*a != *b) return 0;
+        if (!*a) return 1;
+        a++, b++;
+    }
+}
+static void *typed_entry(const char *type) {
+    static struct { const char *type; void *entry; } seen[256]; /* by the call's own text (one per call site) */
+    unsigned slot = (unsigned)(((uintptr_t)type >> 3) & 255);
+    if (seen[slot].type == type) return seen[slot].entry;
+    void *entry = 0;
+    for (unsigned i = 0; i < port_mips_pointer_type_count && !entry; i++)
+        if (port_mips_pointer_types[i].type && same_type(port_mips_pointer_types[i].type, type)) entry = port_mips_pointer_types[i].entry;
+    if (!entry) {
+        static int said;
+        if (!said++) fprintf(stderr, "interpreter: no entry for a call through a pointer of type %s: its arguments as words\n", type);
+        entry = (void *)pointer_entry;
+    }
+    seen[slot].type = type;
+    seen[slot].entry = entry;
+    return entry;
+}
+void *port_mips_pointer_as(uint32_t address, const char *type) {
     if (!port_mips_has_code(address)) return 0;
     pointer_target = address;
-    return (void *)pointer_entry;
+    return type ? typed_entry(type) : (void *)pointer_entry;
 }
+void *port_mips_pointer(uint32_t address) { return port_mips_pointer_as(address, 0); }
 #else
 /* web/be.c's port_icall, for a pointer to a function with no C: the call's slots ($a0-$a3, then the stack's) and
-   its result in slots[16], as a universal entry leaves it. 0: no code there either. */
+   its result in slots[16], as a universal entry leaves it. `count` carries the types above its low byte, as
+   web/webir.py's calls put them: two bits an argument from bit 8 (0 a word, 1 64 bits, 2 a float, 3 a double; the
+   first eight), and the result's at bit 24. 0: no code there either. */
 __attribute__((export_name("port_mips_icall"))) uint32_t port_mips_icall(uint32_t pointer, uint32_t slots, uint32_t count) {
     if (!port_mips_has_code(pointer)) return 0;
     uint64_t *s = (uint64_t *)(uintptr_t)slots;
-    s[16] = port_mips_pointer_call(pointer, s, count > 16 ? 16 : count);
+    unsigned n = count & 0xFF;
+    uint8_t types[16] = {0};
+    for (unsigned i = 0; i < n && i < 8; i++) types[i] = (uint8_t)((count >> (8 + 2 * i)) & 3);
+    s[16] = port_mips_typed_call(pointer, types, s, n > 16 ? 16 : n, (int)((count >> 24) & 3));
     return 1;
 }
 #endif

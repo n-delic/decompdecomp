@@ -2075,11 +2075,11 @@ instructions do:
 - **Built:** the fallback in the native build (Play, the app export): a function with no matched C runs as its
   recompiled C, natively in the host, bridged both ways (docs/N64RECOMP.md, phase 2). In every build (the browser's,
   the Miyoo Mini's, a GitHub runner's) a function with no C yet also runs from the player's own ROM, interpreted
-  (docs/PORTING.md, "Functions with no C yet"), so no build needs the game's code. Left: float arguments through
-  function pointers (into recompiled or interpreted code), a structure passed by value to a function the
-  interpreter runs (from the game's C: its words aren't copied in), code N64Recomp refuses (a tail call it doesn't
-  follow, code the split doesn't have), and the interpreter's speed (a function hot enough to matter is the one to
-  match first).
+  (docs/PORTING.md, "Functions with no C yet"), so no build needs the game's code; float arguments through function
+  pointers and structures passed by value reach interpreted code as o32 passes them. Left: float arguments through
+  function pointers into recompiled C (its pointer bridges take integers), code N64Recomp refuses (a tail call it
+  doesn't follow, code the split doesn't have), and the interpreter's speed (a function hot enough to matter is the
+  one to match first).
 
 Phases:
 - pin and build N64Recomp, and write its configuration from the split;

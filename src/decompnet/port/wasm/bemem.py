@@ -35,8 +35,10 @@ call = """#define CALL_INDIRECT(table, t, ft, x, ...) \\
   (CHECK_CALL_INDIRECT(table, ft, x),       \\
    DO_CALL_INDIRECT(table, t, x, __VA_ARGS__))"""
 assert call in s, "wasm2c's CALL_INDIRECT changed"
-s = s.replace(call, """void *port_func(uint32_t address);
-#define CALL_INDIRECT(table, t, ft, x, ...) ((t)port_func(x))(__VA_ARGS__)""")
+# The call's own type goes with it, as text: a function with no C, run by the host's interpreter (mips.c), takes its
+# float arguments where this call puts them only through an entry of that type.
+s = s.replace(call, """void *port_func_as(uint32_t address, const char *type);
+#define CALL_INDIRECT(table, t, ft, x, ...) ((t)port_func_as(x, #t))(__VA_ARGS__)""")
 open(p, "w").write(s)
 # a trap says where it happened (the host prints a backtrace) before it stops the thread
 trap = "#define TRAP(x) (wasm_rt_trap(WASM_RT_TRAP_##x), 0)"

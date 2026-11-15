@@ -64,7 +64,8 @@ def test_a_call_through_a_pointer_takes_its_arguments_from_slots():
     out = rewrite("define i32 @f(ptr %0) {\n  %2 = call i32 %0(i8 zeroext -1, float 1.0)\n  ret i32 %2\n}\n")
     assert "%port_slots = alloca [17 x i64]" in out
     assert "zext i8 -1 to i64" in out and "bitcast float 1.0 to i32" in out
-    assert "call void @port_icall(ptr %0, ptr %port_slots, i32 2)" in out
+    # two arguments, the second a float (its type above the count, for the host's interpreter: webir._type_code)
+    assert f"call void @port_icall(ptr %0, ptr %port_slots, i32 {2 | 2 << 10})" in out
     assert "%2 = trunc i64" in out
 
 

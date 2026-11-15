@@ -5,7 +5,8 @@ function's IR instead, because in the browser the WebAssembly runs as it is.
   as on the N64, and an uncached address (0xA0000000 up) through the host. The varargs a variadic function reads
   stay as the compiler wrote them (little-endian: the backend fills the buffer and `va_start` the `va_list`, where
   the native build swapped those too).
-- A call through a pointer goes through `port_icall` with its arguments in a buffer of 64-bit slots, and every
+- A call through a pointer goes through `port_icall` with its arguments in a buffer of 64-bit slots (their count in
+  its low byte, their types above it, for the host's interpreter: _type_code), and every
   function gets a "universal" entry (`F.port_u`) that takes them from there: a function pointer in the game is the
   function's console address, and the N64 never checked a callee's type where wasm traps on a mismatch. A callee
   declaring more arguments than the call passes gets the rest from the register words (as adapt.py's calls leave
@@ -190,6 +191,13 @@ def _memory(line, native, fresh, out) -> bool:
 CALL = re.compile(r"^(\s*)(?:(" + NAME + r") = )?(?:tail |musttail |notail )?call ")
 
 
+def _type_code(t: str) -> int:
+    """A value's type as port_icall's count carries it for the host's interpreter (mips.c's port_mips_icall): 0 a
+    word, 1 64 bits, 2 a float, 3 a double. A function with no C, interpreted, takes a float where o32 puts it
+    ($f12 or $f14, or a word) only knowing it's one: the slots hold every argument as 64 bits alike."""
+    return {"i64": 1, "float": 2, "double": 3}.get(t, 0)
+
+
 def _indirect(line, fresh, out) -> bool:
     """A call through a pointer, rewritten through port_icall and the slots; False for any other line."""
     m = CALL.match(line)
@@ -208,15 +216,21 @@ def _indirect(line, fresh, out) -> bool:
     args = [a for a in split_top(rest[open_paren + 1:close])]
     if len(args) > SLOTS:
         return False
+    types = 0  # the arguments' and the result's types, above the count (_type_code), for the host's interpreter
     for i, a in enumerate(args):
         t, v = parse_arg(a)
         w = _value_to_i64(out, fresh, t, v, "zeroext" in a)
         if w is None:
             return False
+        if i < 8:
+            types |= _type_code(t) << (8 + 2 * i)
         s = fresh("s")
         out += [f"{indent}{s} = getelementptr [{SLOTS + 1} x i64], ptr %port_slots, i32 0, i32 {i}",
                 f"{indent}store i64 {w}, ptr {s}, align 8"]
-    out.append(f"{indent}call void @port_icall(ptr {fp}, ptr %port_slots, i32 {len(args)})")
+    types |= _type_code(ret) << 24
+    count = len(args) | types
+    count = count - (1 << 32) if count >= 1 << 31 else count  # (an i32 literal: signed)
+    out.append(f"{indent}call void @port_icall(ptr {fp}, ptr %port_slots, i32 {count})")
     if result and ret != "void":
         s, r = fresh("s"), fresh("r")
         out += [f"{indent}{s} = getelementptr [{SLOTS + 1} x i64], ptr %port_slots, i32 0, i32 {SLOTS}",

@@ -745,7 +745,8 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     if recomp and Path(recomp["folder"], "recomp.json").is_file():
         extra = recomp_c.mips_signatures(Path(recomp["folder"]), lls, fixed, [*sorted(host.glob("*.c")), *own],
                                          library_names)
-    extra += interp.mips_signatures(lls, fixed, [*sorted(host.glob("*.c")), *own], library_names, left_out, replaced)
+    extra += interp.mips_signatures(lls, fixed, [*sorted(host.glob("*.c")), *own], library_names, left_out, replaced,
+                                    interp.by_value(lls, declared=True))
     extra = sorted({n for n in extra if n not in known})
     if extra:
         ret, params = recomp_c.MIPS_SIGNATURE
@@ -803,7 +804,9 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
             bridged = set(re.findall(r"\b(w2c_env_\w+)\(struct w2c_env \*", u.read_text(encoding="utf-8")))
     interp_c, counts = interp.generate((out / "c" / "game.h").read_text(encoding="utf-8"), fixed,
                                        [*sorted(host.glob("*.c")), *own], library_names, bridged, left_out, replaced,
-                                       interp.variadic(lls), interp.by_value(lls))
+                                       interp.variadic(lls), interp.by_value(lls), interp.by_value(lls, declared=True),
+                                       interp.pointer_types(p.read_text(encoding="utf-8", errors="replace")
+                                                            for p in sorted((out / "c").glob("game_*.c"))))
     _write(out / "interp.c", interp_c)
     if counts["imports"]:
         log(f"{counts['imports']} functions the game's C calls have no C yet: the interpreter runs them from the ROM")
