@@ -922,8 +922,12 @@ signature match (`verification_method` `sdk-signature`), and a changed target un
 functions are set aside, the same 32 with the SDK folders removed, `osPfsInitPak` among them. Measured across six
 N64 games, every libultra function named from the SDK folders is in the built-in table except n_audio
 (`libgn_audio.a` 2.0J-2.0L, 50 functions on one game), which ultralib doesn't rebuild, and one
-`__osRepairPackId` build no SDK release has. Left: fingerprints of n_audio rebuilt from public matching C (several
-N64 decomps carry it), checked against the original archives like tools/ultralib_signatures.py's `--compare-db`.
+`__osRepairPackId` build no SDK release has. n_audio now ships too: no public C rebuilds it as the SDK shipped it
+(the GCC decomps carry only NuSystem's synthesizer subset, which didn't reproduce, and the full players exist only
+in Rare's IDO forks), so its table is the fingerprints and names of the SDK's own `libgn_audio.a`/`_d.a` 2.0J-2.0L,
+like decomp-toolkit's GameCube corpus (tools/naudio_signatures.py, `Console.sdk_tables`), less the 63 fingerprints
+the ultralib table already names (n_audio's copies of libultra's audio code: two names on one fingerprint would be
+no identity). With no SDK that racing game now has 242 library functions found, 53 of them n_audio, up from 186.
 
 Similar-code autopilot attempts are bounded and use the unchanged compiler/link judge on MIPS ROM projects.
 They learn unambiguous symbol correspondences, try local-permuter repairs and proven donor flags, and persist

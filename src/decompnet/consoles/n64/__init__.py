@@ -190,6 +190,8 @@ class Nintendo64(Console):
     sdk_assembly_sizes = (160,272)
     # libultra 2.0I-2.0L as decompals/ultralib rebuilds it, so a user without the SDK still has its library found
     sdk_table = str(Path(__file__).with_name("ultralib_signatures.tsv"))
+    # n_audio (libgn_audio.a 2.0J-2.0L), which ultralib doesn't rebuild: the SDK archives' fingerprints and names
+    sdk_tables = (str(Path(__file__).with_name("naudio_signatures.tsv")),)
 
     def sdk_assembly_identity(self, code, big_endian=True):
         from .sdk_assembly import identify

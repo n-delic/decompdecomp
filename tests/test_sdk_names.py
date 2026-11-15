@@ -94,7 +94,8 @@ def test_rejected_unchanged_sdk_names_wait_but_changed_inputs_retry(sdk_case, mo
     name_functions(net, 'demo')
     assert len(calls) == 2
     with net.store.tx() as db:
-        db.execute("UPDATE sdk_signatures SET corpus='updated library'")
+        # the indexed library changes (the built-in tables share a few functions, so they keep their own corpora)
+        db.execute("UPDATE sdk_signatures SET corpus='updated library' WHERE corpus NOT LIKE 'built in /%'")
     name_functions(net, 'demo')
     assert len(calls) == 3
 

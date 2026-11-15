@@ -152,6 +152,9 @@ class Console:
     # a table of library signatures the app ships, from the library rebuilt byte for byte from public source (the
     # N64's from decompals/ultralib: tools/ultralib_signatures.py), loaded like an indexed SDK (app/sdk_builtin.py)
     sdk_table = ""
+    # more such tables, each its own corpus: what no public source rebuilds, from the SDK's own archives as hashes
+    # and names only, like decomp-toolkit's GameCube corpus (the N64's n_audio: tools/naudio_signatures.py)
+    sdk_tables: tuple[str, ...] = ()
     # PROJECT mode: choices the import asks about besides the compiler and scope, as (id, question, ((value, text), ...))
     # with the first value the default; create_project takes each as a keyword (Xbox: ltcg)
     import_options: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = ()
