@@ -319,6 +319,89 @@ def test_csource_finds_definitions_and_stubs():
     assert "return 1" in csource.replace(src, "g", "int g(void) { return 1; }")
 
 
+def test_a_call_followed_by_a_block_is_not_taken_for_a_definition():
+    """#300: `} else if (f(x) == 0) {` passed find()'s tests and was returned as f's definition, so split_file cut
+    overlapping spans and compile_and_diff spliced a try into the call site. A candidate at file scope is f's; a
+    C++ method defined inside its class body is not at file scope and stays the fallback."""
+    text = ('int g(int x) {\n    if (x == 0) {\n        return 0;\n    } else if (f(x) == 0) {\n'
+            '        return 1;\n    }\n    return 2;\n}\n\nint f(int x) {\n    return x;\n}\n')
+    assert csource.get(text, "f").startswith("int f(")
+    cls = "class C {\npublic:\n    int m(void) {\n        return 1;\n    }\n};\n"
+    assert "int m(void)" in csource.get(cls, "m")  # (no candidate at file scope: the first stays the answer)
+
+
+def test_a_moved_tail_keeps_its_pragmas_and_what_follows_it():
+    """#300: _divide hoisted every non-function line above the moved definitions, so `#pragma push/pop`, `cplusplus`
+    and scheduling modes ended up far from their functions and data moved above the code that used it. When the
+    moving definitions are the file's tail, the new file keeps that tail verbatim after the text before the cut."""
+    from decompnet.app.forkengine import ForkEngine
+
+    text = ('#include "common.h"\n\nvoid g(void) {\n}\n\n#pragma push\n#pragma optimization_level 2\n'
+            'void f(void) {\n    g();\n}\n#pragma pop\n\nint data_x = 1;\n')
+    rows = [{"name": n, "meta": json.dumps({"symbol": n}), "status": "open"} for n in ("f", "g")]
+    eng = ForkEngine.__new__(ForkEngine)
+    new, old, moved = eng._divide(text, rows, {"f"})
+    assert moved == 1
+    assert new.index("#pragma push") < new.index("void f(void)") < new.index("#pragma pop") < new.index("int data_x")
+    assert "void g(void)" not in new and "void g(void)" in old
+    assert "int data_x" not in old and "void f(void)" not in old
+
+
+def test_a_local_functions_row_symbol_with_its_address_moves_with_the_split():
+    """#300: a file-local function's row symbol carries its address (`stateBusy_8023FC14`) where symbols.txt has the
+    bare name at the same address with `scope:local`. Looked up verbatim, it stayed in the kept file and its code
+    moved without it. A suffix that names another address doesn't count."""
+    from decompnet.app.forkengine import ForkEngine
+
+    rows = [
+        {"name": "stateBusy_8023FC14", "meta": json.dumps({"symbol": "stateBusy_8023FC14"})},
+        {"name": "other_8023FD00", "meta": json.dumps({"symbol": "other_8023FD00"})},
+        {"name": "plain", "meta": json.dumps({"symbol": "plain"})},
+    ]
+    syms = {"stateBusy": (".text", 0x8023FC14, 0x20), "other": (".text", 0x8023FD10, 0x8),
+            "plain": (".text", 0x8023FD20, 0x8)}
+    assert ForkEngine._going_symbols(rows, syms, 0x8023FC14, 0x8023FD28) == {"stateBusy_8023FC14", "plain"}
+
+
+def test_a_thunk_name_renames_only_the_games_symbols(tmp_path):
+    """#300: a CodeWarrior this-adjust thunk is a local/weak symbol named `@48@<mangled override>`, and no C body
+    compiles to its bare tail branch. rename_symbol refused the name for not being a C identifier, so the game's
+    thunk never paired. Only the game's symbols change: no source spells it. Other projects still refuse it."""
+    import threading
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from decompnet import consoles
+    from decompnet.app.forkengine import ForkEngine
+
+    assert consoles.get("gc").thunk_names and consoles.get("wii").thunk_names
+    assert not consoles.get("pc").thunk_names
+    conf = tmp_path / "config" / "v"
+    conf.mkdir(parents=True)
+    symbols = conf / "symbols.txt"
+    symbols.write_text("fn_80295FCC = .text:0x80295FCC; // type:function size:0x8\n")
+    source = tmp_path / "src" / "a.c"
+    source.parent.mkdir()
+    source.write_text("void fn_80295FCC(void) {\n}\n")
+    fp = SimpleNamespace(root=tmp_path, manifest={"version": "v"}, setup_commands=lambda version: [],
+                         report=lambda: {"units": []})
+    db = SimpleNamespace(execute=lambda *args: None)
+    net = SimpleNamespace(links={}, store=SimpleNamespace(all=lambda *args: [], tx=lambda: nullcontext(db)),
+                          _event=lambda *args: None)
+    tree = SimpleNamespace(exclusive=lambda: nullcontext())
+    eng = ForkEngine.__new__(ForkEngine)
+    eng.net, eng._build_locks, eng._tree = net, {1: threading.Lock()}, lambda proj: tree
+    eng._commit_paths = eng.sync = lambda *args, **kwargs: None
+    eng.get = lambda slug: ({"id": 1}, fp, {"platform": "gc", "version": "v"})
+    thunk = "@48@fn_8028FBC4__12CObj8028DF60Ffff"
+    assert eng.rename_symbol(None, "p", "fn_80295FCC", thunk).startswith("✅")
+    assert symbols.read_text() == f"{thunk} = .text:0x80295FCC; // type:function size:0x8\n"
+    assert source.read_text() == "void fn_80295FCC(void) {\n}\n"
+    eng.get = lambda slug: ({"id": 1}, fp, {"platform": "pc", "version": "v"})
+    with pytest.raises(NetworkError, match="no @N@ thunk names"):
+        eng.rename_symbol(None, "p", "fn_80295FCC", thunk)
+
+
 def test_not_in_your_build_names_the_symbol_not_the_rows_unique_name():
     """A function whose row name was made unique with a trailing "'" (a re-sync after a split) was reported as "its
     object doesn't define _f@4'": agents spent days saying no C makes a name with a quote, and never looked further."""
