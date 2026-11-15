@@ -267,12 +267,13 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     Apple Developer ID another Mac still asks once (Control-click > Open, or Privacy & Security > Open Anyway), which
     `How to open on a Mac.txt` beside the app tells the player. On Linux and Windows the program with `play.sh` / `play.bat`
     (they take the ROM's path and remember it).
-  - *Standalone app with its own window (Mac)*: the same app with the game in an SDL2 window instead of the browser,
-    no browser involved. SDL2 is built once from its pinned source (toolchains.toml `sdl2`, the release the reversing
-    emulator pins) for Apple Silicon and Intel Macs and travels in `Contents/Frameworks` with its licence. The
-    launcher asks for the ROM, checks it is an N64 ROM, and `exec`s `Contents/MacOS/game`, so the game is the app's
-    own process: its name and icon in the Dock, Cmd-Q to quit. A racing game, opened as Finder opens it, plays in its
-    window as the app itself.
+  - *Standalone app with its own window (Mac)*: the game in an SDL3 window instead of the browser. The app is the
+    game itself (`Contents/MacOS/game`), with no script and no AppleScript: opened with no ROM named, it reads
+    `Contents/Resources/port.env` (`PORT_WINDOW`, `PORT_TITLE`, `PORT_APP`), keeps its saves, the ROM's path and its
+    log in `~/Library/Application Support/<PORT_APP>`, and asks for the ROM in SDL3's own file dialog, again until the
+    file is an N64 ROM. SDL3 is built once from its pinned source (toolchains.toml `sdl3`) for Apple Silicon and Intel
+    Macs and travels in `Contents/Frameworks` with its licence. Its name and icon are the app's in the Dock; Cmd-Q
+    quits. A racing game, opened as Finder opens it, plays in its window as the app itself.
   - *For a web browser*: the browser build (`port/wasm/web.py`), a folder with `index.html` for any static web
     server (browsers load WebAssembly only over http). It runs the game's WebAssembly itself, so what wasm2c's C
     was made to do is done to each function's IR instead (`webir.py`): every load and store through big-endian
@@ -314,12 +315,14 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   machine only, which shows each frame and sends the keyboard or a gamepad to the first controller (arrows steer, X is A,
   Z is B, Enter is Start; a gamepad in the browser's standard layout), and can go full screen. A key held wins over `PORT_INPUT`, so a script can bring the game to a race and leave it to
   the player. With `PORT_LIVE` the game runs until it's stopped. On Windows it uses Winsock (built, not yet run there);
-- `PORT_WINDOW=1`: the game in a window of its own instead (`window/sdl.c`), through SDL2 opened at run time
+- `PORT_WINDOW=1`: the game in a window of its own instead (`window/sdl.c`), through SDL3 opened at run time
   (`PORT_SDL` names the library; otherwise an app's `Contents/Frameworks`, then the system's). The game's threads only
-  leave the newest frame and the sound; the host's main thread draws and reads the keyboard and gamepads every
-  retrace, as macOS lets only the main thread touch a window. Keys as the browser's, F or F11 for full screen, a gamepad
-  in SDL's controller layout; closing the window quits. Where SDL2 can't open it falls back to `PORT_LIVE`'s browser
-  view, or stops (exit 5) rather than run unseen. Windows has no SDL2 here yet;
+  leave the newest frame and push the sound into an SDL3 audio stream (more than a quarter of a second queued is
+  dropped, so the sound never lags); the host's main thread draws and reads the keyboard and gamepads every retrace, as
+  macOS lets only the main thread touch a window. Keys as the browser's, F or F11 for full screen, a gamepad in SDL's
+  gamepad layout; closing the window quits. With no ROM named, the window asks for one (`port_live_rom`). Where SDL3
+  can't open it falls back to `PORT_LIVE`'s browser view, or stops (exit 5) rather than run unseen. Windows has no SDL3
+  here yet;
 - the RSP and RDP in software (`render.c`): each graphics task's display list is drawn into the game's own frame
   buffer, F3DEX2 or S2DEX by the microcode the task loads, and `PORT_FRAMES=folder` saves the frames shown as PNG.
   2D screens draw correctly; the 3D path draws a racing game's races, textured.

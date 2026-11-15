@@ -987,20 +987,19 @@ sha256 = "554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c"
 subdir = "zig-x86_64-windows-0.14.1"
 platforms = ["windows-x86_64"]
 
-[sdl2]
-name = "SDL2 2.32.10 (the game's own window)"
+[sdl3]
+name = "SDL3 3.4.18 (the game's own window)"
 kind = "tool"
 license = "Zlib"
-source = "github.com/libsdl-org/SDL releases release-2.32.10 (the source the reversing emulator pins), built here"
-description = "The window, sound and gamepads of an N64 game exported as an app with its own window (port/wasm, window/sdl.c): built from its pinned source with the pinned CMake as one library for Apple Silicon and Intel Macs, and shipped inside the app."
-binary_name = "libSDL2-2.0.0.dylib"
+source = "github.com/libsdl-org/SDL releases release-3.4.18, built here"
+description = "The window, sound, gamepads and ROM chooser of an N64 game exported as an app with its own window (port/wasm, window/sdl.c): built from its pinned source with the pinned CMake as one library for Apple Silicon and Intel Macs, and shipped inside the app."
+binary_name = "libSDL3.0.dylib"
 requires = ["cmake"]
-[[sdl2.parts]]
-url = "https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.tar.gz"
-sha256 = "5f5993c530f084535c65a6879e9b26ad441169b3e25d789d83287040a9ca5165"
-file = "mupenre-SDL2-2.32.10.tar.gz"
-subdir = "SDL2-2.32.10"
-build = "sdl2"
+[[sdl3.parts]]
+url = "https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz"
+sha256 = "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3"
+subdir = "SDL3-3.4.18"
+build = "sdl3"
 platforms = ["macos-arm64", "macos-x86_64"]
 
 [wabt]

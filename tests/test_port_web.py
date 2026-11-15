@@ -320,24 +320,25 @@ def test_a_mac_app_has_a_compiled_launcher_for_both_macs_and_a_sealed_signature(
 
 
 def _sdl_folder(tmp_path):
-    """A stand-in for the `sdl2` toolchain's folder: a real library on a Mac (it gets signed), bytes elsewhere."""
-    sdl = tmp_path / "sdl2"
+    """A stand-in for the `sdl3` toolchain's folder: a real library on a Mac (it gets signed), bytes elsewhere."""
+    sdl = tmp_path / "sdl3"
     sdl.mkdir()
     (sdl / "LICENSE.txt").write_text("zlib licence\n")
     if sys.platform == "darwin":
         source = tmp_path / "lib.c"
         source.write_text("int SDL_Init(unsigned flags) { return (int)flags; }\n")
-        subprocess.run(["xcrun", "clang", "-dynamiclib", "-o", str(sdl / "libSDL2-2.0.0.dylib"), str(source)],
+        subprocess.run(["xcrun", "clang", "-dynamiclib", "-o", str(sdl / "libSDL3.0.dylib"), str(source)],
                        check=True)
     else:
-        (sdl / "libSDL2-2.0.0.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
+        (sdl / "libSDL3.0.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
     return sdl
 
 
 @pytest.mark.skipif(sys.platform == "darwin" and not shutil.which("xcrun"), reason="needs Xcode's Command Line Tools")
-def test_an_app_with_its_own_window_is_the_game_itself_with_sdl2_inside(tmp_path):
-    """The window kind: the game is the app's own process (Contents/MacOS/game, exec'd by the launcher), so the Dock
-    shows the app; SDL2 and its licence travel in the app; a file that isn't an N64 ROM is refused."""
+def test_an_app_with_its_own_window_is_the_game_itself_with_sdl3_inside(tmp_path):
+    """The window kind: the app's program is the game (Contents/MacOS/game), with no script, so the Dock shows the
+    app; its settings are port.env beside it (live.c reads them when no ROM is named); SDL3 and its licence travel in
+    the app."""
     source = tmp_path / "game.c"
     program = tmp_path / "game"
     if sys.platform == "darwin":
@@ -347,13 +348,12 @@ def test_an_app_with_its_own_window_is_the_game_itself_with_sdl2_inside(tmp_path
         program.write_text("#!/bin/sh\n")
     app = export.package_app(program, tmp_path / "out", "Racer", platform="darwin", sdl=_sdl_folder(tmp_path))
     files = sorted(str(p.relative_to(app)) for p in app.rglob("*") if p.is_file() and "_CodeSignature" not in p.parts)
-    assert files == ["Contents/Frameworks/libSDL2-2.0.0.dylib", "Contents/Info.plist", "Contents/MacOS/game",
-                     "Contents/MacOS/play", "Contents/Resources/SDL2-LICENSE.txt", "Contents/Resources/play.sh"]
-    script = (app / "Contents" / "Resources" / "play.sh").read_text()
-    assert "PORT_WINDOW=1" in script and 'exec "$here/../MacOS/game"' in script and "80371240" in script
-    assert "open http" not in script  # no browser
-    if shutil.which("bash"):
-        assert subprocess.run(["bash", "-n", app / "Contents" / "Resources" / "play.sh"]).returncode == 0
+    assert files == ["Contents/Frameworks/libSDL3.0.dylib", "Contents/Info.plist", "Contents/MacOS/game",
+                     "Contents/Resources/SDL3-LICENSE.txt", "Contents/Resources/port.env"]
+    assert plistlib.loads((app / "Contents" / "Info.plist").read_bytes())["CFBundleExecutable"] == "game"
+    settings = dict(line.split("=", 1) for line in (app / "Contents" / "Resources" / "port.env").read_text().split("\n")
+                    if line)
+    assert settings == {"PORT_WINDOW": "1", "PORT_TITLE": "Racer", "PORT_APP": "com.decompdecomp.port.racer"}
     if sys.platform == "darwin":
         verify = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], capture_output=True, text=True)
         assert verify.returncode == 0, verify.stderr
@@ -377,6 +377,6 @@ def test_the_window_kind_is_offered_and_made_on_a_mac_only(tmp_path, monkeypatch
         export.export(None, "rally", "window", log=lambda *a: None)
     monkeypatch.setattr(export.sys, "platform", "darwin")
     result = export.export(None, "rally", "window", log=lambda *a: None)
-    assert asked["tool"] == "sdl2" and asked["sdl"] == tmp_path and asked["universal"] is True
+    assert asked["tool"] == "sdl3" and asked["sdl"] == tmp_path and asked["universal"] is True
     assert asked["dest"].name == "window" and result["kind"] == "window"
     assert any("full screen" in step for step in result["instructions"])

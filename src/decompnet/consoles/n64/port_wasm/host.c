@@ -493,6 +493,8 @@ static int8_t stick_x, stick_y;
 int port_live_input(uint16_t *buttons, int8_t *x, int8_t *y); /* live.c: the keyboard, with PORT_LIVE */
 void port_live_start(void);
 void port_live_pump(void); /* live.c: the main thread's turn at the window (PORT_WINDOW), every retrace */
+void port_live_app(const char *argv0); /* live.c: an exported app's settings, when no ROM is named */
+const char *port_live_rom(void);        /* live.c: the ROM the player chooses in the window */
 static void script_input(void);
 static void scripted_input(void) {
     uint16_t b; int8_t x, y;
@@ -840,9 +842,11 @@ static int port_call(uint32_t vram) {
 
 int main(int argc, char **argv) {
     if (SIGUSR1) signal(SIGUSR1, sample_handler);
-    if (argc < 2) { fprintf(stderr, "usage: %s rom.z64 [seconds, 0: until stopped]\n", argv[0]); return 2; }
-    rom = read_file(argv[1], &rom_size);
-    if (!rom) { fprintf(stderr, "can't read %s\n", argv[1]); return 2; }
+    if (argc < 2) port_live_app(argv[0]); /* an exported app, opened from the Finder: its settings beside it */
+    const char *rom_path = argc > 1 ? argv[1] : port_live_rom();
+    if (!rom_path) { fprintf(stderr, "usage: %s rom.z64 [seconds, 0: until stopped]\n", argv[0]); return 2; }
+    rom = read_file(rom_path, &rom_size);
+    if (!rom) { fprintf(stderr, "can't read %s\n", rom_path); return 2; }
     rom_byte_order(rom, rom_size);
     double seconds = argc > 2 ? atof(argv[2]) : getenv("PORT_LIVE") || getenv("PORT_WINDOW") ? 0 : 5; /* 0: until stopped */
     port_live_start();
