@@ -447,7 +447,7 @@ function closeExportMenu(focus = true) {
   if (menu && menu.open) { menu.open = false; if (focus) menu.querySelector("summary").focus(); }
 }
 
-async function exportGame(kind, existing = null) {
+async function exportGame(kind, existing = null, options = {}) {
   if (exportJob) return;
   closeExportMenu();
   const slug = S.slug, log = $("portExportLog"), stop = $("portExportStop"), show = $("portExportShow");
@@ -457,11 +457,11 @@ async function exportGame(kind, existing = null) {
   $("portExportActions").hidden = false; show.hidden = true; stop.hidden = false; stop.disabled = false;
   showExportNext(null);
   stop.textContent = "Stop the export";
-  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWindow"), $("portExportWeb"), $("portExportMiyoo")],
+  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWindow"), $("portExportWeb"), $("portExportWebSimd"), $("portExportMiyoo")],
     "Exported.");
   if (existing?.progress) updateWorkProgress(log, existing.progress);
   try {
-    let result = existing ? { job: existing.id } : await api("/api/play-export", { method: "POST", body: { slug, kind } });
+    let result = existing ? { job: existing.id } : await api("/api/play-export", { method: "POST", body: { slug, kind, ...options } });
     if (result.job) { exportJob = result.job; result = await followJob(result.job, log, null, () => S.slug === slug); }
     if (result && result.path) {
       show.dataset.kind = result.kind;
@@ -512,6 +512,7 @@ if ($("portPanel")) {
   $("portExportApp").onclick = () => exportGame("app");
   if ($("portExportWindow")) $("portExportWindow").onclick = () => exportGame("window");
   $("portExportWeb").onclick = () => exportGame("web");
+  $("portExportWebSimd").onclick = () => exportGame("web", null, { simd: true });
   if ($("portExportMiyoo")) $("portExportMiyoo").onclick = () => exportGame("miyoo");
   $("portExportStop").onclick = stopExport;
   $("portExportShow").onclick = showExport;

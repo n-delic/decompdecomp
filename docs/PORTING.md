@@ -282,7 +282,7 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     `audio.c`, with `PORT_WEB`) is compiled to WebAssembly beside it, sharing its 4 GB memory (its own data from
     0xB0000000). The host's threads are coroutines switched with JavaScript Promise Integration (`web/co.c`,
     `web/runtime.js`: Chrome and Edge 137 and later, Safari 27); a thread spinning on memory gives the page a turn
-    every 10 ms for the retrace, as the native host's main thread runs beside it. A browser without JavaScript
+    when the next retrace is due (`port_web_deadline`), as the native host's main thread runs beside it. A browser without JavaScript
     Promise Integration plays `app-asyncify.wasm` instead: the host and the game merged into one module (Binaryen's
     `wasm-merge`; the host exports the memory it imports, under its own import name, so the game's import finds it)
     and rewritten with Asyncify (`wasm-opt`, with `port_web.suspend` as the one import that pauses), so a waiting
@@ -291,7 +291,11 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     which Safari places as if negative and refuses, so the page places them itself (`placeDataOurselves`: each
     becomes passive and is copied in after instantiation). The page (the kit's `web/`) shows the
     frames, plays the sound, reads the keyboard and gamepads, and keeps the ROM and the saves in the browser. The
-    racing game's frames are byte for byte the native build's (its opening, menus and a race);
+    racing game's frames are byte for byte the native build's (its opening, menus and a race). *For a web browser,
+    faster where it can (SIMD)* is the same export carrying the host built with WebAssembly SIMD as well
+    (`host-web-simd.wasm`, `app-asyncify-simd.wasm`): the renderer runs about a tenth faster, frame for frame the
+    same, and the page plays those where the browser validates SIMD (Chrome 91, Firefox 89, Safari 16.4 and later),
+    the plain ones elsewhere (`?nosimd` chooses them anywhere);
   - *For Miyoo Mini (SD card)*: the native build for the Miyoo Mini family (Mini, Mini Plus, v4, Flip; 32-bit ARM
     Linux), `port/wasm/miyoo.py`. The game's C is the native build's own wasm2c output; only the host is compiled
     again, by the pinned Zig for `arm-linux-gnueabihf` (glibc 2.28, Cortex-A7), linked at 0x40000000. Two kit files

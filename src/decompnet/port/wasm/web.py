@@ -43,6 +43,11 @@ HOST_FLAGS = ["-target", "wasm32-wasi", "-O2", "-DPORT_WEB=1", "-fno-delete-null
 # Game functions the host calls, besides those its C names as w2c_game_*: thread entries, the game's stack pointer
 HOST_CALLS = {"port_call1": ("void", ["u32", "u32"]), "port_sp": ("u32", []), "port_set_sp": ("void", ["u32"])}
 ASYNCIFY = "app-asyncify.wasm"
+# The faster build an export may carry too (build(simd=True)): the host compiled with WebAssembly SIMD, which the
+# renderer's colour arithmetic (four floats) runs a tenth faster with, frame for frame the same. Safari before 16.4
+# can't load a module that uses SIMD, so the page plays these only where the browser validates them (runtime.js).
+SIMD_FLAGS = ["-msimd128"]
+SIMD = {"host-web.wasm": "host-web-simd.wasm", ASYNCIFY: "app-asyncify-simd.wasm"}
 # The features the two modules use (zig's clang's defaults). Not --all-features: its newest encodings (compact
 # imports) were refused by Chrome 156.
 BINARYEN_FEATURES = ["--enable-bulk-memory", "--enable-mutable-globals", "--enable-sign-ext",
@@ -209,9 +214,10 @@ def host_for_merge(code: bytes) -> bytes:
     return _module(sections)
 
 
-def merge_for_asyncify(host: Path, game: Path, out: Path, binaryen: Path, log) -> None:
+def merge_for_asyncify(host: Path, game: Path, out: Path, binaryen: Path, log, simd: bool = False) -> None:
     """The browser build for browsers without JavaScript Promise Integration: the host and the game merged into one
-    module, then rewritten with Asyncify, into `out`."""
+    module, then rewritten with Asyncify, into `out`; `simd`: the host uses WebAssembly SIMD."""
+    features = [*BINARYEN_FEATURES, *(["--enable-simd"] if simd else [])]
     bins = binaryen / "bin"
     work = out.with_name(out.stem + "-work")
     work.mkdir(exist_ok=True)
@@ -219,18 +225,19 @@ def merge_for_asyncify(host: Path, game: Path, out: Path, binaryen: Path, log) -
     (work / "game.wasm").write_bytes(without_custom_sections(game.read_bytes()))
     merged = work / "merged.wasm"
     done = native._run([bins / "wasm-merge", work / "host.wasm", "env", work / "game.wasm", "game", "-o", merged,
-                        *BINARYEN_FEATURES, "--rename-export-conflicts"], log)
+                        *features, "--rename-export-conflicts"], log)
     if done.returncode:
         raise NetworkError(f"merging the game and its host failed: {done.stderr.strip()[-600:]}")
-    done = native._run([bins / "wasm-opt", merged, *BINARYEN_FEATURES, *ASYNCIFY_FLAGS, "-o", out], log)
+    done = native._run([bins / "wasm-opt", merged, *features, *ASYNCIFY_FLAGS, "-o", out], log)
     if done.returncode:
         raise NetworkError(f"Asyncify failed on the merged game: {done.stderr.strip()[-600:]}")
     shutil.rmtree(work, ignore_errors=True)
 
 
-def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=()) -> Path:
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), simd: bool = False) -> Path:
     """Build the game in the save repository `repo` for the browser; returns the folder that plays it
-    (port/wasm/build/web: index.html and what it loads, without the ROM, which the player chooses)."""
+    (port/wasm/build/web: index.html and what it loads, without the ROM, which the player chooses). `simd`: also
+    the faster build for browsers with WebAssembly SIMD (SIMD), which the page plays where it can."""
     repo = Path(repo).expanduser().resolve()
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None or not (Path(kit.wasm) / "web").is_dir():
@@ -285,42 +292,51 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     dirs = [RUNTIME / "include", web / "gen"]
     includes = [a for d in dirs for a in ("-I", d)]
 
-    def compile_unit(unit: Path) -> str | None | bool:
-        obj = web / "obj" / (unit.stem + ".host.o")
-        key = files.key(unit, dirs, zig, *HOST_FLAGS)
-        if native._fresh(obj, key):
-            return False
-        native._unstamp(obj)
-        done = native._run([zig, "cc", *HOST_FLAGS, *includes, "-c", unit, "-o", obj], log, env=env)
+    def build_host(flags: list, objs: Path, program: Path) -> None:
+        objs.mkdir(exist_ok=True)
+
+        def compile_unit(unit: Path) -> str | None | bool:
+            obj = objs / (unit.stem + ".host.o")
+            key = files.key(unit, dirs, zig, *flags)
+            if native._fresh(obj, key):
+                return False
+            native._unstamp(obj)
+            done = native._run([zig, "cc", *flags, *includes, "-c", unit, "-o", obj], log, env=env)
+            if done.returncode:
+                return (done.stderr.strip().splitlines() or ["failed"])[0]
+            native._stamp(obj, key)
+            return None
+        if failed := native._parallel(units, compile_unit, log, "host files", progress.files):
+            raise NetworkError("building the browser host failed: " + "; ".join(failed[:3]))
+        done = native._run([zig, "cc", "-target", "wasm32-wasi", "-mexec-model=reactor", "-o", program,
+                            *(objs / (u.stem + ".host.o") for u in units), "-Wl,--import-memory",
+                            *(f"-Wl,{m}" for m in HOST_MEMORY), f"-Wl,--global-base={HOST_BASE}",
+                            "-Wl,-z,stack-size=1048576", "-Wl,--export-table"], log, env=env)
         if done.returncode:
-            return (done.stderr.strip().splitlines() or ["failed"])[0]
-        native._stamp(obj, key)
-        return None
-    if failed := native._parallel(units, compile_unit, log, "host files", progress.files):
-        raise NetworkError("building the browser host failed: " + "; ".join(failed[:3]))
-    done = native._run([zig, "cc", "-target", "wasm32-wasi", "-mexec-model=reactor", "-o", web / "host-web.wasm",
-                        *(web / "obj" / (u.stem + ".host.o") for u in units), "-Wl,--import-memory",
-                        *(f"-Wl,{m}" for m in HOST_MEMORY), f"-Wl,--global-base={HOST_BASE}", "-Wl,-z,stack-size=1048576",
-                        "-Wl,--export-table"], log, env=env)
-    if done.returncode:
-        raise NetworkError(f"linking the browser host failed: {done.stderr.strip()[-600:]}")
+            raise NetworkError(f"linking the browser host failed: {done.stderr.strip()[-600:]}")
+    build_host(HOST_FLAGS, web / "obj", web / "host-web.wasm")
+    if simd:
+        log("building the host again with WebAssembly SIMD, for the browsers that have it")
+        build_host([*HOST_FLAGS, *SIMD_FLAGS], web / "obj-simd", web / SIMD["host-web.wasm"])
 
     progress.start(STEPS[len(native.STEPS) + 3])
     log("merging the game and its host for browsers without Promise Integration (Asyncify)")
     binaryen = toolchains.ensure("binaryen", log=log)
-    key = native._digest(files(web / "host-web.wasm"), files(web / "game-web.wasm"), files(Path(__file__)), binaryen,
-                         *BINARYEN_FEATURES, *ASYNCIFY_FLAGS)
-    if not native._fresh(web / ASYNCIFY, key):
-        native._unstamp(web / ASYNCIFY)
-        merge_for_asyncify(web / "host-web.wasm", web / "game-web.wasm", web / ASYNCIFY, binaryen, log)
-        native._stamp(web / ASYNCIFY, key)
+    for with_simd in (False, True) if simd else (False,):
+        host_wasm, merged = (SIMD["host-web.wasm"], SIMD[ASYNCIFY]) if with_simd else ("host-web.wasm", ASYNCIFY)
+        key = native._digest(files(web / host_wasm), files(web / "game-web.wasm"), files(Path(__file__)), binaryen,
+                             *BINARYEN_FEATURES, *ASYNCIFY_FLAGS, *(["simd"] if with_simd else []))
+        if not native._fresh(web / merged, key):
+            native._unstamp(web / merged)
+            merge_for_asyncify(web / host_wasm, web / "game-web.wasm", web / merged, binaryen, log, simd=with_simd)
+            native._stamp(web / merged, key)
 
     # the page: the kit's (what the console shows and takes) on the shared runtime, and what it needs to know
     for page in sorted((host / "web").glob("*")):
         if page.suffix in (".html", ".js", ".css"):
             native._write(web / page.name, page.read_text(encoding="utf-8"))
     native._write(web / "runtime.js", (RUNTIME / "runtime.js").read_text(encoding="utf-8"))
-    native._write(web / "build.json", json.dumps({"slots": calls}) + "\n")
+    native._write(web / "build.json", json.dumps({"slots": calls, "simd": simd}) + "\n")
     log(f"built the browser build in {web}: serve that folder and open index.html")
     return web
 
@@ -330,7 +346,12 @@ def export(web: Path, dest: Path) -> Path:
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
-    for name in ("index.html", "play.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm", ASYNCIFY):
+    try:
+        simd = json.loads((web / "build.json").read_text(encoding="utf-8")).get("simd")
+    except (OSError, ValueError, AttributeError):  # no build.json, or not one this writes: no SIMD modules
+        simd = False
+    for name in ("index.html", "play.js", "runtime.js", "build.json", "game-web.wasm", "host-web.wasm", ASYNCIFY,
+                 *(SIMD.values() if simd else ())):  # (an earlier build's SIMD modules stay out unless asked for)
         if (web / name).is_file():
             shutil.copyfile(web / name, dest / name)
     for extra in web.glob("*.css"):

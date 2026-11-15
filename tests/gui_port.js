@@ -222,6 +222,13 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(!t.c.$('portExportLog').children.some(x=>/rom\.z64/.test(String(x))),'not buried in the log');
    t.c.followJob=()=>new Promise(()=>{});t.run('exportGame("web")');for(let i=0;i<5;i++)await Promise.resolve();
    assert.equal(next.hidden,true,'a new export clears the last one\'s steps until it ends');}
+  {// "faster where it can" is the browser export with its SIMD modules as well: the same job, simd in its request
+   const t=setup(),bodies=[];t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
+   t.c.followJob=async()=>({kind:'web',path:'/save/port/wasm/export/web/index.html',folder:'/save/port/wasm/export/web'});
+   t.c.reply=async(url,opts)=>{if(url==='/api/play-export'){bodies.push(opts.body);return {job:'e4'};}return report;};
+   await t.run('exportGame("web", null, { simd: true })');
+   assert.equal(JSON.stringify(bodies[0]),JSON.stringify({slug:'a',kind:'web',simd:true}));
+   assert.equal(t.c.$('portExportWebSimd').disabled,false,'its menu item comes back');}
   {// an export running when the panel is drawn again is followed, and its Stop cancels it
    const t=setup(),follow=deferred(),cancels=[];t.c.S.tab='porting';t.c.followJob=()=>follow.promise;t.c.updateWorkProgress=()=>{};
    t.c.reply=async(url,opts)=>{if(url==='/api/job/cancel'){cancels.push(opts.body.id);return {};}return {...report,play:{job:null,url:null,export_job:{id:'e2',progress:{phase:'Linking',step:5,steps:11}}}};};
