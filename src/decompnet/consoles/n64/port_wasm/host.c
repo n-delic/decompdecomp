@@ -64,8 +64,10 @@ __attribute__((weak)) void *port_recomp_pointer(uint32_t address) { (void)addres
    retrace woke run (nothing was drawn) */
 void port_safe_point(void) { port_preempt(); }
 __attribute__((weak)) void port_recomp_thread(int number) { (void)number; }
-void *port_mips_pointer(uint32_t address); /* mips.c: a function with no C, run from the ROM by the interpreter */
-void *port_func(uint32_t address) {
+void *port_mips_pointer_as(uint32_t address, const char *type); /* mips.c: run from the ROM by the interpreter */
+/* The function at `address`, called as `type` says (CALL_INDIRECT's C type, as text: bemem.py), which a function
+   with no C, interpreted, needs to take its float arguments where the call puts them. */
+void *port_func_as(uint32_t address, const char *type) {
     /* LLVM calls some functions through the table when the call's types differ from the function's only as
        pointer and integer: an index, never a console address (those are 0x80000000 and up) */
     port_preempt();
@@ -82,12 +84,13 @@ void *port_func(uint32_t address) {
     if (lo < port_func_count && port_funcs[lo].address == address) return port_funcs[lo].func;
     void *recompiled = port_recomp_pointer(address); /* a function with no C yet, run as recompiled C */
     if (recompiled) return recompiled;
-    void *interpreted = port_mips_pointer(address); /* or its own instructions, interpreted */
+    void *interpreted = port_mips_pointer_as(address, type); /* or its own instructions, interpreted */
     if (interpreted) return interpreted;
     fprintf(stderr, "a call through a function pointer to %08X, where no function of the game's C is\n", address);
     port_trace();
     wasm_rt_trap(WASM_RT_TRAP_CALL_INDIRECT);
 }
+void *port_func(uint32_t address) { return port_func_as(address, 0); }
 
 /* ---------------------------------------------------------------- threads and message queues */
 

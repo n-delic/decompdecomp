@@ -136,6 +136,8 @@ u32 port_universal(u32 pointer) {
 IMPORT("port_preempt_flag") u32 port_preempt_flag(void);
 static volatile int *preempt_flag;
 
+/* `count`: the arguments' count in its low byte, their types above it (webir.py's _type_code: for the host's
+   interpreter, which runs a function with no C and needs to know a float); a universal entry takes the count alone. */
 void port_icall(void *pointer, u64 *slots, u32 count) {
     if (!preempt_flag) preempt_flag = (volatile int *)(unsigned long)port_preempt_flag();
     if (*preempt_flag) port_preempt(); /* a safe point, as the native build's port_func is */
@@ -145,7 +147,7 @@ void port_icall(void *pointer, u64 *slots, u32 count) {
         port_bad_call((u32)(unsigned long)pointer);
         __builtin_trap();
     }
-    ((Universal)(unsigned long)u)(slots, count);
+    ((Universal)(unsigned long)u)(slots, count & 0xFF);
 }
 
 /* The host starts each game thread here: its entry (a function pointer) with its one argument. */

@@ -35,6 +35,8 @@ void port_mips_sw(uint32_t a, uint32_t v);
 int port_mips_enter(uint64_t *r, uint32_t *f, int words);
 uint32_t port_mips_varargs(const uint64_t *r, int first);
 uint32_t port_mips_slot(const uint64_t *r, int n);
+void port_mips_copy_in(uint64_t *r, int slot, uint32_t from, int words);
+uint64_t port_mips_typed_call(uint32_t entry, const uint8_t *types, const uint64_t *vals, unsigned n, int ret);
 void port_mips_spread(uint64_t *r, int first, uint32_t buf);
 void port_mips_run(uint32_t entry, uint64_t *r, uint32_t *f);
 void port_mips_leave(const uint64_t *r);
@@ -147,16 +149,17 @@ def _layout(text: str, types: dict) -> tuple[int, int]:
     return {"float": (4, 4), "double": (8, 8), "ptr": (4, 4), "half": (2, 2)}.get(text, (4, 4))
 
 
-def by_value(lls: list[Path]) -> dict[str, dict[int, int]]:
+def by_value(lls: list[Path], declared: bool = False) -> dict[str, dict[int, int]]:
     """{function: {parameter's position: its words}} for the structures it takes by value: in WebAssembly a pointer
     to a copy (`byval(%struct.X)`), where o32 passes the structure's words as argument words. Its size from the
     module's type definitions: the arguments after one take the words after all of it (a racing game's menu
-    function takes a 4-word structure and then two words, its 5th and 6th)."""
+    function takes a 4-word structure and then two words, its 5th and 6th). From the functions' definitions, or
+    with `declared` from their callers' declarations (a function with no C, which the interpreter runs)."""
     out = {}
     for ll in lls:
         text = Path(ll).read_text(encoding="utf-8")
         types = dict(re.findall(r"^(%[\w.$\"-]+) = type (.+)$", text, re.M))
-        for m in re.finditer(r"^define [^@\n]*@([\w.$]+)\(([^\n]*)\)", text, re.M):
+        for m in re.finditer(r"^" + ("declare" if declared else "define") + r" [^@\n]*@([\w.$]+)\(([^\n]*)\)", text, re.M):
             if "byval" not in m.group(2):
                 continue
             params = {}
@@ -185,17 +188,56 @@ def _places_by_value(types: list[str], structs: dict[int, int]) -> list[tuple]:
     return out
 
 
+POINTER_CALL = re.compile(r"CALL_INDIRECT\([^,]+, ((?:void|u32|u64|f32|f64) \(\*\)\(void\*(?:, (?:u32|u64|f32|f64))*\)), ")
+CODES = {"u32": 0, "u64": 1, "f32": 2, "f64": 3, "void": 0}
+
+
+def pointer_types(texts) -> list[str]:
+    """The C types the game's C calls through pointers as (wasm2c's CALL_INDIRECT, which bemem.py makes pass them to
+    port_func_as as text), from the build's C."""
+    return sorted({m.group(1) for text in texts for m in POINTER_CALL.finditer(text)})
+
+
+def _pointer_entries(types: list[str]) -> list[str]:
+    """For the native build, an entry of each type the game calls through pointers as: its arguments handed to the
+    interpreter with their types (mips.c's port_mips_typed_call), floats where o32 puts them, its result as its type
+    returns it. The function it runs is the one port_func_as was just asked for (port_mips_target)."""
+    lines = ["#ifndef PORT_WEB", "uint32_t port_mips_target(void);",
+             "typedef struct { const char *type; void *entry; } PortMipsPointerType;"]
+    table = []
+    for k, t in enumerate(types):
+        m = re.fullmatch(r"(\w+) \(\*\)\(void\*((?:, \w+)*)\)", t)
+        if not m:
+            continue
+        ret, params = m.group(1), [p.strip() for p in m.group(2).split(",") if p.strip()]
+        decl = "".join(f", {p} a{i}" for i, p in enumerate(params))
+        bits = {"u32": "(uint64_t)a{i}", "u64": "a{i}", "f32": "BF(a{i})", "f64": "BD(a{i})"}
+        vals = ", ".join(bits[p].format(i=i) for i, p in enumerate(params)) or "0"
+        codes = ", ".join(str(CODES[p]) for p in params) or "0"
+        back = {"void": "", "u32": "return (u32)v_;", "u64": "return v_;", "f32": "return FB((uint32_t)v_);",
+                "f64": "return DB(v_);"}[ret]
+        lines.append(f"static {ret} P_{k}(void *g{decl}) {{ (void)g; static const uint8_t t_[] = {{{codes}}}; "
+                     f"const uint64_t a_[] = {{{vals}}}; uint64_t v_ = port_mips_typed_call(port_mips_target(), t_, a_, "
+                     f"{len(params)}, {CODES[ret]}); (void)v_; {back} }}")
+        table.append(f'    {{"{t}", (void *)P_{k}}},')
+    lines.append("const PortMipsPointerType port_mips_pointer_types[] = {")
+    lines += table or ["    {0, 0},"]
+    lines += ["};", f"const unsigned port_mips_pointer_type_count = {len(table)};", "#endif"]
+    return lines
+
+
 def _types(params: str) -> list[str]:
     return [t for t in re.findall(r"\b(u32|u64|f32|f64)\b", params)]
 
 
 def mips_signatures(lls: list[Path], fixed: list[str], hosts: list[Path], library_names=None, left_out=(),
-                    replaced=lambda name: False) -> list[str]:
+                    replaced=lambda name: False, by_value_calls=()) -> list[str]:
     """The functions the game's C calls and has no C for, which the interpreter runs: each gets MIPS's own shape in
     the build's one signature per function (recomp.MIPS_SIGNATURE), as recompiled C's do (recomp.mips_signatures).
     Its callers may each declare it their own way (a function one file calls with no arguments and another with
     one, which wasm-ld refuses to link as one import), and MIPS passed whatever was in the registers: adapt.py's
-    thunks fill what a call leaves out from the register words."""
+    thunks fill what a call leaves out from the register words. Not those its callers pass a structure by value
+    (`by_value_calls`): those keep their declared shape, whose pointer to the structure the bridge copies in from."""
     library_names = library_names or {}
     defined, declared = set(), set()
     for ll in lls:
@@ -210,12 +252,14 @@ def mips_signatures(lls: list[Path], fixed: list[str], hosts: list[Path], librar
         if (n.startswith("llvm.") or _vram(n, where) is None or lib in hosted or n in left_out or lib in left_out
                 or replaced(lib) or replaced(n)):
             continue
+        if n in by_value_calls:
+            continue
         out.append(n)
     return out
 
 
 def generate(game_h: str, fixed: list[str], hosts: list[Path], library_names=None, defined=(), left_out=(),
-             replaced=lambda name: False, varargs=(), byval=None) -> tuple[str, dict]:
+             replaced=lambda name: False, varargs=(), byval=None, byval_calls=None, pointer_types=()) -> tuple[str, dict]:
     """interp.c's text, and how many of each it has: {"game", "host", "imports"}. `fixed`: the build's rows of
     names and console addresses (`name address kind`); `hosts`: the host's C files (what it answers by name);
     `defined`: imports something else defines already (recompiled C's bridges). Not interpreted, as before them
@@ -224,8 +268,11 @@ def generate(game_h: str, fixed: list[str], hosts: list[Path], library_names=Non
     sdk_group): libultra's own hardware code, run as it is, would drive hardware the host emulates a level above
     (the Controller Pak's serial transfers, interrupts). `varargs`: the variadic functions (variadic()); `byval`:
     their structures passed by value (by_value()): a pointer to its words where o32 put them (port_mips_slot), the
-    arguments after it in the words after all of it."""
+    arguments after it in the words after all of it; `byval_calls` the same for the functions with no C the game's C
+    passes structures to (by_value(declared=True)): their words copied in. `pointer_types`: the C types the game's
+    C calls through pointers as (pointer_types()), each given an entry for the interpreter in the native build."""
     byval = byval or {}
+    byval_calls = byval_calls or {}
     library_names = library_names or {}
     where = _addresses(fixed)
     hosted = {}
@@ -285,7 +332,13 @@ def generate(game_h: str, fixed: list[str], hosts: list[Path], library_names=Non
             continue
         types = _types(params)
         decl = "".join(f", {t} a{i}" for i, t in enumerate(types))
-        if name in varargs and types:  # the C's buffer of extra arguments, as the words after the fixed ones
+        if byval_calls.get(name):  # a structure by value: its words copied in where o32 passes it
+            places = _places_by_value(types, byval_calls[name])
+            words = max([4] + [n + (byval_calls[name][i] if k == "struct" else 2 if k in ("gpr64", "gprd") else 1)
+                               for i, (k, n) in enumerate(places)])
+            puts = " ".join(f"port_mips_copy_in(r, {w[1]}, (uint32_t)a{i}, {byval_calls[name][i]});" if w[0] == "struct"
+                            else _put(w, f"a{i}") for i, w in enumerate(places))
+        elif name in varargs and types:  # the C's buffer of extra arguments, as the words after the fixed ones
             places = o32(types[:-1])
             first = _next_word(places)
             words = first + 16
@@ -301,6 +354,7 @@ def generate(game_h: str, fixed: list[str], hosts: list[Path], library_names=Non
                      f"\"{name}: no C for it (the interpreter is off): skipped\\n\"); {fail} }} "
                      f"{puts} port_mips_run(0x{vram:08X}u, r, f); port_mips_leave(r); {_returned(ret)} }}")
         counts["imports"] += 1
+    lines += _pointer_entries(pointer_types)
     lines.append("const PortMipsEntry port_mips_calls[] = {")
     lines += [f"    {{0x{v:08X}u, {b}}}," for v, b in sorted(table.items())] or ["    {0, 0},"]
     lines.append("};")

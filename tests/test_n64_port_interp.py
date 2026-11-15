@@ -32,6 +32,7 @@ uint32_t w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { (void)e; retu
 void port_mips_run(uint32_t entry, uint64_t *r, uint32_t *f);
 int port_mips_enter(uint64_t *r, uint32_t *f, int words);
 uint32_t port_mips_varargs(const uint64_t *r, int first);
+uint64_t port_mips_typed_call(uint32_t entry, const uint8_t *types, const uint64_t *vals, unsigned n, int ret);
 /* the one function "with C": returns $a0 * 10 + $a1, and says it was called */
 static int c_calls;
 static void c_function(uint64_t *r, uint32_t *f) { (void)f; c_calls++; r[2] = (uint64_t)(int64_t)(int32_t)((uint32_t)r[4] * 10 + (uint32_t)r[5]); }
@@ -48,6 +49,14 @@ int main(int argc, char **argv) {
     size_t n = fread(mem + 0x%(code)08Xu, 1, 0x1000, in);
     fclose(in);
     (void)n;
+    if (argc > 2 && !strncmp(argv[2], "typed:", 6)) { /* typed:RET:CODES, then each argument's bits (hex) */
+        int ret = argv[2][6] - '0';
+        const char *codes = argv[2] + 8;
+        uint8_t t[16]; uint64_t v[16]; unsigned k = 0;
+        for (; codes[k] && k < 16; k++) { t[k] = (uint8_t)(codes[k] - '0'); v[k] = strtoull(argv[3 + k], NULL, 16); }
+        printf("%%016llX\n", (unsigned long long)port_mips_typed_call(0x%(code)08Xu, t, v, k, ret));
+        return 0;
+    }
     uint64_t r[32]; uint32_t f[32];
     port_mips_enter(r, f, 8);
     for (int i = 0; i < 4 && 2 + i < argc; i++) r[4 + i] = (uint64_t)(int64_t)(int32_t)strtoul(argv[2 + i], NULL, 0);
@@ -103,12 +112,19 @@ def run(tmp_path_factory):
     if done.returncode:
         pytest.skip(f"the harness doesn't build here: {done.stderr[-300:]}")
 
+    def typed(words, ret, codes, *values):
+        (folder / "code.bin").write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in words))
+        out = subprocess.run([str(program), str(folder / "code.bin"), f"typed:{ret}:{codes}", *(f"{v:X}" for v in values)],
+                             capture_output=True, text=True, timeout=30, check=True).stdout.strip()
+        return int(out, 16)
+
     def go(words, *args):
         (folder / "code.bin").write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in words))
         out = subprocess.run([str(program), str(folder / "code.bin"), *(str(a) for a in args)], capture_output=True,
                              text=True, timeout=30, check=True).stdout.split()
         return {"v0": int(out[0], 16), "v1": int(out[1], 16), "f": [int(x, 16) for x in out[2:6]],
                 "data": [int(x, 16) for x in out[6:14]], "c_calls": int(out[14]), "varargs": [int(x, 16) for x in out[15:17]]}
+    go.typed = typed
     return go
 
 
@@ -270,3 +286,71 @@ def test_structures_passed_by_value_take_all_their_words(tmp_path):
     game_h = "/* export: 'menu' */\nvoid w2c_game_menu(w2c_game*, u32, u32, u32);\n"
     text, _ = interp.generate(game_h, ["menu 0x80001000 func"], [], byval=found)
     assert "w2c_game_menu(port_game(), port_mips_slot(r, 0), W(r, 4), W(r, 5))" in text
+
+
+def _f32(x: float) -> int:
+    return struct.unpack(">I", struct.pack(">f", x))[0]
+
+
+def _f64(x: float) -> int:
+    return struct.unpack(">Q", struct.pack(">d", x))[0]
+
+
+def mfc1(rt, fs): return 17 << 26 | 0 << 21 | REG.get(rt, rt) << 16 | fs << 11
+
+
+def test_a_call_with_types_puts_floats_where_o32_does(run):
+    """A call through a pointer with its types (port_mips_typed_call): the first two arguments in $f12 and $f14
+    while they're floats, a float after a word in a word, a double in an even/odd pair, 64 bits in an aligned pair
+    of words; a float result from $f0. A float through a pointer once went in an integer word."""
+    add_s = [cop1(16, 0, fd=0, fs=12, ft=14), JR_RA, NOP]                 # f0 = f12 + f14
+    assert run.typed(add_s, 2, "22", _f32(1.5), _f32(2.25)) == _f32(3.75)
+    word_then_float = [mtc1("a1", 0), JR_RA, NOP]                          # (u32, f32): the float in $a1
+    assert run.typed(word_then_float, 2, "02", 7, _f32(-4.0)) == _f32(-4.0)
+    double_first = [cop1(17, 0, fd=0, fs=12, ft=12), JR_RA, NOP]          # f0/f1 = d12 + d12
+    assert run.typed(double_first, 3, "3", _f64(1.25)) == _f64(2.5)
+    pair = [addu("v0", "a2", "zero"), JR_RA, addu("v1", "a3", "zero")]    # (u32, u64): the pair in $a2, $a3
+    assert run.typed(pair, 1, "01", 1, 0x1122334455667788) == 0x1122334455667788
+
+
+def test_each_type_of_call_through_a_pointer_gets_an_entry():
+    """The native build's entries for the interpreter, one per C type the game calls through pointers as."""
+    c = ("x = CALL_INDIRECT(instance->w2c_0x5F_indirect_function_table, u32 (*)(void*, u32, f32), w2c_game_t3, v, (void*)instance, a, b);\n"
+         "CALL_INDIRECT(instance->w2c_0x5F_indirect_function_table, void (*)(void*), w2c_game_t1, v, (void*)instance);\n")
+    types = interp.pointer_types([c, c])
+    assert types == ["u32 (*)(void*, u32, f32)", "void (*)(void*)"]
+    text, _ = interp.generate("", [], [], pointer_types=types)
+    assert "static u32 P_0(void *g, u32 a0, f32 a1) { (void)g; static const uint8_t t_[] = {0, 2};" in text
+    assert "const uint64_t a_[] = {(uint64_t)a0, BF(a1)}" in text and "return (u32)v_;" in text
+    assert '{"u32 (*)(void*, u32, f32)", (void *)P_0}' in text and "port_mips_pointer_type_count = 2;" in text
+
+
+def test_a_structure_the_game_passes_by_value_is_copied_into_the_argument_words(tmp_path):
+    """The game's C passing a structure by value to a function with no C: its callers' declarations give its size,
+    the bridge copies its words in where o32 passes them, the arguments after it after all of it."""
+    (tmp_path / "a.ll").write_text("%struct.Args = type { [4 x i32] }\n"
+                                   "declare void @func_80005000(ptr noundef byval(%struct.Args) align 4, i32 noundef)\n")
+    calls = interp.by_value([tmp_path / "a.ll"], declared=True)
+    assert calls == {"func_80005000": {0: 4}}
+    game_h = "/* import: 'env' 'func_80005000' */\nvoid w2c_env_func_80005000(struct w2c_env*, u32, u32);\n"
+    text, counts = interp.generate(game_h, [], [], byval_calls=calls)
+    assert counts["imports"] == 1
+    assert "port_mips_enter(r, f, 5)" in text
+    assert "port_mips_copy_in(r, 0, (uint32_t)a0, 4); r[8] = S((uint32_t)(a1));" not in text  # (word 4: the stack)
+    assert "port_mips_copy_in(r, 0, (uint32_t)a0, 4); port_mips_sw((uint32_t)r[29] + 16u, (uint32_t)(a1));" in text
+    assert interp.mips_signatures([tmp_path / "a.ll"], [], [], by_value_calls=calls) == []
+
+
+def test_the_browser_build_says_each_pointer_calls_types():
+    """webir.py: a call through a pointer carries its arguments' and result's types above its count."""
+    import sys
+
+    from decompnet.port.wasm import web
+    sys.path.insert(0, str(web.HERE))
+    import webir  # (beir.py runs it as a script beside adapt.py)
+    out = []
+    ok = webir._indirect("  %r = call float %fp(i32 noundef 1, float noundef %x, double noundef %y)", webir.Fresh(), out)
+    assert ok
+    call = next(line for line in out if "@port_icall" in line)
+    count = int(call.rsplit("i32 ", 1)[1].rstrip(")")) & 0xFFFFFFFF
+    assert count & 0xFF == 3 and (count >> 8) & 0x3F == 0 | 2 << 2 | 3 << 4 and (count >> 24) & 3 == 2

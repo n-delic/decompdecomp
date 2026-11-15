@@ -372,14 +372,19 @@ builds, which recompiled C never reached, run these functions too.
   arguments where MIPS o32 passes them and runs the interpreter; `port_mips_calls` holds every function that has C,
   the game's (through its exported function) and the host's (libultra's it replaces, by name), so interpreted code
   jumping to one runs that C with o32's arguments and goes on at `$ra`. Interpreted code calling interpreted code is
-  only a jump. A function pointer to one goes through host.c's `port_func` (native) or `web/be.c`'s `port_icall`
-  (`port_mips_icall`), with integer arguments as recompiled C's pointer bridges take them.
+  only a jump. A function pointer to one goes through host.c's `port_func_as` (native) or `web/be.c`'s `port_icall`
+  (`port_mips_icall`) with the call's types, so its float arguments go where o32 puts them (`$f12` and `$f14` while
+  they lead, a word after anything else; `port_mips_typed_call`) and a float result comes back from `$f0`: natively
+  the call's C type comes as text (bemem.py's CALL_INDIRECT) and picks an entry of that type (interp.c's
+  `port_mips_pointer_types`, one per type the game calls through pointers as); in the browser the call's count
+  carries them (webir.py's `_type_code`, two bits an argument).
 - What WebAssembly passes differently: a variadic function's extra arguments (a pointer to a buffer of them, from
   the words o32 gives them, big-endian in both builds: `port_mips_varargs` and `port_mips_spread`; only a
   function's own definition, or a declaration with fixed parameters before its `...`, makes it variadic: an
   unprototyped `s32 taskOpen();` is `(...)` in the IR too), and a structure passed by value (a pointer to its words
   where o32 put them, `port_mips_slot`, the arguments after it in the words after all of it: its size from the IR's
-  type definitions). A racing game's allocator takes its block size as an extra argument: passed the next register
+  type definitions; the game's C passing one to a function the interpreter runs: its words copied in, sized from its
+  callers' declarations, `port_mips_copy_in`). A racing game's allocator takes its block size as an extra argument: passed the next register
   word as the buffer, it read its size from address 8 and never returned. The functions the interpreter runs get
   MIPS's own shape in the build's one signature per function, so callers that declare one differently still link
   (as recompiled C's do).
