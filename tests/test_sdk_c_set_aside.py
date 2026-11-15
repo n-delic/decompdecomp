@@ -179,7 +179,7 @@ def test_code_the_port_builds_from_c_is_never_a_lead(example):
     for name in ('guMtxF2L', 'alSynNew', '_n_loadBuffer', 'read32'):
         assert sdk_assembly._lead(net, proj, fn, {'names': [name], 'corpora': ['Toy SDK']}) is None
     assert sdk_assembly._lead(net, proj, fn, {'names': ['osPfsInitPak', 'osOther'], 'corpora': ['Toy SDK']}) is None
-    assert sdk_assembly._lead(net, proj, fn, {'names': ['osPfsInitPak'], 'corpora': ['Toy SDK']}) == ('osPfsInitPak', ['Toy SDK'])
+    assert sdk_assembly._lead(net, proj, fn, {'names': ['osPfsInitPak'], 'corpora': ['Toy SDK']}) == ('osPfsInitPak', ['Toy SDK'], None)
 
 
 def test_sdk_code_is_its_own_event_and_map_state(example):

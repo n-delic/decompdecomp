@@ -45,9 +45,9 @@ def _folder(title: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "", title.title())[:32] or "Game"
 
 
-def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=()) -> Path:
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), library_c=None) -> Path:
     """Build the game for the PC (only what changed), then its host for the Miyoo Mini: port/wasm/build/miyoo/game."""
-    native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out)
+    native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c)
     repo = Path(repo).expanduser().resolve()
     kit = consoles.get(console).port_kit
     host = Path(kit.wasm)

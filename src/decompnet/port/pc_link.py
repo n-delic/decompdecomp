@@ -36,6 +36,8 @@ GROUPS = {
     "glue": "libultra's console plumbing the kit doesn't have (threads, RSP tasks, the cartridge and Controller Pak "
             "internals): the port's glue supplies each",
     "kit": "libultra and C library functions the kit (libultraship, the host's C library) provides",
+    "ultralib": "libultra the port compiles from your copy of ultralib (set aside as SDK code by the project's library "
+                "setting, port/ultralib.py)",
     "other": "symbols nothing in the project names",
 }
 
@@ -101,6 +103,7 @@ def _facts(net, proj) -> dict:
     if key in cache:
         return cache[key]
     from ..app.data_units import matched
+    from ..app.sdk_assembly import ultralib_set_aside
     from ..app.sdk_identity import display_name, identify
     from ..network import IN_BUILD
     rows = store.all(f"SELECT id, name, vram, status FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
@@ -118,6 +121,7 @@ def _facts(net, proj) -> dict:
             glue.update([r["name"], *names])
     facts = {"status": {r["name"]: r["status"] for r in rows}, "at": {r["vram"]: r["name"] for r in rows},
              "symbols": net.symbols(proj["id"]), "replaced": replaced, "glue": glue, "kit": kit,
+             "ultralib": set(ultralib_set_aside(net, proj)),
              "data_c": sorted((a, a + (u["span"] or u["size"] or 0)) for a, u in matched(net, proj).items())}
     cache.clear()
     cache[key] = facts
@@ -134,6 +138,8 @@ def _group(net, proj, name: str) -> str | None:
         return "kit"
     if name in facts["glue"] or unproven == "glue":
         return "glue"
+    if name in facts["ultralib"]:
+        return "ultralib"
     status = facts["status"].get(name)
     if status is not None:
         return "assembly" if status == "asm" else "not matched" if status != "matched" else "other"

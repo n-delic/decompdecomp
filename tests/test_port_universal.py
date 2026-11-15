@@ -25,6 +25,7 @@ def test_the_app_export_asks_for_a_universal_build_and_play_does_not(tmp_path, m
     program.write_bytes(b"\xcf\xfa\xed\xfe")
     monkeypatch.setattr(play, "game", lambda net, slug: (repo, {"platform": "n64", "rom": {"title": "RALLY"}}, None))
     monkeypatch.setattr(play, "library", lambda net, slug, log=print: set())
+    monkeypatch.setattr(play, "library_c", lambda net, slug: {})  # (no ultralib units: port/ultralib.py)
     monkeypatch.setattr(build, "build", lambda *a, **k: asked.update(k) or program)
     export.export(None, "rally", "app", log=lambda *a: None)
     assert asked["universal"] is True

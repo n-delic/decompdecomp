@@ -129,6 +129,12 @@ def library(net, slug: str, log=print) -> set[str]:
     return out
 
 
+def library_c(net, slug: str) -> dict:
+    """Library functions set aside as SDK code that the port builds from the user's ultralib (port/ultralib.units)."""
+    from .. import ultralib
+    return ultralib.units(net, slug)
+
+
 def play(net, slug: str, log=print) -> dict:
     """Build the project's game for the PC if anything changed, start it with its live view, and return its address
     once it answers: {"url": ...}."""
@@ -140,7 +146,7 @@ def play(net, slug: str, log=print) -> dict:
     repo, cfg, rom = game(net, slug)
     steps = (*build.STEPS, STARTING)
     program = build.build(repo, console=cfg.get("platform", "n64"), log=log, steps=steps,
-                          leave_out=library(net, slug, log))
+                          leave_out=library(net, slug, log), library_c=library_c(net, slug))
     build.Progress(log, steps).start(STARTING)
     port = _free_port()
     out = program.parent

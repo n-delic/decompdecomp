@@ -48,7 +48,8 @@ def test_each_undefined_symbol_is_sorted_by_what_supplies_it(project):  # noqa: 
                       "not matched": ["draw_hud"], "data": ["D_80010000", "g_speed"],
                       "glue": ["osSetIntState"], "kit": ["osCreateThread", "osInvalDCache", "osInvalICache"],
                       "other": ["mystery"]}
-    assert [g["kind"] for g in link["groups"]] == list(pc_link.GROUPS)  # the order fixes come in
+    # the order fixes come in (ultralib's group: tests/test_port_ultralib.py)
+    assert [g["kind"] for g in link["groups"]] == [k for k in pc_link.GROUPS if k != "ultralib"]
     assert (link["undefined"], link["provided"], link["unread"], link["functions"]) == (9, 3, 1, 5)
     assert link["duplicates"] == [{"name": "shared_table", "in": ["alSynNew", "helper"]}]
     with net.progress.view():

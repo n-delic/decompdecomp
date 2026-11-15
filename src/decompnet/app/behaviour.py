@@ -93,7 +93,8 @@ def _port(net, slug: str, log) -> tuple[Path, Path]:
     """The port's program (built from the last save, only what changed) and the ROM it runs."""
     from ..port.wasm import build, play
     repo, cfg, rom = play.game(net, slug)
-    program = build.build(repo, console=cfg.get("platform", "n64"), log=log, leave_out=play.library(net, slug, log))
+    program = build.build(repo, console=cfg.get("platform", "n64"), log=log, leave_out=play.library(net, slug, log),
+                          library_c=play.library_c(net, slug))
     return program, rom
 
 

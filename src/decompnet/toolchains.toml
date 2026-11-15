@@ -1573,6 +1573,19 @@ sha256 = "d28a44cdbc2a112838ef242b2a53a690f5884eeee215eb01d0c4da92c88096a8"
 subdir = "decomp-toolkit-1.8.4"
 keep = { "assets/signatures" = "signatures", "LICENSE-MIT" = "LICENSE-MIT", "LICENSE-APACHE" = "LICENSE-APACHE" }
 
+[ultralib-source]
+name = "libultra source (decompals/ultralib)"
+kind = "tool"
+platform = "N64"
+license = "proprietary"
+source = "decompals/ultralib @ e24c836 (its C is SGI's and Nintendo's, as its files say)"
+description = "libultra's C, so an N64 port builds the library math and audio library detection finds (a project's library setting sets them aside) from it instead of the game's own matched C. Read where it is; never copied into a save or an export's sources."
+[[ultralib-source.parts]]
+url = "https://codeload.github.com/decompals/ultralib/tar.gz/e24c836796df4bf520ff8b11a5c9d2cea3a66cbd"
+sha256 = "43a43cc8b4b0ff53d16929b7bd02f724fbd21134b93b173a189ae146d618bff2"
+subdir = "ultralib-e24c836796df4bf520ff8b11a5c9d2cea3a66cbd"
+keep = { "src" = "src", "include" = "include", "README.md" = "README.md" }
+
 [dtk-template]
 name = "dtk-template"
 kind = "template"

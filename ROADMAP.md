@@ -929,6 +929,13 @@ like decomp-toolkit's GameCube corpus (tools/naudio_signatures.py, `Console.sdk_
 the ultralib table already names (n_audio's copies of libultra's audio code: two names on one fingerprint would be
 no identity). With no SDK that racing game now has 242 library functions found, 53 of them n_audio, up from 186.
 
+Library code the port compiles from C (`gu*` math, libultra's synthesizer) is set aside too once the user installs
+libultra source (decompals/ultralib at the table's commit, a proprietary pack: its C is SGI's and Nintendo's), and
+the WebAssembly build compiles ultralib's C for it (port/ultralib.py, docs/PORTING.md). On that racing game 15 more
+functions are set aside this way (`guLookAt`, `guPerspective`, `guMtxXFML`, libultra audio), and all 15 of ultralib's
+units compile with the build's flags; `guTranslate` follows once an agent's claim on it ends. Left: the native
+libultraship build (Compile for PC) reading the same units, and a check that runs the port with them.
+
 Similar-code autopilot attempts are bounded and use the unchanged compiler/link judge on MIPS ROM projects.
 They learn unambiguous symbol correspondences, try local-permuter repairs and proven donor flags, and persist
 trial results and a resume cursor. Compiler-flag hits are saved as evidence for review, not silently applied.

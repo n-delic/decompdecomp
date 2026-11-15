@@ -9,7 +9,10 @@ Inputs, all from the game's save repository (the folder Save writes, under git) 
 - port/wasm/src/*.c: C only the port has, for functions with no matched C yet (it needn't match, only behave);
 - port/wasm/overrides/*.c: the port's version of a matched file, until the fix is in the matched C behind
   `#ifdef PORT` (Fix C for the PC);
-- port/wasm/include/*.h: headers only the port's C includes.
+- port/wasm/include/*.h: headers only the port's C includes;
+- `library_c` (not from the save): library code set aside as SDK that the port builds from the user's own copy of
+  ultralib (port/ultralib.units), one function a file, written to port/wasm/build/ultralib/ (git ignores it: that C
+  is SGI's and Nintendo's, never part of a save) and compiled with ultralib's own headers and defines.
 
 The build goes to port/wasm/build/ (generated, never committed: git ignores it). Its result is a program that runs
 the game from the user's own ROM: `port/wasm/build/game ROM [seconds]`.
@@ -281,6 +284,23 @@ def gather(repo: Path, out: Path, leave_out=()) -> dict[str, Path]:
     return chosen
 
 
+def _library(out: Path, units: dict, sources: dict, log) -> dict[str, list[str]]:
+    """Write the library units (`library_c`) to out/ultralib; {file name: flags}. The game's own C for a function
+    wins: a unit whose function the save has C for is left out (it was matched after it was set aside)."""
+    folder = out / "ultralib"
+    taken = {name.casefold() for name in sources}
+    library = {name: list(flags) for name, (_, flags) in units.items() if name.casefold() not in taken}
+    if library:
+        folder.mkdir(parents=True, exist_ok=True)
+        log(f"{len(library)} library functions from your copy of ultralib")
+    for name in library:
+        _write(folder / name, units[name][0])
+    for stale in folder.glob("*.c") if folder.is_dir() else ():
+        if stale.name not in library:
+            stale.unlink()
+    return library
+
+
 def linked(objects: Path, sources) -> list[Path]:
     """The objects of the files the build compiled, by name in any case: on a case-insensitive disk the object an old
     save's SelectStateReset.c made keeps that name when selectStateReset.o is written over it, and leaving it out
@@ -536,13 +556,15 @@ _builds: dict[str, threading.Lock] = {}
 _builds_guard = threading.Lock()
 
 
-def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False) -> Path:
+def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
+          library_c=None) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
     caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
     build of one save (Play while compare_behaviour builds) waits for the first, then finds little left to do.
     `universal`: on macOS, a program for Apple Silicon and Intel Macs alike (port/wasm/build/game-universal), its
-    objects kept apart from Play's so neither build undoes the other's."""
+    objects kept apart from Play's so neither build undoes the other's. `library_c`: {file name: (C, flags)} of
+    library functions built from ultralib's C (port/ultralib.units)."""
     repo = Path(repo).expanduser().resolve()
     with _builds_guard:
         lock = _builds.setdefault(str(repo), threading.Lock())
@@ -550,12 +572,13 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
         log("waiting for another build of this game to finish")
         lock.acquire()
     try:
-        return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal)
+        return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
+                      library_c=library_c or {})
     finally:
         lock.release()
 
 
-def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False) -> Path:
+def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None) -> Path:
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
         raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
@@ -575,15 +598,27 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
 
     log("gathering the game's C from its save")
     sources = gather(repo, out, leave_out)
+    library = _library(out, library_c or {}, sources, log)
     manifest = json.loads((repo / "progress" / "decompdecomp.json").read_text(encoding="utf-8"))
     fixed, functions = addresses(manifest)
     _write(out / "fixed.txt", "\n".join(fixed) + "\n")
     _write(out / "functions.txt", "\n".join(sorted(functions)) + "\n")
 
     progress.start(STEPS[1])
-    log(f"compiling {len(sources)} files to WebAssembly IR")
+    log(f"compiling {len(sources) + len(library)} files to WebAssembly IR")
 
     def ir(name: str) -> str | None | bool:
+        if name in library:  # ultralib's C, with its own headers and the defines of the game's build of it
+            src, ll = out / "ultralib" / name, out / "ll" / (name[:-2] + ".ll")
+            key = files.key(src, [], zig, *IR_FLAGS, *library[name])
+            if _fresh(ll, key):
+                return False
+            _unstamp(ll)
+            done = _run([zig, "cc", *IR_FLAGS, *library[name], "-S", "-emit-llvm", src, "-o", ll], log, env=env)
+            if done.returncode:
+                return f"{name} (ultralib): " + (done.stderr.strip().splitlines() or ["failed"])[0]
+            _stamp(ll, key)
+            return None
         src, ll = out / "src" / name, out / "ll" / (name[:-2] + ".ll")
         key = files.key(src, [out / "include"], zig, *IR_FLAGS)
         if _fresh(ll, key):
@@ -598,10 +633,10 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
             return (done.stderr.strip().splitlines() or ["failed"])[0]
         _stamp(ll, key)
         return None
-    if failed := _parallel(sorted(sources), ir, log, "files", progress.files):
+    if failed := _parallel(sorted({*sources, *library}), ir, log, "files", progress.files):
         raise NetworkError(f"{len(failed)} of the game's files don't compile for the WebAssembly build: "
                            + "; ".join(failed[:3]))
-    compiled = {name.casefold() for name in sources}
+    compiled = {name.casefold() for name in (*sources, *library)}
     for stale in (out / "ll").glob("*.ll"):
         if (stale.name[:-3] + ".c").casefold() not in compiled:
             for made in (stale, stale.with_name(stale.name + ".key")):
@@ -619,7 +654,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     log("placing every symbol at its console address, data big-endian")
     if failed := place_all(out, lls, set(functions), zig, env, log, progress.files):
         raise NetworkError(f"{len(failed)} functions couldn't be placed at their addresses: " + "; ".join(failed[:3]))
-    objects = linked(out / "o", sources)
+    objects = linked(out / "o", {*sources, *library})
     _write(out / "objects.txt", "\n".join(str(p) for p in objects) + "\n")
     from . import calls
     suspicious = calls.summary(calls.write(out, objects))
