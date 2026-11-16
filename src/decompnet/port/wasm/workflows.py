@@ -163,22 +163,24 @@ def workflow(kind: str, platform: str, title: str, save: str, needs_ultralib: bo
         text = PAGES.format(what=what, name=_quote(f"Export {title} for the web (GitHub Pages)"), package=package, save=save,
                             kind=kind, extra=extra)
         return "export-web.yml", text
-    if kind == "miyoo":
+    if kind == "ios":
+        runner, system = RUNNERS["linux"][0], "ios"
+    elif kind == "miyoo":
         runner, system = RUNNERS["linux"][0], "miyoo"
     else:
         runner, system = RUNNERS.get(platform, RUNNERS["linux"])
     asset = _asset(title, kind, system)
-    if kind == "miyoo" or platform == "linux":
+    if kind in ("miyoo", "ios") or platform == "linux":
         pack, asset = f'tar -czf "$RUNNER_TEMP/{asset}.tar.gz" .', f"{asset}.tar.gz"
     elif platform == "darwin":  # ditto keeps the app's signature and its links
         pack, asset = f'ditto -c -k --keepParent "$(ls -d *.app | head -1)" "$RUNNER_TEMP/{asset}.zip"', f"{asset}.zip"
     else:
         pack, asset = f'7z a -tzip "$RUNNER_TEMP/{asset}.zip" .', f"{asset}.zip"
     what = {"app": f"the standalone app for {system}", "window": f"the app with its own window for {system}",
-            "miyoo": "the Miyoo Mini's SD card folders"}[kind]
+            "miyoo": "the Miyoo Mini's SD card folders", "ios": "the iPhone/iPad Xcode project (unsigned)"}[kind]
     text = RELEASE.format(what=what, name=_quote(f"Export {title}: {what}"), runner=runner, package=package, save=save,
                           kind=kind, extra=extra, pack=pack, asset=asset)
-    name = "export-miyoo.yml" if kind == "miyoo" else f"export-{kind}-{system.lower()}.yml"
+    name = f"export-{kind}.yml" if kind in ("miyoo", "ios") else f"export-{kind}-{system.lower()}.yml"
     return name, text
 
 

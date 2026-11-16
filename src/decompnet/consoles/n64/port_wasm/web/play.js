@@ -2,6 +2,7 @@
    Audio and the keyboard or a gamepad as the first controller, as the native build's live view (live.c) does. */
 import { start, supported } from "./runtime.js";
 import { GpuRenderer, gpuSupported } from "./gl.js";
+import { touchController } from "./touch.js";
 
 const $ = (id) => document.getElementById(id);
 const status = (text) => { $("status").textContent = text; };
@@ -48,14 +49,18 @@ const KEYS = { ArrowUp: 0x0800, ArrowDown: 0x0400, ArrowLeft: 0x0200, ArrowRight
 const PAD = { 0: 0x8000, 2: 0x4000, 1: 0x4000, 3: 0x4000, 9: 0x1000, 4: 0x0020, 5: 0x0010, 6: 0x2000, 7: 0x2000,
   12: 0x0800, 13: 0x0400, 14: 0x0200, 15: 0x0100 };
 const down = new Set();
+const touch = touchController($("touch"));
+// Keep controls available after rotation and when a touch device also has a mouse or trackpad.
+if (navigator.maxTouchPoints > 0) document.documentElement.classList.add("touch-device");
 addEventListener("keydown", (e) => { if (e.code in KEYS && !$("play").hidden) { e.preventDefault(); down.add(e.code); } });
 addEventListener("keyup", (e) => { if (e.code in KEYS) { e.preventDefault(); down.delete(e.code); } });
 addEventListener("blur", () => down.clear());
 function input() {
-  let b = 0;
+  const fingers = touch.read();
+  let b = fingers.buttons;
   for (const k of down) b |= KEYS[k];
-  let x = (down.has("ArrowRight") ? 80 : 0) - (down.has("ArrowLeft") ? 80 : 0);
-  let y = (down.has("ArrowUp") ? 80 : 0) - (down.has("ArrowDown") ? 80 : 0);
+  let x = fingers.x || (down.has("ArrowRight") ? 80 : 0) - (down.has("ArrowLeft") ? 80 : 0);
+  let y = fingers.y || (down.has("ArrowUp") ? 80 : 0) - (down.has("ArrowDown") ? 80 : 0);
   for (const gp of (navigator.getGamepads ? navigator.getGamepads() : [])) {
     if (!gp) continue;
     gp.buttons.forEach((v, i) => { if ((v.pressed || v.value > 0.5) && PAD[i]) b |= PAD[i]; });
