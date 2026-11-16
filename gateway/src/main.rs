@@ -292,6 +292,18 @@ struct Gateway {
     ids: AtomicU64,
     acknowledged: AtomicU64,
     claims_given: AtomicU64,
+    /// Per tool, how long helpers waited for each reply (`/health` "tools").
+    latency: Mutex<HashMap<String, Latency>>,
+}
+
+/// What helpers waited for one tool's replies: every reply counts, "still running" ones too.
+#[derive(Default)]
+struct Latency {
+    calls: u64,
+    total_ms: f64,
+    max_ms: f64,
+    over_10s: u64,
+    still_running: u64,
 }
 
 /// Answers kept for new connections: per (project, method), and the latest per method. Saved to `--state`.
@@ -564,6 +576,24 @@ impl Gateway {
     }
 
     async fn tool_call(self: &Arc<Self>, message: Value, headers: HeaderMap) -> Value {
+        let tool = message.pointer("/params/name").and_then(Value::as_str).unwrap_or("?").to_string();
+        let arrived = Instant::now();
+        let reply = self.tool_call_timed(message, headers).await;
+        let waited = arrived.elapsed().as_secs_f64() * 1000.0;
+        let running = reply_text(&reply).contains(" is still running (");
+        let mut latency = self.latency.lock().unwrap();
+        if latency.len() < 512 || latency.contains_key(&tool) {
+            let kept = latency.entry(tool).or_default();
+            kept.calls += 1;
+            kept.total_ms += waited;
+            kept.max_ms = kept.max_ms.max(waited);
+            kept.over_10s += u64::from(waited >= 10_000.0);
+            kept.still_running += u64::from(running);
+        }
+        reply
+    }
+
+    async fn tool_call_timed(self: &Arc<Self>, message: Value, headers: HeaderMap) -> Value {
         let id = message.get("id").cloned().unwrap_or(Value::Null);
         let auth = bearer(&headers);
         let params = message.get("params").cloned().unwrap_or(Value::Null);
@@ -997,6 +1027,10 @@ async fn health(State(gateway): State<Arc<Gateway>>) -> Response {
         "answered_by_gateway": gateway.answered.load(Ordering::Relaxed),
         "accepted_in_background": gateway.acknowledged.load(Ordering::Relaxed),
         "prepared_claims_given": gateway.claims_given.load(Ordering::Relaxed),
+        "tools": gateway.latency.lock().unwrap().iter().map(|(tool, l)| (tool.clone(), json!({
+            "calls": l.calls, "mean_ms": (l.total_ms / l.calls.max(1) as f64).round(), "max_ms": l.max_ms.round(),
+            "over_10s": l.over_10s, "still_running": l.still_running,
+        }))).collect::<serde_json::Map<String, Value>>(),
         "left_behind": gateway.behind.lock().unwrap().values().map(Vec::len).sum::<usize>(),
         "window": gateway.window.get().map(|w| w.health()),
     }))
@@ -1078,6 +1112,7 @@ async fn main() {
         ids: AtomicU64::new(0),
         acknowledged: AtomicU64::new(0),
         claims_given: AtomicU64::new(0),
+        latency: Mutex::new(HashMap::new()),
     });
     gateway.replay();
     let app = Router::new()

@@ -1038,6 +1038,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                                           'progress_project_lock_wait','progress_verification_wait','progress_recheck_wait','progress_sync',
                                           'progress_stat','progress_files','progress_manifest','progress_render','progress_import',
                                           'progress_saved_judge','progress_publish')})
+            from . import tool_latency
+            tool_latency.record(net, agent.name, slug, name, timings, error is not None)
             if observe:
                 payload={'name':name,'call_id':call_id,'timings':timings}
                 payload['error' if error else 'content']=str(error) if error else result

@@ -191,6 +191,9 @@ def test_a_slow_release_is_accepted_and_the_next_call_waits_for_it(gateway):
         assert text(quick) == "released g", "a quick release answers as the app does"
         health = httpx.get(gateway.url.replace("/mcp", "/health"), timeout=5).json()
         assert health["accepted_in_background"] == 1 and health["left_behind"] == 0
+        released = health["tools"]["release_function"]
+        assert released["calls"] == 2 and released["max_ms"] >= 400 and released["still_running"] == 0
+        assert health["tools"]["claim_function"]["calls"] >= 1
 
 
 def test_a_release_left_behind_survives_a_gateway_restart(tmp_path):
