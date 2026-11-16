@@ -11,6 +11,7 @@ function element() {
   return {
     disabled: false, hidden: false, value: "", checked: true, files: [], textContent: "", innerHTML: "", attrs: {}, dataset: {}, children: [],
     setAttribute(key, value) { this.attrs[key] = value; },
+    querySelectorAll() { return []; },
     append(...children) { this.children.push(...children); },
     before(child) {
       if (child.className === "workbar") this.bar = child;
@@ -135,12 +136,18 @@ async function main() {
     const running = test.ctx.run();
     assert.equal(test.button.disabled, true);
     assert.ok(test.log.bar && !test.log.bar.removed);
+    assert.equal(test.get("deepSweepLoadingBar").hidden, false, "starting feedback stays outside collapsed technical logs");
+    assert.equal(test.get("deepSweepQueueTitle").textContent, "Starting search…");
+    const version = test.ctx.deepSweepProjectVersion;
+    await test.ctx.run();
+    assert.equal(test.ctx.deepSweepProjectVersion, version, "duplicate starts are ignored while the first request waits");
     if (failed) test.start.reject(new Error("Cannot start"));
     else test.start.resolve({job:"sweep"});
     await running;
     assert.equal(test.log.bar.removed, true);
     assert.equal(test.button.disabled, false);
     assert.equal(followed.length, failed ? 0 : 1);
+    if (failed) assert.equal(test.get("deepSweepLoadingBar").hidden, true);
   }
   // Run again explicitly repeats saved completed turns, even with Advanced unchecked.
   {

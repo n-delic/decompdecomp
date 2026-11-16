@@ -65,7 +65,7 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.equal(element("deepSweepActive").textContent, "0");
   assert.equal(element("deepSweepStart").textContent, "Continue search");
   assert.equal(element("deepSweepStop").hidden, true);
-  assert.equal(element("deepSweepSettings").hidden,false);
+  assert.equal(element("deepSweepSettings").disabled,false);
   assert.equal(element("deepActivitySection").hidden,true);
   assert.equal(element("deepSweepLogSection").hidden,true);
   assert.equal(element("deepSweepBlocked").textContent, "2");
@@ -93,7 +93,7 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   ctx.renderDeepQueueState({state:"running",progress:{phase:"waiting for host claims or scored C"}});
   assert.match(element("deepSweepQueueReason").textContent, /Waiting for available functions/);
   assert.equal(element("deepSweepStart").hidden, true);
-  assert.equal(element("deepSweepSettings").hidden,true);
+  assert.equal(element("deepSweepSettings").disabled,true);
   assert.equal(element("deepActivitySection").hidden,false);
   assert.equal(element("deepSweepLogSection").hidden,false);
   element("deepSweepStatus").textContent = "Deep pass stopped: Deep pass stopped.";
@@ -110,9 +110,10 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.equal(element("deepSweepQueueReason").textContent,"Compiler failed");
   ctx.renderDeepQueueState({state:"done",has_activity:true,queue_done:34,queue_left:12,queue_blocked:1});
   assert.equal(element("deepSweepBar").max,47);
-  assert.equal(element("deepSweepProgressText").textContent,"34 of 47 functions completed · 72%");
+  assert.equal(element("deepSweepProgressText").textContent,"Saved progress: 34 of 47 search turns completed · 12 remaining · 1 need attention");
   await ctx.renderDeepSweep();
-  for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,false);
+  for (const id of ["deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,false);
+  assert.equal(element("deepSweepLoadingBar").hidden,false,"unknown running totals show indeterminate progress");
 
   assert.equal(element("deepSweepStop").hidden, false);
   assert.equal(element("deepSweepStart").hidden, true);
@@ -289,25 +290,43 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   element('deepSweepLoop').checked=true;
   element('deepSweepThreads').value='2';
   element('deepSweepFunctionThreads').value='4';
-  ctx.api=async(url, options)=>{assert.equal(element('deepSweepSettings').hidden,true,'hide settings before starting request resolves'); assert.equal(options.body.loop,true);assert.equal(options.body.threads,2);assert.equal(options.body.threads_per_function,4);throw new Error('A deep pass is already running');};
+  ctx.api=async(url, options)=>{assert.equal(element('deepSweepSettings').disabled,true,'lock settings before starting request resolves'); assert.equal(options.body.loop,true);assert.equal(options.body.threads,2);assert.equal(options.body.threads_per_function,4);throw new Error('A deep pass is already running');};
   vm.runInContext(source.slice(source.indexOf('$("deepSweepStart").onclick'),source.indexOf('$("deepSweepStop").onclick')),ctx);
   await element('deepSweepStart').onclick();
-  assert.equal(element('deepSweepSettings').hidden,false);
+  assert.equal(element('deepSweepSettings').disabled,false);
   assert.equal(element('deepSweepLogSection').hidden,true);
   assert.match(element('deepSweepQueueTitle').textContent,/could not start/);
   assert.match(element('deepSweepQueueReason').textContent,/already running/);
+  assert.equal(element('deepSweepQueueReason').hidden,false,'start failures remain visible outside technical logs');
+  // An initial status response must not replace options edited while it was in flight.
+  ctx.S.slug='edited-options';
+  let releaseControl;
+  ctx.api=url=>url.includes('view=control') ? new Promise(resolve=>{releaseControl=resolve;}) : Promise.resolve({state:'idle',has_activity:false});
+  const loading=ctx.renderDeepSweep();
+  element('deepSweepSettings').dataset.editedSlug='edited-options';
+  element('deepSweepMinutes').value='19';
+  releaseControl({state:'idle',minutes:5,max_variants:10000});
+  await loading;
+  assert.equal(element('deepSweepMinutes').value,'19');
+  assert.match(element('deepSweepOptionsSummary').textContent,/19 min/);
+  ctx.S.slug='next-project';
+  ctx.api=async()=>({state:'idle',minutes:3,max_variants:10000});
+  await ctx.renderDeepSweep();
+  assert.equal(element('deepSweepMinutes').value,3,'another project loads its own settings');
+  assert.equal(element('deepSweepSettings').dataset.editedSlug,undefined);
+
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
-// Integration with the match-ranked profile controls: one field in the compact Advanced disclosure.
+// Search controls occur once, in the settings drawer’s movable fieldset.
 const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
 const panel=html.slice(html.indexOf('id="deepSweepPanel"'),html.indexOf('id="deepSweepAttention"'));
 for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','deepSweepThreads','deepSweepFunctionThreads','deepSweepRepeat','deepSweepLoop']) {
   assert.equal((panel.match(new RegExp('id="'+id+'"','g')) || []).length,1,`${id} must occur exactly once`);
 }
-assert.match(panel,/<details class="deep-advanced">[\s\S]*?id="deepSweepProfiles"[^>]*min="1"[^>]*max="16"[\s\S]*?<\/details>/);
+assert.match(panel,/<fieldset class="local-search-options"[\s\S]*?id="deepSweepProfiles"[^>]*min="1"[^>]*max="16"[\s\S]*?<\/fieldset>/);
 assert.match(panel,/<div class="deep-dashboard">/);
 
-assert.ok(panel.indexOf('id="deepSweepSettings"') < panel.indexOf('id="deepSweepStart"'));
+assert.ok(panel.indexOf('id="deepSweepMetricMatched"') < panel.indexOf('id="deepSweepOptions"'));
 assert.doesNotMatch(html,/id="deepSweepResults"/);
 
 assert.doesNotMatch(panel, /deepSweepStatusRetry|Retry status/);

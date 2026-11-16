@@ -585,54 +585,51 @@
     </div>
   </section>
 
-  <section class="ptab" data-pane="matching" hidden>
-    <p class="small muted">Find better matches locally using saved C and code from your other games. No AI tokens are used.</p>
-    <details class="panel settings-disclosure" id="deepSweepPanel">
-      <summary class="panel-head"><h2>Deep permuter</h2><span class="muted small">No AI tokens</span></summary>
-      <div class="pad">
-        <p class="deep-sweep-intro">Search saved C for better matches.</p>
-        <div class="deep-sweep-settings" id="deepSweepSettings">
-          <label class="field deep-main-budget"><span>Time limit</span><input id="deepSweepMinutes" type="number" min="1" max="120" value="5"><span class="deep-budget-unit">min / function</span></label>
-          <details class="deep-advanced"><summary>Advanced settings</summary><div class="deep-advanced-fields">
-            <label class="field"><span>Candidate limit per function</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"></label>
-            <label class="field"><span>Compiler profiles per candidate</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1"><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
-            <label class="deep-sweep-repeat"><input id="deepSweepMaximum" type="checkbox"><span>Maximum throughput<small>Use all detected CPU cores, dedicated candidate generators and a shared compiler pool.</small></span></label>
-            <label class="field"><span>Concurrent compiles</span><input id="deepSweepCompileSlots" type="number" min="1" max="256" placeholder="auto"><small>Blank uses all cores in maximum mode; balanced mode keeps its normal compiler allowance.</small></label>
-            <label class="field"><span>Functions at a time</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label>
-            <label class="field"><span>Threads per function</span><input id="deepSweepFunctionThreads" type="number" min="1" max="256" value="1"><small>Search independent candidate paths in parallel. The time and candidate limits apply to the whole function. Total workers = functions × threads per function.</small></label>
-            <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox"><span>Loop indefinitely<small>Repeat searches with these settings until stopped. Waiting functions go to the back of the queue.</small></span></label>
-            <label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
-          </div></details>
-        </div>
+  <section class="ptab local-matching" data-pane="matching" hidden>
+    <p class="small muted local-matching-note">Runs locally · no AI tokens</p>
+    <details class="panel settings-disclosure local-search-card" id="deepSweepPanel">
+      <summary class="panel-head local-search-head" id="deepSweepQueueState">
+        <div class="local-search-title"><h2>Deep permuter</h2><span class="local-search-state" id="deepSweepQueueTitle" role="status">Ready to search</span></div>
+        <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary small-btn">Start search</button><button id="deepSweepStop" type="button" class="primary small-btn" hidden>Stop</button></div>
+      </summary>
+      <div class="pad local-search-body">
+        <p class="local-search-intro">Try variations of saved C to improve matches.</p>
         <div class="deep-dashboard">
-        <p class="hint" id="deepSweepThroughput" hidden></p>
-        <section class="deep-queue-state" id="deepSweepQueueState" role="status">
-          <div><h3 id="deepSweepQueueTitle">Ready to search</h3><p id="deepSweepQueueReason"></p></div>
-          <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary">Start search</button><button id="deepSweepStop" type="button" class="primary" hidden>Stop</button></div>
-        </section>
         <div class="deep-sweep-counts" id="deepSweepCounts" aria-label="Deep permuter results">
           <button type="button" class="deep-metric" id="deepSweepMetricMatched" aria-haspopup="dialog" title="View matched functions"><b id="deepSweepMatched">0</b><span>Matched<span aria-hidden="true">↗</span></span></button>
           <button type="button" class="deep-metric" id="deepSweepMetricImproved" aria-haspopup="dialog" title="View improved functions"><b id="deepSweepImproved">0</b><span>Improved<span aria-hidden="true">↗</span></span></button>
           <button type="button" class="deep-metric" id="deepSweepMetricActive" aria-haspopup="dialog" title="View searching now functions"><b id="deepSweepActive">0</b><span>Searching now<span aria-hidden="true">↗</span></span></button>
         </div>
-        <div id="deepSweepPreparation" class="compiler-queue-count" hidden><span id="deepSweepPreparationText"></span><progress id="deepSweepPreparationBar" max="1" value="0" aria-label="Functions checked for search eligibility"></progress></div>
-        <div class="deep-progress-heading"><span>Saved search coverage</span><span class="small" id="deepSweepRunChecked"></span></div>
-        <div id="deepSweepLoadingBar" class="workbar" role="progressbar" aria-label="Loading saved search totals" hidden><i></i></div>
-        <progress class="deep-sweep-bar" id="deepSweepBar" hidden max="1" value="0" aria-label="Saved completed search turns"></progress>
-        <p class="deep-sweep-progress-text small muted" id="deepSweepProgressText"></p>
-        <div class="deep-queue-details small muted">
-          <span class="deep-queue-completed" hidden><b id="deepSweepDone">0</b> completed turns</span><span><b id="deepSweepLeft">0</b> remaining</span>
-          <span id="deepSweepPausedGroup" hidden><b id="deepSweepPaused">0</b> paused early</span>
-          <button type="button" id="deepSweepBlockedGroup" class="ghost small-btn" aria-haspopup="dialog" hidden><b id="deepSweepBlocked">0</b> need attention <span aria-hidden="true">↗</span></button>
-          <span id="deepSweepWaitingGroup" hidden><b id="deepSweepWaiting">0</b> waiting for saved C</span>
+        <div class="local-search-progress">
+          <div id="deepSweepLoadingBar" class="workbar" role="progressbar" aria-label="Loading saved search totals" hidden><i></i></div>
+          <progress class="deep-sweep-bar" id="deepSweepBar" hidden max="1" value="0" aria-label="Saved completed search turns"></progress>
+          <p class="small muted" id="deepSweepProgressText">No searches yet.</p>
+          <div id="deepSweepPreparation" class="compiler-queue-count" hidden><span id="deepSweepPreparationText"></span><progress id="deepSweepPreparationBar" max="1" value="0" aria-label="Functions checked for search eligibility"></progress></div>
+          <p class="small muted" id="deepSweepRunChecked"></p>
+          <p class="small muted" id="deepSweepQueueReason" hidden></p>
+          <p class="hint" id="deepSweepThroughput" hidden></p>
+          <div class="deep-queue-details small muted">
+            <span id="deepSweepPausedGroup" hidden><b id="deepSweepPaused">0</b> paused early</span>
+            <button type="button" id="deepSweepBlockedGroup" class="ghost small-btn" aria-haspopup="dialog" hidden><b id="deepSweepBlocked">0</b> need attention <span aria-hidden="true">↗</span></button>
+            <span id="deepSweepWaitingGroup" hidden><b id="deepSweepWaiting">0</b> waiting for saved C</span>
+          </div>
+          <span hidden><b id="deepSweepDone">0</b><b id="deepSweepLeft">0</b></span>
         </div>
         </div>
-        <div class="deep-sweep-tools">
-        <details class="deep-sweep-help"><summary>How it works</summary>
-          <p class="small muted">Completed passes are saved across restarts. Start the pass again after restarting the app to continue. Changes to source, headers or compiler inputs make a function eligible again.</p>
-          <p class="small muted">Each thread picks a different eligible function in random order. Turns start with half the time allowance and extend after improvements, up to your maximum. Repeated identical output can rotate sooner; rotated functions remain eligible next run, or the next pass with Loop indefinitely. Local searches can run alongside agents using saved, scored C; agents keep their claims. Compiler/header changes are deferred while claimed. Room guests still follow the host’s claims. Functions without scored C wait for a draft. Only the ordinary byte judge can save a match. A completed pass means its bounded turn finished, not that every possible rewrite was tried.</p>
-        </details>
-        <button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button>
+        <div class="local-search-options-row"><span class="small muted" id="deepSweepOptionsSummary">5 min per function</span><button class="ghost small-btn" id="deepSweepOptions" type="button" aria-haspopup="dialog">Search options <span aria-hidden="true">↗</span></button></div>
+        <div id="deepSweepSettingsHome" hidden>
+        <fieldset class="local-search-options" id="deepSweepSettings">
+          <legend class="sr-only">Search options</legend>
+          <h3>Search limits</h3>
+          <div class="local-search-option-pair"><label class="field"><span>Minutes per function (1–120)</span><input id="deepSweepMinutes" type="number" min="1" max="120" value="5" required></label><label class="field"><span>Candidates per function (1–1,000,000)</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000" required></label></div>
+          <label class="field"><span>Compiler profiles per candidate (1–16)</span><input id="deepSweepProfiles" type="number" min="1" max="16" value="1" required><small>Default first, then other profiles ranked by matched functions. Each profile uses compile allowance. ROM rooms submit exact source, header and compiler settings for host verification. Imported builds use their own compiler settings.</small></label>
+          <h3>CPU use</h3>
+          <label class="deep-sweep-repeat"><input id="deepSweepMaximum" type="checkbox"><span>Maximum throughput<small>Use all detected CPU cores, dedicated candidate generators and a shared compiler pool.</small></span></label>
+          <div class="local-search-option-pair"><label class="field"><span>Concurrent compiles (1–256)</span><input id="deepSweepCompileSlots" type="number" min="1" max="256" placeholder="auto"><small>Blank uses all cores in maximum mode; balanced mode keeps its normal compiler allowance.</small></label><label class="field"><span>Functions at a time (1 or more)</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Leave blank for automatic.</small></label></div>
+          <label class="field"><span>Threads per function (1–256)</span><input id="deepSweepFunctionThreads" type="number" min="1" max="256" value="1" required><small>Search independent candidate paths in parallel. The time and candidate limits apply to the whole function. Total workers = functions × threads per function.</small></label>
+          <h3>Repeat searches</h3>
+          <label class="deep-sweep-repeat"><input id="deepSweepLoop" type="checkbox"><span>Loop indefinitely<small>Repeat searches with these settings until stopped. Waiting functions go to the back of the queue.</small></span></label><label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, search untested or changed functions.</small></span></label>
+        </fieldset>
         </div>
         <div class="small" id="deepSweepStatus" role="status" hidden></div>
         <details id="deepSweepAttention" hidden><summary id="deepSweepAttentionTitle"></summary><p class="deep-issue-intro">Grouped by reason. Select a function to inspect its saved C and settings.</p><div id="deepSweepAttentionList"></div><p class="deep-issue-footer">After fixing an issue, start the pass again. To retry unchanged inputs, enable <b>Repeat completed passes</b>. This list covers errors for the current inputs; matched and set-aside functions are excluded.</p></details>
@@ -654,28 +651,37 @@
         <div id="deepActivity" class="deep-activity"></div>
         </details>
         <details id="deepSweepLogSection" hidden><summary>Combined technical log</summary><div id="deepSweepLog"></div></details>
+
+        <div class="deep-sweep-tools">
+        <details class="deep-sweep-help"><summary>How it works</summary>
+          <p class="small muted">Completed passes are saved across restarts. Start the pass again after restarting the app to continue. Changes to source, headers or compiler inputs make a function eligible again.</p>
+          <p class="small muted">Each thread picks a different eligible function in random order. Turns start with half the time allowance and extend after improvements, up to your maximum. Repeated identical output can rotate sooner; rotated functions remain eligible next run, or the next pass with Loop indefinitely. Local searches can run alongside agents using saved, scored C; agents keep their claims. Compiler/header changes are deferred while claimed. Room guests still follow the host’s claims. Functions without scored C wait for a draft. Only the ordinary byte judge can save a match. A completed pass means its bounded turn finished, not that every possible rewrite was tried.</p>
+        </details>
+        <button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button>
+        </div>
       </div>
     </details>
 
-      <section class="panel" id="crossGamePanel" hidden>
-        <header class="panel-head"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games <span class="disclosure-context" id="crossGameContext"></span></button></h2><span class="transfer-local-badge">Local CPU · no AI tokens</span></header>
-        <div id="crossGameBody">
-          <p class="transfer-intro">Check all eligible candidates from your other games and local SDKs. Runs until finished or stopped; verified results save automatically.</p>
-          <div class="transfer-dashboard">
-            <div class="transfer-run-heading"><h3 id="crossGameState" role="status">Ready to search</h3><div class="row"><button type="button" class="primary small-btn" id="crossGameRun">Start search</button><button type="button" id="crossGameStop" class="primary small-btn" hidden>Stop</button></div></div>
-            <div id="crossGameWork" hidden>
-              <p id="crossGamePhaseStatus" class="transfer-phase" role="status"></p>
-              <p id="crossGameLeadStatus" class="transfer-lead-status" role="status">Checking saved fingerprints before scanning donor projects.</p>
-              <div id="crossGameActivity" class="workbar" role="progressbar" aria-label="Preparing cross-game search" hidden><i></i></div>
-              <progress id="crossGamePhaseBar" class="transfer-phase-bar" max="1" aria-label="Current search stage progress" hidden></progress>
-              <p id="crossGameRunStatus" class="muted small" role="status"></p>
-
-              <details class="transfer-technical"><summary>Technical output</summary><pre class="joblog" id="crossGameLog"></pre></details>
-            </div>
-            <div class="transfer-summary" id="crossGameSummary"></div>
+    <section class="panel local-search-card" id="crossGamePanel" hidden>
+      <header class="panel-head local-search-head">
+        <div class="local-search-title"><h2><button type="button" class="transfer-toggle" id="crossGameToggle" aria-expanded="true" aria-controls="crossGameBody"><span aria-hidden="true" class="transfer-chevron"></span>Matches from other games</button></h2><span class="local-search-state" id="crossGameState" role="status">Ready to search</span></div>
+        <div class="row"><button type="button" class="primary small-btn" id="crossGameRun">Start search</button><button type="button" id="crossGameStop" class="primary small-btn" hidden>Stop</button></div>
+      </header>
+      <div id="crossGameBody" class="pad local-search-body">
+        <p class="local-search-intro">Try matching code from your other games and local SDKs.</p>
+        <div class="deep-dashboard">
+          <div class="transfer-summary" id="crossGameSummary"></div>
+          <p class="small muted" id="crossGameEmpty">No searches yet.</p>
+          <div id="crossGameWork" class="local-search-progress" hidden>
+            <p id="crossGamePhaseStatus" class="small muted" role="status"></p>
+            <div id="crossGameActivity" class="workbar" role="progressbar" aria-label="Preparing cross-game search" hidden><i></i></div>
+            <progress id="crossGamePhaseBar" class="transfer-phase-bar" max="1" aria-label="Current search stage progress" hidden></progress>
+            <p id="crossGameRunStatus" class="small muted" role="status"></p>
+            <details class="transfer-technical"><summary>Technical output</summary><p id="crossGameLeadStatus" class="small muted"></p><pre class="joblog" id="crossGameLog"></pre></details>
           </div>
         </div>
-      </section>
+      </div>
+    </section>
   </section>
 
   <section class="ptab" data-pane="settings">

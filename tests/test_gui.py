@@ -44,6 +44,13 @@ def test_local_matching_owns_search_tools_and_settings_keeps_configuration():
                    capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_local_search_options_preserve_edits_and_focus_in_the_shared_drawer():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_local_matching_options.js"))], check=True,
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_foreground_progress_covers_delayed_starts_and_clears_on_every_outcome():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
@@ -683,7 +690,7 @@ def test_header_storage_controls_preview_cleanup_compaction_and_stop():
 def test_deep_permuter_reset_is_visible_without_expanding_more_actions():
     html = (Path(__file__).parents[1] / 'src/decompnet/app/static/index.html').read_text()
     start = html.index('<div class="deep-sweep-tools">')
-    tools = html[start:html.index('id="deepSweepStatus"', start)]
+    tools = html[start:html.index('</div>', start)]
     assert '<button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button>' in tools
     assert 'deep-sweep-more' not in tools
     assert '<summary>More actions</summary>' not in tools
