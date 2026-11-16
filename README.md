@@ -182,7 +182,13 @@ archive in `pyproject.toml`, with its SHA-256 in `uv.lock`; installation needs n
 The library only proposes source. decompdecomp still compiles and judges each candidate with the game's
 original compiler, using the unchanged linked-byte or objdiff checks. Existing source and claims stay here.
 
-### Explicit project-wide searches
+### Local Matching
+
+Open a project’s **Local Matching** tab. Each card keeps Start/Stop and status together, with large clickable
+totals that open function details in the side drawer. **Search options** opens Deep permuter budgets, worker
+limits and repetition controls in that same drawer. Closing it keeps edits for the next search; running settings
+remain readable. Returning to a project or opening another window attaches to its existing server-owned jobs.
+
 
 The project-wide search API processes eligible saved C until the queue finishes or you stop it. Each function
 gets its own time and candidate limits, using the same deep-search judge as the function drawer. Completed ROM
