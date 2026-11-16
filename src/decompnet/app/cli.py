@@ -210,25 +210,81 @@ def run(args, serve: bool = False) -> int:
     cleanup.old_registrations(internal)
     net = RomNetwork(internal / "decomp.db", home)
     pair = sessions.Sessions() if serve else None
-    mcp, manager, security, quit_app = build(net, internal, port, secret, pair=pair)
+    from . import tui  # (no Textual yet: tui/__init__.py imports it only when there's a terminal to show it in)
+
+    # under `decomp serve`, whatever ends the process (Quit in the browser, `decomp stop`, an update's restart) first
+    # gives the terminal back from the TUI, or the shell it ran in is left unusable
+    mcp, manager, security, quit_app = build(net, internal, port, secret, pair=pair,
+                                             on_exit=tui.release if serve else None)
     app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
-    if not serve:
-        # with a tray icon, helpers kept working without the window have a way back to it
-        window.IN_TRAY = tray.start(window.open_app, quit_app)
-        print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
-              + ("\nupdated and restarted" if restarted else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
-        # (1.0.2 and older restart into a new version without saying: they had a browser tab, which can't follow)
-        if not restarted or restarted.get("window", True):
-            _open_when_ready(port)
-    else:
+    if serve:
+        return _serve(app, sock, port, secret, home, pair, restarted, quit_app)
+    # with a tray icon, helpers kept working without the window have a way back to it
+    window.IN_TRAY = tray.start(window.open_app, quit_app)
+    print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
+          + ("\nupdated and restarted" if restarted else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
+    # (1.0.2 and older restart into a new version without saying: they had a browser tab, which can't follow)
+    if not restarted or restarted.get("window", True):
+        _open_when_ready(port)
+    try:
+        uvicorn.Server(server_config(app)).run(sockets=[sock])
+    except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
+        log.exception("the server stopped")
+        traceback.print_exc()
+    finally:
+        quit_app()
+    return 0
+
+
+def _wait_for_a_signal() -> None:
+    """For ever, a second at a time. Python runs a signal's handler on the main thread between waits; on Windows, a
+    wait with no end (threading.Event().wait()) runs none, so Ctrl-C and Ctrl-Break would never stop the app."""
+    while True:
+        time.sleep(1)
+
+
+def _serve(app, sock, port: int, secret: str, home: Path, pair, restarted, quit_app, wait=None) -> int:
+    """`decomp serve` from here: the server in a background thread, the TUI in this terminal (tui/__init__.py).
+
+    In the TUI, `q` (or Ctrl-C) and its "stop everything?" stop the app. When the TUI ends any other way (a bug in
+    it), or this isn't a terminal at all (a service, a pipe), the app keeps serving: it prints the address and a
+    browser link and waits for Ctrl-C. A signal from outside — `kill` (SIGTERM), the terminal going away (SIGHUP), an
+    interrupt, Windows' Ctrl-Break (SIGBREAK) — stops it gracefully, as Quit does: helpers stopped, progress saved,
+    the terminal given back."""
+    import logging
+    import signal
+
+    import uvicorn
+
+    from . import tui
+
+    log = logging.getLogger("decompdecomp")  # (support.file_log set it up in run)
+    stopping = threading.Lock()
+
+    def stop_on(signum, frame) -> None:
+        if stopping.acquire(blocking=False):  # (once: a second signal while it stops changes nothing)
+            log.info("%s: stopping", signal.Signals(signum).name)
+            threading.Thread(target=quit_app, name="stop", daemon=True).start()  # not here: the TUI's loop is
+
+    for name in ("SIGTERM", "SIGHUP", "SIGINT", "SIGBREAK"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), stop_on)
+    server = uvicorn.Server(server_config(app))
+    threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True, name="server").start()
+    try:
+        ended = tui.run(port, secret, pair.new_code, name=edition.NAME, home=hostenv.shown_path(home))
+        if ended == "stop":
+            return 0  # (the finally below: decompdecomp and its agents stop, as the TUI asked first)
+        if ended is not None:
+            log.error("the TUI ended (%s); decompdecomp keeps serving the browser", ended)
+            print(f"the TUI ended ({ended}: see the log); decompdecomp keeps running", flush=True)
         print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
               + f"\nserving the GUI to a browser through an SSH tunnel (ssh -L {port}:127.0.0.1:{port});"
               + f" open this link there, once, within {sessions.CODE_SECONDS // 60} minutes:\n  {link(port, pair.new_code())}"
               + "\n(`decomp serve` again, in another shell, shows a fresh one)"
               + ("\nupdated and restarted" if restarted else "\nstop with Ctrl-C"), flush=True)
-    try:
-        uvicorn.Server(server_config(app)).run(sockets=[sock])
-    except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
+        (wait or _wait_for_a_signal)()  # the server's thread serves; a signal ends the process (stop_on)
+    except Exception:
         log.exception("the server stopped")
         traceback.print_exc()
     finally:

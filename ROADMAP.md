@@ -9,10 +9,9 @@ a gap to close, each with its item here (CONTRIBUTING.md, "Every console gets ev
 
 Want to work on one? Open an issue first, so two people don't build the same thing. CONTRIBUTING.md has the rest.
 
-PS2 compiler packs now run on macOS: Sony EE-GCC 2.9/2.96/3.2 through an optional
-local Linux runner, SN Systems EE-GCC and CodeWarrior through wibo. Physical Intel
-Mac and retail-game verification remain planned; Apple Silicon checks use the
-homemade PS2 demo. Arbitrary imported Make/Ninja builds in the VM remain planned.
+PS2 compiler packs now run on macOS: Sony EE-GCC 2.9/2.96/3.2 through an optional local Linux runner,
+SN Systems EE-GCC and CodeWarrior through wibo. Physical Intel Mac and retail-game verification remain planned;
+Apple Silicon checks use the homemade PS2 demo. Arbitrary imported Make/Ninja builds in the VM remain planned.
 
 ## What works where
 
@@ -64,7 +63,13 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
-- **PS4**: Linux x86-64 imports decrypted ELF and judges with strict objdiff. Synthetic tests cover leaf functions and same-file, cross-file and import calls, including rejection of incorrect callees and code. The checked rows are covered by the demo conformance tests. Other rows stay “—” until exercised through the real PS4 engine: twins, permuting, polishing, saves/README cards, rooms, shared knowledge, Check again and verdicts need console-specific validation. Autopilot, header-aware drafts, compiler switching/surveys, source splitting, piece joining, class/structure recovery, reimport and whole-game export remain implementation gaps. Encrypted SELF/PKG and PRX modules are unsupported.
+- **PS4**: Linux x86-64 imports decrypted ELF and judges with strict objdiff. Synthetic tests cover leaf functions and
+  same-file, cross-file and import calls, including rejection of incorrect callees and code. The checked rows are
+  covered by the demo conformance tests. Other rows stay “—” until exercised through the real PS4 engine: twins,
+  permuting, polishing, saves/README cards, rooms, shared knowledge, Check again and verdicts need
+  console-specific validation. Autopilot, header-aware drafts, compiler switching/surveys, source splitting, piece
+  joining, class/structure recovery, reimport and whole-game export remain implementation gaps. Encrypted
+  SELF/PKG and PRX modules are unsupported.
 - **Long C++ names in exports and Windows paths.** Progress saves shorten source filenames to fit a filesystem
   component, but ROM exports still write the full symbol name (`rom/export_build.py`), and the save change does not
   account for Windows' 260-character path limit. Extend the same safe naming and path handling to exports and check
@@ -88,21 +93,21 @@ Where to start on a gap:
   2012-2013's with 2010's, a 64-bit game with 2017's 64-bit compiler or, for any other build, your own x64 copy: Newer
   Windows games, below, is the plan for the packs' own compilers. A class’s constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor:
-  names.py would need the mangled signature in "names". A
-  game's own DLLs come along when its folder or .exe is given by path; a dropped .exe comes alone (a browser doesn't
-  hand over the folder), a project made before can't take its DLLs in yet (Reimport analyses the programs
-  a project has), a project restored or cloned asks only for the .exe (`ForkProject.needs` names one file: the DLLs go in
-  `orig/` by hand, as its README says), and a game whose .exe can't start (for ARM, mostly /GL, protected) can't start
-  from its DLLs either. Visual C++ 2017 inlines a file's small functions into their callers, defined before them or after: a
-  project's file that holds two of the original's (about 4 KiB of functions each) needs `split_file` where the second
-  starts before its callers match (the guide says so).
+  names.py would need the mangled signature in "names". A game's own DLLs come along when its folder or .exe is
+  given by path; a dropped .exe comes alone (a browser doesn't hand over the folder), a project made before can't
+  take its DLLs in yet (Reimport analyses the programs   a project has), a project restored or cloned asks only for the `.exe`
+  (`ForkProject.needs` names one file: the DLLs go in `orig/` by hand, as its README says), and a game whose `.exe`
+  can't start (for ARM, mostly /GL, protected) can't start from its DLLs either. Visual C++ 2017 inlines a file's small
+  functions into their callers, defined before them or after: a project's file that holds two of the original's (about 4 KiB
+  of functions each) needs `split_file` where the second starts before its callers match (the guide says so).
 - **Windows PC debug symbols** (`consoles/pc/debuginfo.py`): Ghidra's function boundaries stay Ghidra's, though a
   PDB gives each function's size; CodeView embedded in the program (NB09, NB11: Visual C++ 4-5 with /PDB:NONE)
   and Visual C++ 4's 16-bit type records aren't read; a class's methods aren't written into its struct (C++ calls a
   method only through a declaration in the class), and optimised code's register locals (2005's S_LOCAL ranges)
   aren't listed. A game's PDB has to be beside its program, or dropped with it, at import: a project made before
   can't take one in yet.
-- **Compiler comparison in project mode** needs a source-file trial and an objdiff-backed apply path for each project console. The current saved-C comparison panel runs on ROM projects, including GBA and PS3.
+- **Compiler comparison in project mode** needs a source-file trial and an objdiff-backed apply path for each project
+  console. The current saved-C comparison panel runs on ROM projects, including GBA and PS3.
 - **Function-end reports** cut MIPS, ARM/Thumb and PPC functions (`engine._cut`) and, in project mode, a console's own
   (`Console.cut_function`: PC's functions.json). DS and GameCube/Wii projects need theirs, so their agents aren't
   offered `report_boundary` yet.
@@ -123,28 +128,39 @@ Where to start on a gap:
 
 ## Recently done
 
+- **decompdecomp on a server: `decomp serve` and its TUI.** A machine with no desktop runs the whole app (the
+  server, the agents, the autopilot, updates) with no window and no tray icon, in the foreground of a terminal
+  (`screen` or `tmux`). In the window's place: a text front end in that terminal (projects, the function map with
+  search, the agents at work and the log; read-only in this first version, docs/TUI.md), and the full GUI in your
+  own browser, paired once by a one-time link through an SSH tunnel. The app still listens on 127.0.0.1 only; a link
+  works once, within 15 minutes, and a session ends with the app. An update restarts it as `decomp serve` again;
+  `kill` or the terminal going away stops it as Quit does. `tests/test_tui.py` runs the TUI against the real app, so
+  an API change that breaks it fails there. Why: long-running agents belong on a machine that stays up, and
+  decompdecomp refused to start without a display.
+
 - **Browse compiler profiles.** Group applied ranges by compiler and arguments, compiler family, or address;
-  sort by range count, verification status, compiler name, or address. Expand profiles and the default settings to see function links,
-  argument lists and verification details. ROM profiles can be compared with the default, tested as a replacement,
-  or tried against saved unmatched C; changing settings rechecks affected matches before publishing.
+  sort by range count, verification status, compiler name, or address. Expand profiles and the default settings to see
+  function links, argument lists and verification details. ROM profiles can be compared with the default, tested as a
+  replacement, or tried against saved unmatched C; changing settings rechecks affected matches before publishing.
 
 - **Agents & models controls.** Collapsible sections show installed agent apps, prompt templates, optional tool
   visibility and recorded usage, manual project-scoped MCP connections, and saved API endpoints. Global and
   per-helper prompt and tool choices take effect on new sessions; disabled tool calls are rejected immediately.
-- **Portable Windows app.** A release ZIP bundles a relocatable `decompdecomp.exe`, Python and app dependencies. It needs the Microsoft window prerequisites already installed. CI extracts the ZIP to a different path and checks the EXE, server import and isolated startup/Stop.
+- **Portable Windows app.** A release ZIP bundles a relocatable `decompdecomp.exe`, Python and app dependencies.
+  It needs the Microsoft window prerequisites already installed. CI extracts the ZIP to a different path and checks the
+  EXE, server import and isolated startup/Stop.
 
 - **64-bit Windows games (x64).** A 64-bit program (PE32+) imports like a 32-bit one and builds with Visual C++
   2017's 64-bit compiler, the packs' only one: a game built with 2015, 2019 and newer, or 2005 to 2013's 64-bit
   compilers builds with it, and the import says how near that is; a build the pack doesn't have exactly reaches
-  your own x64 Visual C++ copy (kits/visualcpp.py) when you've added one, as a 32-bit game reaches your x86 copy. Its
-  functions come from the program, not
-  Ghidra's guesses: the exception directory (`.pdata`) has the start and end of every function that uses the stack
-  (a function's chained parts joined to it, its jump tables in it), and the leaf functions between them are read
-  from the code, one after another (on the 64-bit demo Ghidra finds 7 of 18 functions; a test compares the two).
-  The funclets of C++ exception handling are set aside exactly, as the functions' own exception data (FuncInfo, or
-  `__try`'s scope table) names them. Its relocations are x64's: rip-relative (REL32 to REL32_5), image-relative
-  (ADDR32NB: a switch's tables and some arrays, read through `__ImageBase`) and 64-bit addresses; the project's
-  objects are AMD64 (functions.json's `"machine": "x64"`), its names undecorated and 9 digits or more
+  your own x64 Visual C++ copy (kits/visualcpp.py) when you've added one, as a 32-bit game reaches your x86 copy.
+  Its functions come from the program, not Ghidra's guesses: the exception directory (`.pdata`) has the start and end
+  of every function that uses the stack (a function's chained parts joined to it, its jump tables in it), and the leaf functions
+  between them are read from the code, one after another (on the 64-bit demo Ghidra finds 7 of 18 functions; a test
+  compares the two). The funclets of C++ exception handling are set aside exactly, as the functions' own exception data
+  (FuncInfo, or `__try`'s scope table) names them. Its relocations are x64's: rip-relative (REL32 to REL32_5),
+  image-relative (ADDR32NB: a switch's tables and some arrays, read through `__ImageBase`) and 64-bit addresses; the
+  project's objects are AMD64 (functions.json's `"machine": "x64"`), its names undecorated and 9 digits or more
   (`func_140001000`), its rebuild check reads PE32+ and moves a DLL by DIR64 relocations. RTTI is read the 64-bit way
   (RVAs, 8-byte vtable slots) and the struct and class reader follows x64's calling convention (rcx is `this`,
   rdx, r8, r9 the next arguments). Demo Quest built by 2017's 64-bit compiler (`build.py 14.16-x64`) imports with
@@ -160,10 +176,10 @@ Where to start on a gap:
   for by name still comes, and the release, waiting and model-routing rules stay ahead of it. ROM and project mode
   alike, rooms through their host, and saves and progress folders keep the choice.
 
-- **Named Claude accounts (#45).** Add accounts under Claude Code → Additional accounts in Agents & models, sign in with a separate configuration
-  directory, and choose the account when starting helpers. Restarts retain the assignment. Finished sessions keep
-  their account identity and recorded usage across projects, including after a helper or account is removed.
-  Remaining subscription allowance and automatic account switching are separate work.
+- **Named Claude accounts (#45).** Add accounts under Claude Code → Additional accounts in Agents & models, sign
+  in with a separate configuration directory, and choose the account when starting helpers. Restarts retain the
+  assignment. Finished sessions keep their account identity and recorded usage across projects, including after a
+  helper or account is removed. Remaining subscription allowance and automatic account switching are separate work.
 
 - **Games built with Visual C++ 2017 (and 2015, 2019 and newer, with it).** The import's block for 2017 and newer is
   gone: 2017's Rich builds lead to the pack's `14.16` (build 27027 is its very own; another 2017 update's builds with
@@ -513,8 +529,8 @@ Where to start on a gap:
   function ("Syntax error in base.c": `u16` was no type it knew) and only the six simple rewrites ran, in every
   fork and on DS. It now reads what the function's file includes and declares.
 - **Model routing.** Each model's share of its claims that matched, in the project, tells the models at work
-  apart (on an N64 game free models matched 14-25% of what they claimed, stronger ones 42-77%). A model well behind
-  the strongest one at work leaves functions given up on three times to it, and the strongest takes those first;
+  apart (on an N64 game free models matched 14-25% of what they claimed, stronger ones 42-77%). A model well
+  behind the strongest one at work leaves functions given up on three times to it, and the strongest takes those first;
   near misses already go to the permuter. Nothing changes until two models have 20 claims each.
 - **Helpers' effort.** The launcher's Effort, opencode's until now, is every helper's: Claude Code's (`--effort`,
   Low to Max with Extra high), Codex's (`model_reasoning_effort`, Minimal to Extra high) and the API helper's
@@ -675,8 +691,8 @@ no drafts, and the DS latest/best attempt switch (PR #254). The rest:
   SDKs) and name the DS `svc` numbers as PS2's syscalls are (`consoles/ps2/syscalls.py`).
 
 - **The game's own debug symbols on N64, PS1, GameCube, Wii and DS** (`Console.debug_info`/`debug_of`,
-  `consoles/ps2/debuginfo.py`, `consoles/pc/debuginfo.py`). PS2 reads STABS/DWARF 1 and PC its PDB, map and COFF
-  symbols; these consoles return nothing. Start with a map or SYM file the user's copy has (the common retail
+  `consoles/ps2/debuginfo.py`, `consoles/pc/debuginfo.py`). PS2 reads STABS/DWARF 1 and PC its PDB, map and
+  COFF symbols; these consoles return nothing. Start with a map or SYM file the user's copy has (the common retail
   formats carry none), then the DWARF a full ELF or development build keeps, and give the function's brief its
   prototype and types through `debug_brief`.
 
@@ -698,8 +714,8 @@ are, and its functions matched through the judge with Sony's GCC rebuilt from it
 game's own), a getter of a global among them: that game reached its globals through GCC's minimal TOC (r30), which
 the import reads off the code and builds with (`-mminimal-toc`), and its linker didn't narrow any TOC load. What's left:
 
-- **The period compiler without an SDK.** `packaging/ps3-gcc/` rebuilds Sony's `ppu-lv2-gcc` (SDK 1.9.0, 2.5.0, 2.7.0) from
-  the GPL parts of its published source; its `toolchains.toml` entries wait for it to be published.
+- **The period compiler without an SDK.** `packaging/ps3-gcc/` rebuilds Sony's `ppu-lv2-gcc` (SDK 1.9.0, 2.5.0, 2.7.0)
+  from the GPL parts of its published source; its `toolchains.toml` entries wait for it to be published.
 - **Drafts.** m2c has no PPC64 target: a ROM-mode Ghidra draft (as PC's) would give PS3 drafts, autopilot's draft
   phase and `redraft`.
 - **The processor's readers.** `arch/ppc64.py` has no field accesses (`guess_struct`), class reader (`get_class`),
@@ -917,12 +933,18 @@ Before building it, find out:
 
 The answer goes here: build it, build part of it, or not, and why.
 
+### `decomp serve`: a TUI that acts, and browsers you can unpair
+
+The TUI only reads. Next, in rough order: a function's source, assembly and diff; actions on functions; steering the
+agents; setup and import ([docs/TUI.md](docs/TUI.md#roadmap) has the list). A paired browser stays paired until the
+app stops: a list of the paired browsers, with a way to end one, would suit a server several people log in to.
+
 ## Later
 
 - **Padding by processor (x86).** Retiring a pure-padding split head (editing.py `_cut`) asks the processor
   (`arch/`) for its own filler: MIPS zero, ARM/Thumb and PPC nops are now recognised and those padding heads
-  retired. x86's reader exists (`arch/x86.py` — `0xCC`/`0x90` and the standard multi-byte nops) but isn't wired into a split path yet: `_cut` is
-  ROM-only and PC/Xbox are project mode, so x86 padding heads aren't retired.
+  retired. x86's reader exists (`arch/x86.py` — `0xCC`/`0x90` and the standard multi-byte nops) but isn't wired into
+  a split path yet: `_cut` is ROM-only and PC/Xbox are project mode, so x86 padding heads aren't retired.
 - **Better look-alikes.** A second measure (edit distance over opcodes) next to today's, and shared runs of
   instructions, which find inlined helpers and macros. Needs PowerPC and x86 opcode readers.
 - **Decoders for data formats.** Tools that decode N64 display lists, PS2 GS/VIF packets and GameCube GX command

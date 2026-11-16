@@ -21,6 +21,7 @@ from GitHub. `main` is what users update from.
 ```bash
 uv sync
 uv run decomp                 # the development copy of the app, in its own window; projects in ~/Decomp-dev
+uv run decomp serve           # the same with no window: the TUI in this terminal, the GUI paired to a browser
 uv run pytest -q              # the test suite; many tests skip when a compiler or tool isn't installed
 uv run pytest tests/test_forks.py -q   # one file
 uv run ruff check src tests projects   # the linter (CI runs it and the tests)
@@ -40,9 +41,9 @@ Testing a change must not touch it:
 - Tests already run with a throwaway `DECOMP_HOME` and no window (tests/conftest.py). When the user's
   app runs from this checkout's `.venv`, run them in another environment so uv doesn't rebuild it underneath:
   `UV_PROJECT_ENVIRONMENT=<scratch venv> uv run pytest -q`.
-- To try a change on a real project, work on a copy: `sqlite3 "file:$HOME/Decomp/.decomp/decomp.db?mode=ro"
-  ".backup <copy>/.decomp/decomp.db"`, copy the project folder, point `projects.root` in the copy at it. Read the
-  live database only with `?mode=ro`.
+- To try a change on a real project, work on a copy:
+  `sqlite3 "file:$HOME/Decomp/.decomp/decomp.db?mode=ro" ".backup <copy>/.decomp/decomp.db"`, copy the project
+  folder, point `projects.root` in the copy at it. Read the live database only with `?mode=ro`.
 - Don't restart, update or quit the user's app, and don't change its projects, without asking.
 
 Compilers and tools (objdiff, dtk, wibo, Ghidra, m2c, decomp-permuter, period compilers) are pinned with checksums
@@ -70,11 +71,11 @@ one line each) and the list of consoles. The rest of the app asks `consoles.get(
 depends only on the processor (relocations, disassembly, hand-written assembly, which readers exist for it) is in `arch/`
 (`mips.py`, `ppc.py`, `x86.py`, `arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
 
-1. **ROM mode** (N64, PS1, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
-   code splat misses), and `rom/match.py` *links* each compiled candidate at the function's real address and
-   compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what they
-   share). Exported as a rebuildable tree by `rom/export*.py`.
-3. **PROJECT mode** (GameCube/Wii/PC/DS started from scratch, and public decomps forked by repository address): a
+1. **ROM mode** (N64, PS1, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds
+   the code splat misses), and `rom/match.py` *links* each compiled candidate at the function's real address and
+   compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what
+   they share). Exported as a rebuildable tree by `rom/export*.py`.
+2. **PROJECT mode** (GameCube/Wii/PC/DS started from scratch, and public decomps forked by repository address): a
    community-shaped project on disk with an `objdiff.json`; objdiff judges each unit. The console makes the project
    (`consoles/gc_wii/scratch.py`: dtk-template; `consoles/pc/scratch.py`: Ghidra finds functions, decompdecomp
    delinks them into COFF objects itself, from `consoles/pc/project_template/`; `consoles/nds/scratch.py`: ds-decomp,
@@ -131,9 +132,8 @@ CLI), `ohmy.py` (Oh My Pi), and `api.py` (the API helper: the app's own loop for
 What's the same for every agent (starting, restarting, waiting out usage limits, the records, ending their processes)
 is in `app/agents.py`. The rest of the app asks `agents.get(kind)` and never compares agent names: an agent-specific
 `if` outside `agents/` is a bug (`tests/test_agent_kinds.py` checks it, the GUI too: it gets facts like
-`uses_endpoints` from the server).
-Adding an agent (copy `agents/template.py`, fill in its parts, register it, pass `tests/test_agent_kinds.py`):
-CONTRIBUTING.md, "Adding an agent".
+`uses_endpoints` from the server). Adding an agent (copy `agents/template.py`, fill in its parts, register it, pass
+`tests/test_agent_kinds.py`): CONTRIBUTING.md, "Adding an agent".
 
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
@@ -145,15 +145,15 @@ judge's survey is `engine.survey_compilers`; `app/rangecheck.py` tests a suggest
 applies), `app/tools.py` (the MCP tools helpers get and their prompt; MCP is only the app's private wiring to the CLI
 helpers it starts), `app/window.py` + `app/gtkwindow.py` + `app/macwindow.py` + `app/tray.py` (the window: Linux uses
 system GTK/WebKitGTK, macOS uses Cocoa/WebKit through the app's Python; the page answers only a window with the
-secret in its user agent; Linux and Windows have a tray icon; tests set `DECOMP_WINDOW=0` and `DECOMP_TRAY=0`),
-`app/prompt_settings.py` (global and per-helper prompt overrides), `app/tool_policy.py` (which MCP tools helpers may use),
-`app/manual_mcp.py` (project-scoped credentials for manual MCP clients),
-`app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a project
-restored from them), `app/readable.py` (polishing matched code), `app/knowledge.py` (what agents learn, shared once
-two models agree), `app/drafts.py` + `app/permute.py` (background drafts and the permuter), `structs.py` (struct
-layouts from loads and stores), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through
-`guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, twelve plain scripts loaded in order;
-`js/base.js` says which is which).
+secret in its user agent, or under `decomp serve` a browser paired by a one-time link, `app/sessions.py`; Linux and
+Windows have a tray icon; tests set `DECOMP_WINDOW=0` and `DECOMP_TRAY=0`), `app/prompt_settings.py` (global and
+per-helper prompt overrides), `app/tool_policy.py` (which MCP tools helpers may use), `app/manual_mcp.py`
+(project-scoped credentials for manual MCP clients), `app/edition.py` (release or development copy), `app/saves.py`
+(a ROM project's work as plain files, and a project restored from them), `app/readable.py` (polishing matched code),
+`app/knowledge.py` (what agents learn, shared once two models agree), `app/drafts.py` + `app/permute.py`
+(background drafts and the permuter), `structs.py` (struct layouts from loads and stores), `app/guide/*.md` and
+`consoles/<id>/guides/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`,
+`app.css`, and `js/*.js`, twelve plain scripts loaded in order; `js/base.js` says which is which).
 
 ## Conventions
 
@@ -172,6 +172,9 @@ linting). In short:
 - Errors shown to the user or agent are `ForkError` / `NetworkError` with a sentence they can act on.
 - Every behavior change gets a test in `tests/`. Tests that need a real game or a compiler skip when it isn't there
   (CI has none of them); small homemade games/objects live in `projects/demo-*` and are built by their own scripts.
+- The TUI (`src/decompnet/app/tui/`, the terminal front end `decomp serve` runs; `docs/TUI.md`) reads the `/api/`
+  routes, and `tests/test_tui.py` runs it against the real app. A change to a route it reads updates the TUI in the
+  same pull request; `tui/client.py`'s `READS` lists every field it takes from each answer.
 - `uv run ruff check src tests projects` passes (CI runs it). No formatter: don't run `ruff format`.
 - A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`,
   `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`); a pull request from any other branch fails
@@ -185,9 +188,9 @@ linting). In short:
   `X.Y.Z-alpha` (`-beta`, `-rc`); `updates.version_key` orders them before X.Y.Z.
 - A release is a `vX.Y.Z` tag on main. `.github/workflows/release.yml` builds the `.deb`, the `.rpm`, the AppImage
   (`packaging/linux/build.sh`, which also runs locally) and the Windows setup bundle (`packaging/windows/build.ps1`),
-  then attaches them to the GitHub release; it can be run by hand
-  for a pushed tag (`gh workflow run release -f tag=vX.Y.Z`). Linux package copies set `DECOMP_PACKAGE` and don't
-  update themselves; the Windows copy updates its bundled packages in place.
+  then attaches them to the GitHub release; it can be run by hand for a pushed tag
+  (`gh workflow run release -f tag=vX.Y.Z`). Linux package copies set `DECOMP_PACKAGE` and don't update themselves;
+  the Windows copy updates its bundled packages in place.
 - What's planned is in ROADMAP.md, with a table of which feature works on which platform: when a feature ships or
   reaches another platform, update the table and move its item to done.
 - A change that adds or changes a console's support, or how decompdecomp is installed or downloaded, also updates

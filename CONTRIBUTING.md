@@ -13,9 +13,9 @@ Before you attach a log (`~/Decomp/.decomp/logs/decomp.log`), read it, and cut o
 
 ## Reporting a bug
 
-[Open an issue](https://github.com/n-delic/decompdecomp/issues/new/choose) with the bug report form. It asks for
-your version, your system, the console and compiler, what you did, what you expected and what happened, and the part
-of the log around it, if it helps (see above). Your answers label the issue (its console and system).
+[Open an issue](https://github.com/n-delic/decompdecomp/issues/new/choose) with the bug report form. It asks for your version, your system, the console and compiler, what you
+did, what you expected and what happened, and the part of the log around it, if it helps (see above). Your answers
+label the issue (its console and system).
 
 The name of the game is fine to mention. Many bugs only show up on one game, and the name helps a lot.
 
@@ -27,6 +27,7 @@ decompdecomp is Python 3.12+, managed with [uv](https://docs.astral.sh/uv/).
 git clone https://github.com/n-delic/decompdecomp && cd decompdecomp
 uv sync
 uv run decomp                 # the development copy, in its own window (projects in ~/Decomp-dev, or $DECOMP_HOME)
+uv run decomp serve           # the same with no window: the TUI here, the GUI paired to a browser (docs/TUI.md)
 uv run pytest -q              # the tests
 uv run pytest tests/test_ps2.py -q   # one file
 uv run ruff check src tests projects   # the linter
@@ -52,6 +53,10 @@ out. Read them first.** In short:
 - Don't add a dependency for a few lines. capstone, pyelftools and httpx are already there.
 - Errors shown to users or agents are sentences they can act on.
 - `uv run ruff check src tests projects` passes. There's no formatter: don't reformat code you didn't change.
+- **The TUI reads the API.** `decomp serve`'s terminal front end (`src/decompnet/app/tui`) is a client of the
+  `/api/` routes, and `tests/test_tui.py` runs it against the real app. If your change to a route fails that test,
+  update the TUI where it uses what changed (`tui/client.py`'s `READS` lists every field it reads) in the same pull
+  request. [docs/TUI.md](docs/TUI.md) says how the TUI works inside.
 
 Some things we won't merge:
 
@@ -63,16 +68,16 @@ Some things we won't merge:
 - Links to the decomp.wtf website. That domain isn't ours. Keep the internal names (`decomp`, `decompnet`,
   `~/Decomp`, `.decomp.wtf.json`): existing installs depend on them.
 
-Not sure what to work on? [ROADMAP.md](ROADMAP.md) lists what's planned and why, and has a table of which feature
-works on which platform: every — in it is a gap to fill.
+Not sure what to work on? [ROADMAP.md](ROADMAP.md) lists what's planned and why, and has a table of which feature works
+on which platform: every — in it is a gap to fill.
 
 ## Consoles
 
 ### Every console gets every feature
 
 decompdecomp is one pipeline for every console: whatever helps agents on one console should work on all of them,
-in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When
-you add a feature:
+in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike.
+When you add a feature:
 
 1. Build the shared part where every console uses it: `app/` and `network.py` for the engine, `rom/` and `forks/`
    for each mode, `arch/` for what depends on the processor.
@@ -295,8 +300,8 @@ records the folder, and reads it there. Nothing of it is copied, downloaded or p
    (the folder the compiler reads beside `bin/`), `args` and `flags` when you add one, and let the console's
    `default_compiler` pick the copy by build, as the PS3's does by the `.comment` stamp. A copy of a compiler a
    pack already has (another build of it) sets `like` to that pack instead: it then runs through the pack's own
-   command with its folder as `root` (`kits/owncompiler.py`, the ROM consoles' "Your own PS2 compiler" and the rest), and its
-   id starts with the pack's so a console's `startswith` flag rules apply to it.
+   command with its folder as `root` (`kits/owncompiler.py`, the ROM consoles' "Your own PS2 compiler" and the rest),
+   and its id starts with the pack's so a console's `startswith` flag rules apply to it.
 5. **Pass the tests**: `uv run pytest tests/test_kits.py -q`. It checks the facts, that it's a local toolchain
    nothing downloads, that a console takes it, and that no code outside `kits/` and that console names it. Test
    it with a homemade folder (empty stand-ins, never a file of the real kit).
@@ -306,9 +311,8 @@ records the folder, and reads it there. Nothing of it is copied, downloaded or p
 ### Where an agent's code is
 
 Each agent the app can start is one module: `src/decompnet/agents/<id>.py`. Everything decompdecomp knows about that
-agent is in it: how a session starts, how to read what it prints, its models, where its settings are. The rest of
-the app never asks "is this opencode?". It asks the helper's agent, `agents.get(kind)`, through one file: the
-connector, `agents/__init__.py`.
+agent is in it: how a session starts, how to read what it prints, its models, where its settings are. The rest of the app never
+asks "is this opencode?". It asks the helper's agent, `agents.get(kind)`, through one file: the connector, `agents/__init__.py`.
 
 | Module | Agent | Its parts |
 | :-- | :-- | :-- |
@@ -345,15 +349,17 @@ An agent is one of two sorts:
 1. Open `agents/<id>.py`. Its docstring says how a session runs and what the agent prints.
 2. Change the part you need there. Something every agent needs (how long a helper waits after a failure) goes in
    `app/agents.py`.
-3. Run its tests: `uv run pytest tests/test_agents.py tests/test_agent_kinds.py tests/test_cursor_agent.py tests/test_kimi_agent.py -q`. Never run the real program in a
-   test: it starts the MCP servers in the user's own settings. Use a recorded line of its output instead.
+3. Run its tests:
+   `uv run pytest tests/test_agents.py tests/test_agent_kinds.py tests/test_cursor_agent.py tests/test_kimi_agent.py -q`.
+   Never run the real program in a test: it starts the MCP servers in the user's own settings. Use a recorded line of
+   its output instead.
 
 ### Adding an agent
 
 1. **Copy the template.** `cp src/decompnet/agents/template.py src/decompnet/agents/<id>.py`. Rename the class and
    the object at the end.
-2. **Pick its sort.** A program: fill in `command` and the session's parts. A loop in the app: leave `command`
-   empty and fill in `run` (see `agents/api.py`).
+2. **Pick its sort.** A program: fill in `command` and the session's parts. A loop in the app: leave `command` empty
+   and fill in `run` (see `agents/api.py`).
 3. **Fill in its facts.** Each is one line in the `Agent` class:
 
    | Fact | What it is |
@@ -390,16 +396,19 @@ An agent is one of two sorts:
    file the agent is given by path, never as text on the command line.
 6. **Register it** in the list at the end of `agents/__init__.py` (`_registry`). The Agents page lists the agents in
    that order.
-7. **Pass the tests**: `uv run pytest tests/test_agent_kinds.py tests/test_cursor_agent.py tests/test_kimi_agent.py -q`. It checks the facts, the ids, the command line
-   (no token on it) and that no code outside `agents/` asks an agent's name. Add a test of its own to
-   `tests/test_agents.py`: a recorded line of its output, and the feed items it gives.
+7. **Pass the tests**:
+   `uv run pytest tests/test_agent_kinds.py tests/test_cursor_agent.py tests/test_kimi_agent.py -q`.
+   It checks the facts, the ids, the command line (no token on it) and that no code outside `agents/` asks an agent's
+   name. Add a test of its own to `tests/test_agents.py`: a recorded line of its output, and the feed items it gives.
 8. **Say it**: add the agent to README.md's list of agents, docs/GUIDE.md's table and the site's agent list
    (`site/public/index.html`).
 
 ## Pull requests
 
 - Talk it over first in `#contributors` on the [Discord](https://discord.gg/hhEm3zZagB), or in an issue.
-- Work on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`). CI fails a pull request from any other branch, and labels it by the prefix.
+- Work on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`,
+  `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`). CI fails a pull request from any other branch, and
+  labels it by the prefix.
 - A change to a console or a feature says which of the app's features you ran on it and how (AGENTS.md, "Check
   every feature on the console you touch"); reviewers check the same list.
 - Keep each one to one change, and say in the description what it fixes or adds, and how you tested it.

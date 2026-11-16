@@ -1,8 +1,8 @@
 # How decompdecomp's code is written
 
 These are the house rules. Read them once before your first change; they apply to people and agents alike.
-[AGENTS.md](../AGENTS.md) is the short version agents read on every task, and [CONTRIBUTING.md](../CONTRIBUTING.md)
-says how to send a change. Examples point at real code by file and name: search for the name to find it.
+[AGENTS.md](../AGENTS.md) is the short version agents read on every task, and [CONTRIBUTING.md](../CONTRIBUTING.md) says how to send a
+change. Examples point at real code by file and name: search for the name to find it.
 
 ## 1. Where code goes
 
@@ -36,21 +36,23 @@ says how to send a change. Examples point at real code by file and name: search 
 | The GUI | `app/static/`: `index.html`, `app.css`, and `js/` (twelve plain scripts loaded in order; `js/base.js` lists them; no build step). The notification centre is in `js/sidebar.js` |
 | Know-how agents read | `app/guide/*.md` (shared), `consoles/<id>/guides/*.md` (one console's), served by `guide(topic)` |
 | Compilers and tools themselves | `toolchains.toml` (pinned, with checksums), `toolchains.py` |
+| Running with no window (`decomp serve`) and pairing a browser | `app/cli.py` (`serve`, `_serve`), `app/sessions.py` (one-time codes, sessions), `app/routes/pages.py` (`/pair`, `/api/pair`), `guard()` in `app/server.py` |
+| The TUI, `decomp serve`'s terminal front end | `app/tui/` ([TUI.md](TUI.md)): one more client of the GUI's API, read-only |
 | The app's window, tray, updates | `app/window.py` + `app/gtkwindow.py` + `app/macwindow.py` + `app/winwindow.py`, `app/tray.py`, `app/updates.py`; dev or release: `app/edition.py`; the `decomp` command `app/cli.py`; the apps-menu entry `app/launcher.py`; what the first start removes from older versions `app/cleanup.py` |
 
 A console's code stays in its folder and reaches the rest of the app only through the connector: the engine,
-briefs, twins, the agents' tools and prompts, the export and the GUI ask `consoles.get(platform)`, never `if
-platform == "ps2"`. A new console is a new folder (copy `consoles/template/`), a demo game in `projects/demo-*`
-whose build writes `build/demo.json`, an entry in the list in `consoles/__init__.py`, a passing
+briefs, twins, the agents' tools and prompts, the export and the GUI ask `consoles.get(platform)`, never
+`if platform == "ps2"`. A new console is a new folder (copy `consoles/template/`), a demo game in
+`projects/demo-*` whose build writes `build/demo.json`, an entry in the list in `consoles/__init__.py`, a passing
 `tests/test_consoles.py`, and a column in the table "What works where" in [ROADMAP.md](../ROADMAP.md).
 CONTRIBUTING.md, "Consoles", has the steps, and the steps for adding a compiler to a console. Every new feature
 adds its row or its ticks to that table.
 
 Agents work the same way. One agent's code stays in its module in `agents/`, and the rest of the app (the helpers'
-manager in `app/agents.py`, the routes, the GUI) asks `agents.get(kind)` for a fact or a part, never `if kind ==
-"opencode"`. The GUI gets the facts it shows agents by from the server (`uses_endpoints`, `takes_effort`). A new
-agent is a new module (copy `agents/template.py`), an entry in the list in `agents/__init__.py`, and a passing
-`tests/test_agent_kinds.py`. CONTRIBUTING.md, "Adding an agent", has the steps.
+manager in `app/agents.py`, the routes, the GUI) asks `agents.get(kind)` for a fact or a part, never
+`if kind == "opencode"`. The GUI gets the facts it shows agents by from the server (`uses_endpoints`,
+`takes_effort`). A new agent is a new module (copy `agents/template.py`), an entry in the list in `agents/__init__.py`,
+and a passing `tests/test_agent_kinds.py`. CONTRIBUTING.md, "Adding an agent", has the steps.
 
 A new feature that touches the engine keeps its logic in a module of its own and adds small hooks to the engine
 (see `app/rangecheck.py` and where `self.rangechecks` is used). That keeps the engine's modules readable and makes
@@ -164,6 +166,9 @@ try {
   (`wine.py`), for the packs marked `wine = true`: a Windows runtime the user's system installs and updates, with no
   build to pin for every Linux distribution and Mac. It comes from `$DECOMPNET_WINE`, the PATH or wine.py's known
   places; the compilers it runs stay pinned.
+- The app's address alone grants nothing. Its API answers its own window and `decomp`'s own commands, which carry
+  the per-launch secret, and under `decomp serve` a browser paired by a one-time code (`app/sessions.py`), under the
+  names `127.0.0.1` and `localhost` only. Writes also need the `X-Decomp` header.
 - Proprietary compilers are installed only after the user accepts their licence in the app.
 - Heavy tools run through `limits.capped(argv)` (a memory cap) and with a timeout.
 - Agents may edit only source and header files: `EDITABLE` and `FORBIDDEN_PARTS` in `forks/project.py`.
@@ -177,6 +182,8 @@ try {
 - No new dependency for a few lines of code. capstone, pyelftools, httpx and rabbitizer are already there.
 - A new runtime dependency needs a reason in its commit message.
 - Development tools (pytest, ruff) go in the `dev` dependency group, never in the runtime dependencies.
+- Textual (the TUI) is pinned below its next major version; raising the pin is a change of its own, with
+  `tests/test_tui.py` run against the new version.
 - No JavaScript build step: the GUI is plain files the app's window loads.
 
 ## 8. Concurrency
@@ -186,6 +193,8 @@ try {
 - Long work is a background job the GUI follows (`Jobs.start`), or a thread with its own state dictionary (autopilot,
   the compiler survey, range checks).
 - Where two threads write the same state, a `threading.Lock` guards it (`RangeChecks` in `app/rangecheck.py`).
+- The TUI never asks the app on its own thread: every request goes through `Base.fetch` (`app/tui/app.py`), which
+  asks in a worker thread and applies the answer on the screen.
 
 ## 9. Tests
 
@@ -196,6 +205,8 @@ try {
 - Homemade games and objects live in `projects/demo-*` and are built by their own scripts. Small hand-assembled
   machine code in a test is fine (`tests/test_classes.py`, `tests/test_compilermap.py`).
 - Code that's hard to set up gets a small stand-in for what it uses (`FakeNet` in `tests/test_rangecheck.py`).
+- `tests/test_tui.py` runs the TUI against the real app. A change to an `/api/` route that fails it updates the TUI
+  (`tui/client.py`'s `READS` lists every field it reads) in the same pull request.
 - Tests never reach the user's own app: `tests/conftest.py` sets a throwaway `DECOMP_HOME`, `DECOMP_WINDOW=0` and
   `DECOMP_TRAY=0`. Agent CLIs are always stubbed: listing Antigravity's models starts the MCP servers in its settings.
 
@@ -205,14 +216,16 @@ People working on decompdecomp usually have it running too, with agents working 
 not touch it.
 
 - A checkout is a separate app, "decompdecomp dev" (`app/edition.py`): its own home `~/Decomp-dev`, port 6474 and
-  window class. A newer `decomp` that finds an older one running in the same home quits it and takes its place
-  (`app/cli.py`), so never point a checkout at your real `~/Decomp`. For an experiment, use a throwaway home:
-  `DECOMP_HOME=<scratch> DECOMP_TRAY=0 uv run decomp`, with a PATH without agent CLIs.
+  window class (`uv run decomp serve` is the development copy too). A newer `decomp` that finds an older one running
+  in the same home quits it and takes its place (`app/cli.py`), so never point a checkout at your real `~/Decomp`. For an
+  experiment, use a throwaway home: `DECOMP_HOME=<scratch> DECOMP_TRAY=0 uv run decomp`, with a PATH without
+  agent CLIs.
 - If your app runs from the checkout's `.venv`, run the tests in another environment, so uv doesn't rebuild the one
   your app uses: `UV_PROJECT_ENVIRONMENT=<scratch venv> uv run pytest -q`.
-- To try a change on a real project, use a copy: `sqlite3 "file:$HOME/Decomp/.decomp/decomp.db?mode=ro" ".backup
-  <copy>/.decomp/decomp.db"`, copy the project's folder, and point `projects.root` in the copy at it. Read a live
-  database only with `?mode=ro`.
+- To try a change on a real project, use a copy:
+  `sqlite3 "file:$HOME/Decomp/.decomp/decomp.db?mode=ro" ".backup
+  <copy>/.decomp/decomp.db"`, copy the
+  project's folder, and point `projects.root` in the copy at it. Read a live database only with `?mode=ro`.
 
 ## 11. Commits and releases
 

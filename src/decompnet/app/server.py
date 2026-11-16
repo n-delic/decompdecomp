@@ -16,6 +16,7 @@ import os
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
@@ -35,8 +36,10 @@ from .support import Jobs, Settings, session_options
 START_PAUSE_SECONDS = 0.02  # between projects in the console work at start (consoles_start)
 
 
-def build(net: RomNetwork, home: Path, port: int, secret: str, pair: sessions.Sessions | None = None):
-    """`pair`: `decomp serve`'s browser sessions. The app with its own window passes nothing, and never accepts one."""
+def build(net: RomNetwork, home: Path, port: int, secret: str, pair: sessions.Sessions | None = None,
+          on_exit: Callable[[], None] | None = None):
+    """`pair`: `decomp serve`'s browser sessions. The app with its own window passes nothing, and never accepts one.
+    `on_exit`: run first when the process is about to end or restart (`decomp serve` gives its terminal back)."""
     mcp_url = f"http://127.0.0.1:{port}/mcp"
     build_id = (updates.installed().get("commit") or "")[:12]  # a branch install: the commit it came from
     manager = agents.Manager(net, home, mcp_url)
@@ -56,6 +59,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, pair: sessions.Se
 
     def quit_app() -> None:
         """Quit means quit: the window, every helper with everything it started, then the server."""
+        if on_exit is not None:
+            on_exit()
         window.close_app()
         manager.shutdown()
         flush_progress()
@@ -206,6 +211,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, pair: sessions.Se
         return JSONResponse({"error": str(e)}, status_code=code)
 
     def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
+        if on_exit is not None:
+            on_exit()
         manager.shutdown()
         flush_progress()
 

@@ -25,7 +25,8 @@ UNPAIRED_PAGE = ("<h1 style='font-size:1.4rem'>Pair this browser with decompdeco
                  "<p>This decompdecomp runs with no window (<code>decomp serve</code>). A browser reaches it through a "
                  "one-time link, which pairs it once.</p>"
                  "<p>Get a link on the server: run <code>decomp serve</code> again in another shell there, and it "
-                 "prints a fresh one. Open it here; if your end of the SSH tunnel isn't the server's port, change the "
+                 "prints a fresh one (where <code>decomp serve</code> shows its screens in a terminal, <b>b</b> there "
+                 "shows one too). Open it here; if your end of the SSH tunnel isn't the server's port, change the "
                  "port in the link to yours.</p>"
                  "<p>A link works once, within 15 minutes. After decompdecomp restarts, pair again.</p>")
 OLD_PAGE_WINDOWS = ("<p><b>This version of decompdecomp doesn't run on Windows.</b> Windows comes back in 1.0.4. Your projects "
