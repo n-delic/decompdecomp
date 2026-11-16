@@ -1241,8 +1241,17 @@ Left:
   it and read it), primitive depth and decal mode; G_TEXTURE_GEN; IA16 palettes; alpha as coverage; dithering;
   8- and 32-bit colour images; the VI's mode (the frame at its size, gamma, the dedither and divot filters); lines
   (G_LINE3D from L3DEX, L3DEX2 and Fast3D); one-cycle mode running the combiner's second cycle, as angrylion's
-  renderer does. Not yet: Diddy Kong Racing's F3DDKR (its microcode carries no signature, so it can't be
-  recognised), the RDP's fixed-point arithmetic (floats here: compare with angrylion's renderer frame by frame). S2DEX sprites (G_OBJ_SPRITE) turn and scale
+  renderer does. The RDP in its own fixed point, checked against angrylion's renderer frame by frame
+  (`tools/n64_rdp_compare.py` with `PORT_RDPDUMP`, `--ours` to replay a recording through the current renderer;
+  `tests/test_n64_port_render_rdp.py` with `N64_ANGRYLION`): triangles sent as the microcode's triangle commands and
+  clipped at its guard band, walked in quarter scanlines with the RDP's coverage and its partial-pixel correction,
+  rectangles through the same walker; the combiner, blender (its divider and delta-z shifts), bilinear filter,
+  perspective divide (its reciprocal table), dither (colour and alpha), alpha compare, coverage times alpha, depth
+  test and delta z in integers; coverage kept in the pixel's low bit and RDRAM's hidden bits. Fourteen test scenes
+  match exactly; a racing game's recorded frames differ on 0.14% of pixels (0.7% in its busiest race frame). Not yet: Diddy Kong Racing's F3DDKR (its
+  microcode carries no signature, so it can't be recognised); the last differences in that game's race (a few
+  anti-aliased edges); YUV textures (G_TC_CONV); chroma key; S2DEX's backgrounds and sprites as RDP commands (drawn
+  directly, so the comparison leaves them out); the WebGL path keeps its own arithmetic. S2DEX sprites (G_OBJ_SPRITE) turn and scale
   with the 2D matrix (its rev counter needle); its rectangles (G_OBJ_RECTANGLE, _R) are drawn as before. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
