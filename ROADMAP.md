@@ -4394,3 +4394,7 @@ shared header, keeping the header's const/volatile behavior and leaving saved C 
 still fail. The N64 static recompiler can isolate and confirm a body-level native crash, retain an explicit stub
 reason and translate the other bodies. Global crashes, resource kills and unproved interactions remain errors;
 probes are cancellable and bounded. Synthetic compiler/recompiler regressions cover these paths.
+
+ROM port placement also preserves compiler-declared call targets with data-style names. Repeated helper context
+gets a private identity per module, retaining the caller's own helper body and original pointer addresses while
+leaving the public owner function authoritative. The linker still rejects unresolved duplicate ownership.

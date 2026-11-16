@@ -629,6 +629,28 @@ def invoker(c: str, ret: str, params: list[str]) -> tuple[str, str]:
                   f"{body} }}")
 
 
+def context_functions(lls: list[Path]) -> dict[Path, dict[str, str]]:
+    """Private identities for repeated helper definitions saved as compilation context in other functions' files.
+
+    Their bodies can differ between saved candidates. Keep each caller's own helper instead of selecting an
+    arbitrary global winner or relaxing the linker. A helper's own source file retains its public definition.
+    """
+    modules = {}
+    for ll in lls:
+        for match in re.finditer(r"^define ([^@\n]*)@([\w.$]+)\(", ll.read_text(encoding="utf-8"), re.M):
+            if not {"internal", "private"} & set(match[1].split()):
+                modules.setdefault(match[2], []).append(ll)
+    private = {}
+    for name, files in modules.items():
+        if len(files) < 2:
+            continue
+        for ll in files:
+            if ll.stem != name:
+                prefix = hashlib.sha256(ll.name.encode()).hexdigest()[:12]
+                private.setdefault(ll, {})[name] = f"port_context_{prefix}_{name}"
+    return private
+
+
 def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, step=None, *, web: bool = False):
     """Every function's IR placed at its console address and compiled (beir.py): into out/o, or out/o-web for the
     browser build (`web`: webir.py too). Each is placed again only when its own rows in the tables change, or the
@@ -638,16 +660,20 @@ def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, s
     tools = tuple(files(HERE / n) for n in ("beir.py", "adapt.py", *(("webir.py",) if web else ())))
     folder = out / ("o-web" if web else "o")
     folder.mkdir(exist_ok=True)
+    contexts = context_functions(lls)
 
     def place(ll: Path) -> str | None | bool:
         be, obj = folder / (ll.stem + ".be.ll"), folder / (ll.stem + ".o")
         text = ll.read_text(encoding="utf-8")
-        key = _digest(zig, *(("web",) if web else ()), *tools, text, *table_rows(text, *tables))
+        key = _digest(zig, *(("web",) if web else ()), *tools, text, *table_rows(text, *tables),
+                      sorted(contexts.get(ll, {}).items()))
         if _fresh(obj, key):
             return False
         _unstamp(obj)
         done = _run([py, HERE / "beir.py", ll, be, "--functions", out / "functions.txt", "--renames", out / "renames.txt",
-                     "--signatures", out / "sigs.txt", "--fixed", out / "fixed.txt", *(["--web"] if web else [])], log)
+                     "--signatures", out / "sigs.txt", "--fixed", out / "fixed.txt",
+                     *(arg for old, new in sorted(contexts.get(ll, {}).items()) for arg in ("--context-function", f"{old}={new}")),
+                     *(["--web"] if web else [])], log)
         if done.returncode:
             return (done.stderr.strip().splitlines() or ["beir failed"])[-1]
         done = _run([zig, "cc", "-target", "wasm32-freestanding", "-O0", "-c", be, "-o", obj], log, env=env)

@@ -550,3 +550,9 @@ with that relationship retained in the refusal reason.
 
 A compiler error inside a generated, patchable input body also leaves an explicit refusal and reruns translation;
 header errors and errors outside a body do not implicate an arbitrary function.
+
+The IR placement step respects function declarations even when a call target has a data-style imported name.
+Repeated helper definitions kept as saved compilation context receive identities private to their own input
+module. Each caller retains its own helper body; a real owner file retains the public function. Address-taken
+uses keep the original console address, and private context is not promoted as a public runtime implementation.
+This avoids duplicate symbols without selecting an arbitrary helper variant or relaxing the linker.
