@@ -4,6 +4,7 @@ import hashlib
 import json
 import struct
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import rabbitizer
@@ -50,14 +51,32 @@ def _digest(value):
 
 def _revision(net, proj, affected=()):
     # Unrelated workers may keep submitting candidates. Guard layout, matched C,
-    # shared inputs and the edited rows, not incidental attempt counters elsewhere.
-    ids=set(affected);rows=[]
-    for row in _rows(net,proj):
-        rows.append(row if row['id'] in ids else {k:row[k] for k in
-                    ('id','name','vram','rom_offset','size','target','relocs','unit','status','matched_source','meta')})
+    # shared inputs and the complete edited rows, not incidental counters elsewhere.
+    # Selecting * first inflated every draft, seed and assembly only to discard it.
+    from .metadata_rows import rows as metadata
+    store=net.project_store(proj['id']);ids=set(affected)
+    fields=('id','name','vram','rom_offset','size','target','relocs','unit','status','matched_source','meta')
+    # hex(NULL) is empty text: preserve NULL separately from an empty target.
+    query='SELECT '+','.join('CASE WHEN target IS NULL THEN NULL ELSE hex(target) END AS target' if k=='target' else k for k in fields)
+    rows=metadata(store,fields,query+' FROM functions WHERE project_id=? ORDER BY id',proj['id'])
+    edited={r['id']:dict(r) for r in store.all(
+        'SELECT * FROM functions WHERE project_id=? AND id IN (SELECT value FROM json_each(?))',proj['id'],json.dumps(sorted(ids)))} if ids else {}
+    for index,row in enumerate(rows):
+        row['target']=bytes.fromhex(row['target']) if row['target'] is not None else None
+        if row['id'] in edited:rows[index]=edited[row['id']]
     return _digest([dict(net.project_row(proj['slug'])),rows,
-                    [list(r) for r in net.project_store(proj['id']).all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
-                    [list(r) for r in net.project_store(proj['id']).all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]])
+                    [list(r) for r in store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
+                    [list(r) for r in store.all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]])
+
+
+def _layout_rows(net, proj):
+    """Discovery needs extents and original bytes, never every function's saved C or assembly."""
+    from .metadata_rows import rows
+    fields=('id','name','vram','rom_offset','unit','size','target','status','meta','gone_mark')
+    query='SELECT '+','.join('CASE WHEN target IS NULL THEN NULL ELSE hex(target) END AS target' if k=='target' else k for k in fields)
+    result=rows(net.project_store(proj['id']),fields,query+' FROM functions WHERE project_id=? ORDER BY id',proj['id'])
+    for row in result:row['target']=bytes.fromhex(row['target']) if row['target'] is not None else None
+    return result
 
 
 def _supported(net, slug):
@@ -79,7 +98,7 @@ def audit(net, slug):
     proj=_supported(net,slug)
     from .code_coverage import boundaries
     findings=[]
-    rows=_rows(net,proj);by_name={r['name']:r for r in rows}
+    rows=_layout_rows(net,proj);by_name={r['name']:r for r in rows}
     for finding in boundaries(net,proj):
         fn=by_name[finding['function']];target=fn['target'] or b''
         last=int.from_bytes(target[-4:],'big' if proj['big_endian'] else 'little') if len(target)>=4 else 0
@@ -94,11 +113,31 @@ def audit(net, slug):
 
 
 def preview(net, slug, name, action, end=None, *, investigation=False):
-    proj=_supported(net,slug);fn=dict(net._function(name,slug));rows=_rows(net,proj)
+    """Build a fresh guarded preview; automatic discovery uses only the shared extent checks below."""
+    proj=_supported(net,slug)
+    mapped=_image(net,proj);image,segments=mapped
+    plan=_preview(net,proj,dict(net._function(name,slug)),action,end,investigation=investigation,mapped=mapped,retain=True)
+    plan['function']=name
+    owners=[s for s in segments if s.rom_start<=plan['rom']<s.rom_end and s.vram+plan['rom']-s.rom_start==plan['start']]
+    if len(owners)!=1:raise NetworkError('This entry needs one unambiguous original image mapping.')
+    from .. import arch
+    from .boundary_evidence import assembly
+    plan['assembly']=assembly(arch.get(proj['arch']).boundary_instruction,image,owners[0],plan['start'],plan['end'],
+                              [plan['start'],plan['old_end'],plan['end'],*[p['vram'] for p in plan['pieces']]],proj['big_endian'])
+    plan['revision']=_revision(net,proj,[p['id'] for p in plan['pieces']])
+    plan['image']=_digest(image)
+    return plan
+
+
+def _preview(net, proj, fn, action, end=None, *, investigation=False, rows=None, mapped=None, retain=False):
+    # Discovery shares immutable inputs within one pass. Every selected decision
+    # still goes through a fresh public preview and the transaction-time guards.
+    name=fn['name']
+    if rows is None:rows=_layout_rows(net,proj)
     if fn['status']=='matched':raise NetworkError('A matched function cannot be reclassified or resized.')
     meta=json.loads(fn['meta'] or '{}')
     if meta.get('gone'):raise NetworkError('This entry is archived. Undo its repair before editing it.')
-    image,segments=_image(net,proj)
+    image,segments=mapped if mapped is not None else _image(net,proj)
     start=fn['rom_offset'];address=fn['vram']
     if start is None or address is None or image[start:start+fn['size']]!=fn['target']:
         raise NetworkError('Stored bytes differ from the original mapped image. Reimport/review the mapping first.')
@@ -144,14 +183,17 @@ def preview(net, slug, name, action, end=None, *, investigation=False):
     ids=[p['id'] for p in pieces]
     if not investigation and any(net.project_store(proj['id']).one('SELECT 1 FROM claims WHERE function_id=?',fid) for fid in ids):
         raise NetworkError('Release the affected claims before changing boundaries.')
+    if retain:
+        retained=[]
+        for piece in pieces:
+            current=net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',piece['id'])
+            if current is None or any(current[k]!=v for k,v in piece.items()):
+                raise NetworkError('Project inputs changed while previewing the boundary. Preview again.')
+            retained.append(dict(current))
+        pieces=retained
     raw=image[start:finish]
-    from .. import arch
-    from .boundary_evidence import assembly
-    lines=assembly(arch.get(proj['arch']).boundary_instruction,image,owner,address,newend,
-                   [address,fn['vram']+fn['size'],newend,*[p['vram'] for p in pieces]],proj['big_endian'])
     return {'function':name,'owner':fn['name'],'action':action,'end':newend,'start':address,
             'old_size':fn['size'],'old_end':fn['vram']+fn['size'],'new_size':len(raw),'affected':[{'id':p['id'],'name':p['name'],'size':p['size'],'start':p['vram'],'end':p['vram']+p['size']} for p in pieces],
-            'revision':_revision(net,proj,ids),'image':_digest(image),'assembly':lines,
             'warning':'Safety checks reverify existing matches and guard mappings, overlaps and changed inputs. They do not prove the proposed boundary. Sources, attempts and notes are retained. Resized functions need a fresh match.',
             'pieces':pieces,'raw':raw,'unit':fn['unit'],'rom':start}
 
@@ -410,26 +452,45 @@ def _safe(net, proj, console, plan, calls, context=None):
 def _safe_plans(net, slug, proj, console, calls, skip, tick=lambda done,total:None, context=None):
     from .code_coverage import boundaries
     found=[]
-    rows={r['vram']:r for r in _rows(net,proj) if r['gone_mark'] is None and r['vram'] is not None}
+    layout=_layout_rows(net,proj);by_name={r['name']:r for r in layout}
+    rows={r['vram']:r for r in layout if r['gone_mark'] is None and r['vram'] is not None}
+    mapped=_image(net,proj)
     findings=sorted(boundaries(net,proj),key=lambda f:f['vram'] or 0)
     if context:context=(*context[:2],{f['function'] for f in findings})
     for index,finding in enumerate(findings):
         tick(index,len(findings))
         if finding['override'] or finding['function'] in skip:continue
-        fn=net._function(finding['function'],slug)
+        fn=by_name.get(finding['function'])
+        if fn is None:continue  # A concurrent import added it after this discovery snapshot.
         following=rows.get(fn['vram']+fn['size']) if fn['vram'] is not None else None
         tries=[(finding['function'],'padding')] if fn['size']<=8 else []
         tries+=[(finding['function'],'delay_slot'),(finding['function'],'join_previous')]
         if following and following['unit']==fn['unit']:tries.append((following['name'],'join_previous'))
         for name,action in tries:
-            try:plan=preview(net,slug,name,action)
+            try:plan=_preview(net,proj,by_name[name],action,rows=layout,mapped=mapped)
             except NetworkError:continue
             if _safe(net,proj,console,plan,calls,context):
                 found.append((finding['function'],name,action));break
     return found
 
 
+def _lookups(net):
+    # The saved folder is still checked before each decision. Repeated lookups
+    # inside that decision need not scan it again or publish an intermediate save.
+    progress=getattr(net,'progress',None)
+    return progress.deferring() if progress is not None else nullcontext()
+
+
 def apply_safe(net, slug, log=print):
+    """Publish retained fixes even after Stop or an error; no project lock spans the run."""
+    try:
+        return _apply_safe(net,slug,log)
+    finally:
+        progress=getattr(net,'progress',None)
+        if progress is not None:progress.sync(slug,force=True)
+
+
+def _apply_safe(net, slug, log=print):
     """Apply every repair the original bytes settle, one undoable decision each; leave the rest for review."""
     proj=_supported(net,slug)
     if slug in net.rooms or net._link(slug) is not None:raise NetworkError('Leave the room before editing shared function boundaries.')
@@ -445,18 +506,23 @@ def apply_safe(net, slug, log=print):
     broken=_verify_matches(net,proj,log)
     if broken:raise NetworkError('Existing matches could not be reverified: '+', '.join(n for n,_ in broken[:5]))
     console=net.console(proj);fixed=[];failed=set()
+    def checking(done,count):
+        cancel()
+        progress({'phase':'Checking flagged entries','done':done,'total':count})
     for _ in range(SAFE_ROUNDS):
         cancel()
-        found=_safe_plans(net,slug,proj,console,calls,failed,lambda done,count:progress({'phase':'Checking flagged entries','done':done,'total':count}),(image,flow))
+        with _lookups(net):
+            found=_safe_plans(net,slug,proj,console,calls,failed,checking,(image,flow))
         if not found:break
         context=(image,flow,{f['function'] for f in boundaries(net,proj)})
         for flagged,name,action in found:
             cancel()
-            if any(net._function(n,slug)['gone_mark'] is not None for n in {flagged,name}):continue  # absorbed this round
             try:
-                plan=preview(net,slug,name,action)
-                if not (note:=_safe(net,proj,console,plan,calls,context)):continue
-                result=_commit(net,proj,plan,name,action,plan['revision'],plan['image'],note)
+                with _lookups(net):
+                    if any(net._function(n,slug)['gone_mark'] is not None for n in {flagged,name}):continue  # absorbed this round
+                    plan=preview(net,slug,name,action)
+                    if not (note:=_safe(net,proj,console,plan,calls,context)):continue
+                    result=_commit(net,proj,plan,name,action,plan['revision'],plan['image'],note)
             except NetworkError as error:
                 # A worker claimed a piece or the layout moved under it: leave it for review rather than retry.
                 failed.add(flagged);log(f'{flagged}: left for review ({error})');continue

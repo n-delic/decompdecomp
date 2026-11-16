@@ -432,3 +432,171 @@ def test_your_join_may_take_back_a_return_matched_as_an_empty_function(tmp_path,
         assert net._function('getter','game')['size']==16 and repair.audit(net,'game')['findings']==[]
     else:
         with pytest.raises(NetworkError,match='matched'):net.join_rom_functions('game',['getter','tail'],'cut before its return')
+
+
+@pytest.mark.parametrize('affected',[(),(1,),(1,2)])
+def test_revision_keeps_the_complete_previous_safety_fingerprint(game,affected):
+    net,_=game;proj=net.project_row('game')
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET asm=?,seed=?,best_source=?,matched_source=? WHERE name='normal'",
+                   ('assembly\n'*200,'seed\n'*200,'draft\n'*200,'matched\n'*200))
+        db.execute("UPDATE functions SET target=NULL WHERE name='padding'")
+    rows=[]
+    for row in repair._rows(net,proj):
+        rows.append(row if row['id'] in affected else {k:row[k] for k in
+                    ('id','name','vram','rom_offset','size','target','relocs','unit','status','matched_source','meta')})
+    previous=repair._digest([dict(proj),rows,
+        [list(r) for r in net.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',proj['id'])],
+        [list(r) for r in net.store.all('SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY version',proj['id'])]])
+    assert repair._revision(net,proj,affected)==previous
+
+
+def test_discovery_reuses_one_layout_and_image_without_building_discarded_previews(game,monkeypatch):
+    net,_=game;proj=net.project_row('game');reads=[]
+    image,segments=repair._image(net,proj)
+    original_layout=repair._layout_rows
+    monkeypatch.setattr(repair,'_layout_rows',lambda *args:reads.append('layout') or original_layout(*args))
+    monkeypatch.setattr(repair,'_image',lambda *args:reads.append('image') or (image,segments))
+    def unnecessary(*args,**kwargs):pytest.fail('Discovery must not load full rows, hash revisions or build public previews')
+    for name in ('preview','_rows','_revision'):monkeypatch.setattr(repair,name,unnecessary)
+    result=repair._safe_plans(net,'game',proj,net.console(proj),set(),set(),context=(image,set()))
+    assert result and result[0]==('head','head','delay_slot')
+    assert reads==['layout','image']
+
+
+@pytest.mark.parametrize('change',["status='matched'","target=x'12345678'","best_source='new work'"])
+def test_preview_refuses_a_piece_changed_while_loading_the_layout(game,monkeypatch,change):
+    net,_=game;original=repair._layout_rows
+    def changing(*args):
+        rows=original(*args)
+        with net.store.tx() as db:db.execute('UPDATE functions SET '+change+" WHERE name='head'")
+        return rows
+    monkeypatch.setattr(repair,'_layout_rows',changing)
+    with pytest.raises(NetworkError,match='changed while previewing'):
+        repair.preview(net,'game','head','delay_slot')
+    assert not net.store.one("SELECT 1 FROM settings WHERE key LIKE 'boundary-repair:%'")
+
+
+@pytest.mark.parametrize('change',['claim','header','symbol','matched source','image'])
+def test_safe_fix_rechecks_inputs_inside_its_commit(game,change):
+    net,_=game;original=repair._commit
+    worker,_=net.local_agent('late worker')
+    def changing(net,proj,plan,*args):
+        if change=='image':
+            from pathlib import Path
+            path=Path(proj['root'])/'rom.z64'
+            path.write_bytes(path.read_bytes()[:-4]+b'1234')
+        else:
+            with net.store.tx() as db:
+                if change=='claim':
+                    db.execute("INSERT INTO claims VALUES(?,?,?,?)",(plan['pieces'][0]['id'],worker.id,time.time(),time.time()+100))
+                elif change=='header':db.execute("UPDATE context_versions SET header='changed'")
+                elif change=='symbol':db.execute("UPDATE symbols SET size=size+4 WHERE name='normal'")
+                else:db.execute("UPDATE functions SET matched_source='new match' WHERE name='intact'")
+        return original(net,proj,plan,*args)
+    proj=net.project_row('game');plan=repair.preview(net,'game','head','delay_slot')
+    with pytest.raises(NetworkError,match='changed|claimed'):
+        changing(net,proj,plan,'head','delay_slot',plan['revision'],plan['image'],repair.SAFE_NOTE['delay_slot'])
+    assert net._function('head','game')['size']==4
+    assert not repair.audit(net,'game')['history']
+
+
+@pytest.mark.parametrize('ending',['success','cancel','error'])
+def test_safe_fixes_publish_committed_work_after_every_terminal_outcome(game,monkeypatch,ending):
+    net,_=game;original=repair._commit;syncs=[];progress=net.progress
+    original_sync=progress.sync
+    def sync(slug,**kwargs):
+        if kwargs.get('force'):syncs.append(slug)
+        return original_sync(slug,**kwargs)
+    monkeypatch.setattr(progress,'sync',sync)
+    class Stopped(Exception):pass
+    class Log:
+        committed=False
+        def __call__(self,line):pass
+        def check_cancel(self):
+            if self.committed and ending=='cancel':raise Stopped()
+    log=Log()
+    def commit(*args):
+        # Each decision gets its own lookup scope; it does not suppress later checks.
+        assert progress.local.deferring
+        result=original(*args);log.committed=True
+        if ending=='error':raise RuntimeError('failed after commit')
+        return result
+    monkeypatch.setattr(repair,'_commit',commit)
+    if ending=='success':assert repair.apply_safe(net,'game',log)['fixed']
+    else:
+        with pytest.raises(Stopped if ending=='cancel' else RuntimeError):repair.apply_safe(net,'game',log)
+    assert syncs==['game']
+    assert not getattr(progress.local,'deferring',False)
+    assert net._function('head','game')['size']==8
+    assert repair.audit(net,'game')['history']
+
+
+def test_discovery_checks_stop_between_flagged_entries(game):
+    net,_=game
+    class Stopped(Exception):pass
+    class Log:
+        scanning=False
+        def __call__(self,line):pass
+        def progress(self,value):self.scanning=value['phase']=='Checking flagged entries'
+        def check_cancel(self):
+            if self.scanning:raise Stopped()
+    with pytest.raises(Stopped):repair.apply_safe(net,'game',Log())
+    assert not repair.audit(net,'game')['history']
+
+
+@pytest.mark.parametrize('ending',['success','cancel'])
+def test_safe_fixes_check_saved_inputs_per_decision_and_publish_the_final_layout(tmp_path,monkeypatch,ending):
+    from decompnet.app import saves
+    from decompnet.network import Network
+    entries=[]
+    for i in range(5):entries.extend([(f'head_{i}',[JR_RA],'open'),(f'tail_{i}',[NOP],'open')])
+    net,_=layout(tmp_path,monkeypatch,entries)
+    proj=Network._project(net,'game');cfg=dict(net.cfg(proj));cfg['rom']={**cfg['rom'],'sha1':'synthetic'}
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+    net.progress.sync('game',force=True)
+    checks=[];commits=[];original_sync=net.progress._sync_checked;original_commit=repair._commit
+    def sync(*args,**kwargs):
+        checks.append(kwargs.get('force',False))
+        return original_sync(*args,**kwargs)
+    def commit(*args):
+        commits.append(len(checks))
+        return original_commit(*args)
+    monkeypatch.setattr(net.progress,'_sync_checked',sync)
+    monkeypatch.setattr(repair,'_commit',commit)
+    class Stopped(Exception):pass
+    class Log:
+        def __call__(self,line):pass
+        def check_cancel(self):
+            if ending=='cancel' and len(commits)==2:raise Stopped()
+    if ending=='cancel':
+        with pytest.raises(Stopped):repair.apply_safe(net,'game',Log())
+    else:assert len(repair.apply_safe(net,'game',Log())['fixed'])==5
+    # Each fix checks the folder anew, but its internal lookups do not repeat the scan.
+    assert all(b>a for a,b in zip(commits,commits[1:]))
+    assert len(checks)<4*len(commits)+12
+    assert checks.count(True)==1  # The forced sync has nested non-forced project lookups.
+    folder=saves.default_folder(net,'game')
+    saved=json.loads((folder/saves.MANIFEST).read_text())
+    live={r['name']:r['size'] for r in net.store.all('SELECT name,size FROM functions')}
+    assert {r['name']:r['size'] for r in saved['layout']}==live
+
+
+@pytest.mark.parametrize('platform',['n64','psx','ps2','psp'])
+def test_safe_fix_apply_and_undo_use_each_mips_consoles_byte_order(tmp_path,monkeypatch,platform):
+    from decompnet.consoles import get
+    from decompnet.network import Network
+    console=get(platform)
+    net,checked=layout(tmp_path,monkeypatch,[('head',[JR_RA],'open'),('tail',[NOP],'open'),('normal',[JR_RA,NOP],'open')])
+    proj=Network._project(net,'game');cfg=dict(net.cfg(proj));cfg.update(platform=platform,big_endian=console.big_endian)
+    image=b''.join(w.to_bytes(4,'big' if console.big_endian else 'little') for w in (JR_RA,NOP,JR_RA,NOP))
+    (tmp_path/'rom.z64').write_bytes(image)
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?,big_endian=?',(json.dumps(cfg),console.big_endian))
+        for row in db.execute('SELECT id,rom_offset,size FROM functions').fetchall():
+            db.execute('UPDATE functions SET target=? WHERE id=?',(image[row['rom_offset']:row['rom_offset']+row['size']],row['id']))
+    result=repair.apply_safe(net,'game')
+    assert len(result['fixed'])==1 and result['remaining']==0 and len(checked)==1
+    assert net._function('head','game')['target']==image[:8]
+    repair.undo(net,'game',result['fixed'][0]['key'])
+    assert net._function('head','game')['size']==4 and net._function('tail','game')['gone_mark'] is None

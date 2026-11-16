@@ -396,7 +396,7 @@ project builds retain review/adapters rather than guessed ownership.
 
 Implemented: guided mapped MIPS boundary evidence, neighbouring instruction windows, explicit before/after extents and one-shot agent recommendations with cited supporting/counter-evidence and uncertainty. Advice never edits layouts, claims work or compiles, and stale inputs are labelled.
 
-Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Guided evidence/agent investigation and repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md.
+Implemented: mapped MIPS boundary audit/quarantine, original-byte repair previews, retained-record delay-slot/join/end/padding/data/keep decisions and guarded undo. Guided evidence/agent investigation and repair adapters for other processors and imported object projects remain planned; source-free audit/repair evidence and limitations are documented in docs/CODE_COVERAGE_REVIEW.md. Safe-fix discovery now shares layout/image reads, avoids discarded full previews and coalesces saved-folder checks within each decision while retaining the complete safety fingerprint and commit guards.
 
 Implemented: overlay-scoped data-region review with reversible new-claim pauses, explicit investigation
 outcomes, independent-model verification requests, function-scoped prepared compiler evidence with a bounded

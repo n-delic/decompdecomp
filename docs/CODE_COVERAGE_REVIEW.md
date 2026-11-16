@@ -33,6 +33,30 @@ the existing code-audit panel in Settings. Confirmed-code leads remain unresolve
 until code is recovered into the project; dismissals cannot clear incomplete
 existing entries.
 
+## Safe-fix performance
+
+Safe-fix discovery reads one layout and original image per pass. It uses the same
+mapping, overlap, claim and original-byte checks as a full preview, without
+rendering assembly windows or hashing the whole project for discarded candidates.
+Each selected fix still gets a fresh full preview and a transaction-time check of
+its project fingerprint, original image and claims. The fingerprint keeps the
+same fields, including complete affected records, every matched source, symbols
+and headers; unrelated drafts and assembly are no longer inflated only to be discarded.
+
+Saved-folder synchronization is shared by the lookups within one decision, using
+the same deferral as agent tool calls. Each subsequent decision checks the folder
+again. Saves remain durably pending between publications, and a final forced sync
+runs on success, Stop or error. No project lock is held across the whole run.
+
+A controlled synthetic benchmark with 1,060 functions, 30 missing-delay-slot
+repairs and approximately 23 MB of unrelated draft/seed/assembly text took
+17.560 seconds before this change and 1.142 seconds after it. Actual saved-folder
+checks fell from 1,441 to 35, with the same 30 fixes and no remaining findings.
+Match compilation was stubbed in this benchmark: it measures repair overhead,
+not compiler throughput or a speed guarantee for real games. Regression tests
+also cover real saved-folder publication, cancellation, concurrent input changes,
+fingerprint equivalence and apply/undo for both MIPS byte orders.
+
 ## Progress and completion
 
 The overview reports:
