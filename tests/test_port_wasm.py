@@ -581,3 +581,13 @@ def test_a_struct_returning_calls_argument_is_its_value():
     was read with the attributes as its value, and its function couldn't be placed."""
     from decompnet.port.wasm.adapt import parse_arg
     assert parse_arg("ptr dead_on_unwind writable sret(%struct.CQuatern_t) align 4 %24")[1] == "%24"
+
+
+def test_a_global_two_files_define_links_once():
+    """A save can define one global in two files (each function matched with its own copy): the copies are weak, so
+    wasm-ld keeps one instead of refusing the duplicate."""
+    from decompnet.port.wasm.beir import Types, rewrite_global
+    types = Types("")
+    assert rewrite_global(types, "@seq = hidden global i32 0, align 4").startswith("@seq = weak hidden global")
+    assert rewrite_global(types, "@s = internal global i32 0, align 4").startswith("@s = internal global")
+    assert rewrite_global(types, "@e = external global i32, align 4") == "@e = external global i32, align 4"

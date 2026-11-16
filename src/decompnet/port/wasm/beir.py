@@ -267,11 +267,21 @@ def emit(types, img, t, v):
 GLOBAL = re.compile(r"^(@[\w.$\"-]+) = ((?:[a-z_]+ )*?)(global|constant) (.*)$")
 
 
+LINKAGE = {"private", "internal", "available_externally", "linkonce", "weak", "common", "appending",
+           "extern_weak", "linkonce_odr", "weak_odr", "external"}
+
+
 def rewrite_global(types, line):
     m = GLOBAL.match(line)
     if not m or m.group(1).startswith("@llvm.") or "external" in m.group(2).split():
         return line
     name, pre, kind, rest = m.groups()
+    # A save's matched C can define one global in several files (a shooter's `int global_seqnum = -1;` in both
+    # functions that use it, each matched with its own copy); the console's linker took one, wasm-ld refused the
+    # duplicate. Weak: the linker keeps one, as the console's did.
+    if not LINKAGE & set(pre.split()):
+        pre = "weak " + pre
+        line = f"{name} = {pre}{kind} {rest}"
     t, rest = take_type(rest)
     items = split_list(rest)
     init, tail = items[0], items[1:]
