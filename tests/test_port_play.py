@@ -70,7 +70,9 @@ def test_play_reads_the_project_without_waiting_for_a_sync(tmp_path):
 def test_play_leaves_out_the_libultra_the_project_proves_and_keeps_what_runs_as_the_games_c(tmp_path, monkeypatch):
     """A save made on another computer, with no SDK indexed and no exclude.txt, named libultra func_<address>: its
     build compiled the Controller Pak's internals and failed (`OSPifRam` undeclared). The built-in signatures prove
-    them library code, so Play leaves what the host replaces to the host, by the save's own file names."""
+    them library code, so Play leaves what the host replaces to the host, by the save's own file names. Unmatched
+    library code too: a racing game's save carried an open twin of osEPiStartDma, and the port compiled it over the
+    host's, so the game waited for ever on its first DMA."""
     import json
     from pathlib import Path
     from types import SimpleNamespace
@@ -92,12 +94,15 @@ def test_play_leaves_out_the_libultra_the_project_proves_and_keeps_what_runs_as_
     ids = {}
     with net.project_store(pid).tx() as db:
         for name, status in (("func_80030000", "matched"), ("func_80031000", "matched"), ("race_update", "matched"),
-                             ("func_80032000", "open"), ("_Printf", "matched")):
+                             ("func_80032000", "open"), ("_Printf", "matched"), ("osEPiStartDma", "open"),
+                             ("race_draw", "open")):
             ids[name] = db.execute("INSERT INTO functions(project_id,name,size,n_insns,status) VALUES(?,?,?,?,?)",
                                    (pid, name, 64, 16, status)).lastrowid
-    # osRecvMesg the host replaces, guMtxIdent the game's own C runs, and one unmatched (no file in the save)
+    # osRecvMesg the host replaces, guMtxIdent the game's own C runs, osSendMesg unmatched (left out all the same)
     proven = {ids["func_80030000"]: "osRecvMesg", ids["func_80031000"]: "guMtxIdent", ids["func_80032000"]: "osSendMesg"}
     monkeypatch.setattr(net.twins, "prints", lambda p: {
         fid: SimpleNamespace(key=by_name[n][0], size=by_name[n][1], asm="") for fid, n in proven.items()})
     # _Printf: already named as the library's, with no detection to prove it (an N64 game's: IDO's va_arg C)
-    assert play.library(net, "game", log=lambda line: None) == {"func_80030000.c", "_Printf.c"}
+    # osEPiStartDma: already named, unmatched (a twin from another game); race_draw: the game's own, unmatched
+    assert play.library(net, "game", log=lambda line: None) == {"func_80030000.c", "_Printf.c", "func_80032000.c",
+                                                                 "osEPiStartDma.c"}
