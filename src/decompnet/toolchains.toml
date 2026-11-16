@@ -95,10 +95,13 @@ cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift
 flags = ["-O2", "-G8"]
 cplusplus = true
 [["gcc-2.6.3-psx".parts]]
-url = "https://mirrors.slackware.com/slackware/slackware-2.2.0/source/d/gcc/gcc-2.6.3.tar.gz"
+# mirrors.slackware.com stopped resolving (November 2026); the same archive (same sha256) is on funet.
+url = "https://www.nic.funet.fi/index/gnu/funet/historical-funet-gnu-area-from-early-1990s/gcc-2.6.3.tar.gz"
 sha256 = "66529b6ced4ccc580ec365809c1abed856d948283deff656801dec14f47d081a"
 platforms = ["macos-arm64", "macos-x86_64"]
 build = "psx-gcc-2.6.3"
+# 2: CONST_DOUBLE copies as the 32-bit release lays them out (every PS1 float constant): installs built before are rebuilt
+recipe = 2
 patches_url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
 patches_sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
 config_guess_url = "https://raw.githubusercontent.com/gcc-mirror/gcc/74af13c174714dd3b9f1ded4b39955f003c16361/config.guess"
@@ -220,6 +223,8 @@ url = "https://www.nic.funet.fi/index/gnu/funet/historical-funet-gnu-area-from-e
 sha256 = "678b217098c40ea23c14ff36c42c6e1c85a375b1d9fa235525f209c826525695"
 platforms = ["macos-arm64", "macos-x86_64"]
 build = "psx-gcc"
+# 2: CONST_DOUBLE copies as the 32-bit release lays them out (every PS1 float constant): installs built before are rebuilt
+recipe = 2
 patches_url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
 patches_sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
 config_guess_url = "https://raw.githubusercontent.com/gcc-mirror/gcc/74af13c174714dd3b9f1ded4b39955f003c16361/config.guess"
@@ -272,6 +277,8 @@ url = "https://mirrors.kernel.org/gnu/gcc/gcc-2.8.0.tar.gz"
 sha256 = "549e0482caa6c7fbdec723fae3f7748d35290d9f89cc02fe5a60e6a42b237abd"
 platforms = ["macos-arm64", "macos-x86_64"]
 build = "psx-gcc"
+# 2: CONST_DOUBLE copies as the 32-bit release lays them out (every PS1 float constant): installs built before are rebuilt
+recipe = 2
 patches_url = "https://codeload.github.com/decompals/old-gcc/tar.gz/cf70ec58bce58128732062bc9930045c82904cbb"
 patches_sha256 = "94a2522a7ec72024040ca30f75e847240f1bae1aca18bfcc1e87ead882a086fb"
 config_guess_url = "https://raw.githubusercontent.com/gcc-mirror/gcc/74af13c174714dd3b9f1ded4b39955f003c16361/config.guess"

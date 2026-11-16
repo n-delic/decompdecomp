@@ -352,3 +352,131 @@ def test_macos_build_temporary_files_respect_selected_volume(tmp_path):
                           env={**os.environ,'TMPDIR':str(tmp_path)},capture_output=True,text=True,check=True)
     created=Path(result.stdout)
     assert created.parent==tmp_path and not created.exists()
+
+
+# What the 32-bit Linux releases (decompals/old-gcc 0.17, under qemu-i386) print for the PS1 float check, all three
+# versions alike, and what the native builds printed before their CONST_DOUBLE and real.h fixes.
+_PSX_FLOATS_GOOD = ('\tli.d\t$6,2.50000000000000000000e+00\n'
+                    '\t.word\t0x8800759c\t\t# 1.0000000000000000525e+300\n\t.word\t0x7e37e43c\n'
+                    '\t.word\t0x7f61b1e6\t\t# 3.0000000055e+38 (float)\n'
+                    '\t.word\t0x8800759c\t\t# -1.0000000000000000525e+300\n\t.word\t0xfe37e43c\n'
+                    '\t.word\t0xff61b1e6\t\t# -3.0000000055e+38 (float)\n'
+                    '\t.word\t0x00000000\t\t# -nan\n\t.word\t0xfff80000\n')
+
+
+def _psx_check(tmp_path, monkeypatch, listing, warning_exit=0, error_exit=33):
+    def run(argv, **kwargs):
+        src = Path(argv[argv.index('-o') - 1]).name
+        if src == 'psx_floats.c':
+            Path(argv[argv.index('-o') + 1]).write_text(listing)
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+        if src == 'psx_warning.c':
+            return SimpleNamespace(returncode=warning_exit, stdout='', stderr='warning: initialization makes pointer')
+        return SimpleNamespace(returncode=error_exit, stdout='', stderr="`undeclared' undeclared")
+    monkeypatch.setattr(toolchains.subprocess, 'run', run)
+    toolchains._check_psx_gcc(tmp_path / 'cc1', tmp_path, '2.6.3')
+
+
+def test_native_ps1_gcc_check_accepts_the_32_bit_release_output(tmp_path, monkeypatch):
+    _psx_check(tmp_path, monkeypatch, _PSX_FLOATS_GOOD)
+
+
+@pytest.mark.parametrize('listing', [
+    # 2.8.0 before the fix: each double's high word from CONST_DOUBLE_LOW's never-written half, floats 0.
+    _PSX_FLOATS_GOOD.replace('0x7e37e43c', '0x00000000').replace('0xfe37e43c', '0x00000000')
+                    .replace('0x7f61b1e6', '0x00000000').replace('0xff61b1e6', '0x00000000'),
+    # 2.6.x with only the CONST_DOUBLE copies fixed: real.h read each word through `long *`.
+    _PSX_FLOATS_GOOD.replace('0x8800759c\t\t# 1.0', '0x7e37e43c8800759c\t\t# 1.0')
+                    .replace('\t.word\t0x7e37e43c\n', '\t.word\t0x7e37e43c8800759c\n'),
+    # A word sign-extended into a 64-bit long prints sixteen digits.
+    _PSX_FLOATS_GOOD.replace('0xff61b1e6', '0xffffffffff61b1e6'),
+    # 0.0 / 0.0 folded with arm64's default NaN (sign clear), not x86's.
+    _PSX_FLOATS_GOOD.replace('0xfff80000', '0x7ff80000'),
+    # A constant `li.d` should load went to the pool.
+    _PSX_FLOATS_GOOD.replace('\tli.d\t$6,2.50000000000000000000e+00\n', '\t.word\t0x00000000\n\t.word\t0x40040000\n'),
+])
+def test_native_ps1_gcc_check_refuses_the_broken_builds_seen(tmp_path, monkeypatch, listing):
+    with pytest.raises(toolchains.ToolchainError, match='folds float constants wrongly'):
+        _psx_check(tmp_path, monkeypatch, listing)
+
+
+@pytest.mark.parametrize('warning_exit, error_exit', [(-10, 33), (0, -11)])  # bus error on a warning, segfault
+def test_native_ps1_gcc_check_refuses_builds_that_crash_on_diagnostics(tmp_path, monkeypatch, warning_exit, error_exit):
+    with pytest.raises(toolchains.ToolchainError, match="doesn't report diagnostics"):
+        _psx_check(tmp_path, monkeypatch, _PSX_FLOATS_GOOD, warning_exit, error_exit)
+
+
+def _psx_source(root, version):
+    """The texts the PS1 GCC edits replace, as the pinned sources have them."""
+    files = {}
+    for name, edits in toolchains._psx_const_double_edits(version).items():
+        files.setdefault(name, []).extend(old for old, _ in edits)
+    for name, lines in toolchains._psx_declarations(version).items():
+        files.setdefault(name, []).extend(lines)
+    for name, texts in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text('\n'.join(texts) + '\n', encoding='latin-1')
+
+
+@pytest.mark.parametrize('version', ['2.6.0', '2.6.3', '2.8.0'])
+def test_native_ps1_gcc_edits_copy_const_doubles_word_by_word(tmp_path, version):
+    _psx_source(tmp_path, version)
+    toolchains._edit_exactly(tmp_path, toolchains._psx_declarations(version),
+                             toolchains._psx_const_double_edits(version), 'test')
+    assert 'static void decomp_cd_get' in (tmp_path / 'rtl.h').read_text()
+    assert 'extern void   error ();' not in (tmp_path / 'config/mips/mips.c').read_text()
+    if version.startswith('2.6.'):
+        assert 'DECOMP_X86_NAN (value, d1, d2);' in (tmp_path / 'fold-const.c').read_text()
+        assert 'DECOMP_X86_NAN (value, f0, f1);' in (tmp_path / 'cse.c').read_text()
+        assert 'error_with_decl (thunk,' in (tmp_path / 'cp/method.c').read_text()
+    else:
+        assert '- INTVAL (const_arg1) >= 0' not in (tmp_path / 'cse.c').read_text()
+    assert 'CONST_DOUBLE_LOW' not in (tmp_path / 'varasm.c').read_text()
+    real = (tmp_path / 'real.h').read_text()
+    assert 'CONST_DOUBLE_LOW' not in real
+    assert ('(long *)' in real) is False and (('(unsigned int *)' in real) == version.startswith('2.6.'))
+
+
+def test_native_ps1_gcc_build_fails_closed_when_the_source_moves(tmp_path):
+    _psx_source(tmp_path, '2.6.0')
+    (tmp_path / 'varasm.c').write_text('/* moved */\n')
+    with pytest.raises(toolchains.ToolchainError, match='no longer matches'):
+        toolchains._edit_exactly(tmp_path, toolchains._psx_declarations('2.6.0'),
+                                 toolchains._psx_const_double_edits('2.6.0'), 'GCC 2.6.0')
+
+
+@pytest.mark.parametrize('tid', ['gcc-2.6.0-psx', 'gcc-2.6.3-psx', 'gcc-2.8.0-psx'])
+def test_native_ps1_gcc_installs_built_before_the_float_fix_are_rebuilt(tid):
+    """The recipe number is in the parts' fingerprint, so earlier Mac builds (both architectures) are out of date."""
+    for plat in ('macos-arm64', 'macos-x86_64'):
+        part, = toolchains.get(tid).parts_for(plat)
+        assert part['recipe'] == 2
+        assert 'mirrors.slackware.com' not in part['url']
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='native macOS PS1 compilers')
+@pytest.mark.parametrize('tid', ['gcc-2.6.0-psx', 'gcc-2.6.3-psx', 'gcc-2.8.0-psx'])
+def test_installed_native_ps1_gcc_passes_the_float_check(tid, tmp_path):
+    if toolchains.installed(tid) is None or toolchains.changed(tid, toolchains.installed(tid)):
+        pytest.skip('needs the current native PS1 compiler')
+    toolchains._check_psx_gcc(toolchains.path(tid) / 'cc1', tmp_path, tid)
+
+
+def _x87_fix(tmp_path):
+    """Compile the header's x87 conversions with the host compiler and print a few out-of-range conversions."""
+    if not shutil.which('cc'):
+        pytest.skip('needs a C compiler')
+    src = tmp_path / 'fix.c'
+    src.write_text(toolchains._PSX_26_X87_FIX + '#include <stdio.h>\nint main(void) {\n'
+                   '  double v[] = {-1.0, 3e9, -3e9, 5e9, 1e20, 0.0 / 0.0, 2147483647.9, -2147483648.9};\n'
+                   '  for (int i = 0; i < 8; i++) printf("%d %u\\n", REAL_VALUE_FIX (v[i]), REAL_VALUE_UNSIGNED_FIX (v[i]));\n'
+                   '  return 0;\n}\n')
+    subprocess.run(['cc', '-O0', '-w', str(src), '-o', str(tmp_path / 'fix')], check=True)
+    return subprocess.run([str(tmp_path / 'fix')], capture_output=True, text=True, check=True).stdout.split('\n')[:-1]
+
+
+def test_ps1_gcc_26_converts_folded_floats_as_the_32_bit_release_does(tmp_path):
+    """x87: out-of-range or NaN to int is 0x80000000; to unsigned, the low word of a 64-bit conversion."""
+    assert _x87_fix(tmp_path) == ['-1 4294967295', '-2147483648 3000000000', '-2147483648 1294967296',
+                                  '-2147483648 705032704', '-2147483648 0', '-2147483648 0',
+                                  '2147483647 2147483647', '-2147483648 2147483648']
