@@ -1073,13 +1073,13 @@ details.more[open] > summary::before { content: "− "; }
 /* the app has quit (pages.js, showStopped): nothing on the page answers any more */
 .stopped { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: var(--bg); color: var(--ink); text-align: center; }
 
-/* Settings must shrink to their grid column even when compiler flags or result lines are long. */
-.ptab[data-pane="settings"] .pad { min-width: 0; }
-.ptab[data-pane="settings"] .pad > * { min-width: 0; max-width: 100%; }
-.ptab[data-pane="settings"] .answer,
-.ptab[data-pane="settings"] .flags,
-.ptab[data-pane="settings"] dd,
-.ptab[data-pane="settings"] .check span { overflow-wrap: anywhere; }
+/* Settings and local searches must shrink even when compiler flags or result lines are long. */
+.ptab:is([data-pane="settings"], [data-pane="matching"]) .pad { min-width: 0; }
+.ptab:is([data-pane="settings"], [data-pane="matching"]) .pad > * { min-width: 0; max-width: 100%; }
+.ptab:is([data-pane="settings"], [data-pane="matching"]) .answer,
+.ptab:is([data-pane="settings"], [data-pane="matching"]) .flags,
+.ptab:is([data-pane="settings"], [data-pane="matching"]) dd,
+.ptab:is([data-pane="settings"], [data-pane="matching"]) .check span { overflow-wrap: anywhere; }
 #installedCompilerTest { border-top: 1px solid var(--line-soft); }
 .compiler-test-body { display: grid; gap: 14px; padding: 12px 0; }
 .compiler-queue-count { display: grid; gap: 8px; font-size: 13px; font-weight: 600; }
