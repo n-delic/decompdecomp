@@ -9,7 +9,6 @@ from decompnet.app import rom_explorer
 from decompnet.app.engine import RomNetwork
 from decompnet.app.tools import tool_names
 from decompnet.consoles.n64.port import audio_library, microcode
-from decompnet.network import NetworkError
 from decompnet.port.readiness import describe, readiness
 
 UCODE = (b"RSP Gfx ucode F3DEX       fifo 2.05  Yoshitaka Yasumoto 1998 Nintendo.\0"
@@ -118,13 +117,6 @@ def test_a_console_without_a_kit_still_gets_the_counts(project, monkeypatch):
     assert report["blockers"][0].startswith("Nintendo 64 has no port kit yet")
 
 
-def test_projects_that_are_not_rom_projects_are_told_why(project):
-    net, root = project
-    with net.store.tx() as db:
-        db.execute("UPDATE projects SET config=? WHERE slug='game'", (json.dumps({"kind": "fork", "platform": "gc"}),))
-    with net.progress.view(), pytest.raises(NetworkError, match="split from a ROM"):
-        readiness(net, "game")
-
 
 def test_microcode_and_audio_readers():
     assert microcode(b"no signatures here") == []
@@ -138,9 +130,9 @@ def test_microcode_and_audio_readers():
     assert audio_library(["main"])["library"] == ""
 
 
-def test_agents_get_the_tool_on_rom_projects_only():
+def test_agents_get_the_report_on_rom_and_project_mode_games():
     assert "port_readiness" in tool_names(fork=False)
-    assert "port_readiness" not in tool_names(fork=True)
+    assert "port_readiness" in tool_names(fork=True)
 
 
 def test_the_kit_says_where_each_libultra_function_comes_from():
@@ -211,3 +203,15 @@ def test_calls_that_disagree_with_their_callee_come_from_the_last_build(project)
     assert "2 calls in 1 functions disagree with the function they call" in text
     assert "takes a result from a function its C declares void" in text
     assert "update → helper" in describe(report) and "update → helper (2 of 1)" in describe(report)
+
+
+@pytest.mark.parametrize("console", [c for c in consoles.CONSOLES if c.mode == consoles.ROM], ids=lambda c: c.id)
+def test_every_rom_console_gets_the_shared_report(project, console):
+    net, _ = project
+    with net.store.tx() as db:
+        cfg = json.loads(db.execute("SELECT config FROM projects WHERE slug='game'").fetchone()[0])
+        cfg['platform'] = console.id
+        db.execute("UPDATE projects SET config=? WHERE slug='game'", (json.dumps(cfg),))
+    report = readiness(net, 'game')
+    assert report['mode'] == 'rom' and report['console'] == console.name
+    assert report['code']['total'] == 10

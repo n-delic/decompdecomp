@@ -803,7 +803,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Code the game loads, found by running it (import and Reimport, consoles/n64/loaded_code.py) | ✓ when mupenRE is installed | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
 | Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS) | — no recompiler pinned | — no recompiler pinned | — | — | — no recompiler pinned | — | — no recompiler pinned | — no recompiler pinned | — | — no recompiler pinned | — no ROM to recompile |
 | Behaviour checked against the original (`compare_behaviour`, docs/N64RECOMP.md phase 1) | ✓ (recorded in mupenRE, run through N64Recomp's C and the WebAssembly port's) | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no ROM to run |
-| Port readiness report (docs/PORTING.md, phase 0) | ✓ with the libultraship kit | — no kit yet | — no kit yet | — | — | — no kit yet | — | — project mode not read yet | — project mode not read yet | — | — project mode not read yet | — |
+| Port readiness report (docs/PORTING.md, phase 0) | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — | — | — no `bss_start` reader | — | — project mode: data is in the project's sources | — project mode | — | — project mode | — |
 | The game's C compiled for a PC (Porting → Compile for PC, docs/PORTING.md phase 3) | ✓ (pinned Zig's clang, 64-bit x86 Linux target; nothing linked yet) | — no port kit yet | — no port kit yet | — | — | — no port kit yet | — | — project mode not read yet | — project mode not read yet | — | — project mode not read yet | — |
 | The ROM's data as the kit's extractor config (Porting → Write asset map, docs/PORTING.md phase 2) | ✓ (Torch YAML, one BLOB per resource; typed textures and display lists not yet) | — no port kit yet | — no port kit yet | — | — | — no port kit yet | — | — project mode not read yet | — project mode not read yet | — | — project mode not read yet | — |
@@ -1478,13 +1478,16 @@ claims and a launch option, the export building data from its C, typed drafts, o
 ### Port readiness report
 
 Phase 0 of docs/PORTING.md: Overview's **Port readiness**, the `port_readiness` tool and `GET /api/port-readiness`
-say what stands between a ROM project and a native port, without changing it or running a compiler. A console's
+say what stands between any project and a native port, without changing it or running a compiler. A console's
 `port_kit` (consoles/: the N64's is libultraship and Torch, consoles/n64/port.py) says which proven library code it
 replaces and which graphics microcode it renders. On a finished 2,121-function N64 game: 94 library functions the
 kit replaces, 55 compiled as they are, 22 of the game's own still assembly, 1,551 data symbols reached by address,
 38 addresses written as numbers, F3DEX rendered and S2DEX to check, in under a second. Left: running it on the PS1, PS2
-and PSP demos (no kit: the counts that don't need one) and a PS1 kit (PsyCross); project mode; pointers in 32-bit
-integers.
+and PSP demos (no kit: the counts that don't need one) and a PS1 kit (PsyCross); pointers in 32-bit integers.
+Project-mode reports read current C/C++ unit files and source includes, with separately labelled inferred source
+paths, assembly and matched functions without readable C. Every registered console and an unknown platform are
+covered by synthetic project reports. The checklist leaves data/image coverage unchecked and lists build/runtime
+adapter gaps instead of offering ROM-only buttons or treating 100% objdiff as port readiness.
 
 ### Agent asset discovery
 
@@ -2512,7 +2515,10 @@ byte-identical, ROM Explorer's asset map written as a Torch config (offsets and 
 and a port-fix task for agents judged twice: the console build still matches and the port still compiles. N64
 first (`Console.port_kit`), PS1 next on PsyCross; the rest "—" until a kit exists. First check: libultraship's
 S2DEX coverage, then a hand port of one N64 game's boot, title screen and one track. Phase 0 is built (Recently
-done: Port readiness report).
+done: Port readiness report). Project-mode readiness is available for public and scratch projects on every
+console. The project-build port adapters remain planned: preserve each project's headers, defines and translation
+units when compiling/linking for a PC, map its own asset rules, then build Play/Export against the console's runtime.
+The report exposes these gaps and never marks unavailable steps complete.
 
 ### The Miyoo Mini export at full speed
 

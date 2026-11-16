@@ -52,20 +52,24 @@ function renderPortReadiness(report) {
     portRow("Functions", `${code.total.toLocaleString()}, ${code.c.toLocaleString()} in C`),
     portRow("Library code", `${code.replaced} the kit replaces, ${code.native} compiled as it is, `
       + `${code.glue || 0} the port's glue supplies, ${code.library_other} other`),
-    portRow("The game's own without C", `${code.game_asm} in assembly, ${code.open} not matched`),
-    portRow("Data reached by address", `${report.data.symbols.toLocaleString()} symbols`
+    portRow("The game's own without C", `${code.game_asm} in assembly, ${code.open} not matched`
+      + (code.unread ? `, ${code.unread} matched without readable C` : "")),
+    portRow("Data reached by address", report.data.checked === false ? report.limitations.data : `${report.data.symbols.toLocaleString()} symbols`
       + (report.data.units ? ` (${report.data.units.toLocaleString()} data units already in C)` : "")),
     portRow("Addresses written as numbers", `${report.addresses.literals} in ${report.addresses.functions} functions`),
-    portRow("ROM outside code", `${report.rom_data.bytes.toLocaleString()} bytes`
+    portRow("ROM outside code", report.rom_data.available === false ? "not measured for this source project" : `${report.rom_data.bytes.toLocaleString()} bytes`
       + (report.rom_data.scanned ? `, ${report.rom_data.unshaped.toLocaleString()} of them not yet recognised by ROM Explorer`
         : ", not yet scanned by ROM Explorer")));
+  if (report.source) facts.append(portRow("Project source", `${report.source.files} unit files read`
+    + (report.source.inferred ? `, ${report.source.inferred} paths inferred from unit names` : "")
+    + "; function bodies inspected without recompiling"));
   if (report.graphics.length) facts.append(portRow("Graphics microcode", report.graphics.map((g) =>
     `${g.name}${g.variant ? "." + g.variant : ""} ${g.version} (${g.support})`).join(", ")));
   if (report.audio.library) facts.append(portRow("Audio", report.audio.need));
   const pc = report.pc;
-  facts.append(portRow("Compiled for a PC", !pc ? "not yet: Compile for PC lists what a port build refuses"
+  facts.append(portRow("Compiled for a PC", report.limitations?.compiles || (!pc ? "not yet: Compile for PC lists what a port build refuses"
     : `${(pc.ok + pc.warned).toLocaleString()} of ${pc.total.toLocaleString()} functions compile, ${pc.failed} don't`
-      + `, ${pc.warned} cast pointers to 32-bit integers (${new Date(pc.checked_at * 1000).toLocaleString()})`));
+      + `, ${pc.warned} cast pointers to 32-bit integers (${new Date(pc.checked_at * 1000).toLocaleString()})`)));
   for (const k of pc ? pc.kinds : []) facts.append(portRow(`  ${k.kind}`, `${k.functions}: ${k.about}. `
     + k.examples.join(", ") + (k.functions > k.examples.length ? ", ..." : "")));
   const link = report.link;
@@ -179,6 +183,23 @@ function portSteps(report) {
       buttons: ["portPlay", "portStop", "portExportMenu", ...(report.recomp_available ? ["portRecompile"] : [])],
       logs: ["portPlayLog", "portExportLog", "portExportActions", "portExportNext", "portRecompLog"] },
   ];
+  if (report.mode === "project") {
+    const limits = report.limitations;
+    if (limits.library) steps[1].detail += ` ${limits.library}`;
+    steps[0].detail += code.unread ? `; ${code.unread} matched without readable C/C++` : "";
+    for (const [index, key] of [[2, "data"], [4, "compiles"], [5, "links"], [8, "assets"], [9, "play"]]) {
+      steps[index].pct = null;
+      steps[index].detail = limits[key];
+      steps[index].buttons = [];
+      steps[index].logs = [];
+      steps[index].unavailable = true;
+    }
+    if (!code.total) steps[0].detail = "Finish setup and choose Check again to measure the project's functions.";
+    steps[3].detail = `${report.addresses.literals} in ${report.addresses.functions} inspected functions. ${limits.addresses}`;
+    if (code.unread || !code.total || report.addresses.checked === false) steps[3].pct = null;
+    steps[9].runtimes = report.runtimes || [];
+    steps[6].detail = "Call checks need a project port build.";
+  }
   return steps;
 }
 
@@ -195,7 +216,8 @@ function renderPortSteps(report) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
-  const overall = shown.length ? Math.round(shown.reduce((a, s) => a + s.pct, 0) / shown.length) : 0;
+  const totalSteps = report.mode === "project" ? steps.length : shown.length;
+  const overall = totalSteps ? Math.round(shown.reduce((a, s) => a + s.pct, 0) / totalSteps) : 0;
   $("portOverall").textContent = overall + "%";
   $("portOverallBar").style.width = overall + "%";
   list.replaceChildren(...steps.map((step, i) => {
@@ -208,7 +230,7 @@ function renderPortSteps(report) {
     const head = document.createElement("div"); head.className = "port-step-head";
     const title = document.createElement("b"); title.textContent = step.title;
     const share = document.createElement("span"); share.className = "port-pct";
-    share.textContent = step.pct == null ? (step.play ? "" : "to do") : step.pct + "%";
+    share.textContent = step.unavailable ? "not checked" : step.pct == null ? (step.play ? "" : "to do") : step.pct + "%";
     head.append(title, share);
     const detail = document.createElement("p"); detail.className = "small muted"; detail.textContent = step.detail;
     body.append(head);
