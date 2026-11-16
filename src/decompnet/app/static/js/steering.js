@@ -2450,6 +2450,9 @@ $("deepSweepStart").onclick = async () => {
   deepSweepProjectVersion++; clearTimeout(deepSweepRetryTimer);
   delete $("deepSweepPanel").dataset.statusLoading;
   setDeepRunVisibility(true);
+  $("deepSweepQueueTitle").textContent = "Starting search…";
+  $("deepSweepLoadingBar").hidden = false;
+  $("deepSweepLoadingBar").ariaLabel = "Starting search";
   const done = beginWork(log, "Starting deep pass", [$("deepSweepStart")], "Deep pass started");
   let job = null;
   const runAgain = deepSweepSnapshot?.has_activity && !deepSweepSnapshot.queue_left && !!deepSweepSnapshot.queue_done;
@@ -2461,6 +2464,7 @@ $("deepSweepStart").onclick = async () => {
     showJobError(log, error.message);
     if (S.slug === slug) {
       setDeepRunVisibility(false);
+      $("deepSweepLoadingBar").hidden = true;
       $("deepSweepQueueTitle").textContent = "Search could not start";
       $("deepSweepQueueReason").textContent = error.message;
       $("deepSweepQueueReason").hidden = false;
