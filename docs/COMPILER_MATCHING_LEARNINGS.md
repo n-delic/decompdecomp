@@ -709,6 +709,29 @@ files from the KMC comparison above, plus 4,317 preprocessed papermario files):
 Macs still run the released build and keep the bug (pinned as released, fingerprint unchanged). Linux
 uses the 32-bit releases, which are right.
 
+### Native KMC GCC 2.7.2 and GCC 2.8.1 against their 32-bit Linux releases (16 November 2026)
+
+**Controlled reference comparison**, not a new match. The comparisons above checked the native arm64
+builds against the Intel Mac builds, which are 64-bit too, so a host-width bug they share (like the
+pooled doubles) stays invisible. This one checks them against the true reference: the statically
+linked 32-bit Linux releases (`gcc-2.7.2-linux.tar.gz` for KMC, pmret's `linux.tar.gz` for PM), run
+under `qemu-i386` user mode in a throwaway arm64 Linux VM. Rosetta can't run 32-bit programs.
+The native builds are the `recipe = 2` ones (with `_CONST_DOUBLE_EDITS`). Compared: `cc1`'s assembly
+byte for byte, and its exit status. Same files as above, 20001226-1 excluded (very slow).
+- KMC at `-G0 -mips3 -O2 -mgas -meb`: 1,547 identical, 52 rejected by both, 0 different.
+- KMC at `-G0 -mips3 -mgp32 -mfp32 -O3 -funroll-loops -fomit-frame-pointer`: 1,547 identical, 52
+  rejected by both, 0 different.
+- PM at `-G0 -mips3 -mgp32 -mfp32 -O2` on the same 1,599 files: 1,553 identical, 46 rejected by
+  both, 0 different.
+- PM at `-G0 -mips3 -O2` on 4,317 papermario files: 1,531 identical, 2,786 rejected by both (missing
+  generated headers), 0 different.
+- Both references print 1e300 as `0x7e37e43c 0x8800759c`, as the fixed native builds do.
+
+The c-torture set includes the 8 variable-length-array files that crash the Intel KMC build but
+compile natively. Their native output equals the 32-bit release's. With SN64's 384/384 (above),
+every native N64 GCC `cc1` now matches its 32-bit release on these corpora. Not covered: PM's `as`
+and EGCS, still Intel builds under Rosetta, and `cc1plus` (C++ error paths can still crash natively).
+
 ## CodeWarrior, MSVC, ARM compilers and other installed profiles
 
 No new per-compiler match evidence was collected in this investigation. Existing console guides remain
