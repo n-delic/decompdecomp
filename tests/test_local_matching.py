@@ -194,3 +194,13 @@ def test_routes_guard_writes_and_do_not_synchronize_saved_projects(tmp_path,monk
                    'headers':[(b'x-deny',b'1')]})
     assert asyncio.run(handlers['/api/permuter/pass'](write)).status_code==403
     assert seen==[False,True]
+
+
+def test_job_discovery_does_not_wait_for_function_statistics(tmp_path,monkeypatch):
+    net=setup(tmp_path);matching=Matching(net,Jobs())
+    def forbidden(*args):
+        pytest.fail('Control discovery must not scan functions or saved results.')
+    monkeypatch.setattr(net.store,'all',forbidden)
+    result=matching.control('game')
+    assert result['deep']['statistics_pending'] is True
+    assert result['deep']['job'] is None

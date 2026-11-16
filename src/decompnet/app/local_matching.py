@@ -85,12 +85,17 @@ class Matching:
                                   "AND f.status='open' AND f.best_source IS NOT NULL AND f.best_source!='' "
                                   'AND f.best_score IS NOT NULL ORDER BY f.id',project['id'])
 
-    def _signature(self, project, fn, config):
-        ctx = self.net._context(project['id'],fn['unit'])
+    def _signature(self, project, fn, config, shared=None):
         cfg = self.net.cfg(project)
         profile = compiler_for(cfg,fn['vram']) if cfg.get('compiler') else {}
-        inputs = (json.dumps(profile,sort_keys=True),cfg.get('gp'),cfg.get('big_endian'),cfg.get('platform'),
-                  ctx['header'] if ctx else None,ctx['version'] if ctx else None,
+        key = (fn['unit'],json.dumps(profile,sort_keys=True))
+        shared = {} if shared is None else shared
+        if key not in shared:
+            ctx = self.net._context(project['id'],fn['unit'])
+            common = (key[1],cfg.get('gp'),cfg.get('big_endian'),cfg.get('platform'),
+                      ctx['header'] if ctx else None,ctx['version'] if ctx else None)
+            shared[key] = hashlib.sha256(repr(common).encode()).hexdigest()
+        inputs = (shared[key],
                   tuple(fn[k] for k in ('id','best_source','target','relocs','unit','vram')),
                   config['minutes'],config['max_variants'])
         return hashlib.sha256(repr(inputs).encode()).hexdigest()
@@ -281,39 +286,44 @@ class Matching:
                            '(SELECT id FROM functions WHERE project_id=?)',(project['id'],))
         return self.status(slug)
 
-    def status(self, slug):
-        """Controls and saved metadata only; never invoke project import, build, or source synchronization."""
-        project = self.project(slug)
+    def control(self, slug):
+        """Find running jobs before reading function statistics; Stop must not wait for a large game's totals."""
         config = self.config(slug)
         with self.lock:
-            job = self._current_job(slug,'deep')
-            last = self.jobs.jobs.get(self.active.get((slug,'deep')),{})
-            progress = dict(self.progress.get(slug,{}))
-            progress['workers'] = list(progress.get('workers',{}).values())
-            if not job:
-                progress['workers'] = []
-            improvements = [dict(row) for row in self.net.store.all(
-                '''SELECT f.name AS function,r.starting_score,r.new_score FROM local_search_improvements r
-                   JOIN functions f ON f.id=r.function_id WHERE f.project_id=? ORDER BY r.updated_at DESC''',project['id'])]
-            turns = self.net.store.all('''SELECT f.name AS function,t.state,t.error FROM local_search_turns t
-                    JOIN functions f ON f.id=t.function_id WHERE f.project_id=?''',project['id'])
-            eligible = self._rows(project)
-            fork = bool(self.net.cfg(project).get('kind') == 'fork')
-            left = sum(fork or not (turn := self.net.store.one('SELECT * FROM local_search_turns WHERE function_id=?',fn['id']))
-                       or turn['state'] not in ('done','error') or turn['signature'] != self._signature(project,fn,config)
-                       for fn in eligible)
-            deep = config | {'job':job['id'] if job else None,'state':'running' if job else 'idle',
-                'error':last.get('error') if last.get('state')=='error' else None,
-                'progress':progress,'improvements':improvements,'improved':len(improvements),
-                'queue_done':sum(row['state']=='done' for row in turns),
-                'queue_left':left, 'has_activity':bool(turns or improvements),
-                'threads_default':deep_permuter.max_searches(),
-                'attention':[{'function':row['function'],'error':row['error']} for row in turns if row['state']=='error']}
+            deep_job = self._current_job(slug,'deep')
             cross_job = self._current_job(slug,'cross')
-            cross_last = self.jobs.jobs.get(self.active.get((slug,'cross')),{})
+            last = self.jobs.jobs.get(self.active.get((slug,'deep')), {})
+            cross_last = self.jobs.jobs.get(self.active.get((slug,'cross')), {})
+            progress = dict(self.progress.get(slug,{}))
+            progress['workers'] = list(progress.get('workers',{}).values()) if deep_job else []
+            return {'deep':config | {'job':deep_job['id'] if deep_job else None,
+                'state':'running' if deep_job else 'idle','progress':progress,'statistics_pending':True,
+                'threads_default':deep_permuter.max_searches(),
+                'error':last.get('error') if last.get('state')=='error' else None},
+                'cross':{'job':cross_job['id'] if cross_job else None,
+                         'error':cross_last.get('error') if cross_last.get('state')=='error' else None}}
+
+    def status(self, slug):
+        """Saved metadata only; never invoke project import, build, or source synchronization."""
+        project = self.project(slug)
+        out = self.control(slug)
+        config = self.config(slug)
+        improvements = [dict(row) for row in self.net.store.all(
+            'SELECT f.name AS function,r.starting_score,r.new_score FROM local_search_improvements r\n               JOIN functions f ON f.id=r.function_id WHERE f.project_id=? ORDER BY r.updated_at DESC',project['id'])]
+        turns = self.net.store.all('SELECT f.name AS function,t.state,t.error FROM local_search_turns t '
+                                  'JOIN functions f ON f.id=t.function_id WHERE f.project_id=?',project['id'])
+        eligible = self._rows(project)
+        fork = self.net.cfg(project).get('kind')=='fork'
+        shared = {}
+        left = sum(fork or not (turn := self.net.store.one('SELECT * FROM local_search_turns WHERE function_id=?',fn['id']))
+                   or turn['state'] not in ('done','error') or turn['signature']!=self._signature(project,fn,config,shared)
+                   for fn in eligible)
+        out['deep'].update(statistics_pending=False,improvements=improvements,improved=len(improvements),
+                           queue_done=sum(row['state']=='done' for row in turns),queue_left=left,
+                           has_activity=bool(turns or improvements),
+                           attention=[{'function':row['function'],'error':row['error']} for row in turns if row['state']=='error'])
         rows = self.net.store.all('SELECT outcome,COUNT(*) AS n FROM local_cross_results WHERE project_id=? GROUP BY outcome',project['id'])
         results = [dict(row) for row in self.net.store.all('SELECT * FROM local_cross_results WHERE project_id=? ORDER BY id DESC',project['id'])]
-        return {'deep':deep,'cross':{'job':cross_job['id'] if cross_job else None,
-                'error':cross_last.get('error') if cross_last.get('state')=='error' else None,
-                'counts':{row['outcome']:row['n'] for row in rows},'recent':results,
-                'matches':[row for row in results if row['outcome']=='match']}}
+        out['cross'].update(counts={row['outcome']:row['n'] for row in rows},recent=results,
+                            matches=[row for row in results if row['outcome']=='match'])
+        return out
