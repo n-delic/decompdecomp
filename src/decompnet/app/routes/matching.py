@@ -27,14 +27,14 @@ def register(app: App) -> None:
         action = data.get('action','start')
         if action=='start':
             result = matching.start(slug,'deep',data)
-            return matching.status(slug)['deep'] | result
+            return matching.control(slug)['deep'] | result
         if action=='stop':
             return matching.stop(slug,'deep')
         if action=='reset-metrics':
             return matching.reset(slug)['deep']
         raise NetworkError('Choose Start search, Stop or Reset metrics.')
 
-    route('/api/local-matching',['GET'],lambda slug,r,data:matching.status(slug))
+    route('/api/local-matching',['GET'],lambda slug,r,data:matching.control(slug) if r.query_params.get('view')=='control' else matching.status(slug))
     route('/api/permuter/pass',['GET','POST'],deep)
     route('/api/cross-game/run',['POST'],lambda slug,r,data:matching.start(slug,'cross'))
     route('/api/cross-game',['GET'],lambda slug,r,data:{'results':matching.status(slug)['cross']})
