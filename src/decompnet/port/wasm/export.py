@@ -10,6 +10,7 @@
   and log in its Application Support folder; SDL3 travels in the app (Contents/Frameworks, toolchains.toml `sdl3`).
 - "web": the browser build (web.py): a folder with index.html and what it loads, to put on any web server (it
   needs http, not a file: page); the player chooses their ROM in the page.
+- "ios": the browser build bundled in an offline iPhone/iPad Xcode project (ios.py), signed by the player.
 - "miyoo": the native build for the Miyoo Mini family (miyoo.py): the folders to copy to its SD card (App/ for the
   stock OS and Onion, Tools/ for MinUI), with the project's ROM beside the program.
 
@@ -30,7 +31,7 @@ from pathlib import Path
 
 from ...network import NetworkError
 
-KINDS = {"app": "a standalone app", "window": "a standalone app with its own window", "web": "a browser build", "miyoo": "a Miyoo Mini SD card folder"}
+KINDS = {"app": "a standalone app", "window": "a standalone app with its own window", "web": "a browser build", "miyoo": "a Miyoo Mini SD card folder", "ios": "an iPhone/iPad Xcode project"}
 PACKING = "Packing the export"
 
 
@@ -266,7 +267,7 @@ def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: di
     title, region and SHA-1, for the Miyoo Mini's README; `rom_file`: the ROM the Miyoo Mini's pack carries, or
     None (the player adds theirs)."""
     from ... import toolchains
-    from . import build, miyoo, web
+    from . import build, ios, miyoo, web
 
     if kind == "window" and sys.platform != "darwin":
         raise NetworkError("An app with its own window is made on a Mac for now; on Linux and Windows, export the "
@@ -291,6 +292,9 @@ def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: di
     steps = (*web.STEPS, PACKING)
     folder = web.build(repo, console=console, log=log, steps=steps, simd=simd, **_game_c_only(inputs))
     build.Progress(log, steps).start(PACKING)
+    if kind == "ios":
+        log("packing the offline iPhone/iPad Xcode project")
+        return dest, ios.package(folder, dest, title)
     log("copying the browser build")
     folder = web.export(folder, dest)
     _write(folder / "README.txt", README_WEB.format(title=title) + (README_WEB_SIMD if simd else ""))
@@ -298,11 +302,11 @@ def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: di
 
 
 def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
-    """Build the project's game (only what changed) and export it as `kind` ("app", "web" or "miyoo"): {"kind",
+    """Build the project's game (only what changed) and export it as `kind` ("app", "window", "web", "ios" or "miyoo"): {"kind",
     "folder", "path" (what to open), "files"}. `simd`: a browser build also carries the faster build for browsers
     with WebAssembly SIMD (web.SIMD), which the page plays where it can. The project's repository also gets the
     workflow that makes the same export on GitHub for each release (workflows.py)."""
-    from . import build, miyoo, play, workflows
+    from . import build, ios, miyoo, play, workflows
 
     if kind not in KINDS:
         raise NetworkError(f"export as one of: {', '.join(KINDS)}")
@@ -322,6 +326,8 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
            else "; the ROM isn't in it: the player chooses their own"))
     if kind == "miyoo":
         steps_for_player = miyoo.instructions(folder, title)
+    elif kind == "ios":
+        steps_for_player = ios.instructions(folder)
     elif kind == "web":
         steps_for_player = [f"Serve {folder} over http and open it in Chrome or Edge (its README.txt says how): "
                             "browsers load WebAssembly only over http.", "The page asks the player for their ROM."]

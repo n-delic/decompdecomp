@@ -1,0 +1,65 @@
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 56;
+    objects = {
+        A00000000000000000000001 = {isa = PBXProject; buildConfigurationList = A00000000000000000000010;
+            compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base);
+            mainGroup = A00000000000000000000002; productRefGroup = A00000000000000000000003;
+            projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000004); };
+        A00000000000000000000002 = {isa = PBXGroup; children = (A00000000000000000000005,
+            A00000000000000000000006, A00000000000000000000007, A00000000000000000000008,
+            A00000000000000000000009, A00000000000000000000003); sourceTree = "<group>"; };
+        A00000000000000000000003 = {isa = PBXGroup; children = (A0000000000000000000000A);
+            name = Products; sourceTree = "<group>"; };
+        A00000000000000000000004 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000011;
+            buildPhases = (A00000000000000000000012, A00000000000000000000013, A00000000000000000000014);
+            buildRules = (); dependencies = (); name = Game; productName = Game;
+            productReference = A0000000000000000000000A; productType = "com.apple.product-type.application"; };
+        A00000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift;
+            path = Game/App.swift; sourceTree = "<group>"; };
+        A00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift;
+            path = Game/LocalServer.swift; sourceTree = "<group>"; };
+        A00000000000000000000007 = {isa = PBXFileReference; lastKnownFileType = folder;
+            path = Game/Web; sourceTree = "<group>"; };
+        A00000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml;
+            path = Game/Info.plist; sourceTree = "<group>"; };
+        A00000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = text.xcconfig;
+            path = Game.xcconfig; sourceTree = "<group>"; };
+        A0000000000000000000000A = {isa = PBXFileReference; explicitFileType = wrapper.application;
+            includeInIndex = 0; path = Game.app; sourceTree = BUILT_PRODUCTS_DIR; };
+        A0000000000000000000000B = {isa = PBXBuildFile; fileRef = A00000000000000000000005; };
+        A0000000000000000000000C = {isa = PBXBuildFile; fileRef = A00000000000000000000006; };
+        A0000000000000000000000D = {isa = PBXBuildFile; fileRef = A00000000000000000000007; };
+        A00000000000000000000010 = {isa = XCConfigurationList;
+            buildConfigurations = (A00000000000000000000015, A00000000000000000000016);
+            defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000011 = {isa = XCConfigurationList;
+            buildConfigurations = (A00000000000000000000017, A00000000000000000000018);
+            defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A00000000000000000000012 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647;
+            files = (A0000000000000000000000B, A0000000000000000000000C); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000013 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647;
+            files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000014 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647;
+            files = (A0000000000000000000000D); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000015 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {
+            SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 16.4; SWIFT_VERSION = 5.0;
+            SWIFT_OPTIMIZATION_LEVEL = "-Onone"; CLANG_ENABLE_MODULES = YES; }; };
+        A00000000000000000000016 = {isa = XCBuildConfiguration; name = Release; buildSettings = {
+            SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 16.4; SWIFT_VERSION = 5.0;
+            SWIFT_OPTIMIZATION_LEVEL = "-O"; CLANG_ENABLE_MODULES = YES; }; };
+        A00000000000000000000017 = {isa = XCBuildConfiguration; name = Debug;
+            baseConfigurationReference = A00000000000000000000009; buildSettings = {
+            PRODUCT_NAME = Game; INFOPLIST_FILE = Game/Info.plist; CODE_SIGN_STYLE = Automatic;
+            TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+            SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; }; };
+        A00000000000000000000018 = {isa = XCBuildConfiguration; name = Release;
+            baseConfigurationReference = A00000000000000000000009; buildSettings = {
+            PRODUCT_NAME = Game; INFOPLIST_FILE = Game/Info.plist; CODE_SIGN_STYLE = Automatic;
+            TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+            SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; }; };
+    };
+    rootObject = A00000000000000000000001;
+}

@@ -1,0 +1,19 @@
+/* Touch targets stay at least 44 points wide on a phone. The stick and buttons own their gestures; the rest of
+   the page can still scroll to video settings and errors. Safe-area padding is supplied by the iOS app. */
+#touch { display: none; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; margin: 8px auto; }
+#touch button, #touch [data-stick] { touch-action: none; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none; min-width: 44px; min-height: 44px; padding: 6px; }
+#touch [data-stick] { position: relative; width: 104px; height: 104px; border: 2px solid var(--muted);
+  border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; }
+#touch [data-stick] span { display: block; width: 40px; height: 40px; border-radius: 50%; background: var(--accent);
+  pointer-events: none; }
+.touch-pad { display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 44px); gap: 3px; }
+.touch-pad button:first-child { grid-column: 2; }
+.touch-pad button:nth-child(2) { grid-column: 1; grid-row: 2; }
+.touch-pad button:nth-child(3) { grid-column: 2; grid-row: 2; }
+.touch-pad button:nth-child(4) { grid-column: 3; grid-row: 2; }
+.touch-actions { display: grid; grid-template-columns: repeat(3, minmax(44px, 1fr)); gap: 3px; }
+.touch-device #touch { display: flex; }
+.touch-device #keys { display: none; }
+.touch-device main { padding: 8px; }
+.touch-device canvas { width: min(100%, calc(46vh * 4 / 3)); max-height: 46vh; object-fit: contain; }

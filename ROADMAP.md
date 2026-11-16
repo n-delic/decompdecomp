@@ -811,6 +811,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | What stops the C linking for a PC (Porting, from Compile for PC's objects, docs/PORTING.md phase 3) | ✓ (undefined and twice-defined symbols, sorted by what fixes each; nothing linked yet) | — no port kit yet | — no port kit yet | — | — | — no port kit yet | — | — project mode not read yet | — project mode not read yet | — | — project mode not read yet | — |
 | Port fixes judged twice (Start agents → Fix C for the PC, `fix_for_pc`, docs/PORTING.md phase 4) | ✓ (console match by the function judge, PC build by the pinned Zig's clang) | — no port kit yet | — no port kit yet | — | — | — no port kit yet | — | — project mode not read yet | — project mode not read yet | — | — project mode not read yet | — |
 | Port: a native build of a finished game (docs/PORTING.md) | — planned: libultraship, Torch | — planned: PsyCross | — | — | — | — | — | — | — | — | — | — |
+| iPhone/iPad Xcode export (Porting; offline browser port, touch controls; device playthrough pending) | ✓ wrapper compiles; packaging and input tested | — no browser port kit | — no browser port kit | — | — | — no browser port kit | — | — project mode not read yet | — project mode not read yet | — project mode not read yet | — project mode not read yet | — project mode not read yet |
 | Verified Git export sync (explicit Settings action) | build.json export | shared export adapter | shared export adapter | — | — | shared export adapter | — | source already in checkout | source already in checkout | — | source already in checkout | source already in checkout |
 | Commit and push bound portable progress | ✓ | ✓ | ✓ | — | — | ✓ | — | — own checkout UI planned | — own checkout UI planned | — | — own checkout UI planned | — own checkout UI planned |
 | Create full verified rebuildable repository with nested app progress | ✓ | ✓ | ✓ | — | — | ✓ | — | — source checkout setup planned | — source checkout setup planned | — | — source checkout setup planned | — source checkout setup planned |
@@ -1162,6 +1163,18 @@ release (`port/wasm/workflows.py`, `python -m decompnet.port.wasm export`). Left
 end to end on GitHub (the command it runs is tried from a fresh clone of a racing game's save); the apps on a
 runner have no recompiled C (it comes from the ROM): a function with no C yet runs from the player's ROM, interpreted
 (docs/PORTING.md, "Functions with no C yet"); caching the toolchains between releases.
+
+### Export for iPhone and iPad
+
+Porting → Export… → **For iPhone / iPad (Xcode project)** bundles the same browser port in an offline WKWebView
+app, with touch analog stick, D-pad and every controller button. The touch controls also appear in the browser
+export on touch devices. The export can be made on any desktop; installing on a device needs Xcode on a Mac,
+the owner's Apple signing team and Developer Mode. The README and completion steps explain setup. A local-only
+HTTP origin keeps ROM selection and saves on the device across launches. The release workflow attaches the
+unsigned Xcode project; it never signs or uploads to Apple. Current scope: N64 ROM ports, like the browser export.
+Wrapper compiled against the iPhone SDK; export packaging, shared build inputs, workflows and multitouch tested.
+Left: physical iPhone/iPad gameplay, speed, audio and gamepad validation; simulator launch is blocked locally by
+missing Xcode CoreSimulator components. Other consoles and PROJECT mode need a browser port kit first.
 
 ### The browser build's WebGL renderer
 

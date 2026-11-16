@@ -15,7 +15,7 @@ from decompnet.network import NetworkError
 from decompnet.port.wasm import export, workflows
 
 KINDS = [("web", "darwin"), ("miyoo", "darwin"), ("app", "darwin"), ("app", "linux"), ("app", "win32"),
-         ("window", "darwin")]
+         ("window", "darwin"), ("ios", "darwin"), ("ios", "linux"), ("ios", "win32")]
 
 
 @pytest.mark.parametrize("kind, platform", KINDS)
@@ -44,6 +44,7 @@ def test_the_browser_build_deploys_to_github_pages():
 
 @pytest.mark.parametrize("kind, platform, runner, asset", [
     ("miyoo", "darwin", "ubuntu-latest", "Rally-64-miyoo-miyoo.tar.gz"),
+    ("ios", "darwin", "ubuntu-latest", "Rally-64-ios-ios.tar.gz"),
     ("app", "darwin", "macos-latest", "Rally-64-app-macos.zip"),
     ("app", "linux", "ubuntu-latest", "Rally-64-app-linux.tar.gz"),
     ("app", "win32", "windows-latest", "Rally-64-app-windows.zip")])
@@ -98,7 +99,8 @@ def test_the_workflow_and_manifest_are_committed_alone(tmp_path):
     assert subprocess.run([*git, "diff", "--cached", "--name-only"], capture_output=True, text=True).stdout.split() == ["notes.txt"]
 
 
-def test_an_export_from_the_save_takes_what_the_manifest_says(tmp_path, monkeypatch):
+@pytest.mark.parametrize("kind", ["web", "ios"])
+def test_an_export_from_the_save_takes_what_the_manifest_says(tmp_path, monkeypatch, kind):
     """The runner's export: the build's inputs from port/wasm/export.json, no ROM and no recompiled C."""
     save = tmp_path / "save"
     (save / "port" / "wasm").mkdir(parents=True)
@@ -112,7 +114,7 @@ def test_an_export_from_the_save_takes_what_the_manifest_says(tmp_path, monkeypa
         dest.mkdir(parents=True)
         return dest, dest / "index.html"
     monkeypatch.setattr(export, "make", make)
-    export.export_from_save(save, "web", tmp_path / "out", log=lambda *_: None)
+    export.export_from_save(save, kind, tmp_path / "out", log=lambda *_: None)
     assert seen["inputs"] == {"leave_out": {"pfs.c"}, "library_c": {}, "library_names": {"func_80001000": "bzero"},
                               "recomp": None}
     assert seen["rom_file"] is None and seen["simd"] is True and seen["title"] == "Rally 64"

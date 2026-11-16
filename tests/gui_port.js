@@ -200,6 +200,7 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.equal(t.c.$('portExportMenu').open,false,'choosing closes the menu');
    assert.equal(t.c.$('portExportWeb').disabled,true,'no second export while one runs');
    assert.equal(t.c.$('portExportWindow').disabled,true,'nor one with its own window');
+   assert.equal(t.c.$('portExportIos').disabled,true,'nor iOS');
    assert.equal(t.c.$('portExportStop').hidden,false);
    await t.run('exportGame("app")');assert.equal(bodies.length,1,'a second choice starts nothing');
    follow.resolve({kind:'web',path:'/save/port/wasm/export/web/index.html',folder:'/save/port/wasm/export/web'});await exporting;
@@ -208,6 +209,22 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(t.c.$('portExportLog').children.some(x=>String(x).includes('index.html')),'the log says where it went');
    await t.run('showExport()');assert.equal(JSON.stringify(bodies[1]),JSON.stringify({slug:'a',kind:'web',show:true}));
    t.c.$('portExportMenu').open=true;t.c.docListeners.click({target:{}});assert.equal(t.c.$('portExportMenu').open,false,'a click elsewhere closes it');}
+  {// The iOS choice uses the existing durable export job, with feedback before the first response.
+   const t=setup(),request=deferred(),follow=deferred();t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
+   t.c.reply=()=>request.promise;t.c.followJob=()=>follow.promise;
+   const exporting=t.c.$('portExportIos').onclick();
+   assert.equal(t.c.$('portExportIos').disabled,true,'iOS disables immediately');
+   assert.equal(t.c.$('portExportWeb').disabled,true,'other exports wait too');
+   assert.equal(JSON.stringify(t.bodies[0]),JSON.stringify({slug:'a',kind:'ios'}));
+   await t.run('exportGame("ios")');assert.equal(t.calls.length,1,'duplicate start suppressed');
+   request.resolve({job:'ios1'});for(let i=0;i<5;i++)await Promise.resolve();
+   follow.resolve({kind:'ios',path:'/save/export/ios/Game.xcodeproj',instructions:['Open in Xcode.','Choose your signing team.']});
+   await exporting;
+   assert.equal(t.c.$('portExportIos').disabled,false);
+   assert.match(JSON.stringify(t.c.$('portExportNext').children),/Xcode.*signing team/);
+   t.c.reply=async()=>{throw Error('Browser port not available');};await t.run('exportGame("ios")');
+   assert.match(t.c.$('portExportLog')._errorBox.textContent,/Browser port not available/);
+   assert.equal(t.c.$('portExportIos').disabled,false,'failed requests restore the choice');}
   {// The Miyoo Mini export is one more kind of the same job, and the log says what to do with the folder
    const t=setup(),bodies=[];t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
    t.c.followJob=async()=>({kind:'miyoo',path:'/save/port/wasm/export/miyoo/README.txt',folder:'/save/port/wasm/export/miyoo',

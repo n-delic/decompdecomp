@@ -278,12 +278,12 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   Save that changed one function recompiles that function and the one wasm2c part holding it.
   Its saves stay in the build folder (`game.eep`);
 - the app's **Export…** (Porting, beside Play; `port/wasm/export.py`): the game as something to keep and share,
-  into the save repository's `port/wasm/export/` (git ignores it: it's built from the game). Neither export holds
-  the ROM; each asks the player for their own.
+  into the save repository's `port/wasm/export/` (git ignores it: it's built from the game). App, browser and iOS
+  exports ask for the player's own ROM. The local Miyoo export can include your ROM.
   Each export also adds a GitHub Actions workflow to the project's repository (`port/wasm/workflows.py`) that makes
   the same export again on every published release, never on pull requests or pushes: the browser build
   (`export-web.yml`) is deployed to the repository's GitHub Pages (Settings > Pages > Source: GitHub Actions, once),
-  the others (`export-app-<system>.yml` on that system's runner, `export-window-macos.yml`, `export-miyoo.yml`)
+  the others (`export-app-<system>.yml` on that system's runner, `export-window-macos.yml`, `export-miyoo.yml`, `export-ios.yml`)
   are attached to the release. A runner has the save alone, so the export writes what its build took from the
   project into `port/wasm/export.json` (the library code the host provides, library code's own names, the functions
   built from ultralib's C, the game's title and version) and the workflow runs
@@ -306,6 +306,18 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     file is an N64 ROM. SDL3 is built once from its pinned source (toolchains.toml `sdl3`) for Apple Silicon and Intel
     Macs and travels in `Contents/Frameworks` with its licence. Its name and icon are the app's in the Dock; Cmd-Q
     quits. A racing game, opened as Finder opens it, plays in its window as the app itself.
+  - *For iPhone / iPad (Xcode project)*: the browser port bundled in an offline iOS app
+    (`port/wasm/ios.py`). Open `Game.xcodeproj` on a Mac with Xcode, select the Game target's Signing & Capabilities,
+    choose your Apple account's team and a unique Bundle Identifier, then select your connected device and Run.
+    Enable Developer Mode on the device when asked. The export includes a README with these steps; it does not
+    sign an IPA or submit anything to Apple. iOS/iPadOS 16.4 or later; iPhone and iPad orientations supported.
+    The app's WKWebView loads only its bundled port through a loopback HTTP server (no computer or internet
+    connection needed after installation). The player chooses their ROM from Files; its remembered ROM and
+    saves stay on the device. Touch input has an analog stick, D-pad, A/B/Z, Start, shoulders and C buttons;
+    connected gamepads use the browser port's existing support. Tap Sound on for audio. Compatibility and speed
+    depend on the current port and device; unfinished code or unsupported hardware remains unfinished.
+    The wrapper compiles against the iPhone SDK; a physical-device playthrough remains unverified. The GitHub
+    workflow attaches the unsigned project as a tar archive, ready to open and sign in Xcode.
   - *For a web browser*: the browser build (`port/wasm/web.py`), a folder with `index.html` for any static web
     server (browsers load WebAssembly only over http). It runs the game's WebAssembly itself, so what wasm2c's C
     was made to do is done to each function's IR instead (`webir.py`): every load and store through big-endian

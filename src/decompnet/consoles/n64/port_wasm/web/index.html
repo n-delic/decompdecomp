@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>N64 game (browser build)</title>
+<link rel="stylesheet" href="touch.css">
 <style>
   :root { color-scheme: dark; --bg: #111; --fg: #ccc; --muted: #888; --accent: #c9a227; }
   html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
@@ -27,14 +28,34 @@
 <main>
   <section id="start">
     <p>This plays the game in your browser, from your own copy of its ROM. Nothing is uploaded: the ROM stays on this
-      computer (the browser remembers it for next time), and so do the game's saves.</p>
+      device (the browser remembers it for next time), and so do the game's saves.</p>
     <p><label class="button" for="rom">Choose your ROM…</label> <input id="rom" type="file" accept=".z64,.n64,.v64,.bin">
       <button id="again" type="button" hidden>Play with the ROM you chose before</button></p>
     <p class="muted" id="status"></p>
   </section>
   <section id="play" hidden>
     <canvas id="screen" width="320" height="240"></canvas>
-    <p class="muted">Arrows steer · X: A · Z: B · Enter: Start · Space: Z · Q/W: L/R · I/J/K/L: C buttons · or a gamepad</p>
+    <p class="muted" id="keys">Arrows steer · X: A · Z: B · Enter: Start · Space: Z · Q/W: L/R · I/J/K/L: C buttons · or a gamepad</p>
+    <div id="touch" role="group" aria-label="Touch controller">
+      <div data-stick role="group" aria-label="Analog stick: drag to steer"><span></span></div>
+      <div class="touch-actions" role="group" aria-label="Action buttons">
+        <button type="button" data-button="32">L</button><button type="button" data-button="8192">Z</button>
+        <button type="button" data-button="16">R</button><button type="button" data-button="16384">B</button>
+        <button type="button" data-button="4096">Start</button><button type="button" data-button="32768">A</button>
+      </div>
+      <div class="touch-pad" role="group" aria-label="C buttons">
+        <button type="button" data-button="8" aria-label="C up">C↑</button>
+        <button type="button" data-button="2" aria-label="C left">C←</button>
+        <button type="button" data-button="4" aria-label="C down">C↓</button>
+        <button type="button" data-button="1" aria-label="C right">C→</button>
+      </div>
+      <div class="touch-pad" role="group" aria-label="Directional buttons">
+        <button type="button" data-button="2048" aria-label="Up">↑</button>
+        <button type="button" data-button="512" aria-label="Left">←</button>
+        <button type="button" data-button="1024" aria-label="Down">↓</button>
+        <button type="button" data-button="256" aria-label="Right">→</button>
+      </div>
+    </div>
     <p><button id="sound" type="button">Sound on</button> <button id="full" type="button">Full screen</button>
       <span class="muted" id="rate"></span></p>
   </section>
