@@ -6,10 +6,11 @@
  * three-texel bilinear, or average), two tiles and mip levels, one or two combiner cycles, the blender with fog,
  * depth in the game's z image, anti-aliasing (the RDP's coverage and the VI's filter), the RDP's dither, and the
  * VI's mode (size, gamma, its filters). Triangles go to the RDP as the RSP's microcode sends them (triangle commands
- * in fixed point, clipped at its guard band), and the RDP draws them, and rectangles, as the console does: edges
- * walked in quarter scanlines, coverage from eight samples, combiner, blender, filtering, dither and depth test in its
- * integer arithmetic. Matched against angrylion's renderer (tools/n64_rdp_compare.py) on test scenes, and on a racing
- * game's frames; the perspective divide is still approximated in floats.
+ * in fixed point, clipped at its guard band), S2DEX's objects as its texture loads, rectangles and triangles, and the
+ * RDP draws them as the console does: edges walked in quarter scanlines, coverage from eight samples, combiner,
+ * blender, filtering, dither and depth test in its integer arithmetic, two cycles pipelined pixel to pixel, copy mode
+ * 64 bits at a time. Matched pixel for pixel against angrylion's renderer (tools/n64_rdp_compare.py) on test scenes
+ * and on a racing game's recorded frames.
  *
  * PORT_RDPDUMP=folder, PORT_RDPDUMP_TASKS=first-last: those tasks' RDP commands and memory, for that comparison.
  *
@@ -41,10 +42,8 @@ static HOT void wr16(uint32_t a, uint16_t v) { v = __builtin_bswap16(v); memcpy(
 /* PORT_RDPDUMP=folder with PORT_RDPDUMP_TASKS=first-last: those tasks' RDP commands recorded as the RDP would
    receive them (state commands with physical addresses, each triangle as the triangle command the RSP would send,
    rectangles), with the game's memory before and after, for tools/n64_rdp_compare.py to replay through angrylion's
-   renderer and compare frame by frame. Drawing the RSP doesn't send as RDP commands (S2DEX's backgrounds and
-   sprites) marks the task as partial. */
+   renderer and compare frame by frame. */
 static FILE *dump_cmds;
-static int dump_partial;
 static void record(const uint32_t *words, int n) {
     if (!dump_cmds) return;
     for (int i = 0; i < n; i++) { uint32_t v = __builtin_bswap32(words[i]); fwrite(&v, 4, 1, dump_cmds); }
@@ -276,6 +275,14 @@ static HOT Color sample(const Tile *tile, float s, float t) {
 /* What one pixel's combiner sees: the texels of the two tiles (TEXEL0, TEXEL1), the level of detail's fraction,
    the shade, and the noise. */
 typedef struct { Color t0, t1; float lod; } Texels;
+typedef struct { Color sh; Texels tx; float z; } PixIn;
+/* Two cycles, as the RDP pipelines them (angrylion's renderer models it): a pixel's second cycle runs alongside the
+   next pixel's first, so its combiner's second cycle sees the next pixel's TEXEL0 as TEXEL1, its alpha compare
+   the next pixel's first-cycle alpha, and its blender's first cycle the colour read from the previous pixel's place
+   in memory (the second its own). The walker sets these for each pixel of a span; NULL outside it. */
+static const PixIn *two_next;
+static int two_next_cvg;
+static Color two_mem_prev;
 static Texels one_texel(Color c) { return (Texels){c, c, 0}; }
 static float prim_lod_frac, k4, k5;
 static int prim_min_level;
@@ -398,13 +405,13 @@ static HOT IC combine(int cycle, IC comb, IC t0, IC t1, IC shade, int lod, int n
 /* Both cycles as the RDP runs them. One cycle runs the second cycle's settings, as angrylion's renderer (built from
    the hardware) does: libultra's one-cycle modes set both alike, but a list that leaves the second cycle as another
    mode drew with the wrong one when the first was read here. (The blender's one cycle is its first.) In two cycles
-   the second sees the texels swapped: its TEXEL0 is the first cycle's TEXEL1 (and its TEXEL1 the next
-   pixel's TEXEL0, taken here as this one's). */
+   the second sees the texels swapped: its TEXEL0 is the first cycle's TEXEL1 and its TEXEL1 the next pixel's
+   TEXEL0 (two_next; this one's outside a triangle's span). */
 static HOT Color combiner(const Texels *tx, Color shade) {
     int nz = uses_noise ? C8(noise()) : 0, lod = C8(tx->lod);
     IC none = {0, 0, 0, 0}, t0 = TOI(tx->t0), t1 = uses_t1 ? TOI(tx->t1) : t0, sh = TOI(shade), out;
     if (cycle_type() != 1) out = combine(cycle_type() == 0, none, t0, t1, sh, lod, nz);
-    else out = combine(1, combine(0, none, t0, t1, sh, lod, nz), t1, t0, sh, lod, nz);
+    else out = combine(1, combine(0, none, t0, t1, sh, lod, nz), t1, two_next ? TOI(two_next->tx.t0) : t0, sh, lod, nz);
     return (Color){by255[CLAMP9(out.r)], by255[CLAMP9(out.g)], by255[CLAMP9(out.b)], by255[CLAMP9(out.a)]};
 }
 
@@ -482,7 +489,11 @@ static const struct { uint32_t base; int shift; } z_ranges[8] = {
    these 18-bit ones). Counted in these, every stored delta was three powers too large. */
 static HOT int dz_code(float dz) {
     static float last_dz = -1; static int last_dzc; /* one triangle's pixels share their delta z */
-    if (dz != last_dz) { last_dz = dz; last_dzc = 0; while (last_dzc < 15 && (float)(8 << last_dzc) < dz) last_dzc++; }
+    if (dz != last_dz) { /* its highest bit, in units of 8 (delta z 3 is code 1) */
+        last_dz = dz; last_dzc = 0;
+        int raw = (int)(dz / 8);
+        while (last_dzc < 15 && (raw >> (last_dzc + 1))) last_dzc++;
+    }
     return last_dzc;
 }
 static HOT uint16_t z_encode(float z, float dz) {
@@ -566,13 +577,17 @@ static HOT Color blender_cycle(int cycle, Color in, Color mem, Color shade, int 
     else { r >>= 5; g >>= 5; bl >>= 5; }
     return (Color){by255[r & 0xFF], by255[g & 0xFF], by255[bl & 0xFF], in.a};
 }
-/* Both cycles as the RDP runs them: in two-cycle mode the first always blends (fog); the last blends only with
-   force blend (anti-aliasing, which would blend edges, isn't drawn here) and otherwise passes its P through. */
-static HOT Color blender(Color in, Color mem, Color shade, int blend_en) {
+/* Both cycles as the RDP runs them: in two-cycle mode the first always blends (fog); the last blends when blending
+   is on (force blend, or an anti-aliased edge on the same surface) and otherwise passes its P through, as it does
+   when it would mix IN by its alpha with MEM by one minus it and that alpha is full (the RDP's partial reject: a
+   full alpha's 31/32 weight would let a 32nd of MEM through). `shade1` is the shade the last cycle sees: in two
+   cycles, the next pixel's (the pipeline has moved on; two_next). */
+static HOT Color blender(Color in, Color mem, Color shade, Color shade1, int blend_en) {
     int two = cycle_type() == 1;
-    Color out = two ? blender_cycle(0, in, mem, shade, 0) : in;
-    int last = two ? 1 : 0;
-    if (blend_en) return blender_cycle(last, out, mem, shade, !(mode_l & 0x4000));
+    Color out = two ? blender_cycle(0, in, two_next ? two_mem_prev : mem, shade, 0) : in;
+    int last = two ? 1 : 0, at = last ? 28 : 30;
+    int reject = ((mode_l >> (at - 4)) & 3) == 0 && ((mode_l >> (at - 12)) & 3) == 0 && C8(in.a) >= 255;
+    if (blend_en && !reject) return blender_cycle(last, out, mem, two ? shade1 : shade, !(mode_l & 0x4000));
     Color passed = PICK((mode_l >> (last ? 28 : 30)) & 3, out, mem);
     passed.a = in.a;
     return passed;
@@ -622,6 +637,11 @@ static HOT int depth_passes(float z, float dz, float mem_z, float mem_dz, int ov
     default: return max || (overflow ? z < mem_z : nearer);
     }
 }
+/* The colour the blender reads at a pixel (black and fully covered without IMAGE_READ). */
+static HOT Color memory_at(int x, int y) {
+    if (!(mode_l & 0x40) || !in_frame(x, y)) return (Color){0, 0, 0, by255[224]};
+    return read_pixel(pixel_addr(x, y));
+}
 static HOT void plot(int x, int y, float z, Color shade, const Texels *tx, int depth, int cvg, float dz) {
     if (!in_frame(x, y)) return;
     int zcmp = (mode_l & 0x10) != 0, zupd = (mode_l & 0x20) != 0;
@@ -651,9 +671,17 @@ static HOT void plot(int x, int y, float z, Color shade, const Texels *tx, int d
     if (mode_l & 0x2000) /* ALPHA_CVG_SEL: the coverage as the alpha */
         c.a = by255[(mode_l & 0x1000) ? (scaled > 255 ? 255 : scaled) : cvg >= 8 ? 255 : cvg << 5];
     if (depth && zcmp && !depth_passes(z, dz, mem_z, mem_dz, memcvg + cvg >= 8, &same_surface)) return;
-    int ac = (int)(mode_l & 3);
-    if (ac == 1 && C8(c.a) < C8(blend.a)) return;   /* alpha compare: at or above the blend colour's alpha */
-    if (ac == 3 && C8(c.a) < C8(noise())) return;   /* or a random threshold (G_AC_DITHER) */
+    int ac = (int)(mode_l & 3), compared = C8(c.a);
+    if (ac && two_next) { /* two cycles: the next pixel's first-cycle alpha, by its coverage, this one's dither */
+        IC nx = combine(0, (IC){0, 0, 0, 0}, TOI(two_next->tx.t0), TOI(two_next->tx.t1), TOI(two_next->sh), C8(two_next->tx.lod), 0);
+        int na = CLAMP9(nx.a);
+        if (na == 255) na = 256;
+        if (!(mode_l & 0x2000)) { na += adith; if (na & 0x100) na = 255; }
+        else { na = (mode_l & 0x1000) ? (na * two_next_cvg + 4) >> 3 : two_next_cvg << 5; if (na > 255) na = 255; }
+        compared = na;
+    }
+    if (ac == 1 && compared < C8(blend.a)) return;   /* alpha compare: at or above the blend colour's alpha */
+    if (ac == 3 && compared < C8(noise())) return;   /* or a random threshold (G_AC_DITHER) */
     if (aa && !cvg) return;
     Color mem = imrd ? read_pixel(a) : (Color){0, 0, 0, by255[224]};
     int overflow = memcvg + cvg >= 8;
@@ -672,7 +700,9 @@ static HOT void plot(int x, int y, float z, Color shade, const Texels *tx, int d
     case 2: final = 7; break;
     default: final = memcvg;
     }
-    c = (mode_l & 0x80) && !overflow ? mem : blender(c, mem, shade, blend_en); /* colour on coverage */
+    Color shade1 = shade;
+    if (two_next) { int na = C8(two_next->sh.a) + adith; shade1.a = by255[na > 255 ? 255 : na]; }
+    c = (mode_l & 0x80) && !overflow ? mem : blender(c, mem, shade, shade1, blend_en); /* colour on coverage */
     write_pixel(x, y, a, c, 1);
     cvg_set(a, final + 1);
     if (depth && zupd) z_write(x, y, z, dz);
@@ -827,6 +857,9 @@ static void record_rdp(uint8_t op, uint32_t w0, uint32_t w1) {
 }
 static void rdp_rect(int tile, uint32_t xl, uint32_t yl, uint32_t xh, uint32_t yh, int tex, int16_t s, int16_t t,
                      int16_t dsdx, int16_t dtdy, int flip);
+/* A texture rectangle goes through the RDP's walker in one or two cycles and in copy mode (onto an 8 or 16-bit
+   frame); the WebGL renderer and a 32-bit frame's copy (which the console's RDP doesn't do) draw it themselves. */
+static int rdp_walks_rect(void) { return !gpu && (cycle_type() < 2 || (cycle_type() == 2 && cimg_siz != 3)); }
 static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
     if (dump_cmds && op != 0xE2 && op != 0xE3) record_rdp(op, w0, w1);
     switch (op) {
@@ -1137,15 +1170,22 @@ static HOT void persp_divide(int32_t ss, int32_t st, int32_t sw, int *outs, int 
    three quarters of the scanline when the edge leans away from the inside), at the whole pixel left of the edge,
    then stepped across the scanline pixel by pixel. Sampling each pixel's centre in floats instead put edges half a
    pixel from where the console draws them. */
-static int dzpix_round(int sum) { /* the RDP's delta z: a power of two above the sum of the two steps */
-    if (sum <= 0) return 1;
-    int p = 1;
-    while (p <= sum && p < 0x8000) p <<= 1;
-    return p;
+static int dzpix_round(int sum) { /* the RDP's delta z: the power of two above the sum of the two steps */
+    if (sum & 0xC000) return 0x8000;
+    if (!(sum & 0xFFFF)) return 1;
+    if (sum == 1) return 3; /* the RDP's own rule (angrylion's), not a power of two */
+    int p = 0x2000;
+    while (p && !(sum & p)) p >>= 1;
+    return p << 1;
 }
-static int edge8(int32_t x, int lo, int hi) { /* s15.16 to eighths of a pixel, the last bit set if any remains */
-    if (x < 0) return lo;
+/* A slope's integer part as the RDP adds it into delta z: a negative one's complemented (-1 counts as 0, not 1) */
+static int dz_magnitude(int32_t slope) { int v = (slope >> 16) & 0xFFFF; return (v & 0x8000) ? (~v & 0x7FFF) : v; }
+/* s15.16 to eighths of a pixel, the last bit set if any remains, clamped to the scissor; `side` counts it past
+   the scissor's left (1) or right (2) */
+static int edge8(int32_t x, int lo, int hi, int *side) {
+    if (x < 0) { *side = 1; return lo; }
     int e = ((x >> 13) & ~1) | (((x >> 1) & 0x1FFF) != 0);
+    *side = e < lo ? 1 : e >= hi ? 2 : 0;
     return e < lo ? lo : e >= hi ? hi : e;
 }
 static int32_t signx(uint32_t v, int bits) { return (int32_t)(v << (32 - bits)) >> (32 - bits); }
@@ -1153,6 +1193,54 @@ static int32_t join_hi(uint32_t ints, uint32_t fracs) { return (int32_t)((ints &
 static int32_t join_lo(uint32_t ints, uint32_t fracs) { return (int32_t)((ints << 16) | (fracs & 0xFFFF)); }
 #define SHADE9(v) ((((v) >> 16) & 0x100) ? ((((v) >> 16) & 0x80) ? 0 : 255) : (((v) >> 16) & 0xFF))
 enum { AR, AG, AB, AA, AS, AT, AW, AZ, NATTR };
+/* What the walker hands the pixel pipeline for one pixel of a span: its shade, texels and depth, from the
+   attributes `a` there, corrected to the first covered sample of a partly covered pixel. */
+static HOT void pixel_inputs(PixIn *o, const int32_t *a, const int32_t *step, const int32_t *dyc, int shade, int tex,
+                             int zb, int tile, int persp, int lod_on, int cvg, int offx, int offy) {
+    o->sh = (Color){0, 0, 0, 0};
+    if (shade) {
+        /* a partly covered pixel's shade (and depth) taken at its first covered sample, in quarter pixels from its
+           corner, as the RDP corrects them */
+        int ch[4];
+        for (int q = 0; q < 4; q++) {
+            int v = a[AR + q] >> 14;
+            if (cvg < 8) v = ((v << 2) + offx * signx((uint32_t)(step[AR + q] >> 14), 13)
+                              + offy * signx((uint32_t)(dyc[AR + q] >> 14), 13)) >> 4;
+            else v >>= 2;
+            v &= 0x1FF;
+            ch[q] = (v & 0x100) ? ((v & 0x80) ? 0 : 255) : v;
+        }
+        o->sh = (Color){by255[ch[0]], by255[ch[1]], by255[ch[2]], by255[ch[3]]};
+    }
+    o->tx = (Texels){{1, 1, 1, 1}, {1, 1, 1, 1}, 0};
+    if (tex) {
+        /* s and t in texels: divided by w with perspective, as they are without */
+        float st[3][2];
+        for (int q = 0; q < (lod_on ? 3 : 1); q++) {
+            int32_t S = a[AS], T = a[AT], W = a[AW];
+            if (q == 1) { S += step[AS]; T += step[AT]; W += step[AW]; }
+            if (q == 2) { S += dyc[AS]; T += dyc[AT]; W += dyc[AW]; }
+            float ss = (float)(int16_t)(S >> 16), tt = (float)(int16_t)(T >> 16);
+            if (persp) {
+                int ds, dt;
+                persp_divide(S >> 16, T >> 16, W >> 16, &ds, &dt);
+                ss = (float)ds; tt = (float)dt;
+            }
+            st[q][0] = ss / 32.0f; st[q][1] = tt / 32.0f;
+        }
+        float lod = 0;
+        if (lod_on)
+            lod = fmaxf(fmaxf(fabsf(st[1][0] - st[0][0]), fabsf(st[1][1] - st[0][1])),
+                        fmaxf(fabsf(st[2][0] - st[0][0]), fabsf(st[2][1] - st[0][1])));
+        o->tx = texels_at(tile, st[0][0], st[0][1], lod);
+    }
+    int zi = (a[AZ] >> 10) & 0x3FFFFF;
+    if (cvg < 8) zi = ((zi << 2) + offx * signx((uint32_t)(step[AZ] >> 10), 22)
+                       + offy * signx((uint32_t)(dyc[AZ] >> 10), 22)) >> 5;
+    else zi >>= 3;
+    zi = ((zi >> 17) & 3) == 2 ? 0x3FFFF : ((zi >> 17) & 3) == 3 ? 0 : zi & 0x3FFFF;
+    o->z = zb ? (float)zi : 0;
+}
 static void rdp_walk(const uint32_t *w, int shade, int tex, int zb, int rect) {
     combiner_uses();
     int flip = (w[0] >> 23) & 1, tile = (w[0] >> 16) & 7;
@@ -1187,7 +1275,7 @@ static void rdp_walk(const uint32_t *w, int shade, int tex, int zb, int rect) {
         dyc[i] = dy[i];
         if (offset) { int32_t a = de[i] & ~0x1FF, b = dy[i] & ~0x1FF; diff[i] = a - (a >> 2) - b + (b >> 2); }
     }
-    int sumdz = (int)abs((int16_t)(dx[AZ] >> 16)) + (int)abs((int16_t)(dy[AZ] >> 16));
+    int sumdz = dz_magnitude(dx[AZ]) + dz_magnitude(dy[AZ]);
     float dz = (float)(dzpix_round(sumdz & 0xFFFF) * 8);
     int cycle = cycle_type(), aa = (mode_l & 0x8) != 0 && cycle < 2, persp = (mode_h & 0x80000) != 0 && !rect;
     int lod_on = (mode_h & 0x10000) != 0;
@@ -1195,15 +1283,20 @@ static void rdp_walk(const uint32_t *w, int shade, int tex, int zb, int rect) {
     int yhlim = yh > scissor_q[1] ? yh : scissor_q[1], yllim = yl < scissor_q[3] ? yl : scissor_q[3];
     int32_t xmaj = xh & ~1, xmin = xm & ~1, inc_maj = (dxhdy >> 2) & ~1, inc_min = (dxmdy >> 2) & ~1;
     int ldflag = offset ? 3 : 0;
-    int maj8[4], min8[4], valid[4], major_px = 0;
+    int maj8[4], min8[4], valid[4], major_px = 0, all_over = 1, all_under = 1;
     int32_t at[NATTR];
     int ylast = yllim | 3;
     for (int k = yh & ~3; k <= ylast; k++) {
         if (k == ym) { xmin = xl & ~1; inc_min = (dxldy >> 2) & ~1; }
         int sub = k & 3, line = k >> 2;
         if (k >= (yhlim & ~3)) {
-            maj8[sub] = edge8(xmaj, clip_l, clip_r);
-            min8[sub] = edge8(xmin, clip_l, clip_r);
+            int side_maj, side_min;
+            maj8[sub] = edge8(xmaj, clip_l, clip_r, &side_maj);
+            min8[sub] = edge8(xmin, clip_l, clip_r, &side_min);
+            /* a scanline whose edges all lie past the scissor on one side, on each of its quarters, isn't drawn */
+            if (sub == 0) all_over = all_under = 1;
+            all_over &= side_maj == 2 && side_min == 2;
+            all_under &= side_maj == 1 && side_min == 1;
             int crossed = flip ? (xmin >> 14) < (xmaj >> 14) : (xmaj >> 14) < (xmin >> 14);
             valid[sub] = !(k < yhlim || k >= yllim || crossed);
             if (sub == ldflag) {
@@ -1221,76 +1314,85 @@ static void rdp_walk(const uint32_t *w, int shade, int tex, int zb, int rect) {
                     if ((l8 >> 3) < lo) lo = l8 >> 3;
                     if ((r8 >> 3) > hi) hi = r8 >> 3;
                 }
-                if (any && hi >= lo) {
+                if (any && hi >= lo && !all_over && !all_under) {
                     int x0 = flip ? lo : hi, x1 = flip ? hi : lo, xinc = flip ? 1 : -1;
                     int32_t a[NATTR];
                     /* the major edge clipped: start further in (counted in 12 bits, as the RDP counts it: a sliver
                        whose major edge lies past the span's start wraps round, and its colour with it) */
                     int skip = (flip ? x0 - major_px : major_px - x0) & 0xFFF;
                     for (int i = 0; i < NATTR; i++) a[i] = at[i] + (flip ? step[i] : -step[i]) * skip;
-                    for (int x = x0;; x += xinc) {
-                        int cvg = 0, corner = 0, offx = -1, offy = -1;
-                        for (int i = 0; i < 4; i++) {
-                            if (!valid[i]) continue;
-                            int l8 = flip ? maj8[i] : min8[i], r8 = flip ? min8[i] : maj8[i];
-                            int p0 = x * 8 + ((i & 1) ? 2 : 0), p1 = p0 + 4;
-                            int in0 = p0 >= l8 && p0 < r8, in1 = p1 >= l8 && p1 < r8;
-                            cvg += in0 + in1;
-                            if (i == 0) corner = in0;
-                            if (offy < 0 && (in0 || in1)) { offy = i; offx = ((i & 1) ? 1 : 0) + (in0 ? 0 : 2); }
+                    /* a pixel's coverage: how many of its samples the span covers, its corner's, and its first */
+                    #define COVERAGE(px, cvg, corner, offx, offy) do { \
+                        cvg = 0; corner = 0; offx = -1; offy = -1; \
+                        for (int i = 0; i < 4; i++) { \
+                            if (!valid[i]) continue; \
+                            int l8 = flip ? maj8[i] : min8[i], r8 = flip ? min8[i] : maj8[i]; \
+                            int p0 = (px) * 8 + ((i & 1) ? 2 : 0), p1 = p0 + 4; \
+                            int in0 = p0 >= l8 && p0 < r8, in1 = p1 >= l8 && p1 < r8; \
+                            cvg += in0 + in1; \
+                            if (i == 0) corner = in0; \
+                            if (offy < 0 && (in0 || in1)) { offy = i; offx = ((i & 1) ? 1 : 0) + (in0 ? 0 : 2); } \
+                        } } while (0)
+                    if (cycle == 2) {
+                        /* copy mode (rectangles): every pixel of the span, the right scissor edge's included (on a
+                           frame as wide as the scissor it lands on the next line, as on the console), from TMEM 64
+                           bits at a time: four 16-bit texels (eight 8-bit) for as many pixels, s and t stepping once
+                           per group. Without alpha compare every texel is written, with it those whose alpha bit (a
+                           16-bit texel's) or value (an 8-bit one's) passes. */
+                        int per = cimg_siz == 1 ? 8 : 4;
+                        const Tile *tl = &tiles[tile];
+                        copying = 1;
+                        for (int x = x0, j = 0;; x += xinc, j++) {
+                            if (j && j % per == 0) for (int i = 0; i < NATTR; i++) a[i] += flip ? step[i] : -step[i];
+                            int si = (int)floorf(shifted((float)(int16_t)(a[AS] >> 16) / 32.0f, tl->shifts)) + j % per;
+                            int ti = (int)floorf(shifted((float)(int16_t)(a[AT] >> 16) / 32.0f, tl->shiftt));
+                            uint32_t raw = texel_raw(tl, si, ti), at = pixel_addr(x, line);
+                            int pass = !(mode_l & 1) || (cimg_siz == 1 ? (int)(raw & 0xFF) >= C8(blend.a) : (int)(raw & 1));
+                            if (pass && x >= 0) {
+                                if (cimg_siz == 1) R[at] = (uint8_t)raw; else wr16(at, (uint16_t)raw);
+                                cvg_clean(at);
+                            }
+                            if (x == x1) break;
                         }
+                        copying = 0;
+                    } else if (cycle == 1) {
+                        /* two cycles: the RDP's pipeline runs a pixel's second cycle with the next one's first, so
+                           every pixel of the span goes through it (two_next) */
+                        PixIn cur, nxt;
+                        int cvg, corner, offx, offy, ncvg, ncorner, noffx, noffy;
+                        COVERAGE(x0, cvg, corner, offx, offy);
+                        pixel_inputs(&cur, a, step, dyc, shade, tex, zb, tile, persp, lod_on, cvg, offx, offy);
+                        for (int x = x0;; x += xinc) {
+                            int32_t an[NATTR];
+                            for (int i = 0; i < NATTR; i++) an[i] = a[i] + (flip ? step[i] : -step[i]);
+                            if (x != x1) COVERAGE(x + xinc, ncvg, ncorner, noffx, noffy);
+                            else { ncvg = ncorner = 0; noffx = noffy = 0; }
+                            pixel_inputs(&nxt, an, step, dyc, shade, tex, zb, tile, persp, lod_on, ncvg, noffx, noffy);
+                            two_next = &nxt;
+                            two_next_cvg = ncvg;
+                            Color mem = memory_at(x, line);
+                            if (aa ? cvg > 0 : corner) plot(x, line, cur.z, cur.sh, &cur.tx, zb, cvg, dz);
+                            two_next = NULL;
+                            two_mem_prev = mem;
+                            cur = nxt; cvg = ncvg; corner = ncorner; offx = noffx; offy = noffy;
+                            for (int i = 0; i < NATTR; i++) a[i] = an[i];
+                            if (x == x1) break;
+                        }
+                    } else for (int x = x0;; x += xinc) {
+                        int cvg, corner, offx, offy;
+                        COVERAGE(x, cvg, corner, offx, offy);
                         if (aa ? cvg > 0 : corner) {
                             if (cycle == 3) { if (in_frame(x, line)) fill_pixel(x, line); }
                             else {
-Color sh = {0, 0, 0, 0};
-                                if (shade) {
-                                    /* a partly covered pixel's shade (and depth) taken at its first covered sample,
-                                       in quarter pixels from its corner, as the RDP corrects them */
-                                    int ch[4];
-                                    for (int q = 0; q < 4; q++) {
-                                        int v = a[AR + q] >> 14;
-                                        if (cvg < 8) v = ((v << 2) + offx * signx((uint32_t)(step[AR + q] >> 14), 13)
-                                                          + offy * signx((uint32_t)(dyc[AR + q] >> 14), 13)) >> 4;
-                                        else v >>= 2;
-                                        v &= 0x1FF;
-                                        ch[q] = (v & 0x100) ? ((v & 0x80) ? 0 : 255) : v;
-                                    }
-                                    sh = (Color){by255[ch[0]], by255[ch[1]], by255[ch[2]], by255[ch[3]]};
-                                }
-                                Texels tx = {{1, 1, 1, 1}, {1, 1, 1, 1}, 0};
-                                if (tex) {
-                                    /* s and t in texels: divided by w with perspective, as they are without */
-                                    float st[3][2];
-                                    for (int q = 0; q < (lod_on ? 3 : 1); q++) {
-                                        int32_t S = a[AS], T = a[AT], W = a[AW];
-                                        if (q == 1) { S += step[AS]; T += step[AT]; W += step[AW]; }
-                                        if (q == 2) { S += dyc[AS]; T += dyc[AT]; W += dyc[AW]; }
-                                        float ss = (float)(int16_t)(S >> 16), tt = (float)(int16_t)(T >> 16);
-                                        if (persp) {
-                                            int ds, dt;
-                                            persp_divide(S >> 16, T >> 16, W >> 16, &ds, &dt);
-                                            ss = (float)ds; tt = (float)dt;
-                                        }
-                                        st[q][0] = ss / 32.0f; st[q][1] = tt / 32.0f;
-                                    }
-                                    float lod = 0;
-                                    if (lod_on)
-                                        lod = fmaxf(fmaxf(fabsf(st[1][0] - st[0][0]), fabsf(st[1][1] - st[0][1])),
-                                                    fmaxf(fabsf(st[2][0] - st[0][0]), fabsf(st[2][1] - st[0][1])));
-                                    tx = texels_at(tile, st[0][0], st[0][1], lod);
-                                }
-                                int zi = (a[AZ] >> 10) & 0x3FFFFF;
-                                if (cvg < 8) zi = ((zi << 2) + offx * signx((uint32_t)(step[AZ] >> 10), 22)
-                                                   + offy * signx((uint32_t)(dyc[AZ] >> 10), 22)) >> 5;
-                                else zi >>= 3;
-                                zi = ((zi >> 17) & 3) == 2 ? 0x3FFFF : ((zi >> 17) & 3) == 3 ? 0 : zi & 0x3FFFF;
-                                float z = zb ? (float)zi : 0;
-                                plot(x, line, z, sh, &tx, zb, aa ? cvg : 8, dz);
+                                PixIn in;
+                                pixel_inputs(&in, a, step, dyc, shade, tex, zb, tile, persp, lod_on, cvg, offx, offy);
+                                plot(x, line, in.z, in.sh, &in.tx, zb, cvg, dz);
                             }
                         }
                         for (int i = 0; i < NATTR; i++) a[i] += flip ? step[i] : -step[i];
                         if (x == x1) break;
                     }
+                    #undef COVERAGE
                 }
             }
         }
@@ -1315,6 +1417,7 @@ static void rdp_triangle(const uint32_t *w) {
 static void rdp_rect(int tile, uint32_t xl, uint32_t yl, uint32_t xh, uint32_t yh, int tex, int16_t s, int16_t t,
                      int16_t dsdx, int16_t dtdy, int flip) {
     uint32_t w[24] = {0};
+    if (cycle_type() >= 2) yl |= 3; /* fill and copy modes take the bottom edge's line whole */
     w[0] = 1u << 23 | (uint32_t)(tile & 7) << 16 | (yl & 0xFFF);
     w[1] = (yl & 0xFFF) << 16 | (yh & 0xFFF);
     w[2] = w[6] = (xl >> 2) << 16 | (xl & 3) << 14;
@@ -1657,41 +1760,89 @@ static void gbi1(uint8_t op, uint32_t w0, uint32_t w1) {
 
 /* ---------------------------------------------------------------- S2DEX: backgrounds and sprites */
 
-static void s2d_load(uint32_t txtr) { /* uObjTxtr: a block, a tile or a palette into TMEM */
+/* S2DEX draws as the microcode does: it sends the RDP commands that load the texture, set up its tile and draw it
+   (texture rectangles; triangles for a rotated sprite; a background in strips that fit TMEM), so its drawing goes
+   through the same RDP as everything else and PORT_RDPDUMP records it. */
+static void rdp_send(uint32_t w0, uint32_t w1) { rdp((uint8_t)(w0 >> 24), w0, w1); }
+static void set_timage(int fmt, int siz, int width, uint32_t addr) {
+    rdp_send(0xFD000000u | (uint32_t)fmt << 21 | (uint32_t)siz << 19 | (uint32_t)((width - 1) & 0xFFF), addr);
+}
+static void set_tile(int tile, int fmt, int siz, int line, int tmem, int pal, int cmt, int cms) {
+    rdp_send(0xF5000000u | (uint32_t)fmt << 21 | (uint32_t)siz << 19 | (uint32_t)(line & 0x1FF) << 9 | (uint32_t)(tmem & 0x1FF),
+             (uint32_t)tile << 24 | (uint32_t)(pal & 15) << 20 | (uint32_t)cmt << 18 | (uint32_t)cms << 8);
+}
+static uint32_t q12(int v) { return (uint32_t)(v < 0 ? 0 : v > 0xFFF ? 0xFFF : v); }
+static void set_tile_size(int tile, int uls, int ult, int lrs, int lrt) { /* in quarter texels */
+    rdp_send(0xF2000000u | q12(uls) << 12 | q12(ult), (uint32_t)tile << 24 | q12(lrs) << 12 | q12(lrt));
+}
+/* A texture rectangle's four words, recorded and drawn: the RDP's walker in one or two cycles, else copy or fill. */
+static void texrect_words(uint32_t w0, uint32_t w1, uint32_t h1, uint32_t h2, int flip) {
+    uint32_t rect[4] = {w0, w1, h1, h2};
+    record(rect, 4);
+    if (rdp_walks_rect()) /* the RDP's words: lower right in the first, tile and upper left in the second */
+        rdp_rect((int)(w1 >> 24) & 7, (w0 >> 12) & 0xFFF, w0 & 0xFFF, (w1 >> 12) & 0xFFF, w1 & 0xFFF, 1,
+                 (int16_t)(h1 >> 16), (int16_t)h1, (int16_t)(h2 >> 16), (int16_t)h2, flip);
+    else tex_rect((w1 >> 24) & 7, ((w1 >> 12) & 0xFFF) / 4.0f, (w1 & 0xFFF) / 4.0f, ((w0 >> 12) & 0xFFF) / 4.0f,
+                  (w0 & 0xFFF) / 4.0f, (int16_t)(h1 >> 16) / 32.0f, (int16_t)h1 / 32.0f,
+                  (int16_t)(h2 >> 16) / 1024.0f, (int16_t)h2 / 1024.0f, flip);
+}
+/* A rectangle in quarter pixels (x0, y0 inclusive, x1, y1 exclusive), its texture from s, t (s10.5) in steps of
+   dsdx, dtdy (s5.10) a pixel; cut at the screen's top and left edges as the microcode cuts it, the texture moved on
+   by as much. In copy mode the RDP takes the lower right inclusive and four texels a step. */
+static void s2d_rect(int tile, int x0, int y0, int x1, int y1, int s, int t, int dsdx, int dtdy) {
+    if (x0 < 0) { s += (int)(((int64_t)-x0 * dsdx) >> 7); x0 = 0; }
+    if (y0 < 0) { t += (int)(((int64_t)-y0 * dtdy) >> 7); y0 = 0; }
+    if (x1 <= x0 || y1 <= y0) return;
+    if (cycle_type() >= 2) { x1 -= 4; y1 -= 4; dsdx *= 4; if (x1 < x0 || y1 < y0) return; }
+    dsdx = dsdx > 32767 ? 32767 : dsdx < -32768 ? -32768 : dsdx;
+    dtdy = dtdy > 32767 ? 32767 : dtdy < -32768 ? -32768 : dtdy;
+    texrect_words(0xE4000000u | q12(x1) << 12 | q12(y1), (uint32_t)tile << 24 | q12(x0) << 12 | q12(y0),
+                  (uint32_t)(uint16_t)s << 16 | (uint16_t)t, (uint32_t)(uint16_t)dsdx << 16 | (uint16_t)dtdy, 0);
+}
+
+static void s2d_load(uint32_t txtr) { /* uObjTxtr: a block, a tile or a palette into TMEM, through tile 7 */
     uint32_t type = rd32(txtr), src = phys(rd32(txtr + 4));
-    gpu_gen++;
     int tm = rd16(txtr + 8), b = rd16(txtr + 10), c = rd16(txtr + 12);
     if (type == 0x00000030) { /* a palette: its first entry (phead) and its count minus one (pnum) */
-        for (int i = 0; i <= b; i++) if (tm - 256 + i >= 0 && tm - 256 + i < 256) tlut[tm - 256 + i] = rd16(src + i * 2);
-        tlut_colours_type = -1;
-    } else if (type == 0x00001033) { /* a block: tsize words minus one, tline the line step (dxt) */
-        uint32_t line = 0;
-        for (int i = 0; i <= b && tm * 8 + i * 8 < 4096; i++) { tmem_word((uint32_t)(tm + i) * 8, src + (uint32_t)i * 8, (line >> 11) & 1); line += (uint32_t)c; }
+        set_timage(0, 2, 1, src);
+        set_tile(7, 0, 0, 0, tm, 0, 0, 0); /* as gDPLoadTLUT sets it: the RDP loads a palette through a 4-bit tile */
+        rdp_send(0xF0000000u, 7u << 24 | (uint32_t)(b & 0x3FF) << 14);
+    } else if (type == 0x00001033) { /* a block: tsize 8-byte words minus one (four 16-bit texels each), tline the dxt */
+        set_timage(0, 2, 1, src);
+        set_tile(7, 0, 2, 0, tm, 0, 0, 0);
+        rdp_send(0xF3000000u, 7u << 24 | (uint32_t)((((b + 1) << 2) - 1) & 0xFFF) << 12 | (uint32_t)(c & 0xFFF));
     } else { /* a tile: its width in 8-byte words times four, minus one, and its height in lines times four, minus one */
         int words = (b + 1) >> 2, lines = (c + 1) >> 2;
-        for (int l = 0; l < lines; l++)
-            for (int i = 0; i < words && (tm + l * words + i) * 8 < 4096; i++)
-                tmem_word((uint32_t)(tm + l * words + i) * 8, src + (uint32_t)(l * words + i) * 8, l & 1);
+        if (words <= 0 || lines <= 0) return;
+        set_timage(0, 2, words * 4, src);
+        set_tile(7, 0, 2, words, tm, 0, 0, 0);
+        rdp_send(0xF4000000u, 7u << 24 | (uint32_t)((words * 4 - 1) << 2) << 12 | (uint32_t)((lines - 1) << 2));
     }
 }
-/* A uObjSprite's place (objX, objY, s10.2), scale (u5.10) and image size in texels, its image set up as tile 7. */
+/* A uObjSprite's place (objX, objY, s10.2), scale (u5.10) and image size in texels, its image set up as tile 0
+   (the render tile; 7 is the load tile). */
 typedef struct { float x, y, sw, sh; int iw, ih; } Sprite;
 static Sprite s2d_sprite_tile(uint32_t sp) {
     Sprite o = {(int16_t)rd16(sp) / 4.0f, (int16_t)rd16(sp + 8) / 4.0f, rd16(sp + 2) / 1024.0f, rd16(sp + 10) / 1024.0f,
                 rd16(sp + 4) >> 5, rd16(sp + 12) >> 5};
-    Tile t = {.fmt = R[sp + 20], .siz = R[sp + 21], .line = rd16(sp + 16), .tmem = rd16(sp + 18), .palette = R[sp + 22],
-              .cms = 2, .cmt = 2, .lrs = (float)(o.iw - 1), .lrt = (float)(o.ih - 1)};
     if (o.sw == 0) o.sw = 1;
     if (o.sh == 0) o.sh = 1;
-    tiles[7] = t;
+    set_tile(0, R[sp + 20], R[sp + 21], rd16(sp + 16), rd16(sp + 18), R[sp + 22], 2, 2);
+    set_tile_size(0, 0, 0, (o.iw - 1) << 2, (o.ih - 1) << 2);
     return o;
 }
 
 #include "render_gpu.h"
-static void s2d_sprite(uint32_t sp) { /* an unrotated rectangle from TMEM */
-    dump_partial = 1;
+static void s2d_sprite(uint32_t sp) { /* an unrotated rectangle, scaled by the sprite's own scale */
     Sprite o = s2d_sprite_tile(sp);
-    tex_rect(7, o.x, o.y, o.x + o.iw / o.sw, o.y + o.ih / o.sh, 0, 0, 1.0f / o.sw, 1.0f / o.sh, 0);
+    int x = (int16_t)rd16(sp), y = (int16_t)rd16(sp + 8), sw = rd16(sp + 2), sh = rd16(sp + 10);
+    int iw = rd16(sp + 4), ih = rd16(sp + 12), flags = R[sp + 23];
+    if (!sw) sw = 1024;
+    if (!sh) sh = 1024;
+    int dsdx = sw, dtdy = sh, s = 0, t = 0; /* the scale is texels a pixel (u5.10), the rectangle's step (s5.10) */
+    if (flags & 0x01) { s = (o.iw << 5) - 1; dsdx = -dsdx; } /* G_OBJ_FLAG_FLIPS */
+    if (flags & 0x10) { t = (o.ih << 5) - 1; dtdy = -dtdy; } /* G_OBJ_FLAG_FLIPT */
+    s2d_rect(0, x, y, x + (int)(((int64_t)iw << 7) / sw), y + (int)(((int64_t)ih << 7) / sh), s, t, dsdx, dtdy);
 }
 /* The 2D matrix (uObjMtx, G_OBJ_MOVEMEM at index 0, 24 bytes): A, B, C, D (s15.16) and X, Y (s10.2). */
 static float obj_mtx[6] = {1, 0, 0, 1, 0, 0};
@@ -1708,63 +1859,103 @@ static void s2d_matrix(uint32_t w0, uint32_t a) { /* S2DEX2's G_OBJ_MOVEMEM: ind
     else if ((w0 & 0xFF) == 2) s2d_matrix_load(a, 1);
 }
 /* G_OBJ_SPRITE: the sprite through the 2D matrix, rotated and scaled: its corners in object space are mapped to
-   the screen as (A x + B y + X, C x + D y + Y), and each pixel they cover back to the texel it shows. A racing
-   game's rev counter needle turns this way; drawn unrotated, it was a grey streak above the gauge. */
+   the screen as (A x + B y + X, C x + D y + Y) and drawn as two textured triangles. A racing game's rev counter
+   needle turns this way; drawn unrotated, it was a grey streak above the gauge. */
 static void s2d_sprite_rotated(uint32_t sp) {
-    dump_partial = 1;
-    combiner_uses();
     Sprite o = s2d_sprite_tile(sp);
     float A = obj_mtx[0], B = obj_mtx[1], C = obj_mtx[2], D = obj_mtx[3], X = obj_mtx[4], Y = obj_mtx[5];
     float det = A * D - B * C, w = o.iw / o.sw, h = o.ih / o.sh;
     if (fabsf(det) < 1e-6f || w <= 0 || h <= 0) return;
     if (gpu) { gpu_sprite_rotated(&o, obj_mtx); return; }
-    float cx[4] = {o.x, o.x + w, o.x, o.x + w}, cy[4] = {o.y, o.y, o.y + h, o.y + h};
-    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
-    for (int i = 0; i < 4; i++) {
-        float sx = A * cx[i] + B * cy[i] + X, sy = C * cx[i] + D * cy[i] + Y;
-        x0 = fminf(x0, sx); x1 = fmaxf(x1, sx); y0 = fminf(y0, sy); y1 = fmaxf(y1, sy);
+    float cx[4] = {o.x, o.x + w, o.x + w, o.x}, cy[4] = {o.y, o.y, o.y + h, o.y + h};
+    float ts[4] = {0, (float)o.iw, (float)o.iw, 0}, tt[4] = {0, 0, (float)o.ih, (float)o.ih};
+    SetupV v[4];
+    for (int i = 0; i < 4; i++)
+        v[i] = (SetupV){A * cx[i] + B * cy[i] + X, C * cx[i] + D * cy[i] + Y, 0, ts[i] * 32.0f, tt[i] * 32.0f, 1, {255, 255, 255, 255}};
+    static const int tri[2][3] = {{0, 1, 2}, {0, 2, 3}};
+    for (int k = 0; k < 2; k++) {
+        uint32_t cmd[44];
+        int n = tri_setup(&v[tri[k][0]], &v[tri[k][1]], &v[tri[k][2]], 0, 1, 0, 0, 0, cmd);
+        record(cmd, n);
+        rdp_triangle(cmd);
     }
-    for (int py = (int)floorf(y0); py < (int)ceilf(y1); py++)
-        for (int px = (int)floorf(x0); px < (int)ceilf(x1); px++) {
-            float dx = px + 0.5f - X, dy = py + 0.5f - Y;
-            float ox = (D * dx - B * dy) / det, oy = (-C * dx + A * dy) / det;
-            if (ox < o.x || oy < o.y || ox >= o.x + w || oy >= o.y + h) continue;
-            Texels tx = one_texel(sample(&tiles[7], (ox - o.x) * o.sw, (oy - o.y) * o.sh));
-            plot(px, py, 0, (Color){1, 1, 1, 1}, &tx, 0, 8, 0);
-        }
 }
-static void s2d_bg(uint32_t bg, int scaled) { /* uObjBg: a background straight from memory */
-    dump_partial = 1;
-    combiner_uses();
-    float ix = rd16(bg) / 32.0f, iw = rd16(bg + 2) / 4.0f, fx = (int16_t)rd16(bg + 4) / 4.0f, fw = rd16(bg + 6) / 4.0f;
-    float iy = rd16(bg + 8) / 32.0f, ih = rd16(bg + 10) / 4.0f, fy = (int16_t)rd16(bg + 12) / 4.0f, fh = rd16(bg + 14) / 4.0f;
+/* uObjBg: a background straight from memory, scaled (G_OBJ_BG1CYC) or not (G_OBJ_BGRECTCOPY). Like the microcode,
+   it loads the image a strip of lines at a time, as many as fit TMEM (half of it for a palette's image), and draws
+   each strip as rectangles, cut where the image wraps around to its start. */
+static void s2d_bg(uint32_t bg, int scaled) {
+    int ix = rd16(bg), iw = rd16(bg + 2) >> 2, fx = (int16_t)rd16(bg + 4), fw = rd16(bg + 6);
+    int iy = rd16(bg + 8), ih = rd16(bg + 10) >> 2, fy = (int16_t)rd16(bg + 12), fh = rd16(bg + 14);
     uint32_t image = phys(rd32(bg + 16));
-    int fmt = R[bg + 22], siz = R[bg + 23], pal = rd16(bg + 24), width = (int)iw, height = (int)ih;
-    float scw = scaled ? rd16(bg + 28) / 1024.0f : 1, sch = scaled ? rd16(bg + 30) / 1024.0f : 1;
-    if (scw == 0) scw = 1;
-    if (sch == 0) sch = 1;
-    if (width <= 0 || height <= 0) return;
-    if (gpu && ((int)fw > 1024 || (int)fh > 1024)) return;
-    for (int y = 0; y < (int)fh; y++)
-        for (int x = 0; x < (int)fw; x++) {
-            int s = (int)(ix + x * scw) % width, t = (int)(iy + y * sch) % height;
-            Color c;
-            switch (siz) {
-            case 0: { uint8_t b = R[image + (uint32_t)(t * width + s) / 2]; int v = (s & 1) ? b & 15 : b >> 4;
-                c = fmt == 2 ? unpack5551(tlut[(pal * 16 + v) & 255]) : (Color){by15[v], by15[v], by15[v], 1}; break; }
-            case 1: { uint8_t v = R[image + (uint32_t)(t * width + s)];
-                c = fmt == 2 ? unpack5551(tlut[v]) : (Color){by255[v], by255[v], by255[v], 1}; break; }
-            case 2: c = unpack5551(rd16(image + (uint32_t)(t * width + s) * 2)); break;
-            default: { uint32_t a = image + (uint32_t)(t * width + s) * 4;
-                c = (Color){by255[R[a]], by255[R[a + 1]], by255[R[a + 2]], by255[R[a + 3]]}; }
+    int fmt = R[bg + 22], siz = R[bg + 23], pal = rd16(bg + 24);
+    int scw = scaled ? rd16(bg + 28) : 1024, sch = scaled ? rd16(bg + 30) : 1024;
+    if (!scw) scw = 1024;
+    if (!sch) sch = 1024;
+    if (iw <= 0 || ih <= 0 || fw <= 0 || fh <= 0) return;
+    if (gpu) { /* the WebGL renderer takes the whole background as one texture */
+        int w = fw >> 2, h = fh >> 2;
+        if (w > 1024 || h > 1024) return;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                int s = (int)((ix / 32.0f) + x * (scw / 1024.0f)) % iw, t = (int)((iy / 32.0f) + y * (sch / 1024.0f)) % ih;
+                Color c;
+                switch (siz) {
+                case 0: { uint8_t b = R[image + (uint32_t)(t * iw + s) / 2]; int v = (s & 1) ? b & 15 : b >> 4;
+                    c = fmt == 2 ? unpack5551(tlut[(pal * 16 + v) & 255]) : (Color){by15[v], by15[v], by15[v], 1}; break; }
+                case 1: { uint8_t v = R[image + (uint32_t)(t * iw + s)];
+                    c = fmt == 2 ? unpack5551(tlut[v]) : (Color){by255[v], by255[v], by255[v], 1}; break; }
+                case 2: c = unpack5551(rd16(image + (uint32_t)(t * iw + s) * 2)); break;
+                default: { uint32_t a = image + (uint32_t)(t * iw + s) * 4;
+                    c = (Color){by255[R[a]], by255[R[a + 1]], by255[R[a + 2]], by255[R[a + 3]]}; }
+                }
+                gpu_scratch[y * w + x] = gpu_rgba(c);
             }
-            int px = (int)fx + x, py = (int)fy + y;
-            if (gpu) { gpu_scratch[y * (int)fw + x] = gpu_rgba(c); continue; }
-            if (cycle_type() == 2) {
-                if (in_frame(px, py) && c.a > 0) { uint32_t a = pixel_addr(px, py); write_pixel(px, py, a, c, 0); cvg_clean(a); }
-            } else { Texels tx = one_texel(c); plot(px, py, 0, (Color){1, 1, 1, 1}, &tx, 0, 8, 0); }
+        gpu_bg(fx >> 2, fy >> 2, w, h, gpu_scratch);
+        return;
+    }
+    /* a 4-bit image loads as 8-bit texels of half the width; a line is padded to whole 8-byte words */
+    int load_siz = siz ? siz : 1, load_w = siz ? iw : (iw + 1) / 2;
+    int line = ((load_w << load_siz >> 1) + 7) / 8;
+    if (siz == 3) line = (load_w * 2 + 7) / 8; /* 32-bit texels: their halves in TMEM's two banks */
+    int room = (fmt == 2 ? 256 : 512) / (line ? line : 1); /* lines that fit */
+    if (room <= 0) return;
+    int filtered = ((mode_h >> 12) & 3) != 0 && cycle_type() < 2; /* bilinear reads the line below too */
+    int rows = fh >> 2;
+    int64_t t0 = (int64_t)iy << 5; /* the image's line at the frame's top, in 1/1024 texels */
+    int r = 0;
+    while (r < rows) {
+        int64_t ta = t0 + (int64_t)r * sch;
+        int first = (int)((ta >> 10) % ih);
+        /* the screen lines this strip draws: their image lines from `first` on fit, and don't pass the image's end */
+        int r1 = r + 1;
+        while (r1 < rows) {
+            int64_t tb = t0 + (int64_t)r1 * sch;
+            int last = first + (int)((tb >> 10) - (ta >> 10)) + filtered;
+            if (last - first + 1 > room || ((tb >> 10) - (ta >> 10)) + first >= ih) break;
+            r1++;
         }
-    if (gpu) gpu_bg((int)fx, (int)fy, (int)fw, (int)fh, gpu_scratch);
+        int64_t tl = t0 + (int64_t)(r1 - 1) * sch;
+        int last = first + (int)((tl >> 10) - (ta >> 10)) + filtered;
+        if (last >= ih) last = ih - 1;
+        set_timage(fmt, load_siz, load_w, image);
+        set_tile(7, fmt, load_siz, line, 0, 0, 0, 0);
+        rdp_send(0xF4000000u | (uint32_t)(first << 2), 7u << 24 | (uint32_t)((load_w - 1) << 2) << 12 | (uint32_t)(last << 2));
+        set_tile(0, fmt, siz, line, 0, pal, 2, 0);
+        set_tile_size(0, 0, first << 2, (iw - 1) << 2, last << 2);
+        int t = (int)((((ta >> 10) % ih) << 5) | ((ta & 1023) >> 5)); /* s10.5 */
+        int y0 = fy + (r << 2), y1 = fy + (r1 << 2);
+        /* across: the image wraps at its width, so the rectangle is cut there */
+        int64_t sa = (int64_t)ix << 5;
+        int x = 0, cols = fw >> 2;
+        while (x < cols) {
+            int64_t sx = sa + (int64_t)x * scw;
+            int col = (int)((sx >> 10) % iw), x1 = x + 1;
+            while (x1 < cols && col + (int)(((sa + (int64_t)x1 * scw) >> 10) - (sx >> 10)) < iw) x1++;
+            s2d_rect(0, fx + (x << 2), y0, fx + (x1 << 2), y1, (col << 5) | (int)((sx & 1023) >> 5), t, scw, sch);
+            x = x1;
+        }
+        r = r1;
+    }
 }
 /* S2DEX 1.x (GBI 1) numbers its object commands differently: each mapped to S2DEX2's; the rest are GBI 1's. */
 static int s2dex1_op(uint8_t op) {
@@ -1840,7 +2031,6 @@ void port_render_task(uint32_t task) {
         }
         snprintf(path, sizeof path, "%s/%06lu.cmds", dump_dir, render_tasks);
         dump_cmds = fopen(path, "wb");
-        dump_partial = 0;
         /* the state earlier tasks left, as commands: the replay starts from the RDP's power-on state */
         record2(0xEF000000u | mode_h, mode_l);
         record2(0xFC000000u | combine0, combine1);
@@ -1852,7 +2042,7 @@ void port_render_task(uint32_t task) {
     if (dumping) {
         if (dump_cmds) fclose(dump_cmds);
         dump_cmds = NULL;
-        dump_memory(dump_dir, render_tasks, dump_partial ? "after-partial" : "after");
+        dump_memory(dump_dir, render_tasks, "after");
     }
 }
 /* A recorded RDP command stream (PORT_RDPDUMP's, big-endian words) drawn straight into the game's memory, without
@@ -1877,7 +2067,7 @@ void port_rdp_replay(const uint8_t *cmds, size_t bytes, const uint8_t *hidden, s
         at += words;
         if (id >= 0x08 && id <= 0x0F) rdp_triangle(w);
         else if (id == 0x24 || id == 0x25) {
-            if (cycle_type() < 2)
+            if (rdp_walks_rect())
                 rdp_rect((int)(w[1] >> 24) & 7, (w[0] >> 12) & 0xFFF, w[0] & 0xFFF, (w[1] >> 12) & 0xFFF, w[1] & 0xFFF, 1,
                          (int16_t)(w[2] >> 16), (int16_t)w[2], (int16_t)(w[3] >> 16), (int16_t)w[3], id == 0x25);
             else tex_rect((int)(w[1] >> 24) & 7, ((w[1] >> 12) & 0xFFF) / 4.0f, (w[1] & 0xFFF) / 4.0f, ((w[0] >> 12) & 0xFFF) / 4.0f,
@@ -1930,15 +2120,7 @@ static void render_list(uint32_t task) {
         } else if (op == 0xE4 || op == 0xE5) { /* a textured rectangle: two more commands carry s, t and steps */
             uint32_t h1 = rd32(pc + 4), h2 = rd32(pc + 12);
             pc += 16;
-            float xh = ((w0 >> 12) & 0xFFF) / 4.0f, yh = (w0 & 0xFFF) / 4.0f;
-            float xl = ((w1 >> 12) & 0xFFF) / 4.0f, yl = (w1 & 0xFFF) / 4.0f;
-            uint32_t rect[4] = {w0, w1, h1, h2};
-            record(rect, 4);
-            if (cycle_type() < 2 && !gpu) /* the RDP's words: lower right in the first, tile and upper left in the second */
-                rdp_rect((int)(w1 >> 24) & 7, (w0 >> 12) & 0xFFF, w0 & 0xFFF, (w1 >> 12) & 0xFFF, w1 & 0xFFF, 1,
-                         (int16_t)(h1 >> 16), (int16_t)h1, (int16_t)(h2 >> 16), (int16_t)h2, op == 0xE5);
-            else tex_rect((w1 >> 24) & 7, xl, yl, xh, yh, (int16_t)(h1 >> 16) / 32.0f, (int16_t)h1 / 32.0f,
-                          (int16_t)(h2 >> 16) / 1024.0f, (int16_t)h2 / 1024.0f, op == 0xE5);
+            texrect_words(w0, w1, h1, h2, op == 0xE5);
         } else if (ucode == UC_S2DEX || ucode == UC_S2DEX2) s2dex(op, w0, w1);
         else if (one) gbi1(op, w0, w1);
         else f3dex2(op, w0, w1);
