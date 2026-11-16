@@ -1118,7 +1118,6 @@ async function renderProjectSettings(keepRemoved = false) {
   $("codeAuditPanel").hidden = !S.ov?.code_audit;
   loadCodeAudit();
   const settingsGen = S.gen, settingsSlug = S.slug;
-  renderDeepSweep();
   if ($("compilerImprovements").dataset.slug !== S.slug) $("compilerImprovements").replaceChildren();
   if ($("compilerProgress").dataset.slug !== S.slug) {
     $("compilerProgress").hidden = true;
@@ -2022,7 +2021,7 @@ let deepSweepFollowing = null, deepSweepProjectVersion = 0, deepSweepSnapshot = 
 function retryDeepUpdates(slug, version) {
   clearTimeout(deepSweepRetryTimer);
   deepSweepRetryTimer = setTimeout(() => {
-    if (S.slug === slug && version === deepSweepProjectVersion && (!S.tab || S.tab === "settings")) return renderDeepSweep();
+    if (S.slug === slug && version === deepSweepProjectVersion && (!S.tab || S.tab === "matching")) return renderDeepSweep();
   }, 5000);
 }
 let deepMetricRows = [], deepMetricSlug = null, deepMetricResultStatus = {};
