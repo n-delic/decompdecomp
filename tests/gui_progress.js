@@ -11,6 +11,7 @@ function element() {
   return {
     disabled: false, hidden: false, value: "", checked: true, files: [], textContent: "", innerHTML: "", attrs: {}, dataset: {}, children: [],
     setAttribute(key, value) { this.attrs[key] = value; },
+    querySelectorAll() { return []; },
     append(...children) { this.children.push(...children); },
     before(child) {
       if (child.className === "workbar") this.bar = child;

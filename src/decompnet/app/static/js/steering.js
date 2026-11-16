@@ -2,6 +2,11 @@
 /* ------------------------------------------------------------------ drawers, keys */
 /* A drawer (the function, a dialog) takes the keyboard while it's open and gives it back where it was when it closes:
    whoever works with the keyboard isn't left at the top of the page. */
+function releaseDialogContent() {
+  const cleanup = S.dialogCleanup;
+  S.dialogCleanup = null;
+  if (cleanup) cleanup();
+}
 function showDrawer(id) {
   const d = $(id);
   if (d.hidden) S[id + "From"] = document.activeElement;
@@ -14,7 +19,7 @@ function hideDrawer(id) {
   const d = $(id);
   if (d.hidden) return;
   if (id === "drawer") { if (typeof cancelFunctionRead === "function") cancelFunctionRead(); giveBack(null); S.fn = null; S.fnDetail = null; S.fnNav = (S.fnNav || 0) + 1; if (S.map.length) drawMap(); }
-  if (id === "dialog") { if(typeof stopRomAssetAudio=== "function")stopRomAssetAudio(); S.dialogKind = ""; }
+  if (id === "dialog") { releaseDialogContent(); if(typeof stopRomAssetAudio=== "function")stopRomAssetAudio(); S.dialogKind = ""; }
   d.hidden = true;
   if ($("drawer").hidden && $("dialog").hidden) document.body.classList.remove("locked");
   const back = S[id + "From"];
@@ -59,6 +64,7 @@ function wireCopies(root) {
 /* The side panel for one task (decompiling together, the export, a rename...). `kind` says which, for what keeps it
    up to date while it's open. */
 function dialog(title, html, kind = "") {
+  releaseDialogContent();
   $("dialogBody")._romAssetBusy=false;
   if(typeof stopRomAssetAudio=== "function")stopRomAssetAudio();
   $("dialogBody").classList.remove("rom-region-body");
@@ -680,7 +686,7 @@ function renderAutopilot(ov) {
   const cross = ov.cross_game || { counts: {}, recent: [] };
   const count = cross.counts.match || 0, tried = Object.values(cross.counts).reduce((a, b) => a + b, 0);
   $("crossGamePanel").hidden = false;
-  $("crossGameContext").textContent=`— ${count.toLocaleString()} verified · ${tried.toLocaleString()} checked`;
+  $("crossGameEmpty").hidden = !!tried || !!run._working || logState._slug === ov.slug;
   $("crossGameSummary").innerHTML = `<div class="deep-sweep-counts" aria-label="Cross-game results"><button type="button" class="deep-metric" data-cross-metric="matches" aria-haspopup="dialog"><b class="cross-match-count">${count.toLocaleString()}</b><span>Matched<span aria-hidden="true">↗</span></span></button><button type="button" class="deep-metric" data-cross-metric="improved" aria-haspopup="dialog"><b>${(cross.counts.improved || 0).toLocaleString()}</b><span>Improved<span aria-hidden="true">↗</span></span></button><button type="button" class="deep-metric" data-cross-metric="all" aria-haspopup="dialog"><b>${tried.toLocaleString()}</b><span>Checked<span aria-hidden="true">↗</span></span></button></div>`;
   $("crossGameSummary").querySelectorAll('[data-cross-metric]').forEach(button=>{button.onclick=()=>openCrossGameResults(ov,button.dataset.crossMetric);});
   if(S.dialogKind==='cross-game-results' && $('dialogBody').dataset.crossSlug===ov.slug)renderCrossGameResults(ov);
@@ -2018,6 +2024,30 @@ $("sourcePrepExportRun").onclick = async () => {
 };
 
 let deepSweepFollowing = null, deepSweepProjectVersion = 0, deepSweepSnapshot = null, deepSweepRetryTimer = null;
+// Keep the actual inputs when the shared drawer closes or changes tasks, so a poll never loses edits.
+function openDeepOptions() {
+  const settings = $("deepSweepSettings"), slug = S.slug;
+  dialog("Deep permuter search options", `<p class="small muted" id="deepSweepOptionsHelp"></p><div id="deepSweepOptionsHost"></div><div class="row"><button type="button" class="primary" id="deepSweepOptionsDone">Done</button></div>`, "deep-options");
+  $("deepSweepOptionsHost").append(settings);
+  $("deepSweepOptionsHelp").textContent = settings.disabled
+    ? "These settings are in use. Stop the search to change them."
+    : "Changes apply when you start the next search.";
+  S.dialogCleanup = () => {
+    $("deepSweepSettingsHome").append(settings);
+    renderDeepOptionsSummary();
+  };
+  const edited = () => {
+    if (S.slug !== slug) return;
+    settings.dataset.editedSlug = slug;
+    renderDeepOptionsSummary();
+  };
+  settings.oninput = edited;
+  settings.onchange = edited;
+  $("deepSweepOptionsDone").onclick = () => {
+    if ([...settings.querySelectorAll("input")].every(input => input.reportValidity())) closeDialog();
+  };
+  (settings.disabled ? $("deepSweepOptionsDone") : $("deepSweepMinutes")).focus();
+}
 function retryDeepUpdates(slug, version) {
   clearTimeout(deepSweepRetryTimer);
   deepSweepRetryTimer = setTimeout(() => {
@@ -2169,8 +2199,16 @@ function renderDeepImprovementTable(status, resultHost) {
     button.onclick = () => { closeDialog(); openFn(rows[Number(button.dataset.deepResult)].function); };
   });
 }
+function renderDeepOptionsSummary() {
+  const minutes = Number($("deepSweepMinutes").value) || 5;
+  $("deepSweepOptionsSummary").textContent = `${minutes} min per function${$("deepSweepMaximum").checked ? " · maximum CPU" : ""}${$("deepSweepLoop").checked ? " · looping" : ""}`;
+}
 function setDeepRunVisibility(running) {
-  $("deepSweepSettings").hidden = running;
+  $("deepSweepSettings").disabled = running;
+  renderDeepOptionsSummary();
+  if (S.dialogKind === "deep-options") $("deepSweepOptionsHelp").textContent = running
+    ? "These settings are in use. Stop the search to change them."
+    : "Changes apply when you start the next search.";
   for (const id of ["deepActivitySection", "deepSweepLogSection"]) $(id).hidden = !running;
 }
 function renderDeepQueueState(status) {
@@ -2208,6 +2246,8 @@ function renderDeepQueueState(status) {
     : blocked ? "Open the reasons below, fix the affected functions, then run again."
     : waiting ? `${waiting} functions need saved C with a measured score before they can be searched.`
     : status.statistics_pending ? "Saved totals are loading. You can start a search now." : status.has_activity ? "Each eligible function finished a bounded turn. Run again repeats completed turns to try more rewrites." : "Start with untested or changed functions that have saved C.";
+  $("deepSweepQueueReason").hidden = !error && !stopped && !blocked && !waiting && !preparing
+    && !(running && status.progress?.phase === "waiting for host claims or scored C");
   $("deepSweepStart").hidden = running;
   $("deepSweepStart").textContent = left && status.has_activity ? "Continue search" : status.has_activity ? "Run again" : "Start search";
   $("deepSweepStart").disabled = false;
@@ -2225,8 +2265,12 @@ function renderDeepQueueState(status) {
     ? `${running && status.loop ? `Pass ${status.progress.cycle || 1} · looping` : running ? "This run" : "Last run"}: ${status.progress.functions_tested.toLocaleString()} functions checked` : "";
   $("deepSweepBar").max = Math.max(1, total);
   $("deepSweepBar").value = done;
-  $("deepSweepProgressText").textContent = total ? `${done.toLocaleString()} of ${total.toLocaleString()} functions completed · ${Math.floor(100 * done / total)}%` : "";
-  $("deepSweepLoadingBar").hidden = !status.statistics_pending;
+  $("deepSweepBar").hidden = !total || !status.has_activity;
+  $("deepSweepProgressText").textContent = total && status.has_activity
+    ? `Saved progress: ${done.toLocaleString()} of ${total.toLocaleString()} search turns completed · ${left.toLocaleString()} remaining${blocked ? ` · ${blocked.toLocaleString()} need attention` : ""}`
+    : running ? "Preparing search…" : status.has_activity ? "No eligible functions remaining." : "No searches yet.";
+  $("deepSweepLoadingBar").hidden = preparing || !(status.statistics_pending || (running && !total));
+  $("deepSweepLoadingBar").ariaLabel = status.statistics_pending ? "Loading saved search totals" : "Searching functions";
   if (status.statistics_pending) {
     $("deepSweepBar").hidden = true;
     for (const id of ["deepSweepMatched", "deepSweepImproved", "deepSweepLeft"]) $(id).textContent = "—";
@@ -2240,6 +2284,13 @@ async function renderDeepSweep() {
   if (!slug) return;
   const panel = $("deepSweepPanel");
   if (panel.dataset.slug !== slug) {
+    if (S.dialogKind === "deep-options") closeDialog();
+    const settings = $("deepSweepSettings");
+    delete settings.dataset.editedSlug;
+    for (const input of settings.querySelectorAll("input")) {
+      if (input.type === "checkbox") input.checked = input.defaultChecked;
+      else input.value = input.defaultValue;
+    }
     clearTimeout(deepSweepRetryTimer);
     if (deepSweepFollowing) deepSweepFollowing.finish();
     deepSweepFollowing = null;
@@ -2282,7 +2333,7 @@ async function renderDeepSweep() {
     if (S.slug !== slug || version !== deepSweepProjectVersion || panel.dataset.resetting === slug) return;
     controlsLoaded = true;
     const status = {...deepSweepSnapshot, ...control, statistics_pending:deepSweepSnapshot?.statistics_pending !== false};
-    if (panel.dataset.loadedSlug !== slug) {
+    if (panel.dataset.loadedSlug !== slug && $("deepSweepSettings").dataset.editedSlug !== slug) {
       panel.dataset.loadedSlug = slug;
       $("deepSweepMinutes").value = status.minutes;
       $("deepSweepVariants").value = status.max_variants;
@@ -2325,6 +2376,7 @@ async function renderDeepSweep() {
       } else if (deepSweepSnapshot?.statistics_pending) {
         $("deepSweepQueueReason").textContent += " Saved totals are still loading and will update automatically.";
       }
+      $("deepSweepQueueReason").hidden = false;
       retryDeepUpdates(slug, version);
     }
   } finally {
@@ -2371,6 +2423,7 @@ async function followDeepSweep(slug, job) {
         following.reconnecting = true;
         $("deepSweepQueueTitle").textContent = "Reconnecting to progress updates…";
         $("deepSweepQueueReason").textContent = "The search may still be running. Updates will reconnect automatically; Stop remains available.";
+        $("deepSweepQueueReason").hidden = false;
         retryDeepUpdates(slug, deepSweepProjectVersion);
       }
     }
@@ -2387,7 +2440,12 @@ $("deepSweepBlockedGroup").onclick = () => openDeepMetric("attention");
 $("deepSweepMetricMatched").onclick = () => openDeepMetric("matched");
 $("deepSweepMetricImproved").onclick = () => openDeepMetric("improved");
 $("deepSweepMetricActive").onclick = () => openDeepMetric("active");
+$("deepSweepOptions").onclick = openDeepOptions;
 $("deepSweepStart").onclick = async () => {
+  if ($("deepSweepStart").disabled) return;
+  const invalid = [...$("deepSweepSettings").querySelectorAll("input")].find(input => !input.checkValidity());
+  if (invalid) { openDeepOptions(); invalid.reportValidity(); return; }
+  $("deepSweepPanel").open = true;
   const slug = S.slug, log = $("deepSweepLog");
   deepSweepProjectVersion++; clearTimeout(deepSweepRetryTimer);
   delete $("deepSweepPanel").dataset.statusLoading;
@@ -2405,7 +2463,8 @@ $("deepSweepStart").onclick = async () => {
       setDeepRunVisibility(false);
       $("deepSweepQueueTitle").textContent = "Search could not start";
       $("deepSweepQueueReason").textContent = error.message;
-      }
+      $("deepSweepQueueReason").hidden = false;
+    }
   }
   finally { done(); }
   if (job && S.slug === slug) { $("deepSweepStop").hidden = false; followDeepSweep(slug, job); }
@@ -2413,7 +2472,12 @@ $("deepSweepStart").onclick = async () => {
 $("deepSweepStop").onclick = async () => {
   const button = $("deepSweepStop"); button.disabled = true; button.textContent = "Stopping…";
   try { await api("/api/permuter/pass", {method:"POST", body:{slug:S.slug, action:"stop"}}); }
-  catch (error) { button.disabled = false; button.textContent = "Stop"; showJobError($("deepSweepLog"), error.message); }
+  catch (error) {
+    button.disabled = false; button.textContent = "Stop";
+    $("deepSweepQueueReason").textContent = "Could not stop: " + error.message;
+    $("deepSweepQueueReason").hidden = false;
+    showJobError($("deepSweepLog"), error.message);
+  }
 };
 
 $("deepSweepReset").onclick = async () => {

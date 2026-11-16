@@ -70,6 +70,8 @@ assert.ok(markup.indexOf('id="crossGamePanel"')>markup.indexOf('id="deepSweepPan
 assert.ok(markup.indexOf('id="crossGamePanel"')<markup.indexOf('id="agentBlockerReviews"'));
 assert.ok(!markup.includes('id="crossGameRecent"'),'results are drawer-only');
 render({slug:'target-game',kind:'rom',matched:0});
+assert.equal((get('crossGameSummary').innerHTML.match(/<b[^>]*>0<\/b>/g)||[]).length,3,'all metrics stay visible when empty');
+assert.equal(get('crossGameEmpty').hidden,false);
 
 async function checks() {
   let started=0,finished=0,posted;

@@ -1260,7 +1260,6 @@ details.more[open] > summary::before { content: "− "; }
 /* Deep pass: a compact configuration area followed by a live results dashboard. */
 #deepSweepPanel > summary { justify-content: flex-start; }
 #deepSweepPanel > summary h2 { flex: 1; }
-#deepSweepPanel > .pad { gap: 16px; padding: 20px; }
 .deep-sweep-intro { font-size: 13px; color: var(--muted); margin: 0; max-width: 76ch; }
 .deep-sweep-settings { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); gap: 16px 20px; padding: 16px; border: 1px solid var(--line-soft); border-radius: var(--r); background: var(--raise); }
 .deep-sweep-settings small { font-size: 11px; line-height: 1.5; color: var(--muted); }
@@ -1300,7 +1299,6 @@ details.more[open] > summary::before { content: "− "; }
 @media (max-width: 600px) { .deep-issue-group > header { flex-direction: column; gap: 2px; } }
 @media (max-width: 1000px) { .deep-sweep-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 600px) {
-  #deepSweepPanel > .pad { padding: 14px; }
   #deepSweepPanel > summary h2 { flex: 1 1 calc(100% - 32px); }
   #deepSweepPanel > summary > span { margin-left: 20px; }
   .deep-sweep-settings { grid-template-columns: 1fr; gap: 14px; }
@@ -1758,7 +1756,6 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 
 /* Configure before starting; keep the running view focused on progress. */
 #deepSweepPanel > summary > span { border:1px solid var(--line-soft); border-radius:99px; padding:3px 9px; font-size:10px; white-space:nowrap; }
-#deepSweepPanel > .pad { gap:18px; }
 .deep-dashboard { display:grid; gap:16px; border:0; border-radius:0; padding:0; background:transparent; min-width:0; }
 .deep-dashboard .deep-queue-state { border:0; border-bottom:1px solid var(--line-soft); border-radius:0; padding:0 0 16px; background:transparent; }
 .deep-dashboard .deep-queue-state h3 { font-size:16px; letter-spacing:-.02em; display:flex; align-items:center; gap:9px; }
@@ -2148,7 +2145,7 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 
 /* Cross-game reuse shares the deep-permuter metric buttons, with one stage indicator. */
 #crossGamePanel .transfer-dashboard { border:0; padding:0; background:transparent; }
-#crossGamePanel .transfer-summary { border-top:1px solid var(--line-soft); padding-top:18px; }
+#crossGamePanel .transfer-summary { margin:0; border:0; padding:0; }
 #crossGamePanel .deep-sweep-counts { border:0; background:transparent; }
 #crossGamePanel .deep-metric { background:transparent; border:0; border-left:1px solid var(--line-soft); padding:2px 20px; }
 #crossGamePanel .deep-metric:first-child { border:0; padding-left:0; }
@@ -2260,3 +2257,52 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 .port-details summary { cursor: pointer; color: var(--muted); }
 .port-actions button { white-space: normal; max-width: 100%; text-align: left; }
 #portBlockers { list-style: decimal; padding-left: 22px; display: grid; gap: 4px; }
+
+/* Local matching keeps results prominent; search controls live in the shared side drawer. */
+.local-matching-note { margin-bottom:12px; }
+.local-search-card { margin-bottom:16px; }
+.local-search-card > .local-search-head { gap:12px; flex-wrap:wrap; border-bottom:0; }
+.local-search-title { display:flex; flex:1; min-width:0; flex-wrap:wrap; align-items:baseline; gap:6px 16px; }
+.local-search-title h2 { margin:0; }
+.local-search-state { font-size:11px; color:var(--muted); }
+.local-search-head[data-state="running"] .local-search-state { color:var(--ink); }
+.local-search-head[data-state="error"] .local-search-state { color:var(--miss); }
+.local-search-card > .pad.local-search-body { gap:18px; padding:0 20px 18px; }
+.local-search-intro { font-size:12px; color:var(--muted); margin:0; }
+.local-search-card .deep-dashboard { gap:16px; padding:0; }
+.local-search-card .deep-sweep-counts > button { padding-top:6px; padding-bottom:6px; }
+.local-search-progress { display:grid; gap:8px; min-width:0; }
+.local-search-progress > p { margin:0; }
+.local-search-progress > p:empty, .local-search-progress > .deep-queue-details:has(> [hidden]):not(:has(> :not([hidden]))) { display:none; }
+.local-search-progress .deep-sweep-bar { margin:0; }
+.local-search-progress .deep-queue-details { margin:0; gap:8px 16px; align-items:center; }
+.local-search-progress .deep-queue-details > span:not([hidden]) { border:0; padding:0; }
+.local-search-options-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; }
+.local-search-options-row > button { padding:4px 8px; }
+.local-search-card .deep-sweep-tools { padding:0; border:0; gap:8px 16px; align-items:baseline; }
+.local-search-card .deep-sweep-tools > #deepSweepReset { margin-left:auto; }
+.local-search-card .deep-sweep-tools .deep-sweep-help { flex:initial; }
+.local-search-card .deep-sweep-tools .deep-sweep-help[open] { flex-basis:100%; order:1; }
+#deepSweepRecipes:empty { display:none; }
+.local-search-card .transfer-technical { margin:0; }
+.local-search-options { border:0; padding:0; margin:0; display:grid; gap:18px; min-width:0; }
+.local-search-options legend { font-size:13px; font-weight:600; padding:0 0 16px; }
+.local-search-options h3 { font-size:13px; margin:4px 0 0; }
+.local-search-option-pair { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.local-search-options small { display:block; font-size:11px; line-height:1.6; color:var(--muted); }
+.local-search-options .deep-sweep-repeat { margin:0; }
+.local-search-options:disabled { opacity:.65; }
+@media(max-width:600px) {
+ .local-search-card > .pad.local-search-body { padding:0 14px 16px; }
+ .local-search-card > .local-search-head { align-items:flex-start; }
+ .local-search-title { flex-basis:100%; display:grid; gap:6px; }
+ .local-search-card > summary.local-search-head { display:grid; grid-template-columns:8px minmax(0,1fr); }
+ .local-search-card > summary.local-search-head::before { align-self:start; margin-top:6px; }
+ .local-search-card > summary .local-search-title { grid-column:2; }
+ .local-search-card > summary .deep-sweep-actions { grid-column:2; }
+ .local-search-card .deep-sweep-counts > button { padding-left:8px; padding-right:8px; }
+ .local-search-card .deep-sweep-counts > button:first-child { padding-left:0; }
+ .local-search-card .deep-sweep-counts > .deep-metric > span { flex-wrap:wrap; gap:4px; }
+}
+
+@media(max-width:420px) { .local-search-option-pair { grid-template-columns:1fr; } }
