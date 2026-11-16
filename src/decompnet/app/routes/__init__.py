@@ -3,6 +3,7 @@ module's register(), which adds that part's routes to the MCP server's web app:
 
 - pages:    the GUI's page (for the app's own window only), its assets and the health check
 - state:    the app's state, the project list, imports, the function map, the log and jobs
+- matching: explicit project-wide deep and cross-game searches
 - projects: everything under a project (/api/project, /api/function, /api/compiler, /api/export, ...)
 - forks:    public decomps forked by their address, and projects started from scratch on that build
 - setup:    compilers and tools, helper agents and their sign-in, settings
