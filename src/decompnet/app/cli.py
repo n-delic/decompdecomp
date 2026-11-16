@@ -111,6 +111,11 @@ def replace_older(state_file: Path, log=print) -> dict | None:
         if not _alive(prev["port"]):
             break
         time.sleep(QUIT_POLL_SECONDS)
+    else:
+        if (pid := _hung_app(state_file.parent)) is not None:
+            from . import instance_lock
+            log(f"decompdecomp {running} didn't quit when asked; stopping it (pid {pid})")
+            instance_lock.end(pid, RUNTIME_STOP_SECONDS + 10, log=log)
     return None
 
 
@@ -212,11 +217,17 @@ def run(args) -> int:
     # Migration can legitimately take longer than health discovery. Keep another
     # launcher from starting a second server/workers while this home is opening.
     from ..writer_gate import WriterGate
+    from . import instance_lock
     instance = WriterGate(internal / 'server-instance')
+    if instance.path is not None:
+        instance_lock.clear(instance.path, log=lambda line: (print(line, flush=True), log.warning(line)))
     with instance.hold(blocking=bool(restarted) and not restarted.get('switch_home',False)) as admitted:
         if not admitted:
-            print('decompdecomp is already starting for this home. Wait for its database upgrade to finish.')
+            print('decompdecomp is already starting for this home. Wait for its database upgrade to finish; '
+                  'if it never opens, `decomp stop` ends it.')
             return 0
+        if instance.path is not None:
+            instance_lock.claim(instance.path)
         return _start(args,home,internal,state_file,log,restarted,headless)
 
 
@@ -397,24 +408,45 @@ def setup(args) -> int:
     return 0
 
 
+def _hung_app(internal: Path) -> int | None:
+    """This home's app when it holds the instance lock but its server doesn't answer (16 November 2026: a fork
+    stuck before exec held its request lanes for hours, and nothing answered, quit included)."""
+    from ..writer_gate import WriterGate
+    from . import instance_lock
+    lock = WriterGate(internal / 'server-instance').path
+    return instance_lock.hung_owner(lock) if lock is not None else None
+
+
 def stop(args) -> int:
     """Quit the running app of this home, and say so only once it has: it used to say "stopped" to a 1.0.2 app
-    that refused the request and kept running."""
-    running = _state(home_dir() / ".decomp" / "server.json")
+    that refused the request and kept running. One that doesn't answer, or doesn't quit when asked, is ended:
+    asked by SIGTERM (its shutdown has a hard deadline), then SIGKILL."""
+    from . import instance_lock
+    internal = home_dir() / ".decomp"
+    running = _state(internal / "server.json")
     if running is None:
-        print(f"{edition.NAME} is not running")
-        return 0
-    try:
-        _call(running, "/api/quit", {}, timeout=5)
-    except OSError:
-        pass
-    for _ in range(int(QUIT_WAIT_SECONDS / QUIT_POLL_SECONDS)):
-        if not _alive(running["port"]):
-            print(f"{edition.NAME} stopped")
+        if (pid := _hung_app(internal)) is None:
+            print(f"{edition.NAME} is not running")
             return 0
-        time.sleep(QUIT_POLL_SECONDS)
-    pid = running.get("pid")
-    print(f"{edition.NAME} didn't stop" + (f": end it with `kill {pid}`" if pid else ""), file=sys.stderr)
+        print(f"{edition.NAME} is running (pid {pid}) but doesn't answer; stopping it.")
+    else:
+        try:
+            _call(running, "/api/quit", {}, timeout=5)
+        except OSError:
+            pass
+        for _ in range(int(QUIT_WAIT_SECONDS / QUIT_POLL_SECONDS)):
+            if not _alive(running["port"]):
+                print(f"{edition.NAME} stopped")
+                return 0
+            time.sleep(QUIT_POLL_SECONDS)
+        if (pid := _hung_app(internal)) is None:
+            print(f"{edition.NAME} didn't stop", file=sys.stderr)
+            return 1
+        print(f"{edition.NAME} didn't quit when asked; stopping it (pid {pid}).")
+    if instance_lock.end(pid, QUIT_WAIT_SECONDS):
+        print(f"{edition.NAME} stopped")
+        return 0
+    print(f"{edition.NAME} didn't stop: end it with `kill -9 {pid}`", file=sys.stderr)
     return 1
 
 
