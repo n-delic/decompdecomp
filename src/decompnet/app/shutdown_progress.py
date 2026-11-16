@@ -1,10 +1,25 @@
 """Flushed terminal shutdown status, independent of a busy database or closed window."""
+import os
 import sys
 import threading
 import time
 
 SHUTDOWN_SECONDS = 60
 RUNTIME_STOP_SECONDS = 5
+
+
+def exit_after(seconds):
+    """End the process `seconds` from now, whatever is still running. Some shutdown steps aren't bounded, and once
+    the server returns Python waits for every non-daemon thread: on 16 November 2026 a quit never finished and the
+    app needed SIGKILL. Committed SQLite work survives; unfinished recovery resumes on startup."""
+    def watch():
+        time.sleep(seconds)
+        try:
+            os.write(2, b'[shutdown] Shutdown did not finish in time; exiting now. Committed work is kept.\n')
+        except OSError:
+            pass
+        os._exit(1)
+    threading.Thread(target=watch, daemon=True, name='shutdown-deadline').start()
 
 
 def terminal_note(message, logger, *, prefix='shutdown', stream=None):

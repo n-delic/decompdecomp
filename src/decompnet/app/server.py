@@ -41,9 +41,12 @@ from .routes import (
     setup,
     state,
 )
-from .shutdown_progress import RUNTIME_STOP_SECONDS, SHUTDOWN_SECONDS, terminal_note
+from .shutdown_progress import RUNTIME_STOP_SECONDS, SHUTDOWN_SECONDS, exit_after, terminal_note
 from .shutdown_progress import Progress as ShutdownProgress
 from .support import Jobs, Settings, session_options
+
+# A quit or SIGTERM that started ends the process by then, whatever hangs (quit_app).
+QUIT_DEADLINE_SECONDS = SHUTDOWN_SECONDS + RUNTIME_STOP_SECONDS + 5
 
 
 def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool = False, mcp_url: str | None = None,
@@ -111,6 +114,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     def quit_app() -> None:
         """Quit means quit; keep terminal users informed before each potentially slow step."""
         if not shutdown_lock.acquire(blocking=False):return
+        exit_after(QUIT_DEADLINE_SECONDS)  # a quit or SIGTERM that started is final, whatever hangs
         with ShutdownProgress(jobs.logger) as status:
             status.note('Shutting down decompdecomp; preserving saved work.')
             stop_workers(status,close_window=True)
