@@ -173,6 +173,8 @@ def run(args) -> int:
     log = file_log(internal / "logs" / "decomp.log")  # from the first line on: whatever stops the app is in it
     from . import build_info
     log.info("%s %s starting (%s)", edition.NAME, build_info.label(), sys.executable)
+    from .. import spawner
+    spawner.install()  # macOS: no subprocess forks the app (spawner.py says why)
     print(f"Starting {edition.NAME} {__import__('decompnet').__version__}…", flush=True)
     if sys.platform == "win32" and not os.environ.get("DECOMP_HOME"):  # a test or experiment leaves the user's alone
         from .launcher import update_windows_command
