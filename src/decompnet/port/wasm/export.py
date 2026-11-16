@@ -255,8 +255,8 @@ def package_app(program: Path, dest: Path, title: str, platform: str = sys.platf
 
 
 def _game_c_only(inputs: dict) -> dict:
-    """The browser and the Miyoo builds take the game's C alone: recompiled C runs in the native host only
-    (port/wasm/recomp.py)."""
+    """The browser build takes the game's C alone: recompiled C runs in a native host (the PC's, the Miyoo Mini's),
+    not in the browser's (port/wasm/recomp.py)."""
     return {k: v for k, v in inputs.items() if k != "recomp"}
 
 
@@ -283,7 +283,7 @@ def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: di
         return dest, package_app(program, dest, title, sdl=sdl)
     if kind == "miyoo":
         steps = (*miyoo.STEPS, PACKING)
-        program = miyoo.build(repo, console=console, log=log, steps=steps, **_game_c_only(inputs))
+        program = miyoo.build(repo, console=console, log=log, steps=steps, **inputs)
         build.Progress(log, steps).start(PACKING)
         log("packing the Miyoo Mini's SD card folders")
         version = " ".join(x for x in (rom.get("title"), rom.get("region"), rom.get("sha1") and f"SHA-1 {rom['sha1']}") if x)

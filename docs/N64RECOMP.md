@@ -120,7 +120,7 @@ run takes about a minute and a half (recording, Recompile, the port's build); la
 
 ### 2. The WebAssembly port with recomp where the decomp isn't done
 
-Built for the native build (Play, the app export, the behaviour check), not yet the browser or the Miyoo build.
+Built for the native builds (Play, the app export, the behaviour check, the Miyoo Mini's), not yet the browser build.
 Play runs Recompile first when a project has none. The recompiled C runs in the host, natively, rather than in the
 WebAssembly module: the game's C already imports what it has no C for (`env.func_X`), and funcs.c's invokers already
 call the game's C from o32's words, so both directions needed only generated C (`port/wasm/recomp.py`):

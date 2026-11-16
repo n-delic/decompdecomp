@@ -46,6 +46,38 @@ def test_the_port_header_has_no_lvalue_memory(tmp_path):
     assert "STORE_W(" in text and "port_lw(" in text and "0xFFFFFFFF80000000" not in text
 
 
+def test_the_port_header_multiplies_64_bits_without_a_128_bit_integer(tmp_path):
+    """The Miyoo Mini's 32-bit ARM has no __int128, and N64Recomp's header stops there: the port's header gives
+    DMULT and DMULTU from 32-bit halves, checked here against a 128-bit product where the computer has one."""
+    text = recomp.header(_header().read_text())
+    assert '#error "128-bit integer type not found"' not in text and recomp.MULTIPLY_32 in text
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no C compiler")
+    (tmp_path / "check.c").write_text("#include <stdint.h>\n#include <stdio.h>\n" + recomp.MULTIPLY_32 + r"""
+int main(void) {
+    const uint64_t v[] = {0, 1, 2, 0x7FFFFFFFull, 0x80000000ull, 0xFFFFFFFFull, 0x100000000ull, 0x123456789ABCDEFull,
+                          0x7FFFFFFFFFFFFFFFull, 0x8000000000000000ull, 0xFFFFFFFFFFFFFFFFull, 0xDEADBEEFCAFEF00Dull};
+    int bad = 0;
+    for (unsigned i = 0; i < sizeof v / sizeof *v; i++) for (unsigned j = 0; j < sizeof v / sizeof *v; j++) {
+        uint64_t lo, hi; int64_t slo, shi;
+        unsigned __int128 u = (unsigned __int128)v[i] * v[j];
+        __int128 s = (__int128)(int64_t)v[i] * (int64_t)v[j];
+        DMULTU(v[i], v[j], &lo, &hi);
+        DMULT((int64_t)v[i], (int64_t)v[j], &slo, &shi);
+        bad += lo != (uint64_t)u || hi != (uint64_t)(u >> 64) || slo != (int64_t)s || shi != (int64_t)(s >> 64);
+    }
+    printf("%d\n", bad);
+    return 0;
+}
+""")
+    done = subprocess.run([cc, "-O1", str(tmp_path / "check.c"), "-o", str(tmp_path / "check")], capture_output=True,
+                          text=True)
+    if done.returncode:
+        pytest.skip(f"this computer's C compiler has no __int128 to check against: {done.stderr[:200]}")
+    assert subprocess.run([str(tmp_path / "check")], capture_output=True, text=True).stdout.strip() == "0"
+
+
 def _output(folder: Path):
     """A homemade Recompile: three functions, one the game has C for, one the host has, one only recompiled."""
     funcs = folder / "funcs"

@@ -46,10 +46,12 @@ def _folder(title: str) -> str:
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), library_c=None,
-          library_names=None, function_headers=None) -> Path:
-    """Build the game for the PC (only what changed), then its host for the Miyoo Mini: port/wasm/build/miyoo/game."""
+          library_names=None, function_headers=None, recomp=None) -> Path:
+    """Build the game for the PC (only what changed), then its host for the Miyoo Mini: port/wasm/build/miyoo/game.
+    `recomp`: the console's recompiler's output (play.recompiled), whose C runs the functions with no C yet, as in
+    the native build (recomp.py); without it the interpreter runs them, several times slower on the Mini's chip."""
     native.build(repo, console=console, log=log, steps=steps, leave_out=leave_out, library_c=library_c,
-                 library_names=library_names, function_headers=function_headers)
+                 library_names=library_names, function_headers=function_headers, recomp=recomp)
     repo = Path(repo).expanduser().resolve()
     kit = consoles.get(console).port_kit
     host = Path(kit.wasm)
@@ -68,17 +70,25 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
              *(p for p in sorted(host.glob("*.c")) if p.name != "live.c"), *native.game_host(host, repo),
              *sorted((host / "miyoo").glob("*.c")),
              out / "funcs.c", out / "stubs.c", out / "interp.c"]
+    # the recompiled C the native build just prepared (and its interp.c and stubs.c leave to it), as that build
+    # compiles it: only when this build has it, since out/recomp stays behind from an earlier one
+    recompiled = []
+    if recomp and Path(recomp["folder"], "recomp.json").is_file():
+        recompiled = [*sorted((out / "recomp").glob("rec_*.c")), out / "recomp" / "bridges.c"]
+    units += recompiled
     dirs = [wabt / "include", rt, out / "c"]
+    quiet = ["-w", "-I", out / "recomp"]  # thousands of generated functions: warnings off
     includes = [a for d in dirs for a in ("-I", d)]
     files = native._Files()
 
     def compile_unit(unit: Path) -> str | None | bool:
         obj = dest / "obj" / (unit.stem + ".o")
-        key = files.key(unit, dirs, zig, *TARGET, *FLAGS)
+        extra = quiet if unit in recompiled else []
+        key = files.key(unit, [*dirs, out / "recomp"], zig, *TARGET, *FLAGS, *extra)
         if native._fresh(obj, key):
             return False
         native._unstamp(obj)
-        done = native._run([zig, "cc", *TARGET, *FLAGS, *includes, "-c", unit, "-o", obj], log, env=env)
+        done = native._run([zig, "cc", *TARGET, *FLAGS, *extra, *includes, "-c", unit, "-o", obj], log, env=env)
         if done.returncode:
             return (done.stderr.strip().splitlines() or ["failed"])[0]
         native._stamp(obj, key)

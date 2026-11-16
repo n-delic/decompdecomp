@@ -24,7 +24,8 @@ Calls between the two kinds of C:
 - recompiled code runs on a MIPS stack in the console's address space, one per host thread (`port_recomp_sp`, at
   STACKS), handed down when it calls into the game's C and back.
 
-Only the native build (Play, the app export) has it: the browser and the Miyoo builds take the game's C alone.
+The native builds have it (Play, the app export, the Miyoo Mini's, compiled for its ARM chip with recompiled C's
+MIPS stacks mapped by miyoo/mem32.c); the browser build takes the game's C alone.
 """
 
 from __future__ import annotations
@@ -90,6 +91,24 @@ def stores(text: str) -> str:
     return STORE.sub(lambda m: f"{m.group(1)}STORE_{m.group(2)}({m.group(3)}, {m.group(4)});", text)
 
 
+MULTIPLY_32 = '''static inline void DMULTU(uint64_t a, uint64_t b, uint64_t* lo64, uint64_t* hi64) {
+    uint64_t al = (uint32_t)a, ah = a >> 32, bl = (uint32_t)b, bh = b >> 32;
+    uint64_t ll = al * bl, lh = al * bh, hl = ah * bl, hh = ah * bh;
+    uint64_t mid = (ll >> 32) + (uint32_t)lh + (uint32_t)hl;
+    *lo64 = (mid << 32) | (uint32_t)ll;
+    *hi64 = hh + (lh >> 32) + (hl >> 32) + (mid >> 32);
+}
+
+static inline void DMULT(int64_t a, int64_t b, int64_t* lo64, int64_t* hi64) {
+    uint64_t lo, hi;
+    DMULTU((uint64_t)a, (uint64_t)b, &lo, &hi);
+    /* the signed product's high half: the unsigned one less each operand where the other is negative */
+    hi -= (a < 0 ? (uint64_t)b : 0) + (b < 0 ? (uint64_t)a : 0);
+    *lo64 = (int64_t)lo;
+    *hi64 = (int64_t)hi;
+}'''
+
+
 def header(original: str) -> str:
     """N64Recomp's recomp.h with the port's memory: its MEM_ and SD definitions replaced (LOADS), its helpers' stores
     rewritten. Everything else (the registers' context, the float macros, LOOKUP_FUNC) as it is."""
@@ -100,6 +119,9 @@ def header(original: str) -> str:
     at = text.index("typedef uint64_t gpr;") + len("typedef uint64_t gpr;")
     text = text[:at] + "\n#include <string.h>\n" + LOADS + text[at:]
     text = stores(text)
+    # a 32-bit chip (the Miyoo Mini's ARM) has no 128-bit integer for MIPS's 64-bit multiplies: the product from
+    # 32-bit halves instead, where N64Recomp's header would stop the build
+    text = text.replace('#else\n#error "128-bit integer type not found"', "#else\n" + MULTIPLY_32, 1)
     if re.search(r"MEM_[WHB]U?\([^;]*\) =", text) or "0xFFFFFFFF80000000" in text:
         raise ValueError("N64Recomp's recomp.h addresses memory where the port doesn't rewrite it")
     return text
