@@ -1255,7 +1255,10 @@ Left:
   the image wraps), triangles for sprites turned by the 2D matrix (its rev counter needle). Eighteen test scenes
   match exactly, and so do 40 recorded tasks of a racing game (menus at 640x480, races, replays). Not yet: Diddy
   Kong Racing's F3DDKR (its microcode carries no signature, so it can't be recognised); YUV textures (G_TC_CONV);
-  chroma key; the WebGL path keeps its own arithmetic. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
+  chroma key. The WebGL path's shaders compute as render.c does (the combiner in 9 bits, the 5-bit filter weights,
+  the blender's 5-bit weights and partial reject, alpha compare in integers), checked by drawing the RDP's test scenes
+  both ways in a headless Chrome; what GL can't do the RDP's way (its edges, shade interpolated in floats, no dither,
+  the two-cycle pipeline's next pixel, TMEM read past a tile, delta z) stays its own. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
   saves other games use, the

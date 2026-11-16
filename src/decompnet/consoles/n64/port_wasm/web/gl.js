@@ -2,7 +2,8 @@
    path (render_gpu.h) reads and transforms the display lists as for software, then sends each run of primitives
    here with the RDP's state, and this draws them. The colour combiner, the blender, alpha compare, the samplers'
    wrapping and filtering and the depth test are made into a shader per setting, from the same other modes and
-   combine words render.c reads, and follow it: where they differ, render.c is right and this is the bug.
+   combine words render.c reads, and follow it in its integer arithmetic: where they differ, render.c is right and
+   this is the bug (tests/test_n64_port_render_webgl.py draws the RDP's test scenes both ways in a headless Chrome).
 
    Frame buffers are textures here, one per address the game draws to (`cimg`), at its size times the chosen
    resolution; depth buffers one per z image. What's shown is the frame buffer the VI was given (present), or, for a
@@ -55,38 +56,44 @@ void main() {
 
 /* ---------------------------------------------------------------- the combiner, as render.c's combine() */
 
+/* The shader works in the RDP's arithmetic, as render.c does: every input an integer, 8-bit channels with 1 as 256
+   (so 255 is 255/256 of it), the combiner's (A - B) * C + D in 9 bits rounded at the 8th, the filter's weights in 5
+   bits, the blender's in 5. In floats with 255 as 1, as this drew before, a textured, shaded or translucent surface
+   came out a step off the software renderer's on much of it. */
+
 /* An RGB input: `which` 0 to 3 for A, B, C, D (render.c's rgb_slot). */
 function rgbInput(which, sel) {
   switch (sel) {
-    case 0: return "comb.rgb"; case 1: return "T0.rgb"; case 2: return "T1.rgb"; case 3: return "u_prim.rgb";
-    case 4: return "shade.rgb"; case 5: return "u_env.rgb";
-    case 6: return which === 1 ? "u_keyCenter.rgb" : which === 2 ? "u_keyScale.rgb" : "vec3(1.0)";
-    case 7: return which === 0 ? "vec3(nz)" : which === 1 ? "vec3(u_misc.x)" : which === 2 ? "vec3(comb.a)" : "vec3(0.0)";
+    case 0: return "comb.rgb"; case 1: return "T0.rgb"; case 2: return "T1.rgb"; case 3: return "PRIM.rgb";
+    case 4: return "SH.rgb"; case 5: return "ENV.rgb";
+    case 6: return which === 1 ? "KC.rgb" : which === 2 ? "KS.rgb" : "ivec3(256)";
+    case 7: return which === 0 ? "ivec3(nz)" : which === 1 ? "ivec3(K4)" : which === 2 ? "ivec3(comb.a)" : "ivec3(0)";
   }
-  if (which !== 2) return "vec3(0.0)";
-  return ({ 8: "vec3(T0.a)", 9: "vec3(T1.a)", 10: "vec3(u_prim.a)", 11: "vec3(shade.a)", 12: "vec3(u_env.a)",
-    13: "vec3(lodFrac)", 14: "vec3(u_misc.z)", 15: "vec3(u_misc.y)" })[sel] || "vec3(0.0)";
+  if (which !== 2) return "ivec3(0)";
+  return ({ 8: "ivec3(T0.a)", 9: "ivec3(T1.a)", 10: "ivec3(PRIM.a)", 11: "ivec3(SH.a)", 12: "ivec3(ENV.a)",
+    13: "ivec3(lodFrac)", 14: "ivec3(PLOD)", 15: "ivec3(K5)" })[sel] || "ivec3(0)";
 }
 /* An alpha input (render.c's alpha_slot). */
 function alphaInput(which, sel) {
   switch (sel) {
     case 0: return which === 2 ? "lodFrac" : "comb.a"; case 1: return "T0.a"; case 2: return "T1.a";
-    case 3: return "u_prim.a"; case 4: return "shade.a"; case 5: return "u_env.a";
-    case 6: return which === 2 ? "u_misc.z" : "1.0";
+    case 3: return "PRIM.a"; case 4: return "SH.a"; case 5: return "ENV.a";
+    case 6: return which === 2 ? "PLOD" : "256";
   }
-  return "0.0";
+  return "0";
 }
 /* The selectors of a cycle, as G_SETCOMBINE lays them out: [a, b, c, d] for RGB and alpha. */
 function selectors(c0, c1, cycle) {
   if (cycle === 0) return { rgb: [(c0 >>> 20) & 15, (c1 >>> 28) & 15, (c0 >>> 15) & 31, (c1 >>> 15) & 7],
     alpha: [(c0 >>> 12) & 7, (c1 >>> 12) & 7, (c0 >>> 9) & 7, (c1 >>> 9) & 7] };
   return { rgb: [(c0 >>> 5) & 15, (c1 >>> 24) & 15, c0 & 31, (c1 >>> 6) & 7],
-    alpha: [(c1 >>> 21) & 7, (c1 >>> 18) & 7, (c1 >>> 3) & 7, c1 & 7] };
+    alpha: [(c1 >>> 21) & 7, (c1 >>> 3) & 7, (c1 >>> 18) & 7, c1 & 7] }; // B at bit 3, C at 18 (render.c reads them so)
 }
+/* One cycle's (A - B) * C + D, unclamped (9 bits, as the next cycle takes it; render.c's CC_EQ). */
 function cycleCode(c0, c1, cycle) {
   const { rgb, alpha } = selectors(c0, c1, cycle);
   const r = rgb.map((sel, w) => rgbInput(w, sel)), a = alpha.map((sel, w) => alphaInput(w, sel));
-  return `clamp(vec4((${r[0]} - ${r[1]}) * ${r[2]} + ${r[3]}, (${a[0]} - ${a[1]}) * ${a[2]} + ${a[3]}), 0.0, 1.0)`;
+  return `ivec4(cc3(${r[0]}, ${r[1]}, ${r[2]}, ${r[3]}), cc1(${a[0]}, ${a[1]}, ${a[2]}, ${a[3]}))`;
 }
 /* Whether the combiner reads TEXEL1, or noise (render.c's combiner_uses). */
 function combinerUses(c0, c1, cyc) {
@@ -103,40 +110,50 @@ function combinerUses(c0, c1, cyc) {
 
 /* ---------------------------------------------------------------- the blender, as render.c's blender() */
 
-/* What the shader leaves for GL's blending: P * A + M * B with M (or P) the frame buffer's colour. Its alpha is
-   taken as 1 (the targets' alpha isn't written). Returns the shader's code and GL's blend factors (null: none). */
+/* A blender cycle's settings: P, A, M, B (render.c's blender_cycle). */
+function blendAt(modeL, cycle) {
+  const s = cycle === 0 ? 30 : 28;
+  return { p: (modeL >>> s) & 3, a: (modeL >>> (s - 4)) & 3, m: (modeL >>> (s - 8)) & 3, b: (modeL >>> (s - 12)) & 3 };
+}
+/* The two weights as the RDP takes them: 5 bits each, the second one more; with the frame's alpha as B (its
+   coverage, taken as full: 224) A's kept to 4-step multiples and B's low bits set. */
+function blendWeights({ a, b }) {
+  const A = ["px.a", "FOG.a", "SH.a", "0"][a];
+  const B = ["255 - A", "224", "255", "0"][b];
+  return `int A = ${A}, B = ${B}, a5 = A >> 3, b5 = B >> 3;
+    ${b === 1 ? "a5 &= 0x3C; b5 |= 3;" : ""} int mb = b5 + 1;`;
+}
+/* What the shader leaves for GL's blending: P * a + M * b with M (or P) the frame buffer's colour, its weight in the
+   output's alpha (GL's ONE, SRC_ALPHA; the targets' alpha isn't written). The shader's own share is less 15.5/32 of
+   a step, so that GL's rounding of the sum is the RDP's truncation of it (its fractions are 32nds). Returns the
+   shader's code and whether GL blends; `write`: false where the colour stays as it was. */
 function blenderPlan(modeL, cyc) {
-  const two = cyc === 1, pick = (n) => ["px", "px", "u_blend", "u_fog"][n] + ".rgb";
-  const at = (cycle) => {
-    const s = cycle === 0 ? 30 : 28;
-    return { p: (modeL >>> s) & 3, a: (modeL >>> (s - 4)) & 3, m: (modeL >>> (s - 8)) & 3, b: (modeL >>> (s - 12)) & 3 };
-  };
-  const alpha = (n) => ["px.a", "u_fog.a", "shade.a", "0.0"][n];
+  const two = cyc === 1, pick = (n) => ["px", "px", "BL", "FOG"][n] + ".rgb";
   let code = "";
-  if (two) { // the first cycle (fog) in the shader; the frame buffer it may name is taken as the pixel itself
-    const { p, a, m, b } = at(0);
-    code += `{ float A = ${alpha(a)}; float B = ${["1.0 - A", "1.0", "1.0", "0.0"][b]};
-      px = vec4((${pick(p)} * A + ${pick(m)} * B) / max(A + B, 1.0), px.a); }\n`;
+  if (two) { // the first cycle (fog) in the shader, shifted down 5; the frame buffer it may name is taken as the pixel
+    const first = blendAt(modeL, 0);
+    code += `{ ${blendWeights(first)}
+      px.rgb = (${pick(first.p)} * a5 + ${pick(first.m)} * mb) >> 5; }\n`;
   }
-  const last = at(two ? 1 : 0);
+  const last = blendAt(modeL, two ? 1 : 0);
   if (!(modeL & 0x4000)) { // no force blend: the last cycle's P passes through
-    if (last.p === 1) return { code, blend: null, write: false };
+    if (last.p === 1) return { code, blend: false, write: false };
     code += `px.rgb = ${pick(last.p)};\n`;
-    return { code, blend: null, write: true };
+    return { code, blend: false, write: true };
   }
-  const { p, a, m, b } = last, pMem = p === 1, mMem = m === 1;
-  code += `float A = ${alpha(a)};\n`;
-  if (pMem && mMem) return { code, blend: null, write: false };
+  const { p, m } = last, pMem = p === 1, mMem = m === 1;
+  if (pMem && mMem) return { code, blend: false, write: false };
+  // the partial reject: IN by its alpha and MEMORY by one minus it, at full alpha, passes IN through
+  const reject = last.a === 0 && last.b === 0 ? "px.a >= 255" : "false";
+  code += `{ ${blendWeights(last)}\n`;
   if (!pMem && !mMem) {
-    code += `{ float B = ${["1.0 - A", "1.0", "1.0", "0.0"][b]}; px.rgb = (${pick(p)} * A + ${pick(m)} * B) / max(A + B, 1.0); }\n`;
-    return { code, blend: null, write: true };
+    code += `if (!(${reject})) px.rgb = (${pick(p)} * a5 + ${pick(m)} * mb) >> 5; }\n`;
+    return { code, blend: false, write: true };
   }
-  if (!pMem) { // P * A + memory * B
-    code += `px = vec4(${pick(p)} * A, A);\n`;
-    return { code, blend: ["ONE", ["ONE_MINUS_SRC_ALPHA", "DST_ALPHA", "ONE", "ZERO"][b]], write: true };
-  }
-  code += `px = vec4(${pick(m)} * ${["(1.0 - A)", "1.0", "1.0", "0.0"][b]}, A);\n`; // memory * A + M * B
-  return { code, blend: ["ONE", "SRC_ALPHA"], write: true };
+  code += pMem // memory * A + M * B, or P * A + memory * B
+    ? `o = vec4((vec3(${pick(m)} * mb) - 15.5) / 8160.0, float(a5) / 32.0); }\n`
+    : `o = ${reject} ? vec4(vec3(px.rgb) / 255.0, 0.0) : vec4((vec3(${pick(p)} * a5) - 15.5) / 8160.0, float(mb) / 32.0); }\n`;
+  return { code, blend: true, write: true, out: true };
 }
 
 /* ---------------------------------------------------------------- the fragment shader */
@@ -150,28 +167,34 @@ function fragmentShader(d) {
   const zsPrim = kind === KIND.COMBINE && (modeL & 4) !== 0;
   let body;
   if (kind === KIND.FILL) body = "o = u_fill;";
-  else if (kind === KIND.COPY) {
-    const test = (flags & FLAG.COPY_ALPHA) ? "if (t.a <= 0.0) discard;" : (modeL & 3) === 1 ? "if (t.a <= u_blend.a) discard;" : "";
-    body = `vec4 t = textureTile(u_texInfo.x, v_st); ${test} o = vec4(t.rgb, 1.0);`;
+  else if (kind === KIND.COPY) { // copy mode's alpha compare: a 16-bit texel's alpha bit, or at least the blend alpha
+    const test = (flags & FLAG.COPY_ALPHA) ? "if (t.a == 0) discard;" : (modeL & 3) === 1 ? "if (t.a < I(u_blend).a) discard;" : "";
+    body = `ivec4 t = textureTile(u_texInfo.x, v_st); ${test} o = vec4(vec3(t.rgb) / 255.0, 1.0);`;
   } else {
     const plan = blenderPlan(modeL, cyc);
     const comb = cyc === 1
-      ? `vec4 comb = vec4(0.0); vec4 T0 = t0, T1 = t1; comb = ${cycleCode(c0, c1, 0)};
-         T0 = t1; T1 = t0; vec4 c = ${cycleCode(c0, c1, 1)};`
-      : `vec4 comb = vec4(0.0); vec4 T0 = t0, T1 = t1; vec4 c = ${cycleCode(c0, c1, 1)};`;
-    const ac = modeL & 3;
+      ? `ivec4 comb = ivec4(0); ivec4 T0 = t0, T1 = t1; comb = ${cycleCode(c0, c1, 0)};
+         T0 = t1; T1 = t0; ivec4 c = ${cycleCode(c0, c1, 1)};`
+      : `ivec4 comb = ivec4(0); ivec4 T0 = t0, T1 = t1; ivec4 c = ${cycleCode(c0, c1, 1)};`;
+    const ac = modeL & 3, cvgXAlpha = (modeL & 0x1000) !== 0, alphaCvg = (modeL & 0x2000) !== 0;
+    // as render.c's plot() for a pixel the primitive covers whole (8 samples): the combined alpha, 255 taken as 256,
+    // as the coverage (CVG_X_ALPHA) and the alpha (ALPHA_CVG_SEL); then the alpha compare
     body = `
-      vec4 shade = v_shade;
-      float nz = ${uses.noise || ac === 3 ? "rnd()" : "0.0"};
-      vec4 t0 = vec4(1.0), t1 = vec4(1.0); float lodFrac = 0.0;
+      ivec4 SH = I(v_shade), PRIM = I(u_prim), ENV = I(u_env), FOG = I(u_fog), BL = I(u_blend), KC = I(u_keyCenter),
+        KS = I(u_keyScale);
+      int K4 = I1(u_misc.x), K5 = I1(u_misc.y), PLOD = I1(u_misc.z);
+      int nz = ${uses.noise ? "rnd()" : "0"};
+      ivec4 t0 = ivec4(255), t1 = ivec4(255); int lodFrac = 0;
       ${textured ? `texels(t0, t1, lodFrac, ${uses.t1 && !(flags & FLAG.ONE_TEXEL) ? "true" : "false"});` : ""}
       ${comb}
-      ${ac === 1 ? "if (c.a <= u_blend.a) discard;" : ac === 3 ? "if (c.a <= rnd()) discard;" : ""}
-      ${modeL & 0x3000 ? `float cvg = ${modeL & 0x1000 ? "floor(8.0 * c.a + 0.5)" : "8.0"};
-        ${modeL & 0x2000 ? "c.a = cvg / 8.0;" : ""} if (cvg <= 0.0) discard;` : ""}
-      vec4 px = c;
+      c = ivec4(clamp9(c.r), clamp9(c.g), clamp9(c.b), clamp9(c.a));
+      int alpha = c.a == 255 ? 256 : c.a, cvg = ${cvgXAlpha ? "(alpha >> 5) & 15" : "8"};
+      c.a = ${alphaCvg ? (cvgXAlpha ? "min(alpha, 255)" : "cvg >= 8 ? 255 : cvg << 5") : "min(alpha, 255)"};
+      ${ac === 1 ? "if (c.a < BL.a) discard;" : ac === 3 ? "if (c.a < rnd()) discard;" : ""}
+      ${modeL & 8 ? "if (cvg == 0) discard;" : ""}
+      ivec4 px = c;
       ${plan.code}
-      o = px;
+      ${plan.out ? "" : "o = vec4(px) / 255.0;"}
       ${zsPrim ? "gl_FragDepth = u_primZ;" : ""}`;
   }
   return `#version 300 es
@@ -190,20 +213,31 @@ uniform vec4 u_misc;       // K4, K5, the primitive's LOD fraction, its minimum 
 uniform ivec4 u_texInfo;   // G_TEXTURE's tile, its levels, the noise's seed, the resolution's scale
 uniform float u_primZ;
 
-float rnd() {
+/* a colour (0 to 1) as the RDP's 8 bits */
+ivec4 I(vec4 v) { return ivec4(floor(clamp(v, 0.0, 1.0) * 255.0 + 0.5)); }
+int I1(float v) { return int(floor(clamp(v, 0.0, 1.0) * 255.0 + 0.5)); }
+/* render.c's EXT9, SIGN9, CC_EQ and CLAMP9 */
+int ext9(int v) { return (v & 0x180) == 0x180 ? v | ~0x1FF : v & 0x1FF; }
+int sign9(int v) { return (v & 0x100) != 0 ? v | ~0x1FF : v & 0x1FF; }
+int cc1(int a, int b, int c, int d) { return (((ext9(a) - ext9(b)) * sign9(c) + (ext9(d) << 8) + 0x80) >> 8) & 0x1FF; }
+ivec3 cc3(ivec3 a, ivec3 b, ivec3 c, ivec3 d) { return ivec3(cc1(a.r, b.r, c.r, d.r), cc1(a.g, b.g, c.g, d.g), cc1(a.b, b.b, c.b, d.b)); }
+int clamp9(int v) { v &= 0x1FF; return (v & 0x100) != 0 ? ((v & 0x80) != 0 ? 0 : 255) : v & 0xFF; }
+int rnd() {
   float r = fract(sin(dot(gl_FragCoord.xy + float(u_texInfo.z), vec2(12.9898, 78.233))) * 43758.5453);
-  return floor(r * 256.0) / 255.0;
+  return int(floor(r * 256.0));
 }
-vec4 fetch(int i, ivec2 p) {
+ivec4 fetch(int i, ivec2 p) {
   p = clamp(p, ivec2(0), u_tileI[i].xy - 1);
-  if (i == 0) return texelFetch(u_tex[0], p, 0);
-  if (i == 1) return texelFetch(u_tex[1], p, 0);
-  if (i == 2) return texelFetch(u_tex[2], p, 0);
-  if (i == 3) return texelFetch(u_tex[3], p, 0);
-  if (i == 4) return texelFetch(u_tex[4], p, 0);
-  if (i == 5) return texelFetch(u_tex[5], p, 0);
-  if (i == 6) return texelFetch(u_tex[6], p, 0);
-  return texelFetch(u_tex[7], p, 0);
+  vec4 t;
+  if (i == 0) t = texelFetch(u_tex[0], p, 0);
+  else if (i == 1) t = texelFetch(u_tex[1], p, 0);
+  else if (i == 2) t = texelFetch(u_tex[2], p, 0);
+  else if (i == 3) t = texelFetch(u_tex[3], p, 0);
+  else if (i == 4) t = texelFetch(u_tex[4], p, 0);
+  else if (i == 5) t = texelFetch(u_tex[5], p, 0);
+  else if (i == 6) t = texelFetch(u_tex[6], p, 0);
+  else t = texelFetch(u_tex[7], p, 0);
+  return I(t);
 }
 /* render.c's WRAP_COORD: clamped (its clamp bit, or no mask), then wrapped or mirrored inside the mask */
 int wrapped(int s, int size, int cm, int mask) {
@@ -214,38 +248,41 @@ int wrapped(int s, int size, int cm, int mask) {
   }
   return max(s, 0);
 }
-/* render.c's sample(): point, the RDP's three-texel bilinear, or the average of four */
-vec4 textureTile(int i, vec2 st) {
+/* render.c's sample(): point; the RDP's three-texel bilinear, its weights in 5 bits and rounded at the 5th; or, for
+   G_TF_AVERAGE at a texel's centre, the four texels' mean */
+ivec4 lerp3(ivec4 a, ivec4 b, ivec4 c, int fb, int fc) { return a + ((fb * (b - a) + fc * (c - a) + 0x10) >> 5); }
+ivec4 textureTile(int i, vec2 st) {
   vec4 f = u_tileF[i]; ivec4 n = u_tileI[i], w = u_tileJ[i];
-  float s = st.x * f.z, t = st.y * f.w, s0 = floor(s), t0 = floor(t);
-  int si = int(s0) - int(f.x), ti = int(t0) - int(f.y);
+  int s32 = int(floor(st.x * f.z * 32.0)), t32 = int(floor(st.y * f.w * 32.0));
+  int si = (s32 >> 5) - int(f.x), ti = (t32 >> 5) - int(f.y);
   int c0 = wrapped(si, n.z, w.x, w.z), r0 = wrapped(ti, n.w, w.y, w.w);
-  ${filter === 0 ? "return fetch(i, ivec2(c0, r0));" : `
+  ${!(filter & 2) ? "return fetch(i, ivec2(c0, r0));" : `
+  int fs = s32 & 31, ft = t32 & 31;
   int c1 = wrapped(si + 1, n.z, w.x, w.z), r1 = wrapped(ti + 1, n.w, w.y, w.w);
-  vec4 c10 = fetch(i, ivec2(c1, r0)), c01 = fetch(i, ivec2(c0, r1));
-  ${filter === 3 ? "return (fetch(i, ivec2(c0, r0)) + c10 + c01 + fetch(i, ivec2(c1, r1))) / 4.0;" : `
-  float fs = s - s0, ft = t - t0;
-  if (fs + ft < 1.0) { vec4 a = fetch(i, ivec2(c0, r0)); return a + fs * (c10 - a) + ft * (c01 - a); }
-  vec4 a = fetch(i, ivec2(c1, r1)); return a + (1.0 - fs) * (c01 - a) + (1.0 - ft) * (c10 - a);`}`}
+  ivec4 c10 = fetch(i, ivec2(c1, r0)), c01 = fetch(i, ivec2(c0, r1));
+  ${filter === 3 ? "if (fs == 16 && ft == 16) return (fetch(i, ivec2(c0, r0)) + c10 + c01 + fetch(i, ivec2(c1, r1)) + 2) >> 2;" : ""}
+  if (fs + ft < 32) return lerp3(fetch(i, ivec2(c0, r0)), c10, c01, fs, ft);
+  return lerp3(fetch(i, ivec2(c1, r1)), c01, c10, 32 - fs, 32 - ft);`}
 }
 /* render.c's texels_at: TEXEL0 and TEXEL1, by the level of detail with G_TL_LOD */
-void texels(out vec4 t0, out vec4 t1, out float lodFrac, bool second) {
+void texels(out ivec4 t0, out ivec4 t1, out int lodFrac, bool second) {
   int tile = u_texInfo.x, a = tile, b = tile + 1;
-  lodFrac = 0.0;
+  float frac = 0.0;
   ${lodOn ? `
   vec2 dx = dFdx(v_st), dy = dFdy(v_st);
   float lod = max(max(abs(dx.x), abs(dx.y)), max(abs(dy.x), abs(dy.y))) * float(u_texInfo.w);
   int detail = ${(modeH & 0x40000) ? 1 : 0}, maxLevel = u_texInfo.y;
   if (lod < u_misc.w) lod = u_misc.w;
   if (lod < 1.0) {
-    lodFrac = ${(modeH & 0x40000) ? "1.0 - lod" : (modeH & 0x20000) ? "lod - 1.0" : "0.0"};
+    frac = ${(modeH & 0x40000) ? "1.0 - lod" : (modeH & 0x20000) ? "lod - 1.0" : "0.0"};
   } else {
     int level = 0;
     for (int k = 0; k < 7; k++) if (level < maxLevel && lod >= float(2 << level)) level++;
-    if (level >= maxLevel) { level = maxLevel; lodFrac = 1.0; } else lodFrac = lod / float(1 << level) - 1.0;
+    if (level >= maxLevel) { level = maxLevel; frac = 1.0; } else frac = lod / float(1 << level) - 1.0;
     a = tile + level + detail; b = a + 1;
     if (b > tile + maxLevel + detail) b = a;
   }` : ""}
+  lodFrac = I1(frac);
   t0 = textureTile(a & 7, v_st);
   t1 = second ? textureTile(b & 7, v_st) : t0;
 }
@@ -261,7 +298,7 @@ function programKey(d) {
   if (d.kind === KIND.FILL) return "fill";
   if (d.kind === KIND.COPY) return `copy ${d.flags & FLAG.COPY_ALPHA} ${d.modeL & 3}`;
   return [d.flags & (FLAG.ONE_TEXEL | FLAG.POINT | FLAG.TEXTURED), d.c0, d.c1, cyc, (d.modeH >>> 12) & 3,
-    d.modeH & 0x70000, d.modeL & 0xFFFF7007].join(" ");
+    d.modeH & 0x70000, d.modeL & 0xFFFF700F].join(" ");
 }
 
 const PRESENT_VERTEX = `#version 300 es
@@ -574,8 +611,8 @@ export class GpuRenderer {
       gl.disable(gl.POLYGON_OFFSET_FILL);
     }
     // the blender's last cycle where it reads the frame buffer
-    const plan = d.kind === KIND.COMBINE ? blenderPlan(d.modeL, (d.modeH >>> 20) & 3) : { blend: null, write: true };
-    if (plan.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl[plan.blend[0]], gl[plan.blend[1]]); } else gl.disable(gl.BLEND);
+    const plan = d.kind === KIND.COMBINE ? blenderPlan(d.modeL, (d.modeH >>> 20) & 3) : { blend: false, write: true };
+    if (plan.blend) { gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.SRC_ALPHA); } else gl.disable(gl.BLEND);
     gl.colorMask(plan.write, plan.write, plan.write, false);
     gl.drawArrays(gl.TRIANGLES, u32[w + D.FIRST], count);
     this.stats.draws++;
