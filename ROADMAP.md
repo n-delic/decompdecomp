@@ -2103,9 +2103,9 @@ instructions do:
 - **Reference:** the same functions are a reference beside the reversing emulator. Recorded calls, run through the
   recompiled and the decompiled C, show where the port's C behaves differently even though its bytes match (the
   backwards race start's lost `$v0` would have shown on its first call).
-- **Built:** the fallback in the native build (Play, the app export): a function with no matched C runs as its
+- **Built:** the fallback in the native builds (Play, the app export, the Miyoo Mini's): a function with no matched C runs as its
   recompiled C, natively in the host, bridged both ways (docs/N64RECOMP.md, phase 2). In every build (the browser's,
-  the Miyoo Mini's, a GitHub runner's) a function with no C yet also runs from the player's own ROM, interpreted
+  a GitHub runner's, any without recompiled C) a function with no C yet also runs from the player's own ROM, interpreted
   (docs/PORTING.md, "Functions with no C yet"), so no build needs the game's code; float arguments through function
   pointers and structures passed by value reach interpreted code as o32 passes them. Left: float arguments through
   function pointers into recompiled C (its pointer bridges take integers), code N64Recomp refuses (a tail call it

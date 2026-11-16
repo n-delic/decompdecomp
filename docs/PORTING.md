@@ -356,8 +356,8 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     Linux), `port/wasm/miyoo.py`. The game's C is the native build's own wasm2c output; only the host is compiled
     again, by the pinned Zig for `arm-linux-gnueabihf` (glibc 2.28, Cortex-A7), linked at 0x40000000. Two kit files
     take the place of what a 32-bit computer can't do: `miyoo/mem32.c` replaces wasm2c's allocator, mapping only
-    what the game touches, at its own address (low memory with page 0, the shadow stacks, the console's RAM and its
-    registers; I/O beyond those lands after the registers by its low bits, host.c's `IO_FAR`), so a console
+    what the game touches, at its own address (low memory with page 0, the shadow stacks, the MIPS stacks of
+    recompiled C and of the interpreter, the console's RAM and its registers; I/O beyond those lands after the registers by its low bits, host.c's `IO_FAR`), so a console
     address is still the host's address; `miyoo/miyoo.c` replaces `live.c` with the device's own SDL 1.2, opened
     at run time (the panel turned 180 degrees, the buttons as keys, sound through the audioserver: what the Miyoo64
     ports, mr-finster/miyoo64, found on devices). The pack is `App/<Game>/` (program, `launch.sh`, `config.json`:
@@ -388,8 +388,9 @@ A function the game's C calls (or reaches through a pointer, or starts a thread 
 player's own ROM as the game plays: the host's interpreter of the console's CPU (`consoles/n64/port_wasm/mips.c`:
 MIPS III with its FPU as libultra's games use it) runs that function's own instructions, from the console's memory,
 where the boot and the game's own loads put them. No build holds any of the game's code, so a build made from the
-save alone (a GitHub runner's, `port/wasm/workflows.py`) plays as a local one does, and the browser and Miyoo Mini
-builds, which recompiled C never reached, run these functions too.
+save alone (a GitHub runner's, `port/wasm/workflows.py`) plays as a local one does, and the browser
+build, which recompiled C hasn't reached, runs these functions too (the Miyoo Mini's, exported from the app, has the
+recompiled C as the app has).
 
 - The build's `interp.c` (`port/wasm/interp.py`) is the C between them: each such import of the game's C puts its
   arguments where MIPS o32 passes them and runs the interpreter; `port_mips_calls` holds every function that has C,

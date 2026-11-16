@@ -90,3 +90,65 @@ def test_export_packs_the_projects_rom_and_returns_the_steps(tmp_path, monkeypat
     result = export.export(None, "rally", "miyoo", log=lambda *a: None)
     assert "App/Rally64/rom.z64" in result["files"]
     assert any("SD card" in step for step in result["instructions"])
+
+
+def test_the_miyoo_export_runs_recompiled_c_as_the_app_does(tmp_path, monkeypatch):
+    """The Miyoo Mini's chip interprets MIPS several times slower than a PC, and the browser build of a racing game
+    reached 14 fps on a PC with 91 functions interpreted: the pack gets the recompiled C the app export has."""
+    from decompnet.port.wasm import play
+    repo, rom, program = tmp_path / "save", tmp_path / "rom.z64", tmp_path / "game"
+    repo.mkdir()
+    rom.write_bytes(b"\x80\x37\x12\x40" + bytes(60))
+    program.write_bytes(b"\x7fELF")
+    recomp = {"folder": str(tmp_path / "recomp"), "header": str(tmp_path / "recomp.h")}
+    monkeypatch.setattr(play, "game", lambda net, slug: (repo, {"platform": "n64", "rom": {"title": "RALLY 64"}}, rom))
+    monkeypatch.setattr(play, "inputs", lambda net, slug, log=print: {
+        "leave_out": set(), "library_c": {}, "library_names": {}, "recomp": recomp, "function_headers": {}})
+    took = {}
+    monkeypatch.setattr(miyoo, "build", lambda *a, **k: took.update(k) or program)
+    export.export(None, "rally", "miyoo", log=lambda *a: None)
+    assert took["recomp"] == recomp
+
+
+def test_the_miyoo_build_compiles_the_recompiled_c_only_when_it_has_it(tmp_path, monkeypatch):
+    """The native build leaves the functions recompiled C bridges out of interp.c, so the Miyoo's host must compile
+    the same units; out/recomp stays behind from an earlier build, so without `recomp` none of it goes in."""
+    from decompnet import toolchains
+    from decompnet.port.wasm import build as native
+    repo = tmp_path / "save"
+    out = repo / "port" / "wasm" / "build"
+    (out / "recomp").mkdir(parents=True)
+    for name in ("rec_funcs_0.c", "rec_funcs_1.c", "bridges.c"):
+        (out / "recomp" / name).write_text("")
+    folder = tmp_path / "recomp"
+    folder.mkdir()
+    (folder / "recomp.json").write_text("{}")
+    took = {}
+    monkeypatch.setattr(native, "build", lambda *a, **k: took.update(k))
+    monkeypatch.setattr(toolchains, "binary", lambda name: tmp_path / name)
+    monkeypatch.setattr(toolchains, "ensure", lambda name, log=print: tmp_path / name)
+    compiled = []
+    monkeypatch.setattr(native, "_parallel", lambda units, work, log, what, step: compiled.append(list(units)) or [])
+    monkeypatch.setattr(native, "_run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "", ""))
+    (out / "miyoo").mkdir()
+    (out / "miyoo" / "game").write_bytes(b"\x7fELF")  # (what the link would have made)
+    recomp = {"folder": str(folder), "header": str(tmp_path / "recomp.h")}
+    miyoo.build(repo, log=lambda *a: None, recomp=recomp)
+    assert took["recomp"] == recomp
+    names = {u.name for u in compiled[-1] if u.parent == out / "recomp"}
+    assert names == {"rec_funcs_0.c", "rec_funcs_1.c", "bridges.c"}
+    miyoo.build(repo, log=lambda *a: None)
+    assert not any(u.parent == out / "recomp" for u in compiled[-1])
+
+
+def test_mem32_maps_every_stack_recompiled_c_runs_on():
+    """recomp.py's MIPS stacks sit at 0x14000000, one per host thread: on a 32-bit chip only what mem32.c maps
+    exists, so recompiled code's first call faulted where they weren't mapped."""
+    import re
+
+    from decompnet.port.wasm import recomp
+    text = (KIT / "miyoo" / "mem32.c").read_text()
+    regions = [(int(a, 16), int(b, 16)) for a, b in re.findall(r"\{0x([0-9A-Fa-f]+)u, 0x([0-9A-Fa-f]+)u, \"", text)]
+    # port_recomp_thread: thread n's stack ends at STACKS + (n + 2) * STACK_SIZE, from the boot's (-1) to the 31st
+    low, high = recomp.STACKS + recomp.STACK_SIZE, recomp.STACKS + 32 * recomp.STACK_SIZE
+    assert any(start <= low and high <= start + size for start, size in regions)
