@@ -272,11 +272,13 @@ def routes(net, manager, settings, jobs=None) -> dict:
         "diffs": sorted({(agent, function) for agent, function in list(getattr(net, "_last_diffs", {}))}),
         # The app's guard refuses every page while it prepares a runtime update (server.build guard).
         "preparing": bool(getattr(jobs, "source_update_preparing", False)),
+        # Each helper's next claim, for the gateway to hand over at once (app/claim_ahead.py).
+        "prepared": ahead.routes() if (ahead := getattr(net, "_claims_ahead", None)) is not None else {},
     }
 
 
 # The tools the gateway answers itself (gateway/src/native.rs TOOLS).
-GATEWAY_TOOLS = ("get_claims", "list_functions", "project_info", "get_assembly", "get_context", "guide")
+GATEWAY_TOOLS = ("get_claims", "list_functions", "project_info", "get_assembly", "get_context", "guide", "claim_function")
 
 
 def _hidden(net, helpers: dict) -> dict:

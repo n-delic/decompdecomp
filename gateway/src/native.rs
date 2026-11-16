@@ -49,7 +49,22 @@ pub struct Routes {
     pub hidden: HashMap<i64, HashSet<String>>,
     /// (helper, function) with a compile diff the app keeps: get_assembly's default view starts at its mismatch.
     pub diffs: HashSet<(i64, i64)>,
+    /// helper -> its next claim, prepared by the app (app/claim_ahead.py).
+    pub prepared: HashMap<i64, Prepared>,
 }
+
+/// A claim the app picked and wrote the receipt of before the helper asked (app/claim_ahead.py).
+#[derive(Clone, Debug)]
+pub struct Prepared {
+    pub slug: String,
+    pub function_id: i64,
+    pub function: String,
+    pub text: String,
+    pub at: f64,
+}
+
+/// How long a prepared claim may be handed over (claim_ahead.KEEP_SECONDS).
+const PREPARED_KEEP: f64 = 90.0;
 
 fn int_keys(value: Option<&Value>) -> HashMap<i64, String> {
     value
@@ -116,6 +131,23 @@ impl Routes {
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(|pair| Some((pair.get(0)?.as_i64()?, pair.get(1)?.as_i64()?))).collect())
                 .unwrap_or_default(),
+            prepared: value
+                .get("prepared")
+                .and_then(Value::as_object)
+                .map(|map| {
+                    map.iter()
+                        .filter_map(|(k, p)| {
+                            Some((k.parse().ok()?, Prepared {
+                                slug: p.get("slug")?.as_str()?.to_string(),
+                                function_id: p.get("function_id")?.as_i64()?,
+                                function: p.get("function")?.as_str()?.to_string(),
+                                text: p.get("text")?.as_str()?.to_string(),
+                                at: p.get("at")?.as_f64()?,
+                            }))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 
@@ -167,11 +199,18 @@ pub struct Native {
     routes: Mutex<Option<(Routes, Instant)>>,
     guides: Mutex<Option<Arc<Guides>>>,
     connections: Mutex<HashMap<String, Arc<Mutex<Connection>>>>,
+    /// Prepared claims already handed over, (helper, function, prepared at): each is given once.
+    given: Mutex<HashSet<(i64, i64, u64)>>,
 }
 
 impl Native {
     pub fn new() -> Native {
-        Native { routes: Mutex::new(None), guides: Mutex::new(None), connections: Mutex::new(HashMap::new()) }
+        Native {
+            routes: Mutex::new(None),
+            guides: Mutex::new(None),
+            connections: Mutex::new(HashMap::new()),
+            given: Mutex::new(HashSet::new()),
+        }
     }
 
     pub fn set_guides(&self, guides: Guides) {
@@ -213,6 +252,100 @@ impl Native {
                 .ok()??
         };
         routes.project_of(agent_id).cloned()
+    }
+
+    /// A plain claim_function(): the helper's prepared claim (app/claim_ahead.py) while it holds no claim and the
+    /// function is still open and free, with the function's name for the app to record the claim; None leaves the
+    /// claim to the app. Each prepared claim is given once. Blocking: run off the runtime.
+    pub fn claim(&self, auth: &str, arguments: &Value) -> Option<(Served, String)> {
+        let plain = |key: &str| match arguments.get(key) {
+            None | Some(Value::Null) => true,
+            Some(Value::String(s)) => s.trim().is_empty(),
+            Some(Value::Number(n)) => key == "count" && n.as_f64().is_some_and(|c| c <= 1.0),
+            _ => false,
+        };
+        if !(plain("function") && plain("strategy") && plain("count")) {
+            return None;
+        }
+        let (routes, agent_id, agent_name, slug) = self.helper(auth, "claim_function")?;
+        let prepared = routes.prepared.get(&agent_id)?.clone();
+        let project = routes.projects.get(&slug)?;
+        if prepared.slug != slug || project.fork || now() - prepared.at > PREPARED_KEEP {
+            return None;
+        }
+        let key = (agent_id, prepared.function_id, prepared.at.to_bits());
+        if self.given.lock().unwrap().contains(&key) {
+            return None;
+        }
+        let db = self.connection(&project.db)?;
+        let db = db.lock().unwrap();
+        let at = now();
+        let holds: Option<i64> = db
+            .query_row(
+                "SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=? AND f.project_id=? \
+                 AND c.expires_at>? LIMIT 1",
+                rusqlite::params![agent_id, project.id, at],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()?;
+        let free: Option<i64> = db
+            .query_row(
+                "SELECT 1 FROM functions WHERE id=? AND status='open' AND id NOT IN \
+                 (SELECT function_id FROM claims WHERE expires_at>?)",
+                rusqlite::params![prepared.function_id, at],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()?;
+        if holds.is_some() || free.is_none() {
+            return None;
+        }
+        let mut given = self.given.lock().unwrap();
+        if !given.insert(key) {
+            return None;
+        }
+        if given.len() > 4096 {
+            given.clear();
+            given.insert(key);
+        }
+        Some((Served { text: prepared.text, agent_id, agent_name, slug }, prepared.function))
+    }
+
+    /// The routes, if fresh, and the helper behind `auth` with its project, when the gateway may answer `tool` for
+    /// it: not a helper with app-only state or one whose settings hide the tool, not a busy project.
+    fn helper(&self, auth: &str, tool: &str) -> Option<(Routes, i64, String, String)> {
+        let routes = {
+            let held = self.routes.lock().unwrap();
+            let (routes, at) = held.as_ref()?;
+            if at.elapsed() > STALE {
+                return None;
+            }
+            routes.clone()
+        };
+        let token = auth.strip_prefix("Bearer ").unwrap_or(auth).trim();
+        if token.is_empty() {
+            return None;
+        }
+        let token_hash = hex(&Sha256::digest(token.as_bytes()));
+        let (agent_id, agent_name) = {
+            let catalog = self.connection(&routes.catalog)?;
+            let catalog = catalog.lock().unwrap();
+            catalog
+                .query_row("SELECT id,name FROM agents WHERE token_hash=?", [&token_hash], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                })
+                .optional()
+                .ok()??
+        };
+        if routes.app_only.contains(&agent_id) || routes.hidden.get(&agent_id).is_some_and(|h| h.contains(tool)) {
+            return None;
+        }
+        let slug = routes.project_of(agent_id)?.clone();
+        if routes.busy.contains(&slug) {
+            return None;
+        }
+        Some((routes, agent_id, agent_name, slug))
     }
 
     /// The answer the app would give, or None to let the reader and the app answer. Blocking: run off the runtime.

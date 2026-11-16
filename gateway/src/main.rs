@@ -291,6 +291,7 @@ struct Gateway {
     journal: Option<Journal>,
     ids: AtomicU64,
     acknowledged: AtomicU64,
+    claims_given: AtomicU64,
 }
 
 /// Answers kept for new connections: per (project, method), and the latest per method. Saved to `--state`.
@@ -456,15 +457,7 @@ impl Gateway {
         let work = tokio::task::spawn_blocking(move || native.answer(&auth, &tool_name, &arguments).map(|s| (s, arguments)));
         let (served, arguments) = tokio::time::timeout(Duration::from_secs(10), work).await.ok()?.ok()??;
         self.answered.fetch_add(1, Ordering::Relaxed);
-        let call_id = format!("gw{:x}{:x}", std::process::id(), self.reports.fetch_add(1, Ordering::Relaxed));
-        let report = json!({"call": {
-            "agent_id": served.agent_id, "agent_name": served.agent_name, "slug": served.slug, "name": tool,
-            "arguments": arguments, "call_id": call_id, "content": served.text,
-            "timings": {"dispatch_ms": (started.elapsed().as_secs_f64() * 1000.0 * 100.0).round() / 100.0, "gateway": true},
-        }});
-        let mut out = std::io::stdout().lock();
-        let _ = writeln!(out, "{report}");
-        let _ = out.flush();
+        self.report(&served, tool, &arguments, started);
         Some(json!({"jsonrpc": "2.0", "id": id, "result": {
             "content": [{"type": "text", "text": served.text}],
             "structuredContent": {"result": served.text},
@@ -616,7 +609,11 @@ impl Gateway {
                         tokio::spawn(async move {
                             let _permits = permits;
                             let limit = gateway.config.upstream_limit;
-                            let mut read = gateway.from_here(&message, &headers, &tool).await;
+                            let mut read = if tool == "claim_function" {
+                                gateway.claim_from_here(&message, &headers).await
+                            } else {
+                                gateway.from_here(&message, &headers, &tool).await
+                            };
                             if read.is_none() {
                                 read = gateway.from_reader(&message, &headers, &tool).await;
                             }
@@ -761,23 +758,94 @@ impl Gateway {
                 continue;
             };
             let headers = restored_headers(entry.get("headers").unwrap_or(&Value::Null));
-            let auth = bearer(&headers);
-            let (sender, receiver) = watch::channel(None);
-            let id = self.ids.fetch_add(1, Ordering::Relaxed);
-            self.behind.lock().unwrap().entry(auth.clone()).or_default().push((id, receiver));
-            let (gateway, entry_id) = (self.clone(), entry_id.to_string());
-            tokio::spawn(async move {
-                let tool = message.pointer("/params/name").and_then(Value::as_str).unwrap_or("?").to_string();
-                let reply = match gateway.send_patiently(&message, &headers, gateway.config.upstream_limit).await {
-                    Upstream::Reply(reply) => reply,
-                    Upstream::Unreachable(why) | Upstream::Failed(why) => tool_text(&Value::Null, why),
-                };
-                gateway.notice(&auth, format!("decompdecomp has now finished your earlier {tool} call ({}): {}",
-                                              brief_arguments(&message), reply_text(&reply)));
-                let _ = sender.send(Some(reply));
-                gateway.left_done(&auth, id, &entry_id);
-            });
+            let quiet = entry.get("quiet").and_then(Value::as_str).map(String::from);
+            self.behind_app(message, headers, quiet, Some(entry_id.to_string()));
         }
+    }
+
+    /// Send `message` to the app in the background for its helper, who has already been answered: kept in the
+    /// journal until the app answers, the helper's later calls to the app wait for it, and the app's answer comes at
+    /// the top of the helper's next reply, unless it is the claim the gateway handed over (`quiet`: a reply whose
+    /// first line ends with "/<quiet>", the claim recorded as given).
+    fn behind_app(self: &Arc<Self>, message: Value, headers: HeaderMap, quiet: Option<String>, journaled: Option<String>) {
+        let auth = bearer(&headers);
+        let (sender, receiver) = watch::channel(None);
+        let id = self.ids.fetch_add(1, Ordering::Relaxed);
+        let earlier = self.behind_of(&auth);
+        self.behind.lock().unwrap().entry(auth.clone()).or_default().push((id, receiver));
+        let entry_id = journaled.unwrap_or_else(|| {
+            let entry_id = format!("{:x}-{id}", std::process::id());
+            if let Some(journal) = &self.journal {
+                journal.add(&json!({"id": entry_id, "message": message, "headers": saved_headers(&headers), "quiet": quiet}));
+            }
+            entry_id
+        });
+        let gateway = self.clone();
+        tokio::spawn(async move {
+            let limit = gateway.config.upstream_limit;
+            gateway.wait_for(earlier, limit).await;
+            let tool = message.pointer("/params/name").and_then(Value::as_str).unwrap_or("?").to_string();
+            let reply = match gateway.send_patiently(&message, &headers, limit).await {
+                Upstream::Reply(reply) => reply,
+                Upstream::Unreachable(why) | Upstream::Failed(why) => tool_text(&Value::Null, why),
+            };
+            let text = reply_text(&reply);
+            let error = reply.get("error").is_some()
+                || reply.pointer("/result/isError").and_then(Value::as_bool).unwrap_or(false);
+            let given = quiet.as_ref().is_some_and(|name| {
+                !error && text.lines().next().is_some_and(|first| first.trim_end().ends_with(&format!("/{name}")))
+            });
+            if !given {
+                gateway.notice(&auth, format!("decompdecomp has now finished your earlier {tool} call ({}): {text}",
+                                              brief_arguments(&message)));
+            }
+            let _ = sender.send(Some(reply));
+            gateway.left_done(&auth, id, &entry_id);
+        });
+    }
+
+    /// claim_function answered with the helper's prepared claim (native.rs claim), or None. The app records the
+    /// claim in the background (claim_function naming the function), with every check it makes.
+    async fn claim_from_here(self: &Arc<Self>, message: &Value, headers: &HeaderMap) -> Option<Value> {
+        let id = message.get("id").cloned().unwrap_or(Value::Null);
+        let arguments = message.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
+        let (auth, native) = (bearer(headers), self.native.clone());
+        if !self.behind_of(&auth).is_empty() {
+            return None; // (a release still on its way: the app answers after it)
+        }
+        let started = Instant::now();
+        let asked = arguments.clone();
+        let work = tokio::task::spawn_blocking(move || native.claim(&auth, &asked));
+        let (served, function) = tokio::time::timeout(Duration::from_secs(10), work).await.ok()?.ok()??;
+        let mut record = message.clone();
+        if let Some(params) = record.get_mut("params") {
+            params["arguments"] = json!({"function": function});
+            params.as_object_mut().map(|p| p.remove("_meta"));
+        }
+        if let Some(object) = record.as_object_mut() {
+            object.insert("id".into(), json!(format!("gw-claim-{}", self.ids.fetch_add(1, Ordering::Relaxed))));
+        }
+        self.behind_app(record, headers.clone(), Some(function), None);
+        self.answered.fetch_add(1, Ordering::Relaxed);
+        self.claims_given.fetch_add(1, Ordering::Relaxed);
+        self.report(&served, "claim_function", &arguments, started);
+        Some(json!({"jsonrpc": "2.0", "id": id, "result": {
+            "content": [{"type": "text", "text": served.text}],
+            "structuredContent": {"result": served.text},
+            "isError": false}}))
+    }
+
+    /// Tell the app about a call the gateway answered (app/tool_reader.py apply_report).
+    fn report(&self, served: &native::Served, tool: &str, arguments: &Value, started: Instant) {
+        let call_id = format!("gw{:x}{:x}", std::process::id(), self.reports.fetch_add(1, Ordering::Relaxed));
+        let report = json!({"call": {
+            "agent_id": served.agent_id, "agent_name": served.agent_name, "slug": served.slug, "name": tool,
+            "arguments": arguments, "call_id": call_id, "content": served.text,
+            "timings": {"dispatch_ms": (started.elapsed().as_secs_f64() * 1000.0 * 100.0).round() / 100.0, "gateway": true},
+        }});
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "{report}");
+        let _ = out.flush();
     }
 
     async fn remembered(self: &Arc<Self>, message: Value, headers: HeaderMap, method: &str) -> Value {
@@ -928,6 +996,7 @@ async fn health(State(gateway): State<Arc<Gateway>>) -> Response {
         "passed_to_app": gateway.declined.load(Ordering::Relaxed),
         "answered_by_gateway": gateway.answered.load(Ordering::Relaxed),
         "accepted_in_background": gateway.acknowledged.load(Ordering::Relaxed),
+        "prepared_claims_given": gateway.claims_given.load(Ordering::Relaxed),
         "left_behind": gateway.behind.lock().unwrap().values().map(Vec::len).sum::<usize>(),
         "window": gateway.window.get().map(|w| w.health()),
     }))
@@ -1008,6 +1077,7 @@ async fn main() {
         journal: config.journal.clone().map(|path| Journal { path, lock: Mutex::new(()) }),
         ids: AtomicU64::new(0),
         acknowledged: AtomicU64::new(0),
+        claims_given: AtomicU64::new(0),
     });
     gateway.replay();
     let app = Router::new()
