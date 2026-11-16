@@ -69,3 +69,42 @@ def test_macos_uses_posix_spawn_not_fork(monkeypatch):
                         lambda *a, **k: pytest.fail('used the standard launch'))
     assert spawner.available()
     assert spawner.run(['/bin/echo', 'spawned'], capture_output=True, cwd='/', start_new_session=True).stdout == b'spawned\n'
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='posix_spawn is used on macOS only')
+def test_installed_every_subprocess_call_spawns_without_forking(monkeypatch):
+    """A git run for the repository panel used plain subprocess, forked the app and hung before exec for hours."""
+    import subprocess as stdlib
+    monkeypatch.setattr(spawner, '_standard_execute_child', lambda *a, **k: pytest.fail('forked the app'))
+    try:
+        assert spawner.install()
+        assert stdlib.run(['git', '--version'], capture_output=True, timeout=30).stdout.startswith(b'git version')
+        assert stdlib.check_output(['/bin/echo', 'spawned'], cwd='/') == b'spawned\n'
+    finally:
+        spawner.uninstall()
+    assert stdlib.Popen._execute_child is not spawner._execute_child
+
+
+def test_install_is_a_no_op_with_the_setting_off(monkeypatch):
+    monkeypatch.setenv('DECOMP_POSIX_SPAWN', '0')
+    before = subprocess.Popen._execute_child
+    assert not spawner.install()
+    assert subprocess.Popen._execute_child is before
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='the exec watch runs on macOS only')
+def test_a_fork_stuck_before_exec_is_stopped_not_waited_on_forever(monkeypatch):
+    """The fallback launch (here, a preexec function) that never reaches exec ends with -9 after the deadline."""
+    import time
+    monkeypatch.setattr(spawner, 'EXEC_DEADLINE', 1.0)
+    started = time.monotonic()
+    proc = spawner.Popen([sys.executable, '-c', 'pass'], preexec_fn=lambda: time.sleep(60))
+    assert proc.wait(timeout=30) == -9
+    assert time.monotonic() - started < 15
+
+
+def test_a_normal_fork_launch_is_not_stopped(monkeypatch):
+    monkeypatch.setattr(spawner, 'EXEC_DEADLINE', 1.0)
+    proc = spawner.Popen([sys.executable, '-c', 'import time; time.sleep(2); print("ok")'],
+                         stdout=subprocess.PIPE, preexec_fn=lambda: None)
+    assert proc.communicate(timeout=30)[0] == b'ok\n' and proc.returncode == 0

@@ -15,6 +15,13 @@ compiler process tracking work as before. Anything the fast path doesn't cover (
 changes, passed descriptors, a shell, a standard stream handed over as itself) uses the standard library's own
 launch, as does every other system: Linux's CPython already starts tools with vfork, and Windows has no fork.
 `DECOMP_POSIX_SPAWN=0` turns the fast path off.
+
+`install()` (the app calls it at startup) makes every `subprocess` call in the app start this way, not only the
+compiler's: a `git` run for the repository panel forked the app once and the child never reached exec (with Cocoa's
+threads in the parent, a forked child can block on a lock another thread held). The standard library's launch waits
+for the exec with no timeout, so two of those held the app's fast request lane for hours and nothing answered, quit
+included. The few launches that still fork on macOS are watched: a child that hasn't exec'd after
+`EXEC_DEADLINE` seconds is killed, so its caller gets a failed run instead of waiting forever.
 """
 from __future__ import annotations
 
@@ -36,6 +43,10 @@ _MISSING_PROGRAM = (errno.ENOENT, errno.ENOTDIR)
 
 _lock = threading.Lock()
 _libc = None  # the C library once it's checked, False where the fast path can't be used
+_standard_execute_child = subprocess.Popen._execute_child  # the standard library's launch, before install()
+# The standard launch returns as soon as the child execs (its error pipe closes then); a fork stays this long in it
+# only when the child is stuck before exec.
+EXEC_DEADLINE = 20.0
 
 
 _SIGNATURE = ('self', 'args', 'executable', 'preexec_fn', 'close_fds', 'pass_fds', 'cwd', 'env', 'startupinfo',
@@ -47,7 +58,7 @@ def _standard_signature() -> bool:
     """Popen._execute_child is private: a Python that changed it keeps the standard library's launch."""
     import inspect
     try:
-        return tuple(inspect.signature(subprocess.Popen._execute_child).parameters) == _SIGNATURE
+        return tuple(inspect.signature(_standard_execute_child).parameters) == _SIGNATURE
     except (TypeError, ValueError):
         return False
 
@@ -158,54 +169,98 @@ def _spawn(libc, candidates, argv, envp, cwd, *, close_fds, restore_signals, sta
         libc.posix_spawn_file_actions_destroy(ctypes.byref(actions))
 
 
+def _forking(self, *args):
+    """The standard library's launch; on macOS, a child that hasn't exec'd by EXEC_DEADLINE is killed."""
+    if sys.platform != 'darwin':
+        return _standard_execute_child(self, *args)
+    done = threading.Event()
+
+    def watch():
+        if done.wait(EXEC_DEADLINE):
+            return
+        pid = getattr(self, 'pid', None)
+        import logging
+        logging.getLogger('decompdecomp').warning(
+            'A forked child (pid %s) did not start %s within %.0f s; stopping it.',
+            pid, os.path.basename(str(args[1] or (args[0][0] if isinstance(args[0], (list, tuple)) else args[0]))),
+            EXEC_DEADLINE)
+        if pid:
+            try:
+                os.kill(pid, signal.SIGKILL)  # its caller sees the run end with -9, not a hang
+            except OSError:
+                pass
+
+    threading.Thread(target=watch, daemon=True, name='exec-watch').start()
+    try:
+        return _standard_execute_child(self, *args)
+    finally:
+        done.set()
+
+
+def _execute_child(self, args, executable, preexec_fn, close_fds, pass_fds, cwd, env, startupinfo,
+                   creationflags, shell, p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite,
+                   restore_signals, gid, gids, uid, umask, start_new_session, process_group):
+    """Popen._execute_child with posix_spawn where it can be used (see the module's docstring)."""
+    standard = (p2cread, c2pwrite, errwrite)
+    libc = _load() if _setting_enabled() else False
+    if (not libc or shell or preexec_fn is not None or pass_fds or gid is not None or gids is not None
+            or uid is not None or umask >= 0 or process_group != -1
+            or any(0 <= fd <= 2 for fd in standard)
+            or isinstance(args, (str, bytes, os.PathLike))):
+        return _forking(
+            self, args, executable, preexec_fn, close_fds, pass_fds, cwd, env, startupinfo, creationflags, shell,
+            p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite, restore_signals, gid, gids, uid, umask,
+            start_new_session, process_group)
+    args = list(args)
+    if executable is None:
+        executable = args[0]
+    sys.audit('subprocess.Popen', executable, args, cwd, env)
+    argv = [os.fsencode(arg) for arg in args]
+    source = os.environ if env is None else env
+    envp = []
+    for key, value in source.items():
+        key = os.fsencode(key)
+        if b'=' in key:
+            raise ValueError('illegal environment variable name')
+        envp.append(key + b'=' + os.fsencode(value))
+    program = os.fsencode(executable)
+    candidates = ((program,) if os.path.dirname(program) else
+                  tuple(os.path.join(os.fsencode(folder), program) for folder in os.get_exec_path(env)))
+    folder = None if cwd is None else os.fsencode(cwd)
+    try:
+        self.pid = _spawn(
+            libc, candidates, argv, envp, folder, close_fds=close_fds, restore_signals=restore_signals,
+            start_new_session=start_new_session,
+            closes=[fd for fd in (p2cwrite, c2pread, errread) if fd != -1],
+            dup2s=[(fd, target) for fd, target in ((p2cread, 0), (c2pwrite, 1), (errwrite, 2)) if fd != -1],
+            inherited=[target for fd, target in zip(standard, (0, 1, 2)) if fd == -1])
+    except OSError as error:
+        # Say which name was missing, as the standard library does: the folder, else the program.
+        if error.errno in _MISSING_PROGRAM and folder is not None and not os.path.isdir(folder):
+            raise OSError(error.errno, os.strerror(error.errno), os.fsdecode(cwd)) from None
+        raise OSError(error.errno, os.strerror(error.errno), os.fsdecode(executable)) from None
+    self._child_created = True
+    # The child's ends of the pipes are its own now (on a failure Popen's own cleanup closes them).
+    self._close_pipe_fds(p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite)
+
+
 class Popen(subprocess.Popen):
     """subprocess.Popen, started with posix_spawn on macOS (see the module's docstring)."""
 
     if os.name != 'nt':
-        def _execute_child(self, args, executable, preexec_fn, close_fds, pass_fds, cwd, env, startupinfo,
-                           creationflags, shell, p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite,
-                           restore_signals, gid, gids, uid, umask, start_new_session, process_group):
-            standard = (p2cread, c2pwrite, errwrite)
-            libc = _load() if _setting_enabled() else False
-            if (not libc or shell or preexec_fn is not None or pass_fds or gid is not None or gids is not None
-                    or uid is not None or umask >= 0 or process_group != -1
-                    or any(0 <= fd <= 2 for fd in standard)
-                    or isinstance(args, (str, bytes, os.PathLike))):
-                return super()._execute_child(
-                    args, executable, preexec_fn, close_fds, pass_fds, cwd, env, startupinfo, creationflags, shell,
-                    p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite, restore_signals, gid, gids, uid, umask,
-                    start_new_session, process_group)
-            args = list(args)
-            if executable is None:
-                executable = args[0]
-            sys.audit('subprocess.Popen', executable, args, cwd, env)
-            argv = [os.fsencode(arg) for arg in args]
-            source = os.environ if env is None else env
-            envp = []
-            for key, value in source.items():
-                key = os.fsencode(key)
-                if b'=' in key:
-                    raise ValueError('illegal environment variable name')
-                envp.append(key + b'=' + os.fsencode(value))
-            program = os.fsencode(executable)
-            candidates = ((program,) if os.path.dirname(program) else
-                          tuple(os.path.join(os.fsencode(folder), program) for folder in os.get_exec_path(env)))
-            folder = None if cwd is None else os.fsencode(cwd)
-            try:
-                self.pid = _spawn(
-                    libc, candidates, argv, envp, folder, close_fds=close_fds, restore_signals=restore_signals,
-                    start_new_session=start_new_session,
-                    closes=[fd for fd in (p2cwrite, c2pread, errread) if fd != -1],
-                    dup2s=[(fd, target) for fd, target in ((p2cread, 0), (c2pwrite, 1), (errwrite, 2)) if fd != -1],
-                    inherited=[target for fd, target in zip(standard, (0, 1, 2)) if fd == -1])
-            except OSError as error:
-                # Say which name was missing, as the standard library does: the folder, else the program.
-                if error.errno in _MISSING_PROGRAM and folder is not None and not os.path.isdir(folder):
-                    raise OSError(error.errno, os.strerror(error.errno), os.fsdecode(cwd)) from None
-                raise OSError(error.errno, os.strerror(error.errno), os.fsdecode(executable)) from None
-            self._child_created = True
-            # The child's ends of the pipes are its own now (on a failure Popen's own cleanup closes them).
-            self._close_pipe_fds(p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite)
+        _execute_child = _execute_child
+
+
+def install() -> bool:
+    """Start every subprocess of this process through _execute_child (macOS); whether it did."""
+    if os.name == 'nt' or not available():
+        return False
+    subprocess.Popen._execute_child = _execute_child
+    return True
+
+
+def uninstall() -> None:
+    subprocess.Popen._execute_child = _standard_execute_child
 
 
 def run(*popenargs, input=None, capture_output=False, timeout=None, check=False, **kwargs):
