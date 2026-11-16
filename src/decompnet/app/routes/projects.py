@@ -55,7 +55,7 @@ def register(app: App) -> None:
                 def perform():
                     if request.url.path in ('/api/priority', '/api/variants'):
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
-                    if request.url.path == '/api/try' or (request.method=='POST' and request.url.path=='/api/reimport'):
+                    if request.url.path in ('/api/try', '/api/cross-game/run') or (request.method=='POST' and request.url.path=='/api/reimport'):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
                         # Deep-pass controls schedule local workers; the workers synchronize before judging.
@@ -95,6 +95,8 @@ def register(app: App) -> None:
                         return response(perform, started, JSONResponse, request.url.path)
                     finally:current_project.reset(token)
                 execute=(reader or call) if request.method=="GET" else call
+                if request.url.path == '/api/cross-game/run':
+                    execute=app.control
                 if request.url.path=='/api/rom-explorer/discovery' and (request.query_params.get('view')=='activity' or data.get('action')=='stop'):
                     execute=app.control  # Discovery admission/cancellation must not queue behind builds.
                 return await execute(respond)
@@ -963,13 +965,17 @@ def register(app: App) -> None:
     def p_cross_run(slug, request, data):
         from ..cross_game_progress import report
         from ..twins import Job
-        net.project_row(slug)
+        # Admission reads saved state; the worker synchronizes before judging.
+        with net.progress.view():
+            net.project_row(slug)
+            autopilot = net.autopilot_status(slug)
         if slug in net.links:
             raise ValueError('Run cross-game checks on the room host.')
         with net.twins._lock:
-            if net.twins._full_running(slug) or (net.autopilot_status(slug) or {}).get('state') == 'running':
+            if net.twins._full_running(slug) or (autopilot or {}).get('state') == 'running':
                 raise ValueError('A free matching pass is already running. Wait for it to finish.')
             check = Job()
+            check.promote()
             check.ordered.set()
             net.twins.jobs[slug] = check
         def work(log):
@@ -995,7 +1001,7 @@ def register(app: App) -> None:
             finally:
                 check.state = 'stopped' if check.stop.is_set() else 'done'
         try:
-            check.cross_job = jobs.start('cross-game', work,
+            check.cross_job = jobs.start('cross-game', work, project=slug,
                                          cancel_message='Cross-game check stopped. Verified matches and improvements are saved.')
             return {'job': check.cross_job}
         except Exception:

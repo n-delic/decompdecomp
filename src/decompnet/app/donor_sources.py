@@ -78,11 +78,12 @@ def build_hints(root):
 def imported(net, proj, fn):
     root=Path(proj['root']).resolve()
     unit=ForkProject(root).unit(fn['unit'])
-    if not unit.source:
-        raise NetworkError('The named donor has no source file.')
+    from ..forks.source_paths import readable
+    path=readable(root,unit)
+    if path is None:
+        raise NetworkError('The named donor has no unambiguous source file.')
     roots,defines=build_hints(root)
     reader=DonorReader({'root':str(root),'include_roots':'\n'.join(map(str,roots))})
-    path=root/unit.source
     original=reader.file(path)
     # Imported symbol spelling can differ from its C spelling (e.g. COFF leading underscores).
     spellings=net.forks._names(net.forks._meta(fn),fn)

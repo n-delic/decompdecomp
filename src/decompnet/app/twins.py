@@ -1237,7 +1237,7 @@ class Twins:
         report(job, 'Reading imported target objects', game=other['name'])
         theirs = self._fork_prints(other, matched_only=True, job=job)
         matched = 0
-        for a in self.net.project_store(other['id']).all("SELECT * FROM functions WHERE project_id=? AND status='matched'", other["id"]):
+        for a in self.net.project_store(other['id']).all("SELECT id,project_id,name,unit,meta FROM functions WHERE project_id=? AND status='matched'", other["id"]):
             pa = theirs.get(a["id"])
             if pa is None or pa.asm:
                 continue
