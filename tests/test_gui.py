@@ -25,6 +25,25 @@ def test_the_game_picker_stays_above_existing_project_cards():
             assert not re.search(r"(?:^|;)\s*order\s*:", declarations), selector
 
 
+def test_local_matching_owns_search_tools_and_settings_keeps_configuration():
+    static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    assert '<a data-ptab="matching">Local Matching</a>' in html
+    matching, settings = html.split('data-pane="matching"', 1)[1].split('data-pane="settings"', 1)
+    for panel in ["deepSweepPanel", "crossGamePanel"]:
+        assert f'id="{panel}"' in matching
+        assert f'id="{panel}"' not in settings
+        assert html.count(f'id="{panel}"') == 1
+    assert 'id="releasePanel"' in settings
+    steering = (static / "js" / "steering.js").read_text(encoding="utf-8")
+    settings_render = steering.split("async function renderProjectSettings(", 1)[1].split("function renderScope(", 1)[0]
+    assert "renderDeepSweep()" not in settings_render
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_local_matching.js"))], check=True,
+                   capture_output=True, text=True, encoding="utf-8", timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_foreground_progress_covers_delayed_starts_and_clears_on_every_outcome():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")

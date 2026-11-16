@@ -17,7 +17,7 @@ function element(id) {
 }
 let follower, finished = 0;
 const opened = [];
-const ctx = {AbortController,setTimeout,clearTimeout,renderDeepActivity:()=>{}, $:element, S:{slug:"game-a"}, esc:String, openFn:name=>opened.push(name),
+const ctx = {AbortController,setTimeout,clearTimeout,renderDeepActivity:()=>{}, $:element, S:{slug:"game-a",tab:"matching"}, esc:String, openFn:name=>opened.push(name),
   document:{createElement:()=>({})},
   beginWork:()=>()=>finished++, showJobError:()=>{},
   followJob:(job, log, callback, active)=>new Promise((resolve,reject)=>{follower={job,callback,active,resolve,reject};}),

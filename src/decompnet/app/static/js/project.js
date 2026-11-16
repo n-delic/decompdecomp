@@ -279,6 +279,7 @@ function setTab(tab) {
   if (tab === "rom") loadRomExplorer();
   if (tab === "porting" && typeof loadPortReadiness === "function") loadPortReadiness();
   if (tab === "agents") { renderSessions(S.sessions); renderLog(); loadStats(); }
+  if (tab === "matching") renderDeepSweep();
   if (tab === "settings") renderProjectSettings();
   if (tab === "variants") loadVariants(S.slug);
   if ((tab === "overview" || tab === "functions") && S.primed &&

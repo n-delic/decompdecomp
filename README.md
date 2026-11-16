@@ -79,6 +79,9 @@ contain expanded code; physical-media mapping and object-build adapters remain p
 
 ## Match through the live app
 
+Open a project’s **Local Matching** tab for **Deep permuter** and **Matches from other games**.
+Both searches run locally without AI tokens; their progress and Stop controls stay with each tool.
+
 [Reviewed alternative seeds and compact search briefs](docs/REVIEWED_SEARCH_SEEDS.md) let deep search investigate promising diagnostic shapes without replacing the saved winner. Native GCC allocation evidence targets existing-operation repairs; signature changes stay diagnostic-only until ordinary review. For supported MIPS tail guards, deep search can now generate a diagnostic return/lifetime pair directly from the saved checkpoint; allocation-mapped middle quotients and compact next-experiment briefs reduce manual searching.
 
 Local source preparation recovers referenced enums/object declarations, tries private MIPS symbol aliases only when instruction layouts fully agree, and combines independently verified small helper context with bounded compiler profiles. Source evidence locates branch/statement differences for review; it does not automatically rewrite behavior. See [local source preparation](docs/LOCAL_SOURCE_PREPARATION.md).
