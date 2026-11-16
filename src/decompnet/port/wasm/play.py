@@ -116,8 +116,10 @@ def library(net, slug: str, log=print) -> set[str]:
     if kit is None:
         return set()
     sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
-    rows = net.project_store(proj["id"]).all("SELECT id, name FROM functions WHERE project_id=? AND status='matched'",
-                                             proj["id"])
+    # Every function, not only the matched: a save also carries C that isn't proven yet (a twin from another game,
+    # a draft), and a racing game's twin of osEPiStartDma, still open, was compiled over the host's: it posted to
+    # libultra's PI manager, which the host doesn't run, and the boot thread waited for its first DMA for ever.
+    rows = net.project_store(proj["id"]).all("SELECT id, name FROM functions WHERE project_id=?", proj["id"])
     out = set()
     for r in rows:
         hint = sdk.get(r["id"])
