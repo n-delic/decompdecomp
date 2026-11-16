@@ -39,7 +39,7 @@ from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from ..permuter import mutate
 from ..project import compiler_for
-from . import workers
+from . import permuter_local, workers
 
 log = logging.getLogger("decompdecomp")
 NEAR = 0.06  # a near miss: at most this much of the function differs (best_score <= 6% of n_insns * 100)
@@ -291,6 +291,7 @@ class Permuter:
         fork = self.net.fork_slug(proj["slug"])
         rng = random.Random(self._random_seed(fn))
         gen = None
+        name = fn["name"]
         held = ExitStack()
         try:
             if fork:  # its unit is held for the turn and built once at its end, not after every variant (trial_run)
@@ -314,10 +315,15 @@ class Permuter:
             start_src = best_src = cur_src = fn["best_source"]
             best = cur = fn["best_score"]
             deadline = self._turn_deadline()
+            # Try the library's finite ordering hypotheses before a guarded random walk. A known
+            # adjacent-store near miss otherwise depended on which random mutations survived the guards.
+            local = [candidate for _, candidate in permuter_local.variants(best_src, name)]
             batches = misses = 0
             refused, taken = None, 0  # the last refusal of a variant (NetworkError), variants the project took
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
-                if gen is not None:
+                if local:
+                    batch = [local.pop(0)]
+                elif gen is not None:
                     # a batch of decomp-permuter's variants, of the C the turn started from and of the best so far in
                     # turn: from the best alone, rewrites piled on rewrites and got stuck on one of nine near misses of
                     # the demo ROM (at 45); taking turns, every one matched within 12 s
