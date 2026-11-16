@@ -103,6 +103,8 @@ int main(int argc, char **argv) {
     }
     gfx(0xFF100000u | 319, 0x80000000u | FB);                               /* G_SETCIMG: 320 wide */
     if (aa) { /* AA_EN, the depth buffer, the shade's colour: two triangles' shared edge, or one's silhouette */
+        /* the background black and fully covered (its low bit, coverage's top bit, set), as a game's clear leaves it */
+        for (int i = 0; i < 320 * 240; i++) w16(FB + i * 2, 0x0001);
         gfx(0xEF000000u, 0x8 | 0x10 | 0x20);
         gfx(0xFC000000u | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,
             15u << 28 | 4 << 15 | 7 << 12 | 4 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 4 << 6 | 7 << 3 | 4);

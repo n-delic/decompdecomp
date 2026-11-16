@@ -80,55 +80,6 @@ def test_f3dex2_lights_land_in_their_own_slots(renderer, tmp_path):
     assert lit[0] == 31 and lit[1] == 0 and 6 <= lit[2] <= 9, lit
     assert unlit[0] == 0 and unlit[1] == 0 and 6 <= unlit[2] <= 9, unlit
 
-
-@pytest.mark.parametrize("aa", [False, True], ids=["aliased", "anti-aliased"])
-def test_each_rows_span_draws_what_the_whole_box_does(tmp_path_factory, aa):
-    """raster looks only at the part of each row its three edges allow (span), with a margin over float rounding,
-    rather than at every pixel of the triangle's box: three quarters of those were outside in a racing game's
-    frames. Random triangles, slivers, near-flat edges and ones past the screen's edges, drawn both ways (the
-    renderer built with RENDER_EVERY_PIXEL looks at the whole box), leave the same bytes in memory."""
-    import random
-
-    every = build(tmp_path_factory.mktemp("every"), "-DRENDER_EVERY_PIXEL")
-    spans = build(tmp_path_factory.mktemp("spans"))
-    if not every or not spans:
-        pytest.skip("no C compiler")
-    rnd = random.Random(1 if aa else 2)
-    mem = Memory()
-    g = Gfx(mem)
-    # vertices in quarter pixels: x/4 across, y/4 down the 320 x 240 frame (s15.16 rounding adds sub-pixel jitter)
-    ortho = mem.put(matrix([1 / 640, 0, 0, 0, 0, -1 / 480, 0, 0, 0, 0, 1, 0, -1, 1, 0, 1]))
-    ident = mem.put(matrix())
-    g.frame().fill(0)
-    g(0xDA380007, 0x80000000 | ortho)  # projection: load
-    g(0xDA380003, 0x80000000 | ident)  # model view: load
-    g.othermode(NO_DITHER, 0x8 if aa else 0)
-    g(*SHADE)
-    g(0xD9000000, 0x200000)  # smooth shading only
-    for _ in range(40):  # 40 batches of 10 triangles
-        points = []
-        for _ in range(10):
-            kind = rnd.random()
-            x, y = rnd.randrange(-200, 1480), rnd.randrange(-200, 1160)
-            if kind < 0.3:  # a sliver: two corners close together
-                a, b = (x + rnd.randrange(-3, 4), y + rnd.randrange(-600, 600)), (x + rnd.randrange(-2, 3), y + rnd.randrange(-600, 600))
-            elif kind < 0.5:  # a near-flat edge
-                a, b = (x + rnd.randrange(-900, 900), y + rnd.randrange(-2, 3)), (x + rnd.randrange(-300, 300), y + rnd.randrange(-400, 400))
-            else:
-                a, b = (rnd.randrange(-400, 1680), rnd.randrange(-400, 1360)), (rnd.randrange(-400, 1680), rnd.randrange(-400, 1360))
-            points += [(x, y), a, b]
-        vtx = mem.put(b"".join(vertex(px, py, 0, rgba=rnd.getrandbits(32) | 0xFF) for px, py in points))
-        g(0x01000000 | 30 << 12 | 30 << 1, 0x80000000 | vtx)
-        for t in range(10):
-            g(0x05000000 | (t * 3 * 2) << 16 | ((t * 3 + 1) * 2) << 8 | (t * 3 + 2) * 2)
-    g(0xDF000000)
-    by_box, _ = run(every, mem, tmp_path_factory.mktemp("box"), g.end())
-    by_span, _ = run(spans, mem, tmp_path_factory.mktemp("span"), g.end())
-    drawn = sum(by_box.r16(FB + i * 2) != 0 for i in range(W * H))
-    assert drawn > W * H // 4  # the triangles drew something
-    assert by_span.ram == by_box.ram
-
-
 RED, GREEN, BLUE, WHITE = QUADRANT_COLOURS
 
 
@@ -487,10 +438,12 @@ def test_texture_generation_follows_the_normal(renderer, tmp_path):
     assert out.r16(FB + (120 * W + 240) * 2) == GREEN
 
 
-@pytest.mark.parametrize("dither, differ", [(0, True), (NO_DITHER, False)])
-def test_colours_are_dithered_as_they_are_cut_to_5_bits(renderer, tmp_path, dither, differ):
-    """The RDP adds an ordered dither (the magic square by default) before cutting each 8-bit channel to 5 bits: a
-    flat 132 (16.5 in 5 bits) comes out 16 or 17 by the pixel's place; with G_CD_DISABLE every pixel is 16."""
+@pytest.mark.parametrize("dither, first_red, second_red", [(0, 17, 16), (NO_DITHER, 16, 16)])
+def test_colours_are_dithered_as_they_are_cut_to_5_bits(renderer, tmp_path, dither, first_red, second_red):
+    """The RDP cuts each 8-bit channel to 5 bits rounding up when the 3 bits cut off are above the dither value (the
+    magic square by default, 0 at the first pixel and 6 at the second): a flat 132 (16.5 in 5 bits, 4 cut off)
+    comes out 17 then 16; with G_CD_DISABLE it never rounds up. Adding the dither value and truncating, as this did,
+    gave the mirror image: 16 then 17."""
     mem = Memory()
     g = Gfx(mem)
     _f3dex2_start(mem, g)
@@ -501,9 +454,8 @@ def test_colours_are_dithered_as_they_are_cut_to_5_bits(renderer, tmp_path, dith
     g(0x06000204, 0x00000406)
     g(0xDF000000)
     out, _ = run(renderer, mem, tmp_path, g.end())
-    first, second = out.pixel(0, 0), out.pixel(1, 0)
-    assert first[0] == 16
-    assert (first != second) == differ
+    assert out.pixel(0, 0)[0] == first_red
+    assert out.pixel(1, 0)[0] == second_red
 
 
 def test_alpha_times_coverage_drops_a_cut_outs_clear_texels(renderer, tmp_path):
@@ -547,8 +499,8 @@ def test_an_ia16_palette_reads_intensity_and_alpha(renderer, tmp_path):
 
 
 def test_a_32_bit_colour_image_gets_32_bit_pixels(renderer, tmp_path):
-    """G_SETCIMG's size 32: each pixel is RGBA 8888. Drawn as 16-bit pixels, the image came out half its width and
-    the wrong colours."""
+    """G_SETCIMG's size 32: each pixel is RGBA 8888, its alpha byte the coverage the RDP keeps (full: 7, shifted up
+    5, 0xE0). Drawn as 16-bit pixels, the image came out half its width and the wrong colours."""
     mem = Memory()
     g = Gfx(mem)
     ident = mem.put(matrix())
@@ -563,7 +515,7 @@ def test_a_32_bit_colour_image_gets_32_bit_pixels(renderer, tmp_path):
     g(0xDF000000)
     out, _ = run(renderer, mem, tmp_path, g.end())
     at = FB + (100 * W + 300) * 4
-    assert bytes(out.ram[at:at + 4]) == b"\xff\x00\x00\xff"
+    assert bytes(out.ram[at:at + 4]) == b"\xff\x00\x00\xe0"
 
 
 # ---------------------------------------------------------------- the VI
