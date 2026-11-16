@@ -2,6 +2,11 @@
 /* ------------------------------------------------------------------ drawers, keys */
 /* A drawer (the function, a dialog) takes the keyboard while it's open and gives it back where it was when it closes:
    whoever works with the keyboard isn't left at the top of the page. */
+function releaseDialogContent() {
+  const cleanup = S.dialogCleanup;
+  S.dialogCleanup = null;
+  if (cleanup) cleanup();
+}
 function showDrawer(id) {
   const d = $(id);
   if (d.hidden) S[id + "From"] = document.activeElement;
@@ -14,7 +19,7 @@ function hideDrawer(id) {
   const d = $(id);
   if (d.hidden) return;
   if (id === "drawer") { giveBack(null); S.fn = null; if (S.map.length) drawMap(); }
-  if (id === "dialog") S.dialogKind = "";
+  if (id === "dialog") { releaseDialogContent(); S.dialogKind = ""; }
   d.hidden = true;
   if ($("drawer").hidden && $("dialog").hidden) document.body.classList.remove("locked");
   const back = S[id + "From"];
@@ -59,6 +64,7 @@ function wireCopies(root) {
 /* The side panel for one task (decompiling together, the export, a rename...). `kind` says which, for what keeps it
    up to date while it's open. */
 function dialog(title, html, kind = "") {
+  releaseDialogContent();
   $("dialogTitle").textContent = title;
   $("dialogBody").innerHTML = html;
   $("dialogBody")._html = null;  // (setHtml's memory of what another panel showed here)

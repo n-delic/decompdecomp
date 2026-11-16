@@ -25,6 +25,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
+from typing import Callable
 
 from .. import arch
 from ..elfobj import MASKS_BY_ARCH, Reloc, mask_relocs
@@ -266,6 +267,7 @@ class Job:
     started_at: float = field(default_factory=time.time)
     stop: threading.Event = field(default_factory=threading.Event)
     ordered: threading.Event = field(default_factory=threading.Event)  # assembly set aside, claim order stored
+    report: Callable[[dict], None] | None = None
 
 
 class Twins:
@@ -578,6 +580,19 @@ class Twins:
             return False
         return bool(source) and self._missed(b_id, source)
 
+    def _report_across(self, job, other, a, b, outcome, why):
+        """Explicit searches retain metadata; the automatic twin pipeline has no extra writes."""
+        if job is None or job.report is None:
+            return
+        job.tried += 1
+        job.matched += outcome == 'match'
+        current = self.net.store.one('SELECT best_score,best_source FROM functions WHERE id=?',b['id'])
+        if (outcome == 'miss' and current and current['best_source'] and current['best_score'] is not None
+                and b['best_score'] is not None and current['best_score'] < b['best_score']):
+            outcome = 'improved'
+        job.report({'target':b['name'],'source':a['name'],'source_slug':other['slug'],'game':other['name'],
+                    'outcome':outcome,'reason':why})
+
     def across_games(self, slug: str, job: Job | None = None) -> int:
         """Matched code from the user's other games, tried on this game's identical functions: libraries (an SDK's,
         a compiler's runtime, middleware) come in the same code from one game to the next, built by the same
@@ -617,6 +632,8 @@ class Twins:
             for a in self.net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", other["id"]):
                 pa = theirs.get(a["id"])
                 for b_id in (wanted.get(pa.key, []) if pa is not None else []):
+                    if job is not None and job.stop.is_set():
+                        return matched
                     b = self.net.store.one("SELECT * FROM functions WHERE id=? AND status='open'", b_id)
                     if b is None or compiler_for(other_cfg, a["vram"]) != compiler_for(cfg, b["vram"]):
                         continue
@@ -628,6 +645,7 @@ class Twins:
                     if self._missed(b_id, source):
                         continue
                     outcome, why = self._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}")
+                    self._report_across(job, other, a, b, outcome, why)
                     if outcome == "match":
                         matched += 1
                         log.info("twins: %s matched from %s in %s", b["name"], a["name"], other["slug"])
@@ -668,6 +686,7 @@ class Twins:
                 if not source or self._missed(b_id, source):
                     continue
                 outcome, why = self._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", theirs=True)
+                self._report_across(job, other, a, b, outcome, why)
                 if outcome == "match":
                     matched += 1
                     log.info("twins: %s matched from %s in %s", b["name"], a["name"], other["slug"])

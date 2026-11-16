@@ -199,6 +199,7 @@
     <nav class="ptabs" id="ptabs" aria-label="This project">
       <a data-ptab="overview">Overview</a>
       <a data-ptab="functions">Functions <span class="count" id="fnTabCount"></span></a>
+      <a data-ptab="matching">Local Matching</a>
       <a data-ptab="agents">Agents <span class="count" id="agTabCount"></span></a>
       <a data-ptab="settings">Settings</a>
     </nav>
@@ -369,6 +370,53 @@
   </section>
 
   <!-- settings -->
+  <section class="ptab local-matching" data-pane="matching" hidden>
+    <p class="small muted">Runs locally · no AI tokens</p>
+    <p id="lmStatusError" class="small" role="alert" hidden></p>
+    <button id="lmRetry" class="ghost small-btn" type="button" hidden>Retry loading searches</button>
+    <details class="panel local-search-card" id="lmDeepCard">
+      <summary class="panel-head local-search-head"><div class="local-search-title"><h2>Deep permuter</h2><span id="lmDeepState" class="small muted" role="status">Ready to search</span></div><div class="row"><button id="lmDeepStart" type="button" class="primary small-btn">Start search</button><button id="lmDeepStop" type="button" class="primary small-btn" hidden>Stop</button></div></summary>
+      <div class="pad local-search-body">
+        <p class="small muted">Try variations of saved C to improve matches.</p>
+        <div class="local-search-counts" aria-label="Deep permuter results">
+          <button type="button" class="local-metric" data-local-kind="deep" data-local-metric="matched" aria-haspopup="dialog"><b id="lmDeepMatched">0</b><span>Matched<span aria-hidden="true">↗</span></span></button>
+          <button type="button" class="local-metric" data-local-kind="deep" data-local-metric="improved" aria-haspopup="dialog"><b id="lmDeepImproved">0</b><span>Improved<span aria-hidden="true">↗</span></span></button>
+          <button type="button" class="local-metric" data-local-kind="deep" data-local-metric="active" aria-haspopup="dialog"><b id="lmDeepActive">0</b><span>Searching now<span aria-hidden="true">↗</span></span></button>
+        </div>
+        <div class="workbar" id="lmDeepBar" role="progressbar" aria-label="Deep permuter search" hidden><i></i></div>
+        <p id="lmDeepProgress" class="small muted">No searches yet.</p>
+        <p id="lmDeepMessage" class="small" role="status" hidden></p>
+        <div class="local-options-row"><span id="lmOptionsSummary" class="small muted">5 min per function</span><button id="lmOptions" type="button" class="ghost small-btn" aria-haspopup="dialog">Search options <span aria-hidden="true">↗</span></button></div>
+        <button id="lmAttention" class="ghost small-btn" type="button" aria-haspopup="dialog" hidden></button>
+        <details><summary>Function activity</summary><div id="lmWorkers" class="small muted"></div></details>
+        <div id="lmOptionsHome" hidden><fieldset id="lmOptionsFields" class="local-search-options"><legend>Search options</legend>
+          <label class="field"><span>Minutes per function (1–120)</span><input id="lmMinutes" type="number" min="1" max="120" value="5" required></label>
+          <label class="field"><span>Candidates per function (1–1,000,000)</span><input id="lmVariants" type="number" min="1" max="1000000" value="10000" required></label>
+          <label class="field"><span>Functions at a time (0: automatic)</span><input id="lmThreads" type="number" min="0" value="0" required><small class="muted">Uses shared search workers and leaves capacity for the app's other work.</small></label>
+          <label class="check"><input id="lmRepeat" type="checkbox"><span>Repeat completed turns</span></label>
+          <label class="check"><input id="lmLoop" type="checkbox"><span>Keep searching until stopped</span></label>
+        </fieldset></div>
+        <details><summary>Technical output</summary><pre class="joblog" id="lmDeepLog" hidden></pre></details>
+        <div class="local-search-footer"><details><summary>How it works</summary><p class="small muted">Each function gets a bounded search using its original compiler and the ordinary byte or object judge. Completed ROM turns resume while their inputs agree. Imported builds are rejudged on each explicit pass because their build dependencies live outside the app. Improvements save as they are verified; a completed search does not prove every possible rewrite was tried.</p><p class="small muted">Rewrite proposals come from <a href="https://github.com/RetroReversing/decomp-repair" target="_blank" rel="noopener noreferrer">decomp-repair</a> and the separately pinned decomp-permuter tool. Only the normal judge accepts a match.</p></details><button id="lmReset" type="button" class="ghost small-btn">Reset metrics…</button></div>
+      </div>
+    </details>
+    <details class="panel local-search-card" id="lmCrossCard">
+      <summary class="panel-head local-search-head"><div class="local-search-title"><h2>Matches from other games</h2><span id="lmCrossState" class="small muted" role="status">Ready to search</span></div><div class="row"><button id="lmCrossStart" type="button" class="primary small-btn">Start search</button><button id="lmCrossStop" type="button" class="primary small-btn" hidden>Stop</button></div></summary>
+      <div class="pad local-search-body">
+        <p class="small muted">Try matching code from your other games.</p>
+        <div class="local-search-counts" aria-label="Matches from other games results">
+          <button type="button" class="local-metric" data-local-kind="cross" data-local-metric="matched" aria-haspopup="dialog"><b id="lmCrossMatched">0</b><span>Matched<span aria-hidden="true">↗</span></span></button>
+          <button type="button" class="local-metric" data-local-kind="cross" data-local-metric="improved" aria-haspopup="dialog"><b id="lmCrossImproved">0</b><span>Improved<span aria-hidden="true">↗</span></span></button>
+          <button type="button" class="local-metric" data-local-kind="cross" data-local-metric="checked" aria-haspopup="dialog"><b id="lmCrossChecked">0</b><span>Checked<span aria-hidden="true">↗</span></span></button>
+        </div>
+        <div class="workbar" id="lmCrossBar" role="progressbar" aria-label="Matches from other games search" hidden><i></i></div>
+        <p id="lmCrossProgress" class="small muted">No searches yet.</p>
+        <p id="lmCrossMessage" class="small" role="status" hidden></p>
+        <details><summary>Technical output</summary><pre class="joblog" id="lmCrossLog" hidden></pre></details>
+      </div>
+    </details>
+  </section>
+
   <section class="ptab" data-pane="settings">
     <div class="cols">
       <section class="panel" id="compilerPanel" aria-labelledby="compilerH">
@@ -636,6 +684,7 @@
 
 <script src="/assets/js/deep-permuter.js"></script>
 <script src="/assets/js/steering.js"></script>
+<script src="/assets/js/local-matching.js"></script>
 <script src="/assets/js/pages.js"></script>
 </body>
 </html>

@@ -82,6 +82,7 @@ function setTab(tab) {
   if (tab === "overview") { if (S.map.length) layoutMap(); renderOverview(); }
   if (tab === "functions") renderList();
   if (tab === "agents") { renderSessions(S.sessions); renderLog(); loadStats(); }
+  if (tab === "matching") loadLocalMatching();
   if (tab === "settings") renderProjectSettings();
 }
 document.querySelectorAll("[data-goto]").forEach((a) => {
