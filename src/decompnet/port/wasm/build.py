@@ -422,6 +422,30 @@ def _run(argv: list, log, cwd: Path | None = None, env: dict | None = None) -> s
                           timeout=TIMEOUT)
 
 
+def compile_ir(zig, src: Path, ll: Path, include: Path, env: dict, log, port=()):
+    """Compile generated C, retrying a proven redundant scalar extern with the shared header's qualifiers.
+    The original file is restored even on failure or cancellation; the saved and judged sources are never edited.
+    """
+    from .declarations import qualified_externs
+
+    argv = [zig, "cc", *IR_FLAGS, *port, "-I", include, "-S", "-emit-llvm", src, "-o", ll]
+    done = _run(argv, log, env=env)
+    if not done.returncode:
+        return done
+    source = src.read_text(encoding="utf-8")
+    prepared = qualified_externs(source, done.stderr, src)
+    if prepared == source:
+        return done
+    try:
+        src.write_text(prepared, encoding="utf-8")
+        done = _run(argv, log, env=env)
+    finally:
+        src.write_text(source, encoding="utf-8")
+    if not done.returncode:
+        log(f"{src.name}: using the shared header's qualifiers for redundant scalar extern declarations")
+    return done
+
+
 def _parallel(jobs, work, log, what: str, step=None) -> list[str]:
     """Run work(job) for every job, a core each; the jobs that failed, with their first error line. work returns an
     error line, or None when it did the job, or False when the job was already done (its key matched). `step`
@@ -706,15 +730,14 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
             _stamp(ll, key)
             return None
         src, ll = out / "src" / name, out / "ll" / (name[:-2] + ".ll")
-        key = files.key(src, [out / "include"], zig, *IR_FLAGS)
+        key = files.key(src, [out / "include"], zig, *IR_FLAGS, files(HERE / "declarations.py"))
         if _fresh(ll, key):
             return False
         _unstamp(ll)
         port = ["-DPORT=1"] if NEEDS_PORT.search(src.read_text(encoding="utf-8")) else []
-        done = _run([zig, "cc", *IR_FLAGS, *port, "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll], log, env=env)
+        done = compile_ir(zig, src, ll, out / "include", env, log, port)
         if done.returncode and not port:
-            done = _run([zig, "cc", *IR_FLAGS, "-DPORT=1", "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll],
-                        log, env=env)
+            done = compile_ir(zig, src, ll, out / "include", env, log, ["-DPORT=1"])
         if done.returncode:
             return (done.stderr.strip().splitlines() or ["failed"])[0]
         _stamp(ll, key)

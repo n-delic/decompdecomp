@@ -530,3 +530,23 @@ right while the function still matches makes the C say what the console does.
 3. **First version's scope.** Readiness report and Port export, with fixes done by hand, before the agent task?
 4. **Hand-port first.** Port one game's boot, title screen and one track by hand before building the general feature,
    and order the phases by what breaks.
+
+
+## Port compiler compatibility and recompiler failures
+
+The WebAssembly compiler can reject a redundant scalar `extern int g;` when the shared header already declares
+`g` as `volatile int` (including a typedef of it). The generated build may retry without that redundant line only
+when clang reports the same canonical scalar type with additional shared `const`/`volatile` qualifiers. It keeps
+the stronger shared declaration. Pointer/array type changes, narrower types, conditionals and source-only
+qualifiers are not removed. Saved and judged C stays unchanged; other errors still stop compilation.
+
+A native N64Recomp crash is reported with its signal. Before setting a body aside, the app checks that disabling
+all bodies avoids the crash, narrows the affected subset and confirms the individual body reproduces a native
+crash. Normal refusal messages remain recorded too. The final output is a fresh translation of every body not
+refused. Crashing bodies remain explicit runtime stubs, not recovered C or matches. Resource kills and global or
+unresolved interaction crashes still fail with a reason. Normal refusals are processed for the whole game in one run. Cancellation and per-body/whole-game probe limits apply.
+Generated static-body failures that the CLI cannot name in its patches are isolated to a patchable input body,
+with that relationship retained in the refusal reason.
+
+A compiler error inside a generated, patchable input body also leaves an explicit refusal and reruns translation;
+header errors and errors outside a body do not implicate an arbitrary function.
