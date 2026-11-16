@@ -574,3 +574,10 @@ def test_private_context_calls_keep_the_original_address_when_taken_as_a_pointer
     assert 'define i32 @port_context_first_helper(' in text
     assert '@port_context_first_helper(' in text and 'call i32 @helper(' not in text
     assert r'c"\80\00\12\00"' in text
+
+
+def test_a_struct_returning_calls_argument_is_its_value():
+    """`ptr dead_on_unwind writable sret(%struct.CQuatern_t) align 4 %24` (an N64 game's call through a pointer)
+    was read with the attributes as its value, and its function couldn't be placed."""
+    from decompnet.port.wasm.adapt import parse_arg
+    assert parse_arg("ptr dead_on_unwind writable sret(%struct.CQuatern_t) align 4 %24")[1] == "%24"
