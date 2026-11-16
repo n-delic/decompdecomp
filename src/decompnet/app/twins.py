@@ -569,20 +569,23 @@ class Twins:
             try:
                 # Starting agents wait for the claim order (job.ordered). It takes seconds and touches only this
                 # project, so it doesn't queue for the shared maintenance lane, where another game's reuse pass
-                # kept it (and the agents) waiting up to ORDER_WAIT. After an update the recheck below comes first:
-                # the console's work there can change the functions (a DS game's pieces joined).
-                if self._checked(slug):
-                    try:
-                        self.order(slug, job)
-                    except Exception as e:  # the full pass tries again
-                        log.info("twins: ordering %s: %s", slug, e)
-                    job.progress = {"phase": "Waiting for background CPU"}
+                # kept it (and the agents) waiting up to ORDER_WAIT. That holds after an update too: the recheck
+                # there queued for the lane first, so every start on a project a new version hadn't rechecked
+                # waited the whole ORDER_WAIT and agents claimed unordered. The recheck can change the functions
+                # (a DS game's pieces joined, more code set aside), so the order is stored again after it.
+                try:
+                    self.order(slug, job)
+                except Exception as e:  # the full pass tries again
+                    log.info("twins: ordering %s: %s", slug, e)
+                job.progress = {"phase": "Waiting for background CPU"}
                 with maintenance.foreground(job.foreground), maintenance.slot(job.stop) as ready:
                     if not ready:
                         job.state = "done"
                         job.ordered.set()
                         return
-                    self.net.recheck(slug, log=log.info, only_if_updated=True)  # once after each update: what it knows
+                    # once after each update: what it knows
+                    if self.net.recheck(slug, log=log.info, only_if_updated=True) is not None:
+                        self.update_boosts(self.net.project_row(slug), pending=True)
                     self.full_pass(slug, job)
             except Exception as e:
                 log.info("twins: %s: %s", slug, e)
@@ -623,11 +626,6 @@ class Twins:
                 return maintenance_tasks.full_pass(self, slug, job)
             except maintenance_tasks.Unavailable:
                 return self._execute_full_pass(slug, job)
-
-    def _checked(self, slug: str) -> bool:
-        """This version of decompdecomp has rechecked the project already (Network.recheck, only_if_updated)."""
-        from .. import __version__
-        return self.net.cfg(self.net.project_row(slug)).get("checked") == __version__
 
     def order(self, slug: str, job: Job) -> None:
         """Hand-written assembly set aside and the claim order stored (functions.boost), then job.ordered: what
