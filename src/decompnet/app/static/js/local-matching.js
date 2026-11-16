@@ -26,8 +26,18 @@ async function loadLocalMatching() {
   LOCAL_MATCHING.loading = request;
   $("lmStatusError").hidden = $("lmRetry").hidden = true;
   try {
+    const control = await api(`/api/local-matching?slug=${encodeURIComponent(slug)}&view=control`);
+    if (!acceptLocalMatching(control,slug,version,request)) return;
     const data = await api(`/api/local-matching?slug=${encodeURIComponent(slug)}`);
-    if (!localActive(slug,version) || LOCAL_MATCHING.epoch!==request.epoch) return;
+    acceptLocalMatching(data,slug,version,request);
+  } catch (error) {
+    if (localActive(slug,version) && LOCAL_MATCHING.epoch===request.epoch) { $("lmStatusError").textContent=error.message; $("lmStatusError").hidden=false; $("lmRetry").hidden=false; }
+  } finally { if (LOCAL_MATCHING.loading===request) LOCAL_MATCHING.loading=null; }
+}
+function acceptLocalMatching(data,slug,version,request) {
+  if (!localActive(slug,version) || LOCAL_MATCHING.epoch!==request.epoch) return false;
+    const live = LOCAL_MATCHING.data;
+    if (live && live.deep.job===data.deep.job && LOCAL_MATCHING.following.deep) data.deep.progress=live.deep.progress;
     LOCAL_MATCHING.data = data;
     if (LOCAL_MATCHING.dirty !== slug && !LOCAL_MATCHING.intent.deep) {
       for (const [id,key] of [["lmMinutes","minutes"],["lmVariants","max_variants"],["lmThreads","threads"]]) $(id).value = data.deep[key];
@@ -36,9 +46,7 @@ async function loadLocalMatching() {
     $("lmThreads").max = data.deep.threads_default;
     renderLocalMatching();
     for (const kind of ["deep","cross"]) if (data[kind].job && !LOCAL_MATCHING.intent[kind]) followLocalSearch(kind,data[kind].job,slug,version);
-  } catch (error) {
-    if (localActive(slug,version)) { $("lmStatusError").textContent=error.message; $("lmStatusError").hidden=false; $("lmRetry").hidden=false; }
-  } finally { if (LOCAL_MATCHING.loading===request) LOCAL_MATCHING.loading=null; }
+  return true;
 }
 function renderLocalMatching() {
   const data = LOCAL_MATCHING.data;
@@ -51,7 +59,8 @@ function renderLocalMatching() {
     $(prefix+"Stop").disabled = intent === "stop";
     $(prefix+"Stop").textContent = intent === "stop" ? "Stopping…" : "Stop";
     $(prefix+"State").textContent = intent === "start" ? "Starting search…" : intent === "stop" ? "Stopping search…" : running ? row.progress?.phase || "Searching…" : row.error ? "Search needs attention" : "Ready to search";
-    $(prefix+"Bar").hidden = !busy && !!data;
+    $(prefix+"Bar").hidden = !busy && !!data && !data.deep.statistics_pending;
+    $(prefix+"Bar").ariaLabel = data?.deep.statistics_pending ? "Loading saved totals" : "Local matching search";
     const error = LOCAL_MATCHING.errors[kind] || row.error;
     $(prefix+"Message").hidden = !error;
     $(prefix+"Message").textContent = error || "";
@@ -61,8 +70,8 @@ function renderLocalMatching() {
   const improvements = deep.improvements || [];
   for (const [id,count] of [["lmDeepMatched",improvements.filter(r=>r.new_score===0).length],["lmDeepImproved",improvements.length],
        ["lmDeepActive",workers.length],["lmCrossMatched",cross.counts?.match || 0],["lmCrossImproved",cross.counts?.improved || 0],
-       ["lmCrossChecked",Object.values(cross.counts || {}).reduce((a,b)=>a+b,0)]]) $(id).textContent=data ? Number(count).toLocaleString() : "—";
-  $("lmDeepProgress").textContent = !data ? "Loading saved progress…" : deep.has_activity
+       ["lmCrossChecked",Object.values(cross.counts || {}).reduce((a,b)=>a+b,0)]]) $(id).textContent=data && (!deep.statistics_pending || id==="lmDeepActive") ? Number(count).toLocaleString() : "—";
+  $("lmDeepProgress").textContent = !data || deep.statistics_pending ? "Loading saved progress…" : deep.has_activity
     ? `Saved progress: ${(deep.queue_done || 0).toLocaleString()} completed turns · ${(deep.queue_left || 0).toLocaleString()} eligible`
     : "No searches yet.";
   $("lmCrossProgress").textContent = cross.progress?.phase || (cross.recent?.length ? "Verified results are saved automatically." : "No searches yet.");

@@ -74,6 +74,13 @@ function windowFor(){
  await fresh.ctx.loadLocalMatching();assert.equal(fresh.followers.length,1);
  fresh.ctx.api=async()=>{throw Error('Unavailable');};await fresh.ctx.loadLocalMatching();
  assert.equal(fresh.get('lmRetry').hidden,false);assert.match(fresh.get('lmStatusError').textContent,/Unavailable/);
+ const slow=windowFor(),totals=deferred();slow.ctx.data.deep.job='slow';
+ slow.ctx.api=async url=>url.includes('view=control') ? {...slow.ctx.data,deep:{...slow.ctx.data.deep,statistics_pending:true}} : totals.promise;
+ const waiting=slow.ctx.loadLocalMatching();await tick();
+ assert.equal(slow.get('lmDeepStop').hidden,false,'Stop attaches before slow saved statistics');
+ assert.equal(slow.followers.length,1);assert.equal(slow.get('lmDeepMatched').textContent,'—');
+ totals.resolve(slow.ctx.data);await waiting;
+ assert.equal(slow.followers.length,1,'totals do not attach a second follower');
  assert.match(html,/data-ptab="matching">Local Matching/);
  assert.match(html,/js\/local-matching\.js/);
  console.log('Local Matching: settings, drawers, delayed starts, duplicates, errors, navigation and reattachment passed.');
