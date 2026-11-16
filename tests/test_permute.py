@@ -744,3 +744,19 @@ def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, m
     assert caplog.records[-1].exc_info is None
     # the same best attempt is refused every time: its other turns go too
     assert net.store.one("SELECT permuted FROM functions WHERE id=1")["permuted"] == permute.MAX_TURNS
+
+
+def test_library_ordering_candidates_precede_random_batches_and_keep_the_judge(monkeypatch):
+    source = 'void f(Item *p) {\n  p->y = 0;\n  p->x = 0;\n}\n'
+    candidate = source.replace('  p->y = 0;\n  p->x = 0;', '  p->x = 0;\n  p->y = 0;')
+    net = FakeNet()
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?',(source,))
+    generated = batches(monkeypatch,['unrelated random candidate'])
+    search = ScriptedPermuter(net,{candidate:0})
+    state = State()
+    search._permute(AGENT,net.project_row('game'),net.function(),state)
+    assert search.judged==[candidate]
+    assert state.matched==1 and state.variants==1
+    assert generated==[]
+    assert not net.store.one('SELECT 1 FROM claims')
