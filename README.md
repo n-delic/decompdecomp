@@ -17,6 +17,13 @@
 decompdecomp is an app that decompiles games you own. Helper agents write C or C++, the game's original compiler builds it, and a function is matched only when
 the result is byte-identical to the game. The export builds your game again.
 
+<p align="center">
+  <img alt="decompdecomp on Demo Quest 64: the autopilot matches 20 functions for free, then a helper matches six more, each judged byte for byte." src=".github/assets/demo.webp" width="900">
+  <br>
+  <sub>The app on Demo Quest 64, the demo ROM that comes with it. To keep the recording short, the helper is a
+  stand-in for a model that hands in the demo's own C; the app compiles and judges every function for real.</sub>
+</p>
+
 ## Install
 decompdecomp runs on Linux and Windows 10/11 on x86-64, and on macOS 12+ on Intel or Apple Silicon. The Linux installer also gets the free compilers
 and keeps decompdecomp up to date.
