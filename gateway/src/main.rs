@@ -72,6 +72,13 @@ struct Config {
     window_reader: Option<String>,
     window_reads: Vec<window::Read>,
     window_reader_limit: Duration,
+    /// Tools the agent may leave behind (release_function): after `ack_deadline` the agent hears "accepted" and
+    /// moves on while the call keeps running in the app. Kept in `journal` until the app answers, so a restart
+    /// loses none; the agent's later calls to the app wait for it, so they see it done; the app's answer comes
+    /// with the agent's next reply.
+    ack_tools: HashSet<String>,
+    ack_deadline: Duration,
+    journal: Option<String>,
 }
 
 impl Config {
@@ -95,6 +102,9 @@ impl Config {
             window_reader: None,
             window_reads: Vec::new(),
             window_reader_limit: Duration::from_secs(10),
+            ack_tools: HashSet::new(),
+            ack_deadline: Duration::from_secs(3),
+            journal: None,
         };
         let mut args = std::env::args().skip(1);
         while let Some(flag) = args.next() {
@@ -137,6 +147,11 @@ impl Config {
                         .collect::<Result<_, _>>()?
                 }
                 "--window-reader-limit" => config.window_reader_limit = seconds(value()?)?,
+                "--ack-tools" => {
+                    config.ack_tools = value()?.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
+                }
+                "--ack-deadline" => config.ack_deadline = seconds(value()?)?,
+                "--journal" => config.journal = Some(value()?),
                 _ => return Err(format!("unknown option {flag}")),
             }
         }
@@ -155,6 +170,96 @@ struct Call {
     started: Instant,
     done: watch::Receiver<Option<Value>>,
     finished_at: Mutex<Option<Instant>>,
+    /// The agent was told "accepted" and went on: the reply goes to its next call instead (`notices`).
+    acked: Mutex<bool>,
+}
+
+/// Calls the agent left behind (release_function), kept on disk until the app answers them.
+struct Journal {
+    path: String,
+    lock: Mutex<()>,
+}
+
+impl Journal {
+    fn entries(&self) -> Vec<Value> {
+        let _held = self.lock.lock().unwrap();
+        std::fs::read_to_string(&self.path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .collect()
+    }
+
+    fn add(&self, entry: &Value) {
+        let _held = self.lock.lock().unwrap();
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(&self.path);
+        match file {
+            Ok(mut file) => {
+                let _ = writeln!(file, "{entry}");
+                let _ = file.sync_data();
+            }
+            Err(error) => log(format!("can't write the journal {}: {error}", self.path)),
+        }
+    }
+
+    fn remove(&self, id: &str) {
+        let _held = self.lock.lock().unwrap();
+        let kept: Vec<String> = std::fs::read_to_string(&self.path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| serde_json::from_str::<Value>(l).ok().and_then(|v| v.get("id").cloned()) != Some(json!(id)))
+            .map(String::from)
+            .collect();
+        let temporary = format!("{}.tmp", self.path);
+        let text = kept.iter().map(|l| format!("{l}\n")).collect::<String>();
+        if std::fs::write(&temporary, text).is_ok() {
+            let _ = std::fs::rename(&temporary, &self.path);
+        }
+    }
+}
+
+/// The headers a call goes to the app with, kept in the journal so a replay after a restart sends the same.
+const FORWARDED: [&str; 4] = ["authorization", "mcp-protocol-version", "user-agent", "x-decomp-connection-check"];
+
+fn saved_headers(headers: &HeaderMap) -> Value {
+    let mut map = serde_json::Map::new();
+    for name in FORWARDED {
+        if let Some(value) = headers.get(name).and_then(|v| v.to_str().ok()) {
+            map.insert(name.into(), Value::String(value.into()));
+        }
+    }
+    Value::Object(map)
+}
+
+fn restored_headers(saved: &Value) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for name in FORWARDED {
+        if let Some(value) = saved.get(name).and_then(Value::as_str).and_then(|v| HeaderValue::from_str(v).ok()) {
+            headers.insert(name, value);
+        }
+    }
+    headers
+}
+
+/// The first text of a tool reply.
+fn reply_text(reply: &Value) -> String {
+    reply.pointer("/result/content/0/text").and_then(Value::as_str).map(String::from)
+        .or_else(|| reply.pointer("/error/message").and_then(Value::as_str).map(String::from))
+        .unwrap_or_default()
+}
+
+/// `notes` put before the reply's first text (and its structured copy).
+fn with_notes(mut reply: Value, notes: &[String]) -> Value {
+    if notes.is_empty() {
+        return reply;
+    }
+    let head = notes.join("\n\n") + "\n\n---\n\n";
+    for pointer in ["/result/content/0/text", "/result/structuredContent/result"] {
+        if let Some(Value::String(text)) = reply.pointer_mut(pointer) {
+            *text = format!("{head}{text}");
+        }
+    }
+    reply
 }
 
 struct Gateway {
@@ -179,6 +284,13 @@ struct Gateway {
     reports: AtomicU64,
     /// The app window's proxy, when it listens (window.rs).
     window: std::sync::OnceLock<Arc<window::Window>>,
+    /// Per helper: its calls left behind still running in the app (`ack_tools`), which its later calls to the app
+    /// wait for, and the app's answers to them, given with its next reply.
+    behind: Mutex<HashMap<String, Vec<(u64, watch::Receiver<Option<Value>>)>>>,
+    notices: Mutex<HashMap<String, Vec<String>>>,
+    journal: Option<Journal>,
+    ids: AtomicU64,
+    acknowledged: AtomicU64,
 }
 
 /// Answers kept for new connections: per (project, method), and the latest per method. Saved to `--state`.
@@ -388,7 +500,7 @@ impl Gateway {
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT, "application/json, text/event-stream")
             .body(message.to_string());
-        for name in ["authorization", "mcp-protocol-version", "user-agent", "x-decomp-connection-check"] {
+        for name in FORWARDED {
             if let Some(value) = headers.get(name) {
                 request = request.header(name, value.clone());
             }
@@ -476,7 +588,9 @@ impl Gateway {
                             self.config.per_agent));
                     };
                     let (sender, receiver) = watch::channel(None);
-                    let call = Arc::new(Call { started: Instant::now(), done: receiver, finished_at: Mutex::new(None) });
+                    let call = Arc::new(Call {
+                        started: Instant::now(), done: receiver.clone(), finished_at: Mutex::new(None), acked: Mutex::new(false),
+                    });
                     let mut calls = self.calls.lock().unwrap();
                     // Another request for the same call may have started it while this one took permits.
                     if let Some(raced) = calls.get(&key) {
@@ -484,9 +598,21 @@ impl Gateway {
                     } else {
                         calls.insert(key.clone(), call.clone());
                         drop(calls);
+                        // What this helper left behind before this call; a call left behind itself joins them.
+                        let earlier = self.behind_of(&auth);
+                        let left = self.config.ack_tools.contains(&tool).then(|| {
+                            let id = self.ids.fetch_add(1, Ordering::Relaxed);
+                            self.behind.lock().unwrap().entry(auth.clone()).or_default().push((id, receiver.clone()));
+                            let entry = format!("{:x}-{id}", std::process::id());
+                            if let Some(journal) = &self.journal {
+                                journal.add(&json!({"id": entry, "message": message, "headers": saved_headers(&headers)}));
+                            }
+                            (id, entry)
+                        });
                         let gateway = self.clone();
                         let started = call.clone();
-                        let (message, headers, tool) = (message.clone(), headers.clone(), tool.clone());
+                        let (message, headers, tool, auth) = (message.clone(), headers.clone(), tool.clone(), auth.clone());
+                        let key_of_task = key.clone();
                         tokio::spawn(async move {
                             let _permits = permits;
                             let limit = gateway.config.upstream_limit;
@@ -496,7 +622,10 @@ impl Gateway {
                             }
                             let reply = match read {
                                 Some(reply) => Upstream::Reply(reply),
-                                None => gateway.send_patiently(&message, &headers, limit).await,
+                                None => {
+                                    gateway.wait_for(earlier, limit).await;
+                                    gateway.send_patiently(&message, &headers, limit).await
+                                }
                             };
                             let reply = match reply {
                                 Upstream::Reply(reply) => reply,
@@ -508,7 +637,25 @@ impl Gateway {
                                      (get_function) before repeating it.")),
                             };
                             *started.finished_at.lock().unwrap() = Some(Instant::now());
-                            let _ = sender.send(Some(reply));
+                            {
+                                let acked = started.acked.lock().unwrap();
+                                if *acked {
+                                    gateway.notice(&auth, format!(
+                                        "decompdecomp has now finished your earlier {tool} call ({}): {}",
+                                        brief_arguments(&message), reply_text(&reply)));
+                                }
+                                let _ = sender.send(Some(reply));
+                            }
+                            if let Some((id, entry)) = left {
+                                gateway.left_done(&auth, id, &entry);
+                                if *started.acked.lock().unwrap() {
+                                    // Nobody will repeat it: its answer went to the notices.
+                                    let mut calls = gateway.calls.lock().unwrap();
+                                    if calls.get(&key_of_task).is_some_and(|c| Arc::ptr_eq(c, &started)) {
+                                        calls.remove(&key_of_task);
+                                    }
+                                }
+                            }
                         });
                         call
                     }
@@ -516,7 +663,10 @@ impl Gateway {
             }
         };
         let mut done = call.done.clone();
-        let waited = tokio::time::timeout(self.config.call_deadline, done.wait_for(|r| r.is_some())).await;
+        let leave = self.config.ack_tools.contains(&tool);
+        let deadline = if leave { self.config.ack_deadline.min(self.config.call_deadline) } else { self.config.call_deadline };
+        let waited = tokio::time::timeout(deadline, done.wait_for(|r| r.is_some())).await;
+        let notes = self.notices_of(&auth);
         if let Ok(Ok(reply)) = waited {
             let reply = reply.clone().unwrap_or(Value::Null);
             // Delivered: the next identical call is a new call.
@@ -525,7 +675,34 @@ impl Gateway {
                 calls.remove(&key);
             }
             self.served.fetch_add(1, Ordering::Relaxed);
-            return with_id(reply, &id);
+            return with_notes(with_id(reply, &id), &notes);
+        }
+        if leave {
+            let mut acked = call.acked.lock().unwrap();
+            if let Some(reply) = call.done.borrow().clone() {
+                drop(acked);
+                let mut calls = self.calls.lock().unwrap();
+                if calls.get(&key).is_some_and(|c| Arc::ptr_eq(c, &call)) {
+                    calls.remove(&key);
+                }
+                self.served.fetch_add(1, Ordering::Relaxed);
+                return with_notes(with_id(reply, &id), &notes);
+            }
+            *acked = true;
+            drop(acked);
+            self.acknowledged.fetch_add(1, Ordering::Relaxed);
+            let text = format!(
+                "{tool} accepted: decompdecomp is busy, so it records it in the background ({}). Go on with your \
+                 next step (claim another function); your next calls wait for it to be recorded first. If \
+                 decompdecomp answers anything you need to know, it comes at the top of your next tool reply. \
+                 Don't repeat this call.", brief_arguments(&message));
+            let reply = json!({"jsonrpc": "2.0", "id": id, "result": {
+                "content": [{"type": "text", "text": text}], "structuredContent": {"result": text}, "isError": false}});
+            return with_notes(reply, &notes);
+        }
+        if !notes.is_empty() {
+            // Not delivered now: keep them for the reply that is.
+            self.notices.lock().unwrap().entry(auth.clone()).or_default().splice(0..0, notes);
         }
         self.late.fetch_add(1, Ordering::Relaxed);
         let running = call.started.elapsed().as_secs();
@@ -538,6 +715,69 @@ impl Gateway {
             "{tool} is still running ({running} s so far): {state}. Nothing was lost and it will not run twice: \
              repeat exactly the same {tool} call (same arguments) to wait for its result. Meanwhile don't redo \
              its work another way."))
+    }
+
+    /// This helper's calls left behind and still running.
+    fn behind_of(&self, auth: &str) -> Vec<watch::Receiver<Option<Value>>> {
+        self.behind.lock().unwrap().get(auth).map(|v| v.iter().map(|(_, r)| r.clone()).collect()).unwrap_or_default()
+    }
+
+    /// Wait (up to `limit`) until those calls have their answers, so the app sees them before what comes after.
+    async fn wait_for(&self, earlier: Vec<watch::Receiver<Option<Value>>>, limit: Duration) {
+        let end = Instant::now() + limit;
+        for mut done in earlier {
+            let left = end.saturating_duration_since(Instant::now());
+            let _ = tokio::time::timeout(left, done.wait_for(|r| r.is_some())).await;
+        }
+    }
+
+    fn left_done(&self, auth: &str, id: u64, entry: &str) {
+        let mut behind = self.behind.lock().unwrap();
+        if let Some(list) = behind.get_mut(auth) {
+            list.retain(|(i, _)| *i != id);
+            if list.is_empty() {
+                behind.remove(auth);
+            }
+        }
+        drop(behind);
+        if let Some(journal) = &self.journal {
+            journal.remove(entry);
+        }
+    }
+
+    fn notice(&self, auth: &str, text: String) {
+        self.notices.lock().unwrap().entry(auth.to_string()).or_default().push(text);
+    }
+
+    fn notices_of(&self, auth: &str) -> Vec<String> {
+        self.notices.lock().unwrap().remove(auth).unwrap_or_default()
+    }
+
+    /// Calls left behind when the gateway last ended, sent to the app again (it never answered them).
+    fn replay(self: &Arc<Self>) {
+        let Some(journal) = &self.journal else { return };
+        for entry in journal.entries() {
+            let (Some(message), Some(entry_id)) = (entry.get("message").cloned(), entry.get("id").and_then(Value::as_str)) else {
+                continue;
+            };
+            let headers = restored_headers(entry.get("headers").unwrap_or(&Value::Null));
+            let auth = bearer(&headers);
+            let (sender, receiver) = watch::channel(None);
+            let id = self.ids.fetch_add(1, Ordering::Relaxed);
+            self.behind.lock().unwrap().entry(auth.clone()).or_default().push((id, receiver));
+            let (gateway, entry_id) = (self.clone(), entry_id.to_string());
+            tokio::spawn(async move {
+                let tool = message.pointer("/params/name").and_then(Value::as_str).unwrap_or("?").to_string();
+                let reply = match gateway.send_patiently(&message, &headers, gateway.config.upstream_limit).await {
+                    Upstream::Reply(reply) => reply,
+                    Upstream::Unreachable(why) | Upstream::Failed(why) => tool_text(&Value::Null, why),
+                };
+                gateway.notice(&auth, format!("decompdecomp has now finished your earlier {tool} call ({}): {}",
+                                              brief_arguments(&message), reply_text(&reply)));
+                let _ = sender.send(Some(reply));
+                gateway.left_done(&auth, id, &entry_id);
+            });
+        }
     }
 
     async fn remembered(self: &Arc<Self>, message: Value, headers: HeaderMap, method: &str) -> Value {
@@ -617,6 +857,14 @@ impl Gateway {
     }
 }
 
+/// The call's function, to name it in a later notice.
+fn brief_arguments(message: &Value) -> String {
+    match message.pointer("/params/arguments/function").and_then(Value::as_str) {
+        Some(function) => format!("function={function}"),
+        None => "no function named".into(),
+    }
+}
+
 fn json_response(status: StatusCode, value: Value) -> Response {
     let mut response = (status, value.to_string()).into_response();
     response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -679,6 +927,8 @@ async fn health(State(gateway): State<Arc<Gateway>>) -> Response {
         "read_by_reader": gateway.read.load(Ordering::Relaxed),
         "passed_to_app": gateway.declined.load(Ordering::Relaxed),
         "answered_by_gateway": gateway.answered.load(Ordering::Relaxed),
+        "accepted_in_background": gateway.acknowledged.load(Ordering::Relaxed),
+        "left_behind": gateway.behind.lock().unwrap().values().map(Vec::len).sum::<usize>(),
         "window": gateway.window.get().map(|w| w.health()),
     }))
 }
@@ -753,7 +1003,13 @@ async fn main() {
         answered: AtomicU64::new(0),
         reports: AtomicU64::new(0),
         window: std::sync::OnceLock::new(),
+        behind: Mutex::new(HashMap::new()),
+        notices: Mutex::new(HashMap::new()),
+        journal: config.journal.clone().map(|path| Journal { path, lock: Mutex::new(()) }),
+        ids: AtomicU64::new(0),
+        acknowledged: AtomicU64::new(0),
     });
+    gateway.replay();
     let app = Router::new()
         .route("/mcp", post(mcp_post).get(mcp_other).delete(mcp_other))
         .route("/mcp/", post(mcp_post).get(mcp_other).delete(mcp_other))

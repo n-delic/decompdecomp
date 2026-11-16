@@ -27,7 +27,19 @@ class App:
     def __init__(self, port):
         from mcp.server.mcpserver import MCPServer
         self.port, self.runs = port, {"slow": 0}
+        self.order: list[str] = []
         server = MCPServer(name="decomp")
+
+        @server.tool()
+        def release_function(function: str, seconds: float = 0.0) -> str:
+            time.sleep(seconds)
+            self.order.append("release " + function)
+            return f"released {function}"
+
+        @server.tool()
+        def claim_function() -> str:
+            self.order.append("claim")
+            return "CLAIMED next"
 
         @server.tool()
         def fast(text: str) -> str:
@@ -70,7 +82,8 @@ def text(reply):
 def gateway(tmp_path):
     port = free_port()
     gw = mcp_gateway.Gateway(mcp_gateway.built(), f"http://127.0.0.1:{port}/mcp", tmp_path / "gateway.log",
-                             call_deadline=1.0, meta_deadline=1.5)
+                             call_deadline=1.0, meta_deadline=1.5, journal=tmp_path / "journal.jsonl",
+                             background_seconds=0.5)
     gw.start()
     gw.app_port = port
     yield gw
@@ -155,6 +168,58 @@ def test_a_new_connection_gets_the_tools_while_the_app_is_down_even_after_a_rest
         assert reply["result"] == live["result"]
     finally:
         again.stop()
+
+
+def test_a_slow_release_is_accepted_and_the_next_call_waits_for_it(gateway):
+    """release_function only ends a claim: when the app is slow the helper hears "accepted" and goes on. Its next
+    call to the app waits until the release is recorded (so a claim never hands back the released function), and
+    the app's own answer comes at the top of that reply."""
+    with App(gateway.app_port) as app:
+        began = time.monotonic()
+        first = rpc(gateway.url, "tools/call", {"name": "release_function",
+                                                 "arguments": {"function": "f", "seconds": 1.5}}, id=1)
+        assert time.monotonic() - began < 1.2
+        assert "accepted" in text(first) and not first["result"]["isError"]
+        for attempt in range(5):  # (it waits for the release, so it may say "still running" first)
+            claim = rpc(gateway.url, "tools/call", {"name": "claim_function", "arguments": {}}, id=2 + attempt)
+            if "still running" not in text(claim):
+                break
+        assert app.order == ["release f", "claim"]
+        assert "finished your earlier release_function call (function=f): released f" in text(claim)
+        assert text(claim).endswith("CLAIMED next")
+        quick = rpc(gateway.url, "tools/call", {"name": "release_function", "arguments": {"function": "g"}}, id=9)
+        assert text(quick) == "released g", "a quick release answers as the app does"
+        health = httpx.get(gateway.url.replace("/mcp", "/health"), timeout=5).json()
+        assert health["accepted_in_background"] == 1 and health["left_behind"] == 0
+
+
+def test_a_release_left_behind_survives_a_gateway_restart(tmp_path):
+    """Kept in the journal until the app answers: a gateway that ends first sends it again when it starts."""
+    port, journal = free_port(), tmp_path / "journal.jsonl"
+    make = lambda log: mcp_gateway.Gateway(mcp_gateway.built(), f"http://127.0.0.1:{port}/mcp", tmp_path / log,  # noqa: E731
+                                           call_deadline=1.0, meta_deadline=1.5, journal=journal,
+                                           background_seconds=0.3)
+    gw = make("gateway.log")
+    gw.start()
+    try:  # the app is down: the release waits in the journal
+        reply = rpc(gw.url, "tools/call", {"name": "release_function", "arguments": {"function": "f"}}, id=1)
+        assert "accepted" in text(reply)
+        assert '"release_function"' in journal.read_text()
+    finally:
+        gw.stop()
+    with App(port) as app:
+        again = make("gateway2.log")
+        again.start()
+        try:
+            deadline = time.time() + 10
+            while "release f" not in app.order and time.time() < deadline:
+                time.sleep(0.05)
+            assert app.order == ["release f"]
+            while journal.read_text().strip() and time.time() < deadline:
+                time.sleep(0.05)
+            assert not journal.read_text().strip()
+        finally:
+            again.stop()
 
 
 def test_restarts_on_the_same_port(gateway):
