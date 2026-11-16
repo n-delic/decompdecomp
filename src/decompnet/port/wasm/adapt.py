@@ -3,7 +3,10 @@ them (wasm refuses a direct call of the wrong type; MIPS just passed registers).
 import re
 
 ATTRS = {"noundef", "signext", "zeroext", "nonnull", "readonly", "writeonly", "noalias", "nocapture", "returned",
-         "inreg", "nofree", "nest", "immarg", "noundef", "range"}
+         "inreg", "nofree", "nest", "immarg", "noundef", "range",
+         # a struct-returning call through a pointer (an N64 game's quaternion to matrix): `ptr dead_on_unwind
+         # writable sret(...) align 4 %24`, whose value was read as `dead_on_unwind`
+         "dead_on_unwind", "writable"}
 
 
 def wclass(t):
