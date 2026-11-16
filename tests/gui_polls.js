@@ -86,7 +86,7 @@ ctx.SERVER_CONSOLES = JSON.parse(process.env.GUI_CONSOLES || "[]");
 vm.createContext(ctx);
 // GUI_JS: another copy of the scripts (an older one, to see the test fail there)
 const js = process.env.GUI_JS || path.join(__dirname, "..", "src", "decompnet", "app", "static", "js");
-for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "deep-permuter", "steering", "pages"]) {
+for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "deep-permuter", "compiler-groups", "steering", "pages"]) {
   vm.runInContext(fs.readFileSync(path.join(js, `${name}.js`), "utf8"), ctx, { filename: `${name}.js` });
 }
 ctx.toast = (html) => toasts.push(html);
@@ -504,7 +504,7 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
   checks.compilerComparisonConsoles = vm.runInContext(`(() => {
     const previous = S.ov, original = document.getElementById, elements = new Map();
     document.getElementById = id => {
-      if (!elements.has(id)) elements.set(id, { hidden: false, textContent: '', innerHTML: '' });
+      if (!elements.has(id)) elements.set(id, { hidden: false, textContent: '', innerHTML: '', querySelector: () => null, querySelectorAll: () => [] });
       return elements.get(id);
     };
     try {

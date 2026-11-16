@@ -119,8 +119,12 @@ class Jobs:
             if cancel.is_set():
                 raise RuntimeError("opening the saved project was cancelled")
 
+        def progress(value: dict) -> None:
+            check_cancel()
+            job["progress"] = dict(value)
+
+        log.progress = progress
         log.check_cancel = check_cancel
-        log.progress = lambda value: job.__setitem__("progress", value)
 
         def progress(values: dict) -> None:
             job["progress"] = dict(values)

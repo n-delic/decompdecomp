@@ -123,6 +123,11 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Browse compiler profiles.** Group applied ranges by compiler and arguments, compiler family, or address;
+  sort by range count, verification status, compiler name, or address. Expand profiles and the default settings to see function links,
+  argument lists and verification details. ROM profiles can be compared with the default, tested as a replacement,
+  or tried against saved unmatched C; changing settings rechecks affected matches before publishing.
+
 - **Agents & models controls.** Collapsible sections show installed agent apps, prompt templates, optional tool
   visibility and recorded usage, manual project-scoped MCP connections, and saved API endpoints. Global and
   per-helper prompt and tool choices take effect on new sessions; disabled tool calls are rejected immediately.

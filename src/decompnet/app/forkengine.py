@@ -21,6 +21,7 @@ import struct
 import subprocess
 import threading
 import time
+from bisect import bisect_left
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -4206,10 +4207,10 @@ class ForkEngine:
                 "compilers": [c.id for c in consoles.get(cfg.get("platform")).project_compilers(fp)],
                 "compiler_ranges": parts}
 
-    def compiler_answer(self, slug: str) -> dict:
+    def compiler_answer(self, slug: str, *, include_functions: bool = True) -> dict:
         """The Settings panel's answer (engine.compiler_answer's form): the project's compiler and the files built
         with another, each kept because its matched functions match with it."""
-        _, fp, cfg = self.get(slug)
+        proj, fp, cfg = self.get(slug)
         found = self._file_parts(fp, cfg)
         if found is None:
             raise NetworkError("this project's own build sets its compilers")
@@ -4218,6 +4219,13 @@ class ForkEngine:
         elsewhere = [r for r in files.build(slug).runs if r.differs()]
         survey, state = cfg.get("file_survey") or {}, files.surveys.get(slug) or {}
         checks = cfg.get("file_checks") or []
+        fields = "name,vram,status" if include_functions else "vram"
+        functions = self.net.store.all(
+            f"SELECT {fields} FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram", proj["id"])
+        addresses = [fn["vram"] for fn in functions]
+        def part_functions(part):
+            first, last = bisect_left(addresses, part["start"]), bisect_left(addresses, part["end"])
+            return [dict(fn) for fn in functions[first:last]] if include_functions else last - first
         has_map = files.applies(slug)  # (`mips` is what older pages called this fact)
         return {"compiler": consoles.compiler_name(own), "flags": "", "compiler_map": has_map,
                 "mips": has_map, "unit": "source file",
@@ -4231,6 +4239,10 @@ class ForkEngine:
                 "checks": [{"id": c["id"], "audit": False, "status": c["status"], "said": c.get("said") or "",
                             "ranges": c["spans"], "compiler": consoles.compiler_name(c["toolchain"])} for c in checks],
                 "parts": [{"start": p["start"], "end": p["end"], "compiler": p["name"], "flags": "", "file": p["file"],
+                           "toolchain": p["toolchain"], "family": toolchains.compiler_family(p["toolchain"]) or p["toolchain"],
+                           **({"function_list": part_functions(p)} if include_functions else {}),
+                           "functions": (len(part_functions(p)) if include_functions else part_functions(p))
+                           if p["end"] > p["start"] else None,
                            "check": "confirmed", "said": f"{p['file']}: its matched functions match with it"}
                           for p in parts]}
 
