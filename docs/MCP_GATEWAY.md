@@ -67,7 +67,18 @@ Each reply is exactly what the app's handler gives: the same SQL, Python's numbe
   - fork projects;
   - `project_info(detail=true)`;
   - a missing row, or any database error.
-- Claims, releases, notes and everything that compiles stay with the app. They move once projects have their slim
+- `claim_function()` with nothing named (12% of all calls), from a claim the app prepared before the helper asked
+  (`app/claim_ahead.py`): every 2 s the app picks, for each helper it started, the function that helper's own claim
+  would get (the same query, filters and model routing as `Network.claim_row`, from a snapshot, writing nothing;
+  never the same function for two helpers) and writes its receipt. The routes carry them (`prepared`). The gateway
+  gives one when the helper holds no claim and the function is still open and free, each once, and then sends the
+  app `claim_function(function=<it>)` in the background, as a release left behind is sent (journal, the helper's
+  later calls to the app wait for it). The app records the claim with all its checks; the receipt says the
+  claim_token is being recorded, and `get_claims` has it a moment later. Should the app refuse (another helper took
+  the function in the moment between), its answer, with the function it gave instead, comes at the top of the
+  helper's next reply: a duplicate is possible for that moment, never silent. A function named, a batch, a strategy,
+  a focused helper, forks, rooms and functions only a retry grant opens are claimed by the app.
+- Releases, notes and everything that compiles stay with the app. They move once projects have their slim
   hosted format, with the gateway as the only thing that claims.
 
 ## Read-only tools in their own process

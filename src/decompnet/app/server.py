@@ -266,6 +266,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
                         lambda message: tool_reader.apply_report(net, manager, message))
         if gateway is not None:
             gateway.guides = tool_reader.guides
+            # Each helper's next claim, prepared for the gateway to hand over at once (app/claim_ahead.py).
+            from .claim_ahead import Ahead
+            net._claims_ahead = Ahead(net, lambda: dict(manager.assignments))
+            net._claims_ahead.start()
 
     mcp_metadata_limiter = anyio.CapacityLimiter(2)
 
