@@ -147,3 +147,17 @@ def test_project_reports_use_recorded_sdk_proof_instead_of_name_guesses(project)
     assert report['code']['replaced'] == 1
     assert report['code']['game_asm'] == 0
     assert report['names']['replaced'] == ['osInvalDCache']
+
+
+def test_included_source_is_read_without_following_links_outside_the_project(project):
+    net, root = project
+    (root / 'src/main.c').write_text('#include "implementation.c"\n')
+    (root / 'src/implementation.c').write_text('void update(void) {}\n')
+    assert readiness(net, 'game')['code']['c'] == 2
+    (root / 'src/implementation.c').unlink()
+    external = root.parent / 'external.c'
+    external.write_text('void update(void) {}\n')
+    (root / 'src/implementation.c').symlink_to(external)
+    report = readiness(net, 'game')
+    assert report['code']['c'] == 1
+    assert 'update' in report['names']['unread']

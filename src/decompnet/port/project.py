@@ -57,7 +57,7 @@ def sources(proj, rows: list) -> dict:
     try:
         units = {u.name: u for u in fp.units()}
         problem = ''
-    except (ForkError, OSError, ValueError, TypeError, KeyError) as error:
+    except (ForkError, OSError, ValueError, TypeError, KeyError, AttributeError) as error:
         units, problem = {}, f"The project's source-unit list could not be read: {error}"
     bodies, assembly, files, inferred = {}, set(), set(), set()
     cached, paths = {}, {}

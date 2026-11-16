@@ -195,8 +195,8 @@ function portSteps(report) {
       steps[index].unavailable = true;
     }
     if (!code.total) steps[0].detail = "Finish setup and choose Check again to measure the project's functions.";
-    steps[3].detail += ` ${limits.addresses}`;
-    if (code.unread || !code.total) steps[3].pct = null;
+    steps[3].detail = `${report.addresses.literals} in ${report.addresses.functions} inspected functions. ${limits.addresses}`;
+    if (code.unread || !code.total || report.addresses.checked === false) steps[3].pct = null;
     steps[9].runtimes = report.runtimes || [];
     steps[6].detail = "Call checks need a project port build.";
   }
@@ -216,7 +216,8 @@ function renderPortSteps(report) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
   const shown = steps.filter((s) => s.pct != null);
-  const overall = shown.length ? Math.round(shown.reduce((a, s) => a + s.pct, 0) / shown.length) : 0;
+  const totalSteps = report.mode === "project" ? steps.length : shown.length;
+  const overall = totalSteps ? Math.round(shown.reduce((a, s) => a + s.pct, 0) / totalSteps) : 0;
   $("portOverall").textContent = overall + "%";
   $("portOverallBar").style.width = overall + "%";
   list.replaceChildren(...steps.map((step, i) => {

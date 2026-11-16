@@ -42,6 +42,10 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(rows.some(r=>r.includes('Read project data in its own source files')));
    assert.ok(rows.some(r=>r.includes('4 unit files read, 2 paths inferred')));
    assert.ok(rows.some(r=>r.includes('Needs a project compiler adapter')));
+   t.c.projectReport={...t.c.projectReport,code:{...t.c.projectReport.code,total:7,c:7,open:0,game_asm:0,unread:0},
+     addresses:{literals:0,functions:0}};
+   t.run('renderPortReadiness(projectReport)');
+   assert.notEqual(t.c.$('portOverall').textContent,'100%','unavailable build steps cannot show a finished port');
    t.c.reply=async()=>report;await t.run('loadPortReadiness()');
    assert.ok(t.run('portSteps(projectReport).length')===10);
    assert.ok(t.c.$('portSteps').children[9].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),

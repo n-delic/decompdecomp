@@ -213,7 +213,8 @@ def _readiness(net, slug: str) -> dict:
 
     limitations = {} if rom_mode else {
         "data": "Data lives in the project's own source files; address-only data coverage has not been checked.",
-        "addresses": "Counts cover the function bodies found in the project's source files.",
+        "addresses": ("Counts cover the function bodies found in the project's source files." if high > low else
+                      "Address checks need a recognized console RAM map; zero is not a completed check."),
         "library": "Library counts use recorded SDK identities; this report does not start library detection.",
         "compiles": "Compiling this project's C/C++ for a PC needs its own headers, flags and translation units; "
                     "the project-build port adapter is planned (ROADMAP.md, Ports).",
@@ -236,7 +237,8 @@ def _readiness(net, slug: str) -> dict:
         "data": {"symbols": len(data), "automatic": len(automatic), "in_c": len(in_c), "units": len(units),
                  "examples": sorted(automatic or data)[:_LIMIT], "checked": rom_mode},
         "addresses": {"functions": len(literals), "literals": sum(literals.values()),
-                      "examples": sorted(literals, key=lambda n: -literals[n])[:_LIMIT]},
+                      "examples": sorted(literals, key=lambda n: -literals[n])[:_LIMIT],
+                      **({"checked": high > low} if not rom_mode else {})},
         "rom_data": _rom_data(net, slug, cfg, len(image)) if rom_mode else {
             "bytes": 0, "scanned": False, "stale": False, "kinds": {}, "unshaped": 0, "available": False},
         "pc": _pc(net, proj) if rom_mode else None,
