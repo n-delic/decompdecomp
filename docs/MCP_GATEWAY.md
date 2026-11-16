@@ -18,6 +18,12 @@ with their work.
   of `params`, such as the new `_meta.progressToken` clients send with every request, doesn't count) as one
   still running, or finished but not yet delivered, waits for that run. Once delivered, the same call again is a
   new run. Undelivered results are kept 15 minutes.
+- **A release never holds a helper up.** `release_function` (13% of all calls) only ends a claim. When the app
+  hasn't answered it within 3 s (`--ack-tools`, `--ack-deadline`), the helper hears "accepted" and goes on while
+  the call keeps running in the app. The call is kept in `.decomp/mcp-gateway-journal.jsonl` until the app answers,
+  and a gateway that ended first sends it again when it starts. That helper's later calls to the app wait until it
+  is recorded, so the next claim never hands back the function just released. The app's own answer (a pushback, a
+  refusal) comes at the top of the helper's next tool reply. A gateway too old for the option runs without it.
 - **Waiting is free.** Helpers pay for answers, not time: the gateway holds a call open up to its deadline, and
   retries connections that never reached the app (the app restarting) instead of failing at once.
 - **Bounded everywhere.** Every wait has a deadline, no lock is held across an await, a helper may have 16 calls

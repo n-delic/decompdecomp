@@ -37,6 +37,10 @@ NAME = "decomp-mcp-gateway" + (".exe" if os.name == "nt" else "")
 # Under the clients' own limits (Codex: 60 s per tool call), so the helper hears "still running", not an error.
 CALL_DEADLINE = 45.0
 META_DEADLINE = 15.0
+# release_function is 13% of helpers' calls and only ends a claim: when the app takes longer than this, the helper
+# hears "accepted" and goes on, and its next calls to the app wait until the release is recorded.
+BACKGROUND_TOOLS = ("release_function",)
+BACKGROUND_SECONDS = 3.0
 MAX_BODY = 16 * 1024 * 1024
 START_SECONDS = 10.0
 ROUTES_SECONDS = 1.0
@@ -156,8 +160,12 @@ class Gateway:
 
     def __init__(self, exe: Path, upstream: str, log_path: Path | None = None, *,
                  call_deadline: float = CALL_DEADLINE, meta_deadline: float = META_DEADLINE,
-                 reader: str | None = None, read_tools=(), state: Path | None = None, window: dict | None = None):
+                 reader: str | None = None, read_tools=(), state: Path | None = None, window: dict | None = None,
+                 journal: Path | None = None, background_tools=BACKGROUND_TOOLS, background_seconds: float = BACKGROUND_SECONDS):
         self.exe, self.upstream, self.log_path = exe, upstream, log_path
+        # Calls a helper may leave behind while the app is busy (gateway/src/main.rs, --ack-tools): it hears
+        # "accepted" after BACKGROUND_SECONDS and goes on; `journal` keeps them until the app answers.
+        self.journal, self.background_tools, self.background_seconds = journal, sorted(background_tools), background_seconds
         # The window's listener: {"upstream": the app's address, "reader": the reader's or None, "reads": paths}
         # (gateway/src/window.rs). None when there's no window, or the program is too old to have it.
         self.window = window
@@ -195,6 +203,8 @@ class Gateway:
                 "--max-body", str(MAX_BODY)] + (
                     ["--reader", self.reader, "--read-tools", ",".join(self.read_tools)] if self.reader else []) + (
                     ["--state", str(self.state)] if self.state else []) + (
+                    ["--ack-tools", ",".join(self.background_tools), "--ack-deadline", str(self.background_seconds)]
+                    + (["--journal", str(self.journal)] if self.journal else []) if self.background_tools else []) + (
                     ["--window-listen", f"127.0.0.1:{window_port}", "--window-upstream", window["upstream"]]
                     + (["--window-reader", window["reader"], "--window-reads", ",".join(window["reads"])]
                        if window.get("reader") else [])
@@ -281,6 +291,11 @@ class Gateway:
         try:
             return self._launch(preferred, window_preferred)
         except StartError as error:
+            if error.code == OLD_GATEWAY_EXIT and self.background_tools:
+                # A downloaded gateway from before calls could be left behind: every call waits for the app.
+                log.info("This MCP gateway can't accept calls in the background; helpers wait for the app")
+                self.background_tools = []
+                return self._first(preferred, window_preferred)
             if not self.window or error.code != OLD_GATEWAY_EXIT:
                 raise
             # A gateway from before the window's listener (a downloaded release older than this app): it still
@@ -381,7 +396,8 @@ def start(app_port: int, log_path: Path | None = None, port_file: Path | None = 
                    if window and window_wanted() else None)
     gateway = Gateway(exe, f"http://127.0.0.1:{app_port}/mcp", log_path,
                       reader=reader.url if reader is not None else None, read_tools=READER_TOOLS,
-                      state=port_file.with_name("mcp-gateway-answers.json") if port_file else None, window=window_spec)
+                      state=port_file.with_name("mcp-gateway-answers.json") if port_file else None, window=window_spec,
+                      journal=port_file.with_name("mcp-gateway-journal.jsonl") if port_file else None)
     window_file = port_file.with_name("window-gateway.port") if port_file else None
     preferred = _saved_port(port_file, app_port)
     try:
