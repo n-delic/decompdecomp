@@ -529,7 +529,7 @@ def test_decomp_permuter_reads_an_sdk_local_and_a_macro_with_a_type():
         variants = gen.batch(job)
     finally:
         gen.close()
-    assert variants and all(" Widget::Count(int k)\n" in v for v in variants)
+    assert variants and all(re.search(r" Widget::Count\([^)]*\bk\)\n", v) for v in variants)
 
 
 @needs_tool
@@ -601,8 +601,8 @@ def test_decomp_permuter_reads_a_function_among_msvcs_macros(header, head):
     finally:
         gen.close()
     # the macros are put in where the function uses them, and its convention kept (the randomizer may retype what
-    # it returns: `__declspec(dllexport) volatile unsigned int f(int a)`)
-    convention = r"__declspec\(dllexport\) [^;{]*\bf\(int a\)" if "DLLEXPORT" in head else r"\b__stdcall f\(int a\)"
+    # it returns or a parameter’s type). Test restoration rather than a particular random rewrite sequence.
+    convention = r"__declspec\(dllexport\) [^;{]*\bf\([^)]*\ba\)" if "DLLEXPORT" in head else r"\b__stdcall f\([^)]*\ba\)"
     assert variants and all(re.search(convention, v) for v in variants)
 
 
