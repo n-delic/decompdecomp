@@ -133,7 +133,10 @@ def prepare(net, slug, path, root, log):
         (stage/MARKER).write_text(json.dumps({'format': 1, 'files': sorted(set(names)|{MARKER}), 'hashes': {name:repository_sync.digest(stage/name) for name in names if not name.startswith('progress/')}, 'retired': sorted(set(old)-set(names))}, indent=1)+'\n', encoding='utf-8')
         if any(p.is_symlink() for p in stage.rglob('*')):
             raise NetworkError('Generated repository contains symbolic links. No files were published.')
-        generated = {str(p.relative_to(stage)) for p in stage.rglob('*') if p.is_file()}
+        # Verification leaves disposable objects and binaries in build/. They are not
+        # repository inputs, and may differ from an earlier export's build cache.
+        generated = {str(p.relative_to(stage)) for p in stage.rglob('*')
+                     if p.is_file() and p.relative_to(stage).parts[0] != 'build'}
         # Refuse collisions with files not owned by the old portable save.
         for name in generated:
             target = repository_sync.inside(destination, name)

@@ -474,3 +474,46 @@ def test_queued_commit_can_be_stopped(project):
             with pytest.raises(RuntimeError, match='cancelled'):
                 future.result(timeout=5)
     assert not repository_operations._STATES
+
+
+@pytest.mark.parametrize('existing', [False, True])
+def test_repository_creation_leaves_verification_build_outputs_private(project, monkeypatch, existing):
+    net, root, _ = project
+    console = net.console(net.project_row('game'))
+    export = console.export_project
+    artifact = 'build/asm/runs/code/function.o'
+    def verified_export(net, slug, out, log):
+        result = export(net, slug, out, log)
+        target = out/artifact
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b'new verification object')
+        return result
+    monkeypatch.setattr(console, 'export_project', verified_export)
+    target = root/artifact
+    if existing:
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b'previous local build')
+    state = repository_setup.run(net, 'game', 'init', '', lambda _:None)
+    assert state['rebuildable']
+    if existing:assert target.read_bytes() == b'previous local build'
+    else:assert not target.exists()
+    assert (root/'build.py').is_file()
+    assert (root/'assets/extracted.bin').read_bytes() == b'PRIVATE DATA'
+
+
+def test_repository_creation_still_preserves_conflicting_source(project, monkeypatch):
+    net, root, _ = project
+    target = root/'src/function.c'
+    console = net.console(net.project_row('game'))
+    export = console.export_project
+    def verified_export(net, slug, out, log):
+        result = export(net, slug, out, log)
+        # Write after progress synchronization, which owns the old flat src/ folder.
+        target.parent.mkdir(exist_ok=True)
+        target.write_text('local source edit\n')
+        return result
+    monkeypatch.setattr(console, 'export_project', verified_export)
+    with pytest.raises(NetworkError, match='replace an existing file: src/function.c'):
+        repository_setup.run(net, 'game', 'init', '', lambda _:None)
+    assert target.read_text() == 'local source edit\n'
+    assert not (root/'build.py').exists()
