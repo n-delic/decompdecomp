@@ -2079,11 +2079,12 @@ class ForkEngine:
     def _current_source(self, fp: ForkProject, fn, comment: bool = False) -> str | None:
         """fn's definition as its file has it now, also when the file gets it by including another source file.
         `comment`: with the comment right above it (polishing's brief shows it)."""
-        unit = fp.unit(fn["unit"])
-        if not unit.source or not (fp.root / unit.source).exists():
+        from ..forks.source_paths import readable
+        path = readable(fp.root, fp.unit(fn["unit"]))
+        if path is None:
             return None
         names = self._names(self._meta(fn), fn)
-        todo, seen = [fp.root / unit.source], set()
+        todo, seen = [path], set()
         while todo and len(seen) < 6:
             path = todo.pop(0)
             if path in seen:

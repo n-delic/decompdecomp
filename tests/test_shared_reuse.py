@@ -170,3 +170,14 @@ def test_sdk_discovery_without_eligible_targets_does_not_scan_catalog(pair,monke
     monkeypatch.setattr(pair.store,'all',inspect)
     result=shared_reuse.discover(pair.twins,proj,force=True,donors=[])
     assert result['hints']=={} and result['detected']==0
+
+
+def test_completed_donors_precede_older_small_donors_without_reading_sources(pair):
+    import json
+    cfg = json.loads(pair.project_row('source')['config'])
+    with pair.store.tx() as db:
+        pid = db.execute('INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)',
+                         ('completed','Completed','mips',1,str(pair.workspace),json.dumps(cfg))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,status,size) VALUES(?,'extra','matched',64)", (pid,))
+        db.execute("INSERT INTO functions(project_id,name,status,size) VALUES(?,'extra2','matched',64)", (pid,))
+    assert [p['slug'] for p in shared_reuse.compatible(pair,pair.project_row('destination'))] == ['completed','source']

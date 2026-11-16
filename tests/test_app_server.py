@@ -3586,3 +3586,26 @@ def test_startup_does_not_stop_at_one_projects_half_written_save(tmp_path, monke
     monkeypatch.setattr(net.progress, "sync", broken)
     build(net, home / ".decomp", PORT, SECRET)
     net.autosave.close()
+
+
+def test_cross_game_admission_returns_job_without_saved_progress_sync(app, monkeypatch):
+    from .test_loading import tiny_game
+    client, net, _ = app
+    tiny_game(net, 'cross-sync')
+    entered, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('Admission synchronized saved progress'))
+    monkeypatch.setattr(net.twins, 'cross_game_results', lambda slug: {'counts':{}})
+    def across(slug, job):
+        assert job.foreground.is_set()
+        entered.set()
+        assert release.wait(5)
+        return 0
+    monkeypatch.setattr(net.twins, 'across_games', across)
+    try:
+        response = client.post('/api/cross-game/run', headers={'X-Decomp':'1'}, json={'slug':'cross-sync'})
+        assert response.status_code == 200, response.text
+        assert entered.wait(2)
+        snapshot = client.get('/api/job', params={'id':response.json()['job']}).json()
+        assert snapshot['state'] == 'running'
+        assert snapshot['activity_project'] == 'cross-sync'
+    finally:release.set()

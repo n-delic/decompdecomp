@@ -25,6 +25,7 @@ def machine(net, proj):
 
 def compatible(net, proj, *, active_only=False):
     wanted = machine(net, proj)
+    candidates = []
     for catalog in net.store.all('SELECT id,slug FROM projects WHERE id!=?', proj['id']):
         if active_only:
             from .project_activity import active
@@ -35,9 +36,14 @@ def compatible(net, proj, *, active_only=False):
             continue
         try:
             if machine(net, other) == wanted:
-                yield other
+                totals = net.project_store(other['id']).one('SELECT matched FROM project_totals WHERE project_id=?', other['id'])
+                candidates.append((int(totals['matched']) if totals else 0, other))
         except (NetworkError, ValueError, KeyError):
             continue
+    # A completed import can supply most of this game. Do not bury it behind
+    # years of smaller library donors in catalog insertion order. Counts are metadata only.
+    for _, other in sorted(candidates, key=lambda item: -item[0]):
+        yield other
 
 
 def discover(twins, proj, *, job=None, force=False, donors=None, matched_only=False):
