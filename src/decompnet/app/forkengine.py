@@ -3929,7 +3929,7 @@ class ForkEngine:
             for folder, dirs, names in os.walk(root):
                 dirs[:] = sorted(d for d in dirs if d not in excluded)
                 for name in sorted(names):
-                    if Path(name).suffix in (".c", ".cc", ".cpp", ".h", ".hpp", ".inc"):
+                    if Path(name).suffix.lower() in (".c", ".cc", ".cpp", ".h", ".hpp", ".inc"):
                         yield Path(folder) / name
 
         try:

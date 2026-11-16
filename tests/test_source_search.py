@@ -90,6 +90,13 @@ def test_search_streams_only_the_first_eighty_matches(search, tmp_path, monkeypa
     assert len(opened) == 1 and opened[0].closed
 
 
+@pytest.mark.parametrize("suffix", [".C", ".CC", ".CPP", ".H", ".HPP", ".INC", ".Cpp"])
+def test_search_includes_uppercase_and_mixed_case_source_extensions(search, tmp_path, suffix):
+    source = tmp_path / ("module" + suffix)
+    source.write_text("needle\n")
+    assert search("needle") == f"{source.name}:1: needle"
+
+
 def test_source_search_shares_the_heavy_tool_limiter():
     assert "search_code" in HEAVY_TOOLS
     assert {"claim_function", "release_function", "read_file"}.isdisjoint(HEAVY_TOOLS)
