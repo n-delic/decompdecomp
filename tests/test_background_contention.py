@@ -295,7 +295,6 @@ def test_claim_order_does_not_wait_for_another_games_pass(monkeypatch):
     twin._lock=threading.RLock();twin.jobs={}
     ordered=[]
     twin.net=SimpleNamespace(links={},recheck=lambda *a,**k:None)
-    monkeypatch.setattr(twin,'_checked',lambda slug:True)
     monkeypatch.setattr(twin,'set_aside_asm',lambda proj:ordered.append(proj) or 0)
     monkeypatch.setattr(twin,'update_boosts',lambda proj,pending=False:0)
     twin.net.project_row=lambda slug:{'slug':slug}
@@ -313,3 +312,35 @@ def test_claim_order_does_not_wait_for_another_games_pass(monkeypatch):
         assert not passed  # the rest of the pass still waits its turn
     finally:
         release.set();other.join(2)
+
+
+def test_claim_order_after_an_update_does_not_wait_for_the_recheck(monkeypatch):
+    """After an update, the project's recheck queued for the shared lane before the claim order was stored, so every
+    agent start on a project the new version hadn't rechecked waited the whole ORDER_WAIT. The order comes first, and
+    is stored again once the recheck (which can change the functions) has run."""
+    from types import SimpleNamespace
+
+    from decompnet.app.twins import Twins
+    twin=Twins.__new__(Twins)
+    twin._lock=threading.RLock();twin.jobs={}
+    steps=[]
+    twin.net=SimpleNamespace(links={},project_row=lambda slug:{'slug':slug},
+                             recheck=lambda *a,**k:steps.append('recheck') or 'pieces joined')
+    monkeypatch.setattr(twin,'set_aside_asm',lambda proj:steps.append('asm') or 0)
+    monkeypatch.setattr(twin,'update_boosts',lambda proj,pending=False:steps.append(('boosts',pending)) or 0)
+    monkeypatch.setattr(twin,'full_pass',lambda slug,job:steps.append('pass'))
+    holding=threading.Event();release=threading.Event()
+    def other_game():
+        with maintenance.slot():
+            holding.set();release.wait(5)
+    other=threading.Thread(target=other_game);other.start()
+    try:
+        assert holding.wait(2)
+        job=twin.refresh('game')
+        assert job.ordered.wait(2) and steps==['asm',('boosts',True)]
+    finally:
+        release.set();other.join(2)
+    deadline=time.time()+2
+    while 'pass' not in steps and time.time()<deadline:
+        time.sleep(0.01)
+    assert steps==['asm',('boosts',True),'recheck',('boosts',True),'pass']
