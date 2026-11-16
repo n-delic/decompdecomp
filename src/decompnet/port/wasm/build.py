@@ -422,6 +422,30 @@ def _run(argv: list, log, cwd: Path | None = None, env: dict | None = None) -> s
                           timeout=TIMEOUT)
 
 
+def compile_ir(zig, src: Path, ll: Path, include: Path, env: dict, log, port=()):
+    """Compile generated C, retrying a proven redundant scalar extern with the shared header's qualifiers.
+    The original file is restored even on failure or cancellation; the saved and judged sources are never edited.
+    """
+    from .declarations import qualified_externs
+
+    argv = [zig, "cc", *IR_FLAGS, *port, "-I", include, "-S", "-emit-llvm", src, "-o", ll]
+    done = _run(argv, log, env=env)
+    if not done.returncode:
+        return done
+    source = src.read_text(encoding="utf-8")
+    prepared = qualified_externs(source, done.stderr, src)
+    if prepared == source:
+        return done
+    try:
+        src.write_text(prepared, encoding="utf-8")
+        done = _run(argv, log, env=env)
+    finally:
+        src.write_text(source, encoding="utf-8")
+    if not done.returncode:
+        log(f"{src.name}: using the shared header's qualifiers for redundant scalar extern declarations")
+    return done
+
+
 def _parallel(jobs, work, log, what: str, step=None) -> list[str]:
     """Run work(job) for every job, a core each; the jobs that failed, with their first error line. work returns an
     error line, or None when it did the job, or False when the job was already done (its key matched). `step`
@@ -605,6 +629,28 @@ def invoker(c: str, ret: str, params: list[str]) -> tuple[str, str]:
                   f"{body} }}")
 
 
+def context_functions(lls: list[Path]) -> dict[Path, dict[str, str]]:
+    """Private identities for repeated helper definitions saved as compilation context in other functions' files.
+
+    Their bodies can differ between saved candidates. Keep each caller's own helper instead of selecting an
+    arbitrary global winner or relaxing the linker. A helper's own source file retains its public definition.
+    """
+    modules = {}
+    for ll in lls:
+        for match in re.finditer(r"^define ([^@\n]*)@([\w.$]+)\(", ll.read_text(encoding="utf-8"), re.M):
+            if not {"internal", "private"} & set(match[1].split()):
+                modules.setdefault(match[2], []).append(ll)
+    private = {}
+    for name, files in modules.items():
+        if len(files) < 2:
+            continue
+        for ll in files:
+            if ll.stem != name:
+                prefix = hashlib.sha256(ll.name.encode()).hexdigest()[:12]
+                private.setdefault(ll, {})[name] = f"port_context_{prefix}_{name}"
+    return private
+
+
 def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, step=None, *, web: bool = False):
     """Every function's IR placed at its console address and compiled (beir.py): into out/o, or out/o-web for the
     browser build (`web`: webir.py too). Each is placed again only when its own rows in the tables change, or the
@@ -614,16 +660,20 @@ def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, s
     tools = tuple(files(HERE / n) for n in ("beir.py", "adapt.py", *(("webir.py",) if web else ())))
     folder = out / ("o-web" if web else "o")
     folder.mkdir(exist_ok=True)
+    contexts = context_functions(lls)
 
     def place(ll: Path) -> str | None | bool:
         be, obj = folder / (ll.stem + ".be.ll"), folder / (ll.stem + ".o")
         text = ll.read_text(encoding="utf-8")
-        key = _digest(zig, *(("web",) if web else ()), *tools, text, *table_rows(text, *tables))
+        key = _digest(zig, *(("web",) if web else ()), *tools, text, *table_rows(text, *tables),
+                      sorted(contexts.get(ll, {}).items()))
         if _fresh(obj, key):
             return False
         _unstamp(obj)
         done = _run([py, HERE / "beir.py", ll, be, "--functions", out / "functions.txt", "--renames", out / "renames.txt",
-                     "--signatures", out / "sigs.txt", "--fixed", out / "fixed.txt", *(["--web"] if web else [])], log)
+                     "--signatures", out / "sigs.txt", "--fixed", out / "fixed.txt",
+                     *(arg for old, new in sorted(contexts.get(ll, {}).items()) for arg in ("--context-function", f"{old}={new}")),
+                     *(["--web"] if web else [])], log)
         if done.returncode:
             return (done.stderr.strip().splitlines() or ["beir failed"])[-1]
         done = _run([zig, "cc", "-target", "wasm32-freestanding", "-O0", "-c", be, "-o", obj], log, env=env)
@@ -706,15 +756,14 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
             _stamp(ll, key)
             return None
         src, ll = out / "src" / name, out / "ll" / (name[:-2] + ".ll")
-        key = files.key(src, [out / "include"], zig, *IR_FLAGS)
+        key = files.key(src, [out / "include"], zig, *IR_FLAGS, files(HERE / "declarations.py"))
         if _fresh(ll, key):
             return False
         _unstamp(ll)
         port = ["-DPORT=1"] if NEEDS_PORT.search(src.read_text(encoding="utf-8")) else []
-        done = _run([zig, "cc", *IR_FLAGS, *port, "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll], log, env=env)
+        done = compile_ir(zig, src, ll, out / "include", env, log, port)
         if done.returncode and not port:
-            done = _run([zig, "cc", *IR_FLAGS, "-DPORT=1", "-I", out / "include", "-S", "-emit-llvm", src, "-o", ll],
-                        log, env=env)
+            done = compile_ir(zig, src, ll, out / "include", env, log, ["-DPORT=1"])
         if done.returncode:
             return (done.stderr.strip().splitlines() or ["failed"])[0]
         _stamp(ll, key)

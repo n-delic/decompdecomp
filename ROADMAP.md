@@ -801,7 +801,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Set up as a project folder (import checkbox or Export panel; guessed `units.json`; edits to `src/<segment>/<function>.c` judged by the ROM judge on Refresh) | ✓ demo: 14 of 16 files found | ✓ demo: 1 of 18 files found (no padding between objects) | ✓ demo: 1 of 18 files found (functions padded like files) | — | — | — offered; demo not run (no PSP compiler build for Apple Silicon) | — | the project | the project | — | the project | the project |
 | The reversing emulator for agents (`watch_in_emulator`: which code writes an address, what a function is called with, on the user's ROM) | ✓ mupenRE (Linux, macOS) | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
 | Code the game loads, found by running it (import and Reimport, consoles/n64/loaded_code.py) | ✓ when mupenRE is installed | — no emulator pinned yet | — no emulator pinned yet | — | — | — no emulator pinned yet | — | — no emulator pinned yet | — no emulator pinned yet | — | — no emulator pinned yet | — no ROM to run |
-| Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS) | — no recompiler pinned | — no recompiler pinned | — | — | — no recompiler pinned | — | — no recompiler pinned | — no recompiler pinned | — | — no recompiler pinned | — no ROM to recompile |
+| Static recompile (Recompile with N64Recomp, docs/N64RECOMP.md phase 0) | ✓ N64Recomp (Linux, macOS; bounded native-crash isolation, explicit stubs) | — no recompiler pinned | — no recompiler pinned | — | — | — no recompiler pinned | — | — no recompiler pinned | — no recompiler pinned | — | — no recompiler pinned | — no ROM to recompile |
 | Behaviour checked against the original (`compare_behaviour`, docs/N64RECOMP.md phase 1) | ✓ (recorded in mupenRE, run through N64Recomp's C and the WebAssembly port's) | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no emulator or recompiler yet | — | — no emulator or recompiler yet | — no ROM to run |
 | Port readiness report (docs/PORTING.md, phase 0) | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available | ✓ shared ROM/project report; kit where available |
 | Data in C, judged by bytes (`compile_data`, docs/PORTING.md phase 1) | ✓ (data after the last code segment, `.bss`; Start agents → Write data as C) | — no `bss_start` reader | — no `bss_start` reader | — | — | — no `bss_start` reader | — | — project mode: data is in the project's sources | — project mode | — | — project mode | — |
@@ -4385,3 +4385,16 @@ Planned adapters: PROJECT-mode object identity and objdiff/build/export; team ro
 overlapping overlay-bank export; grouped portable Save/Open manifests; automatic
 identity recovery after a reimport replaces concrete function IDs. Validate the
 remaining ROM export adapters with their demo games before marking their columns.
+
+
+### Port build diagnostics preserve saved source
+
+The generated WebAssembly build can reconcile a compiler-proved redundant scalar extern with a more-qualified
+shared header, keeping the header's const/volatile behavior and leaving saved C unchanged. Other type changes
+still fail. The N64 static recompiler can isolate and confirm a body-level native crash, retain an explicit stub
+reason and translate the other bodies. Global crashes, resource kills and unproved interactions remain errors;
+probes are cancellable and bounded. Synthetic compiler/recompiler regressions cover these paths.
+
+ROM port placement also preserves compiler-declared call targets with data-style names. Repeated helper context
+gets a private identity per module, retaining the caller's own helper body and original pointer addresses while
+leaving the public owner function authoritative. The linker still rejects unresolved duplicate ownership.

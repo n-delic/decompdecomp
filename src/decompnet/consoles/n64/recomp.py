@@ -21,17 +21,20 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from pathlib import Path
 
 from ... import limits
+from ...forks.csource import _blank
 
 TOOL = "n64recomp"
 JR_RA = 0x03E00008
-MAX_RUNS = 400  # N64Recomp runs, each setting aside one more function it refuses
+MAX_PROBE_RUNS = 64  # one crash's controlled body subsets, including CLI name resolution
 
 
 class RecompError(RuntimeError):
@@ -169,31 +172,149 @@ def config(rom: Path, entry: int | None, stubs: list[str], renamed: list[str]) -
 ERROR = re.compile(r"^Error recompiling (\S+)")
 UNDECLARED = re.compile(r"undeclared function '(\w+)'")
 CONFLICT = re.compile(r"(?:conflicting types for|redefinition of) '(\w+)'")
+_UNKNOWN_STUB = re.compile(r"Function (\S+) is stubbed out in the config file but does not exist!")
+
+
+def _crash(code: int) -> str | None:
+    """Input-related native crashes only. A killed or terminated process may be a resource limit or Stop."""
+    for name in ("SIGSEGV", "SIGBUS", "SIGABRT", "SIGILL"):
+        if (value := getattr(signal, name, None)) is not None and code == -value:
+            return name
+    return "access violation" if code in (0xC0000005, -1073741819) else None
+
+
+def _failure(done) -> str:
+    text = (done.stdout + done.stderr).strip().splitlines()
+    reason = text[-1] if text else "no diagnostic output"
+    return f"N64Recomp stopped ({_crash(done.returncode) or f'exit {done.returncode}'}): {reason}"
+
+
+def _function_names(out: Path, entry) -> set[str]:
+    """Names after the CLI's entry-point rename, so disabling a body really disables that body."""
+    sections = tomllib.loads((out / "syms.toml").read_text(encoding="utf-8"))["section"]
+    return {"recomp_entrypoint" if entry is not None and f["vram"] == entry
+            and section["rom"] + f["vram"] - section["vram"] == 0x1000 else f["name"]
+            for section in sections for f in section.get("functions", [])}
 
 
 def _translate(program, out, rom, entry, refused, renamed, stop, log):
-    """N64Recomp until it translates everything: each function it refuses (it stops at the first) becomes a stub,
-    declared with an empty body, and it runs again. Adds to `refused` {name: N64Recomp's reason}."""
-    for run in range(MAX_RUNS):
+    """Translate everything the CLI can handle, retaining explicit reasons for normal refusals and native crashes.
+
+    Its jump-table analyser can read outside the ROM and segfault without a diagnostic. Controlled body subsets
+    isolate such a crash: all other bodies become stubs, then the single body must reproduce it. A global crash,
+    a resource kill or an inconsistent result still fails; a partial output file is never taken as evidence.
+    """
+    runs = full_runs = 0
+    probe_names = None
+    patchable = _function_names(out, entry)
+    # Each full failed pass must refuse a new input body. Scale to the game instead of cutting a user's job off
+    # after 400 functions; probes are separately bounded for each body, and repeated failures stop immediately.
+    full_limit = len(patchable) + 1
+    total_limit = full_limit * (MAX_PROBE_RUNS + 1)
+
+    def invoke(extra=(), *, probe=False):
+        nonlocal runs, full_runs
         if stop():
             raise RecompError("Stopped.")
-        (out / "recomp.toml").write_text(config(rom, entry, list(refused), sorted(renamed)), encoding="utf-8")
+        if runs >= total_limit or (not probe and full_runs >= full_limit):
+            raise RecompError("N64Recomp reached its translation safety limit: check the split and retry")
+        runs += 1
+        full_runs += not probe
+        (out / "recomp.toml").write_text(config(rom, entry, sorted(set(refused) | set(extra)), sorted(renamed)),
+                                         encoding="utf-8")
         shutil.rmtree(out / "funcs", ignore_errors=True)
         (out / "funcs").mkdir(parents=True)
-        done = subprocess.run(limits.capped([str(program), "recomp.toml"]), cwd=out, capture_output=True, text=True,
+        return subprocess.run(limits.capped([str(program), "recomp.toml"]), cwd=out, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=600)
+
+    def refusal(done):
         text = done.stdout + done.stderr
-        if done.returncode == 0:
-            return
         failed = next((m.group(1) for line in text.splitlines() if (m := ERROR.match(line))), None)
-        if failed is None or failed in refused:
-            raise RecompError("N64Recomp stopped: " + (text.strip().splitlines() or ["no output"])[-1])
+        if failed is None or failed in refused or failed not in patchable:
+            return False
         reason = next((line for line in text.splitlines() if line.strip() and not ERROR.match(line)
                        and not line.startswith(("Error in recompiling", "Function count", "Working dir", "["))), "")
         refused[failed] = reason.strip()
-        if run % 10 == 9:
+        if len(refused) % 10 == 0:
             log(f"N64Recomp: {len(refused)} functions set aside so far")
-    raise RecompError(f"N64Recomp refused more than {MAX_RUNS} functions: the split may be far off")
+        return True
+
+    def input_failure(done):
+        if crashed := _crash(done.returncode):
+            return "crash", crashed
+        text = done.stdout + done.stderr
+        failed = next((m.group(1) for line in text.splitlines() if (m := ERROR.match(line))), None)
+        if failed is not None and failed not in patchable:
+            # The CLI also invents static function bodies that its patches table cannot name. Do not put an
+            # unpatchable generated name in stubs: isolate the source body that causes it to be generated instead.
+            return "generated body", failed
+        return None
+
+    def isolate(label):
+        nonlocal probe_names
+        if probe_names is None:
+            probe_names = _function_names(out, entry)
+        names = probe_names
+        if not names:
+            return None
+        probes = 0
+
+        def probe(active):
+            nonlocal probes
+            while True:
+                if probes >= MAX_PROBE_RUNS:
+                    raise RecompError("N64Recomp reached its crash-isolation safety limit: check the split and retry")
+                probes += 1
+                done = invoke(names - active, probe=True)
+                if done.returncode == 0:
+                    return False
+                if failure := input_failure(done):
+                    return failure
+                unknown = _UNKNOWN_STUB.search(done.stdout + done.stderr)
+                if unknown and unknown[1] in names - active:
+                    # The CLI renames built-in library functions before reading patches. Use that name once;
+                    # if it is absent too, leave it outside the probe set rather than inventing a body/refusal.
+                    names.remove(unknown[1])
+                    if not unknown[1].endswith("_recomp"):
+                        names.add(unknown[1] + "_recomp")
+                        patchable.add(unknown[1] + "_recomp")
+                    continue
+                if not _crash(done.returncode) and refusal(done):
+                    continue  # a normal refusal must not mask a later crash in the same subset
+                raise RecompError(_failure(done))
+
+        if probe(set()):
+            return None  # even disabling every body crashes: no single function has been implicated
+        suspects = sorted(names - set(refused))
+        log(f"N64Recomp {label}; isolating the affected function")
+        while len(suspects) > 1:
+            half = len(suspects) // 2
+            if probe(set(suspects[:half])):
+                suspects = suspects[:half]
+            elif probe(set(suspects[half:])):
+                suspects = suspects[half:]
+            else:
+                return None  # the crash needs an interaction we have not proved safe to set aside
+        if suspects and (stopped_by := probe(set(suspects))):
+            return suspects[0], stopped_by
+        return None
+
+    while True:
+        done = invoke()
+        if done.returncode == 0:
+            return
+        if not _crash(done.returncode) and refusal(done):
+            continue
+        if failure := input_failure(done):
+            kind, detail = failure
+            label = f"crashed with {detail}" if kind == "crash" else f"could not translate generated body {detail}"
+            if isolated := isolate(label):
+                failed, (kind, detail) = isolated
+                reason = (f"crashed with {detail}" if kind == "crash" else f"could not translate generated body {detail}")
+                refused[failed] = f"N64Recomp {reason} translating this body alone; explicit runtime stub"
+                log(f"N64Recomp: {failed} set aside after a confirmed {kind}: {detail}")
+                continue
+        raise RecompError(_failure(done))
 
 
 def check(out: Path, include: Path, stop=lambda: False) -> tuple[list[str], set[str], list[str]]:
@@ -229,6 +350,34 @@ def check(out: Path, include: Path, stop=lambda: False) -> tuple[list[str], set[
     return sorted(provided), clashes, errors
 
 
+def _invalid_bodies(out: Path, errors: list[str]) -> dict[str, str]:
+    """Generated function bodies containing compiler errors. Header errors never implicate an arbitrary body."""
+    files, bad = {}, {}
+    folder = (out / "funcs").resolve()
+    for error in errors:
+        match = re.match(r"^(.*?):(\d+):\d+: error: (.*)", error)
+        if match is None:
+            continue
+        file = Path(match[1]).resolve()
+        if file.parent != folder or file.suffix != ".c":
+            continue
+        if file not in files:
+            try:
+                lines = file.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            files[file] = (lines, [(n, m[1]) for n, line in enumerate(lines, 1)
+                                  if (m := re.match(r"^RECOMP_FUNC void (\w+)\(", line))])
+        lines, definitions = files[file]
+        number = int(match[2])
+        body = next(((line, name) for line, name in reversed(definitions) if line <= number), None)
+        if body:
+            prefix = _blank("\n".join(lines[body[0]-1:number]))
+            if prefix.count("{") > prefix.count("}"):
+                bad[body[1]] = match[3][:300]
+    return bad
+
+
 def recompile(program: Path, rom_path: Path, segments: list[dict], functions: list[dict], out: Path, log=print,
               stop=lambda: False) -> dict:
     """Run N64Recomp over the split into `out` and check what it writes; returns (and writes to out/recomp.json) its
@@ -257,7 +406,14 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
         _translate(program, out, Path(rom_path).resolve(), entry if at_entry else None, refused, renamed, stop, log)
         log("checking the C with this computer's compiler")
         provided, clashes, errors = check(out, include, stop)
-        if not clashes - renamed:
+        known = _function_names(out, entry if at_entry else None)
+        bad = {name: reason for name, reason in _invalid_bodies(out, errors).items()
+               if name in known and name not in refused}
+        for name, reason in bad.items():
+            refused[name] = f"the generated C does not compile: {reason}; explicit runtime stub"
+        if bad:
+            log(f"N64Recomp: {len(bad)} more bodies set aside because their generated C does not compile")
+        if not clashes - renamed and not bad:
             break
         renamed |= clashes
     written = len(list((out / "funcs").glob("*.c")))

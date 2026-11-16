@@ -309,6 +309,10 @@ def pin(text, fixed, functions):
     """Every global the project has an address for is used at that address: data symbols, and functions where the
     C takes their address (a direct call stays a call). Their declarations go; a definition here is kept, unused,
     under another name."""
+    # A split can name a call target as data (D_...), with no matched C at that address yet. LLVM's own
+    # function declaration still proves this is a callable symbol: replacing its name with inttoptr would
+    # produce an invalid `declare ... inttoptr(...)` and lose the direct call the runtime needs to answer.
+    functions = set(functions) | set(re.findall(r"^(?:define|declare) [^@\n]*@([\w.$]+)\(", text, re.M))
     out = []
     for line in text.split("\n"):
         m = re.match(r"^@([\w.$]+) = (.*)$", line)
@@ -354,10 +358,14 @@ def main():
     src, dst, *opts = sys.argv[1:]
     absolute, aliases, functions, signatures, fixed, renames = {}, [], set(), {}, {}, {}
     web = False
+    contexts = {}
     it = iter(opts)
     for o in it:
         if o == "--web":  # the browser build's IR (webir.py)
             web = True
+        elif o == "--context-function":
+            old, new = next(it).split("=", 1)
+            contexts[old] = new
         elif o == "--absolute":
             k, v = next(it).split("=")
             absolute[k] = int(v, 0)
@@ -376,6 +384,17 @@ def main():
         elif o == "--renames":  # old new: a call by a function's older name goes to the function by its name now
             renames.update(row.split() for row in open(next(it)).read().splitlines() if row.strip())
     text = open(src).read()
+    # Each saved candidate can carry a different body for the same helper. Give that module's definition and
+    # direct calls a private identity, but keep address-taken uses at the original console address. These
+    # private names are absent from the public function map, so they never become an arbitrary runtime winner.
+    for old, new in contexts.items():
+        text = re.sub(rf"@{re.escape(old)}(?![\w.$])", f"@{new}", text)
+        if old in signatures:
+            signatures[new] = signatures[old]
+        if old in fixed:
+            fixed[new] = (fixed[old][0], "context")
+        elif match := re.fullmatch(r"(?:func|D|B)_([0-9A-Fa-f]+)", old):
+            fixed[new] = (int(match[1], 16), "context")
     for old, new in renames.items():
         text = re.sub(rf"@{re.escape(old)}\b", f"@{new}", text)
     if renames:  # one declaration of each

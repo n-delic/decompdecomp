@@ -199,3 +199,19 @@ thread, whose code calls into an overlay its split doesn't have.
 - `consoles/n64/emulator`: recording a function's calls for the differential tests.
 - Tests: the bridge thunks on hand-made IR (like `tests/test_port_wasm.py`), the configuration from a demo project's
   symbols, and a real game behind `DECOMP_TEST_N64_ROM`.
+
+
+Native CLI crashes during translation are isolated with bounded body-subset probes, then confirmed with the
+individual body active. The affected function is listed as an explicit stub with its crash signal; the remaining
+functions are translated again for the final output. If even an all-stub probe crashes, if no individual body
+reproduces the failure, or if a resource limit kills the tool, the job fails rather than blaming a guessed function.
+The recompiler's stub count is separate from matched-source progress and does not prove gameplay compatibility.
+
+Normal refusals no longer stop a large game after a fixed 400-function batch. Each failed full pass must identify
+a new input body; the run bound scales to the input count, and each body's isolation has a separate probe limit.
+A generated static body's failure is isolated to the input body that independently causes it to be generated,
+rather than adding an invalid generated name to the CLI's stubs list.
+
+If the CLI emits an invalid function body (for example a goto whose label is outside the imported extent), the
+compiler check maps the error back to that body and retries it as an explicit stub. Errors in runtime headers
+or outside a function do not blame a nearby body. Saved source and the matching judge remain unchanged.

@@ -524,3 +524,53 @@ def test_the_build_leaves_debug_only_code_out():
     """zig cc defines _DEBUG at -O0, so libultra's debug heap code (`hp->count`) was compiled into the port."""
     from decompnet.port.wasm.build import IR_FLAGS
     assert "-U_DEBUG" in IR_FLAGS
+
+
+def test_a_data_named_call_target_keeps_its_llvm_function_declaration():
+    from decompnet.port.wasm.beir import pin
+    text = """@callback = global ptr @D_80001200
+@D_80002000 = external global i32
+
+define i32 @update() {
+  %v = call i32 @D_80001200(i32 1)
+  ret i32 %v
+}
+declare i32 @D_80001200(i32)
+"""
+    result = pin(text, {'D_80001200': (0x80001200, 'data'), 'D_80002000': (0x80002000, 'data')}, set())
+    assert 'declare i32 @D_80001200(i32)' in result
+    assert 'call i32 @D_80001200(i32 1)' in result
+    assert '@callback = global ptr inttoptr (i32 2147488256 to ptr)' in result
+    assert '@D_80002000' not in result
+    assert 'declare i32 inttoptr' not in result
+
+
+def test_repeated_context_helpers_keep_each_callers_own_body_and_only_the_owner_is_public(tmp_path):
+    from decompnet.port.wasm.build import context_functions
+    first, second, owner = [tmp_path/f'{name}.ll' for name in ('first', 'second', 'helper')]
+    first.write_text('define i32 @helper() {\n ret i32 1\n}\ndefine internal i32 @local() {\n ret i32 3\n}\n')
+    second.write_text('define i32 @helper() {\n ret i32 2\n}\ndefine internal i32 @local() {\n ret i32 4\n}\n')
+    private = context_functions([first, second])
+    assert private[first]['helper'] != private[second]['helper']
+    assert all('local' not in names for names in private.values())
+    owner.write_text('define i32 @helper() {\n ret i32 5\n}\n')
+    with_owner = context_functions([first, second, owner])
+    assert owner not in with_owner and with_owner[first] == private[first]
+
+
+def test_private_context_calls_keep_the_original_address_when_taken_as_a_pointer(tmp_path):
+    import subprocess
+    import sys
+
+    from decompnet.port.wasm import build
+    src, out, fixed = tmp_path/'in.ll', tmp_path/'out.ll', tmp_path/'fixed.txt'
+    src.write_text('@callback = global ptr @helper\n'
+                   'define i32 @helper() {\n ret i32 1\n}\n'
+                   'define i32 @caller() {\n %v = call i32 @helper()\n ret i32 %v\n}\n')
+    fixed.write_text('helper 0x80001200 func\n')
+    subprocess.run([sys.executable,str(build.HERE/'beir.py'),str(src),str(out),'--fixed',str(fixed),
+                    '--context-function','helper=port_context_first_helper'],check=True,capture_output=True,text=True)
+    text=out.read_text()
+    assert 'define i32 @port_context_first_helper(' in text
+    assert '@port_context_first_helper(' in text and 'call i32 @helper(' not in text
+    assert r'c"\80\00\12\00"' in text
