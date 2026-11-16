@@ -1220,6 +1220,140 @@ _CONST_DOUBLE_EDITS = {
                       if file == "varasm.c" and "CONST_DOUBLE_LOW (x)" in old),
 }
 
+# The PlayStation GCCs built from source (2.6.0, 2.6.3, 2.8.0) have all six of SN64's copies, and on PS1 every float
+# pooled constant wrong (the ones `li.d`/`li.s` can't load: 1e300 as 0x8800759c 0x00000000, 3e38f and -0.0 as 0;
+# 2.6.0 even printed a 40-bit word). The macOS host header (old-gcc's xm-darwin.h) keeps HOST_WIDE_INT 32 bits, as
+# the 32-bit Linux releases have it. 2.6.x indent decode_rtx_const's copy differently from 2.8.0.
+_PSX_CONST_DOUBLE_EDITS = {
+    "rtl.h": _CONST_DOUBLE_EDITS["rtl.h"],
+    "real.h": tuple((old, new) for file, old, new in _SN64_EDITS if file == "real.h"),
+    "emit-rtl.c": tuple((old, new) for file, old, new in _SN64_EDITS if file == "emit-rtl.c"),
+    "varasm.c": tuple((old, new) for file, old, new in _SN64_EDITS if file == "varasm.c"),
+}
+# 2.6.x also convert host doubles to target words through `long *` (real.h's host-float branch, which 2.8.0 doesn't
+# use): on a 64-bit Mac each "word" read the whole double (1e300 printed as 0x7e37e43c8800759c, twice) and a float
+# read four bytes past itself. Read 32 bits, unsigned so that %08lx prints eight digits, as the 32-bit release does.
+_PSX_26_REAL = tuple((old, old.replace("(long *)", "(unsigned int *)")) for old in (
+    "(OUT)[0] = ((long *) &in)[0];", "(OUT)[1] = ((long *) &in)[1];",
+    "(OUT)[1] = ((long *) &in)[0];", "(OUT)[0] = ((long *) &in)[1];", "(OUT) = *(long *) &f;"))
+_PSX_26_DECODE = ("bcopy ((char *) &CONST_DOUBLE_LOW (x),\n\t     (char *) &value->un.du, sizeof value->un.du);",
+                  "decomp_cd_get (x, (char *) &value->un.du, sizeof value->un.du);")
+
+
+# GCC 2.6 folds float constants with the host's FPU. An invalid operation on two numbers (0.0 / 0.0, inf - inf) gives
+# x86's default NaN, sign bit set, in the 32-bit releases, and arm64's, sign bit clear, natively: the pool word was
+# 0x7ff80000, not 0xfff80000. A NaN operand propagates alike on both (folding returns it before the arithmetic).
+_PSX_X86_NAN = """
+#ifndef DECOMP_X86_NAN
+#if defined (__aarch64__)
+#define DECOMP_X86_NAN(v, a, b) do { if ((v) != (v) && (a) == (a) && (b) == (b)) \\
+  { union { unsigned long long u; double d; } decomp_nan_; decomp_nan_.u = 0xfff8000000000000ULL; \\
+    (v) = decomp_nan_.d; } } while (0)
+#else
+#define DECOMP_X86_NAN(v, a, b) ((void) 0)
+#endif
+#endif
+"""
+# ... and converts folded floats to integers with the host's casts (real.h's REAL_VALUE_FIX and friends, used by cse).
+# Out of range that is undefined in C: the 32-bit releases' x87 code gives 0x80000000 for int and, for unsigned, the
+# low word of a 64-bit conversion (-1.0 is 0xffffffff); arm64 saturates (0). Do it as the releases do.
+_PSX_26_X87_FIX = """
+#ifndef DECOMP_X87_FIX
+#define DECOMP_X87_FIX
+static int decomp_x87_fix (double x) __attribute__ ((unused));
+static unsigned int decomp_x87_ufix (double x) __attribute__ ((unused));
+static int decomp_x87_fix (double x)
+{ return x == x && x < 2147483648.0 && x > -2147483649.0 ? (int) x : (int) 0x80000000U; }
+static unsigned int decomp_x87_ufix (double x)
+{ return x == x && x < 9223372036854775808.0 && x > -9223372036854775809.0 ? (unsigned int) (long long) x : 0; }
+#define REAL_VALUE_FIX(x) decomp_x87_fix (x)
+#define REAL_VALUE_UNSIGNED_FIX(x) decomp_x87_ufix (x)
+#define REAL_VALUE_RNDZINT(x) ((double) decomp_x87_fix (x))
+#define REAL_VALUE_UNSIGNED_RNDZINT(x) ((double) decomp_x87_ufix (x))
+#endif
+"""
+_PSX_26_NAN = {
+    "fold-const.c": (("#endif /* no REAL_ARITHMETIC */\n      t = build_real (TREE_TYPE (arg1),",
+                      "#endif /* no REAL_ARITHMETIC */\n      DECOMP_X86_NAN (value, d1, d2);\n"
+                      "      t = build_real (TREE_TYPE (arg1),"),),
+    "cse.c": (("\t}\n#endif\n\n      value = real_value_truncate (mode, value);\n      set_float_handler (NULL_PTR);\n",
+               "\t}\n      DECOMP_X86_NAN (value, f0, f1);\n#endif\n\n      value = real_value_truncate (mode, value);\n"
+               "      set_float_handler (NULL_PTR);\n"),),
+    # Called without its declaration (undefined behaviour); the prototypes make it a compile error.
+    "cp/method.c": (("error_with_decl (\"implementation-reserved name `%s' used\");",
+                     "error_with_decl (thunk, \"implementation-reserved name `%s' used\");"),),
+}
+
+# Old-style declarations of the error functions that conflict with _GCC_PM_VARARGS' prototypes (removed exactly).
+# Without the prototypes, every warning or error crashed the arm64 build (a variadic call made as a fixed one).
+_PSX_DECLARATIONS = {
+    "config/mips/mips.c": _GCC_PM_DECLARATIONS["config/mips/mips.c"],
+    "cp/errfn.c": _GCC_PM_DECLARATIONS["cp/errfn.c"],
+}
+_PSX_26_DECLARATIONS = {
+    **_PSX_DECLARATIONS,
+    "cp/typeck.c": ("extern void error ();\n", "extern void warning ();\n"),
+    "cp/sig.c": ("extern void error ();\n", "extern void sorry ();\n"),
+    "cp/typeck2.c": ("extern void pedwarn (), error ();\n",),
+    "cp/call.c": ("extern void sorry ();\n",),
+}
+
+
+# 2.8.0's cse guards a rewrite with `INTVAL (c) < 0 && - INTVAL (c) >= 0`. The optimising GCC that built the 32-bit
+# release took the second test as always true (signed overflow is undefined), so `x - 0x80000000` became `subu`;
+# unoptimised clang wraps, skips the rewrite and printed `addu`. Drop the test, as that build did.
+_PSX_28_CSE = {"cse.c": (("\t      && INTVAL (const_arg1) < 0\n\t      && - INTVAL (const_arg1) >= 0\n",
+                          "\t      && INTVAL (const_arg1) < 0\n"),)}
+
+
+def _psx_const_double_edits(version: str) -> dict:
+    if not version.startswith("2.6."):
+        return {**_PSX_CONST_DOUBLE_EDITS, **_PSX_28_CSE}
+    return {**_PSX_CONST_DOUBLE_EDITS, **_PSX_26_NAN,
+            "real.h": _PSX_CONST_DOUBLE_EDITS["real.h"] + _PSX_26_REAL, "varasm.c": tuple(
+        _PSX_26_DECODE if "value->un.du" in old else (old, new) for old, new in _PSX_CONST_DOUBLE_EDITS["varasm.c"])}
+
+
+def _psx_declarations(version: str) -> dict:
+    return _PSX_26_DECLARATIONS if version.startswith("2.6.") else _PSX_DECLARATIONS
+
+
+def _check_psx_gcc(cc1: Path, tmp: Path, version: str) -> None:
+    """Refuse a native PS1 GCC whose pooled float constants aren't the IEEE words the 32-bit releases print."""
+    floats = tmp / "psx_floats.c"
+    floats.write_text("double f(double x) { return x * 2.5; }\ndouble g(double x) { return x * 1e300; }\n"
+                      "float h(float x) { return x * 3e38f; }\ndouble i(double x) { return x * -1e300; }\n"
+                      "float j(float x) { return x * -3e38f; }\ndouble k(void) { return 0.0 / 0.0; }\n", encoding="utf-8")
+    asm = floats.with_suffix(".s")
+    try:
+        res = subprocess.run([str(cc1), "-quiet", "-O2", "-G0", str(floats), "-o", str(asm)],
+                             capture_output=True, text=True, errors="replace", timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ToolchainError(f"GCC {version} for PlayStation failed its float check: {error}") from error
+    text = asm.read_text(errors="replace") if asm.is_file() else ""
+    words = re.findall(r"\.word\s+(0x[0-9a-fA-F]+)", text)
+    # Little-endian: a double's low word first. 2.5 needs no pool: `li.d`.
+    expected = ["0x8800759c", "0x7e37e43c", "0x7f61b1e6", "0x8800759c", "0xfe37e43c", "0xff61b1e6",
+                "0x00000000", "0xfff80000"]
+    if res.returncode or words != expected or not re.search(r"li\.d\s+\$\d+,2\.5", text):
+        raise ToolchainError(f"The native GCC {version} for PlayStation folds float constants wrongly "
+                             f"({' '.join(words) or 'no constants'}); not installing it.\n"
+                             + res.stderr[-2000:] + text[-2000:])
+    # A warning compiles and an error is reported (exit 33): without the variadic prototypes both crashed on arm64.
+    for name, code, exit_code, needle in (("psx_warning.c", "int *p = 1;\n", 0, "warning"),
+                                          ("psx_error.c", "int f(void) { return undeclared; }\n", 33, "undeclared")):
+        src = tmp / name
+        src.write_text(code, encoding="utf-8")
+        try:
+            run = subprocess.run([str(cc1), "-quiet", "-O2", "-G0", str(src), "-o", str(src.with_suffix(".s"))],
+                                 capture_output=True, text=True, errors="replace", timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ToolchainError(f"GCC {version} for PlayStation failed its diagnostics check: {error}") from error
+        if run.returncode != exit_code or needle not in run.stderr:
+            raise ToolchainError(f"The native GCC {version} for PlayStation doesn't report diagnostics (exit "
+                                 f"{run.returncode}); not installing it.\n" + run.stderr[-2000:])
+
+
 def _build_sn64_gcc(archive: Path, dest: Path, subdir: str | None, log) -> None:
     """Build the checksum-pinned reconstructed SN compiler (GCC 2.7.2) natively on macOS.
 
@@ -1574,6 +1708,14 @@ def _build_psx_gcc(archive: Path, dest: Path, part: dict, log) -> None:
             if res.returncode:
                 raise ToolchainError(f"Couldn't apply {Path(argv[-1]).name}:\n{(res.stdout + res.stderr)[-2000:]}")
 
+        edits, declarations = _psx_const_double_edits(version), _psx_declarations(version)
+        for name in {**edits, **declarations}:
+            (source / name).chmod((source / name).stat().st_mode | 0o200)
+        _edit_exactly(source, declarations, edits, f"GCC {version} for PlayStation")
+        header = source / "decomp-arm64-varargs.h"
+        header.write_text(_GCC_PM_VARARGS + _PSX_X86_NAN + (_PSX_26_X87_FIX if version.startswith("2.6.") else ""),
+                          encoding="latin-1")
+
         # The upstream sdbout patch's context is one line off in the released 2.6.3 tarball; make the same
         # portability change directly and fail closed if upstream changes the source.
         if version in ("2.6.0", "2.6.3"):
@@ -1642,15 +1784,19 @@ def _build_psx_gcc(archive: Path, dest: Path, part: dict, log) -> None:
         build = root / "build"
         build.mkdir()
         (build / "insn-config.h").touch()
-        cflags = "-std=gnu89 -w -Wno-int-conversion -Wno-implicit-function-declaration -Wno-return-mismatch"
+        cflags = ("-std=gnu89 -w -Wno-int-conversion -Wno-implicit-function-declaration -Wno-return-mismatch "
+                  "-Wno-incompatible-function-pointer-types")
         env["CFLAGS"] = cflags
         host_flags = ["--host=" + _platform.machine() + "-apple-darwin",
                       "--build=" + _platform.machine() + "-apple-darwin"]
         commands = [
             [str(source / "configure"), "--target=mips-sony-psx", "--prefix=/opt/cross",
              "--with-endian-little", "--with-gnu-as", *host_flags],
-            ["/usr/bin/make", "-j" + str(min(4, os.cpu_count() or 1)), "cpp", "cc1", "xgcc", "cc1plus", "g++",
-             "CFLAGS=" + cflags],
+            # The prototypes go into GCC's own files, not the generators (their static fatal()) ...
+            ["/usr/bin/make", "-j" + str(min(4, os.cpu_count() or 1)), "cpp", "cc1", "xgcc", "cc1plus",
+             f"CFLAGS={cflags} -include {header}", f"HOST_CFLAGS=$(INTERNAL_CFLAGS) $(X_CFLAGS) $(T_CFLAGS) {cflags}"],
+            # ... nor the g++ driver, which has static error() and fatal().
+            ["/usr/bin/make", "g++", "CFLAGS=" + cflags],
         ]
         for argv in commands:
             log(f"  building native GCC {version} for PlayStation (first install only): " + Path(argv[0]).name)
@@ -1674,6 +1820,7 @@ def _build_psx_gcc(archive: Path, dest: Path, part: dict, log) -> None:
             raise ToolchainError(f"GCC {version} failed its target smoke test: {error}") from error
         if res.returncode or not re.search(r"lbu\s+\$2,0\(\$4\)", asm.read_text(errors="replace")):
             raise ToolchainError(f"GCC {version} failed its little-endian MIPS smoke test.\n" + (res.stdout + res.stderr)[-2000:])
+        _check_psx_gcc(build / "cc1", root, version)
         outputs = {"cpp": "cpp", "cc1": "cc1", "gcc": "xgcc", "cc1plus": "cc1plus", "g++": "g++"}
         for name, binary in outputs.items():
             target = dest / name

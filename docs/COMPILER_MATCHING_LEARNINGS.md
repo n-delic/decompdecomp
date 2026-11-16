@@ -732,6 +732,43 @@ compile natively. Their native output equals the 32-bit release's. With SN64's 3
 every native N64 GCC `cc1` now matches its 32-bit release on these corpora. Not covered: PM's `as`
 and EGCS, still Intel builds under Rosetta, and `cc1plus` (C++ error paths can still crash natively).
 
+### Native PS1 GCC 2.6.0, 2.6.3 and 2.8.0 on Macs (16 November 2026)
+
+**Controlled host-build bugs**, not new matches. These three are built from source on every Mac (arm64 and Intel),
+from the old-gcc patches with its `xm-darwin.h` (`HOST_WIDE_INT` 32 bits, `long` 64). Against the 32-bit Linux
+releases the app pins elsewhere (decompals/old-gcc 0.17, statically linked i386, under `qemu-i386`) they had:
+- **Pooled constants wrong.** SN64's six `CONST_DOUBLE` copies (above): 1e300 printed `0x8800759c 0x00000000`
+  (2.8.0) or `0x8800759c 0x8800759c` (2.6.x); 3e38f and -0.0 as 0. Fixed with SN64's helpers.
+- **2.6.x printed 64-bit words.** real.h's host-float `REAL_VALUE_TO_TARGET_DOUBLE`/`SINGLE` read through
+  `long *`: each word was the whole double (`.word 0x7e37e43c8800759c`), a float read 4 bytes past itself. Now
+  `unsigned int *`.
+- **Crashes on any warning or error** (bus error/segfault, arm64): the error functions are variadic but were called
+  without prototypes. Fixed with PM's prototype header and the conflicting declarations removed; 2.6's C++ front
+  end also called `error_with_decl` without its declaration (`cp/method.c`).
+- **NaN sign (2.6.x, arm64).** 2.6 folds with the host FPU; 0.0/0.0 gave arm64's `0x7ff80000`, the releases x86's
+  `0xfff80000`. An invalid operation on two numbers now yields x86's NaN.
+- **Out-of-range float→int folding (2.6.x).** cse uses the host's `(int)`/`(unsigned int)` casts; arm64
+  saturates, the releases' x87 code gives 0x80000000 and, for unsigned, the low word of a 64-bit conversion (-1.0 →
+  0xffffffff). Emulated; checked against i686 x87 code under qemu at -O0 and -O2.
+- **`x - 0x80000000` (2.8.0).** cse's `INTVAL (c) < 0 && - INTVAL (c) >= 0`: the optimising GCC that built the
+  release took the second test as always true, so `subu`; unoptimised clang wrapped, `addu`. Test dropped.
+
+`recipe = 2` rebuilds earlier installs, and the install check (`_check_psx_gcc`) requires the release's words for
+2.5, ±1e300, ±3e38f and 0.0/0.0, a warning that compiles and an error that exits 33. 2.6.3's source moved to funet
+(same sha256): mirrors.slackware.com stopped resolving.
+
+**Comparison, fixed native arm64 `cc1` vs 32-bit release** (1,094 c-torture files from GCC 3.0, preprocessed;
+`-O2 -G8` and `-O3 -funroll-loops -G8`): every file both compile is identical once `#` comments are stripped.
+- 2.6.0: 1,035 / 1,036 byte-identical, 2 comment-only (macOS printf writes `nan` for `-nan`), 54 rejected by both.
+- 2.6.3: 1,038 / 1,037 identical, 2 comment-only, 52 / 53 rejected by both.
+- 2.8.0: 1,048 / 1,048 identical, 2 comment-only, 43 rejected by both.
+- The releases crash on `20001226-1` and `950610-1`, which compile natively. Native 2.6.0 crashes on `941113-1` at
+  -O1/-O2 only (calls an uninitialised function pointer; not with `-da`): memory-dependent, left open.
+
+Before the fixes, 2.6.0 -O2 had 41 native crashes and 2 different files on the same corpus. Not covered: the
+Intel Mac build of the new recipe (same source; the NaN rule is arm64-only, the x87 casts are right on x86-64 too),
+and C++ diagnostics, which still call the error functions through unprototyped pointers (`cp/errfn.c`).
+
 ## CodeWarrior, MSVC, ARM compilers and other installed profiles
 
 No new per-compiler match evidence was collected in this investigation. Existing console guides remain
