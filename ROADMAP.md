@@ -14,6 +14,19 @@ local Linux runner, SN Systems EE-GCC and CodeWarrior through wibo. Physical Int
 Mac and retail-game verification remain planned; Apple Silicon checks use the
 homemade PS2 demo. Arbitrary imported Make/Ninja builds in the VM remain planned.
 
+## Explicit local matching
+
+Project-wide deep searches and standalone cross-game twin searches are shared jobs over the existing
+ROM and PROJECT judges. Control-flow tests cover both modes, resume/invalidation, cancellation, queued
+claims, duplicate starts and status reads without project synchronization. `tests/test_local_matching_consoles.py`
+exercises each installed console's demo through its normal attempt and a bounded project pass; missing tools
+skip explicitly. This adds orchestration, not a new console judge: the existing permuter/twin support rows below
+still apply, and room guests run searches on their host.
+
+Planned follow-ups: an SDK source donor catalogue; alternate compiler profiles with atomic verified publication;
+parallel paths within one function; maximum-throughput compiler scheduling; portable fingerprints of imported
+build dependencies. These features are not exposed as working controls in this first upstream series.
+
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to
