@@ -165,7 +165,12 @@ its CPU, all of it under the interpreter lock the background work holds, so busy
   and the gateway can each restart without breaking the other.
 - The app holds the gateway's standard input; when the app ends for any reason the gateway sees end-of-file and
   ends too. If the gateway ends while the app runs, the app starts it again on the same port.
-- Its log is `.decomp/logs/mcp-gateway.log`; `GET /health` on the gateway's port reports counters.
+- Its log is `.decomp/logs/mcp-gateway.log`; `GET /health` on the gateway's port reports counters, and under
+  `tools` how long helpers waited for each tool's replies (calls, mean and longest, over 10 s, "still running").
+- Where a slow call's time went in the app: every call of a second or more is kept with its phases (the wait for a
+  thread in its lane, SQL and the writer's lock, the build, the candidate lock, saved progress) in
+  `.decomp/logs/slow-tool-calls.log`; `python -m decompnet.app.tool_latency <that file>` sums it up per tool
+  (`app/tool_latency.py`). It is what decides whether compiles should move out of the app's process.
 - Inside the app, tool calls have thread lanes of their own (`tools.QUICK_TOOLS` and the rest), apart from the
   window's, so a burst of compiles can't make `guide` or `get_claims` wait.
 
