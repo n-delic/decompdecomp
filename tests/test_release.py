@@ -96,7 +96,7 @@ def test_a_session_of_refused_releases_made_no_progress(tmp_path, monkeypatch):
     _attempts(net, a, "f", [40])
     assert m._progress(a.id) == before + 1
     # the session outcome, not just the count: a helper whose sessions only ask to release, never compile, has
-    # each one fail, waits that grow between them, then pauses with the reason, its function still held
+    # each one fail, waits that grow between them, then pauses with the reason
     assert net.release_function(a, "f", "tried the field stores", "game").startswith("Released f")
     assert net.claim_row(a, "game", "g")["name"] == "g"
     s = m._record("game", "opencode", "a", "a", {})
@@ -114,7 +114,7 @@ def test_a_session_of_refused_releases_made_no_progress(tmp_path, monkeypatch):
     rows = net.store.all("SELECT outcome FROM helper_sessions WHERE helper_id=?", s.id)
     assert [r["outcome"] for r in rows] == ["failed"] * agents.FAST_FAILURES_TO_PAUSE
     waits = [w for w in s.stop.waits if w]
-    assert len(waits) == agents.FAST_FAILURES_TO_PAUSE - 1 and waits == sorted(waits)  # longer each time
+    assert len(waits) == agents.FAST_FAILURES_TO_PAUSE - 1 and all(w1 < w2 for w1, w2 in zip(waits, waits[1:]))
     assert any("paused:" in f["text"] and "without compiling anything" in f["text"] for f in s.feed)
 
 
