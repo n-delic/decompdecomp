@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..network import IN_BUILD, NetworkError
+from ..network import IN_BUILD, Network, NetworkError
 from ..rom.symbols import AUTO_NAME
 
 _COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
@@ -109,27 +109,41 @@ def _assets(net, slug: str) -> dict | None:
 
 
 def readiness(net, slug: str) -> dict:
-    """{"kit", "code", "graphics", "audio", "data", "addresses", "rom_data", "blockers"} for a ROM project."""
+    """Read any project's port blockers without starting project maintenance or building it."""
+    with net.progress.view():
+        return _readiness(net, slug)
+
+
+def _readiness(net, slug: str) -> dict:
     from ..app.sdk_identity import display_name, identify
 
     proj = net.project_row(slug)
-    if not net.is_rom(proj):
-        raise NetworkError("The port readiness report reads projects decompdecomp split from a ROM; projects built "
-                           "from a public decomp or started in project mode aren't read yet (ROADMAP.md, Ports).")
+    rom_mode = net.is_rom(proj)
     console = net.console(proj)
     kit = console.port_kit
     cfg = net.cfg(proj)
     root = Path(proj["root"])
     rows = net.project_store(proj["id"]).all(
-        f"SELECT id, name, vram, size, status, matched_source, meta FROM functions WHERE project_id=? AND {IN_BUILD} "
+        f"SELECT id, name, unit, vram, size, status, matched_source, meta FROM functions WHERE project_id=? AND {IN_BUILD} "
         "ORDER BY vram, id", proj["id"])
+    project_source = None
+    if not rom_mode:
+        from .project import sources
+        project_source = sources(proj, rows)
     from .identities import confirmed
-    sdk = identify(net, proj, net.sdk_functions(proj), include_asm=True) | confirmed(net, proj)
+    # Imported SDK discovery fingerprints target objects and writes its cache. A report reads recorded proof;
+    # it must not launch discovery, rebuild missing references or create operational state in the source tree.
+    sdk = (identify(net, proj, net.sdk_functions(proj), include_asm=True) if rom_mode
+           else Network.sdk_functions(net, proj)) | confirmed(net, proj)
 
     code = {"total": len(rows), "c": 0, "replaced": [], "native": [], "glue": [], "library_other": [], "game_asm": [],
-            "open": [], "unproven": []}
+            "open": [], "unproven": [], "unread": []}
     game_c = []
-    for r in rows:
+    for row in rows:
+        r = dict(row)
+        if project_source is not None:
+            r["matched_source"] = project_source["bodies"].get(r["id"])
+        has_c = r["status"] == "matched" and bool(r["matched_source"])
         hint = sdk.get(r["id"])
         if hint:
             name = display_name(hint, r["name"])
@@ -137,16 +151,25 @@ def readiness(net, slug: str) -> dict:
             group = ("replaced" if "replaced" in groups else "glue" if "glue" in groups else "native" if "native" in groups
                      else "library_other")
             code[group].append(name)
-            if r["status"] == "matched":
+            if has_c:
                 code["c"] += 1
+            elif project_source is not None and group in ("native", "library_other"):
+                if r["status"] == "asm" or (project_source is not None and r["id"] in project_source["assembly"]):
+                    code["game_asm"].append(name)
+                elif r["status"] == "matched":
+                    code["unread"].append(name)
+                else:
+                    code["open"].append(name)
             continue
         if kit and kit.sdk_group(r["name"]):
             code["unproven"].append(r["name"])
-        if r["status"] == "matched":
+        if has_c:
             code["c"] += 1
             game_c.append(r)
-        elif r["status"] == "asm":
+        elif r["status"] == "asm" or (project_source is not None and r["id"] in project_source["assembly"]):
             code["game_asm"].append(r["name"])
+        elif r["status"] == "matched":
+            code["unread"].append(r["name"])
         else:
             code["open"].append(r["name"])
 
@@ -174,7 +197,7 @@ def readiness(net, slug: str) -> dict:
             literals[r["name"]] = len(found)
     # Data already in C (app/data_units.py): a symbol inside a matched unit's span is reached by name there
     from ..app.data_units import matched
-    units = sorted((a, a + (u["span"] or u["size"] or 0)) for a, u in matched(net, proj).items())
+    units = sorted((a, a + (u["span"] or u["size"] or 0)) for a, u in matched(net, proj).items()) if rom_mode else []
     in_c = {n for n in data if (a := symbols.resolve(n)) is not None and any(lo <= a < hi for lo, hi in units)}
     data -= in_c
     automatic -= in_c
@@ -188,30 +211,50 @@ def readiness(net, slug: str) -> dict:
         names = [r["name"] for r in rows] + [n for hint in sdk.values() for n in hint.get("names", [])]
         audio = kit.audio(names) if kit.audio else audio
 
+    limitations = {} if rom_mode else {
+        "data": "Data lives in the project's own source files; address-only data coverage has not been checked.",
+        "addresses": "Counts cover the function bodies found in the project's source files.",
+        "library": "Library counts use recorded SDK identities; this report does not start library detection.",
+        "compiles": "Compiling this project's C/C++ for a PC needs its own headers, flags and translation units; "
+                    "the project-build port adapter is planned (ROADMAP.md, Ports).",
+        "links": "Link checks need objects from the project-build port adapter.",
+        "assets": "The project's own asset files and extraction rules need a port asset adapter.",
+        "play": "Play and Export need a port-build adapter for this project's source tree; "
+                "a matching console build alone is not a runnable port (ROADMAP.md, Ports).",
+    }
     report = {
-        "console": console.name,
+        "mode": "rom" if rom_mode else "project",
+        "limitations": limitations,
+        "source": ({"files": len(project_source["files"]), "inferred": len(project_source["inferred"]),
+                    "problem": project_source["problem"]} if project_source is not None else None),
+        "console": console.name or "Unknown platform",
         "kit": {"name": kit.name, "summary": kit.summary} if kit else None,
         "code": {k: (v if isinstance(v, int) else len(v)) for k, v in code.items()},
         "names": {k: v[:_LIMIT] for k, v in code.items() if isinstance(v, list)},
         "graphics": graphics,
         "audio": audio,
         "data": {"symbols": len(data), "automatic": len(automatic), "in_c": len(in_c), "units": len(units),
-                 "examples": sorted(automatic or data)[:_LIMIT]},
+                 "examples": sorted(automatic or data)[:_LIMIT], "checked": rom_mode},
         "addresses": {"functions": len(literals), "literals": sum(literals.values()),
                       "examples": sorted(literals, key=lambda n: -literals[n])[:_LIMIT]},
-        "rom_data": _rom_data(net, slug, cfg, len(image)),
-        "pc": _pc(net, proj),
-        "link": _link(net, proj),
-        "assets": _assets(net, slug),
-        "calls": _calls(net, slug),
-        "recomp": _recomp(net, proj),
-        "recomp_available": console.recompiler is not None,
-        "behaviour": _behaviour(net, proj),
-        "behaviour_available": console.recompiler is not None and console.emulator is not None,
+        "rom_data": _rom_data(net, slug, cfg, len(image)) if rom_mode else {
+            "bytes": 0, "scanned": False, "stale": False, "kinds": {}, "unshaped": 0, "available": False},
+        "pc": _pc(net, proj) if rom_mode else None,
+        "link": _link(net, proj) if rom_mode else None,
+        "assets": _assets(net, slug) if rom_mode else None,
+        "calls": _calls(net, slug) if rom_mode else None,
+        "recomp": _recomp(net, proj) if rom_mode else None,
+        "recomp_available": rom_mode and console.recompiler is not None,
+        "behaviour": _behaviour(net, proj) if rom_mode else None,
+        "behaviour_available": rom_mode and console.recompiler is not None and console.emulator is not None,
     }
     report["blockers"] = blockers(report)
     report["ready"] = not report["blockers"]
     report["runtimes"] = runtimes(kit, report)
+    if not rom_mode:
+        for runtime in report["runtimes"]:
+            runtime["playable"] = False
+            runtime["missing"].append("A port-build adapter for the project's source tree")
     return report
 
 
@@ -225,7 +268,7 @@ def steps_done(report: dict) -> set[str]:
     native port runs 64-bit (macOS has nothing else)."""
     code, pc, link, assets = report["code"], report.get("pc"), report.get("link"), report.get("assets")
     extracted = (assets or {}).get("extracted")
-    done = {"code": not code["open"] and not code["game_asm"],
+    done = {"code": bool(code.get("total", 1)) and not code["open"] and not code["game_asm"] and not code.get("unread"),
             "compiles": bool(pc) and not pc["failed"] and not pc["warned"],
             "links": bool(link) and not link["undefined"] and not link["duplicates"],
             "assets": bool(extracted) and extracted["current"] and extracted["mapped"] == extracted["total"]}
@@ -249,6 +292,17 @@ def blockers(report: dict) -> list[str]:
     """What stands in a port's way, in the order docs/PORTING.md works through it, each a sentence to act on."""
     out = []
     code = report["code"]
+    if not code["total"]:
+        out.append("No functions have been measured yet: finish project setup and choose Check again before porting.")
+    if report.get("mode") == "project":
+        if problem := (report.get("source") or {}).get("problem"):
+            out.append(problem)
+        out.append(report["limitations"]["compiles"])
+        out.append(report["limitations"]["assets"])
+        out.append(report["limitations"]["play"])
+    if code.get("unread"):
+        out.append(f"{code['unread']} matched functions have no readable C/C++ body: objdiff can also match assembly. "
+                   "Check their unit source paths and recover their C before porting.")
     if report["kit"] is None:
         out.append(f"{report['console']} has no port kit yet: no library to build a port on (ROADMAP.md, Ports).")
     if code["open"]:
@@ -268,7 +322,7 @@ def blockers(report: dict) -> list[str]:
                        "the game's own display lists with it first.")
     if report["kit"] and not report["audio"]["library"]:
         out.append(report["audio"]["need"])
-    if report["data"]["symbols"]:
+    if report["data"].get("checked", True) and report["data"]["symbols"]:
         out.append(f"The C reaches {report['data']['symbols']} data symbols that exist only as addresses in the "
                    "split's assembly: each needs to be C (compile_data), or an asset the kit extracts.")
     if report["addresses"]["literals"]:
@@ -286,9 +340,9 @@ def blockers(report: dict) -> list[str]:
                    "they match, but only the original compiler sees them right, and a port can behave differently "
                    f"there. Worst first, {worst['calls']} {worst['about']}: {worst['why']}.")
     pc = report.get("pc")
-    if pc is None:
+    if pc is None and report.get("mode") != "project":
         out.append("The game's C hasn't been compiled for a PC yet: Compile for PC lists what a port build refuses.")
-    else:
+    elif pc is not None:
         if pc["failed"]:
             out.append(f"{pc['failed']} functions don't compile for a PC: "
                        + "; ".join(f"{k['functions']} {k['kind']}" for k in pc["kinds"] if k["kind"] != "pointer size")
@@ -340,6 +394,13 @@ def describe(report: dict) -> str:
              f"library code compiled as it is: {code['native']}; library code the port's glue supplies: "
              f"{code['glue']}; other library code: {code['library_other']}. "
              f"The game's own in assembly: {code['game_asm']}; without C: {code['open']}."]
+    if report.get("mode") == "project":
+        source = report["source"]
+        lines.append(f"Project source: {source['files']} unit files read ({source['inferred']} paths inferred from "
+                     "unit names); source bodies are inspected, not recompiled by this report.")
+        lines.append(report["limitations"]["library"])
+        lines.append(report["limitations"]["data"])
+        lines.append(report["limitations"]["addresses"])
     if report["graphics"]:
         lines.append("Graphics microcode: " + ", ".join(
             f"{g['name']}{'.' + g['variant'] if g['variant'] else ''} {g['version']} ({g['support']})"
@@ -347,10 +408,10 @@ def describe(report: dict) -> str:
     if report["audio"]["library"]:
         lines.append(f"Audio: {report['audio']['need']}")
     for key, title in (("game_asm", "Game functions in assembly"), ("open", "Without C"),
-                       ("unproven", "Named like library code, unproven")):
-        if report["names"][key]:
+                       ("unproven", "Named like library code, unproven"), ("unread", "Matched without readable C")):
+        if report["names"].get(key):
             lines.append(f"{title}: {', '.join(report['names'][key])}")
-    if report["data"]["examples"]:
+    if report["data"].get("checked", True) and report["data"]["examples"]:
         lines.append(f"Data symbols by address ({report['data']['symbols']}): {', '.join(report['data']['examples'])}")
     pc = report.get("pc")
     if pc:

@@ -1,6 +1,6 @@
 # Porting a finished decomp (plan)
 
-Status: phase 0, the readiness report, is built (ROM projects; N64 with its kit); phase 1's judge and tools are
+Status: phase 0, the readiness report, is built for ROM and project-mode games on every console (N64 with its kit); phase 1's judge and tools are
 built (N64); phase 3's first step, compiling the game's C for a PC, is built (N64), and so is phase 4's task with its
 two-way judge (N64); phase 2's asset map is written as Torch's config, one BLOB per resource, and extracted and checked by the
 pinned Torch (N64, macOS and Linux); the rest is planned. ROADMAP.md, "Ports: a native build of a finished game", tracks it.
@@ -44,7 +44,7 @@ Each phase is useful on its own, and each is a prerequisite for the next.
 
 ### 0. Port readiness report
 
-Built. The **Porting** tab of a ROM project (opened, it reads; it never runs on its own) shows it as a checklist: each
+Built. The **Porting** tab of any project (opened, it reads; it never runs on its own) shows it as a checklist: each
 step with how far along it is (in C, library code, data as C, addresses, compiled and linked for a PC, assets, Play)
 and the button that does it, and the
 `port_readiness` tool for agents and `GET /api/port-readiness` (src/decompnet/port/readiness.py). It reads the
@@ -58,7 +58,18 @@ project and changes nothing, with no compiler run: under a second on a 2,121-fun
   one).
 
 Still to add: pointers stored in 32-bit integers, and the moved-build count of the modding-ready check. Consoles
-without a kit get the counts that don't need one; projects in project mode aren't read yet.
+without a kit get the counts that don't need one.
+
+Project-mode reports read the unit's current C/C++ files, including source includes and C++ methods. Old objdiff
+files without source paths can use a unique source file named exactly after the unit; inferred paths are labelled.
+Matched objects without a readable body stay separate from C: an object may match through assembly. The report
+never runs setup, builds, extracts assets or changes source, matches or project settings.
+
+A project-mode report is not a runnable port. The app still needs adapters for the project's headers, compiler
+flags, translation units, assets and runtime build before Compile for PC, Play and Export can run there. The
+checklist names these gaps, leaves unknown data coverage unchecked and offers only supported actions. This also
+applies to public N64 decomps: their source-tree builds differ from decompdecomp's ROM saves. Their source is not
+silently converted to the ROM-save layout. Missing source, missing setup and unknown consoles still get reports.
 
 ### 1. Data migration, judged
 

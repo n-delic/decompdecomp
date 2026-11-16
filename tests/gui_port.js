@@ -25,6 +25,28 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
   graphics:[{name:'F3DEX',variant:'Rej',version:'2.05',support:'rendered'}],audio:{library:'synth',need:'A mixer.'},
   blockers:['Match draw_hud.','Write C for boot_stub.']};
 (async()=>{
+  {const t=setup();t.c.S.tab='porting';t.c.reply=async()=>({...report,mode:'project',
+    code:{...report.code,unread:3},data:{symbols:0,checked:false},rom_data:{available:false,bytes:0},
+    source:{files:4,inferred:2},limitations:{data:'Read project data in its own source files.',
+      addresses:'Only readable source was inspected.',compiles:'Needs a project compiler adapter.',
+      links:'Needs project port objects.',assets:'Needs project asset mapping.',play:'Needs a project port build.'}});
+   await t.run('loadPortReadiness()');
+   t.c.projectReport=await t.c.reply();
+   const steps=t.run('portSteps(projectReport)');
+   for(const index of [2,4,5,8,9]){
+     assert.equal(steps[index].pct,null);
+     assert.equal(steps[index].buttons.length,0,'unsupported project actions are not offered');
+   }
+   assert.match(steps[0].detail,/3 matched without readable C/);
+   const rows=t.c.$('portFacts').children.map(r=>r.children[0].textContent+r.children[1].textContent);
+   assert.ok(rows.some(r=>r.includes('Read project data in its own source files')));
+   assert.ok(rows.some(r=>r.includes('4 unit files read, 2 paths inferred')));
+   assert.ok(rows.some(r=>r.includes('Needs a project compiler adapter')));
+   t.c.reply=async()=>report;await t.run('loadPortReadiness()');
+   assert.ok(t.run('portSteps(projectReport).length')===10);
+   assert.ok(t.c.$('portSteps').children[9].children[1].children.some(c=>c.children&&c.children.includes(t.c.$('portPlay'))),
+     'returning to a ROM report restores its supported controls');
+  }
   {const t=setup();await t.run('loadPortReadiness()');assert.equal(t.calls.length,0,'another tab asks for nothing');}
   {const t=setup();t.c.S.tab='porting';t.c.reply=async()=>report;
    await t.run('loadPortReadiness()');
