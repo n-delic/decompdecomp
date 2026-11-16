@@ -418,7 +418,7 @@ static void gpu_fill_rect(int x0, int y0, int x1, int y1) {
     gpu_quad(cycle_type() == 3 ? GPU_KIND_FILL : GPU_KIND_COMBINE, 0, 0, 0, xy, st, prim);
 }
 
-/* S2DEX's rotated sprite: its four corners through the 2D matrix, tile 7's texels across it. */
+/* S2DEX's rotated sprite: its four corners through the 2D matrix, tile 0's texels across it. */
 static void gpu_sprite_rotated(const Sprite *o, const float *m) {
     combiner_uses();
     float w = o->iw / o->sw, h = o->ih / o->sh;
@@ -429,7 +429,7 @@ static void gpu_sprite_rotated(const Sprite *o, const float *m) {
         st[k][0] = (ox[k] - o->x) * o->sw;
         st[k][1] = (oy[k] - o->y) * o->sh;
     }
-    gpu_quad(GPU_KIND_COMBINE, GPU_ONE_TEXEL, 7, 1, xy, st, (Color){1, 1, 1, 1});
+    gpu_quad(GPU_KIND_COMBINE, GPU_ONE_TEXEL, 0, 1, xy, st, (Color){1, 1, 1, 1});
 }
 
 /* S2DEX's background: its pixels as s2d_bg reads them from RDRAM, made a texture of the screen's rectangle and

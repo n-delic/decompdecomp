@@ -1247,12 +1247,15 @@ Left:
   clipped at its guard band, walked in quarter scanlines with the RDP's coverage and its partial-pixel correction,
   rectangles through the same walker; the combiner, blender (its divider and delta-z shifts), bilinear filter,
   perspective divide (its reciprocal table), dither (colour and alpha), alpha compare, coverage times alpha, depth
-  test and delta z in integers; coverage kept in the pixel's low bit and RDRAM's hidden bits. Fourteen test scenes
-  match exactly; a racing game's recorded frames differ on 0.14% of pixels (0.7% in its busiest race frame). Not yet: Diddy Kong Racing's F3DDKR (its
-  microcode carries no signature, so it can't be recognised); the last differences in that game's race (a few
-  anti-aliased edges); YUV textures (G_TC_CONV); chroma key; S2DEX's backgrounds and sprites as RDP commands (drawn
-  directly, so the comparison leaves them out); the WebGL path keeps its own arithmetic. S2DEX sprites (G_OBJ_SPRITE) turn and scale
-  with the 2D matrix (its rev counter needle); its rectangles (G_OBJ_RECTANGLE, _R) are drawn as before. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
+  test and delta z in integers; coverage kept in the pixel's low bit and RDRAM's hidden bits (a pixel's real
+  coverage, with or without anti-aliasing); two cycles pipelined as the RDP runs them (the next pixel's TEXEL0 and
+  alpha, the previous pixel's memory in the first blend), the blender's partial reject, copy mode 64 bits at a time
+  up to the scissor's edge. S2DEX's objects reach the RDP as the microcode sends them: texture loads (palettes
+  through a 4-bit tile), rectangles for sprites (scaled, flipped) and backgrounds (in strips that fit TMEM, cut where
+  the image wraps), triangles for sprites turned by the 2D matrix (its rev counter needle). Eighteen test scenes
+  match exactly, and so do 40 recorded tasks of a racing game (menus at 640x480, races, replays). Not yet: Diddy
+  Kong Racing's F3DDKR (its microcode carries no signature, so it can't be recognised); YUV textures (G_TC_CONV);
+  chroma key; the WebGL path keeps its own arithmetic. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,
   credits), and a race started from its menus (Arcade, car selection, the start line, driving). It plays in a browser
   with the keyboard or a gamepad, and its sound (`PORT_LIVE`); its saves go to an EEPROM file; then the Controller Pak, the 16 Kbit EEPROM, SRAM and flash
   saves other games use, the

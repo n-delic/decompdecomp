@@ -31,6 +31,7 @@ from tests.n64_render_kit import (
     matrix,
     quadrant_texture,
     run,
+    ucode_data,
     vertex,
 )
 
@@ -204,6 +205,87 @@ def test_triangles_are_clipped_to_the_guard_band(renderer, tmp_path):
     assert triangles >= 1
 
 
+def test_full_alpha_passes_the_colour_through_the_blender(renderer, tmp_path):
+    """IN * IN_A + MEM * (1 - IN_A) under force blend: with a full alpha the RDP doesn't blend at all (its partial
+    reject) and writes IN as it is. Blended, IN's weight is 31/32 and a 32nd of the blue behind came through, a red
+    of 248 coming out as 240 (30 in 5 bits)."""
+    mem = Memory()
+    g = Gfx(mem)
+    _start(mem, g)
+    g.fill(0x003F)                                          # blue behind
+    g.othermode(NO_DITHER, 0x4000 | 0x40 | 1 << 22)         # force blend, image read, IN * IN_A + MEM * (1 - IN_A)
+    g(*SHADE)
+    g(0xD9000000, 0x200004)
+    red = 0xFF0000FF
+    _triangles(mem, g, [(-1, 1, 0, 0, 0, red), (1, 1, 0, 0, 0, red), (1, -1, 0, 0, 0, red)])
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.pixel(W * 3 // 4, H // 4) == (31, 0, 0)
+
+
+def test_s2dex_draws_through_rdp_commands(renderer, tmp_path):
+    """S2DEX's sprites and backgrounds reach the RDP as the microcode sends them: texture loads, tiles and texture
+    rectangles, recorded with the rest of the task (so tools/n64_rdp_compare.py can replay them). The sprite still
+    lands where it should: four times larger at (100, 50), its top-left quadrant red."""
+    dumps = tmp_path / "dumps"
+    dumps.mkdir()
+    mem = Memory()
+    g = Gfx(mem, "S2DEX2")
+    g.frame().fill(0)
+    g.othermode(NO_DITHER | 6 << 9, 0)
+    g(*TEX)
+    g(0x05000000, 0x80000000 | _obj_block(mem, quadrant_texture(mem), 8, 8))       # G_OBJ_LOADTXTR
+    g(0x01000000, 0x80000000 | _obj_sprite(mem, 100, 50, 4, 8, 8))                     # G_OBJ_RECTANGLE
+    g(0xDF000000)
+    os.environ["PORT_RDPDUMP"], os.environ["PORT_RDPDUMP_TASKS"] = str(dumps), "1"
+    try:
+        out, _ = run(renderer, mem, tmp_path, g.end())
+    finally:
+        del os.environ["PORT_RDPDUMP"], os.environ["PORT_RDPDUMP_TASKS"]
+    assert out.pixel(104, 54) == (31, 0, 0) and out.pixel(120, 70) == (31, 31, 31)
+    words = (dumps / "000001.cmds").read_bytes()
+    ops = [w >> 24 for w in struct.unpack(f">{len(words) // 4}I", words)]
+    assert 0xF3 in ops and 0xE4 in ops  # the load (LoadBlock) and the rectangle
+    assert (dumps / "000001.after").exists()
+
+
+def _obj_block(mem: Memory, image: int, width: int, height: int) -> int:
+    """A uObjTxtr loading an RGBA16 image into TMEM 0 by LoadBlock: its 8-byte words less one, and the line step."""
+    words = width * height * 2 // 8
+    line = width * 2 // 8
+    return mem.put(struct.pack(">IIHHHHII", 0x00001033, 0x80000000 | image, 0, words - 1, (2048 + line - 1) // line,
+                               0, 0, 0xFFFFFFFF))
+
+
+def _obj_tile(mem: Memory, image: int, tmem: int, width_words: int, height: int) -> int:
+    """A uObjTxtr loading a texture by LoadTile: its width in 8-byte words and height in lines, each times 4 less 1."""
+    return mem.put(struct.pack(">IIHHHHII", 0x00FC1034, 0x80000000 | image, tmem, width_words * 4 - 1, height * 4 - 1,
+                               0, 0, 0xFFFFFFFF))
+
+
+def _obj_tlut(mem: Memory, palette: int, count: int) -> int:
+    """A uObjTxtr loading a palette of `count` colours into TMEM's upper half (entry 256)."""
+    return mem.put(struct.pack(">IIHHHHII", 0x00000030, 0x80000000 | palette, 256, count - 1, 0, 0, 0, 0xFFFFFFFF))
+
+
+def _obj_sprite(mem: Memory, x: float, y: float, scale: float, width: int, height: int, flags: int = 0, fmt: int = 0,
+                siz: int = 2, stride: int = 2) -> int:
+    """A uObjSprite: its place (s10.2), scale (u5.10: 1024 / scale), image size (u10.5), TMEM line (`stride`
+    8-byte words) at TMEM 0, format and flags (1: flipped across, 16: down)."""
+    return mem.put(struct.pack(">hHHhhHHhHHBBBB", round(x * 4), round(1024 / scale), width << 5, 0, round(y * 4),
+                               round(1024 / scale), height << 5, 0, stride, 0, fmt, siz, 0, flags))
+
+
+def _obj_bg(mem: Memory, image: int, width: int, height: int, frame: tuple, at: tuple = (0, 0),
+            scale: tuple = (1.0, 1.0)) -> int:
+    """A uObjBg of an RGBA16 image: drawn into the frame rectangle (x, y, w, h, pixels), from image position `at`
+    (texels, wrapping) at `scale` texels a pixel."""
+    x, y, w, h = frame
+    return mem.put(struct.pack(">HHhHHHhHIHBBHHHHiI", round(at[0] * 32), width * 4, x * 4, w * 4, round(at[1] * 32),
+                               height * 4, y * 4, h * 4, 0x80000000 | image, 0, 0, 2, 0, 0, round(scale[0] * 1024),
+                               round(scale[1] * 1024), 0, 0))
+
+
 # ---------------------------------------------------------------- the same scenes through angrylion
 
 def _scenes() -> dict:
@@ -343,10 +425,88 @@ def _scenes() -> dict:
                 _triangles(mem, g, points)
         return scene
 
+    def two_cycle(mem, g):
+        """Two cycles, as the RDP pipelines them: the second combiner cycle mixing in TEXEL1 (the next pixel's
+        TEXEL0), alpha compare on a cut-out alpha (the next pixel's), the first blender cycle mixing with memory (the
+        previous pixel's) and the second with its own, dithered."""
+        gradient(mem, g)
+        texels = b"".join((0xF801 if (s ^ t) & 2 else 0x07FE | ((s + t) & 1)).to_bytes(2, "big")
+                          for t in range(8) for s in range(8))
+        load_texture(g, mem.put(texels), tile=0, tmem=0)
+        load_texture(g, quadrant_texture(mem), tile=1, tmem=64)
+        g(0xFB000000, 0x8040C0A0)                                  # the environment: its alpha mixes TEXEL1 in
+        g(0xF9000000, 0x00000060)                                  # the alpha compare's threshold
+        g.othermode(1 << 20 | 1 << 6 | FILTER | PERSP, 0x4000 | 0x40 | 0x1 | 1 << 22 | 1 << 20)
+        g(0xFC000000 | 1 << 20 | 4 << 15 | 1 << 12 | 4 << 9 | 2 << 5 | 12,
+          15 << 28 | 0 << 24 | 7 << 21 | 7 << 18 | 7 << 15 | 7 << 12 | 7 << 9 | 0 << 6 | 7 << 3 | 0)
+        g(0xD7000002, 0xFFFFFFFF)
+        g(0xD9000000, 0x200004)
+        g(0xDA380007, 0x80000000 | mem.put(matrix([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, -1, 0, 0, -0.2, 0])))
+        g(0xDA380003, 0x80000000 | mem.put(matrix([1.2, 0, 0, 0, 0, 0.9, 0.3, 0, 0, 0, 1, 0, 0.1, 0, -1.6, 1])))
+        q = [(-1, 1, 0, 0, 0, 0xFFFFFFFF), (1, 1, 0, 8, 0, 0xC0FFFFC0), (1, -1, 0, 8, 8, 0xFFC0FF80),
+             (-1, -1, 0, 0, 8, 0xFFFFC0FF)]
+        _triangles(mem, g, [q[0], q[1], q[2], q[0], q[2], q[3]])
+
+    def copy_scissor(mem, g):
+        """Copy mode against a scissor narrower than the frame: the rectangle's span includes the scissor's
+        right edge, and a rectangle wholly beyond it draws nothing."""
+        gradient(mem, g)
+        load_texture(g, quadrant_texture(mem))
+        g(0xED000000, (200 * 4) << 12 | 180 * 4)
+        g.othermode(NO_DITHER | 2 << 20 | 6 << 9, 0)
+        for x0, x1, y in ((150, 260, 20), (210, 300, 60), (190, 199, 100)):
+            g(0xE4000000 | (x1 * 4) << 12 | (y + 30) * 4, 0 << 24 | (x0 * 4) << 12 | y * 4)
+            g(0xE1000000, 0)
+            g(0xF1000000, 0x10000400)
+
+    def depth_slopes(mem, g):
+        """Depth that barely changes across the triangles (slopes of a fraction of a unit, negative ones too): the
+        RDP's delta z from those slopes' integer parts, and the blender's delta-z shifts from it."""
+        g.zimage()
+        g(0xFF100000 | (W - 1), 0x80000000 | ZB)
+        g.fill(0xFFFC)
+        g.frame()
+        g(0xED000000, (W * 4) << 12 | H * 4)
+        gradient(mem, g)
+        g.othermode(NO_DITHER, 0x4000 | 0x8 | 0x10 | 0x20 | 0x40 | 1 << 22 | 1 << 18)  # force blend, AA, z: IN * IN_A + MEM * MEM_A
+        g(*SHADE)
+        g(0xD9000000, 0x200005)
+        scaled(mem, g)
+        _triangles(mem, g, [(-90, 70, 1, 0, 0, 0xFF2020C0), (85, 40, 0, 0, 0, 0x20FF20C0), (-30, -85, 1, 0, 0, 0x2020FFC0),
+                            (-80, -70, 0, 0, 0, 0xFFFF20C0), (90, -30, 1, 0, 0, 0x20FFFFC0), (10, 90, 0, 0, 0, 0xFF20FFC0)])
+
+    def s2dex(mem, g):
+        """S2DEX2's objects, as RDP commands: a background copied and one scaled (both wrapping round their image),
+        a palette and a 4-bit texture loaded by tile and drawn as a flipped, scaled rectangle, and an RGBA texture
+        loaded as a block and drawn as a sprite turned by the 2D matrix."""
+        gradient(mem, g)
+        g(0xE1000000, 0x80000000 | ucode_data(mem, "S2DEX2"))
+        g(0xDD000FFF, 0)
+        image = mem.put(b"".join(((x * 7 + y * 3) % 31 << 11 | (x * 2) % 31 << 6 | (y * 3) % 31 << 1 | 1).to_bytes(2, "big")
+                                 for y in range(24) for x in range(40)))
+        g.othermode(NO_DITHER | 2 << 20, 0)
+        g(0x0A000000, 0x80000000 | _obj_bg(mem, image, 40, 24, (8, 6, 64, 40), at=(13, 5)))      # G_OBJ_BGRECTCOPY
+        g.othermode(NO_DITHER | 6 << 9, 0)                       # G_TC_FILT: no YUV conversion
+        g(*TEX)
+        g(0x09000000, 0x80000000 | _obj_bg(mem, image, 40, 24, (90, 8, 120, 90), at=(7.5, 3), scale=(0.75, 0.6)))
+        palette = mem.put(b"".join(((i * 2) << 11 | (31 - i * 2) << 6 | (i * 5 % 31) << 1 | (i > 0)).to_bytes(2, "big")
+                                   for i in range(16)))
+        ci4 = mem.put(bytes(((x + y) % 16) << 4 | ((x * 3 + y) % 16) for y in range(8) for x in range(8)))
+        g.othermode(NO_DITHER | 6 << 9 | 2 << 14, 0)               # G_TT_RGBA16
+        g(0x05000000, 0x80000000 | _obj_tlut(mem, palette, 16))
+        g(0x05000000, 0x80000000 | _obj_tile(mem, ci4, 0, 1, 8))
+        g(0x01000000, 0x80000000 | _obj_sprite(mem, 20.5, 120.25, 3, 16, 8, flags=1, fmt=2, siz=0, stride=1))
+        g.othermode(NO_DITHER | 6 << 9, 0)
+        g(0x05000000, 0x80000000 | _obj_block(mem, quadrant_texture(mem), 8, 8))
+        g(0xDC170000, 0x80000000 | mem.put(struct.pack(">iiiihhHH", 56756, -32768, 32768, 56756, 250 * 4, 150 * 4,
+                                                         1024, 1024)))
+        g(0x02000000, 0x80000000 | _obj_sprite(mem, -20, -20, 5, 8, 8))
+
     return {"random": random_triangles(False), "random-aa": random_triangles(True), "shade": shade, "flat": textured(False, False, False), "flat-persp": textured(True, False, False),
             "flat-bilerp": textured(False, True, False), "tilted-point": textured(True, False, True),
             "tilted-bilerp": textured(True, True, True), "depth": depth, "rect": rect, "blend": blend, "fog": fog,
-            "combine": combined, "antialiased": antialiased}
+            "combine": combined, "antialiased": antialiased, "two-cycle": two_cycle, "copy-scissor": copy_scissor,
+            "depth-slopes": depth_slopes, "s2dex": s2dex}
 
 
 SCENES = _scenes()

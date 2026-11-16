@@ -195,21 +195,30 @@ def drawn(program: Path, persp: bool, kind: str = "ci4", *extra: str) -> list[in
     return [int(line, 16) for line in out.split()]
 
 
+def colours(pixels: list[int]) -> list[int]:
+    """16-bit pixels without their low bit, which holds coverage: the textured quad's probes lie on its two
+    triangles' shared diagonal, where each triangle covers part of the pixel and the RDP keeps that coverage."""
+    return [p & ~1 for p in pixels]
+
+
+COLOURS = colours(QUADRANTS)
+
+
 def test_a_4bit_texture_with_perspective_is_sampled_whole(renderer):
     """The car skins' case: each screen quadrant shows its own texture quadrant, not the top-left one stretched."""
-    assert drawn(renderer, True) == QUADRANTS
+    assert colours(drawn(renderer, True)) == COLOURS
 
 
 def test_coordinates_without_perspective_are_taken_at_half_scale(renderer):
     """The menu font's case: doubled coordinates, drawn without perspective correction, cover the texture once."""
-    assert drawn(renderer, False) == QUADRANTS
+    assert colours(drawn(renderer, False)) == COLOURS
 
 
 @pytest.mark.parametrize("kind", ["rgba32block", "rgba32tile"])
 def test_a_32bit_texture_is_read_at_its_tiles_line(renderer, kind):
     """The car shadows' case: a 32-bit texture loaded by LoadBlock or LoadTile into a tile whose line counts two
     bytes a texel reads back row by row, odd rows included."""
-    assert drawn(renderer, True, kind) == QUADRANTS
+    assert colours(drawn(renderer, True, kind)) == COLOURS
 
 
 @pytest.mark.parametrize("kind", ["ci4", "rgba32tile"])
@@ -218,8 +227,8 @@ def test_the_rdps_bilinear_filter_blends_neighbouring_texels(renderer, kind):
     blend of both, where point sampling gives the red one; inside a quadrant's own colour nothing changes. (The
     odd-row probes lie a sixtieth of a texel from a quadrant's edge, so the filter rightly tints them.)"""
     pixels = drawn(renderer, True, kind, "bilerp")
-    assert pixels[0:8:2] == QUADRANTS[0:8:2]
-    assert drawn(renderer, True, kind)[8] == 0xF801  # point sampling: the red texel
+    assert colours(pixels[0:8:2]) == COLOURS[0:8:2]
+    assert colours(drawn(renderer, True, kind))[8] == 0xF800  # point sampling: the red texel
     red, green, blue = pixels[8] >> 11 & 31, pixels[8] >> 6 & 31, pixels[8] >> 1 & 31
     assert 10 <= red <= 21 and 10 <= green <= 21 and blue == 0, hex(pixels[8])
 
@@ -231,7 +240,7 @@ def test_fog_blends_the_fog_colour_by_the_rsps_fog_alpha(renderer):
     pixels = drawn(renderer, True, "ci4", "fog")
     red, green, blue = pixels[0] >> 11 & 31, pixels[0] >> 6 & 31, pixels[0] >> 1 & 31
     assert 13 <= red <= 18 and green == 0 and 13 <= blue <= 18, hex(pixels[0])
-    assert drawn(renderer, True, "ci4")[0] == 0xF801
+    assert colours(drawn(renderer, True, "ci4"))[0] == 0xF800
 
 
 def test_a_force_blend_that_passes_its_input_draws_it_opaque(renderer):

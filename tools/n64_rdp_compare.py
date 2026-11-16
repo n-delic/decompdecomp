@@ -5,9 +5,9 @@ its own arithmetic. angrylion's RDP renderer reproduces the console's RDP bit fo
 the same RDP commands, the port's is the one that's wrong.
 
 1. Run a port with PORT_RDPDUMP=<folder> and PORT_RDPDUMP_TASKS=<first>-<last>: each of those tasks' RDP commands
-   (as the RSP would send them: triangles as the RDP's triangle commands) are recorded with the game's memory
-   before and after it (NNNNNN.cmds, NNNNNN.before, NNNNNN.after; .after-partial when the task also drew what the
-   RSP doesn't send as commands, S2DEX's backgrounds and sprites).
+   (as the RSP would send them: triangles as the RDP's triangle commands, S2DEX's objects as its loads and
+   rectangles) are recorded with the game's memory before and after it (NNNNNN.cmds, NNNNNN.before, NNNNNN.after,
+   and RDRAM's hidden bits in NNNNNN.hidden).
 2. Run this with that folder and a checkout of angrylion-rdp-plus (https://github.com/ata4/angrylion-rdp-plus): it
    builds angrylion's core into a small program (in --work), replays each task's commands on its memory from
    before, and compares the colour images the task drew with the port's, pixel by pixel. angrylion's code is under
@@ -257,9 +257,6 @@ def main() -> None:
     for cmds in sorted(args.dumps.glob("*.cmds")):
         stem = cmds.with_suffix("")
         after = stem.with_suffix(".after")
-        partial = not after.exists()
-        if partial:
-            after = stem.with_suffix(".after-partial")
         theirs_path = args.work / f"{stem.name}.angrylion"
         hidden = [str(stem.with_suffix(".hidden"))] if stem.with_suffix(".hidden").exists() else []
         subprocess.run([str(program), str(stem.with_suffix(".before")), str(cmds), str(theirs_path), *hidden], check=True,
@@ -274,10 +271,9 @@ def main() -> None:
         for addr, width, siz, lines in images(cmds.read_bytes()):
             ours, theirs = rgb(ours_mem, addr, width, siz, lines), rgb(theirs_mem, addr, width, siz, lines)
             r = compare(ours, theirs)
-            if not partial:  # what the RSP drew without commands isn't in the replay
-                for k in totals:
-                    totals[k] += r[k]
-            print(f"task {stem.name} image {addr:06X} {width}x{lines}{' (partial)' if partial else ''}: "
+            for k in totals:
+                totals[k] += r[k]
+            print(f"task {stem.name} image {addr:06X} {width}x{lines}: "
                   f"{r['differ_pct']:.2f}% of pixels differ, {r['beyond_pct']:.2f}% by more than one step, "
                   f"largest {r['largest']}, mean {r['mean']:.2f}")
             if args.out:
@@ -288,7 +284,7 @@ def main() -> None:
                 diff = [tuple(min(255, abs(x - y) * 8) for x, y in zip(a, b)) for a, b in zip(ours, theirs)]
                 png(args.out / f"{name}_diff.png", diff, width, lines)
     n = totals["pixels"] or 1
-    print(f"all tasks recorded whole: {100 * totals['differ'] / n:.2f}% of pixels differ, "
+    print(f"all tasks: {100 * totals['differ'] / n:.2f}% of pixels differ, "
           f"{100 * totals['beyond_one_step'] / n:.2f}% by more than one step")
 
 
