@@ -1503,8 +1503,8 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
             limit = missed
             gap = pe.read(end, limit - end)
         if gap and gap.strip(b"\x90") == b"" and i + 1 < len(starts):
-            end = limit  # Visual C++ 6's own padding: part of the compiled function's section too, up to the next
-            # function of the section: past the code the loader maps is the file's padding, no function's own
+            end = limit  # Visual C++ 6's own padding: part of the compiled function's section too, when a function
+            # follows (the program's last keeps its own end, which the moved DLL's reanalysis test expects)
         extents[start] = (code_end, end, entries)
         i += 1
 
