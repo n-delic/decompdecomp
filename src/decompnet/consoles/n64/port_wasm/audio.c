@@ -1,6 +1,7 @@
 /*
  * The N64's sound, in software (port/wasm): the audio tasks libultra's synthesizer sends the RSP (the "ABI 1" command
- * list: ADPCM decoding, resampling, envelopes and mixing in the RSP's 4 KB of data memory), and the audio interface
+ * list: ADPCM decoding, resampling, envelopes and mixing in the RSP's 4 KB of data memory; or n_audio's, the leaner
+ * synthesizer later libultra and NuSystem games use, naudio_task), and the audio interface
  * (AI) the game hands each finished buffer of 16-bit stereo samples to. The resampler's 4-tap table is linear
  * interpolation here, not the microcode's own.
  *
@@ -26,7 +27,9 @@ static void wr32(uint32_t a, uint32_t v) { wr16(a, (uint16_t)(v >> 16)); wr16(a 
 
 /* ---------------------------------------------------------------- the RSP's audio microcode (ABI 1) */
 
-#define DMEM_BASE 0x5C0
+/* where the command list's buffer offsets start in data memory: 0x5C0 for ABI 1, whose microcode keeps its own data
+   below; n_audio's offsets are data memory's own (0x000-0xAA0) */
+static uint32_t DMEM_BASE = 0x5C0;
 static uint8_t dmem[4096 + 64];
 static int16_t ds(uint32_t o) { o &= 0xFFF; return (int16_t)(dmem[o] << 8 | dmem[o + 1]); }
 static void ds_set(uint32_t o, int16_t v) { o &= 0xFFF; dmem[o] = (uint8_t)((uint16_t)v >> 8); dmem[o + 1] = (uint8_t)v; }
@@ -183,9 +186,94 @@ static void envmixer(int init, int aux, uint32_t state) {
 }
 
 static unsigned long unknown_commands;
+
+/* n_audio (libultra's n_al* synthesizer, NuSystem's n_audio): the same operations as ABI 1 with their buffers fixed
+   in data memory instead of set by A_SETBUFF, every voice 184 samples at a time, and other packings, as the game's
+   own n_alAdpcmPull, n_alResamplePull, n_alEnvmixerPull and n_alSavePull write them. Read as ABI 1, its ADPCM
+   command's second word (flags, count and offsets) was taken for the decoder's state address: a racing game's
+   decoder states went to 0x80204170 + n * 0x1000, over an overlay's code, and the game stopped drawing when that code
+   next ran (its sound had been noise all along). */
+enum { N_COUNT = 0x170, N_DECODER_IN = 0x000, N_RESAMPLER_OUT = 0x000, N_MAIN_L = 0x4E0, N_MAIN_R = 0x650,
+       N_AUX_L = 0x7C0, N_AUX_R = 0x930 };
+static void naudio_task(uint32_t list, uint32_t size) {
+    /* a resample's output, by the 2 bits _n_loadOutputBuffer packs from its buffer: N_AL_TEMP_0, 1 and 2 (3 isn't
+       sent) */
+    static const uint16_t outputs[4] = {0x000, 0x170, 0x2E0, 0x000};
+    DMEM_BASE = 0;
+    for (uint32_t pc = 0; pc + 8 <= size; pc += 8) {
+        uint32_t w0 = rd32(list + pc), w1 = rd32(list + pc + 4);
+        uint8_t flags = (uint8_t)(w0 >> 16);
+        switch (w0 >> 24) {
+        case 0x00: break;
+        case 0x01: /* A_ADPCM: state | flags:4 count:12 input's offset:4 output:12, from N_AL_DECODER_IN */
+            st.in = (uint16_t)(N_DECODER_IN + ((w1 >> 12) & 0xF));
+            st.out = (uint16_t)(w1 & 0xFFF);
+            st.count = (uint16_t)((w1 >> 16) & 0xFFF);
+            adpcm(w1 >> 28 & 1, w1 >> 28 & 2, w0 & 0xFFFFFF);
+            break;
+        case 0x02: /* A_CLEARBUFF: where | how many bytes */
+            for (uint32_t i = 0, d = w0 & 0xFFF; i < align(w1 & 0xFFFF, 16); i++) dmem[(d + i) & 0xFFF] = 0;
+            break;
+        case 0x03: /* A_ENVMIXER: the right volume | state; the rest from A_SETVOL, into both buses */
+            st.vol[1] = (int16_t)w0;
+            st.in = N_RESAMPLER_OUT; st.out = N_MAIN_L; st.dry_right = N_MAIN_R;
+            st.wet_left = N_AUX_L; st.wet_right = N_AUX_R; st.count = N_COUNT;
+            envmixer(flags & 1, 1, w1 & 0xFFFFFF);
+            break;
+        case 0x04: /* A_LOADBUFF: bytes:12 where:12 | from */
+            dram_to_dmem(w0 & 0xFFF, w1, (w0 >> 12) & 0xFFF);
+            break;
+        case 0x05: /* A_RESAMPLE: state | flags:2 pitch:16 input:12 output:2 */
+            st.in = (uint16_t)((w1 >> 2) & 0xFFF);
+            st.out = outputs[w1 & 3];
+            st.count = N_COUNT;
+            resample(w1 >> 30 & 1, ((w1 >> 14) & 0xFFFF) << 1, w0 & 0xFFFFFF);
+            break;
+        case 0x06: /* A_SAVEBUFF: bytes:12 where:12 | to */
+            dmem_to_dram(w1, w0 & 0xFFF, (w0 >> 12) & 0xFFF);
+            break;
+        case 0x09: /* A_SETVOL, as n_alEnvmixerPull sends it: the left's target and rate; the left's volume and the
+                      dry and wet amounts; the right's target and rate (its volume comes with A_ENVMIXER) */
+            if (flags == 0x06) { st.vol[0] = (int16_t)w0; st.dry = (int16_t)(w1 >> 16); st.wet = (int16_t)w1; }
+            else { int lr = flags == 0x04 ? 1 : 0; st.target[lr] = (int16_t)w0; st.rate[lr] = (int32_t)w1; }
+            break;
+        case 0x0A: { /* A_DMEMMOVE: from | to:16 bytes:16 */
+            uint32_t from = w0 & 0xFFF, to = w1 >> 16, n = align(w1 & 0xFFFF, 16);
+            for (uint32_t i = 0; i < n; i++) dmem[(to + i) & 0xFFF] = dmem[(from + i) & 0xFFF];
+            break; }
+        case 0x0B: { /* A_LOADADPCM: bytes | from */
+            uint32_t a = ram(w1), n = align(w0 & 0xFFFF, 8) / 2;
+            for (uint32_t i = 0; i < n && i < 128; i++) st.table[i] = (int16_t)rd16(a + 2 * i);
+            break; }
+        case 0x0C: { /* A_MIXER: gain | from:16 to:16, one sub-frame */
+            int16_t gain = (int16_t)w0;
+            uint32_t from = w1 >> 16, to = w1 & 0xFFFF;
+            for (uint32_t i = 0; i < N_COUNT; i += 2) ds_set(to + i, clamp16(ds(to + i) + ((ds(from + i) * gain) >> 15)));
+            break; }
+        case 0x0D: /* A_INTERLEAVE: the main bus's left and right into the output, at 0 */
+            for (uint32_t i = 0, o = 0; i < N_COUNT; i += 2, o += 4) { ds_set(o, ds(N_MAIN_L + i)); ds_set(o + 2, ds(N_MAIN_R + i)); }
+            break;
+        case 0x0F: st.loop = w1 & 0xFFFFFF; break; /* A_SETLOOP */
+        default: /* (A_POLEF too: its n_audio buffers aren't known yet, and no game here has sent it) */
+            if (unknown_commands++ < 4) fprintf(stderr, "audio: n_audio command %02X not known\n", w0 >> 24);
+        }
+    }
+}
+
+/* ABI 1's lists always set a segment (alAudioFrame's first command) and their buffers (A_SETBUFF); n_audio's never */
+static int is_abi1(uint32_t list, uint32_t size) {
+    for (uint32_t pc = 0; pc + 8 <= size; pc += 8) {
+        uint32_t op = rd32(list + pc) >> 24;
+        if (op == 0x07 || op == 0x08) return 1;
+    }
+    return 0;
+}
+
 void port_audio_task(uint32_t task) {
     A = port_memory();
     uint32_t list = ram(rd32(ram(task) + 48)), size = rd32(ram(task) + 52); /* OSTask's data_ptr and data_size */
+    if (!is_abi1(list, size)) { naudio_task(list, size); return; }
+    DMEM_BASE = 0x5C0;
     for (uint32_t pc = 0; pc + 8 <= size; pc += 8) {
         uint32_t w0 = rd32(list + pc), w1 = rd32(list + pc + 4);
         uint8_t flags = (uint8_t)(w0 >> 16);
