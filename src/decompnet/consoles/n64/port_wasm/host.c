@@ -565,6 +565,8 @@ void w2c_env_osSpTaskStartGo(struct w2c_env *e, u32 task) {
     if (type == 1) post_event(EV_DP);
 }
 u32 w2c_env_osSpTaskYielded(struct w2c_env *e, u32 task) { (void)e; (void)task; return 0; }
+/* osSpTaskStart is osSpTaskLoad then osSpTaskStartGo: the task runs whole at StartGo, so loading it is nothing */
+void w2c_env_osSpTaskLoad(struct w2c_env *e, u32 task) { (void)e; (void)task; }
 
 /* ---------------------------------------------------------------- the CPU's own registers */
 
@@ -775,6 +777,9 @@ u32 w2c_env_osMotorInit(struct w2c_env *e, u32 mq, u32 pfs, u32 ch) { (void)e; (
 u32 w2c_env_0x5F_osMotorAccess(struct w2c_env *e, u32 pfs, u32 on) { (void)e; (void)pfs; (void)on; return 1; }
 u32 w2c_env_osPfsIsPlug(struct w2c_env *e, u32 mq, u32 pattern) { (void)e; (void)mq; M[pattern] = 0; return 0; }
 u32 w2c_env_osPfsInitPak(struct w2c_env *e, u32 mq, u32 pfs, u32 ch) { (void)e; (void)mq; (void)pfs; (void)ch; return 1; }
+/* no Controller Pak (osPfsInitPak said so): PFS_ERR_NOPACK, as a console with none answers */
+u32 w2c_env_osPfsNumFiles(struct w2c_env *e, u32 pfs, u32 max, u32 used) { (void)e; (void)pfs; (void)max; (void)used; return 1; }
+u32 w2c_env_osPfsFreeBlocks(struct w2c_env *e, u32 pfs, u32 left) { (void)e; (void)pfs; (void)left; return 1; }
 
 /* ---------------------------------------------------------------- the rest of libultra and libc */
 
@@ -858,6 +863,8 @@ void w2c_env_osMapTLB(struct w2c_env *e, u32 index, u32 pm, u32 va, u32 even, u3
     if (!said++) fprintf(stderr, "osMapTLB(%u, %08X -> %08X/%08X): the port has no TLB, so mapped addresses aren't translated\n", index, va, even, odd);
 }
 u32 w2c_env_memcpy(struct w2c_env *e, u32 d, u32 s, u32 n) { (void)e; memmove(M + d, M + s, n); return d; }
+u32 w2c_env_memset(struct w2c_env *e, u32 d, u32 c, u32 n) { (void)e; memset(M + d, (int)c, n); return d; }
+u32 w2c_env_strlen(struct w2c_env *e, u32 p) { (void)e; return (u32)strlen((char *)M + p); }
 void w2c_env_0x5F_osCopyBytes(struct w2c_env *e, u32 s, u32 d, u32 n) { (void)e; memmove(M + d, M + s, n); }
 u32 w2c_env_abs(struct w2c_env *e, u32 x) { (void)e; return (u32)abs((int32_t)x); }
 /* What stays hand-written assembly in most games, answered by its library name: a game's C calls it by its automatic

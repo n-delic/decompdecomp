@@ -476,3 +476,10 @@ def test_the_sdks_sample_scheduler_runs_as_the_games_own_code():
         assert port._sdk_group(name) is None, name
     assert port._sdk_group("osCreateThread") is not None
     assert re.search(r"\bw2c_env_osSetIntMask\(struct w2c_env", HOST.read_text())
+
+
+def test_the_host_answers_what_a_packed_shooters_boot_calls():
+    """memset, strlen, the Controller Pak's file counts and osSpTaskLoad were each skipped in a packed shooter's boot."""
+    text = HOST.read_text()
+    for name in ("memset", "strlen", "osPfsNumFiles", "osPfsFreeBlocks", "osSpTaskLoad"):
+        assert re.search(rf"\bw2c_env_{name}\(struct w2c_env", text), name
