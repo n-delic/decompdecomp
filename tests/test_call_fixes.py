@@ -68,3 +68,24 @@ def test_each_rewrite_is_judged_and_only_matches_are_kept(project, monkeypatch, 
         "s32 helper(char *arg0) {\n    return draw_hud(arg0);\n}"
     assert net._function("draw_hud", "game")["matched_source"] == "void draw_hud(void) {\n}"  # refused: stays
     assert [r["function"] for r in result["refused"]] == ["draw_hud"]
+
+
+def test_callers_types_are_read_as_the_callees_file_names_them():
+    text = "typedef struct Thing Thing;\nstruct Known { int x; };\n"
+    assert call_fixes.local_type("M2C_UNK", text) == "s32"
+    assert call_fixes.local_type("M2C_UNK16 *", text) == "s16 *"
+    assert call_fixes.local_type("Thing *", text) == "Thing *"
+    assert call_fixes.local_type("CGameObjectInstance *", text) == "void *"
+    assert call_fixes.local_type("BOOL", text) is None
+    assert call_fixes.local_type("unsigned char", text) == "unsigned char"
+    view = call_fixes._local_view(("M2C_UNK", ["CGameObjectInstance *pThis", "BOOL on"]), text)
+    assert view == ("s32", None)
+    assert call_fixes._local_view(("float", ["Other *p"]), text) == ("float", ["void *p"])
+
+
+def test_a_result_falls_back_to_the_trailing_calls_own_type():
+    src = "s32 g(void *a);\nvoid f(void *a) {\n    g(a);\n}\n"
+    assert call_fixes._trailing_type(src, "f", src) == "s32"
+    assert call_fixes._trailing_type("void f(void) {\n    h();\n}\n", "f", "") == "s32"
+    assert call_fixes._trailing_type("u8 h(void);\nvoid f(void) {\n    h();\n}\n", "f",
+                                     "u8 h(void);\n") == "u8"

@@ -13,6 +13,12 @@ So the callee's definition is rewritten to agree with how its callers call it:
 - arguments it declares that no caller passes and its body never reads: dropped;
 - where the callers' prototype has the same number of arguments, its types, whole.
 
+The callers' types are read in the callee's own file: a machine draft's `M2C_UNK` is the s32 it stands for, a pointer
+to a struct the callee's header doesn't define is `void *`, and a type it can't name is left as the callee had it (43
+rewrites of an N64 shooter stopped at `Syntax Error` on its callers' types). When the callers' result type doesn't
+match, the trailing call's own type is tried: callers of 57 input checks declared them `float` while the call they end
+with returns an int in their file, so `return (float)g()` added a conversion and `s32` kept the bytes.
+
 Each rewrite is judged as any rewrite of matched C: the game's own compiler must still build the function's exact
 bytes, or it keeps its C and is listed with why. Nothing else of the C changes, and no caller is touched. The next
 WebAssembly build reads the new definitions, and its list of disagreeing calls shrinks by what was put right.
@@ -195,6 +201,54 @@ def _view(rows, header, callee: str, callers) -> tuple | None:
     return ret, (list(params) if params is not None else None)
 
 
+_M2C = {"M2C_UNK": "s32", "M2C_UNK8": "s8", "M2C_UNK16": "s16", "M2C_UNK32": "s32"}
+_BUILTIN = re.compile(r"(?:void|char|short|int|long|float|double|signed|unsigned|const|volatile|struct|union|enum|"
+                      r"[su](?:8|16|32|64)|f32|f64)")
+
+
+def local_type(t: str, text: str) -> str | None:
+    """`t`, a type the callers wrote, as the callee's file (`text`: its header and source) can name it, or None."""
+    t = " ".join(_M2C.get(w, w) for w in t.replace("*", " * ").split()).replace(" *", "*").replace("*", " *")
+    t = t.replace(" * *", " **").strip()
+    for word in re.findall(r"[A-Za-z_]\w*", t):
+        if _BUILTIN.fullmatch(word):
+            continue
+        if re.search(rf"\b(?:typedef\b[^;]*\b{word}\s*;|(?:struct|union|enum)\s+{word}\s*\{{|#\s*define\s+{word}\b)",
+                     text):
+            continue
+        return "void *" if "*" in t else None
+    return t
+
+
+def _local_view(view, text: str):
+    """The callers' view with each type as the callee's file names it; a parameter list with a type it can't name
+    is dropped (the callee's own types stay)."""
+    if not view:
+        return view
+    ret = local_type(view[0], text) if view[0] else None
+    params = None
+    if view[1] is not None:
+        params = []
+        for p in view[1]:
+            name = _param_name(p)
+            typ = p[:p.rfind(name)].strip() if name else p
+            local = local_type(typ, text)
+            if local is None:
+                params = None
+                break
+            params.append((local + ("" if local.endswith("*") else " ") + name) if name else local)
+    return ret, params
+
+
+def _trailing_type(source: str, name: str, text: str) -> str:
+    """The return type of the call `name` ends with, as its own file declares it (s32 without a prototype)."""
+    found = definition(source, name)
+    call = found and _trailing_call(source, found[2][3], found[2][4])
+    callee = call and re.match(r"[A-Za-z_]\w*", source[call[0]:call[1]])
+    proto = callee and prototype(text, callee.group(0))
+    return (proto and proto[0] != "void" and local_type(proto[0], text)) or "s32"
+
+
 def fix(net, slug: str, log=print) -> dict:
     """Put right every callee the last WebAssembly build lists, judged: {"callees", "kept", "refused"}."""
     from .wasm import play
@@ -228,18 +282,22 @@ def fix(net, slug: str, log=print) -> dict:
         "matched C: rewriting each one's definition the way its callers call it, judged by the game's own compiler")
     refused: dict[str, str] = {}
     kept: dict[int, str] = {}
-    for whole in (True, False):  # the callers' prototype whole first, then only what has to change
+    # the callers' prototype whole first, then only what has to change, then the trailing call's own result type
+    for whole, own_result in ((True, False), (False, False), (False, True)):
         candidates = {}
         for callee, p in sorted(plans.items()):
             row = rows[callee]
-            if row["id"] in kept:
+            if row["id"] in kept or (own_result and not p["takes_result"]):
                 continue
             passed = (min(p["passed"]), max(p["passed"])) if p["passed"] else None
-            view = _view(rows, header, callee, p["callers"])
+            text = header(row) + "\n" + row["matched_source"]
+            view = _local_view(_view(rows, header, callee, p["callers"]), text)
+            if own_result:
+                view = (_trailing_type(row["matched_source"], callee, text), view[1] if view else None)
             new = rewrite(row["matched_source"], callee, view, passed=passed, takes_result=p["takes_result"],
                           whole=whole)
             if new is None or new in candidates.values():
-                if not whole and callee not in refused:
+                if not whole and not own_result and callee not in refused:
                     refused[callee] = "no rewrite states what its callers expect (a result from no trailing call, " \
                                       "or arguments it reads that a caller leaves out)"
                 continue
@@ -247,7 +305,8 @@ def fix(net, slug: str, log=print) -> dict:
         if not candidates:
             continue
         judged = [r for r in rows.values() if r["id"] in candidates]
-        log(f"judging {len(judged)} rewritten definitions" + (" (callers' prototypes)" if whole else ""))
+        log(f"judging {len(judged)} rewritten definitions" + (" (callers' prototypes)" if whole else
+                                                              " (the trailing call's result type)" if own_result else ""))
         broken = dict(net.regression_test(proj, None, sources=candidates, only=judged, header_for=header))
         for fn in judged:
             if fn["name"] in broken:
