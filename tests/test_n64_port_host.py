@@ -156,14 +156,23 @@ def test_the_window_code_agrees_with_sdl3s_own_headers(tmp_path):
     assert done.returncode == 0, done.stderr
 
 
-def _entry_rom(words, entry=0x80000400, region=b"E"):
-    """A homemade ROM: a header naming `entry` and `region`, and an entry routine of `words` at 0x1000."""
+def _entry_rom(words, entry=0x80000400, region=b"E", boot_crc=None):
+    """A homemade ROM: a header naming `entry` and `region`, and an entry routine of `words` at 0x1000. `boot_crc`:
+    the boot code (0x40 to 0x1000) made to have that CRC-32, as a boot chip's has (its last word chosen so)."""
     import struct
+    import zlib
     rom = bytearray(0x1000 + 4 * len(words) + 16)
     rom[8:12] = struct.pack(">I", entry)
     rom[0x3E:0x3F] = region
     for i, w in enumerate(words):
         rom[0x1000 + 4 * i:0x1004 + 4 * i] = struct.pack(">I", w)
+    if boot_crc is not None:  # run the CRC back from the wanted state over the last four bytes
+        state = zlib.crc32(bytes(rom[0x40:0xFFC])) ^ 0xFFFFFFFF
+        want = boot_crc ^ 0xFFFFFFFF
+        for _ in range(32):
+            want = ((want ^ 0xEDB88320) << 1 | 1) & 0xFFFFFFFF if want & 0x80000000 else want << 1 & 0xFFFFFFFF
+        rom[0xFFC:0x1000] = struct.pack("<I", want ^ state)
+        assert zlib.crc32(bytes(rom[0x40:0x1000])) == boot_crc
     return bytes(rom)
 
 
@@ -184,21 +193,26 @@ UP_TO_END = [_lui(T0, 0x800B), _addiu(T0, T0, 0x1000), _lui(T1, 0x800C), _sw0(0,
              _bne(T0, T1, -3), 0, 0x0C000000 | (0x80001234 >> 2) & 0x3FFFFFF, 0]
 
 
-@pytest.mark.parametrize("words,entry,region,want", [
-    (COUNT_DOWN, 0x80025C00, b"E", "80025C00 80026E00 8004AAA0 93840 1"),
-    (COUNT_DOWN, 0x80000400, b"P", "80000400 80026E00 8004AAA0 93840 0"),
-    (UP_TO_END, 0x80000400, b"B", "80000400 80001234 800B1000 F000 2"),
+@pytest.mark.parametrize("words,entry,region,want,crc", [
+    (COUNT_DOWN, 0x80025C00, b"E", "80025C00 80026E00 8004AAA0 93840 1", None),
+    (COUNT_DOWN, 0x80000400, b"P", "80000400 80026E00 8004AAA0 93840 0", None),
+    (UP_TO_END, 0x80000400, b"B", "80000400 80001234 800B1000 F000 2", None),
+    # made for CIC-6103, whose header names an entry 0x100000 above where the game runs (a racing game's 0x80100400)
+    (COUNT_DOWN, 0x80100400, b"P", "80000400 80026E00 8004AAA0 93840 0", 0x0B050EE0),
+    (COUNT_DOWN, 0x80200400, b"E", "80000400 80026E00 8004AAA0 93840 1", 0xACC8580A),  # CIC-6106: 0x200000
 ])
-def test_any_games_boot_is_read_from_its_entry_routine(tmp_path, words, entry, region, want):
+def test_any_games_boot_is_read_from_its_entry_routine(tmp_path, words, entry, region, want, crc):
     """The host named one racing game's first C function (boot_start) and where its image ended (0xA7FE0); another
-    game loads at 0x80025C00 and starts at `main`. The entry routine says both, and the header the TV type."""
+    game loads at 0x80025C00 and starts at `main`. The entry routine says both, and the header the TV type. A game
+    made for the CIC-6103 or 6106 boot chip runs below its header's entry: taken at its word, a racing game's code
+    was loaded a megabyte off and its functions with no C had no instructions for the interpreter."""
     cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     if not cc:
         pytest.skip("no C compiler")
     text = HOST.read_text()
     code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
                 text.index("/* the console's RAM as the boot leaves it")]
-    (tmp_path / "rom.bin").write_bytes(_entry_rom(words, entry, region))
+    (tmp_path / "rom.bin").write_bytes(_entry_rom(words, entry, region, crc))
     source = tmp_path / "t.c"
     source.write_text("#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n"
                       "static uint8_t *rom; static size_t rom_size;\n" + code + """

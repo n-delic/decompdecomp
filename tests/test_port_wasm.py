@@ -591,3 +591,21 @@ def test_a_global_two_files_define_links_once():
     assert rewrite_global(types, "@seq = hidden global i32 0, align 4").startswith("@seq = weak hidden global")
     assert rewrite_global(types, "@s = internal global i32 0, align 4").startswith("@s = internal global")
     assert rewrite_global(types, "@e = external global i32, align 4") == "@e = external global i32, align 4"
+
+
+def test_a_game_with_no_c_yet_builds_from_its_recompiled_c(tmp_path):
+    """A racing game newly imported: none of its functions has C, so N64Recomp's C runs them all. The WebAssembly
+    module still needs an object (wasm-ld: no input files) that keeps the stack pointer the host sets and imports
+    from the host's environment, which wasm2c's instantiate then takes (host.c)."""
+    from decompnet.port.wasm.build import EMPTY_UNIT
+    repo = tmp_path / "game"
+    (repo / "progress" / "src").mkdir(parents=True)
+    (repo / "progress" / "decompdecomp.json").write_text(json.dumps({"layout": [], "symbols": []}))
+    out = tmp_path / "build"
+    chosen = gather(repo, out)
+    assert list(chosen) == [EMPTY_UNIT]
+    text = (out / "src" / EMPTY_UNIT).read_text()
+    assert "char buffer[16];" in text and "osCreateThread(0, 0, 0, 0, 0, 0)" in text
+    (repo / "progress" / "src" / "race_update.c").write_text("void race_update(void) {}\n")
+    assert list(gather(repo, out)) == ["race_update.c"]  # the first matched function takes its place
+    assert not (out / "src" / EMPTY_UNIT).exists()
