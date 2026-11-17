@@ -632,3 +632,42 @@ def test_lines_are_drawn(renderer, tmp_path, ucode):
     assert out.pixel(W * 3 // 4, H // 2 - 3) == (0, 0, 0)
     assert out.pixel(W // 4, H // 4) == (0, 31, 0)
     assert out.pixel(W // 4 + 3, H // 4) == (0, 0, 0)
+
+
+def test_fill_mode_fills_the_scissors_right_edge_and_frames_taller_than_240_lines(renderer, tmp_path):
+    """A PAL racing game's frames are 320 x 264 with its scissor ending at 319: the console fills column 319 (in
+    fill mode the scissor's right edge is drawn, as in copy mode) and the lines below 240. The renderer left both
+    unfilled (last frame's pixels showed there)."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame()
+    g(0xED000000, (319 * 4) << 12 | 264 * 4)                 # the scissor: 0 to 319 by 0 to 264
+    g.othermode(3 << 20, 0)
+    g(0xF7000000, 0xF801F801)                                 # red
+    g(0xF6000000 | (319 * 4) << 12 | 263 * 4, 0)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.r16(FB + (10 * W + 319) * 2) == 0xF801
+    assert out.r16(FB + (255 * W + 100) * 2) == 0xF801
+
+
+def test_a_32_bit_block_loaded_past_tmems_low_half_wraps_inside_its_halves(renderer, tmp_path):
+    """A racing game loads its sky's second RGBA32 texture at TMEM 0x180 (byte 0xC00): red and green wrap into the
+    low half, blue and alpha into the high, where the tile reads them. The load once stopped at the low half's end
+    and loaded nothing, and the sky drew with the other texture's texels."""
+    mem = Memory()
+    g = Gfx(mem)
+    g.frame().fill(0)
+    g.othermode(NO_DITHER | 2 << 20, 0)                       # copy mode: the texel as it is
+    image = mem.put((0x00FF00FF).to_bytes(4, "big") * 16)     # green, 4 x 4 RGBA32
+    g(0xFD180000, 0x80000000 | image)
+    g(0xF5180180, 7 << 24)
+    g(0xF3000000, 7 << 24 | 15 << 12 | 0x200)                 # LoadBlock: 16 texels
+    g(0xF5180000 | 1 << 9 | 0x180, 0)                         # tile 0: RGBA32, line 1, TMEM 0x180
+    g(0xF2000000, (3 * 4) << 12 | 3 * 4)
+    g.othermode(NO_DITHER, 0)
+    g(*TEX)
+    _texrect(g, 0, 0, 0, 4, 4)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.pixel(1, 1) == (0, 31, 0)
