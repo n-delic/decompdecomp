@@ -13,7 +13,7 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
      still matches);
    - real names for functions and data -> `rename_symbol` (by address: matches never break);
    - tricks -> `add_note`.
-6. `compile_and_diff` says when to move on: no better score in N compiles in a row, where N is the function's own number: its brief names it, and every compile_and_diff result shows where you stand, as in "no better in 2/6 compiles (move on at 6)".
+6. `compile_and_diff` says when to move on: no better score in N compiles in a row, where N is the function's own number: its brief names it, and every compile_and_diff result shows where you stand, as in "no better in 2/6 compiles (move on at 6)"; one claim gets at most twice N compiles, then compile_and_diff stops and release_function goes through.
    Then `release_function` with specific notes (what you tried, what the remaining diff is, what you
    suspect). The next agent starts from your best attempt.
 

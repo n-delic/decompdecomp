@@ -219,10 +219,17 @@ const CLAIM_ORDER_TEXT = {
   closest: "Helpers take the functions closest to matching first (near misses).",
   untried: "Helpers take functions nobody has tried yet first, then the smallest.",
 };
+/* What goes before or after the order whatever it is (claim_row and Network.claim_row's queue): the setting only
+   said the order, and a helper handed a starred function or a twin looked like it ignored it (#286). */
+const CLAIM_ORDER_EXCEPTIONS = "Before the order: a starred function (★); a function another one waits for, or one "
+  + "whose wait is over; and, in every order but largest and closest first, a function the game has more than once "
+  + "(up to 400 instructions). A function given up on often goes to the strongest model at work. After the order: a "
+  + "function waiting for another to match, and one this helper, or a helper of the same model, gave back lately. A "
+  + "helper that names a function gets it.";
 function renderClaimOrder(ov) {
   const value = (ov && ov.claim_order) || "";
   $("claimOrder").value = value;
-  $("claimOrderHint").textContent = CLAIM_ORDER_TEXT[value] || CLAIM_ORDER_TEXT[""];
+  $("claimOrderHint").textContent = `${CLAIM_ORDER_TEXT[value] || CLAIM_ORDER_TEXT[""]} ${CLAIM_ORDER_EXCEPTIONS}`;
 }
 async function setClaimOrder(order) {
   const before = (S.ov && S.ov.claim_order) || "";

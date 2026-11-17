@@ -10,7 +10,16 @@ import time
 
 import pytest
 
-from decompnet.network import NetworkError, stale_note, stall_budget
+from decompnet.network import (
+    NetworkError,
+    compile_limit,
+    move_on_brief,
+    no_best_text,
+    stale_note,
+    stall_budget,
+    state_text,
+    tried_brief,
+)
 
 from .test_claims import _game, _held
 
@@ -338,3 +347,77 @@ def test_a_brief_leaves_out_notes_that_only_say_an_open_function_matches(tmp_pat
     section = "\n".join(net.notes_for_brief(net.store.one("SELECT * FROM functions WHERE id=?", fid)))
     assert "no work needed" not in section and "1 note saying it already matches left out" in section
     assert "[out of date" in section and "func_0206d4f8" in section
+
+
+def test_one_claim_gets_twice_the_move_on_number_of_compiles(tmp_path):
+    # #286: the move-on number counts compiles in a row without a better score, so an agent whose score kept moving,
+    # or whose own instructions said to keep going, never reached it; one spent a 5-hour plan limit on one function
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    limit = compile_limit(stall_budget(10))
+    assert limit == 2 * stall_budget(10)
+    _attempts(net, a, "f", list(range(100, 100 - (limit - 1), -1)))  # each one better: never told to move on
+    assert net._over_compile_limit(a, "f", "game") is None  # one compile left
+    assert "Compiles left on this claim: 1" in net.stall_note(_fid(net, "f"), a.id)
+    _attempts(net, a, "f", [50])
+    assert "that was the last compile this claim gets" in net.stall_note(_fid(net, "f"), a.id)
+    res = net.attempt(a, "f", "int f(void) { return 1; }", "game")  # refused before anything is built
+    assert res["score"] is None and not res["matched"]
+    assert res["text"].startswith("Not compiled: you've compiled f 6 times since you claimed it")
+    assert net.store.one("SELECT COUNT(*) AS n FROM attempts")["n"] == limit  # not recorded
+    # the release goes through at once, though the last compiles kept getting better
+    assert net.release_function(a, "f", "better each time, never matched", "game").startswith("Released f")
+    assert _held(net, a) is None
+
+
+def test_the_compile_limit_is_per_claim_and_not_for_the_apps_own_workers(tmp_path):
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    a, _ = net.local_agent("a")
+    auto, _ = net.local_agent("autopilot")
+    net.claim_row(auto, "game", "f")
+    _attempts(net, auto, "f", [None] * 20)
+    assert net._over_compile_limit(auto, "f", "game") is None
+    net.release(auto, "f", "drafts done", "game")
+    net.claim_row(a, "game", "f")
+    _attempts(net, a, "f", [None] * compile_limit(stall_budget(10)))
+    assert net._over_compile_limit(a, "f", "game")
+    net.release_function(a, "f", "nothing builds", "game")
+    with net.store.tx() as db:  # (a later claim of its: the old compiles are before it)
+        db.execute("UPDATE attempts SET created_at=created_at-60")
+        db.execute("UPDATE events SET created_at=created_at-3600 WHERE kind='release'")
+    net.claim_row(a, "game", "f")
+    assert net._over_compile_limit(a, "f", "game") is None
+
+
+def test_agents_read_compiles_that_left_no_best_as_such_not_as_not_started():
+    # #286 (after #288, the GUI's half): a function whose 12 compiles all failed to build read "not started" in
+    # find_similar, and its brief said nothing of them
+    assert no_best_text(0) == "not started"
+    assert no_best_text(1) == "1 compile, no best yet"
+    assert no_best_text(12) == "12 compiles, no best yet"
+    row = {"status": "open", "best_score": None, "attempts": 12}
+    assert state_text(row) == "12 compiles, no best yet"
+    assert state_text(row | {"attempts": 0}) == "not started"
+    assert state_text(row | {"best_score": 40}) == "best 40"
+    assert state_text(row | {"status": "matched"}) == "matched"
+    assert state_text(row | {"status": "asm"}) == "set aside"
+    assert tried_brief(row) == ["tried before: 12 compiles, no best yet (the notes below say what was tried, if any)"]
+    assert tried_brief(row | {"attempts": 0}) == []
+    assert tried_brief(row | {"best_score": 40}) == []  # the best attempt's section says it
+    assert tried_brief(row | {"status": "matched"}) == []
+
+
+def test_the_brief_says_a_function_was_compiled_with_no_best_yet(tmp_path):
+    net, _ = _game(tmp_path, [("f", 10, "open")])
+    a, _ = net.local_agent("a")
+    _attempts(net, a, "f", [None] * 12)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET attempts=12")
+    fn = net.store.one("SELECT * FROM functions WHERE name='f'")
+    assert "tried before: 12 compiles, no best yet" in tried_brief(fn)[0]
+    assert "one claim gets at most 6 compiles" in move_on_brief(fn)
+
+
+def _fid(net, name):
+    return net.store.one("SELECT id FROM functions WHERE name=?", name)["id"]

@@ -550,6 +550,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
         the move-on rule), it answers once with what to try instead; call it again to release anyway. A release with
         no compile since you claimed it is not taken, however often you ask: compile first, or end your session.
+        After twice the move-on number of compiles in one claim, compile_and_diff takes no more and this goes through.
 
         Args:
             function: the function you hold

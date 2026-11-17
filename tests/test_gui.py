@@ -245,6 +245,8 @@ def test_the_project_can_choose_which_functions_helpers_take_first(gui):
     assert order["saved"] == {"url": "/api/claim-order", "body": {"slug": "a", "order": "untried"},
                               "value": "untried"}
     assert order["reverted"] == "untried" and "nobody has tried yet" in order["text"]
+    # #286: it names what comes before or after the order, whatever it is
+    assert "starred function" in order["text"] and "names a function gets it" in order["text"]
     assert any("read-only" in note for note in order["notes"])
 
 

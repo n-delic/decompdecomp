@@ -280,3 +280,15 @@ def test_only_a_few_autopilots_compile_at_once_across_projects(tmp_path, monkeyp
     while states["c"]["state"] == "running" and time.time() < deadline:
         time.sleep(0.01)
     assert states["c"]["state"] == "done" and "c" in tried and "d" not in tried
+
+
+def test_compiles_that_built_nothing_are_not_not_started_to_agents(net):
+    # #286: a function whose 12 compiles all failed to build read "not started" in find_similar, and its brief said
+    # nothing of them (#288 fixed the GUI's badge and map tip)
+    slug = "demo-quest-64"
+    agent, _ = net.local_agent("tester-286")
+    assert "not started" in net.find_similar(slug, "func_80000674")  # its look-alike, func_80000700: nobody compiled
+    assert "COMPILE ERROR" in net.compile_and_diff(agent, "func_80000700", "this is not C", slug)
+    said = net.find_similar(slug, "func_80000674")
+    assert "func_80000700" in said and "1 compile, no best yet" in said and "not started" not in said
+    assert "tried before: 1 compile, no best yet" in net.get_function("func_80000700", slug)

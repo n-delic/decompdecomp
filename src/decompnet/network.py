@@ -42,6 +42,12 @@ MODEL_FAMILIES = {"opus": "claude", "sonnet": "claude", "haiku": "claude", "fabl
 STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
 STALL_BUDGET_BIGGEST = 10
 STALL_LOOKBACK = 16  # compiles stall_note reads back: more than the biggest budget
+# The most compiles one claim gets on a function, as a multiple of its move-on number (compile_limit). The move-on
+# number counts compiles in a row without a better score, so an agent whose score kept moving, or whose own
+# instructions said to keep trying, never reached it: one spent a 5-hour plan limit on one function (#286). Past
+# this, compile_and_diff refuses and release_function goes through. decompdecomp's own workers (MACHINE_AGENTS) are
+# not limited.
+COMPILE_LIMIT = 2
 # The game's own code (an SQL condition on `functions`): not what the project sets aside as library code, middleware
 # or the C runtime (config/<version>/set_aside.json, objdiff.game_measures; while its scope is the game's own code).
 # (meta's set_aside, as store.py's triggers copy it: the counts' index holds it)
@@ -357,14 +363,24 @@ def stall_budget_text() -> str:
     names it, every compile_and_diff result shows where you stand against it, release_function goes by it): the
     prompt used to say "3 compiles ... up to 10", and agents guessed which applied."""
     return ("no better score in N compiles in a row, where N is the function's own number: its brief names it, and "
-            "every compile_and_diff result shows where you stand, as in \"no better in 2/6 compiles (move on at 6)\"")
+            "every compile_and_diff result shows where you stand, as in \"no better in 2/6 compiles (move on at 6)\"; "
+            "one claim gets at most twice N compiles, then compile_and_diff stops and release_function goes through")
 
 
 def move_on_brief(fn) -> str:
     """The brief's line naming the function's own move-on number (the one compile_and_diff counts against)."""
     after = stall_budget(fn["n_insns"] or 0)
     return (f"move on after {after} compiles in a row without a better score (this function's number, by its size; "
-            f"each compile_and_diff result shows the count)")
+            f"each compile_and_diff result shows the count); one claim gets at most {compile_limit(after)} compiles")
+
+
+def tried_brief(fn) -> list[str]:
+    """The brief's line for an open function compiled before with no best score: the best-attempt section says
+    how many compiles it had only when there is a best, so a function whose 12 compiles all failed to build said
+    nothing of them (#286)."""
+    if fn["status"] != "open" or fn["best_score"] is not None or not fn["attempts"]:
+        return []
+    return [f"tried before: {no_best_text(fn['attempts'])} (the notes below say what was tried, if any)"]
 
 
 def normalized_source(source: str) -> str:
@@ -382,6 +398,29 @@ def stall_line(since: int, after: int) -> str:
     """Where an agent stands against a function's move-on number, as every compile result and the release push-back
     word it (one wording, so the two can't seem to disagree)."""
     return f"no better in {since}/{after} compiles (move on at {after})"
+
+
+def compile_limit(after: int) -> int:
+    """The most compiles one claim gets on a function: COMPILE_LIMIT times its move-on number (stall_budget)."""
+    return COMPILE_LIMIT * after
+
+
+def no_best_text(compiles: int) -> str:
+    """An open function with no best score, as agents read it (find_similar, the brief): "not started" only when
+    nobody compiled it. The GUI's noBest (static/js/base.js) says the same. A compile that doesn't build gives no
+    score, so a function with 12 failed compiles read "not started" (#286). Not "none built": a fork's compile that
+    built and scored but broke a matched neighbour is undone without becoming the best."""
+    return f"{compiles} compile{'' if compiles == 1 else 's'}, no best yet" if compiles else "not started"
+
+
+def state_text(r) -> str:
+    """A function's state in one word or so, for find_similar's list: matched, best score, set aside, or
+    no_best_text."""
+    if r["status"] == "matched":
+        return "matched"
+    if r["status"] == "asm":
+        return "set aside"
+    return f"best {r['best_score']}" if r["best_score"] is not None else no_best_text(r["attempts"] or 0)
 
 
 def _ago(ts: float | None) -> str:
@@ -1016,6 +1055,7 @@ class Network:
                          f"(each compile_and_diff renews it)")
         if fn["status"] != "matched":
             lines.append(move_on_brief(fn))
+            lines += tried_brief(fn)
         if fn["status"] == "matched":
             lines += [f"MATCHED by {self._agent_name(fn['matched_agent_id'])} {_ago(fn['matched_at'])}:",
                       "```c", fn["matched_source"].strip(), "```"]
@@ -1206,11 +1246,18 @@ class Network:
         if not st["compiles"]:
             return ""
         since, after = st["no_better"], st["after"]
+        left = compile_limit(after) - st["compiles"] if st["claimed_at"] is not None else None
+        if left is not None and left <= 0:
+            return (f"\n\n⏭ Move on: that was the last compile this claim gets ({compile_limit(after)}, twice the "
+                    f"move-on number). release_function with notes (what you tried, what's left) now; then claim "
+                    "the next one.")
+        limit = (f"\nCompiles left on this claim: {left} (then compile_and_diff stops and release_function goes "
+                 "through)." if left is not None and left <= after else "")
         if since < after:
-            return f"\n\nMove-on count: {stall_line(since, after)}."
+            return f"\n\nMove-on count: {stall_line(since, after)}.{limit}"
         return (f"\n\n⏭ Move on: {stall_line(since, after)}. release_function with notes (what you tried, what's "
                 "left) goes through now; then claim the next one: functions that match mostly do in the first few "
-                "tries, and this one keeps your best attempt for whoever comes next.")
+                f"tries, and this one keeps your best attempt for whoever comes next.{limit}")
 
     def claim_progress(self, agent: Agent, fn) -> dict | None:
         """This agent's claim on `fn` as release_function judges it: stall_status, the same count compile_and_diff
