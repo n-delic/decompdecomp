@@ -106,3 +106,29 @@ def test_play_leaves_out_the_libultra_the_project_proves_and_keeps_what_runs_as_
     # osEPiStartDma: already named, unmatched (a twin from another game); race_draw: the game's own, unmatched
     assert play.library(net, "game", log=lambda line: None) == {"func_80030000.c", "_Printf.c", "func_80032000.c",
                                                                  "osEPiStartDma.c"}
+
+
+def test_play_leaves_out_the_saves_c_for_functions_the_project_doesnt_count_as_matched(tmp_path):
+    """A save copied while it was being rewritten after a recheck still held the C of functions the recheck had
+    found wrong (a racing game's switch whose cases followed another game's jump table): its car selection said the
+    car broke its class's rules, and it never raced. That C goes; the functions run as the game's own code."""
+    import json
+
+    from decompnet.app.engine import RomNetwork
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)",
+                         ("game", "game", "mips", 1, str(tmp_path), json.dumps({"kind": "rom", "platform": "n64"}))
+                         ).lastrowid
+    with net.project_store(pid).tx() as db:
+        for name, status in (("func_80030000", "matched"), ("func_80031000", "open"), ("func_80032000", "open")):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status) VALUES(?,?,?,?,?)",
+                       (pid, name, 64, 16, status))
+    (tmp_path / "progress" / "src").mkdir(parents=True)
+    (tmp_path / "progress" / "decompdecomp.json").write_text("{}")
+    for name in ("func_80030000", "func_80031000"):  # func_80032000: open, with no C in the save
+        (tmp_path / "progress" / "src" / f"{name}.c").write_text("void f(void) {}\n")
+    said = []
+    assert play.unverified(net, "game", log=said.append) == {"func_80031000.c"}
+    assert said and "1 functions" in said[0]

@@ -57,6 +57,10 @@ def _demangle(c: str) -> str:
 # ---------------------------------------------------------------- recomp.h, for the port's memory
 
 LOADS = '''
+/* a loop's safe point (loops): every 1024th time round, a thread the retrace woke that outranks this one takes over,
+   as the interpreter lets it every 64K instructions */
+void port_safe_point(void);
+static inline void port_recomp_poll(void) { static __thread unsigned n; if (!(++n & 0x3FF)) port_safe_point(); }
 uint64_t port_io_load(uint64_t addr);
 uint64_t port_io_store(uint64_t addr, uint64_t value);
 /* the console's memory as the port keeps it: big-endian, at the console's own addresses from `rdram` (the host's
@@ -84,6 +88,20 @@ static inline void port_sb(uint8_t *rdram, gpr a, uint8_t v) { *port_at(rdram, a
 #define STORE_BU STORE_B
 #define SD(val, offset, reg) { STORE_W((offset) + 4, reg, (gpr)(val) >> 0); STORE_W((offset) + 0, reg, (gpr)(val) >> 32); }
 '''
+
+
+LABEL = re.compile(r"^(L_[0-9A-Fa-f]+):", re.M)
+GOTO = re.compile(r"\bgoto (L_[0-9A-Fa-f]+);")
+
+
+def loops(text: str) -> str:
+    """Each backward branch (a loop) of N64Recomp's C with a safe point (port_recomp_poll) before it. The host
+    switches threads only at safe points, and recompiled C had none in its loops: a racing game's boot thread
+    (priority 10) waits for a flag the higher threads set, and spinning in its recompiled C it never let them run, so
+    the native build booted to its first audio task and drew nothing."""
+    where = {m.group(1): m.start() for m in LABEL.finditer(text)}
+    return GOTO.sub(lambda m: f"{{ port_recomp_poll(); goto {m.group(1)}; }}"
+                    if where.get(m.group(1), len(text)) < m.start() else m.group(0), text)
 
 
 def stores(text: str) -> str:
@@ -335,7 +353,7 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
     for f, text in sources.items():
         text = only(text, drop & set(DEFINED.findall(text)))
         target = out / f"rec_{f.stem}.c"
-        _write(target, stores(rename(text)))
+        _write(target, stores(rename(loops(text))))
         units.append(target)
     for f in list(out.glob("rec_*.c")):
         if f not in units:
@@ -371,7 +389,7 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
         elif kind == "host":
             body = call_host(library)
         else:
-            body = f'port_recomp_missing(0x{vram:08X}u, "{name}");'
+            body = f'port_recomp_missing(0x{vram:08X}u, "{name}", rdram, ctx);'
         lines.append(f"void {r}(uint8_t* rdram, recomp_context* ctx) {{ (void)rdram; {body} }}")
     # what N64Recomp declared but left to its runtime, and nothing above covers: the host's if it has it
     covered = {f"R_{c or name}" for _, name, c, _ in choice.values()}
@@ -382,7 +400,7 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
         if library in hosted:
             body = call_host(library)
         else:
-            body = f'port_recomp_missing(0, "{n}");'
+            body = f'port_recomp_missing(0, "{n}", rdram, ctx);'
         lines.append(f"void R_{n}(uint8_t* rdram, recomp_context* ctx) {{ (void)rdram; {body} }}")
     lines[first:first] = [f"{hosted[n][1]} {hosted[n][0]}(struct w2c_env *" + "".join(f", {t}" for t in hosted[n][2]) + ");"
                           for n in sorted(used)]
@@ -479,7 +497,31 @@ static void port_recomp_decomp(uint32_t vram, uint8_t *rdram, recomp_context *ct
     case 4: ctx->f0.u32l = out[2]; ctx->f0.u32h = out[3]; break;
     }
 }
-static void port_recomp_missing(uint32_t vram, const char *name) {
+/* the host's interpreter (mips.c), for a function the recompiler never saw or couldn't translate: one the split doesn't list (a racing
+   game's, reached through a pointer, starts where the function before it was thought to end), so its recompiled
+   code's call stopped the game. The interpreter runs it from the ROM with the registers as recompiled code left
+   them, and gives them back. */
+void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs);
+int port_mips_has_code(uint32_t address);
+static __thread uint32_t port_recomp_unlisted;
+static void port_recomp_interpret(uint8_t *rdram, recomp_context *ctx) {
+    (void)rdram;
+    uint32_t entry = port_recomp_unlisted;
+    uint64_t r[32]; uint32_t f[32];
+    gpr *g = &ctx->r0; fpr *fp = &ctx->f0;
+    for (int i = 0; i < 32; i++) r[i] = (uint64_t)g[i];
+    for (int i = 0; i < 32; i += 2) { f[i] = fp[i].u32l; f[i + 1] = fp[i].u32h; } /* (odd: the even's high half) */
+    r[31] = (uint64_t)(int64_t)(int32_t)0xFFFFFFF0u; /* mips.c's RETURN: back here when it returns */
+    uint64_t ra = g[31];
+    port_mips_run(entry, r, f);
+    for (int i = 1; i < 32; i++) g[i] = (gpr)r[i];
+    g[31] = ra;
+    for (int i = 0; i < 32; i += 2) { fp[i].u32l = f[i]; fp[i].u32h = f[i + 1]; }
+}
+static void port_recomp_missing(uint32_t vram, const char *name, uint8_t *rdram, recomp_context *ctx) {
+    /* one N64Recomp couldn't translate: the interpreter runs it from the ROM, as the browser build does (skipped,
+       a racing game's race clock ran but nothing on the track moved) */
+    if (vram && port_mips_has_code(vram)) { port_recomp_unlisted = vram; port_recomp_interpret(rdram, ctx); return; }
     static int said;
     if (said++ < 20) fprintf(stderr, "%%s (%%08X): no C for it, and the recompiler couldn't translate it: skipped\n", name, vram);
 }
@@ -495,7 +537,10 @@ void do_break(uint32_t vram) { fprintf(stderr, "recompiled code reached a break 
 void recomp_syscall_handler(uint8_t *rdram, recomp_context *ctx, int32_t vram) {
     (void)rdram; (void)ctx; fprintf(stderr, "recompiled code reached a syscall at %%08X\n", (uint32_t)vram);
 }
-void pause_self(uint8_t *rdram) { (void)rdram; fprintf(stderr, "recompiled code paused its thread\n"); }
+/* `j .`, the idle thread's end: parked by the host for good, as the interpreter's (host.c); the boot code has no
+   thread to park and goes on */
+void port_idle_forever(void);
+void pause_self(uint8_t *rdram) { (void)rdram; port_idle_forever(); fprintf(stderr, "recompiled code paused its thread\n"); }
 '''
 
 LOOKUPS = r'''
@@ -505,6 +550,12 @@ recomp_func_t *get_function(int32_t vram) {
     unsigned lo = 0, hi = %(tables)d;
     while (lo < hi) { unsigned mid = (lo + hi) / 2; if (port_recomp_table[mid].vram < (uint32_t)vram) lo = mid + 1; else hi = mid; }
     if (lo < %(tables)du && port_recomp_table[lo].vram == (uint32_t)vram) return port_recomp_table[lo].func;
+    if (port_mips_has_code((uint32_t)vram)) {
+        static int said;
+        if (said++ < 8) fprintf(stderr, "recompiled code called %%08X, which no listed function starts: interpreted\n", (uint32_t)vram);
+        port_recomp_unlisted = (uint32_t)vram;
+        return port_recomp_interpret;
+    }
     fprintf(stderr, "recompiled code called %%08X, where no function is\n", (uint32_t)vram);
     exit(4);
 }

@@ -133,6 +133,38 @@ def library(net, slug: str, log=print) -> set[str]:
     return out
 
 
+def unverified(net, slug: str, log=print) -> set[str]:
+    """The save's files of C for functions the project doesn't count as matched: the build leaves them out, and
+    those functions run as the game's own code instead (recompiled, or interpreted from the player's ROM). A save
+    copied while it was being rewritten after a recheck still had the C of 296 functions the recheck had found
+    wrong: a racing game's switch matched another game's jump table, not its own, and its car selection said every
+    car broke its class's rules, so it never raced. A save made elsewhere (a contributor's, an older one) can carry
+    the same. The project's own matches are what the save holds when it's whole, so this leaves nothing out then."""
+    from ...app.saves import _source_file
+
+    with net.progress.view():
+        proj = net._project(slug)
+    root = default_save(net, slug)
+    rows = net.project_store(proj["id"]).all("SELECT name FROM functions WHERE project_id=? AND status!='matched'",
+                                             proj["id"])
+    out = {_source_file(r["name"]) for r in rows}
+    if root is not None:
+        out = {name for name in out if (root / "progress" / "src" / name).is_file()}
+    if out:
+        log(f"leaving out the save's C for {len(out)} functions the project doesn't count as matched: they run as "
+            "the game's own code")
+    return out
+
+
+def default_save(net, slug: str) -> Path | None:
+    """The save repository the build reads (game), or None if there's none to look in."""
+    from ...app import saves
+    try:
+        return save_repository(saves.default_folder(net, slug))
+    except Exception:  # noqa: BLE001  (no save: nothing of it to leave out)
+        return None
+
+
 def library_names(net, slug: str) -> dict[str, str]:
     """{a function's name: its library name} for library code with no matched C, found by library detection: its
     calls go to the library's name, which the host answers by name in any game (a racing game's bzero kept its
@@ -162,7 +194,7 @@ def inputs(net, slug: str, log=print) -> dict:
     """What the build takes from the project besides its save: the library the host provides (`leave_out`), library
     code built from ultralib's C (`library_c`), library code's own names (`library_names`), and the recompiled C for
     functions with no C yet (`recomp`)."""
-    return {"leave_out": library(net, slug, log), "library_c": library_c(net, slug),
+    return {"leave_out": library(net, slug, log) | unverified(net, slug, log), "library_c": library_c(net, slug),
             "library_names": library_names(net, slug), "recomp": recompiled(net, slug, log),
             "function_headers": function_headers(net, slug)}
 
