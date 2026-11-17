@@ -457,3 +457,11 @@ int main(void) {
     assert done.returncode == 0, done.stderr
     out = subprocess.run([str(tmp_path / "si")], capture_output=True, text=True).stdout.split()
     assert out == ["1", "1", "1", "801234C0", "801234C0", "0", "0"]  # not busy; the AI's registers aren't the SI's
+
+
+def test_the_host_answers_libultras_underscored_labels():
+    """A packed shooter's C called `_bzero` and `__osSetHWIntrRoutine`, libultra's own labels, and the host stubbed
+    both to nothing: its clears didn't clear."""
+    text = HOST.read_text()
+    for name in ("0x5Fbzero", "0x5Fbcopy", "0x5Fbcmp", "0x5F_osSetHWIntrRoutine"):
+        assert re.search(rf"\bw2c_env_{name}\(struct w2c_env", text), name
