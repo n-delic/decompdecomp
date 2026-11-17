@@ -239,6 +239,11 @@ The host boots any game as the console does, from the ROM: the boot chip's copy 
 entry address the header names, then what the game's entry routine at 0x1000 does, read rather than run (its BSS,
 zeroed, from its first `sw $zero` and the loop's count or end; its first C function, from its jump, called by
 address; host.c `read_boot`). The header's region sets osTvType and the retrace: PAL 50 a second, NTSC and MPAL 60.
+The boot chip is known by its boot code's CRC-32 (`boot_chips`): the 6103 and 6106 start the game below the
+header's entry address, and the host leaves what each chip's code leaves, which games check against piracy: the part
+of the boot code copied into RAM to run from (RAM 0x200 on), the RSP's memories filled (and 6103 or 6105 in the
+first word of its instruction memory) and osCicId. The cartridge also reads directly at 0xB0000000. A racing game
+missing any of these turned its screen upside down, mirrored its tracks or paused in its world.
 The hand-written library code most games keep in assembly (`bzero`, `bcopy`, `bcmp`, the TLB, status-register and
 interrupt helpers, `osGetCount`) is the host's by its library name: the build renames a call by a function's
 automatic name to the name library detection found (`play.library_names`). What only one game needs, such as

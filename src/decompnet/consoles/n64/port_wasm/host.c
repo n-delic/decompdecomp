@@ -443,11 +443,16 @@ enum { EV_SP = 4, EV_SI = 5, EV_AI = 6, EV_VI = 7, EV_PI = 8, EV_DP = 9 };
 #endif
 int port_ai_register(uint32_t addr, int write, uint32_t value, uint32_t *read); /* audio.c */
 static int si_register(uint32_t addr, int write, uint32_t value, uint32_t *read); /* below, with the PIF */
+static uint32_t rom32(size_t o); /* below, with the boot */
 uint64_t port_io_load(uint64_t addr) {
     if (addr < 0xA0800000u) return addr - 0x20000000u; /* RAM, uncached: the same RAM */
     if (addr == SP_STATUS) { wbe32(IO_SCRATCH, 1); return IO_SCRATCH; } /* halted: a task finishes at once */
     uint32_t v;
     if (port_ai_register((uint32_t)addr, 0, 0, &v) || si_register((uint32_t)addr, 0, 0, &v)) { wbe32(IO_SCRATCH, v); return IO_SCRATCH; }
+    if (addr >= 0xB0000000u && addr < 0xBFC00000u) { /* the cartridge, read directly (a racing game checks its own word) */
+        wbe32(IO_SCRATCH, rom32((size_t)((addr - 0xB0000000u) & ~3u)));
+        return IO_SCRATCH + (addr & 3);
+    }
     return IO_FAR(addr);
 }
 uint64_t port_io_store(uint64_t addr, uint64_t value) {
@@ -898,11 +903,39 @@ static uint32_t boot_crc(void) {
     }
     return ~crc;
 }
+/* What each boot chip's boot code leaves behind, read from its instructions (the PAL chips' are the same code):
+   where it starts the game; the part of itself it copies into RAM to run from there (ROM offsets, and where in RAM);
+   the word it fills the RSP's two memories with; the ID it leaves in the first word of the RSP's instruction memory
+   and in osCicId (0x80000310), 0 for none. Games check these as the console leaves them: a racing game made for the
+   6103 turns its screen upside down when the cartridge's word at 0x578 isn't its own, mirrors its tracks when RAM
+   0x200 isn't the boot code's, and pauses in its world when the instruction memory doesn't start with 6103. The
+   6106's copy is scrambled as it goes, so it has none here yet. */
+static const struct boot_chip {
+    uint32_t crc, entry_less, copy_from, copy_to, copy_at, sp_fill, id;
+} boot_chips[] = {
+    {0x90BB6CB5u, 0, 0x4C0, 0x774, 0, 0, 0},                  /* CIC-6102 (7101) */
+    {0x009E9EA3u, 0, 0x4C0, 0x750, 0, 0, 0},                  /* CIC-7102 */
+    {0x0B050EE0u, 0x100000u, 0x4C0, 0x768, 0, 0xFFFFFFFFu, 6103}, /* CIC-6103 (7103) */
+    {0x98BC2C86u, 0, 0x554, 0x888, 4, 0xA4002000u, 6105},       /* CIC-6105 (7105) */
+    {0xACC8580Au, 0x200000u, 0, 0, 0, 0, 0},                  /* CIC-6106 (7106) */
+};
+static const struct boot_chip *boot_chip(void) {
+    uint32_t crc = boot_crc();
+    for (size_t i = 0; i < sizeof boot_chips / sizeof *boot_chips; i++)
+        if (boot_chips[i].crc == crc) return &boot_chips[i];
+    return NULL;
+}
 static uint32_t boot_entry(void) {
-    uint32_t entry = rom32(8), crc = boot_crc();
-    if (crc == 0x0B050EE0u) return entry - 0x100000u; /* CIC-6103 (7103) */
-    if (crc == 0xACC8580Au) return entry - 0x200000u; /* CIC-6106 (7106) */
-    return entry;
+    const struct boot_chip *chip = boot_chip();
+    return rom32(8) - (chip ? chip->entry_less : 0);
+}
+/* RAM and the RSP's memories as the boot chip's code leaves them (above) */
+static void boot_leftovers(void) {
+    const struct boot_chip *chip = boot_chip();
+    if (!chip) return;
+    for (uint32_t o = chip->copy_from; o < chip->copy_to; o += 4) wbe32(0x80000000u + chip->copy_at + o - chip->copy_from, rom32(o));
+    for (uint32_t a = 0xA4000000u; a < 0xA4002000u; a += 4) wbe32(a, chip->sp_fill); /* DMEM, then IMEM */
+    if (chip->id) { wbe32(0xA4001000u, chip->id); wbe32(0x80000310u, chip->id); } /* osCicId */
 }
 static int read_boot(void) {
     uint32_t r[32] = {0}, pre[32] = {0};
@@ -942,6 +975,7 @@ static int boot_memory(void) {
     if (boot.bss_size && boot.bss >= 0x80000000u && (uint64_t)boot.bss + boot.bss_size <= 0x80800000u)
         memset(M + boot.bss, 0, boot.bss_size);
     else LOG("the entry routine's BSS wasn't read: memory after the image keeps the ROM's bytes");
+    boot_leftovers();
     wbe32(SP_STATUS, 1);              /* the RSP is halted until a task starts it */
     wbe32(0x80000300, (uint32_t)boot.tv); /* osTvType */
     wbe32(0x80000308, 0xB0000000);    /* osRomBase */

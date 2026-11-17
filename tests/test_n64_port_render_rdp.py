@@ -113,6 +113,31 @@ def test_a_fully_covered_pixel_passes_the_depth_test_only_when_nearer(renderer, 
     assert out.pixel(W // 2, H // 2) == (31, 0, 0)
 
 
+def test_an_interpenetrating_pixel_in_front_by_less_than_its_step_is_not_drawn(renderer, tmp_path):
+    """ZMODE_INTER: a fully covered pixel in front of a fully covered one, but within delta z, passes with its
+    coverage scaled by how far in front it is, counted in delta z's power of two. A green rectangle 16 depth units in
+    front of a red one with a delta z of 2048 is in the same step: its coverage scales to nothing and the red stays.
+    Treated as opaque, as the renderer did, the nearer green was drawn (one pixel at a kart's edge in a racing game)."""
+    mem = Memory()
+    g = Gfx(mem)
+    _start(mem, g)
+    g.zimage()
+    g(0xFF100000 | (W - 1), 0x80000000 | ZB)
+    g.fill(0xFFFC)
+    g.frame()
+    g(0xED000000, (W * 4) << 12 | H * 4)
+    # one cycle, primitive depth (G_ZS_PRIM), Z_CMP, Z_UPD, IMAGE_READ, anti-aliasing, interpenetrating
+    g.othermode(NO_DITHER, 0x4 | 0x10 | 0x20 | 0x40 | 0x8 | 1 << 10)
+    g(*combine(15, 15, 31, 3, 7, 7, 7, 3))                     # the primitive colour
+    for colour, depth, dz in ((0xFF0000FF, 0x4040, 8), (0x00FF00FF, 0x4030, 0x800)):
+        g(0xFA000000, colour)
+        g(0xEE000000, (depth // 8) << 16 | dz // 8)          # G_SETPRIMDEPTH, in eighths
+        g(0xF6000000 | (140 * 4) << 12 | 140 * 4, (100 * 4) << 12 | 100 * 4)
+    g(0xDF000000)
+    out, _ = run(renderer, mem, tmp_path, g.end())
+    assert out.pixel(120, 120) == (31, 0, 0)
+
+
 def test_the_combiners_one_is_256_and_255_is_not_one(renderer, tmp_path):
     """The combiner multiplies 8-bit values with 1 as 256: a shade of 136 by a primitive colour of 255 is
     (136 * 255 + 128) >> 8 = 135, which cuts to 16 in 5 bits. Taking 255 as 1, as the renderer did, kept 136: 17."""

@@ -710,8 +710,11 @@ static HOT Color blender(Color in, Color mem, Color shade, Color shade1, int ble
    what's there when it's that close (`same`). Opaque and interpenetrating surfaces pass by those rules or over the
    farthest depth; transparent ones when nearer; decals only within delta z on both sides (a shadow, a mark on a
    wall). Passing anything within delta z of nearer, as this did, let the farther of two crossing triangles show
-   along their crossing. */
-static HOT int depth_passes(float z, float dz, float mem_z, float mem_dz, int overflow, int *same) {
+   along their crossing. Interpenetrating surfaces differ from opaque ones where a fully covering pixel is in front
+   but within delta z: it passes with its coverage scaled by how far in front it is (in delta z's units, as the
+   console's 4 bits keep it), so where two surfaces cross the nearer one fades in. Taken as opaque, the edge of a
+   racing game's kart drew one pixel the console leaves (its coverage scaled to none). */
+static HOT int depth_passes(float z, float dz, float mem_z, float mem_dz, int overflow, int *same, int *cvg) {
     int e = 0;
     while (e < 7 && mem_z >= (float)z_ranges[e + 1].base) e++;
     int raw_mem = (int)(mem_dz / 8), coplanar = 0;
@@ -720,12 +723,19 @@ static HOT int depth_passes(float z, float dz, float mem_z, float mem_dz, int ov
         if (raw_mem != 0x8000) { raw_mem <<= 1; if (raw_mem < (16 >> e)) raw_mem = 16 >> e; }
         else { coplanar = 1; raw_mem = 0xFFFF; }
     }
-    int both = raw_mem | (int)(dz / 8), top = 1;
-    while (top * 2 <= both) top <<= 1;
+    int both = raw_mem | (int)(dz / 8), top = 1, exp = 0;
+    while (top * 2 <= both) { top <<= 1; exp++; }
     float dzmax = (float)(top * 8);
     int farther = coplanar || z + dzmax >= mem_z, nearer = coplanar || z - dzmax <= mem_z, max = mem_z >= 0x3FFFF;
     *same = farther;
     switch ((mode_l >> 10) & 3) {
+    case 1: /* interpenetrating */
+        if (z < mem_z && farther && overflow) {
+            int zi = z <= 0 ? 0 : z >= 0x3FFFF ? 0x3FFFF : (int)z, coeff = (((int)mem_z >> exp) - (zi >> exp)) & 15;
+            *cvg = (coeff * *cvg >> 3) & 15;
+            return 1;
+        }
+        return max || (overflow ? z < mem_z : nearer);
     case 2: return z < mem_z || max;              /* transparent */
     case 3: return farther && nearer && !max;     /* decal */
     default: return max || (overflow ? z < mem_z : nearer);
@@ -769,7 +779,8 @@ static HOT void plot(int x, int y, float z, Color shade, const Texels *tx, int d
        edge a step or more off the console's. */
     if (mode_l & 0x2000) /* ALPHA_CVG_SEL: the coverage as the alpha */
         c.a = by255[(mode_l & 0x1000) ? (scaled > 255 ? 255 : scaled) : cvg >= 8 ? 255 : cvg << 5];
-    if (depth && zcmp && !depth_passes(z, dz, mem_z, mem_dz, memcvg + cvg >= 8, &same_surface)) return;
+    int overflow = memcvg + cvg >= 8; /* (before the depth test scales an interpenetrating pixel's coverage) */
+    if (depth && zcmp && !depth_passes(z, dz, mem_z, mem_dz, overflow, &same_surface, &cvg)) return;
     int ac = (int)(mode_l & 3), compared = C8(c.a);
     if (ac && two_next) { /* two cycles: the next pixel's first-cycle alpha, by its coverage, this one's dither */
         IC nx = combine(0, (IC){0, 0, 0, 0}, TOI(two_next->tx.t0), TOI(two_next->tx.t1), TOI(two_next->sh), C8(two_next->tx.lod), 0);
@@ -783,7 +794,6 @@ static HOT void plot(int x, int y, float z, Color shade, const Texels *tx, int d
     if (ac == 3 && compared < C8(noise())) return;   /* or a random threshold (G_AC_DITHER) */
     if (aa && !cvg) return;
     Color mem = imrd ? read_pixel(a) : (Color){0, 0, 0, by255[224]};
-    int overflow = memcvg + cvg >= 8;
     { /* the blender's delta-z shifts (blender_cycle) */
         int code = dz_code(dz), mem_code = 0;
         while (mem_code < 15 && (float)(8 << mem_code) < mem_dz) mem_code++;
