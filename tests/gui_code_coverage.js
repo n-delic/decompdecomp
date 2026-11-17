@@ -69,3 +69,29 @@ assert.equal(classify({status:'asm'}),'asm');
   row.dataset.state='dismissed';checkbox.onchange();assert.equal(row.hidden,true);
   checkbox.checked=true;checkbox.onchange();assert.equal(row.hidden,false);
 })().catch(e=>{console.error(e);process.exitCode=1;});
+
+// Add missed functions: shown only where the console can search, one click at a time, its result in the status line.
+(async()=>{
+  for (const fail of [false,true]) {
+    const els={},calls=[];let starts=0,finishes=0,buttons;
+    const get=id=>els[id]??={hidden:false,querySelectorAll:()=>[],scrollIntoView(){}};
+    const c={supported:true,audit_state:'needs_review',incomplete_entries:[],unresolved_candidates:0,raw_bytes:0,completion_audit_required:false,audit_revision:'r'};
+    const ctx={S:{slug:'game'},$:get,Set,esc:s=>String(s),bytes:String,setHtml:(e,s)=>e.html=s,openFn(){},renderCodeAudit(){},
+      renderStats(){},renderNext(){},beginWork(log,what,list){starts++;buttons=list;return ()=>finishes++;},showJobError:(e,s)=>e.error=s,
+      api:async(url,options)=>{calls.push([url,options]);if(fail&&url==='/api/missed-functions')throw Error('busy');
+        return url==='/api/missed-functions'?{job:'m'}:{slug:'game'};},
+      followJob:async()=>({added:[{name:'func_80001010',vram:0x80001010,size:16}],message:'Added 1 function the split had left as data.'})};
+    vm.createContext(ctx);vm.runInContext(code,ctx);
+    ctx.renderCodeCoverage({slug:'game',code_coverage:c});
+    assert.equal(get('missedFunctionsBtn').hidden,true,'hidden where the console has no search');
+    ctx.renderCodeCoverage({slug:'game',code_coverage:c,missed_functions:true});
+    assert.equal(get('missedFunctionsBtn').hidden,false);
+    const click=get('missedFunctionsBtn').onclick();
+    assert.match(get('coverageAuditStatus').innerHTML,/spin-dot.*functions the split left as data/);
+    assert.ok(buttons.includes(get('missedFunctionsBtn')),'the button is disabled while it works');
+    await click;for(let i=0;i<5;i++)await Promise.resolve();
+    assert.equal(calls[0][0],'/api/missed-functions');assert.equal(calls[0][1].method,'POST');assert.equal(starts,1);assert.equal(finishes,1);
+    if (fail) {assert.match(get('coverageAuditStatus').textContent,/Search failed: busy/);assert.equal(get('coverageAuditLog').error,'busy');}
+    else {assert.equal(get('coverageAuditStatus').textContent,'Added 1 function the split had left as data.');assert.equal(calls[1][0],'/api/project?slug=game');}
+  }
+})().catch(e=>{console.error(e);process.exitCode=1;});

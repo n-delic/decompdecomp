@@ -264,8 +264,8 @@ def play(net, slug: str, log=print) -> dict:
            "PORT_ENTRIES": str(rom.parent / RUNTIME_ENTRIES)}
     if (unlisted := unlisted_entries(net, slug)):
         log(f"playing has found {len(unlisted)} addresses the game runs that no function starts "
-            f"({', '.join(f'{a:08X}' for a in unlisted[:4])}{'…' if len(unlisted) > 4 else ''}): reimport the game "
-            "to add them as functions")
+            f"({', '.join(f'{a:08X}' for a in unlisted[:4])}{'…' if len(unlisted) > 4 else ''}): Add missed functions "
+            "(the project's Code coverage review) adds them as functions, without a reimport")
     log_file = open(out / "play.log", "w", encoding="utf-8")
     proc = subprocess.Popen([str(program), str(rom), "0"], cwd=out, env=env, stdout=log_file, stderr=subprocess.STDOUT,
                             stdin=subprocess.DEVNULL)

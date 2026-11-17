@@ -1736,6 +1736,8 @@ function renderCodeCoverage(ov) {
   const review=$("coverageReviewBtn"); review.hidden=!c.supported || !candidates;
   review.textContent=`Review ${candidates} candidate${candidates===1 ? "" : "s"}`;
   review.onclick=()=>{ $("codeAuditPanel").open=true; $("codeAuditPanel").scrollIntoView({behavior:"smooth",block:"start"}); };
+  const missed=$("missedFunctionsBtn");missed.hidden=!ov.missed_functions;
+  missed.onclick=()=>addMissedFunctions();
   const key=ov.slug+":"+c.audit_revision;
   if (c.completion_audit_required && !coverageAuditRunning && !completionAuditAttempts.has(key)) {
     completionAuditAttempts.add(key);
@@ -1761,6 +1763,24 @@ async function runCoverageAudit() {
   } catch(error) {if(S.slug===slug) {status.textContent="Scan failed: "+error.message+". You can try again.";showJobError(log,error.message);}} finally {coverageAuditRunning=false;finish();}
 }
 
+/* The import's search for functions the split left as data, run on the project as it is (no reimport). */
+async function addMissedFunctions() {
+  const slug=S.slug, button=$("missedFunctionsBtn"), log=$("coverageAuditLog"), status=$("coverageAuditStatus");
+  status.hidden=false;
+  status.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Looking for functions the split left as data…';
+  const finish=beginWork(log,"Finding missed functions",[button,$("coverageAuditBtn")],"Search complete.");
+  try {
+    const {job}=await api("/api/missed-functions",{method:"POST",body:{slug}});
+    const result=await followJob(job,log);
+    if (S.slug!==slug) return;
+    status.textContent=result.message;
+    if (result.added?.length) {
+      const ov=await api("/api/project?slug="+encodeURIComponent(slug));
+      if (S.slug!==slug) return;
+      S.ov=ov;renderStats(ov);renderNext(ov);
+    }
+  } catch(error) {if(S.slug===slug) {status.textContent="Search failed: "+error.message+". You can try again.";showJobError(log,error.message);}} finally {finish();}
+}
 
 function reviewCodeExtension(name,start,size) {
   const slug=S.slug;

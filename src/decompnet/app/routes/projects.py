@@ -433,6 +433,9 @@ def register(app: App) -> None:
         from .. import rom_gap_audit
         return {"job": jobs.start("code-audit",lambda log:rom_gap_audit.run(net,slug,log))}
 
+    def p_missed_functions(slug, request, data):
+        return {"job": jobs.start("missed-functions", lambda log: net.find_missed_functions(slug, log), project=slug)}
+
     def p_recover_code(slug, request, data):
         from ..reviewed_code import run
         return {"job":jobs.start('reviewed-code-recovery',lambda log:run(net,slug,data.get('changes'),log))}
@@ -1210,7 +1213,7 @@ def register(app: App) -> None:
         "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]),
         "/api/project-layout": (p_project_layout, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["GET", "POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
-        "/api/recover-code": (p_recover_code, ["POST"]),
+        "/api/recover-code": (p_recover_code, ["POST"]), "/api/missed-functions": (p_missed_functions, ["POST"]),
         "/api/data-regions": (p_data_regions, ["GET", "POST"]),
         "/api/agent-reviews": (g_agent_reviews, ["GET"]), "/api/agent-review": (p_agent_review, ["POST"]),
         "/api/code-audit-results": (g_code_audit, ["GET"]), "/api/code-audit-review": (p_code_audit_review, ["POST"]),
