@@ -688,6 +688,9 @@ READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
                        "port_readiness", "get_data_unit", "check_for_pc", "watch_in_emulator"})
 
+# Tools whose work is judging a candidate: the check before them reads only what a judge reads.
+JUDGE_TOOLS = frozenset({"compile_and_diff", "compile_patch", "compile_variants", "compile_family", "try_local_repairs"})
+
 ROM_ONLY = {"watch_in_emulator","compare_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
              "standins_for"}
@@ -863,7 +866,9 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
     # Enter before this wrapper's sync, not only inside the engine's attempt.
     with _tool_foreground(net, agent, slug, name, args):
         progress = getattr(net, 'progress', None)
-        if progress is not None:progress.sync(slug, force=True)
+        if progress is not None:
+            # (a compile reads only the manifest and the headers: Progress.check_for_judging)
+            progress.check_for_judging(slug) if name in JUDGE_TOOLS else progress.sync(slug, force=True)
         after = name not in READ_ONLY
         before = progress.publish_token(slug) if progress is not None and after else None
         with progress.checked_around(slug, after=after) if progress is not None else nullcontext():

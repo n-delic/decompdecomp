@@ -1279,7 +1279,7 @@ class Progress:
         around = getattr(self.local, "checked_around", None)
         covered = around is not None and around[0] == slug
         if synchronize and not covered:
-            self.sync(slug, force=True)
+            self.check_for_judging(slug)
         previous = getattr(self.local, "judging", None)
         self.local.judging = (slug, self.revisions.get(slug, 0))
         before = self.publish_token(slug) if synchronize else None
@@ -1289,6 +1289,59 @@ class Progress:
             self.local.judging = previous
         if synchronize and not (covered and around[1]) and not self.unchanged(slug, before):
             self.sync(slug, force=True)
+
+    # What a judge reads from the saved folder: the manifest (its compiler, flags and layout) and the headers. Another
+    # function's file is not an input to this judgment.
+    JUDGE_FOLDERS = ("include",)
+
+    def check_for_judging(self, slug: str) -> bool:
+        """The check before a judge: only what it reads, when the last full check is on record.
+
+        A forced check stats every saved file (2,100 on an N64 game: 0.3 to 1.8 s a compile under load). The folder's
+        change watch spares that, but on macOS it stops for the session once a fence takes over 2 s, which a busy
+        machine does. A judge's result depends only on the manifest and the headers, so those are stat'ed (with the
+        folders' own times, which a pull or a new file changes) and compared with the last acknowledged check; any
+        difference, or no check on record, runs the full one. An in-place edit of another function's file is read by
+        the next full check (a tool that isn't a compile, the periodic deep autosave check every 15 s); the folder's
+        revision still guards a result against a pull made meanwhile (judging, check_result)."""
+        self._check_paused(slug)  # (a pause the user chose holds judges as it holds the full check)
+        cached = self.signatures.get(slug)
+        if cached is not None and slug not in self.rechecking and slug not in self.blocked:
+            try:
+                folder = saves.default_folder(self.net, slug)
+                wanted = {*saves.TOP_FILES, "src", "best", *self.JUDGE_FOLDERS}
+                kept = tuple(item for item in cached if item[0] in wanted
+                             or item[0].split("/", 1)[0] in self.JUDGE_FOLDERS)
+                if kept and self._judge_signature(folder) == kept:
+                    return False
+            except (OSError, NetworkError):
+                pass
+        return self.sync(slug, force=True)
+
+    @classmethod
+    @phase('progress_stat')
+    def _judge_signature(cls, folder: Path) -> tuple:
+        """_signature's items for the manifest, the folders, and the files in JUDGE_FOLDERS only."""
+        items = []
+        for name in (*saves.TOP_FILES, "src", "best", "include"):
+            path = folder / name
+            try:
+                info = os.stat(path, follow_symlinks=False)
+            except OSError:
+                items.append((name, None))
+                continue
+            items.append((name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
+            if name in cls.JUDGE_FOLDERS and stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                with os.scandir(path) as entries:
+                    children = sorted((e for e in entries if not e.name.endswith(".tmp")), key=lambda e: e.name)
+                for child in children:
+                    try:
+                        info = child.stat(follow_symlinks=False)
+                    except FileNotFoundError:
+                        return ()  # (removed meanwhile: the full check reads it)
+                    items.append((f"{name}/{child.name}", info.st_mtime_ns, info.st_size, info.st_mode,
+                                  info.st_ctime_ns, info.st_ino))
+        return tuple(items)
 
     def publish_token(self, slug: str):
         """The project's progress_dirty token: the database's triggers move it whenever a column the saved files are
