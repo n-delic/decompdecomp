@@ -348,3 +348,34 @@ def test_the_host_defines_every_function_the_kit_says_it_provides():
                for n in re.findall(r"\bw2c_env_(\w+)\(struct w2c_env", text)}
     provided = set(port.LIBULTRASHIP) | set(port.GLUE_PROVIDES) | set(port._OS_INTERNAL)
     assert sorted(provided - defined - NOT_FUNCTIONS - NEVER_RUN) == []
+
+
+def test_a_games_own_serial_code_moves_the_pif_through_the_registers(tmp_path):
+    """A racing game whose __osSiRawStartDma library detection didn't name ran its own: it wrote SI_DRAM_ADDR and
+    SI_PIF_ADDR_WR64B / _RD64B, nothing answered, and its main thread waited for the SI event for ever. The host's
+    registers now move the PIF's 64 bytes as its own __osSiRawStartDma does (which raises the event)."""
+    cc = shutil.which("cc") or shutil.which("clang")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static uint32_t si_dram;"):text.index("u32 w2c_env_osContStartQuery")]
+    harness = tmp_path / "si.c"
+    harness.write_text("#include <stdint.h>\n#include <stdio.h>\ntypedef uint32_t u32;\nstruct w2c_env;\n"
+                       "static int calls[2]; static u32 where[2];\n"
+                       "u32 w2c_env_0x5F_osSiRawStartDma(struct w2c_env *e, u32 direction, u32 dram) {\n"
+                       "    (void)e; calls[direction]++; where[direction] = dram; return 0;\n}\n" + code + r"""
+int main(void) {
+    uint32_t status = 1;
+    int mine = si_register(0xA4800000u, 1, 0x801234C0u, NULL);        /* SI_DRAM_ADDR */
+    si_register(0xA4800010u, 1, 0x1FC007C0u, NULL);                   /* SI_PIF_ADDR_WR64B: RAM to the PIF */
+    si_register(0xA4800004u, 1, 0x1FC007C0u, NULL);                   /* SI_PIF_ADDR_RD64B: the PIF to RAM */
+    si_register(0xA4800018u, 0, 0, &status);                          /* SI_STATUS */
+    printf("%d %d %d %08X %08X %u %d\n", mine, calls[1], calls[0], where[1], where[0], status,
+           si_register(0xA4500004u, 0, 0, &status));
+    return 0;
+}
+""")
+    done = subprocess.run([cc, "-o", str(tmp_path / "si"), str(harness)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    out = subprocess.run([str(tmp_path / "si")], capture_output=True, text=True).stdout.split()
+    assert out == ["1", "1", "1", "801234C0", "801234C0", "0", "0"]  # not busy; the AI's registers aren't the SI's

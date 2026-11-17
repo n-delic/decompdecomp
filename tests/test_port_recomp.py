@@ -123,6 +123,8 @@ def test_each_function_runs_as_the_games_c_the_hosts_or_recompiled(tmp_path):
     assert "RECOMP_FUNC void R_func_80003000(" in rec and "R_func_80001000(rdram, ctx);" in rec
     assert "void R_func_80001000(uint8_t* rdram, recomp_context* ctx) {" not in rec and "R_osSendMesg(rdram" in rec
     assert "STORE_W(0X4, ctx->r4, ctx->r2);" in rec
+    # PORT_RECOMP_CALLS and PORT_RECOMP_CHANGED: each recompiled function tells the host it was entered, when asked
+    assert "if (port_recomp_watch) port_recomp_entered(0x80003000u, ctx); R_func_80003000_body(rdram, ctx);" in rec
     bridges = (out / "bridges.c").read_text()
     assert "void R_func_80001000(uint8_t* rdram, recomp_context* ctx) { (void)rdram; port_recomp_decomp(0x80001000u" in bridges
     assert "w2c_env_osSendMesg(NULL, (uint32_t)ctx->r4, (uint32_t)ctx->r5, (uint32_t)ctx->r6)" in bridges
@@ -139,6 +141,7 @@ def test_each_function_runs_as_the_games_c_the_hosts_or_recompiled(tmp_path):
     assert "void pause_self(uint8_t *rdram) { (void)rdram; port_idle_forever();" in bridges
     # into the game's C: $a0-$a3 in adapt.py's register words, for a callee that passes on what it doesn't declare
     assert "for (int i = 0; i < 4; i++) STORE_W(4 * i, 0x90000u, w[i]);" in bridges
+    assert 'getenv("PORT_RECOMP_CALLS")' in bridges and 'getenv("PORT_RECOMP_CHANGED")' in bridges
     cc = shutil.which("cc") or shutil.which("clang")
     if cc:
         for unit in prepared["units"]:
@@ -169,3 +172,32 @@ def test_a_function_named_as_the_c_programs_entry_is_renamed():
     text = "RECOMP_FUNC void main(uint8_t* rdram, recomp_context* ctx) {\n    main(rdram, ctx);\n}\n"
     renamed = recomp.DEFINED.sub(lambda m: f"RECOMP_FUNC void R_{m.group(1)}(uint8_t* rdram, recomp_context* ctx)", text)
     assert recomp.CALL.sub(lambda m: f"R_{m.group(1)}", renamed).count("R_main") == 2
+
+
+def test_a_hardware_register_gets_the_value_and_memory_its_big_endian_bytes(tmp_path):
+    """A racing game's audio interface was told its buffer lengths byte-swapped (0xFC0 as 0xC00F0000): the word store
+    swapped the value for memory before handing it to the register too. The length the game read back overflowed its
+    sample count and its audio command list, which wrote over the synthesizer."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no C compiler")
+    (tmp_path / "t.c").write_text("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\ntypedef uint64_t gpr;\n"
+                                  + recomp.LOADS + r"""
+static uint64_t told[4]; static int n;
+uint64_t port_io_store(uint64_t addr, uint64_t value) { (void)addr; told[n++] = value; return 48; }
+uint64_t port_io_load(uint64_t addr) { (void)addr; return 48; }
+void port_safe_point(void) {}
+int main(void) {
+    static uint8_t ram[64];
+    port_sw(ram, 0xA4500004u, 0xFC0);
+    port_sh(ram, 0xA4500008u, 0x1234);
+    port_sw(ram, 8, 0x11223344u);
+    printf("%llX %llX %02X%02X%02X%02X\n", (unsigned long long)told[0], (unsigned long long)told[1],
+           ram[8], ram[9], ram[10], ram[11]);
+    return 0;
+}
+""")
+    done = subprocess.run([cc, str(tmp_path / "t.c"), "-o", str(tmp_path / "t")], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    out = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True).stdout.split()
+    assert out == ["FC0", "1234", "11223344"]

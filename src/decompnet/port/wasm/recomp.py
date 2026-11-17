@@ -41,6 +41,7 @@ STACK_SIZE = 0x40000
 STORE = re.compile(r"^(\s*)MEM_(W|H|B|HU|BU)\(([^()]*)\) = (.+);\s*$", re.M)
 CALL = re.compile(r"\b([A-Za-z_]\w*)(?=\(rdram, ctx\))")
 DEFINED = re.compile(r"^RECOMP_FUNC void ([A-Za-z_]\w*)\(uint8_t\* rdram, recomp_context\* ctx\)", re.M)
+ENTRY = re.compile(r"^RECOMP_FUNC void R_([A-Za-z_]\w*)\(uint8_t\* rdram, recomp_context\* ctx\) \{", re.M)
 DECLARED = re.compile(r"^void ([A-Za-z_]\w*)\(uint8_t\* rdram, recomp_context\* ctx\);", re.M)
 SYMBOL = re.compile(r'\{ name = ("(?:[^"\\]|\\.)*"), vram = 0x([0-9A-Fa-f]+), size = 0x[0-9A-Fa-f]+ \}')
 IMPORT = re.compile(r"/\* import: 'env' '([^']+)' \*/\n(u32|u64|f32|f64|void) (w2c_env_\w+)\(struct w2c_env\*((?:, \w+)*)\);")
@@ -73,7 +74,10 @@ static inline uint8_t *port_at(uint8_t *rdram, gpr a, int store, uint64_t v) {
 static inline int32_t port_lw(uint8_t *rdram, gpr a) { uint32_t v; memcpy(&v, port_at(rdram, a, 0, 0), 4); return (int32_t)__builtin_bswap32(v); }
 static inline int16_t port_lh(uint8_t *rdram, gpr a) { uint16_t v; memcpy(&v, port_at(rdram, a, 0, 0), 2); return (int16_t)__builtin_bswap16(v); }
 static inline int8_t port_lb(uint8_t *rdram, gpr a) { return *(int8_t *)port_at(rdram, a, 0, 0); }
-static inline void port_sw(uint8_t *rdram, gpr a, uint32_t v) { v = __builtin_bswap32(v); memcpy(port_at(rdram, a, 1, v), &v, 4); }
+/* a hardware register gets the value itself, memory its bytes big-endian: a racing game's audio interface was given
+   its buffer lengths byte-swapped (0xFC0 as 0xC00F0000), and the length the game read back overflowed its sample
+   count and its audio command list */
+static inline void port_sw(uint8_t *rdram, gpr a, uint32_t v) { uint32_t b = __builtin_bswap32(v); memcpy(port_at(rdram, a, 1, v), &b, 4); }
 static inline void port_sh(uint8_t *rdram, gpr a, uint16_t v) { uint16_t b = __builtin_bswap16(v); memcpy(port_at(rdram, a, 1, v), &b, 2); }
 static inline void port_sb(uint8_t *rdram, gpr a, uint8_t v) { *port_at(rdram, a, 1, v) = v; }
 #define MEM_W(offset, reg) port_lw(rdram, (gpr)(reg) + (gpr)(offset))
@@ -135,7 +139,9 @@ def header(original: str) -> str:
     if "MEM_W(offset" in text or "#define SD(" in text:
         raise ValueError("N64Recomp's recomp.h has changed: its memory macros aren't where the port replaces them")
     at = text.index("typedef uint64_t gpr;") + len("typedef uint64_t gpr;")
-    text = text[:at] + "\n#include <string.h>\n" + LOADS + text[at:]
+    text = (text[:at] + "\n#include <string.h>\n" + LOADS
+            + "\nextern int port_recomp_watch; /* PORT_RECOMP_CALLS: each listed function's entries (port_recomp_entered) */"
+            "\nvoid port_recomp_entered(uint32_t vram, void *ctx);\n" + text[at:])
     text = stores(text)
     # a 32-bit chip (the Miyoo Mini's ARM) has no 128-bit integer for MIPS's 64-bit multiplies: the product from
     # 32-bit halves instead, where N64Recomp's header would stop the build
@@ -334,10 +340,18 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
     # every function the recompiled C calls, by name, is R_<name>: rename its definitions, declarations and calls
     names = {c for _, _, c, _ in choice.values() if c}
 
+    at = {c: vram for vram, (_, _, c, _) in choice.items() if c}
+
     def rename(text: str) -> str:
         text = DEFINED.sub(lambda m: f"RECOMP_FUNC void R_{m.group(1)}(uint8_t* rdram, recomp_context* ctx)", text)
         text = DECLARED.sub(lambda m: f"void R_{m.group(1)}(uint8_t* rdram, recomp_context* ctx);", text)
-        return CALL.sub(lambda m: f"R_{m.group(1)}", text)
+        text = CALL.sub(lambda m: f"R_{m.group(1)}", text)
+        # each function's start tells port_recomp_entered, when PORT_RECOMP_CALLS asks (one test of a flag otherwise)
+        return ENTRY.sub(lambda m: m.group(0) if m.group(1) not in at else (
+            f"static void R_{m.group(1)}_body(uint8_t* rdram, recomp_context* ctx);\n"
+            f"RECOMP_FUNC void R_{m.group(1)}(uint8_t* rdram, recomp_context* ctx) {{ if (port_recomp_watch) "
+            f"port_recomp_entered(0x{at[m.group(1)]:08X}u, ctx); R_{m.group(1)}_body(rdram, ctx); }}\n"
+            f"static void R_{m.group(1)}_body(uint8_t* rdram, recomp_context* ctx) {{"), text)
 
     from ..csource import only
     keep = {c for kind, _, c, _ in choice.values() if kind == "recomp" and c}
@@ -544,6 +558,37 @@ void pause_self(uint8_t *rdram) { (void)rdram; port_idle_forever(); fprintf(stde
 '''
 
 LOOKUPS = r'''
+/* PORT_RECOMP_CALLS=ADDR,ADDR...: each entry to those recompiled functions, with $a0-$a3, $ra and $sp, for finding
+   where a game's state goes wrong (a racing game's audio synthesizer, its filter never set). -1: not read yet. */
+int port_recomp_watch = -1;
+static uint32_t port_recomp_watched[32];
+static int port_recomp_watched_n;
+static uint32_t port_recomp_changed; /* PORT_RECOMP_CHANGED's address */
+void port_recomp_entered(uint32_t vram, void *context) {
+    if (port_recomp_watch < 0) {
+        const char *list = getenv("PORT_RECOMP_CALLS");
+        for (char *p = (char *)list; p && *p && port_recomp_watched_n < 32; ) {
+            port_recomp_watched[port_recomp_watched_n++] = (uint32_t)strtoul(p, &p, 16);
+            while (*p == ',') p++;
+        }
+        const char *changed = getenv("PORT_RECOMP_CHANGED"); /* a RAM word, checked at every entry */
+        if (changed) port_recomp_changed = (uint32_t)strtoul(changed, NULL, 16) | 0x80000000u;
+        port_recomp_watch = port_recomp_watched_n > 0 || port_recomp_changed;
+        if (!port_recomp_watch) return;
+    }
+    recomp_context *ctx = (recomp_context *)context;
+    if (port_recomp_changed) {
+        uint8_t *m = port_memory();
+        uint32_t a = port_recomp_changed, now = (uint32_t)m[a] << 24 | m[a + 1] << 16 | m[a + 2] << 8 | m[a + 3];
+        static uint32_t was; static int seen;
+        if (!seen || now != was) fprintf(stderr, "%%08X is %%08X entering %%08X (from %%08X)\n", a, now, vram, (uint32_t)ctx->r31);
+        was = now; seen = 1;
+    }
+    for (int i = 0; i < port_recomp_watched_n; i++)
+        if (port_recomp_watched[i] == vram)
+            fprintf(stderr, "recompiled %%08X(%%08X, %%08X, %%08X, %%08X) from %%08X, sp %%08X\n", vram, (uint32_t)ctx->r4,
+                    (uint32_t)ctx->r5, (uint32_t)ctx->r6, (uint32_t)ctx->r7, (uint32_t)ctx->r31, (uint32_t)ctx->r29);
+}
 void port_safe_point(void); /* the host's (host.c): a thread the retrace woke that outranks this one takes over */
 void port_trace(void);
 recomp_func_t *get_function(int32_t vram) {
