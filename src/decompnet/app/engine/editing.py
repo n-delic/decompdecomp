@@ -114,6 +114,86 @@ class EditMixin:
         self._ops.pop(proj["id"], None)
         return f"✅ new function {new_name} at 0x{new.vram:08X}, {new.size} bytes."
 
+    def find_missed_functions(self, slug: str, log=print) -> dict:
+        """The user's "Find missed functions": what an import would now find in the bytes the split left as data
+        (the console's missed_functions; N64: functions only a pointer the code builds reaches, frameless leaves,
+        switches, and the addresses Play saw the game run), added to the project as it is, as open functions. A
+        project gained them only by being imported again, which reopens its work; here matches, attempts and
+        notes stay as they were, and splat's config gets the code segments an import would give it, so an export
+        rebuilds them as code. Returns {"added": [{name, vram, size}], "message"}."""
+        from pathlib import Path
+
+        self._rom_only(slug, "find_missed_functions")
+        if self._link(slug) is not None or slug in self.rooms:
+            raise NetworkError("leave the shared room before adding functions: the host's project decides them")
+        proj = self._project(slug)
+        console = self.console(proj)
+        configs = sorted(Path(proj["root"]).glob("*.yaml"))
+        if not configs:
+            raise NetworkError("this project has no splat configuration to look for missed functions in")
+        config = configs[0]
+        before = config.read_text(encoding="utf-8")
+        image, _ = self._rom(proj)
+        try:
+            found = console.missed_functions(config, image, log)
+        except Exception:
+            config.write_text(before, encoding="utf-8")
+            raise
+        if found is None:
+            raise NetworkError(f"finding missed functions isn't supported for {console.name} yet (ROADMAP.md)")
+        store = self.project_store(proj["id"])
+        rows = store.all("SELECT name,vram,rom_offset,size FROM functions WHERE project_id=?", proj["id"])
+        names = {r["name"] for r in rows}
+        fresh = [(lo, hi, vram) for lo, hi, vram in found
+                 if not any(r["rom_offset"] is not None and r["rom_offset"] < hi and lo < r["rom_offset"] + r["size"]
+                            for r in rows)]
+        syms = self.symbols(proj["id"])
+        added = []
+        try:
+            with store.tx() as db:
+                cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
+                for lo, hi, vram in fresh:
+                    name = f"func_{vram:08X}"
+                    if name in names or name in syms.by_name:
+                        name = f"func_{vram:08X}_{lo:X}"
+                    unit = f"code_{vram:08X}"
+                    fn = split.function_from_bytes(name, image[lo:hi], lo, vram, unit, bool(proj["big_endian"]))
+                    syms.add(Symbol(name, vram, fn.size, "func"))
+                    target = self._make_target(proj, fn, syms)
+                    db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,"
+                               "rom_offset,status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                               (proj["id"], name, fn.size, len(fn.lines), target.code, json.dumps(target.to_json()),
+                                console.function_asm(fn), None, unit, vram, lo, console.function_status(fn),
+                                json.dumps({"found_after_split": True})))
+                    db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                               (proj["id"], name, vram, fn.size, "func"))
+                    cfg.setdefault("segments", []).append(vars(split.Segment(unit, lo, hi, vram)))
+                    added.append({"name": name, "vram": vram, "size": fn.size})
+                cfg["segments"].sort(key=lambda s: s["rom_start"])
+                db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+                if added:
+                    self._event(db, proj["id"], None, "boundary",
+                                f"found {len(added)} missed function{'s' if len(added) != 1 else ''}: "
+                                + ", ".join(a["name"] for a in added[:20]))
+        except Exception:
+            config.write_text(before, encoding="utf-8")
+            raise
+        for cache in (self._roms, self._syms, self._sym_override, self._xrefs, self._asm_names, self._ops,
+                      self._warmed, self._cmaps):
+            cache.pop(proj["id"], None)
+        self._headers = {key: value for key, value in self._headers.items() if key[0] != proj["id"]}
+        if added:
+            self.twins.forget(proj)
+            self.bump_generation(proj["id"])
+            self.progress.sync(slug, force=True)
+        kib = sum(a["size"] for a in added) / 1024
+        message = (f"Added {len(added)} function{'s' if len(added) != 1 else ''} the split had left as data "
+                   f"({kib:.1f} KB). They're open for agents; nothing else changed." if added else
+                   "No missed functions found: every gap between code that an import would now recover is "
+                   "already a function. Playing the game in Play records more evidence for next time.")
+        log(message)
+        return {"added": added, "message": message}
+
     def split_rom_by_you(self, slug: str, function: str, at: str, new_name: str = "") -> str:
         """Operator correction of a merged ROM entry; keep both sides as code requiring a fresh judgement."""
         self._rom_only(slug, "split_rom_by_you")

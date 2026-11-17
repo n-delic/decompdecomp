@@ -343,6 +343,17 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     if packed:
         cfg.setdefault("options", {})["target_path"] = image
         cfg["sha1"] = hashlib.sha1(rom).hexdigest()
+    insert_segments(config, cfg, found, len(rom))
+    kib = sum(en - st for st, en, _ in found) // 1024
+    log(f"found {len(found)} more code segment{'s' if len(found) != 1 else ''} the game loads later ({kib} KiB)")
+    return image
+
+
+def insert_segments(config: Path, cfg: dict, found, size: int) -> None:
+    """Write `found` (rom_start, rom_end, vram) into splat's config `cfg` as code segments of their own, each
+    followed by raw bytes up to the next segment, and save it to `config`. Used by the import, and by
+    missed_functions on a project that already exists."""
+    import yaml
 
     def start_of(seg):
         return seg[0] if isinstance(seg, list) else seg.get("start")
@@ -362,10 +373,10 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     for st, en, vram in found:
         name = f"code_{vram:08X}"
         segs.append({"name": name, "type": "code", "start": st, "vram": vram, "subsegments": [[st, "c", name]]})
-        if en < len(rom) and en not in starts and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
+        if en < size and en not in starts and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
             segs.append({"type": "bin", "start": en})
     segs.sort(key=lambda s: start_of(s) if start_of(s) is not None else -1)
-    segs.append([len(rom)])
+    segs.append([size])
     for i, seg in enumerate(segs[:-1]):
         start = start_of(seg)
         if start in bss_ends:
@@ -373,6 +384,23 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
             seg["bss_size"] = bss_ends[start] - seg["vram"] - (end - start)
     cfg["segments"] = segs
     config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
-    kib = sum(en - st for st, en, _ in found) // 1024
-    log(f"found {len(found)} more code segment{'s' if len(found) != 1 else ''} the game loads later ({kib} KiB)")
-    return image
+
+
+def missed_functions(config: Path, rom: bytes, log=print) -> list[tuple[int, int, int]]:
+    """In a project that exists, the functions its split left as data that an import would now find (complete_gaps,
+    with the addresses the game was seen running in the project's folder): written into splat's `config` as code
+    segments, as an import writes them, and returned as (rom_start, rom_end, vram), one function each. Lets a
+    project gain them without being imported again, which would reopen its work."""
+    import yaml
+
+    taken = split.code_ranges(config)
+    if not taken:
+        return []
+    known = split.segments_from_config(config)
+    declared = tuple((s.rom_start, s.rom_end, s.vram) for s in known)
+    found = complete_gaps(rom, taken, [], declared, runtime_entries(config.parent), log=log)
+    new = sorted({r for r in found if not any(a < r[1] and r[0] < b for a, b, _ in taken)})
+    if new:
+        cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+        insert_segments(config, cfg, new, len(rom))
+    return new

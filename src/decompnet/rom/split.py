@@ -552,6 +552,31 @@ def function_from_text(name: str, text: str, segment: str) -> RomFunction:
     return RomFunction(name, lines[0].vram, lines[0].rom, segment, lines, Path(), labels)
 
 
+def function_from_bytes(name: str, raw: bytes, rom: int, vram: int, segment: str,
+                        big_endian: bool = True) -> RomFunction:
+    """A function disassembled from its bytes (raw), at `rom` and `vram`: what spimdisasm would write, its branches
+    and jumps inside it labelled. For code found after the split (missed_functions)."""
+    order = "big" if big_endian else "little"
+    lines, labels = [], set()
+    end = vram + len(raw)
+    for i in range(0, len(raw) - len(raw) % 4, 4):
+        word = int.from_bytes(raw[i:i + 4], order)
+        insn = rabbitizer.Instruction(word, vram + i)
+        target = None
+        if insn.isBranch():
+            target = insn.getBranchVramGeneric()
+        elif insn.isJumpWithAddress() and not insn.isFunctionCall():
+            target = insn.getInstrIndexAsVram()
+        if target is not None and vram <= target < end:
+            labels.add(target)
+            text = insn.disassemble(immOverride=f".L{target:08X}")
+        else:
+            text = insn.disassemble()
+        parts = text.split(None, 1)
+        lines.append(AsmLine(rom + i, vram + i, word, parts[0] if parts else "nop", parts[1] if len(parts) > 1 else ""))
+    return RomFunction(name, vram, rom, segment, lines, Path(), labels)
+
+
 def _trim_padding(lines: list[AsmLine]) -> None:
     """Alignment padding between source files shows up as nops after the last function of a file.
     A nop in a delay slot belongs to the function; any nop after that is padding."""
