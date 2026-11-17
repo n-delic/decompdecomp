@@ -171,7 +171,9 @@ def config(rom: Path, entry: int | None, stubs: list[str], renamed: list[str]) -
 
 ERROR = re.compile(r"^Error recompiling (\S+)")
 UNDECLARED = re.compile(r"undeclared function '(\w+)'")
-CONFLICT = re.compile(r"(?:conflicting types for|redefinition of) '(\w+)'")
+# a clash with the C library's names, or with `main`, whose parameters C fixes (a game's own function named main,
+# as a racing game's first C function is): renamed, as N64Recomp's `renamed` does, rather than set aside
+CONFLICT = re.compile(r"(?:conflicting types for|redefinition of) '(\w+)'|(?:parameter|argument) of '(main)'|'(main)' (?:must|is not|takes)")
 _UNKNOWN_STUB = re.compile(r"Function (\S+) is stubbed out in the config file but does not exist!")
 
 
@@ -342,7 +344,7 @@ def check(out: Path, include: Path, stop=lambda: False) -> tuple[list[str], set[
                 if (m := UNDECLARED.search(line)) and not second:
                     provided.add(m.group(1))
                 elif m := CONFLICT.search(line):
-                    clashes.add(m.group(1))
+                    clashes.add(next(g for g in m.groups() if g))
                 else:
                     errors.append(line.strip())
         if not provided:

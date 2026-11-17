@@ -545,6 +545,7 @@ void pause_self(uint8_t *rdram) { (void)rdram; port_idle_forever(); fprintf(stde
 
 LOOKUPS = r'''
 void port_safe_point(void); /* the host's (host.c): a thread the retrace woke that outranks this one takes over */
+void port_trace(void);
 recomp_func_t *get_function(int32_t vram) {
     port_safe_point();
     unsigned lo = 0, hi = %(tables)d;
@@ -557,6 +558,7 @@ recomp_func_t *get_function(int32_t vram) {
         return port_recomp_interpret;
     }
     fprintf(stderr, "recompiled code called %%08X, where no function is\n", (uint32_t)vram);
+    port_trace(); /* the host's backtrace: which recompiled function made the call */
     exit(4);
 }
 /* the host's port_func, for a function pointer to what only recompiled C has: integer arguments, its $v0 */

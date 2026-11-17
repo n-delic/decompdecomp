@@ -869,10 +869,28 @@ u32 w2c_env_0x5F_osSetFpcCsr(struct w2c_env *e, u32 v) { return w2c_env_0x5F_bui
    target. A racing game loads at 0x80000400 and is PAL; another at 0x80025C00, NTSC. */
 static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;
 static uint32_t rom32(size_t o) { return o + 4 <= rom_size ? (uint32_t)rom[o] << 24 | rom[o + 1] << 16 | rom[o + 2] << 8 | rom[o + 3] : 0; }
+/* The boot chip (CIC) a cartridge was made for, by its boot code's CRC-32 (ROM 0x40 to 0x1000): CIC-6103 and
+   CIC-6106 start the game 0x100000 and 0x200000 below the header's entry address, so the header of a racing game
+   made for the 6103 says 0x80100400 where its code runs at 0x80000400. Taken at its word, the code was loaded a
+   megabyte off and the functions with no C had no instructions to run. */
+static uint32_t boot_crc(void) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0x40; i < 0x1000 && i < rom_size; i++) {
+        crc ^= rom[i];
+        for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320u & -(crc & 1));
+    }
+    return ~crc;
+}
+static uint32_t boot_entry(void) {
+    uint32_t entry = rom32(8), crc = boot_crc();
+    if (crc == 0x0B050EE0u) return entry - 0x100000u; /* CIC-6103 (7103) */
+    if (crc == 0xACC8580Au) return entry - 0x200000u; /* CIC-6106 (7106) */
+    return entry;
+}
 static int read_boot(void) {
     uint32_t r[32] = {0}, pre[32] = {0};
     int base = -1;
-    boot.entry = rom32(8);
+    boot.entry = boot_entry();
     for (int i = 0; i < 64; i++) {
         uint32_t w = rom32(0x1000 + 4 * (size_t)i), op = w >> 26, rs = (w >> 21) & 31, rt = (w >> 16) & 31;
         int32_t imm = (int16_t)(w & 0xFFFF);

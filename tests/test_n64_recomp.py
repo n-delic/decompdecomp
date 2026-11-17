@@ -171,3 +171,16 @@ def test_a_call_looping_on_a_runtime_stub_ends_with_a_reason_not_a_flood(tmp_pat
     result = recomp.run_one(program, 0x80000460, _state(tmp_path / "in.state"), rdram, tmp_path / "out", timeout=60)
     assert not result["ok"] and "kept calling the runtime's osRecvMesg" in result["error"], result
     assert (tmp_path / "out.result").stat().st_size < 1000
+
+
+@pytest.mark.parametrize("line,name", [
+    ("funcs_15.c:8813:18: error: second parameter of 'main' (argument array) must be of type 'char **'", "main"),
+    ("funcs_15.c:8813:6: error: second argument of 'main' should be 'char **' [-Werror=main]", "main"),
+    ("funcs_1.c:12:6: error: conflicting types for 'sqrtf'", "sqrtf"),
+])
+def test_a_function_named_as_the_c_library_or_main_is_renamed_not_set_aside(line, name):
+    """A racing game's first C function is its own `main`: N64Recomp wrote it as main(rdram, ctx), which C refuses,
+    and the check set it aside as a stub, so the port had nothing to boot. Such a clash is renamed (main_recomp)."""
+    from decompnet.consoles.n64.recomp import CONFLICT
+    m = CONFLICT.search(line)
+    assert m and next(g for g in m.groups() if g) == name

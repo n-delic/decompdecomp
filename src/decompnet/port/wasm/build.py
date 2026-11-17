@@ -299,6 +299,9 @@ def own_functions(chosen: dict[str, Path], texts: dict[str, str]) -> dict[str, s
     return out
 
 
+EMPTY_UNIT = "port_no_game_c.c"
+
+
 def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[str, Path]:
     """The C the build compiles, in out/src (one file per function, the shared header included) and out/include.
     `leave_out`: more matched files to leave out than exclude.txt names (play.library). `function_headers`: the
@@ -331,6 +334,15 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[s
         _write(out / "src" / name, big_endian_bitfields(ido_c(text)))
     # By name in any case: on a case-insensitive disk (macOS, Windows) a file an old save wrote as SelectStateReset.c
     # is the one just written as selectStateReset.c, and deleting it as stale deleted that function's C
+    if not chosen:  # a game with no C yet: N64Recomp's C runs every function, and the module still needs an object
+        empty = out / "src" / EMPTY_UNIT
+        # its one function (never called) uses the stack and imports one of the host's functions, so the module
+        # keeps the stack pointer the host sets and is instantiated with the host's environment (host.c)
+        _write(empty, "/* no function of the game has C yet: its recompiled C (recomp.py) runs them all */\n"
+                      "void osCreateThread(int, int, int, int, int, int);\n"
+                      "void port_no_game_c(void (*use)(char *)) {\n"
+                      "    char buffer[16];\n    use(buffer);\n    if (!use) osCreateThread(0, 0, 0, 0, 0, 0);\n}\n")
+        chosen = {EMPTY_UNIT: empty}
     kept = {name.casefold() for name in chosen}
     for stale in (out / "src").glob("*.c"):
         if stale.name.casefold() not in kept:
