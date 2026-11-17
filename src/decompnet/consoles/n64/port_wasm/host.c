@@ -871,10 +871,10 @@ void w2c_env_bcopy(struct w2c_env *e, u32 s, u32 d, u32 n) { (void)e; memmove(M 
 void w2c_env_0x5Fbzero(struct w2c_env *e, u32 p, u32 n) { w2c_env_bzero(e, p, n); }
 void w2c_env_0x5Fbcopy(struct w2c_env *e, u32 s, u32 d, u32 n) { w2c_env_bcopy(e, s, d, n); }
 u32 w2c_env_0x5Fbcmp(struct w2c_env *e, u32 a, u32 b, u32 n) { return w2c_env_bcmp(e, a, b, n); }
-/* the handler libultra installs for an RCP interrupt: the host raises the console's interrupts itself */
-void w2c_env_0x5F_osSetHWIntrRoutine(struct w2c_env *e, u32 irq, u32 handler, u32 sp) {
-    (void)e; (void)irq; (void)handler; (void)sp;
-}
+/* the handler libultra installs for an RCP interrupt: the host raises the console's interrupts itself. Two
+   arguments, as the older libultra a packed shooter's C calls it with (the stack argument came later; a build's
+   declarations must agree with the game's) */
+void w2c_env_0x5F_osSetHWIntrRoutine(struct w2c_env *e, u32 irq, u32 handler) { (void)e; (void)irq; (void)handler; }
 f32 w2c_env_sqrtf(struct w2c_env *e, f32 x) { (void)e; return sqrtf(x); }
 u32 w2c_env_osGetCount(struct w2c_env *e) { return w2c_env_0x5F_builtin_mips_read_count(e); }
 void w2c_env_osMapTLBRdb(struct w2c_env *e) { (void)e; }
