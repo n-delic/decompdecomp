@@ -864,8 +864,17 @@ u32 w2c_env_abs(struct w2c_env *e, u32 x) { (void)e; return (u32)abs((int32_t)x)
    name, and the build renames the call to the name library detection found (play.library_names). Without these a
    racing game's bzero was stubbed to nothing. The TLB, the status register and interrupts are the host's own. */
 void w2c_env_bzero(struct w2c_env *e, u32 p, u32 n) { (void)e; memset(M + p, 0, n); }
-void w2c_env_bcopy(struct w2c_env *e, u32 s, u32 d, u32 n) { (void)e; memmove(M + d, M + s, n); }
 u32 w2c_env_bcmp(struct w2c_env *e, u32 a, u32 b, u32 n) { (void)e; return memcmp(M + a, M + b, n) != 0; }
+void w2c_env_bcopy(struct w2c_env *e, u32 s, u32 d, u32 n) { (void)e; memmove(M + d, M + s, n); }
+/* the same three by the labels libultra's assembly also gives them: a packed shooter's C called _bzero, so its
+   clears were stubbed to nothing */
+void w2c_env_0x5Fbzero(struct w2c_env *e, u32 p, u32 n) { w2c_env_bzero(e, p, n); }
+void w2c_env_0x5Fbcopy(struct w2c_env *e, u32 s, u32 d, u32 n) { w2c_env_bcopy(e, s, d, n); }
+u32 w2c_env_0x5Fbcmp(struct w2c_env *e, u32 a, u32 b, u32 n) { return w2c_env_bcmp(e, a, b, n); }
+/* the handler libultra installs for an RCP interrupt: the host raises the console's interrupts itself */
+void w2c_env_0x5F_osSetHWIntrRoutine(struct w2c_env *e, u32 irq, u32 handler, u32 sp) {
+    (void)e; (void)irq; (void)handler; (void)sp;
+}
 f32 w2c_env_sqrtf(struct w2c_env *e, f32 x) { (void)e; return sqrtf(x); }
 u32 w2c_env_osGetCount(struct w2c_env *e) { return w2c_env_0x5F_builtin_mips_read_count(e); }
 void w2c_env_osMapTLBRdb(struct w2c_env *e) { (void)e; }
