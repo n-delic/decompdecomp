@@ -1,6 +1,7 @@
 """The WebAssembly build of a finished game (port/wasm): what it takes from the game's save repository."""
 
 import json
+import re
 
 import pytest
 
@@ -622,3 +623,13 @@ def test_a_file_that_also_defines_a_left_out_function_is_left_out(tmp_path):
     chosen = gather(repo, tmp_path / "build", {"_Printf.c"})
     assert "gl_func_0006E224.c" not in chosen and "_Printf.c" not in chosen
     assert "tokenize.c" in chosen
+
+
+def test_every_automatic_data_name_says_its_address():
+    """A packed shooter's sound bank was `RO_00628350 - D_00626DD0`: the build named only D_, B_ and func_ by their
+    address, so the end was 0 and the DMA asked for -6 MB. The build's names are the app's (engine/common.py)."""
+    from decompnet.app.engine.common import _AUTO_TOKEN
+    from decompnet.port.wasm.beir import AUTO_DATA
+
+    for name in ("RO_00628350", "D_00626DD0", "STR_80012340", "FLT_80012340", "DBL_80012340", "jtbl_80012340"):
+        assert _AUTO_TOKEN.fullmatch(name) and re.fullmatch(rf"(?:{AUTO_DATA})_[0-9A-F]+", name), name
