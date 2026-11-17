@@ -6,12 +6,14 @@ everything on one connection and one lock, 16 agents on two games made every GUI
 from __future__ import annotations
 
 import hashlib
+import itertools
 import logging
 import sqlite3
 import sys
 import threading
 import time
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from time import thread_time
 
@@ -32,6 +34,9 @@ def corrupt_database(error):
     return (getattr(error, 'sqlite_errorcode', 0) & 255) in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
 
 _transactions = threading.local()
+# The revisions read during one tool call (Store.versions_held): (store, kind) -> (the store's commit count, revision).
+_held_versions: ContextVar[dict | None] = ContextVar("held_versions", default=None)
+_commits = itertools.count(1)
 
 
 def in_transaction() -> bool:
@@ -811,8 +816,51 @@ class Store:
 
     def read_version(self, kind, project=None):
         key = kind if project is None else f'{kind}:{project}'
+        held = _held_versions.get()
+        if held is None or getattr(self._local, 'in_tx', False):
+            row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
+            return row['revision'] if row else 0
+        commits = getattr(self, '_commit_seq', 0)  # (taken before the read: a commit meanwhile makes it stale)
+        kept = held.get((id(self), key))
+        if kept is not None and kept[0] == commits:
+            return kept[1]
         row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
-        return row['revision'] if row else 0
+        revision = row['revision'] if row else 0
+        held[(id(self), key)] = (commits, revision)
+        return revision
+
+    def held_one(self, sql: str, *args):
+        """one(), read once per tool call (versions_held) until this process commits a write; inside a transaction
+        or outside a call, always read. For rows a call asks for again and again: its function, project and claim."""
+        held = _held_versions.get()
+        if held is None or getattr(self._local, 'in_tx', False):
+            return self.one(sql, *args)
+        commits = getattr(self, '_commit_seq', 0)
+        key = (id(self), sql, args)
+        kept = held.get(key)
+        if kept is not None and kept[0] == commits:
+            return kept[1]
+        row = self.one(sql, *args)
+        held[key] = (commits, row)
+        return row
+
+    @staticmethod
+    @contextmanager
+    def versions_held():
+        """Within one tool call, each revision is read once until this process commits a write.
+
+        A compile asked read_revisions 91 times (of its 290 reads), about 3 ms each on a busy machine, for numbers
+        that change only when something is written. Any commit through a Store of this process starts the reading
+        afresh, so the call sees its own writes and other helpers' at once; another process's write (the permuter's
+        child) is seen from the next call, as if it came just after this one."""
+        if _held_versions.get() is not None:
+            yield
+            return
+        token = _held_versions.set({})
+        try:
+            yield
+        finally:
+            _held_versions.reset(token)
 
     def optimize(self) -> None:
         """Refresh the planner's statistics where they went stale (cheap when nothing did): the autosave, hourly."""
@@ -904,6 +952,7 @@ class Store:
                     try:
                         yield self.conn
                         self.conn.execute("COMMIT")
+                        self._commit_seq = next(_commits)  # (read_version's held revisions are stale now)
                     except BaseException:
                         if self.conn.in_transaction:self.conn.execute("ROLLBACK")
                         self._local.after_commit = []

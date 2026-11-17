@@ -863,8 +863,10 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
     if (name == 'project_info' and not args.get('detail', False)
             and (agent.id, slug) in getattr(net, '_pending_tool_handshakes', set())):
         return _dispatch(net, agent, slug, name, args)
-    # Enter before this wrapper's sync, not only inside the engine's attempt.
-    with _tool_foreground(net, agent, slug, name, args):
+    # Enter before this wrapper's sync, not only inside the engine's attempt. Revisions are read once per call until
+    # a write (Store.versions_held).
+    from ..store import Store
+    with _tool_foreground(net, agent, slug, name, args), Store.versions_held():
         progress = getattr(net, 'progress', None)
         if progress is not None:
             # (a compile reads only the manifest and the headers: Progress.check_for_judging)

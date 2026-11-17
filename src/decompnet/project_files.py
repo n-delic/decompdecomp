@@ -16,6 +16,7 @@ class Files:
         self.lock = threading.RLock()
         self.opened = {}
         self.removed = set()
+        self.slugs = {}  # slug -> id of an opened project: a slug never changes, and this was 88 reads a compile
         from .writer_gate import WriterGate
         self.publication = WriterGate(str(self.catalog.path)+'.project-publication')
         self.recover()
@@ -38,6 +39,11 @@ class Files:
     def get(self,project):
         # An open project needs no catalog read: this is asked on nearly every request and tool call.
         # A removed project (_unpublish) is asked of the catalog again, which no longer has it.
+        if type(project) is not int:
+            with self.lock:
+                known = self.slugs.get(project)
+                cached = None if known is None or known in self.removed else self.opened.get(known)
+            if cached is not None:return cached
         if type(project) is int:
             with self.lock:cached = None if project in self.removed else self.opened.get(project)
             if cached is not None:return cached
@@ -45,7 +51,9 @@ class Files:
         if row is None:
             from .network import NetworkError
             raise NetworkError('This project is not in the catalog. Reopen an existing project or restore its database backup.')
-        with self.lock:cached = self.opened.get(row['id'])
+        with self.lock:
+            cached = self.opened.get(row['id'])
+            if cached is not None:self.slugs[row['slug']] = row['id']
         if cached is not None:return cached
         journal = state(self.catalog)
         relative = journal['projects'].get(str(row['id'])) if journal and journal['phase']=='ready' else None
@@ -65,7 +73,9 @@ class Files:
         if store.one("SELECT 1 FROM settings WHERE key='project-storage-removed'"):
             store.conn.close()
             raise ValueError('This project database was removed. Restore a consistent backup.')
-        with self.lock:existing = self.opened.setdefault(row['id'],store)
+        with self.lock:
+            existing = self.opened.setdefault(row['id'],store)
+            self.slugs[row['slug']] = row['id']
         if existing is not store:store.conn.close()
         return existing
 
