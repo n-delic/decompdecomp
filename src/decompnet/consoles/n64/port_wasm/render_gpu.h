@@ -262,7 +262,7 @@ static GpuDraw *gpu_draw(uint32_t kind, uint32_t flags, int tile, int textured) 
     d.tex_tile = tile < 0 ? tex_tile : tile;
     d.tex_levels = tex_levels;
     memcpy(d.scissor, scissor, sizeof d.scissor);
-    d.cimg = cimg_addr; d.cimg_width = (uint32_t)cimg_width; d.cimg_height = (uint32_t)frame_height();
+    d.cimg = cimg_addr; d.cimg_width = (uint32_t)cimg_width; d.cimg_height = (uint32_t)frame_lines();
     if (!(flags & GPU_SCREEN))
         for (int k = 0; k < 3; k++) {
             d.vp_scale[k] = k < 2 ? vp_scale[k] / 4.0f : vp_scale[k];

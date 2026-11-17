@@ -201,3 +201,47 @@ int main(void) {
     assert done.returncode == 0, done.stderr
     out = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True).stdout.split()
     assert out == ["FC0", "1234", "11223344"]
+
+
+def test_a_function_that_runs_on_into_the_next_calls_it(tmp_path):
+    """Hand-written assembly: a racing game's cosine adds a quarter turn and runs on into its sine, which the split
+    lists as the next function. N64Recomp stops at the end of the first, so cosine computed nothing and the game's
+    view matrices were all zeros. Its C now calls the next; one that ends in a return doesn't."""
+    folder = tmp_path / "recomp"
+    funcs = folder / "funcs"
+    funcs.mkdir(parents=True)
+    (folder / "recomp.json").write_text("{}")
+    (folder / "syms.toml").write_text(
+        '[[section]]\nfunctions = [\n'
+        '    { name = "func_80001000", vram = 0x80001000, size = 0x4 },\n'
+        '    { name = "func_80001004", vram = 0x80001004, size = 0x8 },\n'
+        '    { name = "func_8000100C", vram = 0x8000100C, size = 0x8 },\n]\n')
+    (funcs / "funcs.h").write_text('#include "recomp.h"\n' + "".join(
+        f"void func_{a}(uint8_t* rdram, recomp_context* ctx);\n" for a in ("80001000", "80001004", "8000100C")))
+    (funcs / "funcs_0.c").write_text(
+        '#include "recomp.h"\n#include "funcs.h"\n\n'
+        "RECOMP_FUNC void func_80001000(uint8_t* rdram, recomp_context* ctx) {\n"
+        "    // 0x80001000: addiu       $a0, $a0, 0x4000\n    ctx->r4 = ADD32(ctx->r4, 0X4000);\n;}\n"
+        "RECOMP_FUNC void func_80001004(uint8_t* rdram, recomp_context* ctx) {\n"
+        "    // 0x80001004: jr          $ra\n    // 0x80001008: addiu       $v0, $a0, 0x1\n"
+        "    ctx->r2 = ADD32(ctx->r4, 0X1);\n    return;\n"
+        "    // 0x80001008: addiu       $v0, $a0, 0x1\n    ctx->r2 = ADD32(ctx->r4, 0X1);\n;}\n"
+        "RECOMP_FUNC void func_8000100C(uint8_t* rdram, recomp_context* ctx) {\n"
+        "    // 0x8000100C: jr          $ra\n    // 0x80001010: nop\n\n    return;\n    // 0x80001010: nop\n\n;}\n")
+    header = tmp_path / "recomp.h"
+    header.write_text(_header().read_text())
+    host = tmp_path / "host.c"
+    host.write_text("")
+    out = tmp_path / "build"
+    recomp.prepare(folder, out, "", [], [host], header, {}, lambda *a: None)
+    rec = (out / "rec_funcs_0.c").read_text()
+    assert rec.count("/* falls into the next function */") == 1
+    first = rec[rec.index("R_func_80001000_body(uint8_t* rdram, recomp_context* ctx) {"):]
+    assert "R_func_80001004(rdram, ctx); /* falls into the next function */" in first[:first.index(";}")]
+
+
+def test_a_nan_is_reported_not_asserted():
+    """N64Recomp asserts no float operand is NaN; the console computes with one (a racing game's frustum planes from
+    a camera not set up yet), so the port says so once a function and goes on."""
+    text = recomp.header(_header().read_text())
+    assert "assert(val == val)" not in text and "port_recomp_nan(__func__)" in text

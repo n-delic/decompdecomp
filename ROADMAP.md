@@ -1277,8 +1277,12 @@ Left:
   chroma key (G_CK_KEY): the last cycle's A passes as the colour and its (A - B) * C + D, before the shift, against
   each channel's width (G_SETKEYR, G_SETKEYGB) gives the alpha, in software and the WebGL shader alike; two scenes
   match angrylion. A two-cycle span's first pixel past the scissor reads memory there (the next row's first pixel)
-  for the next pixel's first blend, as the RDP does. Not yet: Diddy Kong Racing's F3DDKR (its microcode carries no
-  signature, so it can't be recognised); YUV 4-, 8- and 32-bit tiles. The WebGL path's shaders compute as render.c does (the combiner in 9 bits, the 5-bit filter weights,
+  for the next pixel's first blend, as the RDP does. Rare's F3DDKR, known by the CRC of its data (it carries no
+  signature): its matrix slots, 10-byte vertices with billboarding, triangles carrying their own texture coordinates
+  and culling, counted display lists and address offsets; a racing game's European release (imported with no C,
+  run on N64Recomp's C) draws its logos, title and intro, 18 of 20 recorded tasks exactly as angrylion and the
+  other two within 0.08% (a span's last pixels in two cycles, not yet found). Not yet: YUV 4-, 8- and 32-bit tiles;
+  F3DDKR's other releases and Rare's later games that use it (their data's CRCs). The WebGL path's shaders compute as render.c does (the combiner in 9 bits, the 5-bit filter weights,
   the blender's 5-bit weights and partial reject, alpha compare in integers), checked by drawing the RDP's test scenes
   both ways in a headless Chrome; what GL can't do the RDP's way (its edges, shade interpolated in floats, no dither,
   the two-cycle pipeline's next pixel, TMEM read past a tile, delta z) stays its own. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,

@@ -98,7 +98,15 @@ static HOT void cvg_set(uint32_t a, int c) { /* as the blender writes it */
 }
 static HOT void cvg_clean(uint32_t a) { cvg_hole[(a & 0x7FFFFF) >> 1] = 0; } /* the pixel speaks for itself */
 static uint32_t images[8][2]; /* colour images drawn to: address, width */
-static int frame_height(void) { return cimg_width > 320 ? 480 : 240; } /* 640 wide: the high-resolution mode */
+/* The lines a frame may be drawn on: the RDP knows none (its scissor says), so only the renderer's own buffers'
+   (MAXH). Taken as 240 for any frame up to 320 wide, a PAL racing game's 264-line frames lost their last 24 lines. */
+static int frame_height(void) { return MAXH; }
+/* The lines a frame has, for the GPU's frame buffers (render_gpu.h): 240 (480 for a frame wider than 320), or more
+   where the scissor reaches further (a PAL racing game's 264). */
+static int frame_lines(void) {
+    int lines = cimg_width > 320 ? 480 : 240;
+    return scissor[3] > lines ? (scissor[3] < MAXH ? scissor[3] : MAXH) : lines;
+}
 
 #define cycle_type() ((int)((mode_h >> 20) & 3)) /* 0 one, 1 two, 2 copy, 3 fill */
 
@@ -817,7 +825,9 @@ static void fill_rect(int x0, int y0, int x1, int y1) {
         if (xa < 0) xa = 0;
         if (ya < scissor[1]) ya = scissor[1];
         if (ya < 0) ya = 0;
-        if (xb > scissor[2] - 1) xb = scissor[2] - 1;
+        /* the scissor's right edge included, as in copy mode: a racing game's scissor ends at 319 and the console
+           fills that column (it was left unfilled, a line of last frame's pixels) */
+        if (xb > scissor[2]) xb = scissor[2];
         if (xb > cimg_width - 1) xb = cimg_width - 1;
         if (yb > scissor[3] - 1) yb = scissor[3] - 1;
         if (yb > fh - 1) yb = fh - 1;
@@ -904,7 +914,7 @@ static void load_block(int tile, int uls, int ult, int lrs, int dxt) {
     if (tl->fmt == 1 && timg_siz == 2) { /* YUV: each word's four texels a word's half in each half of TMEM */
         uint32_t src = phys(timg_addr) + (uint32_t)((ult * timg_width + uls) * 2), line = 0;
         uint32_t words = ((uint32_t)(lrs - uls + 1) * 2 + 7) / 8;
-        for (uint32_t i = 0; i < words && tl->tmem * 8 + i * 4 < 2048; i++) {
+        for (uint32_t i = 0; i < words && i < 512; i++) { /* wrapping within each half, as a 32-bit load does */
             tmem_yuv(tl->tmem * 8 + i * 4, src + i * 8, (line >> 11) & 1);
             line += (uint32_t)dxt;
         }
@@ -913,7 +923,9 @@ static void load_block(int tile, int uls, int ult, int lrs, int dxt) {
     if (timg_siz == 3) { /* each 64-bit word two texels; the line counter as below */
         uint32_t src = phys(timg_addr) + (uint32_t)((ult * timg_width + uls) * 4), line = 0;
         uint32_t words = (uint32_t)(lrs - uls + 2) / 2;
-        for (uint32_t i = 0; i < words && tl->tmem * 8 + i * 4 < 2048; i++) {
+        /* the addresses wrap within each half of TMEM (tmem_texel32), from any start: a racing game loads its sky's
+           second texture at 0x180 (byte 0xC00), which the load once skipped as past the low half */
+        for (uint32_t i = 0; i < words && i < 512; i++) {
             for (uint32_t k = 0; k < 2; k++) tmem_texel32(tl->tmem * 8 + i * 4 + k * 2, src + i * 8 + k * 4, (line >> 11) & 1);
             line += (uint32_t)dxt;
         }
@@ -976,7 +988,9 @@ static int rdp_walks_rect(void) { return !gpu && (cycle_type() < 2 || (cycle_typ
 static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
     if (dump_cmds && op != 0xE2 && op != 0xE3) record_rdp(op, w0, w1);
     switch (op) {
-    case 0xFF: cimg_addr = w1 & 0x1FFFFFFF; cimg_width = (w0 & 0xFFF) + 1; if (cimg_width > MAXW) cimg_width = MAXW;
+    /* the colour and depth images' addresses through the segments, as the microcode resolves them: a racing game
+       names its frame buffer by segment 1 (0x01000000), and drawing went to that address, outside RAM */
+    case 0xFF: cimg_addr = phys(w1) & 0x1FFFFFFF; cimg_width = (w0 & 0xFFF) + 1; if (cimg_width > MAXW) cimg_width = MAXW;
         cimg_siz = (int)(w0 >> 19) & 3; if (!cimg_siz) cimg_siz = 1;
         for (int i = 0; i < 8; i++) /* each colour image's width, for showing it later */
             if (!images[i][0] || images[i][0] == cimg_addr) { images[i][0] = cimg_addr; images[i][1] = (uint32_t)cimg_width; break; }
@@ -993,7 +1007,7 @@ static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
     case 0xEA: key_center.g = (w1 >> 24) / 255.0f; key_scale.g = ((w1 >> 16) & 255) / 255.0f;          /* G_SETKEYGB */
         key_width[1] = (int)(w0 >> 12) & 0xFFF; key_width[2] = (int)w0 & 0xFFF;
         key_center.b = ((w1 >> 8) & 255) / 255.0f; key_scale.b = (w1 & 255) / 255.0f; break;
-    case 0xFE: zimg_addr = w1 & 0x1FFFFFFF; break;
+    case 0xFE: zimg_addr = phys(w1) & 0x1FFFFFFF; break;
     case 0xFD: timg_addr = w1; timg_siz = (w0 >> 19) & 3; timg_width = (w0 & 0xFFF) + 1; break;
     case 0xF7: fill_color = w1; break;
     case 0xFA: prim = unpack8888(w1); prim_min_level = (int)(w0 >> 8) & 0x1F; prim_lod_frac = (w0 & 0xFF) / 255.0f; break;
@@ -1682,9 +1696,17 @@ static void line3d(int i0, int i1, int wd) {
 /* The microcode a task (or G_LOAD_UCODE) runs, from the signature in its data: "RSP Gfx ucode F3DEX  fifo 2.05" is
    GBI 2 (F3DEX2, F3DZEX, F3DLX2...), a 1.x version is GBI 1 (F3DEX, F3DLX, F3DLP); "S2DEX" the 2D microcode of
    either generation; "RSP SW Version" is Fast3D. Without a signature: F3DEX2, as before microcodes were told apart. */
-enum { UC_F3DEX2, UC_S2DEX2, UC_F3D, UC_F3DEX, UC_S2DEX };
+enum { UC_F3DEX2, UC_S2DEX2, UC_F3D, UC_F3DEX, UC_S2DEX, UC_F3DDKR };
 static int ucode, line_ucode; /* line_ucode: L3DEX or L3DEX2, whose G_LINE3D shares F3DEX's G_QUAD opcode */
-static const char *const ucode_names[] = {"F3DEX2", "S2DEX2", "Fast3D", "F3DEX", "S2DEX"};
+static const char *const ucode_names[] = {"F3DEX2", "S2DEX2", "Fast3D", "F3DEX", "S2DEX", "F3DDKR"};
+/* Microcodes with no signature in their data, known by the CRC-32 of it (the task's 2 KB): Rare's F3DDKR, Fast3D
+   with its own matrices, vertices and triangles (f3ddkr()), as a racing game's European release has it. */
+static const struct { uint32_t crc; int ucode; } unsigned_ucodes[] = {{0xC432D0EAu, UC_F3DDKR}};
+static uint32_t data_crc(const uint8_t *p, size_t n) {
+    uint32_t c = 0xFFFFFFFFu;
+    while (n--) { c ^= *p++; for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & -(c & 1)); }
+    return ~c;
+}
 static uint32_t half1; /* G_RDPHALF_1's word: G_BRANCH_Z's list, G_LOAD_UCODE's data */
 static int identify_ucode(uint32_t data) { /* data: a physical address */
     line_ucode = 0;
@@ -1700,6 +1722,9 @@ static int identify_ucode(uint32_t data) { /* data: a physical address */
         if (*p != '1') return two_d ? UC_S2DEX2 : UC_F3DEX2;
         return two_d ? UC_S2DEX : UC_F3DEX;
     }
+    uint32_t c = data_crc(d, 0x800);
+    for (size_t i = 0; i < sizeof unsigned_ucodes / sizeof *unsigned_ucodes; i++)
+        if (unsigned_ucodes[i].crc == c) return unsigned_ucodes[i].ucode;
     return UC_F3DEX2;
 }
 static int tracing;
@@ -1822,7 +1847,7 @@ static uint32_t gbi1_geometry(uint32_t g) {
     return out;
 }
 static void gbi1(uint8_t op, uint32_t w0, uint32_t w1) {
-    int fast3d = ucode == UC_F3D, scale = fast3d ? 10 : 2;
+    int fast3d = ucode == UC_F3D || ucode == UC_F3DDKR, scale = fast3d ? 10 : 2;
     switch (op) {
     case 0x01: { /* G_MTX: projection 1, load 2, push 4 */
         int p = (int)(w0 >> 16) & 0xFF;
@@ -1876,6 +1901,95 @@ static void gbi1(uint8_t op, uint32_t w0, uint32_t w1) {
     case 0x00: case 0xBE: case 0xB3: case 0xB8: case 0x06: break; /* no-op, G_CULLDL, halves; lists in the task loop */
     default: if (op >= 0xC0) rdp(op, w0, w1);
     }
+}
+
+/* ---------------------------------------------------------------- F3DDKR: Rare's Fast3D */
+
+/* F3DDKR (a racing game's, and Rare's games of its time) is Fast3D with its own geometry commands, as the game's
+   decomp documents them (f3ddkr.h) and GLideN64 reads them:
+   - G_DMA_MTX (0x01): a whole model-view-projection matrix into one of four slots (w0's bits 22-23), which becomes
+     the one vertices are transformed by; the projection is the identity;
+   - G_DMA_VTX (0x04): vertices of 10 bytes (x, y, z, then r, g, b, a: no texture coordinates), n - 1 in bits
+     19-23, their first slot in bits 9-13, after those loaded already when bit 16 (append) is set with billboarding;
+     with billboarding on (G_MOVEWORD 0x02) each vertex but the first is moved by the first's place in clip space,
+     which is how a sprite is drawn facing the camera at a point in the world;
+   - G_DMA_TRI (0x05): triangles of 16 bytes, each its flags (0x40: drawn from behind too), three vertex slots and
+     each vertex's s and t (s10.5); bit 16: textured;
+   - G_DMA_DL (0x07): n commands from an address, then back (no G_ENDDL ends them);
+   - 0xBF (Fast3D's G_TRI1): offsets added to the matrices' and vertices' addresses (w0 and w1's 24 bits);
+   - G_MOVEWORD 0x02 billboarding on or off, 0x0A the matrix slot by w1's bits 6-7. */
+static float dkr_mtx[4][16];
+static int dkr_billboard, dkr_next; /* dkr_next: where an appended load starts */
+static uint32_t dkr_mtx_offset, dkr_vtx_offset;
+static void dkr_select(int i) {
+    memcpy(mvp, dkr_mtx[i & 3], sizeof mvp);
+    memcpy(mv[mv_depth], dkr_mtx[i & 3], sizeof mvp); /* what lighting turns normals by: the same matrix */
+}
+static void dkr_vertices(uint32_t addr, int n, int v0) {
+    for (int i = 0; i < n && v0 + i < 64; i++) {
+        uint32_t a = addr + (uint32_t)i * 10;
+        float x = (int16_t)rd16(a), y = (int16_t)rd16(a + 2), z = (int16_t)rd16(a + 4);
+        Vtx *v = &vtx[v0 + i];
+        v->x = x * mvp[0] + y * mvp[4] + z * mvp[8] + mvp[12];
+        v->y = x * mvp[1] + y * mvp[5] + z * mvp[9] + mvp[13];
+        v->z = x * mvp[2] + y * mvp[6] + z * mvp[10] + mvp[14];
+        v->w = x * mvp[3] + y * mvp[7] + z * mvp[11] + mvp[15];
+        if (dkr_billboard && v0 + i > 0) { v->x += vtx[0].x; v->y += vtx[0].y; v->z += vtx[0].z; v->w += vtx[0].w; }
+        v->s = v->t = 0;
+        v->shade = (Color){R[a + 6] / 255.0f, R[a + 7] / 255.0f, R[a + 8] / 255.0f, R[a + 9] / 255.0f};
+        if (geometry & 0x10000) { /* G_FOG, as for Fast3D's vertices */
+            float f = (v->z / (v->w > 1e-4f ? v->w : 1e-4f)) * (float)fog_mul + (float)fog_off;
+            v->shade.a = (f < 0 ? 0 : f > 255 ? 255 : f) / 255.0f;
+        }
+        v->clip = v->fixed_xy = v->fixed_z = 0;
+        if (gpu) gpu_match(R + a, v);
+    }
+}
+/* 1 when the command is F3DDKR's own (the rest are Fast3D's: gbi1) */
+static int f3ddkr(uint8_t op, uint32_t w0, uint32_t w1) {
+    switch (op) {
+    case 0x01: { /* G_DMA_MTX */
+        if ((w0 & 0xFFFF) != 64) return 1;
+        int index = (int)(w0 >> 16) & 15, multiply = 0;
+        if (index == 0) index = (int)(w0 >> 22) & 3; /* the racing game's form; a later game's names it in bits 16-19 */
+        else multiply = (int)(w0 >> 23) & 1;
+        float m[16];
+        matrix_read(phys(w1) + dkr_mtx_offset, m);
+        if (multiply) matrix_mul(dkr_mtx[0], m, dkr_mtx[index & 3]); else memcpy(dkr_mtx[index & 3], m, sizeof m);
+        dkr_select(index);
+        return 1; }
+    case 0x04: { /* G_DMA_VTX */
+        if (w0 & 0x10000) { if (dkr_billboard) dkr_next = 1; } else dkr_next = 0;
+        int n = (int)((w0 >> 19) & 31) + 1;
+        dkr_vertices(phys(w1) + dkr_vtx_offset, n, dkr_next + (int)((w0 >> 9) & 31));
+        dkr_next += n;
+        return 1; }
+    case 0x05: { /* G_DMA_TRI */
+        int n = (int)(w0 >> 4) & 0xFFF, textured = (w0 >> 16) & 1, was_on = tex_on;
+        uint32_t keep = geometry, a = phys(w1);
+        tex_on = textured; /* the batch says (the list's G_TEXTURE turns texturing off and names only the tile) */
+        for (int i = 0; i < n; i++, a += 16) {
+            int i0 = R[a + 1], i1 = R[a + 2], i2 = R[a + 3];
+            if (i0 >= 64 || i1 >= 64 || i2 >= 64) continue;
+            /* the microcode culls the back unless the triangle says otherwise (F3DEX2's G_CULL_BACK and _FRONT) */
+            geometry = (geometry & ~0x600u) | (R[a] & 0x40 ? 0 : vp_scale[0] > 0 ? 0x400u : 0x200u);
+            int idx[3] = {i0, i1, i2};
+            for (int k = 0; k < 3; k++) {
+                vtx[idx[k]].s = (int16_t)rd16(a + 4 + k * 4) / 32.0f;
+                vtx[idx[k]].t = (int16_t)rd16(a + 6 + k * 4) / 32.0f;
+            }
+            triangle(i0, i1, i2);
+        }
+        geometry = keep; tex_on = was_on;
+        dkr_next = 0;
+        return 1; }
+    case 0xBF: dkr_mtx_offset = w0 & 0xFFFFFF; dkr_vtx_offset = w1 & 0xFFFFFF; return 1; /* G_DMA_OFFSETS */
+    case 0xBC:
+        if ((w0 & 0xFF) == 0x02) { dkr_billboard = w1 & 1; return 1; }
+        if ((w0 & 0xFF) == 0x0A) { dkr_select((int)(w1 >> 6) & 3); return 1; }
+        return 0;
+    }
+    return 0;
 }
 
 /* ---------------------------------------------------------------- S2DEX: backgrounds and sprites */
@@ -2201,7 +2315,8 @@ static void render_list(uint32_t task) {
     static long trace = -1;
     if (trace < 0) trace = getenv("PORT_DLTRACE") ? atol(getenv("PORT_DLTRACE")) : 0;
     tracing = trace > 0 && (long)render_tasks >= trace && (long)render_tasks < trace + 6;
-    if (tracing) fprintf(stderr, "== task %lu, %s\n", render_tasks, ucode_names[ucode]);
+    if (tracing) fprintf(stderr, "== task %lu, %s (code %08X + %X, data %08X + %X)\n", render_tasks, ucode_names[ucode],
+                         rd32(task + 16), rd32(task + 20), rd32(task + 24), rd32(task + 28));
     if (tracing && getenv("PORT_TRIDEBUG")) debug_tris = atoi(getenv("PORT_TRIDEBUG"));
     if (tracing && getenv("PORT_DUMPAT")) { /* words at physical addresses, comma-separated, for debugging */
         char *list = strdup(getenv("PORT_DUMPAT")), *tok = strtok(list, ",");
@@ -2214,13 +2329,22 @@ static void render_list(uint32_t task) {
         free(list);
     }
     uint32_t stack[18];
-    int depth = 0;
+    int depth = 0, left[19]; /* left[depth]: commands to go in a list F3DDKR's G_DMA_DL counted (-1: to its end) */
+    left[0] = -1;
+    dkr_next = 0;
     uint32_t pc = phys(rd32(task + 48));
     for (long steps = 0; steps < 2000000; steps++) {
+        if (left[depth] == 0) { pc = stack[--depth]; continue; } /* a counted list done: back */
         uint32_t w0 = rd32(pc), w1 = rd32(pc + 4);
         uint8_t op = w0 >> 24;
         if (tracing) fprintf(stderr, "%*s%08X %08X %08X\n", depth * 2, "", pc, w0, w1);
         pc += 8;
+        if (left[depth] > 0) left[depth]--;
+        if (ucode == UC_F3DDKR && op == 0x07) { /* G_DMA_DL: n commands from w1 */
+            if (depth < 18) { stack[depth++] = pc; left[depth] = (int)(w0 >> 16) & 0xFF; pc = phys(w1); }
+            continue;
+        }
+        if (ucode == UC_F3DDKR && f3ddkr(op, w0, w1)) continue;
         int one = ucode >= UC_F3D; /* GBI 1: G_DL 0x06, G_ENDDL 0xB8, G_MOVEWORD 0xBC */
         uint8_t op_dl = one ? 0x06 : 0xDE, op_end = one ? 0xB8 : 0xDF;
         if (!one && op == 0xDB && ((w0 >> 16) & 0xFF) == 0x06) segments[((w0 & 0xFFFF) / 4) & 15] = w1 & 0x1FFFFFFF;
@@ -2232,7 +2356,7 @@ static void render_list(uint32_t task) {
                 if ((w0 >> 16) & 1) { if (!depth) break; pc = stack[--depth]; }
                 continue;
             }
-            if (!((w0 >> 16) & 1) && depth < 18) stack[depth++] = pc;
+            if (!((w0 >> 16) & 1) && depth < 18) { stack[depth++] = pc; left[depth] = -1; }
             pc = phys(w1);
         } else if (op == op_end) { /* G_ENDDL */
             if (!depth) break;

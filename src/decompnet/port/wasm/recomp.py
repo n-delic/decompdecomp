@@ -41,6 +41,9 @@ STACK_SIZE = 0x40000
 STORE = re.compile(r"^(\s*)MEM_(W|H|B|HU|BU)\(([^()]*)\) = (.+);\s*$", re.M)
 CALL = re.compile(r"\b([A-Za-z_]\w*)(?=\(rdram, ctx\))")
 DEFINED = re.compile(r"^RECOMP_FUNC void ([A-Za-z_]\w*)\(uint8_t\* rdram, recomp_context\* ctx\)", re.M)
+INSTRUCTION = re.compile(r"^\s*// 0x([0-9A-F]{8}): (\S.*)$", re.M)
+# a recompiled function's whole definition, its C name (as N64Recomp ends each: a line of ";}")
+FALLS = re.compile(r"^RECOMP_FUNC void R_([A-Za-z_]\w*)\(uint8_t\* rdram, recomp_context\* ctx\) \{\n.*?\n;\}", re.M | re.S)
 ENTRY = re.compile(r"^RECOMP_FUNC void R_([A-Za-z_]\w*)\(uint8_t\* rdram, recomp_context\* ctx\) \{", re.M)
 DECLARED = re.compile(r"^void ([A-Za-z_]\w*)\(uint8_t\* rdram, recomp_context\* ctx\);", re.M)
 SYMBOL = re.compile(r'\{ name = ("(?:[^"\\]|\\.)*"), vram = 0x([0-9A-Fa-f]+), size = 0x[0-9A-Fa-f]+ \}')
@@ -146,6 +149,13 @@ def header(original: str) -> str:
     # a 32-bit chip (the Miyoo Mini's ARM) has no 128-bit integer for MIPS's 64-bit multiplies: the product from
     # 32-bit halves instead, where N64Recomp's header would stop the build
     text = text.replace('#else\n#error "128-bit integer type not found"', "#else\n" + MULTIPLY_32, 1)
+    # N64Recomp asserts that no float operand is NaN, a check for its own users; the console computes with NaN as it
+    # comes (a racing game's camera math meets one at its title screen), so the port says so once a function and goes on
+    nan = "#define NAN_CHECK(val) \\\n    assert(val == val)\n"
+    if nan not in text:
+        raise ValueError("N64Recomp's recomp.h has changed: its NAN_CHECK isn't where the port replaces it")
+    text = text.replace(nan, "void port_recomp_nan(const char *where);\n"
+                             "#define NAN_CHECK(val) ((void)((val) == (val) || (port_recomp_nan(__func__), 0)))\n", 1)
     if re.search(r"MEM_[WHB]U?\([^;]*\) =", text) or "0xFFFFFFFF80000000" in text:
         raise ValueError("N64Recomp's recomp.h addresses memory where the port doesn't rewrite it")
     return text
@@ -342,10 +352,28 @@ def prepare(folder: Path, out: Path, game_h: str, fixed: list[str], hosts: list[
 
     at = {c: vram for vram, (_, _, c, _) in choice.items() if c}
 
+    following = dict(zip(sorted(at.values()), sorted(at.values())[1:]))
+    name_at = {vram: c for c, vram in at.items()}
+
+    def falls_into_next(m: re.Match) -> str:
+        """A function whose last instruction is no jump or return runs on into the next (hand-written assembly: a
+        racing game's cosine adds a quarter turn and falls into its sine). N64Recomp stops at the function's end, so
+        its C did nothing more: the next is called there, and returns for both."""
+        body, name = m.group(0), m.group(1)
+        nxt = name_at.get(following.get(at.get(name, -1), -1))
+        # its instructions, as N64Recomp's comments name them: falls through unless the one before the last (the
+        # last is a jump's delay slot) is a jump or return
+        ops = dict(INSTRUCTION.findall(body))
+        last_two = [ops[a].split()[0] for a in sorted(ops)[-2:]]
+        if not nxt or not ops or any(op in ("jr", "j", "b", "eret") for op in last_two):
+            return body
+        return body[:-3] + f"\n    R_{nxt}(rdram, ctx); /* falls into the next function */\n;}}"
+
     def rename(text: str) -> str:
         text = DEFINED.sub(lambda m: f"RECOMP_FUNC void R_{m.group(1)}(uint8_t* rdram, recomp_context* ctx)", text)
         text = DECLARED.sub(lambda m: f"void R_{m.group(1)}(uint8_t* rdram, recomp_context* ctx);", text)
         text = CALL.sub(lambda m: f"R_{m.group(1)}", text)
+        text = FALLS.sub(falls_into_next, text)
         # each function's start tells port_recomp_entered, when PORT_RECOMP_CALLS asks (one test of a flag otherwise)
         return ENTRY.sub(lambda m: m.group(0) if m.group(1) not in at else (
             f"static void R_{m.group(1)}_body(uint8_t* rdram, recomp_context* ctx);\n"
@@ -558,6 +586,12 @@ void pause_self(uint8_t *rdram) { (void)rdram; port_idle_forever(); fprintf(stde
 '''
 
 LOOKUPS = r'''
+/* a NaN operand (NAN_CHECK, which N64Recomp asserts): said once for each function that meets one */
+void port_recomp_nan(const char *where) {
+    static const char *said[64]; static int n;
+    for (int i = 0; i < n; i++) if (said[i] == where) return;
+    if (n < 64) { said[n++] = where; fprintf(stderr, "recompiled %%s computes with a NaN (as the console would)\n", where); }
+}
 /* PORT_RECOMP_CALLS=ADDR,ADDR...: each entry to those recompiled functions, with $a0-$a3, $ra and $sp, for finding
    where a game's state goes wrong (a racing game's audio synthesizer, its filter never set). -1: not read yet. */
 int port_recomp_watch = -1;
