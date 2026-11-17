@@ -16,7 +16,7 @@ HOST = Path(__file__).resolve().parents[1] / "src/decompnet/consoles/n64/port_wa
 
 def _function(text: str, name: str) -> str:
     """One function's definition from the C, its braces matched."""
-    start = re.search(rf"^(?:static )?\w+ {name}\(", text, re.M).start()
+    start = re.search(rf"^(?:static )?\w+ {name}\([^;{{]*\)\s*{{", text, re.M).start()  # (not a declaration)
     depth, i = 0, text.index("{", start)
     while True:
         depth += {"{": 1, "}": -1}.get(text[i], 0)
@@ -156,14 +156,17 @@ def test_the_window_code_agrees_with_sdl3s_own_headers(tmp_path):
     assert done.returncode == 0, done.stderr
 
 
-def _entry_rom(words, entry=0x80000400, region=b"E", boot_crc=None):
+def _entry_rom(words, entry=0x80000400, region=b"E", boot_crc=None, boot_words=None):
     """A homemade ROM: a header naming `entry` and `region`, and an entry routine of `words` at 0x1000. `boot_crc`:
-    the boot code (0x40 to 0x1000) made to have that CRC-32, as a boot chip's has (its last word chosen so)."""
+    the boot code (0x40 to 0x1000) made to have that CRC-32, as a boot chip's has (its last word chosen so), with
+    `boot_words` ({ROM offset: word}) in it."""
     import struct
     import zlib
     rom = bytearray(0x1000 + 4 * len(words) + 16)
     rom[8:12] = struct.pack(">I", entry)
     rom[0x3E:0x3F] = region
+    for at, w in (boot_words or {}).items():
+        rom[at:at + 4] = struct.pack(">I", w)
     for i, w in enumerate(words):
         rom[0x1000 + 4 * i:0x1004 + 4 * i] = struct.pack(">I", w)
     if boot_crc is not None:  # run the CRC back from the wanted state over the last four bytes
@@ -193,6 +196,19 @@ UP_TO_END = [_lui(T0, 0x800B), _addiu(T0, T0, 0x1000), _lui(T1, 0x800C), _sw0(0,
              _bne(T0, T1, -3), 0, 0x0C000000 | (0x80001234 >> 2) & 0x3FFFFFF, 0]
 
 
+# what the boot code needs around it: the ROM, and the console's RAM and RSP memories as two small arrays
+_BOOT_HARNESS = """#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static uint8_t *rom; static size_t rom_size;
+static uint8_t ram[0x400], sp[0x2000];
+static uint8_t *at(uint32_t a) { return a >= 0xA4000000u ? sp + (a - 0xA4000000u) : ram + (a - 0x80000000u); }
+static void wbe32(uint32_t a, uint32_t v) { uint8_t *p = at(a); p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
+static uint32_t be32(uint32_t a) { uint8_t *p = at(a); return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+"""
+
+
 @pytest.mark.parametrize("words,entry,region,want,crc", [
     (COUNT_DOWN, 0x80025C00, b"E", "80025C00 80026E00 8004AAA0 93840 1", None),
     (COUNT_DOWN, 0x80000400, b"P", "80000400 80026E00 8004AAA0 93840 0", None),
@@ -214,8 +230,7 @@ def test_any_games_boot_is_read_from_its_entry_routine(tmp_path, words, entry, r
                 text.index("/* the console's RAM as the boot leaves it")]
     (tmp_path / "rom.bin").write_bytes(_entry_rom(words, entry, region, crc))
     source = tmp_path / "t.c"
-    source.write_text("#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n"
-                      "static uint8_t *rom; static size_t rom_size;\n" + code + """
+    source.write_text(_BOOT_HARNESS + code + """
 int main(int argc, char **argv) {
     FILE *f = fopen(argv[1], "rb"); rom = malloc(1 << 16); rom_size = fread(rom, 1, 1 << 16, f);
     int ok = read_boot();
@@ -226,6 +241,69 @@ int main(int argc, char **argv) {
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
     done = subprocess.run([str(tmp_path / "t"), str(tmp_path / "rom.bin")], capture_output=True, text=True, check=True)
     assert done.stdout.split() == want.split()
+
+
+@pytest.mark.parametrize("crc,want", [
+    # CIC-6103: its code from 0x4C0 copied to RAM 0, both RSP memories filled with -1, then 6103 in IMEM and osCicId
+    (0x0B050EE0, "AC290000 240B17D7 FFFFFFFF FFFFFFFF 000017D7 000017D7"),
+    (0x90BB6CB5, "AC290000 240B17D7 00000000 00000000 00000000 00000000"),  # CIC-6102: zeroes them, leaves no ID
+    (0x12345678, "00000000 00000000 00000000 00000000 00000000 00000000"),  # a boot chip it doesn't know: nothing
+])
+def test_the_boot_leaves_what_the_boot_chips_code_leaves(tmp_path, crc, want):
+    """A racing game made for the 6103 checks what the boot chip's code leaves: RAM 0x200 and 0x284 (copies of the boot
+    code, which runs from there), the first words of the RSP's data and instruction memories, osCicId. With none of
+    it, it mirrored its tracks, kept balloons from being collected and paused in its world."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    code = text[text.index("static struct { uint32_t entry, target, bss, bss_size; int tv; } boot;"):
+                text.index("/* the console's RAM as the boot leaves it")]
+    (tmp_path / "rom.bin").write_bytes(_entry_rom(COUNT_DOWN, 0x80000400, b"P", crc,
+                                                  boot_words={0x6C0: 0xAC290000, 0x744: 0x240B17D7}))
+    source = tmp_path / "t.c"
+    source.write_text(_BOOT_HARNESS + code + """
+int main(int argc, char **argv) {
+    FILE *f = fopen(argv[1], "rb"); rom = malloc(1 << 16); rom_size = fread(rom, 1, 1 << 16, f);
+    boot_leftovers();
+    printf("%08X %08X %08X %08X %08X %08X\\n", be32(0x80000200), be32(0x80000284), be32(0xA4000000), be32(0xA4001FFC),
+           be32(0xA4001000), be32(0x80000310));
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t"), str(tmp_path / "rom.bin")], capture_output=True, text=True, check=True)
+    assert done.stdout.split() == want.split()
+
+
+def test_the_cartridge_reads_as_the_rom(tmp_path):
+    """The game reads its cartridge directly at 0xB0000000 (a racing game checks the word at 0x578 and turns its
+    screen upside down when it isn't its own): word, half and byte loads there read the ROM."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = tmp_path / "t.c"
+    source.write_text("""#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#define SP_STATUS 0xA4040010u
+#define IO_SCRATCH 0x000A0000u
+#define IO_FAR(a) (a)
+static uint8_t M[0xA0010], rom[0x1000]; static size_t rom_size = sizeof rom;
+static void wbe32(uint32_t a, uint32_t v) { M[a] = v >> 24; M[a + 1] = v >> 16; M[a + 2] = v >> 8; M[a + 3] = v; }
+static int port_ai_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
+static int si_register(uint32_t a, int w, uint32_t v, uint32_t *r) { (void)a; (void)w; (void)v; (void)r; return 0; }
+""" + _function(HOST.read_text(), "rom32") + "\n" + _function(HOST.read_text(), "port_io_load") + """
+int main(void) {
+    rom[0x578] = 0x34; rom[0x579] = 0x21; rom[0x57A] = 0x89; rom[0x57B] = 0x65;
+    uint64_t w = port_io_load(0xB0000578u), h = port_io_load(0xB000057Au), b = port_io_load(0xB0000579u);
+    printf("%02X%02X%02X%02X %02X%02X %02X\\n", M[w], M[w + 1], M[w + 2], M[w + 3], M[h], M[h + 1], M[b]);
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    done = subprocess.run([str(tmp_path / "t")], capture_output=True, text=True, check=True)
+    assert done.stdout.split() == ["34218965", "8965", "21"]
 
 
 def test_the_host_names_no_one_games_functions(tmp_path):
