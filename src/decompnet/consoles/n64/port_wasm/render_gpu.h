@@ -135,11 +135,19 @@ static void gpu_tile_size(const Tile *t, int *w, int *h, int *size_w, int *size_
 }
 /* What the tile's texels are made from: the TMEM its rows cover, the palette entries a colour-indexed one reads and
    how the palette is read. Equal hashes, equal texels. */
+/* A YUV tile the texture pipeline converts (G_TC_CONV in the first cycle, or the second converting the first's):
+   sent converted by K0 to K3, which the combiner finishes as for software. Filtering the converted texels, as the GPU
+   does, is near the RDP's converting of filtered ones. */
+static int gpu_yuv_converted(const Tile *t) {
+    return t->fmt == 1 && t->siz == 2 && (!((mode_h >> 11) & 1) || ((mode_h >> 9) & 1));
+}
 static uint64_t gpu_tile_hash(const Tile *t, int w, int h) {
-    uint32_t row_bytes = t->siz == 0 ? (uint32_t)(w + 1) / 2 : t->siz == 1 ? (uint32_t)w : (uint32_t)w * 2;
+    int yuv = t->fmt == 1 && t->siz == 2; /* a byte a texel in each half of TMEM */
+    uint32_t row_bytes = t->siz == 0 ? (uint32_t)(w + 1) / 2 : t->siz == 1 || yuv ? (uint32_t)w : (uint32_t)w * 2;
     if (row_bytes > 4096) row_bytes = 4096;
-    uint32_t shape[6] = {(uint32_t)t->fmt, (uint32_t)t->siz, (uint32_t)w, (uint32_t)h, (uint32_t)((mode_h >> 14) & 3) == 3,
-                         (uint32_t)t->palette};
+    uint32_t shape[11] = {(uint32_t)t->fmt, (uint32_t)t->siz, (uint32_t)w, (uint32_t)h, (uint32_t)((mode_h >> 14) & 3) == 3,
+                          (uint32_t)t->palette, (uint32_t)gpu_yuv_converted(t), (uint32_t)conv_k[0], (uint32_t)conv_k[1],
+                          (uint32_t)conv_k[2], (uint32_t)conv_k[3]};
     uint64_t hash = gpu_hash(0xCBF29CE484222325ull, (const uint8_t *)shape, sizeof shape);
     uint32_t last_start = ~0u;
     for (int y = 0; y < h; y++) {
@@ -147,7 +155,7 @@ static uint64_t gpu_tile_hash(const Tile *t, int w, int h) {
         if (start == last_start) continue; /* a line of 0: every row the same */
         last_start = start;
         uint32_t first = start & ~7u, n = (row_bytes + (start - first) + 7) & ~7u;
-        for (int half = 0; half < (t->siz == 3 ? 2 : 1); half++) {
+        for (int half = 0; half < (t->siz == 3 || yuv ? 2 : 1); half++) {
             uint32_t from = (first + (uint32_t)half * 2048) & 4095;
             if (from + n <= 4096) hash = gpu_hash(hash, tmem + from, n);
             else { hash = gpu_hash(hash, tmem + from, 4096 - from); hash = gpu_hash(hash, tmem, from + n - 4096); }
@@ -194,7 +202,7 @@ static void gpu_tile(int i, GpuTile *out) {
     const Tile *t = &tiles[i & 7];
     int w, h, size_w, size_h;
     gpu_tile_size(t, &w, &h, &size_w, &size_h);
-    uint32_t type = ((mode_h >> 14) & 3) == 3;
+    uint32_t type = (((mode_h >> 14) & 3) == 3) | (uint32_t)gpu_yuv_converted(t) << 1;
     GpuTileMemo *m = &gpu_tile_memo[i & 7];
     uint32_t id = 0;
     if (m->gen == gpu_gen && m->tlut_type == type && !memcmp(&m->tile, t, sizeof *t)
@@ -204,8 +212,24 @@ static void gpu_tile(int i, GpuTile *out) {
         uint64_t hash = gpu_tile_hash(t, w, h);
         id = gpu_texture(hash, w, h, NULL);
         if (!id) {
+            int conv = gpu_yuv_converted(t);
             for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++) gpu_scratch[y * w + x] = gpu_rgba(texel_wrapped(t, x, y));
+                for (int x = 0; x < w; x++) {
+                    Color c = texel_wrapped(t, x, y);
+                    if (conv) { /* 9-bit results, as the combiner's clamp would take them */
+                        IC yuv = TOI(c);
+                        if ((x & 1) && ((mode_h >> 11) & 1)) { /* filtered: an odd texel's U and V halfway to the next pair's, as the RDP's filter has them */
+                            IC n = TOI(texel_wrapped(t, (x + 1) % w, y));
+                            yuv.r = ((SIGN9(yuv.r) + SIGN9(n.r)) >> 1) & 0x1FF;
+                            yuv.g = ((SIGN9(yuv.g) + SIGN9(n.g)) >> 1) & 0x1FF;
+                        }
+                        IC v = yuv_convert(yuv);
+                        int q[4] = {SIGN9(v.r), SIGN9(v.g), SIGN9(v.b), SIGN9(v.a)};
+                        for (int k = 0; k < 4; k++) q[k] = q[k] < 0 ? 0 : q[k] > 255 ? 255 : q[k];
+                        c = (Color){by255[q[0]], by255[q[1]], by255[q[2]], by255[q[3]]};
+                    }
+                    gpu_scratch[y * w + x] = gpu_rgba(c);
+                }
             id = gpu_texture(hash, w, h, gpu_scratch);
         }
         m->tile = *t; m->gen = gpu_gen; m->tlut_type = type; m->hash = hash; m->id = id;
