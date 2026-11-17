@@ -286,6 +286,12 @@ def register(app: App) -> None:
         from ...port import renamed_calls
         return {"job": jobs.start("rename-calls", lambda log: renamed_calls.fix(net, slug, log), project=slug)}
 
+    def p_fix_calls(slug, request, data):
+        """Rewrite each function its callers disagree with (the last WebAssembly build's calls.json) the way they
+        call it, each judged by the game's own compiler (port/call_fixes.py), in the background."""
+        from ...port import call_fixes
+        return {"job": jobs.start("fix-calls", lambda log: call_fixes.fix(net, slug, log), project=slug)}
+
     def p_play(slug, request, data):
         """Build the game for the PC and run it with its live view in the browser (port/wasm/play.py), in the
         background; Stop ends it."""
@@ -1246,6 +1252,7 @@ def register(app: App) -> None:
         "/api/play": (p_play, ["POST"]),
         "/api/play-export": (p_play_export, ["POST"]),
         "/api/rename-calls": (p_rename_calls, ["POST"]),
+        "/api/fix-calls": (p_fix_calls, ["POST"]),
         "/api/port-identity": (p_port_identity, ["POST"]),
         "/api/asset-extract": (p_asset_extract, ["POST"]),
         "/api/recompile": (p_recompile, ["POST"]),

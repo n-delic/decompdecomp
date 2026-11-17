@@ -162,7 +162,8 @@ function portSteps(report) {
     { title: "Calls agree with what they call", pct: calls ? pct(code.total - calls.functions, code.total) : null,
       detail: calls ? (calls.calls ? `${calls.calls.toLocaleString()} calls in ${calls.functions.toLocaleString()} `
         + "functions match but disagree with the function they call: a port can behave differently there"
-        : "every call agrees with the function it calls") : "after Play builds the game" },
+        : "every call agrees with the function it calls") : "after Play builds the game",
+      buttons: calls && calls.calls ? ["portFixCalls"] : [], logs: ["portFixCallsLog"] },
     { title: "Behaves like the original", pct: compared ? pct(behaviour.same, compared) : null,
       detail: !report.behaviour_available ? "needs a reversing emulator and a static recompiler for this console"
         : !behaviour ? "not checked yet: Check behaviour runs each matched function's first call both ways"
@@ -207,11 +208,11 @@ function renderPortSteps(report) {
   const list = $("portSteps");
   if (!list) return;
   const steps = portSteps(report), parked = $("portParked");
-  for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portAssets", "portExtract", "portPlay", "portStop",
+  for (const id of ["portDrafts", "portCompile", "portRenameCalls", "portFixCalls", "portAssets", "portExtract", "portPlay", "portStop",
     "portExportMenu", "portRecompile", "portBehaviour", "portBehaviourStop", "portBehaviourSettings"]) {
     if (parked && $(id)) parked.append($(id));  // back where they wait, then into their step
   }
-  for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portAssetsLog", "portExtractLog", "portPlayLog",
+  for (const id of ["portDraftLog", "portCompileLog", "portRenameLog", "portFixCallsLog", "portAssetsLog", "portExtractLog", "portPlayLog",
     "portExportLog", "portExportActions", "portExportNext", "portRecompLog", "portBehaviourLog"]) {
     if (parked && $(id)) parked.append(...withWork($(id)));
   }
@@ -388,6 +389,20 @@ async function fixRenamedCalls() {
   if (S.slug === slug) loadPortReadiness();
 }
 
+async function fixDisagreeingCalls() {
+  const slug = S.slug, log = $("portFixCallsLog");
+  log.hidden = false; log._showJobProgress = true;
+  showJobError(log, "");
+  const finish = beginWork(log, "Making functions agree with their callers", [$("portFixCalls"), $("portReload")], "Done.");
+  try {
+    const { job } = await api("/api/fix-calls", { method: "POST", body: { slug } });
+    await followJob(job, log, null, () => S.slug === slug);
+  } catch (error) {
+    showJobError(log, error.message);
+  } finally { finish(); }
+  if (S.slug === slug) loadPortReadiness();
+}
+
 /* Play: build the game for the PC and open it in the browser (port/wasm/play.py). The first build takes minutes,
    later ones only rebuild what changed; a game already running opens again at once. The bar counts the build's
    steps and each step's files; Stop cancels the build, then stops the game. A build still running when the panel
@@ -545,6 +560,7 @@ if ($("portPanel")) {
     if (menu && menu.open && !menu.contains(e.target)) closeExportMenu(false);
   });
   $("portRenameCalls").onclick = fixRenamedCalls;
+  $("portFixCalls").onclick = fixDisagreeingCalls;
   $("portExtract").onclick = extractAssets;
   if ($("portRecompile")) $("portRecompile").onclick = recompileGame;
   if ($("portBehaviour")) $("portBehaviour").onclick = () => checkBehaviour();
