@@ -132,3 +132,18 @@ def test_discovered_code_preserves_the_original_explicit_bss_extent(tmp_path, mo
     # Repeating discovery must not grow the BSS a second time.
     code.add_segments(path, tmp_path, "rom.z64", log=lambda _: None)
     assert yaml.safe_load(path.read_text())["segments"][0]["bss_size"] == 0xE80
+
+
+def test_a_function_longer_than_the_quiet_stretch_joins_its_neighbours():
+    from decompnet.consoles.n64.code import close_gaps
+    nop = (0).to_bytes(4, "big")
+    big = nop * 0x600 + JR_RA.to_bytes(4, "big") + nop  # one 6 KB function: its only return at the end
+    rom = bytes(0x1000) + nop * 0x100 + big + nop * 0x100 + bytes(0x100) + nop * 0x40
+    a_end = 0x1000 + 0x400
+    b_start = a_end + len(big)
+    found = [(0x1000, a_end, 0x80001000), (b_start, b_start + 0x400, 0x80001000 + b_start - 0x1000)]
+    assert close_gaps(rom, found) == [(0x1000, b_start + 0x400, 0x80001000)]
+    # another mapping (an overlay elsewhere), or a gap with no return (data), stays apart
+    assert len(close_gaps(rom, [found[0], (b_start, b_start + 0x400, 0x80400000)])) == 2
+    quiet = bytes(0x1000) + nop * 0x100 + nop * 0x600 + nop * 0x100
+    assert len(close_gaps(quiet, found)) == 2
