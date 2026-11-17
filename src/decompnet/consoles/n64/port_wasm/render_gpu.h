@@ -250,6 +250,8 @@ static GpuDraw *gpu_draw(uint32_t kind, uint32_t flags, int tile, int textured) 
     d.combine0 = combine0; d.combine1 = combine1; d.mode_h = mode_h; d.mode_l = mode_l;
     GPU_COLOR(d.prim, prim); GPU_COLOR(d.env, env); GPU_COLOR(d.fog, fog); GPU_COLOR(d.blend, blend);
     GPU_COLOR(d.key_center, key_center); GPU_COLOR(d.key_scale, key_scale);
+    /* the key's widths where the key has no alpha: red's, then green's and blue's as one number (12 bits each) */
+    d.key_center[3] = (float)key_width[0]; d.key_scale[3] = (float)(key_width[1] * 4096 + key_width[2]);
     d.k4 = k4; d.k5 = k5; d.prim_lod_frac = prim_lod_frac; d.prim_min_level = prim_min_level / 32.0f;
     d.prim_z = prim_z / 262143.0f;
     if (kind == GPU_KIND_FILL) {

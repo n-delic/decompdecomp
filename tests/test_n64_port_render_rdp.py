@@ -538,7 +538,36 @@ def _scenes() -> dict:
             _triangles(mem, g, [q[0], q[1], q[2], q[0], q[2], q[3]])
         return scene
 
-    return {"yuv": yuv(False), "yuv-filtconv": yuv(True), "random": random_triangles(False), "random-aa": random_triangles(True), "shade": shade, "flat": textured(False, False, False), "flat-persp": textured(True, False, False),
+    def chroma_key(two: bool):
+        """A filtered texture keyed out by colour (G_CK_KEY, G_CC_CHROMA_KEY2: (TEXEL0 - CENTER) * SCALE), blended
+        over the background by the key's alpha: the texels near the key go, the edge between them part way. In one
+        cycle, or two with the key in the second."""
+        def scene(mem, g):
+            gradient(mem, g)
+            texels = b"".join((((s * 4) << 11 | (31 - t * 3) << 6 | (s * 2 + t * 2) << 1 | 1)).to_bytes(2, "big")
+                              for t in range(8) for s in range(8))
+            load_texture(g, mem.put(texels))
+            g(0xEB000000, 0x0280 << 16 | 0x60 << 8 | 0x30)              # G_SETKEYR: width, centre, scale
+            g(0xEA000000 | 0x380 << 12 | 0x200, 0xC0 << 24 | 0x28 << 16 | 0x50 << 8 | 0x40)  # G_SETKEYGB
+            g(0xDA380003, 0x80000000 | mem.put(matrix([1.1, 0.2, 0, 0, -0.25, 0.8, 0, 0, 0, 0, 1, 0, 0.05, 0.03, 0, 1])))
+            blend = 0x4000 | 0x40 | 1 << 22 | 1 << 20                   # IN * IN_A + MEM * (1 - IN_A), both cycles
+            rgb = (1, 6, 6, 7)                                          # (TEXEL0 - CENTER) * SCALE + 0
+            if two:
+                g.othermode(NO_DITHER | FILTER | 1 << 20 | 1 << 8, blend)
+                # cycle 0: TEXEL0 as it is; cycle 1: (COMBINED - CENTER) * SCALE, the alpha TEXEL0's
+                g(0xFC000000 | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 0 << 5 | 6,
+                  15 << 28 | 6 << 24 | 7 << 21 | 7 << 18 | 1 << 15 | 7 << 12 | 1 << 9 | 7 << 6 | 7 << 3 | 0)
+            else:
+                g.othermode(NO_DITHER | FILTER | 1 << 8, blend)
+                g(*combine(*rgb, 7, 7, 7, 1))
+            g(0xD7000002, 0xFFFFFFFF)
+            g(0xD9000000, 0x200004)
+            white = 0xFFFFFFFF
+            q = [(-1, 1, 0, 0, 0, white), (1, 1, 0, 8, 0, white), (1, -1, 0, 8, 8, white), (-1, -1, 0, 0, 8, white)]
+            _triangles(mem, g, [q[0], q[1], q[2], q[0], q[2], q[3]])
+        return scene
+
+    return {"chroma-key": chroma_key(False), "chroma-key-2cycle": chroma_key(True), "yuv": yuv(False), "yuv-filtconv": yuv(True), "random": random_triangles(False), "random-aa": random_triangles(True), "shade": shade, "flat": textured(False, False, False), "flat-persp": textured(True, False, False),
             "flat-bilerp": textured(False, True, False), "tilted-point": textured(True, False, True),
             "tilted-bilerp": textured(True, True, True), "depth": depth, "rect": rect, "blend": blend, "fog": fog,
             "combine": combined, "antialiased": antialiased, "two-cycle": two_cycle, "copy-scissor": copy_scissor,

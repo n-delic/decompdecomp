@@ -357,6 +357,8 @@ static Texels one_texel(Color c) { return (Texels){c, c, 0}; }
 static float prim_lod_frac, k4, k5;
 static int prim_min_level;
 static Color key_center, key_scale;
+static int key_width[3]; /* G_SETKEYR / G_SETKEYGB: each channel's width, 12 bits (4.8) */
+static int key_alpha;    /* the chroma key's alpha for the pixel combiner() last made (other mode H's KEY_EN) */
 static uint32_t noise_seed = 0x12345678u;
 static HOT float noise(void) { noise_seed = noise_seed * 1664525u + 1013904223u; return by255[noise_seed >> 24]; }
 
@@ -481,6 +483,21 @@ static HOT Color combiner(const Texels *tx, Color shade) {
     IC none = {0, 0, 0, 0}, t0 = TOI(tx->t0), t1 = uses_t1 ? TOI(tx->t1) : t0, sh = TOI(shade), out;
     if (cycle_type() != 1) out = combine(cycle_type() == 0, none, t0, t1, sh, lod, nz);
     else out = combine(1, combine(0, none, t0, t1, sh, lod, nz), t1, two_next ? TOI(two_next->tx.t0) : t0, sh, lod, nz);
+    if (mode_h & 0x100) { /* chroma key: the last cycle's A passes as the colour, and how far (A - B) * C + D lies
+        from the key (B its centre, C its scale) against each channel's width is the alpha, the least of the three */
+        const uint8_t *r = cc_slot[1];
+        IC A = cc[r[0]], B = cc[r[1]], C = cc[r[2]], D = cc[r[3]];
+        int ch[3][4] = {{A.r, B.r, C.r, D.r}, {A.g, B.g, C.g, D.g}, {A.b, B.b, C.b, D.b}}, least = 0x7FFFFFFF;
+        for (int k = 0; k < 3; k++) {
+            int v = ((EXT9(ch[k][0]) - EXT9(ch[k][1])) * SIGN9(ch[k][2]) + (EXT9(ch[k][3]) << 8) + 0x80) & 0x1FFFF;
+            if (v & 0x10000) v |= ~0x1FFFF; /* signed 17 bits */
+            if (v > 0) v = (v & 15) == 8 ? 16 - v : -v;
+            v += key_width[k] << 4;
+            if (v < least) least = v;
+        }
+        key_alpha = least < 0 ? 0 : least > 255 ? 255 : least;
+        out.r = A.r; out.g = A.g; out.b = A.b;
+    }
     return (Color){by255[CLAMP9(out.r)], by255[CLAMP9(out.g)], by255[CLAMP9(out.b)], by255[CLAMP9(out.a)]};
 }
 
@@ -706,10 +723,15 @@ static HOT int depth_passes(float z, float dz, float mem_z, float mem_dz, int ov
     default: return max || (overflow ? z < mem_z : nearer);
     }
 }
-/* The colour the blender reads at a pixel (black and fully covered without IMAGE_READ). */
+/* The colour the blender reads at a pixel (black and fully covered without IMAGE_READ). Outside the scissor too: a
+   two-cycle span's first pixel can lie past it (its right edge, the span drawn right to left), and the RDP reads
+   memory there, the next row's first pixel, which the next pixel's first blender cycle mixes in. Read as black,
+   the column at the scissor's edge came out a step off the console's. */
 static HOT Color memory_at(int x, int y) {
-    if (!(mode_l & 0x40) || !in_frame(x, y)) return (Color){0, 0, 0, by255[224]};
-    return read_pixel(pixel_addr(x, y));
+    if (!(mode_l & 0x40)) return (Color){0, 0, 0, by255[224]};
+    uint32_t a = pixel_addr(x, y);
+    if ((a & 0x1FFFFFFF) + 4 > 0x800000) return (Color){0, 0, 0, by255[224]};
+    return read_pixel(a);
 }
 static HOT void plot(int x, int y, float z, Color shade, const Texels *tx, int depth, int cvg, float dz) {
     if (!in_frame(x, y)) return;
@@ -731,7 +753,7 @@ static HOT void plot(int x, int y, float z, Color shade, const Texels *tx, int d
     if (alpha == 255) alpha = 256;
     int scaled = (alpha * cvg + 4) >> 3;
     if (mode_l & 0x1000) cvg = (scaled >> 5) & 15;
-    if (!(mode_l & 0x2000)) c.a = by255[alpha + adith > 255 ? 255 : alpha + adith];
+    if (!(mode_l & 0x2000)) c.a = (mode_h & 0x100) ? by255[key_alpha] : by255[alpha + adith > 255 ? 255 : alpha + adith];
     if (adith) { int sa = C8(shade.a) + adith; shade.a = by255[sa > 255 ? 255 : sa]; }
     /* Coverage, as the RDP keeps it with each pixel (CVG_DST: clamp, wrap, zap or save), and an anti-aliased edge
        blended with what's there when it's the same surface and the two coverages don't overflow: through the
@@ -966,8 +988,10 @@ static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
         gpu_gen++; /* the GPU's converted YUV textures (render_gpu.h) */
         k4 = (float)((int32_t)(w1 << 14) >> 23) / 255.0f; k5 = (float)((int32_t)(w1 << 23) >> 23) / 255.0f; break;
     }
-    case 0xEB: key_center.r = ((w1 >> 8) & 255) / 255.0f; key_scale.r = (w1 & 255) / 255.0f; break;   /* G_SETKEYR */
+    case 0xEB: key_center.r = ((w1 >> 8) & 255) / 255.0f; key_scale.r = (w1 & 255) / 255.0f;            /* G_SETKEYR */
+        key_width[0] = (int)(w1 >> 16) & 0xFFF; break;
     case 0xEA: key_center.g = (w1 >> 24) / 255.0f; key_scale.g = ((w1 >> 16) & 255) / 255.0f;          /* G_SETKEYGB */
+        key_width[1] = (int)(w0 >> 12) & 0xFFF; key_width[2] = (int)w0 & 0xFFF;
         key_center.b = ((w1 >> 8) & 255) / 255.0f; key_scale.b = (w1 & 255) / 255.0f; break;
     case 0xFE: zimg_addr = w1 & 0x1FFFFFFF; break;
     case 0xFD: timg_addr = w1; timg_siz = (w0 >> 19) & 3; timg_width = (w0 & 0xFFF) + 1; break;

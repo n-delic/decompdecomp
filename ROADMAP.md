@@ -1252,15 +1252,18 @@ Left:
   alpha, the previous pixel's memory in the first blend), the blender's partial reject, copy mode 64 bits at a time
   up to the scissor's edge. S2DEX's objects reach the RDP as the microcode sends them: texture loads (palettes
   through a 4-bit tile), rectangles for sprites (scaled, flipped) and backgrounds (in strips that fit TMEM, cut where
-  the image wraps), triangles for sprites turned by the 2D matrix (its rev counter needle). Twenty test scenes
+  the image wraps), triangles for sprites turned by the 2D matrix (its rev counter needle). Twenty-two test scenes
   match exactly, and so do 40 recorded tasks of a racing game (menus at 640x480, races, replays). YUV textures as the RDP
   reads them: loaded split across TMEM's halves (U and V a pair, Y a texel), U and V filtered at half the columns,
   and the texture convert stage per cycle (G_TC_CONV, G_TC_FILTCONV; G_SETCONVERT's K0 to K3), which also turns a
   texture that isn't YUV to garbage as the console does when a list leaves the bits 0; two YUV scenes match
   angrylion. The WebGL path gets a YUV texture converted on the CPU, a step or two off where the RDP takes Y and U,
-  V from different corners (converting in the shader would need the tile's raw YUV and K0 to K3 in the draw). Not
-  yet: Diddy Kong Racing's F3DDKR (its microcode carries no signature, so it can't be recognised); chroma key; YUV
-  4-, 8- and 32-bit tiles. The WebGL path's shaders compute as render.c does (the combiner in 9 bits, the 5-bit filter weights,
+  V from different corners (converting in the shader would need the tile's raw YUV and K0 to K3 in the draw). The
+  chroma key (G_CK_KEY): the last cycle's A passes as the colour and its (A - B) * C + D, before the shift, against
+  each channel's width (G_SETKEYR, G_SETKEYGB) gives the alpha, in software and the WebGL shader alike; two scenes
+  match angrylion. A two-cycle span's first pixel past the scissor reads memory there (the next row's first pixel)
+  for the next pixel's first blend, as the RDP does. Not yet: Diddy Kong Racing's F3DDKR (its microcode carries no
+  signature, so it can't be recognised); YUV 4-, 8- and 32-bit tiles. The WebGL path's shaders compute as render.c does (the combiner in 9 bits, the 5-bit filter weights,
   the blender's 5-bit weights and partial reject, alpha compare in integers), checked by drawing the RDP's test scenes
   both ways in a headless Chrome; what GL can't do the RDP's way (its edges, shade interpolated in floats, no dither,
   the two-cycle pipeline's next pixel, TMEM read past a tile, delta z) stays its own. Past the prompt the game loads its tracks and runs its demo race (cars, track, replay cameras,

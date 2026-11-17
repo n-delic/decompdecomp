@@ -95,6 +95,12 @@ function cycleCode(c0, c1, cycle) {
   const r = rgb.map((sel, w) => rgbInput(w, sel)), a = alpha.map((sel, w) => alphaInput(w, sel));
   return `ivec4(cc3(${r[0]}, ${r[1]}, ${r[2]}, ${r[3]}), cc1(${a[0]}, ${a[1]}, ${a[2]}, ${a[3]}))`;
 }
+/* The chroma key's alpha (G_CK_KEY, render.c's combiner()): the last cycle's (A - B) * C + D before its shift, by
+   each channel's distance from the key against its width, the least of the three. */
+function keyCode(c0, c1) {
+  const { rgb } = selectors(c0, c1, 1), r = rgb.map((sel, w) => rgbInput(w, sel));
+  return `keyAlpha(${r[0]}, ${r[1]}, ${r[2]}, ${r[3]})`;
+}
 /* Whether the combiner reads TEXEL1, or noise (render.c's combiner_uses). */
 function combinerUses(c0, c1, cyc) {
   let t1 = false, noise = false;
@@ -176,6 +182,7 @@ function fragmentShader(d) {
       ? `ivec4 comb = ivec4(0); ivec4 T0 = t0, T1 = t1; comb = ${cycleCode(c0, c1, 0)};
          T0 = t1; T1 = t0; ivec4 c = ${cycleCode(c0, c1, 1)};`
       : `ivec4 comb = ivec4(0); ivec4 T0 = t0, T1 = t1; ivec4 c = ${cycleCode(c0, c1, 1)};`;
+    const key = (modeH & 0x100) !== 0;
     const ac = modeL & 3, cvgXAlpha = (modeL & 0x1000) !== 0, alphaCvg = (modeL & 0x2000) !== 0;
     // as render.c's plot() for a pixel the primitive covers whole (8 samples): the combined alpha, 255 taken as 256,
     // as the coverage (CVG_X_ALPHA) and the alpha (ALPHA_CVG_SEL); then the alpha compare
@@ -188,9 +195,10 @@ function fragmentShader(d) {
       ${textured ? `texels(t0, t1, lodFrac, ${uses.t1 && !(flags & FLAG.ONE_TEXEL) && !(modeH & 0x200) ? "true" : "false"});` : ""}
       ${modeH & 0x200 ? "t1 = t0; // G_TC_FILTCONV: the second cycle's texel is the first's, converted (render_gpu.h sent it so)" : ""}
       ${comb}
+      ${key ? `int KA = ${keyCode(c0, c1)}; c.rgb = ${rgbInput(0, selectors(c0, c1, 1).rgb[0])}; // the chroma key: A passes` : ""}
       c = ivec4(clamp9(c.r), clamp9(c.g), clamp9(c.b), clamp9(c.a));
       int alpha = c.a == 255 ? 256 : c.a, cvg = ${cvgXAlpha ? "(alpha >> 5) & 15" : "8"};
-      c.a = ${alphaCvg ? (cvgXAlpha ? "min(alpha, 255)" : "cvg >= 8 ? 255 : cvg << 5") : "min(alpha, 255)"};
+      c.a = ${alphaCvg ? (cvgXAlpha ? "min(alpha, 255)" : "cvg >= 8 ? 255 : cvg << 5") : key ? "KA" : "min(alpha, 255)"};
       ${ac === 1 ? "if (c.a < BL.a) discard;" : ac === 3 ? "if (c.a < rnd()) discard;" : ""}
       ${modeL & 8 ? "if (cvg == 0) discard;" : ""}
       ivec4 px = c;
@@ -222,6 +230,17 @@ int ext9(int v) { return (v & 0x180) == 0x180 ? v | ~0x1FF : v & 0x1FF; }
 int sign9(int v) { return (v & 0x100) != 0 ? v | ~0x1FF : v & 0x1FF; }
 int cc1(int a, int b, int c, int d) { return (((ext9(a) - ext9(b)) * sign9(c) + (ext9(d) << 8) + 0x80) >> 8) & 0x1FF; }
 ivec3 cc3(ivec3 a, ivec3 b, ivec3 c, ivec3 d) { return ivec3(cc1(a.r, b.r, c.r, d.r), cc1(a.g, b.g, c.g, d.g), cc1(a.b, b.b, c.b, d.b)); }
+int keyChannel(int a, int b, int c, int d, int width) {
+  int v = ((ext9(a) - ext9(b)) * sign9(c) + (ext9(d) << 8) + 0x80) & 0x1FFFF;
+  if ((v & 0x10000) != 0) v |= ~0x1FFFF;
+  if (v > 0) v = (v & 15) == 8 ? 16 - v : -v;
+  return v + (width << 4);
+}
+int keyAlpha(ivec3 a, ivec3 b, ivec3 c, ivec3 d) { // the widths: red's in the key centre's alpha, green's and blue's in the scale's
+  int wgb = int(u_keyScale.a);
+  return clamp(min(keyChannel(a.r, b.r, c.r, d.r, int(u_keyCenter.a)),
+    min(keyChannel(a.g, b.g, c.g, d.g, wgb / 4096), keyChannel(a.b, b.b, c.b, d.b, wgb % 4096))), 0, 255);
+}
 int clamp9(int v) { v &= 0x1FF; return (v & 0x100) != 0 ? ((v & 0x80) != 0 ? 0 : 255) : v & 0xFF; }
 int rnd() {
   float r = fract(sin(dot(gl_FragCoord.xy + float(u_texInfo.z), vec2(12.9898, 78.233))) * 43758.5453);
@@ -300,7 +319,7 @@ function programKey(d) {
   if (d.kind === KIND.FILL) return "fill";
   if (d.kind === KIND.COPY) return `copy ${d.flags & FLAG.COPY_ALPHA} ${d.modeL & 3}`;
   return [d.flags & (FLAG.ONE_TEXEL | FLAG.POINT | FLAG.TEXTURED), d.c0, d.c1, cyc, (d.modeH >>> 12) & 3,
-    d.modeH & 0x70A00, d.modeL & 0xFFFF700F].join(" ");
+    d.modeH & 0x70B00, d.modeL & 0xFFFF700F].join(" ");
 }
 
 const PRESENT_VERTEX = `#version 300 es
