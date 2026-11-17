@@ -35,6 +35,7 @@
   </div>
   <div class="nav-scroll">
     <p class="nav-label">Projects</p>
+    <input class="nav-filter" id="navFilter" type="search" placeholder="Filter projects" aria-label="Filter projects" autocomplete="off" hidden>
     <div class="nav-projects" id="navProjects"><p class="nav-empty">None yet: drop in a game.</p></div>
   </div>
   <div class="nav-foot">
@@ -373,10 +374,39 @@
       <section class="panel" id="compilerPanel" aria-labelledby="compilerH">
         <header class="panel-head"><h2 id="compilerH">Compiler</h2><span class="muted small" id="compilerState"></span></header>
         <div class="pad">
-          <p class="answer" id="compilerAnswer"></p>
+          <div class="compiler-view-controls" id="compilerViewControls" hidden>
+            <label class="field">Group by <select id="compilerGroup"><option value="settings">Compiler + arguments</option><option value="family">Compiler family</option><option value="range">Address ranges</option></select></label>
+            <label class="field">Sort <select id="compilerSort"><option value="count">Most ranges</option><option value="status">Verification status</option><option value="address">Address ↑</option><option value="address-desc">Address ↓</option><option value="compiler">Compiler name</option></select></label>
+          </div>
+          <div class="answer" id="compilerAnswer"></div>
           <div id="compilerParts"></div>
           <div id="compilerWaiting"></div>
           <label class="check" id="autoAdjustRow"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label>
+          <details class="more" id="installedCompilerTest"><summary>Find better compiler settings <span id="compilerRunState"></span></summary><div class="compiler-test-body">
+              <p class="small muted">Test saved C locally, then review and apply the results. No AI tokens are used.</p>
+              <div class="compiler-test-options">
+                <label class="check"><input type="checkbox" id="compilerFlagsOnly"><span><b>Flag variations only</b><small>Faster: keep each function’s compiler and test different flags.</small></span></label>
+                <label class="check"><input type="checkbox" id="compilerUsedProfilesOnly"><span><b>Only profiles used in this project</b><small>Faster: test exact compiler and flag combinations already assigned to functions.</small></span></label>
+                <label class="check"><input type="checkbox" id="compilerRetest"><span><b>Retest completed functions</b><small>Leave off to continue with new or changed attempts.</small></span></label>
+                <label class="check"><input type="checkbox" id="compilerAutoApply" checked><span><b>Automatically apply exact matches</b><small>Apply only byte-exact matches when comparison finishes. Review partial improvements in the results drawer.</small></span></label>
+              </div>
+              <p id="compilerTestScope" class="muted small">All installed compilers and supported flag variations · new or changed attempts only.</p>
+              <div class="row"><button class="primary" type="button" id="testInstalledCompilers">Find better settings</button></div>
+              <p class="err-msg" id="compilerTestError" hidden></p>
+              <section id="compilerProgress" class="compiler-progress" aria-label="Compiler comparison progress" hidden>
+                <div class="compiler-queue-count"><span data-queue>Preparing eligibility checks…</span><progress data-queue-bar max="1" value="0" aria-label="Functions completed in this run"></progress></div>
+                <div class="compiler-progress-heading"><span class="small muted compiler-current-label">Current function</span><b class="mono" data-current>Preparing…</b></div>
+                <div class="compiler-progress-count"><span data-tested>Waiting for the first result</span><progress data-bar max="1" value="0" aria-label="Settings tested for current function"></progress></div>
+                <dl class="compiler-progress-stats">
+                  <div class="compiler-percent"><dt>Saved match</dt><dd data-before>—</dd></div>
+                  <div class="compiler-percent"><dt>Best tested</dt><dd data-best>—</dd></div>
+                  <div><dt>Functions finished</dt><dd><button type="button" class="compiler-stat-link" data-compiler-results="all" aria-label="Show finished functions"><span data-completed>0</span></button></dd></div>
+                  <div><dt>Better settings found</dt><dd><button type="button" class="compiler-stat-link" data-compiler-results="improved" aria-label="Show functions with better settings"><span data-improved>0</span></button></dd></div>
+                  <div><dt>Exact matches found</dt><dd><button type="button" class="compiler-stat-link" data-compiler-results="exact" aria-label="Show exact matches"><span data-exact>0</span></button></dd></div>
+                </dl>
+                <p class="small muted compiler-progress-profile" data-profile>Comparing the saved C. Compiler settings stay unchanged.</p>
+              </section>
+            </div></details>
           <details class="more" id="compilerHow">
             <summary>How the app checks</summary>
             <div class="more-body" id="compilerEvidence"></div>
@@ -440,12 +470,27 @@
 <main id="agentsPage" class="view" hidden>
   <header class="page-head"><p class="eyebrow">Agents &amp; models</p><h1>Your AI agents</h1>
     <p class="muted">Helper agents run in the background on a project. Install the ones you use, pick their models, or add any model with an API key.</p></header>
-  <section class="ag-apps" aria-labelledby="agAppsH">
-    <header class="ag-apps-head"><h2 id="agAppsH">Agent apps on this computer</h2><button class="ghost small-btn" id="agRefresh" type="button">Refresh</button></header>
-    <div class="ag-grid" id="agList"></div>
-  </section>
+  <details class="panel settings-disclosure ag-apps" aria-labelledby="agAppsH" open>
+    <summary class="panel-head"><h2 id="agAppsH">Agent apps on this computer <span class="disclosure-context" id="agAppsContext">— Checking installed apps…</span></h2><button class="disclosure-action" id="agRefresh" type="button" title="Refresh installed agent apps">↻ Refresh</button></summary><div class="pad">
+    <div class="ag-grid" id="agList"></div></div>
+  </details>
+  <details class="panel settings-disclosure"><summary class="panel-head"><h2>Agent prompts <span class="disclosure-context" id="agPromptsContext">— Global session defaults</span></h2></summary><div class="pad"><p class="small muted">Global defaults for new sessions. Agents can override them individually. Project instructions, guides and continuation context are still appended to the initial prompt.</p><div id="globalPromptSettings"></div><pre id="globalPromptLog" hidden></pre></div></details>
+  <details class="panel settings-disclosure"><summary class="panel-head"><h2>Agent tools &amp; usage <span class="disclosure-context" id="agToolsContext">— Optional tools and usage</span></h2><button id="agentToolsRefresh" class="disclosure-action" type="button" title="Refresh tools and usage counts">↻ Refresh</button></summary><div class="pad"><p class="small muted">Disable optional tools to reduce agent context. Global switches apply to every agent; per-agent tools can disable additional tools. Required core tools stay enabled. New tool lists take effect at the next session or MCP reconnect; cached calls to disabled tools are rejected immediately.</p><details class="tool-coverage more"><summary>About usage counts</summary><p id="agentToolCoverage" class="small muted"></p></details><div id="agentToolCatalog"></div><pre id="agentToolLog" hidden></pre></div></details>
   <div class="cols ag-cols">
-    <section class="panel"><header class="panel-head"><h2>Models with an API key</h2></header><div class="pad" id="apiBox"></div></section>
+  <details class="panel manual-mcp settings-disclosure" aria-labelledby="mcpHeading">
+    <summary class="panel-head"><h2 id="mcpHeading">Connect another AI tool with MCP <span class="disclosure-context" id="agMcpContext">— Local connections</span></h2></summary>
+    <div class="pad">
+      <p>Use the local MCP server with an AI tool that supports Streamable HTTP and bearer authentication. Keep decompdecomp running on this computer.</p>
+      <div id="mcpStatus" role="status"></div>
+      <label class="field"><span>Project for this connection</span><select id="mcpProject"></select></label>
+      <div class="row"><button class="primary" id="mcpCreate" type="button">Create connection</button><button class="ghost" id="mcpRefresh" type="button">Refresh</button></div>
+      <pre class="joblog" id="mcpLog" hidden></pre>
+      <div id="mcpConfig"></div>
+      <details><summary>Available tools <span id="mcpToolCount"></span></summary><div id="mcpTools"></div></details>
+      <details><summary>Your manual connections</summary><div id="mcpConnections"></div></details>
+    </div>
+  </details>
+    <details class="panel settings-disclosure" open><summary class="panel-head"><h2>Models with an API key <span class="disclosure-context" id="agApiContext">— Checking saved endpoints…</span></h2></summary><div class="pad" id="apiBox"></div></details>
   </div>
 </main>
 
@@ -487,7 +532,8 @@
       <div class="row">
         <span class="badge" id="fnStatus"></span>
         <button class="ghost small-btn pin" id="fnPin" type="button" title="Agents take this function next">★ Next</button>
-        <button class="ghost small-btn" id="fnSetAside" type="button" hidden title="You know no C makes this function (hand-written assembly, a piece of another function): set it aside now, without waiting for agents to agree. It turns red, leaves agents' work and the percentage, and Give it back to the agents undoes it.">Set aside: no C makes it</button>
+        <details class="fn-menu" id="fnActionsMenu"><summary class="ghost icon" aria-label="More function actions" title="More actions">⋯</summary><div class="fn-menu-body"><button class="ghost small-btn" id="fnSetAside" type="button" hidden>Set aside: no C makes it</button></div></details>
+        <button class="ghost icon" id="fnExpand" type="button" aria-label="Expand function view" aria-pressed="false" title="Expand function view">⤢</button>
         <button class="ghost icon" id="fnPrev" type="button" aria-label="Previous function" title="Previous function (K)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.3 2.7 11.4 3.8 7.2 8l4.2 4.2-1.1 1.1L5 8z"/></svg></button>
         <button class="ghost icon" id="fnNext" type="button" aria-label="Next function" title="Next function (J)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 2.7 4.6 3.8 8.8 8l-4.2 4.2 1.1 1.1L11 8z"/></svg></button>
         <button class="ghost icon" data-close type="button" aria-label="Close" title="Close (Esc)">✕</button>
@@ -499,6 +545,8 @@
         <div class="tabs" role="tablist" aria-label="Function view">
           <button role="tab" class="tab on" data-ftab="diff" type="button">Diff</button>
           <button role="tab" class="tab" data-ftab="code" type="button">Edit</button>
+          <button role="tab" class="tab" data-ftab="deep" type="button">Deep permuter <span id="deepTabState"></span></button>
+          <button role="tab" class="tab" data-ftab="history" type="button">History</button>
         </div>
         <div class="seg small" id="diffWhich" hidden><button type="button" data-which="latest" class="on">Latest attempt</button><button type="button" data-which="best">Best attempt</button></div>
       </div>
@@ -522,6 +570,31 @@
           <p class="try-msg" id="tryMsg" hidden></p>
         </div>
       </div>
+      <section id="deepPermuterPanel" class="deep-panel" hidden aria-labelledby="deepTitle">
+        <div class="deep-heading"><div><h3 id="deepTitle">Find a closer match</h3><p class="muted">Try local C rewrites with your game's compiler. Improvements are saved as they are verified.</p></div><span class="badge">Local CPU · No AI tokens</span></div>
+        <div class="deep-controls">
+          <label class="field"><span>Time limit (minutes)</span><input id="deepMinutes" type="number" min="1" max="120" value="10"></label>
+          <label class="field"><span>Variant limit</span><input id="deepVariants" type="number" min="1" max="1000000" value="500"></label>
+          <button class="primary" id="deepStart" type="button">Start search</button>
+          <button class="ghost" id="deepStop" type="button" hidden>Stop search</button>
+        </div>
+        <p class="muted small" id="deepEligibility" hidden></p>
+        <div id="deepResults" class="deep-results" hidden>
+          <div class="deep-status-row"><strong id="deepStatus" role="status"></strong><span id="deepTiming" class="muted small"></span></div>
+          <progress id="deepProgress" max="100" value="0" aria-label="Candidates tested"></progress>
+          <div class="deep-metrics">
+            <div><span>Starting match</span><strong id="deepStarting">—</strong></div>
+            <div><span>Best match</span><strong id="deepBest">—</strong><small id="deepGain"></small></div>
+            <div><span>Candidates tested</span><strong id="deepTested">0</strong><small id="deepLimit"></small></div>
+          </div>
+          <div class="row deep-result-actions"><button class="ghost small-btn" id="deepViewDiff" type="button">View best diff</button></div>
+          <div class="deep-run-chart fn-chart"><p class="col-title">Match progress in this run</p><svg id="deepChart" role="img" aria-label="Best match during this search"></svg></div>
+          <p class="muted small" id="deepError" hidden></p>
+          <details class="deep-output"><summary>Detailed output</summary><pre class="code" id="deepLog"></pre></details>
+        </div>
+        <div id="deepEmpty" class="deep-empty"><strong>Give this function a little more time.</strong><p>Set a budget above to search its saved C. Progress and improvements will appear here.</p></div>
+      </section>
+      <section id="fnHistoryView" class="fn-history" hidden aria-label="Function history and notes">
       <div class="fn-chart" id="fnChartWrap"><svg id="fnChart" aria-label="Match per compile"></svg><div class="fn-chart-note" id="fnChartNote"></div></div>
       <div class="xref" id="fnXref"></div>
       <div id="fnNotes"></div>
@@ -530,6 +603,7 @@
           <textarea id="noteText" rows="2" placeholder="e.g. this is the player's update loop; the struct at 0x8004AE34 is the player"></textarea></label>
         <div class="row"><button class="ghost small-btn" id="noteAdd" type="button">Add note</button></div>
       </div>
+      </section>
     </div>
   </div>
 </div>
@@ -553,8 +627,14 @@
 <script src="/assets/js/home.js"></script>
 <script src="/assets/js/project.js"></script>
 <script src="/assets/js/map.js"></script>
+<script src="/assets/js/prompt-settings.js"></script>
+<script src="/assets/js/tool-catalog.js"></script>
+<script src="/assets/js/tool-settings.js"></script>
 <script src="/assets/js/agents.js"></script>
 <script src="/assets/js/function.js"></script>
+<script src="/assets/js/compiler-groups.js"></script>
+
+<script src="/assets/js/deep-permuter.js"></script>
 <script src="/assets/js/steering.js"></script>
 <script src="/assets/js/pages.js"></script>
 </body>

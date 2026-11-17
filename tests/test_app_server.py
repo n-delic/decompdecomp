@@ -39,6 +39,77 @@ def app(tmp_path_factory):
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
 
 
+def test_deep_permuter_job_can_be_found_and_stopped_from_the_function(app, monkeypatch):
+    from decompnet.app import deep_permuter
+
+    client, _, _ = app
+    started = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(deep_permuter, "validate", lambda *args: None)
+
+    def run(net, slug, name, minutes, variants, log):
+        log.progress({"tested": 2, "starting_score": 40, "best_score": 20})
+        started.set()
+        release.wait(2)
+        log.check_cancel()
+        return {"function": name}
+
+    monkeypatch.setattr(deep_permuter, "run", run)
+    payload = {"slug": "game", "name": "f", "minutes": 1, "variants": 10}
+    try:
+        response = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json=payload)
+        assert response.status_code == 200, response.text
+        jid = response.json()["job"]
+        assert started.wait(1)
+        found = client.get("/api/deep-permuter", params={"slug": "game", "name": "f"}).json()
+        assert found["job"] == jid and found["last"]["function"] == "f"
+        assert found["last"]["progress"]["tested"] == 2
+        again = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json=payload)
+        assert again.json()["job"] == jid
+        other = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json={**payload, "name": "g"})
+        assert other.status_code == 400 and "Another function" in other.json()["error"]
+        assert client.post("/api/job/cancel", headers={"X-Decomp": "1"}, json={"id": jid}).json() == {"cancelled": True}
+    finally:
+        release.set()
+    for _ in range(100):
+        state = client.get("/api/job", params={"id": jid}).json()["state"]
+        if state != "running":
+            break
+        time.sleep(.01)
+    found = client.get("/api/deep-permuter", params={"slug": "game", "name": "f"}).json()
+    assert found["job"] is None and found["last"]["state"] == "cancelled"
+    assert found["last"]["progress"]["best_score"] == 20
+
+
+def test_deep_searches_are_capped_app_wide_below_the_shared_workers(app, monkeypatch):
+    """#244: a fixed cap of 2 searches could take every shared worker of a small machine."""
+    from decompnet.app import deep_permuter
+
+    client, _, _ = app
+    started, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(deep_permuter, "validate", lambda *args: None)
+    monkeypatch.setattr(deep_permuter.workers, "WORKERS", 2)
+
+    def run(net, slug, name, minutes, variants, log):
+        started.set()
+        release.wait(2)
+        return {"function": name}
+
+    monkeypatch.setattr(deep_permuter, "run", run)
+    payload = {"slug": "capped-a", "name": "f", "minutes": 1, "variants": 10}
+    try:
+        jid = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json=payload).json()["job"]
+        assert started.wait(1)
+        other = client.post("/api/deep-permuter", headers={"X-Decomp": "1"}, json={**payload, "slug": "capped-b"})
+        assert other.status_code == 400 and "1 deep search is already running" in other.json()["error"]
+    finally:
+        release.set()
+    for _ in range(100):
+        if client.get("/api/job", params={"id": jid}).json()["state"] != "running":
+            break
+        time.sleep(.01)
+
+
 def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp_path):
     from .test_loading import tiny_game
 
@@ -56,6 +127,40 @@ def test_opening_a_project_recovers_its_own_successful_save_destination(app, tmp
         response = client.get("/api/project", params={"slug": slug})
         assert response.status_code == 200, response.text
         assert response.json()["save_folder"] == str((tmp_path / slug).resolve())
+
+
+def test_compiler_comparison_route_passes_options_and_reuses_running_job(tmp_path, monkeypatch):
+    from .test_loading import tiny_game
+
+    (tmp_path / '.decomp').mkdir()
+    net = RomNetwork(tmp_path / '.decomp' / 'decomp.db', tmp_path)
+    tiny_game(net, 'comparison-route')
+    mcp, _, security, _ = build(net, tmp_path / '.decomp', PORT, SECRET)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host='127.0.0.1'),
+                        base_url=f'http://127.0.0.1:{PORT}', headers=WINDOW)
+    started = threading.Event()
+    release = threading.Event()
+    seen = []
+
+    def compare(slug, log, **options):
+        seen.append((slug, options))
+        started.set()
+        assert release.wait(5)
+        return {'tried': 0, 'results': []}
+
+    monkeypatch.setattr(net, 'find_better_compiler_settings', compare)
+    request = {'slug': 'comparison-route', 'find_better_settings': True, 'flags_only': True,
+               'auto_apply': False}
+    try:
+        first = client.post('/api/compilermap', headers={'X-Decomp': '1'}, json=request)
+        assert first.status_code == 200, first.text
+        assert started.wait(5)
+        second = client.post('/api/compilermap', headers={'X-Decomp': '1'}, json=request)
+        assert second.status_code == 200 and second.json()['job'] == first.json()['job']
+    finally:
+        release.set()
+    assert seen == [('comparison-route', {'flags_only': True, 'used_profiles_only': False,
+                                          'untested_only': True, 'auto_apply': False})]
 
 
 def test_a_project_remembers_which_functions_helpers_take_first(app):
@@ -240,6 +345,22 @@ def test_the_home_page_waits_for_no_agent_and_no_projects_files(tmp_path, monkey
     assert ran == []
     (game,) = client.get("/api/projects").json()
     assert game["slug"] == "game" and game["functions"] == 4 and game["compiler"]["name"] and "broken" not in game
+    # hundreds of projects: the sidebar's ask every 5 s gets just "the same" when nothing changed, and each project's
+    # totals are counted again only when its functions change
+    first = client.get("/api/projects?since=").json()
+    assert first["projects"] == [game]
+    assert client.get(f"/api/projects?since={first['sig']}").json() == {"sig": first["sig"], "same": True}
+    counted = []
+    real_one = net.store.one
+    monkeypatch.setattr(net.store, "one", lambda sql, *a: (counted.append(sql) if "COUNT(*) AS total" in sql else None)
+                        or real_one(sql, *a))
+    client.get("/api/projects")
+    assert counted == []
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE project_id=(SELECT id FROM projects WHERE slug='game') "
+                   "AND id=(SELECT MIN(id) FROM functions)")
+    again = client.get(f"/api/projects?since={first['sig']}").json()
+    assert len(counted) == 1 and again["projects"][0]["matched"] == game["matched"] + 1
 
 
 def test_helpers_started_to_polish_matched_code_get_that_task(tmp_path, monkeypatch):
@@ -1029,6 +1150,8 @@ def test_the_map_brings_polished_and_set_aside_and_changes_when_a_function_is_po
     assert {"polished", "not_c"} <= set(after["keys"]) and "same" not in after
     rows = {r[after["keys"].index("name")]: dict(zip(after["keys"], r)) for r in after["rows"]}
     assert rows["func_0"]["polished"] and not rows["func_1"]["polished"]
+    same = client.get(f"/api/map?slug=game&since={after['sig']}").json()
+    assert same.get("same") is True and same.get("sig") == after["sig"]
 
 
 def test_rom_library_setting_and_background_lookup(app, tmp_path, monkeypatch):
@@ -1062,3 +1185,33 @@ def test_rom_library_setting_and_background_lookup(app, tmp_path, monkeypatch):
     assert result['state'] == 'done' and result['result']['path'].endswith('game.z64')
     assert seen == [(p, {'sha1': 'a' * 40}, str(library))]
     assert client.post('/api/settings', json={'rom_library': ''}, headers={'X-Decomp': '1'}).json()['rom_library'] == ''
+
+
+def test_compiler_profile_jobs_stream_progress_and_reuse_active_task(app, monkeypatch, tmp_path):
+    from decompnet.app import compiler_default_test
+
+    client, net, _ = app
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)',
+                   ('profile-api', 'Profile API', str(tmp_path), json.dumps({'kind': 'rom', 'platform': 'n64'})))
+    release = threading.Event()
+    entered = threading.Event()
+    def run(net, slug, profile, log, **kwargs):
+        log.progress({'total': 2, 'checked': 1, 'passed': 1, 'failed': 0})
+        entered.set()
+        release.wait(3)
+        return {'compatible': True}
+    monkeypatch.setattr(compiler_default_test, 'run', run)
+    data = {'slug': 'profile-api', 'profile': {'toolchain': 'ido-5.3', 'flags': ['-O1']}, 'action': 'nonmatches'}
+    try:
+        first = client.post('/api/compiler/test-default', headers={'X-Decomp': '1'}, json=data)
+        assert first.status_code == 200, first.text
+        assert entered.wait(2)
+        second = client.post('/api/compiler/test-default', headers={'X-Decomp': '1'}, json=data)
+        assert second.json()['job'] == first.json()['job']
+        snapshot = client.get('/api/job', params={'id': first.json()['job']}).json()
+        assert snapshot['progress']['checked'] == 1 and snapshot['state'] == 'running'
+    finally:
+        release.set()
+    bad = client.post('/api/compiler/test-default', headers={'X-Decomp': '1'}, json={**data, 'action': 'unsupported'})
+    assert bad.status_code == 400

@@ -1763,6 +1763,7 @@ def test_a_projects_flags_follow_its_compiler_and_how_it_takes_its_c_runtime():
     assert settings("6.0", own) == ("6.0", ["/nologo", "/c", "/O2", "/W3", "/GX"])
     # a copy of the user's own (kits/visualcpp.py) is named by its cl.exe's version: 19.x is 2015 and newer, 15.0 is
     # 2008 (whose msvcr90 isn't yet), as the Rich header names them (rich_version)
+    assert scratch_pe.builds_md(dll, "own-19.29.30137-x64")
     assert scratch_pe.builds_md(dll, "own-19.29.30137") and not scratch_pe.builds_md(dll, "own-15.0.30411")
     text = scratch_pe.configure_settings(template, "own-19.29.30137", dll, log=lambda _: None, ehsc=True)
     assert re.search(r'^CL_FLAGS = .*"/EHsc", "/MD"\]', text, re.M), text
@@ -3561,6 +3562,25 @@ def test_a_64_bit_programs_functions_are_its_pdata_and_the_code_between():
     assert scratch_pe.merge_pieces(pe, functions, log=lambda *_: None) == (functions, {})
 
 
+def test_the_64_bit_sweep_stops_where_the_loaded_code_ends():
+    """Review of #209: the sweep between .pdata's functions ran to the end of .text in the file (SizeOfRawData,
+    rounded up to the file alignment), so a prologue's bytes in that padding became a function the loader never maps.
+    It stops at VirtualSize: .text 0x20 bytes of 0x200 in the file, a `sub rsp, 0x28; ret` at +0x20."""
+    code = bytearray(0x200)
+    code[:0x20] = bytes.fromhex("31c0c3").ljust(0x20, b"\xcc")  # xor eax, eax; ret
+    code[0x20:0x25] = bytes.fromhex("4883ec28c3")
+    exe = bytearray(_tiny_exe64(bytes(code)))
+    text = 0x40 + 24 + 0xF0  # (its section header, after the PE header and PE32+'s optional header)
+    struct.pack_into("<I", exe, text + 8, 0x20)  # VirtualSize
+    pe = scratch_pe.read_pe(bytes(exe))
+    assert [(s.vsize, s.size, s.loaded_size) for s in pe.sections[:1]] == [(0x20, 0x200, 0x20)]
+    assert [(f.addr - X64_BASE, f.size) for f in scratch_pe.analyse(pe, [])] == [(0x1000, 3)]
+    struct.pack_into("<I", exe, text + 8, 0)  # (no VirtualSize: the file's size, and the sweep reads all of it)
+    pe = scratch_pe.read_pe(bytes(exe))
+    assert pe.sections[0].loaded_size == 0x200
+    assert [(f.addr - X64_BASE, f.size) for f in scratch_pe.analyse(pe, [])] == [(0x1000, 3), (0x1020, 5)]
+
+
 @pytest.mark.parametrize("shape", ["rvas", "offsets", "a constant"])
 def test_data_past_a_64_bit_functions_pdata_end_is_not_a_function(shape):
     """A function's .pdata entry can end before data its code reads (code a compiler other than Visual C++ made, or
@@ -3865,3 +3885,71 @@ def test_a_mask_equal_to_a_functions_start_is_a_number():
 def test_a_purge_ghidra_couldnt_work_out_counts_as_none():
     assert scratch_pe.decorate("f", "__stdcall", 2147483647, 0) == "_f"
     assert scratch_pe.decorate("f", "__stdcall", 8, 2) == "_f@8"
+
+
+def test_own_compiler_selection_never_crosses_targets(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.29.30137.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    assert scratch_pe.own_copy("14.2", 30137, "x86") is None
+    assert scratch_pe.own_copy("14.2", 30137, "x64").version == "own-19.29.30137-x64"
+    assert scratch_pe.own_copy("14.2", 30137, "arm64") is None
+    make_vc(tmp_path, "19.29.30136.0", "VC/bin/Hostx64/x86")
+    assert scratch_pe.own_copy("14.2", 30137, "x86").version == "own-19.29.30136"
+    assert scratch_pe.own_copy("14.2", None, "x64").version == "own-19.29.30137-x64"
+
+
+def test_locate_prefers_an_x86_toolset_over_a_newer_x64_only_one(tmp_path, monkeypatch):
+    """A Visual Studio root whose newest MSVC folder is x64-only (no Hostx86/x86) must not hide an older folder that
+    has the x86 compiler: locate checks every candidate for an x86 compiler before accepting an x64-only one, so a
+    32-bit game of the older toolset still reaches the user's own copy instead of falling back to the pack."""
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    root = tmp_path / "VS"
+    make_vc(root, "19.38.33130.0", "Tools/MSVC/14.38.33130.0/bin/Hostx64/x64")  # newer, x64-only (sorts first)
+    make_vc(root, "19.29.30133.0", "Tools/MSVC/14.29.30133.0/bin/Hostx86/x86")  # older, has the x86 compiler
+    toolchains.install("visualcpp", folder=root, accept_license=True, log=lambda *_: None)
+    own = scratch_pe.own_copy("14.2", 30133, "x86")
+    assert own is not None and own.version == "own-19.29.30133"  # the x86 copy, not None (the x64-only hid it before)
+
+
+def test_build_env_survives_an_unreadable_own_copy(tmp_path, monkeypatch):
+    """wine.build_env scans the user's kits on every PC build step to see whether an own copy needs wine. A copy
+    whose folder can't be read (wrong permissions, a dropped mount) must be skipped, not abort every build with a
+    raw PermissionError -- including a pack-built project, which needs no own copy at all."""
+    from decompnet import wine
+    if not wine.needed():
+        pytest.skip("Windows runs the compilers itself; build_env reads no kits")
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.29.30133.0", "VC/bin/Hostx86/x86")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    broken = copy / "bin" / "Hostx86" / "x86"  # where cl.exe and c2.dll are
+    broken.chmod(0o000)
+    try:
+        assert wine.build_env() == {}  # no wine packs installed and the only copy is unreadable: nothing to do
+    finally:
+        broken.chmod(0o755)
+
+
+def test_x86_pack_does_not_hide_a_matching_own_x64_copy(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "15.0.30729.1", "VC/bin/amd64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    assert scratch_pe.own_copy("9.0", 30729, "x86") is None  # exact downloadable x86 build
+    assert scratch_pe.own_copy("9.0", 30729, "x64").version == "own-15.0.30729-x64"
+
+
+def test_a_64_bit_game_reaches_the_users_own_x64_copy(tmp_path, monkeypatch):
+    """The review's high point: with #212's PE32+ import on main, a 64-bit program must reach the user's own x64
+    Visual C++ copy through describe and program_compilers, not only through own_copy directly. A 2019 Rich build is
+    newer than any 64-bit pack, so without the fix (the call sites passing the target) a 64-bit game gets own=None."""
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    copy = make_vc(tmp_path, "19.29.30137.0", "VC/bin/Hostx64/x64")
+    toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+    data = _windows_program(machine=0x8664, rich=[(0x105, 30137, 300), (0x102, 30137, 1)])
+    built = scratch_pe.describe(data)
+    assert built.machine == scratch_pe.X64 and (built.version, built.build) == ("14.2", 30137)
+    assert built.own is not None and built.own.version == "own-19.29.30137-x64"  # the x64 copy, not None
+    # program_compilers marks the 2019 files buildable: no 64-bit pack has that build, so only the own x64 copy
+    # can (installed is True because built.own is found). Before the fix, a 64-bit game got own=None here too.
+    rows = scratch_pe.program_compilers(data)
+    assert rows and all(installed for *_, installed in rows)

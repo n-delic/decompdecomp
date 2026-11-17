@@ -1,0 +1,387 @@
+"""A manual search has explicit limits and uses the ordinary permuter judge."""
+
+import json
+import time
+
+import pytest
+
+from decompnet.app import deep_permuter
+from decompnet.app.engine import RomNetwork
+from decompnet.network import NetworkError
+
+
+class Log:
+    def __init__(self):
+        self.lines = []
+        self.cancelled = False
+        self.snapshot = None
+
+    def progress(self, values):
+        self.snapshot = values
+
+    def __call__(self, line):
+        self.lines.append(line)
+
+    def check_cancel(self):
+        if self.cancelled:
+            raise RuntimeError("cancelled")
+
+
+def setup(tmp_path):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)",
+                         ("game", "Game", str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,n_insns,status,best_source,best_score,permuted) "
+                   "VALUES(?,?,?,'open',?,?,?)", (pid, "f", 10, "int f(void) { return 1; }", 40, 3))
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at) VALUES(?,1,'',0)", (pid,))
+    return net
+
+
+@pytest.mark.parametrize("minutes,variants", [(0, 10), (121, 10), (True, 10), (1, 0), (1, 1_000_001), (1, 1.5)])
+def test_search_rejects_invalid_budgets(tmp_path, minutes, variants):
+    net = setup(tmp_path)
+    with pytest.raises(NetworkError, match="limit"):
+        deep_permuter.validate(net, "game", "f", minutes, variants)
+
+
+def test_search_does_not_use_the_automatic_turn_allowance(tmp_path):
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    fn = net._function("f", "game")
+    search = deep_permuter.Search(net, 1, 1, Log())
+    assert search._hold(agent, fn)
+    assert net._function("f", "game")["permuted"] == 3
+    search._let_go(agent, fn)
+
+
+def test_variant_limit_is_checked_before_another_compile(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    fn = net._function("f", "game")
+    search = deep_permuter.Search(net, 1, 1, Log())
+    calls = []
+    monkeypatch.setattr(Permuter, "_score", lambda *args: calls.append(args) or 20)
+    assert search._score(agent, net.project_row("game"), fn, "candidate", 40, None) == 20
+    with pytest.raises(deep_permuter.SearchLimit, match="Variant limit"):
+        search._score(agent, net.project_row("game"), fn, "candidate two", 20, None)
+    assert len(calls) == 1
+    assert search.log.snapshot["starting_score"] == 40
+    assert search.log.snapshot["best_score"] == 20
+    assert search.log.snapshot["tested"] == 1
+    assert search.log.snapshot["history"] == [{"tested": 0, "score": 40}, {"tested": 1, "score": 20}]
+
+
+def test_search_stops_at_variant_limit_and_keeps_a_verified_improvement(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    log = Log()
+
+    def fake_permute(search, agent, proj, fn, state):
+        assert search._random_seed(fn) != search._random_seed(fn)
+        state.add(variants=1)
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_score=20 WHERE id=?", (fn["id"],))
+        search.tested += 1
+
+    monkeypatch.setattr(deep_permuter.Search, "_permute", fake_permute)
+    monkeypatch.setattr(Permuter, "_score", lambda *args: 40)
+    result = deep_permuter.run(net, "game", "f", 1, 2, log)
+    assert result == {"function": "f", "reason": "Variant limit reached", "tested": 2,
+                      "matched": False, "best_score": 20}
+    assert any("verified improvements" in line for line in log.lines)
+
+
+def test_search_checks_cancellation_before_start(tmp_path):
+    net = setup(tmp_path)
+    log = Log()
+    log.cancelled = True
+    with pytest.raises(RuntimeError, match="cancelled"):
+        deep_permuter.run(net, "game", "f", 1, 10, log)
+
+
+def test_duplicate_misses_and_compile_failures_do_not_spend_more_compiles(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    fn, proj = net._function("f", "game"), net.project_row("game")
+    search = deep_permuter.Search(net, 1, 10, Log())
+    calls = []
+    monkeypatch.setattr(Permuter, "_score", lambda *args: calls.append(args) or (None if args[4] == "broken" else 50))
+    for source in ("candidate", "candidate", "broken", "broken"):
+        search._score(agent, proj, fn, source, 40, None)
+    assert len(calls) == search.tested == 2
+    assert search.skipped == 2
+    with net.store.tx() as db:
+        db.execute("UPDATE context_versions SET header='new header'")
+    search._score(agent, proj, fn, "candidate", 40, None)
+    assert search.tested == 3  # changed inputs invalidate the earlier result
+
+
+def test_baseline_rebases_a_stale_score_and_blocks_changed_inputs(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    fn, proj = net._function("f", "game"), net.project_row("game")
+    search = deep_permuter.Search(net, 1, 10, Log())
+    monkeypatch.setattr(Permuter, "_score", lambda *args: 80)
+    assert search.baseline(agent, proj, fn, None) == 80
+    assert net._function("f", "game")["best_score"] == search.starting_score == 80
+    assert search.tested == 1
+    with net.store.tx() as db:
+        db.execute("UPDATE context_versions SET header='changed'")
+    with pytest.raises(deep_permuter.SearchLimit, match="header or target changed"):
+        search._score(agent, proj, fn, "candidate", 80, None)
+    assert search.tested == 1
+
+
+def test_broken_baseline_stops_before_mutations_and_releases_claim(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    monkeypatch.setattr(Permuter, "_score", lambda *args: None)
+    with pytest.raises(NetworkError, match="no longer compiles"):
+        deep_permuter.run(net, "game", "f", 1, 10, Log())
+    assert not net.store.one("SELECT 1 FROM claims")
+
+
+def test_baseline_never_replaces_a_concurrent_winner(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    fn, proj = net._function("f", "game"), net.project_row("game")
+
+    def concurrent_change(*args):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source='new winner',best_score=20")
+        return 80
+
+    monkeypatch.setattr(Permuter, "_score", concurrent_change)
+    with pytest.raises(NetworkError, match="saved candidate changed"):
+        deep_permuter.Search(net, 1, 10, Log()).baseline(agent, proj, fn, None)
+    current = net._function("f", "game")
+    assert current["best_source"] == "new winner" and current["best_score"] == 20
+
+
+@pytest.mark.parametrize("fork", [None, "imported"])
+def test_potential_winners_are_always_rejudged(tmp_path, monkeypatch, fork):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    fn, proj = net._function("f", "game"), net.project_row("game")
+    search = deep_permuter.Search(net, 1, 10, Log())
+    calls = []
+    monkeypatch.setattr(Permuter, "_score", lambda *args: calls.append(args) or 20)
+    for _ in range(2):
+        assert search._score(agent, proj, fn, "candidate", 40, fork) == 20
+    assert len(calls) == search.tested == 2
+    assert search.skipped == 0
+
+
+def test_local_rewrites_precede_random_search_and_use_the_same_budget(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    source = "int f(int a) { return a + (a << 5); }"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source=?", (source,))
+    judged = []
+    monkeypatch.setattr(Permuter, "_score", lambda *args: judged.append(args[4]) or 40)
+    monkeypatch.setattr(deep_permuter.Search, "_permute", lambda *args: pytest.fail("budget already spent"))
+    result = deep_permuter.run(net, "game", "f", 1, 2, Log())
+    assert judged == [source, "int f(int a) { return (a << 5) + a; }"]
+    assert result["tested"] == 2
+
+
+@pytest.mark.parametrize("finish", ["matched", "limit"])
+def test_published_improvements_continue_within_the_original_budget(tmp_path, monkeypatch, finish):
+    from decompnet.app import saves
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    log = Log()
+    calls, searches = [], []
+
+    def judge(search, agent, proj, fn, source, best, fork):
+        calls.append(source)
+        score = {"int f(void) { return 1; }": 40, "closer": 20, "next": 0 if finish == "matched" else 10}[source]
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_score=?,best_source=?,status=? WHERE id=?",
+                       (score,source,"matched" if score == 0 else "open",fn["id"]))
+        # The actual progress writer records a new revision after publishing saved C.
+        saves._remember_revision(net,"game",{"revision":len(calls)})
+        return score
+
+    def turn(search, agent, proj, fn, state):
+        searches.append((id(search),search.deadline,search.limit))
+        source = "closer" if len(searches) == 1 else "next"
+        state.add(variants=1)
+        search._score(agent,proj,fn,source,fn["best_score"],None)
+
+    monkeypatch.setattr(Permuter,"_score",judge)
+    monkeypatch.setattr(deep_permuter.Search,"_permute",turn)
+    monkeypatch.setattr(deep_permuter.permuter_local,"variants",lambda *args:[])
+    result = deep_permuter.run(net,"game","f",1,3,log)
+    assert calls == ["int f(void) { return 1; }","closer","next"]
+    assert len(searches) == 2 and searches[0] == searches[1]
+    assert result["reason"] == ("Matched" if finish == "matched" else "Variant limit reached")
+    assert result["tested"] == log.snapshot["tested"] == 3
+    assert log.snapshot["history"] == [{"tested":0,"score":40},{"tested":2,"score":20},
+                                        {"tested":3,"score":0 if finish == "matched" else 10}]
+    assert not net.store.one("SELECT 1 FROM claims")
+
+
+@pytest.mark.parametrize("field", ["compiler", "header", "target"])
+def test_real_compile_input_changes_still_stop_the_search(tmp_path, monkeypatch, field):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    proj, fn = net.project_row("game"), net._function("f","game")
+    search = deep_permuter.Search(net,1,10,Log())
+    monkeypatch.setattr(Permuter,"_score",lambda *args:40)
+    search.baseline(agent,proj,fn,None)
+    with net.store.tx() as db:
+        if field == "compiler":
+            config = json.loads(proj["config"])
+            config["compiler"] = {"toolchain":"different","flags":["-O2"]}
+            db.execute("UPDATE projects SET config=?",(json.dumps(config),))
+        elif field == "header":
+            db.execute("UPDATE context_versions SET header='typedef int Changed;'")
+        else:
+            db.execute("UPDATE functions SET target=?",(b"different target",))
+    with pytest.raises(deep_permuter.SearchLimit,match="Compiler, header or target changed"):
+        search._score(agent,proj,fn,"next",40,None)
+    assert search.tested == 1
+
+
+def test_long_search_keeps_its_claim_until_its_deadline(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    fn = net._function('f', 'game')
+    search = deep_permuter.Search(net, 10, 10, Log())
+    monkeypatch.setattr(Permuter, '_score', lambda *args: 40)
+    assert search._hold(agent, fn)
+    try:
+        claim = net.store.one('SELECT expires_at FROM claims WHERE function_id=?', fn['id'])
+        assert claim['expires_at'] > time.time() + 600
+        assert search._score(agent, net.project_row('game'), fn, 'candidate', 40, None) == 40
+    finally:
+        search._let_go(agent, fn)
+
+
+def test_unrelated_project_bookkeeping_does_not_end_search(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    proj, fn = net.project_row('game'), net._function('f', 'game')
+    search = deep_permuter.Search(net, 1, 10, Log())
+    monkeypatch.setattr(Permuter, '_score', lambda *args: 40)
+    search.baseline(agent, proj, fn, None)
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?',
+                   (json.dumps({'kind': 'rom', 'autopilot_tried': 42}), proj['id']))
+    assert search._score(agent, proj, fn, 'next', 40, None) == 40
+
+
+def test_a_project_mode_turn_judges_its_variants(tmp_path, monkeypatch):
+    """#244: Permuter._permute ends a project's turn when _renew says False after trial_run, and Search._renew said
+    None, so every fork turn ended untried ("No further variants available", one variant tested)."""
+    from contextlib import contextmanager
+
+    from decompnet.app import permute
+    from decompnet.app.permute import Permuter, State
+
+    net = setup(tmp_path)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source=?", ("s32 f(s32 a) {\n    s32 b = a + 1;\n    return b * 2;\n}\n",))
+    runs, judged = [], []
+
+    class Forks:
+        @contextmanager
+        def trial_run(self, proj, unit):
+            runs.append(unit)
+            yield
+
+    monkeypatch.setattr(net, "forks", Forks(), raising=False)
+    monkeypatch.setattr(net, "fork_slug", lambda slug: slug)
+    monkeypatch.setattr(permute, "available", lambda: False)  # the simple rewrites: no decomp-permuter needed
+    monkeypatch.setattr(Permuter, "_score", lambda self, agent, proj, fn, source, best, fork: judged.append(source) or 40)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    search = deep_permuter.Search(net, 1, 5, Log())
+    with pytest.raises(deep_permuter.SearchLimit, match="Variant limit"):
+        search._permute(agent, net.project_row("game"), net._function("f", "game"), State())
+    assert runs and search.tested == 5 and len(judged) == 5
+    assert not net.store.one("SELECT 1 FROM claims")
+
+
+def test_a_claim_lost_before_a_compile_ends_the_search(tmp_path, monkeypatch):
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    agent, _ = net.local_agent(deep_permuter.AGENT)
+    other, _ = net.local_agent("someone")
+    fn = net._function("f", "game")
+    judged = []
+    monkeypatch.setattr(Permuter, "_score", lambda *args: judged.append(args) or 40)
+    search = deep_permuter.Search(net, 1, 10, Log())
+    assert search._hold(agent, fn)
+    with net.store.tx() as db:  # its claim ran out and an agent took the function meanwhile
+        db.execute("UPDATE claims SET agent_id=?", (other.id,))
+    with pytest.raises(deep_permuter.SearchLimit, match="no longer held"):
+        search._score(agent, net.project_row("game"), fn, "candidate", 40, None)
+    assert judged == []
+    assert net.store.one("SELECT agent_id FROM claims")["agent_id"] == other.id
+
+
+def test_the_automatic_permuters_claim_between_turns_is_waited_out(tmp_path, monkeypatch):
+    """#244: both ran as "permuter", so the automatic permuter's claim between two turns of the search looked like
+    the search's own and ended it as "No further variants available". The search is a worker of its own now, and
+    waits for any claim; it never renews or lets go of the automatic permuter's."""
+    from decompnet.app.permute import Permuter
+
+    net = setup(tmp_path)
+    log = Log()
+    automatic, _ = net.local_agent("permuter")
+    turns = []
+    monkeypatch.setattr(Permuter, "_score", lambda *args: 40)
+    monkeypatch.setattr(deep_permuter.permuter_local, "variants", lambda *args: [])
+
+    def turn(search, agent, proj, fn, state):
+        turns.append(agent.name)
+        if len(turns) == 1:  # the automatic permuter takes the function between the search's turns
+            with net.store.tx() as db:
+                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], automatic.id, time.time(), time.time() + 60))
+        if len(turns) == 3:  # and lets go of it
+            assert net.store.one("SELECT agent_id FROM claims")["agent_id"] == automatic.id  # (untouched meanwhile)
+            with net.store.tx() as db:
+                db.execute("DELETE FROM claims")
+        if not search._hold(agent, fn):
+            return
+        try:
+            state.add(variants=1)
+            search._score(agent, proj, fn, "next", fn["best_score"], None)
+        finally:
+            search._let_go(agent, fn)
+
+    monkeypatch.setattr(deep_permuter.Search, "_permute", turn)
+    result = deep_permuter.run(net, "game", "f", 1, 2, log)
+    assert set(turns) == {deep_permuter.AGENT}
+    assert result["reason"] == "Variant limit reached" and result["tested"] == 2
+    assert any("Another worker holds" in line for line in log.lines)
+
+
+@pytest.mark.parametrize("cores,searches", [(1, 1), (2, 1), (3, 2), (4, 2)])
+def test_deep_searches_leave_a_worker_for_the_rest(monkeypatch, cores, searches):
+    monkeypatch.setattr(deep_permuter.workers, "WORKERS", cores)
+    assert deep_permuter.max_searches() == searches

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,13 @@ def project(root, platform='n64'):
 
 def needs(data):
     return {'path': 'baserom.z64', 'sha1': hashlib.sha1(data).hexdigest()}
+
+
+def rewrite(path, data):
+    # The hash cache keys file versions by stat. Same-tick, same-size writes can keep both timestamps on Linux too.
+    before = path.stat()
+    path.write_bytes(data)
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
 
 
 @pytest.mark.parametrize('order', ['z64', 'v64', 'n64'])
@@ -42,7 +50,7 @@ def test_existing_rom_wins_even_without_library_setting_and_wrong_rom_does_not(t
     file = tmp_path / 'baserom.z64'
     file.write_bytes(b'valid')
     assert romlibrary.find(project(tmp_path), needs(b'valid'), '')['in_project']
-    file.write_bytes(b'wrong')
+    rewrite(file, b'wrong')
     assert romlibrary.find(project(tmp_path), needs(b'valid'), '')['path'] is None
 
 
@@ -154,7 +162,7 @@ def test_cache_is_invalidated_by_file_changes(tmp_path):
     file.write_bytes(b'first')
     cfg = needs(b'other')
     assert romlibrary.find(project(root, 'ps'), cfg, str(lib))['path'] is None
-    file.write_bytes(b'other')
+    rewrite(file, b'other')
     cfg['sha1'] = hashlib.sha1(b'other').hexdigest()
     assert romlibrary.find(project(root, 'ps'), cfg, str(lib))['path'] == str(file)
 
