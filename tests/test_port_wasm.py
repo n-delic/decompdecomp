@@ -609,3 +609,16 @@ def test_a_game_with_no_c_yet_builds_from_its_recompiled_c(tmp_path):
     (repo / "progress" / "src" / "race_update.c").write_text("void race_update(void) {}\n")
     assert list(gather(repo, out)) == ["race_update.c"]  # the first matched function takes its place
     assert not (out / "src" / EMPTY_UNIT).exists()
+
+
+def test_a_file_that_also_defines_a_left_out_function_is_left_out(tmp_path):
+    """A packed shooter's _Printf was matched in its static helper's file too: leaving _Printf.c out still compiled
+    _Printf there, with IDO's va_arg, and the build stopped."""
+    repo, _ = save(tmp_path)
+    src = repo / "progress" / "src"
+    (src / "gl_func_0006E224.c").write_text("static void gl_func_0006E224(int x) {}\n"
+                                            "int _Printf(int a) { gl_func_0006E224(a); return 0; }\n")
+    (src / "_Printf.c").write_text("int _Printf(int a) { return 0; }\n")
+    chosen = gather(repo, tmp_path / "build", {"_Printf.c"})
+    assert "gl_func_0006E224.c" not in chosen and "_Printf.c" not in chosen
+    assert "tokenize.c" in chosen

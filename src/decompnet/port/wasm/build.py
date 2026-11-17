@@ -299,6 +299,15 @@ def own_functions(chosen: dict[str, Path], texts: dict[str, str]) -> dict[str, s
     return out
 
 
+def _defines_left_out(path: Path, leave_out) -> bool:
+    """Whether a save's file also defines a function the host provides: that file is the library's source, and its
+    own function a static helper of it. A packed shooter's _Printf was matched in its helper's file too, so leaving
+    _Printf.c out still compiled _Printf, with IDO's va_arg that clang can't (`__builtin_classof`)."""
+    from ..csource import defined
+    gone = {name.removesuffix(".c") for name in leave_out}
+    return bool(gone) and bool(gone & (set(defined(path.read_text(encoding="utf-8"))) - {path.stem}))
+
+
 EMPTY_UNIT = "port_no_game_c.c"
 
 
@@ -313,6 +322,7 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[s
                            "repository (the folder Save writes)")
     exclude = _names(port / "exclude.txt") | set(leave_out)
     chosen = {p.name: p for p in sorted((progress / "src").glob("*.c")) if p.name not in exclude}
+    chosen = {name: path for name, path in chosen.items() if not _defines_left_out(path, leave_out)}
     for folder in (port / "src", port / "overrides"):
         chosen.update({p.name: p for p in sorted(folder.glob("*.c"))})
     (out / "src").mkdir(parents=True, exist_ok=True)
