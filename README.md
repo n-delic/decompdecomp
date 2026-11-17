@@ -679,6 +679,18 @@ home and port, for example `DECOMP_HOME=/path/to/server-projects decomp serve --
 `uv run decomp serve --port 6474`. Stop the server with Ctrl-C or `decomp stop` using the same home. Updates preserve
 server mode; they do not open a native window.
 
+To start a project from a terminal (a script, or a server without its window), ask the running app to import a game
+you own, as dropping it on the home page does:
+
+```bash
+decomp import "/path/to/game.z64"        # asks you to confirm it's your own copy; --yes to skip the question
+```
+
+The app imports it from where it is (a ROM, a disc image, a PC game's folder), and the command prints the import's
+log and the new project's slug. `--name` names the project, `--toolchain` picks the compiler to start with, and
+`--no-wait` returns once the import has started. It talks to the app of the same home (`DECOMP_HOME`), which must be
+running.
+
 It binds **127.0.0.1 only**. Direct LAN binding and public HTTPS serving are not enabled. Private HTTPS through Tailscale Serve uses
 the explicitly trusted remote address configured in Settings. A private SSH forward can reach a remote machine's localhost server while keeping the same forwarded port.
 Browser file uploads still work; folder/file-path chooser buttons ask for a path **on the server computer**.
