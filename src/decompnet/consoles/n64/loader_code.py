@@ -11,8 +11,9 @@ from ...arch.mips_code_recovery import called_extent, leaf_extent
 from ...arch.mips_references import references
 
 
-def complete(image, segments, banks, taken=(), log=print):
-    """Scan every unowned bank interval, then follow newly exposed calls to a fixed point."""
+def complete(image, segments, banks, taken=(), log=print, *, table_ranges=(), what='full verified loader ranges', entries=()):
+    """Scan every unowned bank interval, then follow newly exposed calls to a fixed point. `table_ranges`: where
+    the game's data is mapped, so a switch's own jump table can close its body (mips_code_recovery)."""
     banks=sorted(banks)
     spans=sorted(list(segments)+list(taken))
     covered=sorted((a,b) for a,b,_ in spans)
@@ -27,7 +28,7 @@ def complete(image, segments, banks, taken=(), log=print):
     if not gaps:return sorted(segments)
     starts=[a for a,_,_ in gaps]
     check=getattr(log,'check_cancel',lambda:None)
-    calls=set();entries=set();incoming=defaultdict(set)
+    calls=set();incoming=defaultdict(set);entries=set(entries)  # (addresses the game was seen running too)
     def read_calls(lo,hi,vram):
         for target,at,kind in references(image,lo,hi,vram):
             incoming[target].add(at)
@@ -43,7 +44,7 @@ def complete(image, segments, banks, taken=(), log=print):
         for at in range(lo,hi-3,4):
             if at%0x1000==0:check()
             if not is_frame(int.from_bytes(image[at:at+4],'big')):continue
-            size=called_extent(image,at,hi,vram+at-lo)
+            size=called_extent(image,at,hi,vram+at-lo,table_ranges=table_ranges)
             if size:bodies[at]=(at,at+size,vram+at-lo)
     # A quiet framed function can be dead code or a callback. Its own calls to
     # independently established CPU callees corroborate it even without an incoming
@@ -55,7 +56,7 @@ def complete(image, segments, banks, taken=(), log=print):
             valid=False
             if len(owners)==1:
                 lo,hi,ram=owners[0];at=lo+target-ram
-                valid=bool(called_extent(image,at,hi,target) or leaf_extent(image,at,hi,target))
+                valid=bool(called_extent(image,at,hi,target,table_ranges=table_ranges) or leaf_extent(image,at,hi,target,table_ranges=table_ranges))
             callee_cache[target]=valid
         return callee_cache[target]
     def linked_frame(a,b,v):
@@ -76,7 +77,7 @@ def complete(image, segments, banks, taken=(), log=print):
             lo,_,v=owners[0];at=lo+target-v;i=bisect_right(starts,at)-1
             if i<0 or not gaps[i][0]<=at<gaps[i][1]:continue
             if at not in bodies:
-                size=leaf_extent(image,at,gaps[i][1],target)
+                size=leaf_extent(image,at,gaps[i][1],target,table_ranges=table_ranges)
                 if size:bodies[at]=(at,at+size,target)
         # Grow anchored runs in either direction. Padding is allowed only when
         # it is zero and no direct call names an interior instruction.
@@ -100,5 +101,5 @@ def complete(image, segments, banks, taken=(), log=print):
     # order select one overlapping body or swallow such a destination.
     result=[r for r in accepted.values() if not independent(*r)
             and not any(r!=s and r[0]<s[1] and s[0]<r[1] for s in accepted.values())]
-    if result:log(f'Recovered {len(result)} closed CPU bodies across full verified loader ranges; other loaded bytes remain raw.')
+    if result:log(f'Recovered {len(result)} closed CPU bodies across {what}; other loaded bytes remain raw.')
     return sorted(list(segments)+result)

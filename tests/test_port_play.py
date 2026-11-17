@@ -132,3 +132,24 @@ def test_play_leaves_out_the_saves_c_for_functions_the_project_doesnt_count_as_m
     said = []
     assert play.unverified(net, "game", log=said.append) == {"func_80031000.c"}
     assert said and "1 functions" in said[0]
+
+
+def test_play_lists_the_addresses_the_game_ran_that_no_function_starts(tmp_path):
+    """The host writes where the game starts running (PORT_ENTRIES) beside the project; Play says which of them no
+    function of the project starts, functions the split missed, for the next import to take."""
+    import json
+
+    from decompnet.app.engine import RomNetwork
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)",
+                         ("game", "game", "mips", 1, str(tmp_path), json.dumps({"kind": "rom", "platform": "n64"}))
+                         ).lastrowid
+    with net.project_store(pid).tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,vram) VALUES(?,?,?,?,?,?)",
+                   (pid, "func_80001000", 0x40, 16, "open", 0x80001000))
+    assert play.unlisted_entries(net, "game") == []
+    (tmp_path / "runtime-entries.txt").write_text("80001000\n80001020\n80002000\n")
+    # 80001020: inside func_80001000 (two functions run together); 80002000: in no function (the split's data)
+    assert play.unlisted_entries(net, "game") == [0x80001020, 0x80002000]

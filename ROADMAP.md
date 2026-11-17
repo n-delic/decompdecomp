@@ -108,6 +108,19 @@
   Planned: the same pointer evidence for raw text inside a segment
   (`rom/mixed_code.py`, every MIPS console), which still needs a call.
 
+- Done: N64 imports scan the gaps between code on one ROM-to-RAM mapping as they scan
+  loader banks (`consoles/n64/code.py`, `complete_gaps`): functions reached only through
+  an address the code builds (`lui`/`addiu`), frameless leaves, switches whose table sits
+  in the overlay's own data (including GCC's scale-in-delay-slot idiom), several functions
+  in one gap. A racing game's import gained 16 functions (31 KB), its object handlers
+  among them; none it had before moved. Play's host writes down each address the game starts
+  running (`PORT_ENTRIES`, the project's `runtime-entries.txt`), Play says which no function
+  starts, and the next import takes them as entries, opening a gap between two overlays
+  under the mapping of the code before it (two more on that game).
+  Planned: the same for the other MIPS consoles' splits (PS1, PS2), runtime entries that
+  fall inside a listed function as split evidence (`automatic_boundaries`), the browser
+  build's entries, and a body that tail-jumps into the next function in its gap.
+
 - Done: N64 imports scan all unowned intervals in corroborated loader banks,
   following newly recovered calls and materialized callback addresses to completion.
   Quiet balanced frames need adjacency or independently corroborated callees and
@@ -771,6 +784,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — | — | — | — | — |
 | Matching-only ELF32 entry extraction for scattered pools (ROM export) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | — | — | — | — |
 | Closed-body recovery throughout verified loader banks | ✓ | — | — | — | — | — | — | — | — | — | — | — |
+| Gap recovery between code on one mapping: built pointers, leaves, switches (import) | ✓ | — | — | — | — | — | — | — | — | — | — | — |
+| Function entries seen running in Play, taken by the next import | ✓ | — | — | — | — | — | — | — | — | — | — | — |
 | Automatic proven framed/leaf boundary repair on import/reimport | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
 | Guided boundary repair and advisory agent investigation (local mapped ROM) | ✓ | ✓ | ✓ (scalar decoder) | — | — | ✓ | — | — | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | ✓ | — | — |

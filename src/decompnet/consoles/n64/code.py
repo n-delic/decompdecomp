@@ -22,6 +22,7 @@ Majora's Mask's). Such code is unpacked and appended to a working copy of the RO
 from __future__ import annotations
 
 import collections
+import re
 import struct
 import zlib
 from pathlib import Path
@@ -129,6 +130,57 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
 
     found=refine(rom,found+referenced_gaps(rom,sorted(taken+found),declared),taken,log)
     return loaded_code(rom,found,verified(rom,taken),taken,log)
+
+
+def complete_gaps(rom, taken, found, declared=(), entries=(), log=print):
+    """`found` with the gaps between code on one mapping scanned as loader banks are (loader_code): a function
+    reached only through a pointer the code builds (lui/addiu), a leaf with no frame, a switch, several functions
+    in one gap, or an address the game was seen running (`entries`, runtime_entries). A racing game's split left 16
+    of them (31 KB) as data, its object handlers among them, so its port called into nothing. Run last, after the
+    game has been run for what it loads (loaded_code): what that finds by following calls stays as it was."""
+    from .loader_code import complete as loaded_code
+
+    spans=sorted(list(taken)+list(found))
+    banks=mapped_gaps(spans)
+    # A gap between code on two mappings (two overlays side by side) has no address the code on both sides agrees
+    # on; one where the game was seen running is scanned on the code before it, whose mapping places that address
+    # in the gap (a racing game's 0x801D74F4: the first byte after its overlay's last listed function).
+    for (s0,e0,v0),(s1,_,v1) in zip(spans,spans[1:]):
+        if e0<s1 and v0-s0!=v1-s1 and s1-e0<=0x10000 and any(v0+e0-s0<=a<v0+s1-s0 for a in entries):
+            banks.append((e0,s1,v0+e0-s0))
+    return loaded_code(rom,list(found),sorted(banks),taken,log,table_ranges=mapped_data(spans,declared,len(rom)),
+                       what='gaps between code on one mapping',entries=entries)
+
+
+RUNTIME_ENTRIES = "runtime-entries.txt"
+
+
+def runtime_entries(workdir: Path) -> set[int]:
+    """The addresses the game was seen starting to run, in the project's folder (port/wasm/play.py has the port's
+    interpreter write them as the game plays, PORT_ENTRIES): one hexadecimal address a line. Evidence of where
+    functions start that the code alone may not give (a function only a pointer the game computes reaches)."""
+    try:
+        text = (Path(workdir) / RUNTIME_ENTRIES).read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    return {int(x, 16) for x in text.split() if re.fullmatch(r"[0-9A-Fa-f]{8}", x)}
+
+
+def mapped_gaps(spans):
+    """(rom_start, rom_end, vram) of each gap between two code ranges that share one ROM-to-RAM mapping (up to
+    64 KB): bytes whose address the code on both sides establishes."""
+    return [(e0,s1,v0+e0-s0) for (s0,e0,v0),(s1,_,v1) in zip(spans,spans[1:])
+            if e0<s1 and v0-s0==v1-s1 and s1-e0<=0x10000]
+
+
+def mapped_data(spans,declared,size):
+    """Where a switch's jump table may be read (mips_indirect.jump_table): the config's own segments, the code,
+    and the bytes after each code range up to the next, on its mapping (an overlay's read-only data follows its
+    code, loaded with it). A table counts only when every entry lands inside the candidate function."""
+    ranges=[dict(rom_start=s,rom_end=e,vram=v) for s,e,v in list(spans)+list(declared)]
+    for (s0,e0,v0),nxt in zip(spans,list(spans[1:])+[(min(size,spans[-1][1]+0x10000),None,None)] if spans else []):
+        if e0<nxt[0]:ranges.append(dict(rom_start=e0,rom_end=nxt[0],vram=v0+e0-s0))
+    return ranges
 
 
 # ---------------------------------------------------------------------------------------------- compressed code
@@ -280,6 +332,8 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
 
         loaded = run_and_find(workdir / original, rom, taken, found, log=log)
         found = sorted(found + loaded["segments"])
+        found = sorted(complete_gaps(rom, taken, found, tuple((s.rom_start, s.rom_end, s.vram) for s in known),
+                                     runtime_entries(workdir), log=log))
     from .boot_mapping import recover
 
     recover(config, rom, found, log)

@@ -134,8 +134,16 @@ def run(tmp_path_factory):
         (folder / "code.bin").write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in words))
         return subprocess.run([str(program), str(folder / "code.bin"), *(str(a) for a in args)], capture_output=True,
                               text=True, timeout=30, check=True).stdout.strip()
+    def entries(words, path, *args):
+        """Run with PORT_ENTRIES=path; the file's addresses."""
+        import os
+        (folder / "code.bin").write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in words))
+        subprocess.run([str(program), str(folder / "code.bin"), *(str(a) for a in args)], capture_output=True,
+                       text=True, timeout=30, check=True, env={**os.environ, "PORT_ENTRIES": str(path)})
+        return [int(x, 16) for x in path.read_text().split()] if path.is_file() else []
     go.typed = typed
     go.raw = raw
+    go.entries = entries
     return go
 
 
@@ -245,6 +253,17 @@ def test_a_jump_to_itself_parks_the_thread_instead_of_spinning(run, loop):
     jump = j(here) if loop == "j" else i_type(4, "zero", "zero", -1)  # beq $zero, $zero, .
     prog = [*_data_base(), addiu("t0", "zero", 42), sw("t0", 0, "t9"), jump, NOP]
     assert run.raw(prog) == "idle 0000002A"
+
+
+def test_the_addresses_the_game_starts_running_are_written_down_once(run, tmp_path):
+    """PORT_ENTRIES: each function entry the interpreter sees (where a run starts, each call's target), once, for the
+    importer's evidence of where functions start (consoles/n64/code.py, runtime_entries)."""
+    prog = [addiu("sp", "sp", -16), sw("ra", 12, "sp"),
+            jal(C_FUNCTION), NOP, jal(C_FUNCTION), NOP,
+            lw("ra", 12, "sp"), JR_RA, addiu("sp", "sp", 16)]
+    path = tmp_path / "entries.txt"
+    assert run.entries(prog, path, 1, 2) == [CODE, C_FUNCTION]
+    assert run.entries(prog, path, 1, 2) == [CODE, C_FUNCTION] * 2  # (appended: one run's own each once)
 
 
 # ---------------------------------------------------------------- the generated bridges

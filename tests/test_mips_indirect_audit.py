@@ -125,3 +125,17 @@ def test_loaded_index_can_form_a_record_stride_but_never_proves_reachability():
     found=rows[0]['callback_consumers'][0]
     assert found['stride']==28 and found['possible_index']==2
     assert found['mapping_verified'] and found['state']=='consumer_hypothesis'
+
+
+def test_a_switch_whose_scale_sits_in_the_guards_delay_slot_is_followed():
+    """GCC scheduled the index's scale into the guard branch's delay slot in an N64 racing game (sltiu; beqz; sll in
+    its slot; lui; addu; lw; jr), one word shorter than the idiom above: its table is read and its cases followed."""
+    image=bytearray(0x1200)
+    words=[0x2c620002,0x1040000a,0x00031080,0x3c018000,0x00220821,0x8c221100,0x00400008,0,
+           0x03e00008,0,0x03e00008,0,0x03e00008,0]
+    image[0x1000:0x1038]=b''.join(w.to_bytes(4,'big') for w in words)
+    image[0x1100:0x1108]=b''.join(w.to_bytes(4,'big') for w in [0x80001020,0x80001028])
+    ranges=[dict(rom_start=0x1100,rom_end=0x1108,vram=0x80001100)]
+    assert jump_table(image,0x1000,0x1038,0x80001000,0x1018,'big',ranges)['state']=='validated'
+    result=extent(image,0x1000,0x1038,0x80001000,'big',table_ranges=ranges)
+    assert result['flow_closed'] and result['return_sites']==3 and not result['unresolved_transfers']
