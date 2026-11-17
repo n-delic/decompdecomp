@@ -519,8 +519,25 @@ def source_name(path: str, known_names) -> str:
     return next((name for name in known_names if saves._source_file(name) == file), file.removesuffix('.c'))
 
 
-def affected_functions(old, new, changed, rows):
-    """Scope known per-function build inputs; unknown shared linking/layout changes require a full check."""
+_INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*["<]([^">]+)[">]', re.M)
+
+
+def included_headers(files) -> set[str]:
+    """The header file names the saved C and headers `#include` (by base name)."""
+    names = set()
+    for path, text in files.items():
+        if isinstance(text, str) and path.endswith(('.c', '.h')) and path.startswith(('src/', 'best/', 'include/')):
+            names.update(name.rsplit('/', 1)[-1] for name in _INCLUDE.findall(text))
+    return names
+
+
+def affected_functions(old, new, changed, rows, included=None):
+    """Scope known per-function build inputs; unknown shared linking/layout changes require a full check.
+
+    `included`: the header names the folder's files `#include` (included_headers). An include/ file no unit uses and
+    nothing includes builds nothing: a unit's header left behind after its unit went away (a game's folder kept
+    include/common_main.h) once made every sync rejudge all 1,135 saved functions, and each shutdown cut that pass off
+    and left the matches it hadn't reached open. None (unknown) keeps the cautious full check."""
     from ..project import compiler_for
 
     # Symbol order and verdict notes do not alter linked bytes. Only actual symbol
@@ -535,7 +552,8 @@ def affected_functions(old, new, changed, rows):
         return None
     old_headers, new_headers = old.get('headers') or {}, new.get('headers') or {}
     known_headers = {'include/'+file for mapping in (old_headers, new_headers) for file in mapping.values()}
-    if any(path.startswith('include/') and path not in known_headers for path in changed):
+    unknown = [path for path in changed if path.startswith('include/') and path not in known_headers]
+    if unknown and (included is None or any(path.rsplit('/', 1)[-1] in included for path in unknown)):
         return None
     if bool(old.get('compiler')) != bool(new.get('compiler')):
         return None
@@ -591,6 +609,70 @@ class _Publication:
     rechecks: dict[str, _Recheck]
 
 
+def _reverify_key(pid: int) -> str:
+    return f"saved_reverify:{pid}"
+
+
+def _remember_reopened(db, pid: int, names) -> None:
+    """Durably list the matches a saved-progress check reopened, in the transaction that reopens them.
+
+    The check wins each one back one compile at a time; if it stops early (quitting, Stop, a crash, a compiler that
+    fails), what it didn't reach would stay open for good, the folder's copy of their C already moved to best/. A game
+    lost 415 of 658 matches over three restarts that way. The list lets the next sync finish the job."""
+    if not names:
+        return
+    key = _reverify_key(pid)
+    row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    pending = set(json.loads(row["value"])) if row else set()
+    db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+               (key, json.dumps(sorted(pending | set(names)))))
+
+
+def _settle_reopened(store, pid: int, judged) -> None:
+    """A completed check gave each function it judged a verdict: take those off the reopened list."""
+    key = _reverify_key(pid)
+    with store.tx() as db:
+        row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        if row is None:
+            return
+        left = set(json.loads(row["value"])) - set(judged)
+        if left:
+            db.execute("UPDATE settings SET value=? WHERE key=?", (json.dumps(sorted(left)), key))
+        else:
+            db.execute("DELETE FROM settings WHERE key=?", (key,))
+
+
+def reopened(store, pid: int) -> set[str]:
+    """The matches a saved-progress check reopened and hasn't given a verdict yet."""
+    row = store.one("SELECT value FROM settings WHERE key=?", _reverify_key(pid))
+    return set(json.loads(row["value"])) if row else set()
+
+
+def resume_reopened(net, slug: str, log) -> dict:
+    """Judge again the matches an interrupted check left open, from the exact C and headers they matched with before
+    (match_reconciliation's recorded evidence): one that still builds the original bytes is matched again; one that
+    no longer does keeps that C as its best attempt. Either way it leaves the list."""
+    from . import match_reconciliation
+    pid = net.store.one("SELECT id FROM projects WHERE slug=?", slug)["id"]
+    store = net.project_store(pid)
+    names = reopened(store, pid)
+    if not names:
+        return {"matched": 0, "attempts": 0}
+    log(f"Checking again {len(names)} matches an interrupted saved-progress check left open")
+    result = match_reconciliation.run(net, slug, None, None, log, names=names)
+    if result.get("finished"):
+        with store.tx() as db:
+            row = db.execute("SELECT value FROM settings WHERE key=?", (_reverify_key(pid),)).fetchone()
+            if row is not None:
+                # Names a newer check reopened meanwhile stay for their own verdict.
+                left = set(json.loads(row["value"])) - names
+                if left:
+                    db.execute("UPDATE settings SET value=? WHERE key=?", (json.dumps(sorted(left)), _reverify_key(pid)))
+                else:
+                    db.execute("DELETE FROM settings WHERE key=?", (_reverify_key(pid),))
+    return result
+
+
 class Progress:
     def __init__(self, net):
         self.net = net
@@ -641,6 +723,7 @@ class Progress:
         self.adopting: set[str] = set()
         self.recheck_minutes = RECHECK_MINUTES  # (server.py and Settings set it from settings.json)
         self.blocked: dict[str, tuple] = {}  # slug -> (folder, dirty token, settings) while a compiler waits
+        self.reverifying: set[str] = set()  # projects whose interrupted rechecks are being resumed (_resume_reverify)
         self.case_checked: dict[str, tuple] = {}  # slug -> (dirty token, why saving waits for a rename, or None)
         self.refusals: dict[str, int] = {}  # slug -> syncs in a row whose write found the folder not as it read it
         self.failed: dict[str, tuple] = {}  # slug -> ((dirty token, settings, folder), when) of the last failed sync
@@ -1600,12 +1683,14 @@ class Progress:
                     raise
                 return False
             self._covered(slug, force)
+            self._resume_reverify(slug)
             return changed
         first = slug not in synced
         synced.add(slug)  # (before: the sync's own project lookup syncs again inside it)
         try:
             changed = self._sync_checked(slug, force=force, logger=logger, retry=retry, asked=asked if force else None)
             self._covered(slug, force)
+            self._resume_reverify(slug)
             return changed
         except NetworkError as error:
             if self._tolerated(slug, error):
@@ -1617,6 +1702,38 @@ class Progress:
             if first:
                 synced.discard(slug)
             raise
+
+    def _resume_reverify(self, slug: str) -> None:
+        """After a sync: if an earlier check stopped before judging every match it reopened, finish that in the
+        background (resume_reopened). Never while quitting, and once at a time per project."""
+        net = self.net
+        if getattr(net, "shutting_down", False) or slug in self.reverifying:
+            return
+        try:
+            row = net.store.one("SELECT id FROM projects WHERE slug=?", slug)  # (not _project: that syncs again)
+            if row is None or not reopened(net.project_store(row["id"]), row["id"]):
+                return  # (a project being removed has nothing to resume either)
+        except Exception:
+            # Resuming is an extra after a sync that already succeeded; it must never fail that sync.
+            saves.log.debug("Could not read %s's reopened matches", slug, exc_info=True)
+            return
+        self.reverifying.add(slug)
+        def work(logger):
+            try:
+                resume_reopened(net, slug, logger)
+            finally:
+                self.reverifying.discard(slug)
+        startup = getattr(net, "startup", None)
+        if startup is not None:
+            startup.add("Check again matches an interrupted check left open", work, project=slug, with_log=True)
+            startup.start()
+            return
+        def background():
+            try:
+                work(lambda line: saves.log.info("%s: %s", slug, line))
+            except Exception:
+                saves.log.exception("Could not check again the matches an interrupted check left open")
+        threading.Thread(target=background, name=f"reverify-{slug}", daemon=True).start()
 
     def _covered(self, slug: str, force: bool) -> None:
         """A forced check that finished: later asks from before it took the lock need not check again."""
@@ -2243,8 +2360,9 @@ class Progress:
                     return saves._source_text(text) if text is not None and name.startswith(('src/', 'best/')) else text
                 input_changes = {name for name in set(candidate) | set(rendered)
                                  if input_text(candidate, name) != input_text(rendered, name)}
+                included = included_headers(rendered | candidate)
                 affected = affected_functions(json.loads(rendered[saves.MANIFEST]), merged_manifest,
-                                              input_changes, function_rows)
+                                              input_changes, function_rows, included)
                 if before is None:
                     applied_changed = {name for name in set(candidate) | set(comparison)
                                        if candidate.get(name) != comparison.get(name)}
@@ -2268,7 +2386,7 @@ class Progress:
                                        or source_name(path, matched_names | known_names) not in matched_names}
                     shared = affected_functions(json.loads(rendered[saves.MANIFEST]), merged_manifest,
                                                 {path for path in input_changes if not path.startswith(('src/', 'best/'))},
-                                                function_rows)
+                                                function_rows, included)
                     deferred, recheck_due, pending_rechecks = self._deferred_rechecks(store, pid, affected, candidate, shared)
                     affected = (affected - deferred) | pending_rechecks
                 all_code = affected is None
@@ -2292,6 +2410,13 @@ class Progress:
                 judging_change = all_code or bool(affected) or any(name.startswith(("src/", "best/", "include/"))
                                                  for name in changed)
                 needs_judging = judging_change and (code_files or database_code)
+                if needs_judging and getattr(net, "shutting_down", False):
+                    # Judging reopens every affected match first and wins it back one compile at a time. Quitting
+                    # gives it under a minute, so each restart left most of a big game's matches open (and their
+                    # C gone from the folder). Change nothing now: the next start judges the same folder in full.
+                    # (Overtaken, not a False result: that would acknowledge the folder as read.)
+                    report("the saved code changed; it is checked when decompdecomp starts again")
+                    raise _SyncOvertaken
                 if needs_judging:
                     reason = ("Shared linking inputs or function layout changed. Saved functions must be rebuilt to confirm their original bytes."
                               if all_code else f"Build inputs changed for {len(affected or [])} functions. Only their saved sources are being rechecked; other matches are retained.")
@@ -2346,6 +2471,7 @@ class Progress:
                     rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?",
                                       (pid,)).fetchall()
                     self._record_rechecks(db, pid, deferred, recheck_due)
+                    reopened = []
                     for row in rows:
                         if row["name"] in deferred:
                             continue  # its saved C is the database's own verdict: checked again when due
@@ -2354,14 +2480,17 @@ class Progress:
                         changed_best = f"best/{saves._source_file(row['name'])}" in applied_changed
                         keep_backup = False
                         keep_best = False
-                        if changed_source or impacted:
+                        if changed_source or impacted or changed_best:
                             old = db.execute("SELECT status,matched_source,matched_agent_id,best_source,best_score,"
                                              "best_agent_id FROM functions WHERE id=?", (row["id"],)).fetchone()
+                            # A changed best/ file alone also reopens the function: its match must survive as the
+                            # best attempt then too, or a second interrupted check erases the only copy of its C.
                             if old["status"] == "matched" and old["matched_source"]:
                                 # An all_code change (a header or the layout) can't be judged yet if the compiler is
                                 # missing or the restore is cancelled. The last match stays as the best attempt until
                                 # the new source is judged (#101 review).
                                 keep_backup = True
+                                reopened.append(row["name"])
                                 db.execute("UPDATE functions SET best_source=?,best_score=?,best_agent_id=? WHERE id=?",
                                            (old["matched_source"], max(1, row["n_insns"] or 1) * 100,
                                             old["matched_agent_id"], row["id"]))
@@ -2383,6 +2512,7 @@ class Progress:
                                        "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
                                        (status, keep, keep, keep, row["id"]))
                             db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
+                    _remember_reopened(db, pid, reopened)
                     # A source-only edit must not replay the whole note history. Compare
                     # with the fresh database render, retaining concurrent new notes too.
                     if restore_notes:
@@ -2420,6 +2550,10 @@ class Progress:
             self.results[slug], recheck = self._judge_saved(slug, folder, manifest, by_name,
                                                     saved, report,
                                                     files=disk, judge_code=needs_judging)
+            if needs_judging:
+                # Every saved function this pass reopened has its verdict now. A reopened match with no saved file
+                # stays listed: only its earlier verified C can bring it back (_resume_reverify).
+                _settle_reopened(store, pid, set(saved))
             # The saved judge has finished (including its worker's publications).
             # Rendering/export still holds this project's lock and file guards, but
             # must not occupy another project's compiler admission lane.
