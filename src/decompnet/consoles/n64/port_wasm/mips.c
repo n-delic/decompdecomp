@@ -58,6 +58,29 @@ typedef struct { uint32_t vram; PortMipsCall call; } PortMipsEntry;
 __attribute__((weak)) const PortMipsEntry port_mips_calls[1] = {{0, 0}};
 __attribute__((weak)) const unsigned port_mips_call_count = 0;
 
+/* PORT_ENTRIES=path: every address the game starts running here (a function's entry: a call, a pointer, a thread),
+   each once, appended as it's first seen, so a game that's stopped keeps what it found. The importer reads the
+   project's file as evidence of where functions start (consoles/n64/code.py, runtime_entries): a racing game's
+   split left functions it only reaches through pointers as data. */
+void port_note_entry(uint32_t address) {
+#ifndef PORT_WEB
+    static const char *path;
+    static int ready;
+    static uint32_t seen[16384];
+    static unsigned count;
+    if (!ready) { ready = 1; path = getenv("PORT_ENTRIES"); }
+    if (!path || !address || count >= 12000) return;
+    unsigned h = (address >> 2) * 2654435761u % 16384u;
+    while (seen[h]) { if (seen[h] == address) return; h = (h + 1) % 16384u; }
+    seen[h] = address;
+    count++;
+    FILE *f = fopen(path, "a");
+    if (f) { fprintf(f, "%08X\n", address); fclose(f); }
+#else
+    (void)address;
+#endif
+}
+
 /* ---------------------------------------------------------------- the console's memory, big-endian */
 
 /* (always inlined: the native host is built with -fno-inline, and each instruction goes through these) */
@@ -390,6 +413,7 @@ static int step(Cpu *c, uint32_t pc, uint32_t op, uint32_t *target) {
 void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
     if (!M) M = port_memory();
     if (tracing < 0) tracing = getenv("PORT_INTERP_TRACE") ? atoi(getenv("PORT_INTERP_TRACE")) : 0;
+    port_note_entry(entry);
     if (tracing) fprintf(stderr, "interpreter: %08X (%08X, %08X, %08X, %08X)\n", entry, (uint32_t)regs[4],
                          (uint32_t)regs[5], (uint32_t)regs[6], (uint32_t)regs[7]);
     Cpu c;
@@ -424,6 +448,7 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
             port_idle_forever();
             continue; /* (only if it comes back: the same jump again) */
         }
+        if (kind == 4 || op >> 26 == 3) port_note_entry(target); /* a call: jal, jalr */
         pc = target;
         if (kind == 4) { /* a call through a pointer is a safe point, as host.c's port_func is for the game's C: only
                             those (a direct call never is), or a thread the C starts runs before its creator is done */

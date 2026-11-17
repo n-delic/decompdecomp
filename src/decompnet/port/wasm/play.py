@@ -258,7 +258,14 @@ def play(net, slug: str, log=print) -> dict:
     build.Progress(log, steps).start(STARTING)
     port = _free_port()
     out = program.parent
-    env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(out / "game.eep")}
+    # what the game runs that no function starts, kept beside the project for its next import (runtime_entries)
+    from ...consoles.n64.code import RUNTIME_ENTRIES
+    env = {**os.environ, "PORT_LIVE": str(port), "PORT_SAVE": str(out / "game.eep"),
+           "PORT_ENTRIES": str(rom.parent / RUNTIME_ENTRIES)}
+    if (unlisted := unlisted_entries(net, slug)):
+        log(f"playing has found {len(unlisted)} addresses the game runs that no function starts "
+            f"({', '.join(f'{a:08X}' for a in unlisted[:4])}{'…' if len(unlisted) > 4 else ''}): reimport the game "
+            "to add them as functions")
     log_file = open(out / "play.log", "w", encoding="utf-8")
     proc = subprocess.Popen([str(program), str(rom), "0"], cwd=out, env=env, stdout=log_file, stderr=subprocess.STDOUT,
                             stdin=subprocess.DEVNULL)
@@ -277,6 +284,22 @@ def play(net, slug: str, log=print) -> dict:
         _running[slug] = (proc, url)
     log(f"playing at {url}")
     return {"url": url, "window": _open_window(slug, url, proc.pid, f"{cfg['rom'].get('title') or slug} (PC port)")}
+
+
+def unlisted_entries(net, slug: str) -> list[int]:
+    """The addresses the game was seen starting to run (the project's runtime-entries.txt, which Play's host
+    writes) that no function of the project starts: functions the split missed, in its data or run together with
+    the function before them, which the next import takes as evidence (consoles/n64/code.py)."""
+    from ...consoles.n64.code import runtime_entries
+
+    with net.progress.view():
+        proj = net._project(slug)
+    seen = runtime_entries(Path(proj["root"]))
+    if not seen:
+        return []
+    starts = {r["vram"] for r in net.project_store(proj["id"]).all("SELECT vram FROM functions WHERE project_id=?",
+                                                                   proj["id"])}
+    return sorted(a for a in seen if a not in starts)
 
 
 def _open_window(slug: str, url: str, pid: int, title: str) -> bool:

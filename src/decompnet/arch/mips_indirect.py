@@ -17,23 +17,38 @@ def locations(address,size,image,ranges,mappings=()):
     return [(address-m,False) for m in mappings if 0<=address-m<=len(image)-size],None
 
 
+def _guard(image,at,order,scheduled):
+    """The guard/scale/LUI/add/load/JR words before the JR at `at`, as (guard's address, bound, branch, delay,
+    scale, hi, add, load, jump, slot), or None. `scheduled`: the scale sits in the guard branch's delay slot, as
+    an N64 racing game's GCC scheduled it (sltiu; beqz; sll in its slot; lui; addu; lw; jr), one word shorter."""
+    if scheduled:
+        bound,branch,scale,hi,add,load,jump,slot=[int.from_bytes(image[p:p+4],order) for p in range(at-24,at+8,4)]
+        return at-24,bound,branch,0,scale,hi,add,load,jump,slot
+    bound,branch,delay,scale,hi,add,load,jump,slot=[int.from_bytes(image[p:p+4],order) for p in range(at-28,at+8,4)]
+    return at-28,bound,branch,delay,scale,hi,add,load,jump,slot
+
+
 def jump_table(image,start,end,vram,at,order,ranges=(),mappings=()):
-    """Recognize one exact guard/scale/LUI/add/load/JR idiom, with no interior entry."""
-    if at-start<28 or at+8>end:return None
-    words=[int.from_bytes(image[p:p+4],order) for p in range(at-28,at+8,4)]
-    bound,branch,delay,scale,hi,add,load,jump,slot=words
-    index=(bound>>21)&31;condition=(bound>>16)&31;count=bound&0xffff
-    dest=(jump>>21)&31;base=(hi>>16)&31;scaled=(scale>>11)&31
-    if bound>>26!=11 or not 0<count<=MAX_ENTRIES or not index or not condition or condition==index:return None
-    if branch>>26!=4 or {(branch>>21)&31,(branch>>16)&31}!={0,condition}:return None
-    # The guard's delay slot can be NOP or clearing an unrelated register.
-    clear=delay>>26==0 and delay&63 in (33,37) and not delay&0x03ff0000 and ((delay>>11)&31) not in (index,condition)
-    if delay and not clear:return None
-    if scale>>26 or scale&63 or (scale>>6)&31!=2 or (scale>>16)&31!=index or (scale>>21)&31:return None
-    if hi>>26!=15 or not base or not scaled or base==scaled:return None
-    if add>>26 or add&63!=33 or (add>>11)&31!=base or {(add>>21)&31,(add>>16)&31}!={base,scaled}:return None
-    if load>>26!=35 or (load>>21)&31!=base or (load>>16)&31!=dest or jump&0xfc1fffff!=8 or not dest or slot:return None
-    guard=at-28
+    """Recognize one exact guard/scale/LUI/add/load/JR idiom (its scale in the guard's delay slot or after it),
+    with no interior entry."""
+    if at+8>end:return None
+    for scheduled in (False,True):
+        if at-start<(24 if scheduled else 28):continue
+        guard,bound,branch,delay,scale,hi,add,load,jump,slot=_guard(image,at,order,scheduled)
+        index=(bound>>21)&31;condition=(bound>>16)&31;count=bound&0xffff
+        dest=(jump>>21)&31;base=(hi>>16)&31;scaled=(scale>>11)&31
+        if bound>>26!=11 or not 0<count<=MAX_ENTRIES or not index or not condition or condition==index:continue
+        if branch>>26!=4 or {(branch>>21)&31,(branch>>16)&31}!={0,condition}:continue
+        # The guard's delay slot can be NOP or clearing an unrelated register.
+        clear=delay>>26==0 and delay&63 in (33,37) and not delay&0x03ff0000 and ((delay>>11)&31) not in (index,condition)
+        if delay and not clear:continue
+        if scale>>26 or scale&63 or (scale>>6)&31!=2 or (scale>>16)&31!=index or (scale>>21)&31:continue
+        if hi>>26!=15 or not base or not scaled or base==scaled:continue
+        if add>>26 or add&63!=33 or (add>>11)&31!=base or {(add>>21)&31,(add>>16)&31}!={base,scaled}:continue
+        if load>>26!=35 or (load>>21)&31!=base or (load>>16)&31!=dest or jump&0xfc1fffff!=8 or not dest or slot:continue
+        break
+    else:
+        return None
     default=guard+8+signed(branch)*4
     if not start<=default<end or guard<default<=at+4:return None
     address=(((hi&0xffff)<<16)+signed(load))&0xffffffff

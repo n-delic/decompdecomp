@@ -5,12 +5,20 @@ from .mips_gaps import extent
 MAX_BYTES = 0x10000
 
 
-def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check=None):
+def _closed(info, table_ranges):
+    """Direct flow closed; or, with `table_ranges` (where the game's data is mapped), flow closed through jump
+    tables each validated there: a switch's cases followed through its own table, as code_references takes them."""
+    return info['direct_flow_closed'] or bool(table_ranges) and info['flow_closed'] and bool(info['jump_tables']) and all(
+        t['state'] == 'validated' for t in info['jump_tables'])
+
+
+def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check=None, table_ranges=()):
     """Reject incomplete, unbalanced and multi-frame bodies; this never grants a match.
 
     A call into raw disassembler output can locate code, but a frame pattern alone is
-    not enough. Keep this smaller than the review audit: no switches, tail jumps,
-    interior entry points or inferred callback destinations are promoted here.
+    not enough. Keep this smaller than the review audit: no tail jumps, interior entry
+    points or inferred callback destinations are promoted here, and a switch only with
+    `table_ranges`, its table validated where the game's data is mapped.
     """
     order='big' if big_endian else 'little'
     end=min(end,start+MAX_BYTES)
@@ -23,9 +31,9 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     amount=0x10000-(frame&0xffff)
     if amount%8 or amount>0x1000:
         return None
-    info=extent(image,start,end,vram,order,cpu,max_steps=MAX_BYTES//4)
+    info=extent(image,start,end,vram,order,cpu,table_ranges=table_ranges,max_steps=MAX_BYTES//4)
     size=info['extent_bytes']
-    if not info['direct_flow_closed'] or info['step_limit'] or size<16:
+    if not _closed(info,table_ranges) or info['step_limit'] or size<16:
         return None
     body=image[start:start+size]
     if (asm_check(body) if asm_check else asm_reason(body,big_endian,cpu=cpu)):
@@ -78,11 +86,12 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     return size if returns else None
 
 
-def leaf_extent(image,start,end,vram,*,big_endian=True,cpu='',asm_check=None):
+def leaf_extent(image,start,end,vram,*,big_endian=True,cpu='',asm_check=None,table_ranges=()):
     """A closed frameless leaf: no calls, stack writes or callee-saved clobbers.
 
     Callers must independently establish its entry from a call, callback or known
-    return boundary, never scan arbitrary data for a pattern. Indirect flow stays review-only.
+    return boundary, never scan arbitrary data for a pattern. Indirect flow stays review-only, but for a switch
+    whose table `table_ranges` validates.
     """
     import rabbitizer
 
@@ -91,9 +100,9 @@ def leaf_extent(image,start,end,vram,*,big_endian=True,cpu='',asm_check=None):
     end=min(end,start+MAX_BYTES)
     if start<0 or start%4 or start+8>end or end>len(image):return None
     order='big' if big_endian else 'little'
-    info=extent(image,start,end,vram,order,cpu,max_steps=MAX_BYTES//4)
+    info=extent(image,start,end,vram,order,cpu,table_ranges=table_ranges,max_steps=MAX_BYTES//4)
     size=info['extent_bytes']
-    if not info['direct_flow_closed'] or info['step_limit'] or size<8:return None
+    if not _closed(info,table_ranges) or info['step_limit'] or size<8:return None
     body=image[start:start+size]
     if (asm_check(body) if asm_check else asm_reason(body,big_endian,cpu=cpu)):return None
     preserved={*range(16,24),29,30,31}
