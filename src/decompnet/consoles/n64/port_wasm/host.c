@@ -883,6 +883,9 @@ void w2c_env_osSetTLBASID(struct w2c_env *e, u32 asid) { (void)e; (void)asid; }
 u32 w2c_env_0x5F_osGetSR(struct w2c_env *e) { (void)e; return cop0_status; } /* as __builtin_mips_read_status */
 void w2c_env_0x5F_osSetSR(struct w2c_env *e, u32 v) { (void)e; cop0_status = v; }
 u32 w2c_env_0x5F_osGetCause(struct w2c_env *e) { (void)e; return 0; }
+/* the RCP interrupts a game masks: the host raises them itself, so the mask is only kept to be returned (a packed
+   shooter's osSetIntMask is hand-written assembly, and was skipped) */
+u32 w2c_env_osSetIntMask(struct w2c_env *e, u32 mask) { (void)e; static u32 now = 0x3FFFFFu; u32 was = now; now = mask; return was; }
 u32 w2c_env_0x5F_osDisableInt(struct w2c_env *e) { (void)e; return 1; }
 void w2c_env_0x5F_osRestoreInt(struct w2c_env *e, u32 v) { (void)e; (void)v; }
 u32 w2c_env_0x5F_osGetFpcCsr(struct w2c_env *e) { (void)e; return fcsr; }

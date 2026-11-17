@@ -46,12 +46,20 @@ def microcode(image: bytes) -> list[dict]:
     return found
 
 
+SCHEDULER = re.compile(r"osCreateScheduler$|osSc[A-Z]\w*$|__sc[A-Z]\w*$")
+
+
 def _sdk_group(name: str) -> str | None:
     """Where a libultra or C library function goes in the port: "replaced" (libultraship, decompdecomp's glue for it
     or the host's C library has it), "native" (the game's copy compiles for the PC as it is: math, the synthesizer), "glue" (console
     plumbing libultraship doesn't have: the port's own glue supplies it, a main loop in place of threads, RSP tasks
     handed to the renderer and the mixer, stubs for the 64DD), or None (the game's own code)."""
     bare = name.lstrip("_")
+    # The SDK's sample scheduler (sched.c: osCreateScheduler, osScAddClient, __scMain...) isn't libultra: a game
+    # compiles it as its own code, so its copy runs. A packed shooter's was left out as "glue" the web host has
+    # none of, and its main loop waited for a scheduler that was never made.
+    if SCHEDULER.match(name):
+        return None
     if name in _MATH:  # before the C library: libultra's __cosf is its own, not the host's cosf
         return "native"
     if name in LIBULTRASHIP or name in GLUE_PROVIDES or bare in _LIBC or name in _OS_INTERNAL or re.match(r"(Printf|Litob|Ldtob)$", bare):
