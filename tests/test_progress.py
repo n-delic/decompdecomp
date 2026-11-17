@@ -1309,7 +1309,9 @@ def test_read_only_view_does_not_bypass_judging_synchronization(project, monkeyp
         assert calls == []
         with net.progress.judging('game'):
             pass
-    assert calls == [('game', True)]  # (the judge changed nothing saved: no check after it, Progress.unchanged)
+    # (the last full check is on record and nothing a judge reads changed: Progress.check_for_judging; nor did the
+    # judge change anything saved: Progress.unchanged)
+    assert calls == []
     assert not net.progress.viewing
 
 
@@ -3482,12 +3484,13 @@ def test_a_tool_call_reads_the_folder_once_per_project(project, monkeypatch):
     assert len(runs) >= 5  # (outside a tool call every sync runs, and its own lookup syncs again)
 
 
-@pytest.mark.parametrize('tool,expected', [('compile_and_diff', 1), ('get_function', 1)])
+@pytest.mark.parametrize('tool,expected', [('compile_and_diff', 0), ('get_function', 1)])
 def test_a_judge_inside_a_tool_call_reads_the_folder_through_the_calls_own_checks(project, monkeypatch, tool, expected):
     """A compile read a 9,900-file save fully four times: the tool call before and after its work, and its judge
     before and after again, milliseconds apart. The judge now relies on the call's checks; a read-only tool makes
     none after its work, so a judge inside one still checks after. Neither checks after a judge that changed nothing
-    the saved files show (Progress.unchanged); a match is published."""
+    the saved files show (Progress.unchanged); a match is published. A compile's check before reads only what its
+    judge reads (Progress.check_for_judging)."""
     from decompnet.app import tools
     net, _, _ = project
     worker = net.progress
@@ -3512,7 +3515,7 @@ def test_a_judge_inside_a_tool_call_reads_the_folder_through_the_calls_own_check
     with worker.judging('game'):  # outside a tool call (autopilot, the editor) the judge still checks both sides
         with net.store.tx() as db:
             db.execute("UPDATE functions SET best_source='int f(){return 2;}',best_score=5 WHERE name='f'")
-    assert len(forced) == 2
+    assert len(forced) == 1  # (the check after publishing it; the one before read only the manifest and headers)
     assert getattr(worker.local, 'checked_around', None) is None
 
 
@@ -3612,12 +3615,59 @@ def test_a_judge_that_changed_nothing_saved_skips_the_check_after_it(project, mo
                         lambda slug, **kw: (checks.append(True) if kw.get("force") else None) or sync(slug, **kw))
     with net.progress.judging("game"):
         pass  # (an attempt that wasn't better: no column the files are rendered from changed)
-    assert checks == [True], "only the check before judging"
-    checks.clear()
+    assert checks == [], "nothing a judge reads changed, and nothing to publish"
     with net.progress.judging("game"):
         with net.store.tx() as db:
             db.execute("UPDATE functions SET status='matched',matched_source='int f(){}',best_source='int f(){}',"
                        "best_score=0 WHERE name='f'")
-    assert checks == [True, True], "a match is published"
+    assert checks == [True], "a match is published"
     assert any("int f(){}" in p.read_text() for p in folder.rglob("*.c"))
     assert not net.progress.unchanged("game", None)  # (no token read: never skipped)
+
+
+def test_the_check_before_a_judge_reads_only_the_manifest_and_headers(project, monkeypatch):
+    """A forced check stats every saved file; a judge reads only the manifest and the headers. With the last full
+    check on record and those unchanged, the judge doesn't stat the rest (on macOS the folder's watch, which spares
+    it, stops for the session once the machine is busy). Anything a judge reads changing runs the full check."""
+    net, folder, _ = project
+    worker = net.progress
+    full = []
+    real = worker.sync
+    monkeypatch.setattr(worker, "sync", lambda slug, **kw: (full.append(1) if kw.get("force") else None) or real(slug, **kw))
+    assert worker.check_for_judging("game") is False and full == []
+    # Another function's file edited in place is not this judgment's input.
+    some = next(folder.rglob("*.c"), None)
+    if some is not None:
+        some.write_text(some.read_text() + "\n")
+        assert worker.check_for_judging("game") is False and full == []
+    # The manifest or a header changed: the full check reads it before judging.
+    manifest_path = folder / saves.MANIFEST
+    later = manifest_path.stat().st_mtime + 5
+    os.utime(manifest_path, (later, later))
+    worker.check_for_judging("game")
+    assert full
+    full.clear()
+    assert worker.check_for_judging("game") is False and full == []  # (acknowledged by that check)
+    (folder / "include").mkdir(exist_ok=True)
+    (folder / "include" / "extra.h").write_text("int x;\n")
+    worker.check_for_judging("game")
+    assert full
+    full.clear()
+    worker.signatures.pop("game", None)  # no full check on record
+    worker.check_for_judging("game")
+    assert full
+
+
+def test_a_compile_tool_call_checks_only_what_its_judge_reads(project, monkeypatch):
+    from decompnet.app import tools
+    net, _, _ = project
+    worker = net.progress
+    agent, _ = net.local_agent("you")
+    forced = []
+    real = worker.sync
+    monkeypatch.setattr(worker, "sync", lambda slug, **kw: (forced.append(1) if kw.get("force") else None) or real(slug, **kw))
+    monkeypatch.setattr(tools, "_dispatch", lambda *_: "judged")
+    assert tools._invoke(net, agent, "game", "compile_and_diff", {"function": "f"}) == "judged"
+    assert forced == []
+    tools._invoke(net, agent, "game", "add_note", {"function": "f"})
+    assert forced == [1], "other work tools still check the whole folder first"
