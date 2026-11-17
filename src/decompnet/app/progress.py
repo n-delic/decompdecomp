@@ -1282,12 +1282,30 @@ class Progress:
             self.sync(slug, force=True)
         previous = getattr(self.local, "judging", None)
         self.local.judging = (slug, self.revisions.get(slug, 0))
+        before = self.publish_token(slug) if synchronize else None
         try:
             yield
         finally:
             self.local.judging = previous
-        if synchronize and not (covered and around[1]):
+        if synchronize and not (covered and around[1]) and not self.unchanged(slug, before):
             self.sync(slug, force=True)
+
+    def publish_token(self, slug: str):
+        """The project's progress_dirty token: the database's triggers move it whenever a column the saved files are
+        rendered from changes (a match, a better best, a header, a rename). None when it can't be read."""
+        try:
+            row = self.net.store.one("SELECT id FROM projects WHERE slug=?", slug)
+            return None if row is None else ("token", self._dirty(row["id"]).token)
+        except Exception:
+            return None
+
+    def unchanged(self, slug: str, before) -> bool:
+        """True when nothing the saved files are rendered from changed since `before` (publish_token): then the
+        forced check after a compile or a tool call has nothing to write, and it only re-read every file's size and
+        time (2.3 s of a 3.4 s compile_and_diff on a real project). An edit to the folder made meanwhile is still
+        read before anything is judged: every judge and work tool forces a check first, and the periodic deep
+        autosave check runs every 15 s."""
+        return before is not None and self.publish_token(slug) == before
 
     @contextmanager
     def checked_around(self, slug: str, *, after: bool):

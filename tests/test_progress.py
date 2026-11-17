@@ -1309,7 +1309,7 @@ def test_read_only_view_does_not_bypass_judging_synchronization(project, monkeyp
         assert calls == []
         with net.progress.judging('game'):
             pass
-    assert calls == [('game', True), ('game', True)]
+    assert calls == [('game', True)]  # (the judge changed nothing saved: no check after it, Progress.unchanged)
     assert not net.progress.viewing
 
 
@@ -3482,11 +3482,12 @@ def test_a_tool_call_reads_the_folder_once_per_project(project, monkeypatch):
     assert len(runs) >= 5  # (outside a tool call every sync runs, and its own lookup syncs again)
 
 
-@pytest.mark.parametrize('tool,expected', [('compile_and_diff', 2), ('get_function', 2)])
+@pytest.mark.parametrize('tool,expected', [('compile_and_diff', 1), ('get_function', 1)])
 def test_a_judge_inside_a_tool_call_reads_the_folder_through_the_calls_own_checks(project, monkeypatch, tool, expected):
     """A compile read a 9,900-file save fully four times: the tool call before and after its work, and its judge
     before and after again, milliseconds apart. The judge now relies on the call's checks; a read-only tool makes
-    none after its work, so a judge inside one still checks after."""
+    none after its work, so a judge inside one still checks after. Neither checks after a judge that changed nothing
+    the saved files show (Progress.unchanged); a match is published."""
     from decompnet.app import tools
     net, _, _ = project
     worker = net.progress
@@ -3509,7 +3510,8 @@ def test_a_judge_inside_a_tool_call_reads_the_folder_through_the_calls_own_check
     assert len(forced) == expected
     forced.clear()
     with worker.judging('game'):  # outside a tool call (autopilot, the editor) the judge still checks both sides
-        pass
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source='int f(){return 2;}',best_score=5 WHERE name='f'")
     assert len(forced) == 2
     assert getattr(worker.local, 'checked_around', None) is None
 
@@ -3598,3 +3600,24 @@ def test_a_pause_the_user_chose_still_holds_agents_tool_calls(project, monkeypat
     net.progress.pause("game")
     with pytest.raises(NetworkError, match="paused"):
         tools._invoke(net, agent, "game", "compile_and_diff", {"function": "f"})
+
+
+def test_a_judge_that_changed_nothing_saved_skips_the_check_after_it(project, monkeypatch):
+    """The forced check after a compile re-read every saved file's size and time (2.3 s of a 3.4 s compile on a
+    real project) even when the compile changed nothing the files show. It runs only when something did."""
+    net, folder, _ = project
+    checks = []
+    sync = net.progress.sync
+    monkeypatch.setattr(net.progress, "sync",
+                        lambda slug, **kw: (checks.append(True) if kw.get("force") else None) or sync(slug, **kw))
+    with net.progress.judging("game"):
+        pass  # (an attempt that wasn't better: no column the files are rendered from changed)
+    assert checks == [True], "only the check before judging"
+    checks.clear()
+    with net.progress.judging("game"):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched',matched_source='int f(){}',best_source='int f(){}',"
+                       "best_score=0 WHERE name='f'")
+    assert checks == [True, True], "a match is published"
+    assert any("int f(){}" in p.read_text() for p in folder.rglob("*.c"))
+    assert not net.progress.unchanged("game", None)  # (no token read: never skipped)
