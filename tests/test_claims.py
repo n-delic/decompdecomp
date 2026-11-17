@@ -544,6 +544,101 @@ def test_you_set_a_function_aside_at_once_and_give_it_back(tmp_path):
         assert "isn't open" in str(e)
 
 
+def _notes_no_c_makes(net, pid, function_id, names):
+    """Notes from agents of two models saying no C makes the function: what Check again's not_c_from_notes reads."""
+    for name in names:
+        agent, _ = net.local_agent(name)
+        with net.store.tx() as db:
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
+                       (pid, function_id, agent.id, "Hand-written assembly: no C makes it.", 0))
+
+
+def test_a_function_set_aside_while_an_agent_holds_it_is_not_handed_back(tmp_path):
+    """#283: Check again sets a function aside from notes but the set-aside path keeps the claim; claim_row renewed
+    it and handed the function back, full brief and all. The dead claim goes with the set-aside, and the next open
+    function comes instead."""
+    net, pid = _game(tmp_path, [("set_aside", 4, "open"), ("next", 6, "open"), ("priority", 8, "open")])
+    with net.store.tx() as db:  # the owner's priority still comes first, even after the dead claim
+        db.execute("UPDATE projects SET config=? WHERE id=?",
+                   (json.dumps({"kind": "rom", "priority": ["priority"]}), pid))
+    agent, _ = net.local_agent("opencode-beam-free-1")
+    assert net.claim_row(agent, "game", "set_aside")["name"] == "set_aside"
+    assert net.release_function(agent, "set_aside", "", "game").startswith("Not released yet")  # a pushed-back release
+    fid = net.store.one("SELECT id FROM functions WHERE name='set_aside'")["id"]
+    _notes_no_c_makes(net, pid, fid, ("opencode-beam-free-2", "opencode-glm-1", "claude-sonnet-5-5-1"))
+    assert net.not_c_from_notes("game") == 1
+    assert net.store.one("SELECT status FROM functions WHERE id=?", fid)["status"] == "asm"
+    assert _held(net, agent) == "set_aside"  # the claim the set-aside path left behind
+    assert net.still_holding(agent, None) == ""  # not a hold any more, whatever it tried to release before
+    assert net.claim_row(agent, "game")["name"] == "priority"
+    assert net.store.one("SELECT 1 FROM claims WHERE function_id=?", fid) is None
+    assert _held(net, agent) == "priority"
+
+
+def test_a_dead_claim_doesnt_stop_an_agent_claiming_another_function_by_name(tmp_path):
+    """#283: a function set aside while held (as any set-aside path leaves it) made asking for another by name say
+    "you already hold ...". The dead claim is dropped, so the function asked for is claimed."""
+    net, _ = _game(tmp_path, [("held", 4, "open"), ("wanted", 6, "open")])
+    agent, _ = net.local_agent("opencode-beam-free-1")
+    net.claim_row(agent, "game", "held")
+    held_id = net.store.one("SELECT id FROM functions WHERE name='held'")["id"]
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm' WHERE name='held'")
+    with pytest.raises(network.NetworkError, match="set aside"):  # the unclaimed path's error, not a renewed claim
+        net.claim_row(agent, "game", "held")
+    assert net.store.one("SELECT 1 FROM claims WHERE function_id=?", held_id) is None
+    assert net.claim_row(agent, "game", "wanted")["name"] == "wanted"
+    assert _held(net, agent) == "wanted"
+
+
+def test_a_dead_claim_doesnt_come_back_in_a_batch(tmp_path, monkeypatch):
+    """#283: claim_function(count=...) read the held claim itself, so it handed the set-aside function back with its
+    neighbours. The dead claim goes before the batch is made."""
+    net, _ = _game(tmp_path, [("set_aside", 4, "open"), ("next", 6, "open"), ("third", 8, "open")])
+    agent, _ = net.local_agent("opencode-beam-free-1")
+    net.claim_row(agent, "game", "set_aside")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm' WHERE name='set_aside'")
+    monkeypatch.setattr(net, "_brief", lambda fn, agent, header: f"## {header}: {fn['name']}")
+    net.claim_many(agent, "game", 2, "easiest")
+    names = {r["name"] for r in net.store.all("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id "
+                                              "WHERE c.agent_id=?", agent.id)}
+    assert "set_aside" not in names and "next" in names, names
+
+
+def test_a_dead_claim_doesnt_stop_a_compile_of_another_function(tmp_path, monkeypatch):
+    """#283: compile_and_diff's "you hold another claim" read the dead claim too, so an agent had to release the
+    function that was already set aside before working on the next one."""
+    net, _ = _game(tmp_path, [("set_aside", 4, "open"), ("next", 6, "open")])
+    agent, _ = net.local_agent("opencode-beam-free-1")
+    net.claim_row(agent, "game", "set_aside")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm' WHERE name='set_aside'")
+    monkeypatch.setattr(net, "_context", lambda *args: {"header": "", "version": 1})
+    def reached(*args, **kwargs):
+        raise RuntimeError("reached the compiler")
+    monkeypatch.setattr(net, "_compile", reached)
+    with pytest.raises(RuntimeError, match="reached the compiler"):
+        net.attempt(agent, "next", "int next(void) { return 0; }", "game")
+    assert net.store.one("SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.name='set_aside'") is None
+    assert _held(net, agent) == "next"
+
+
+def test_a_dead_claim_doesnt_stop_a_polishing_helper(tmp_path):
+    """#283: claim_readable read a claim left on a set-aside function as one the helper still held, so polishing
+    stopped with "match it or release_function it first". It's dropped and the next matched function comes."""
+    net, _ = _game(tmp_path, [("set_aside", 4, "open"), ("done", 6, "open")])
+    agent, _ = net.local_agent("opencode-beam-free-1")
+    net.claim_row(agent, "game", "set_aside")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm' WHERE name='set_aside'")
+        db.execute("UPDATE functions SET status='matched', matched_source=? WHERE name='done'",
+                   ("int done(void) { return 0; }",))
+    assert "MAKE READABLE: done" in net.readability.claim(agent, "game")
+    assert net.store.one("SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.name='set_aside'") is None
+    assert _held(net, agent) == "done"
+
+
 def test_at_the_end_of_a_game_big_functions_cant_be_passed_around_untried(tmp_path):
     """Two big functions left (a DS game's printf engine and float formatter, 500 instructions each): agents read
     "too large, skip" in the notes and gave each back untried, six and seven times, and nobody ever compiled them.
