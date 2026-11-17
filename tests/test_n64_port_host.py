@@ -16,7 +16,7 @@ HOST = Path(__file__).resolve().parents[1] / "src/decompnet/consoles/n64/port_wa
 
 def _function(text: str, name: str) -> str:
     """One function's definition from the C, its braces matched."""
-    start = re.search(rf"^\w+ {name}\(", text, re.M).start()
+    start = re.search(rf"^(?:static )?\w+ {name}\(", text, re.M).start()
     depth, i = 0, text.index("{", start)
     while True:
         depth += {"{": 1, "}": -1}.get(text[i], 0)
@@ -284,3 +284,53 @@ int main(void) {
     assert done.returncode == 0, done.stderr
     done = subprocess.run([str(program)], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
+
+
+def test_the_eeprom_calls_read_and_write_the_chip_by_block(tmp_path):
+    """osEepromLongRead/LongWrite and their 8-byte forms are the host's: the game's own copies go with the rest of
+    what the host replaces (port/wasm/play.py), and a racing game's long read had become a stub that read nothing,
+    so its default car broke its class's rules and never raced. A write of part of a block keeps the rest of it."""
+    cc = shutil.which("cc") or shutil.which("clang")
+    if not cc:
+        pytest.skip("no C compiler")
+    text = HOST.read_text()
+    harness = tmp_path / "eeprom.c"
+    harness.write_text("#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\ntypedef uint32_t u32;\n"
+                       "static uint8_t M[4096]; static uint8_t eeprom[512];\n"
+                       "static void eeprom_load(void) {}\n"
+                       "static void eeprom_write(int block, const uint8_t *data) { memcpy(eeprom + block * 8, data, 8); }\n"
+                       + _function(text, "eeprom_read") + "\n" + _function(text, "eeprom_write_bytes") + "\n" + r"""
+int main(void) {
+    memset(eeprom, 0xEE, sizeof eeprom);
+    for (int i = 0; i < 20; i++) M[100 + i] = (uint8_t)(i + 1);
+    eeprom_write_bytes(3, 100, 20);            /* blocks 3, 4 and the first 4 bytes of 5 */
+    eeprom_read(3, 200, 24);
+    for (int i = 0; i < 24; i++) printf("%02X", M[200 + i]);
+    printf(" %02X %02X\n", eeprom[3 * 8 - 1], eeprom[5 * 8 + 4]);
+    return 0;
+}
+""")
+    done = subprocess.run([cc, "-o", str(tmp_path / "eeprom"), str(harness)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    out = subprocess.run([str(tmp_path / "eeprom")], capture_output=True, text=True).stdout.split()
+    assert out[0] == "".join(f"{i:02X}" for i in range(1, 21)) + "EEEEEEEE"  # the rest of block 5 kept
+    assert out[1:] == ["EE", "EE"]  # blocks 2 and 5's tail untouched
+
+
+# what the kit says the host provides but the host doesn't define as a function, with why that's right
+NOT_FUNCTIONS = {"__osCurrentTime", "__osEventStateTab", "__osMaxControllers"}  # data
+NEVER_RUN = {"viMgrMain", "corrupted", "corrupted_init"}  # threads and checks only libultra's managers start
+
+
+def test_the_host_defines_every_function_the_kit_says_it_provides():
+    """The build leaves out the game's own copy of each function the kit says the host provides (play.library), so
+    one the host doesn't define becomes a stub that does nothing: a racing game's EEPROM reads, its audio
+    interface's length and next buffer, and libultra's thread queries were all stubs."""
+    from decompnet.consoles.n64 import port
+
+    kit = HOST.parent
+    text = "".join(p.read_text() for p in kit.glob("*.c"))
+    defined = {re.sub(r"0x([0-9A-F]{2})", lambda m: chr(int(m.group(1), 16)), n)
+               for n in re.findall(r"\bw2c_env_(\w+)\(struct w2c_env", text)}
+    provided = set(port.LIBULTRASHIP) | set(port.GLUE_PROVIDES) | set(port._OS_INTERNAL)
+    assert sorted(provided - defined - NOT_FUNCTIONS - NEVER_RUN) == []

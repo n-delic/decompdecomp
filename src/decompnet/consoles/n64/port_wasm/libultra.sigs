@@ -21,6 +21,17 @@ viSetSwapBuffer	void	ptr
 osCreatePiManager	void	i32, ptr, ptr, i32
 osPiStartDma	i32	ptr, i32, i32, i32, ptr, i32, ptr
 osGetTime	i64	
+osSetTime	void	i64
+osSetTimer	i32	ptr, i64, i64, ptr, ptr
+osStopTimer	i32	ptr
+osGetThreadId	i32	ptr
+osGetThreadPri	i32	ptr
+osAiGetLength	i32	
+osAiSetNextBuffer	i32	ptr, i32
+osPiReadIo	i32	i32, ptr
+osPiWriteIo	i32	i32, i32
+osViSetXScale	void	f32
+osMapTLB	void	i32, i32, ptr, i32, i32, i32
 osVirtualToPhysical	i32	ptr
 osWritebackDCache	void	ptr, i32
 osWritebackDCacheAll	void	
@@ -37,6 +48,10 @@ osContGetReadData	void	ptr
 osContStartQuery	i32	ptr
 osContGetQuery	void	ptr
 osEepromProbe	i32	ptr
+osEepromRead	i32	ptr, i32, ptr
+osEepromWrite	i32	ptr, i32, ptr
+osEepromLongRead	i32	ptr, i32, ptr, i32
+osEepromLongWrite	i32	ptr, i32, ptr, i32
 osMotorInit	i32	ptr, ptr, i32
 __osMotorAccess	i32	ptr, i32
 osPfsIsPlug	i32	ptr, ptr

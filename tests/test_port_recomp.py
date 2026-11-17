@@ -133,6 +133,10 @@ def test_each_function_runs_as_the_games_c_the_hosts_or_recompiled(tmp_path):
     # a call through a pointer gives way to a thread the retrace woke, as the game's C does at port_func
     assert "recomp_func_t *get_function(int32_t vram) {\n    port_safe_point();" in bridges
     assert "R___osSiRawStartDma_recomp(uint8_t* rdram" in (out / "funcs.h").read_text()
+    # a function no listed one starts (the split missed it), reached through a pointer: the interpreter runs it
+    assert "if (port_mips_has_code((uint32_t)vram)) {" in bridges and "return port_recomp_interpret;" in bridges
+    # `j .`: the host parks the thread, as the interpreter's
+    assert "void pause_self(uint8_t *rdram) { (void)rdram; port_idle_forever();" in bridges
     # into the game's C: $a0-$a3 in adapt.py's register words, for a callee that passes on what it doesn't declare
     assert "for (int i = 0; i < 4; i++) STORE_W(4 * i, 0x90000u, w[i]);" in bridges
     cc = shutil.which("cc") or shutil.which("clang")
@@ -141,6 +145,22 @@ def test_each_function_runs_as_the_games_c_the_hosts_or_recompiled(tmp_path):
             done = subprocess.run([cc, "-c", "-w", "-I", str(out), str(unit), "-o", str(unit.with_suffix(".o"))],
                                   capture_output=True, text=True)
             assert done.returncode == 0, done.stderr[-1500:]
+
+
+def test_each_loop_of_recompiled_c_gives_other_threads_their_turn():
+    """A racing game's boot thread (priority 10) spins until a higher thread sets a flag; in recompiled C the loop had
+    no safe point, so the host never switched to that thread and the native build drew nothing. Backward branches
+    get one; forward ones stay as they were."""
+    text = ("L_80001000:\n    ctx->r2 = MEM_HU(ctx->r2, -0X1A8);\n    if (ctx->r2 == ctx->r3) {\n"
+            "        goto L_80001000;\n    }\n    goto L_80001010;\n    ctx->r2 = 0;\nL_80001010:\n    return;\n")
+    out = recomp.loops(text)
+    assert "{ port_recomp_poll(); goto L_80001000; }" in out
+    assert "    goto L_80001010;" in out and "port_recomp_poll(); goto L_80001010" not in out
+
+
+def test_the_port_header_has_the_loops_safe_point():
+    text = recomp.header(_header().read_text())
+    assert "static inline void port_recomp_poll(void)" in text and "port_safe_point();" in text
 
 
 def test_a_function_named_as_the_c_programs_entry_is_renamed():

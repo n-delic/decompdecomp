@@ -311,6 +311,41 @@ void w2c_env_osSetThreadPri(struct w2c_env *e, u32 t, u32 pri) {
     }
     pthread_mutex_unlock(&lock);
 }
+/* The rest of libultra's thread calls the port kit says the host provides (consoles/n64/port.py): the game's own
+   copies read libultra's thread list, which the host doesn't keep, so they'd answer for no thread. */
+u32 w2c_env_osGetThreadId(struct w2c_env *e, u32 t) {
+    (void)e;
+    pthread_mutex_lock(&lock);
+    PortThread *p = t ? find(t) : self;
+    u32 id = p ? (u32)p->id : t ? be32(t + 20) : 0; /* (OSThread's id, for one the host never started) */
+    pthread_mutex_unlock(&lock);
+    return id;
+}
+u32 w2c_env_osGetThreadPri(struct w2c_env *e, u32 t) {
+    (void)e;
+    pthread_mutex_lock(&lock);
+    PortThread *p = t ? find(t) : self;
+    u32 pri = p ? (u32)p->pri : t ? be32(t + 4) : 0;
+    pthread_mutex_unlock(&lock);
+    return pri;
+}
+void w2c_env_osYieldThread(struct w2c_env *e) {
+    (void)e;
+    pthread_mutex_lock(&lock);
+    if (self) { self->ready_at = ++ticks; schedule(); wait_turn(self); }
+    pthread_mutex_unlock(&lock);
+}
+void w2c_env_osStopThread(struct w2c_env *e, u32 t) {
+    (void)e;
+    pthread_mutex_lock(&lock);
+    PortThread *p = t ? find(t) : self;
+    if (p && p->state != DONE) {
+        p->state = STOPPED; /* osStartThread makes it ready again */
+        if (p == self) { schedule(); wait_turn(self); }
+        else if (p == running) schedule();
+    }
+    pthread_mutex_unlock(&lock);
+}
 
 void w2c_env_osCreateMesgQueue(struct w2c_env *e, u32 mq, u32 buf, u32 count) {
     (void)e;
@@ -447,8 +482,10 @@ void w2c_env_osViSwapBuffer(struct w2c_env *e, u32 fb) { (void)e; port_vi_swap(f
 u32 w2c_env_osViGetCurrentFramebuffer(struct w2c_env *e) { (void)e; return frame_buffer; }
 u32 w2c_env_osViGetNextFramebuffer(struct w2c_env *e) { (void)e; return frame_buffer; }
 
+static void port_timers(void);
 static void retrace(void) {
     vi_count++;
+    port_timers();
     if (vi.queue && vi_count % vi.every == 0) put(vi.queue, vi.msg, 0, 0);
 }
 
@@ -681,6 +718,37 @@ void w2c_env_osContGetQuery(struct w2c_env *e, u32 status) {
     return;
 }
 u32 w2c_env_osEepromProbe(struct w2c_env *e, u32 mq) { (void)e; (void)mq; return 1; } /* EEPROM_TYPE_4K */
+/* libultra's EEPROM calls, which the host provides as it provides osEepromProbe: the game's own copies go out of the
+   build with the rest of what the host replaces (port/wasm/play.py), so a racing game's osEepromLongRead, whose C
+   had reached the chip through the serial bus above, became a stub that read nothing: its menus said its default
+   car broke its class's rules, and its car selection never let it race. `address` is the 8-byte block. */
+static u32 eeprom_read(u32 address, u32 buffer, u32 bytes) {
+    eeprom_load();
+    for (u32 i = 0; i < bytes && address * 8 + i < sizeof eeprom; i++) M[buffer + i] = eeprom[address * 8 + i];
+    return 0;
+}
+static u32 eeprom_write_bytes(u32 address, u32 buffer, u32 bytes) {
+    eeprom_load();
+    for (u32 b = 0; b * 8 < bytes && address + b < sizeof eeprom / 8; b++) {
+        uint8_t block[8];
+        memcpy(block, eeprom + (address + b) * 8, 8);
+        for (u32 i = 0; i < 8 && b * 8 + i < bytes; i++) block[i] = M[buffer + b * 8 + i];
+        eeprom_write((int)(address + b), block);
+    }
+    return 0;
+}
+u32 w2c_env_osEepromRead(struct w2c_env *e, u32 mq, u32 address, u32 buffer) {
+    (void)e; (void)mq; return eeprom_read(address & 0xFF, buffer, 8);
+}
+u32 w2c_env_osEepromWrite(struct w2c_env *e, u32 mq, u32 address, u32 buffer) {
+    (void)e; (void)mq; return eeprom_write_bytes(address & 0xFF, buffer, 8);
+}
+u32 w2c_env_osEepromLongRead(struct w2c_env *e, u32 mq, u32 address, u32 buffer, u32 bytes) {
+    (void)e; (void)mq; return eeprom_read(address & 0xFF, buffer, bytes);
+}
+u32 w2c_env_osEepromLongWrite(struct w2c_env *e, u32 mq, u32 address, u32 buffer, u32 bytes) {
+    (void)e; (void)mq; return eeprom_write_bytes(address & 0xFF, buffer, bytes);
+}
 u32 w2c_env_osMotorInit(struct w2c_env *e, u32 mq, u32 pfs, u32 ch) { (void)e; (void)mq; (void)pfs; (void)ch; return 1; }
 u32 w2c_env_0x5F_osMotorAccess(struct w2c_env *e, u32 pfs, u32 on) { (void)e; (void)pfs; (void)on; return 1; }
 u32 w2c_env_osPfsIsPlug(struct w2c_env *e, u32 mq, u32 pattern) { (void)e; (void)mq; M[pattern] = 0; return 0; }
@@ -696,12 +764,76 @@ void w2c_env_osWritebackDCache(struct w2c_env *e, u32 a, u32 n) { (void)e; (void
 void w2c_env_osWritebackDCacheAll(struct w2c_env *e) { (void)e; }
 u32 w2c_env_osSetIntState(struct w2c_env *e, u32 s) { (void)e; return s; }
 static struct timespec start;
+static int64_t time_offset; /* osSetTime's */
 u64 w2c_env_osGetTime(struct w2c_env *e) {
     (void)e;
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     double s = (now.tv_sec - start.tv_sec) + (now.tv_nsec - start.tv_nsec) / 1e9;
-    return (u64)(s * 46875000.0); /* the CPU's count rate */
+    return (u64)((int64_t)(s * 46875000.0) + time_offset); /* the CPU's count rate */
+}
+void w2c_env_osSetTime(struct w2c_env *e, u64 t) { time_offset = 0; time_offset = (int64_t)t - (int64_t)w2c_env_osGetTime(e); }
+/* osSetTimer: its message when the countdown (in the CPU's count, as osGetTime) has run, then every interval if it
+   has one; checked at each retrace (port_timers), so a timer fires to the nearest 1/60 s. */
+static struct { u32 timer, mq, msg; u64 due, interval; } timers[32];
+u32 w2c_env_osSetTimer(struct w2c_env *e, u32 t, u64 countdown, u64 interval, u32 mq, u32 msg) {
+    u64 now = w2c_env_osGetTime(e);
+    pthread_mutex_lock(&lock);
+    int slot = -1;
+    for (int i = 0; i < 32; i++) if (timers[i].timer == t || (slot < 0 && !timers[i].timer)) { slot = i; if (timers[i].timer == t) break; }
+    if (slot >= 0) {
+        timers[slot].timer = t; timers[slot].mq = mq; timers[slot].msg = msg;
+        timers[slot].due = now + (countdown ? countdown : interval); timers[slot].interval = interval;
+    } else LOG("osSetTimer: more than 32 timers at once, %08X ignored", t);
+    pthread_mutex_unlock(&lock);
+    return 0;
+}
+u32 w2c_env_osStopTimer(struct w2c_env *e, u32 t) {
+    (void)e;
+    pthread_mutex_lock(&lock);
+    int found = -1;
+    for (int i = 0; i < 32; i++) if (timers[i].timer == t) { timers[i].timer = 0; found = 0; }
+    pthread_mutex_unlock(&lock);
+    return (u32)found;
+}
+static void port_timers(void) {
+    u64 now = w2c_env_osGetTime(NULL);
+    struct { u32 mq, msg; } due[32];
+    int n = 0;
+    pthread_mutex_lock(&lock);
+    for (int i = 0; i < 32; i++) {
+        if (!timers[i].timer || now < timers[i].due) continue;
+        due[n].mq = timers[i].mq; due[n++].msg = timers[i].msg;
+        if (timers[i].interval) timers[i].due += timers[i].interval; else timers[i].timer = 0;
+    }
+    pthread_mutex_unlock(&lock);
+    for (int i = 0; i < n; i++) if (due[i].mq) put(due[i].mq, due[i].msg, 0, 0); /* (put takes the lock itself) */
+}
+/* The audio interface as libultra drives it, through the registers audio.c answers: what's left of the buffer
+   playing, and the next buffer (with libultra's own step back of 8 KB after a buffer that ends on an 8 KB boundary,
+   which audio.c undoes as the hardware does) */
+int port_ai_register(uint32_t addr, int write, uint32_t value, uint32_t *read); /* audio.c */
+u32 w2c_env_osAiGetLength(struct w2c_env *e) { (void)e; u32 v = 0; port_ai_register(0xA4500004u, 0, 0, &v); return v; }
+u32 w2c_env_osAiSetNextBuffer(struct w2c_env *e, u32 buf, u32 size) {
+    (void)e;
+    static int bug;
+    u32 status = 0;
+    port_ai_register(0xA450000Cu, 0, 0, &status);
+    if (status & 0x80000000u) return (u32)-1; /* full: a buffer already waits */
+    u32 at = buf - (bug ? 0x2000u : 0);
+    bug = ((buf + size) & 0x1FFF) == 0;
+    port_ai_register(0xA4500000u, 1, at & 0x1FFFFFFFu, NULL);
+    port_ai_register(0xA4500004u, 1, size, NULL);
+    return 0;
+}
+/* the older API's word of the cartridge, as osEPiReadIo reads it */
+u32 w2c_env_osPiReadIo(struct w2c_env *e, u32 dev, u32 data) { return w2c_env_osEPiReadIo(e, 0, dev, data); }
+u32 w2c_env_osPiWriteIo(struct w2c_env *e, u32 dev, u32 value) { return w2c_env_osEPiWriteIo(e, 0, dev, value); }
+void w2c_env_osViSetXScale(struct w2c_env *e, f32 x) { (void)e; (void)x; } /* (the frame is shown whole) */
+void w2c_env_osMapTLB(struct w2c_env *e, u32 index, u32 pm, u32 va, u32 even, u32 odd, u32 asid) {
+    (void)e; (void)pm; (void)asid;
+    static int said;
+    if (!said++) fprintf(stderr, "osMapTLB(%u, %08X -> %08X/%08X): the port has no TLB, so mapped addresses aren't translated\n", index, va, even, odd);
 }
 u32 w2c_env_memcpy(struct w2c_env *e, u32 d, u32 s, u32 n) { (void)e; memmove(M + d, M + s, n); return d; }
 void w2c_env_0x5F_osCopyBytes(struct w2c_env *e, u32 s, u32 d, u32 n) { (void)e; memmove(M + d, M + s, n); }
