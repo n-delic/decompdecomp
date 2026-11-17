@@ -64,6 +64,10 @@ class Types:
         return t
 
 
+# The automatic data names that say their address, as the app makes them (engine/common.py's _AUTO_TOKEN): a packed
+# shooter's sound bank was `RO_00628350 - D_00626DD0`, its end unnamed here, so 0, and its DMA asked for -6 MB
+AUTO_DATA = "D|B|RO|STR|FLT|DBL|jtbl"
+
 def struct_layout(parts):
     off, align, offs = 0, 1, []
     for s, a in parts:
@@ -403,7 +407,7 @@ def main():
             signatures[new] = signatures[old]
         if old in fixed:
             fixed[new] = (fixed[old][0], "context")
-        elif match := re.fullmatch(r"(?:func|D|B)_([0-9A-Fa-f]+)", old):
+        elif match := re.fullmatch(rf"(?:func|{AUTO_DATA})_([0-9A-Fa-f]+)", old):
             fixed[new] = (int(match[1], 16), "context")
     for old, new in renames.items():
         text = re.sub(rf"@{re.escape(old)}\b", f"@{new}", text)
@@ -423,7 +427,7 @@ def main():
                          if not ((m := re.match(r"^@([\w.$]+) = external ", l)) and m.group(1) in named))
     if fixed:
         for name in set(REF.findall(text)) - set(fixed):  # an automatic name says its address
-            if (m := re.fullmatch(r"(D|B|func)_([0-9A-Fa-f]+)", name)):
+            if (m := re.fullmatch(rf"({AUTO_DATA}|func)_([0-9A-Fa-f]+)", name)):
                 fixed[name] = (int(m.group(2), 16), "func" if m.group(1) == "func" else "")
         text = pin(text, fixed, functions)
     types = Types(text)
