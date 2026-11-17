@@ -450,6 +450,83 @@ def stop(args) -> int:
     return 1
 
 
+IMPORT_POLL_SECONDS = 0.5
+
+
+def _listening(port: int) -> bool:
+    """Whether anything still accepts connections on the port (the app, however busy)."""
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+        return True
+    except OSError:
+        return False
+
+
+def import_cmd(args) -> int:
+    """A game the user owns made a project by the running app, as dropping it on the home page does: the app imports
+    it from where it is (a ROM, a disc image, a PC game's folder), and this prints the import's log as it goes and the
+    project's slug at the end. The app must be running (this asks it, with server.json's secret, as `decomp stop`
+    does): an import is the app's work, its database and its jobs, and two processes writing them would collide."""
+    import urllib.parse
+    game = Path(args.path).expanduser().resolve()
+    if not game.exists():
+        print(f"no file or folder at {game}", file=sys.stderr)
+        return 2
+    running = _state(home_dir() / ".decomp" / "server.json")
+    if running is None:
+        print(f"{edition.NAME} isn't running for {home_dir()}: start it (`decomp`), then import again", file=sys.stderr)
+        return 1
+    if not args.yes:
+        answer = input(f"Is {game.name} your own legally obtained copy of the game? [y/N] ") if sys.stdin.isatty() else ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("not imported: confirm that the game is your own copy (or pass --yes)", file=sys.stderr)
+            return 1
+    query = {"path": str(game), "confirmed": "1"}
+    if args.name:
+        query["name"] = args.name
+    if args.toolchain:
+        query["toolchain"] = args.toolchain
+    try:
+        started = _call(running, "/api/import?" + urllib.parse.urlencode(query), {}, timeout=60)
+    except urllib.error.HTTPError as e:
+        try:
+            message = json.loads(e.read() or b"{}").get("error") or str(e)
+        except ValueError:
+            message = str(e)
+        print(f"not imported: {message}", file=sys.stderr)
+        return 1
+    except OSError as e:
+        print(f"{edition.NAME} didn't answer: {e}", file=sys.stderr)
+        return 1
+    job_id = started.get("job")
+    print(f"importing {game.name} into {home_dir()} (job {job_id})")
+    if args.no_wait:
+        return 0
+    shown = 0
+    while True:
+        try:
+            job = _call(running, "/api/job?id=" + urllib.parse.quote(str(job_id)), timeout=30)
+        except OSError as e:
+            # a busy app (an import's heaviest steps) can answer late, /health too: ask again while it still listens
+            if _listening(running["port"]):
+                time.sleep(IMPORT_POLL_SECONDS)
+                continue
+            print(f"{edition.NAME} stopped answering ({e}); the import may not have finished", file=sys.stderr)
+            return 1
+        log = job.get("log") or []
+        for line in log[shown:]:
+            print(line)
+        shown = len(log)
+        state = job.get("state")
+        if state == "done":
+            print(f"imported: {(job.get('result') or {}).get('slug', '')}")
+            return 0
+        if state in ("error", "cancelled"):
+            print(f"not imported: {job.get('error') or state}", file=sys.stderr)
+            return 1
+        time.sleep(IMPORT_POLL_SECONDS)
+
+
 def shortcut(args) -> int:
     from .launcher import install_launcher
 
@@ -468,6 +545,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("setup", help="install the compilers and tools this computer needs")
     sub.add_parser("stop", help="quit the running app (and every helper it started)")
     sub.add_parser("shortcut", help="add decompdecomp to your apps menu")
+    im = sub.add_parser("import", help="make a project of a game you own (the running app imports it)")
+    im.add_argument("path", help="the game: a ROM, a disc image, or a PC game's folder")
+    im.add_argument("--name", help="the project's name (default: the file's)")
+    im.add_argument("--toolchain", help="the compiler to start with (default: the app finds it)")
+    im.add_argument("--yes", action="store_true", help="confirm it's your own legally obtained copy without asking")
+    im.add_argument("--no-wait", action="store_true", help="start the import and return (the app shows its progress)")
     up = sub.add_parser("update", help="install the newest decompdecomp (the running app restarts into it)")
     up.add_argument("--check", action="store_true", help="only say whether there is one")
     he = sub.add_parser("hosted-export", help="write a project as a small hosted file, for decomp-mcp-gateway hosted serve")
@@ -498,7 +581,7 @@ def main(argv: list[str] | None = None) -> int:
     from .. import limits
     limits.raise_open_file_limit()
     limits.no_core_dumps()
-    return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd,
+    return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd, "import": import_cmd,
             "install-info": install_info, "hosted-export": hosted_export,
             "judge-worker": judge_worker, "hosted-link": hosted_link,
             "hosted-publish": hosted_publish}.get(args.cmd, run)(args)
