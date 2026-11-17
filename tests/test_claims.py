@@ -3,11 +3,13 @@ the same size the one in the file closest to done. A crowd of agents must not sp
 leftovers around (Mario Party 6: 16 agents, one match, on 326 big functions released again and again)."""
 
 import json
+import time
 
 import pytest
 
 from decompnet import network
 from decompnet.app.engine import RomNetwork
+from decompnet.network import NetworkError
 
 
 def _ordered_game(tmp_path, kind: str, order: str = ""):
@@ -27,6 +29,44 @@ def _ordered_game(tmp_path, kind: str, order: str = ""):
                        "VALUES(?,?,?,?,?,?,?,?,?)",
                        (pid, name, n * 4, n, "open", "a", attempts, abandons, score))
     return net
+
+
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+def test_a_function_with_no_bytes_is_never_handed_to_an_agent(tmp_path, kind):
+    """#297: a size-0 function was the smallest in the queue, so every agent got it, failed, released it, and got it
+    again. It isn't claimable by name either, and an agent still holding an old claim on one moves to real work."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "mips", 0, str(tmp_path), json.dumps({"kind": kind}))).lastrowid
+        empty = db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                           (pid, "empty", 0, 1, "open", "a")).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                   (pid, "real", 40, 10, "open", "a"))
+        first, _ = net.local_agent("first")
+        now = time.time()
+        db.execute("INSERT INTO claims VALUES(?,?,?,?)", (empty, first.id, now, now + net.claim_ttl))
+    assert net.claim_row(first, "game", None, "easiest")["name"] == "real"
+    second, _ = net.local_agent("second")
+    with pytest.raises(NetworkError, match="no bytes"):
+        net.claim_row(second, "game", "empty")
+
+
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+def test_a_function_with_no_recorded_size_is_still_claimable(tmp_path, kind):
+    """Project-mode rows can have their size from the project's build rather than the database. NULL means "not
+    recorded", not "no bytes": #297's zero-size filters must not make such a function unclaimable."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "mips", 0, str(tmp_path), json.dumps({"kind": kind}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,NULL,10,'open','a')",
+                   (pid, "unknown_size"))
+    first, _ = net.local_agent("first")
+    assert net.claim_row(first, "game", None, "easiest")["name"] == "unknown_size"
+    net.release(first, "unknown_size", "", "game")
+    second, _ = net.local_agent("second")
+    assert net.claim_row(second, "game", "unknown_size")["name"] == "unknown_size"
 
 
 @pytest.mark.parametrize("kind", ["rom", "fork"])
