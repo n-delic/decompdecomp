@@ -442,17 +442,19 @@ enum { EV_SP = 4, EV_SI = 5, EV_AI = 6, EV_VI = 7, EV_PI = 8, EV_DP = 9 };
 #define IO_FAR(addr) (addr)
 #endif
 int port_ai_register(uint32_t addr, int write, uint32_t value, uint32_t *read); /* audio.c */
+static int si_register(uint32_t addr, int write, uint32_t value, uint32_t *read); /* below, with the PIF */
 uint64_t port_io_load(uint64_t addr) {
     if (addr < 0xA0800000u) return addr - 0x20000000u; /* RAM, uncached: the same RAM */
     if (addr == SP_STATUS) { wbe32(IO_SCRATCH, 1); return IO_SCRATCH; } /* halted: a task finishes at once */
     uint32_t v;
-    if (port_ai_register((uint32_t)addr, 0, 0, &v)) { wbe32(IO_SCRATCH, v); return IO_SCRATCH; }
+    if (port_ai_register((uint32_t)addr, 0, 0, &v) || si_register((uint32_t)addr, 0, 0, &v)) { wbe32(IO_SCRATCH, v); return IO_SCRATCH; }
     return IO_FAR(addr);
 }
 uint64_t port_io_store(uint64_t addr, uint64_t value) {
     if (addr < 0xA0800000u) return addr - 0x20000000u;
     if (addr == SP_STATUS) return IO_SCRATCH + 4; /* a command (clear halt, set a signal): nothing to keep */
-    if (port_ai_register((uint32_t)addr, 1, (uint32_t)value, NULL)) return IO_SCRATCH + 4;
+    if (port_ai_register((uint32_t)addr, 1, (uint32_t)value, NULL) || si_register((uint32_t)addr, 1, (uint32_t)value, NULL))
+        return IO_SCRATCH + 4;
     return IO_FAR(addr);
 }
 
@@ -710,6 +712,21 @@ u32 w2c_env_0x5F_osSiRawStartDma(struct w2c_env *e, u32 direction, u32 dram) {
     else for (int i = 0; i < 64; i++) M[dram + i] = pif[i];
     post_event(EV_SI);
     return 0;
+}
+/* The serial interface's registers, for a game whose own SI code runs (recompiled or interpreted: library detection
+   didn't name its __osSiRawStartDma, as in a racing game whose main thread then waited for the SI event for ever):
+   SI_DRAM_ADDR, then a write to SI_PIF_ADDR_RD64B or _WR64B moves the PIF's 64 bytes and raises the event, as the
+   host's own __osSiRawStartDma does. SI_STATUS is never busy. */
+static uint32_t si_dram;
+static int si_register(uint32_t addr, int write, uint32_t value, uint32_t *read) {
+    if (addr < 0xA4800000u || addr > 0xA4800018u) return 0;
+    switch (addr & 0x1F) {
+    case 0x00: if (write) si_dram = value & 0x7FFFFF; else *read = si_dram; break;
+    case 0x04: if (write) w2c_env_0x5F_osSiRawStartDma(NULL, 0, 0x80000000u | si_dram); else *read = 0; break; /* PIF to RAM */
+    case 0x10: if (write) w2c_env_0x5F_osSiRawStartDma(NULL, 1, 0x80000000u | si_dram); else *read = 0; break; /* RAM to PIF */
+    default: if (read) *read = 0; /* SI_STATUS: not busy, no error; a write clears the interrupt */
+    }
+    return 1;
 }
 u32 w2c_env_osContStartQuery(struct w2c_env *e, u32 mq) { (void)e; si_done(mq); return 0; }
 void w2c_env_osContGetQuery(struct w2c_env *e, u32 status) {

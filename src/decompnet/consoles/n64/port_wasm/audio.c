@@ -274,9 +274,12 @@ void port_audio_task(uint32_t task) {
     uint32_t list = ram(rd32(ram(task) + 48)), size = rd32(ram(task) + 52); /* OSTask's data_ptr and data_size */
     if (!is_abi1(list, size)) { naudio_task(list, size); return; }
     DMEM_BASE = 0x5C0;
+    static int trace = -1; /* PORT_AUDIO_TRACE: each command, and the RAM address it names */
+    if (trace < 0) trace = getenv("PORT_AUDIO_TRACE") != NULL;
     for (uint32_t pc = 0; pc + 8 <= size; pc += 8) {
         uint32_t w0 = rd32(list + pc), w1 = rd32(list + pc + 4);
         uint8_t flags = (uint8_t)(w0 >> 16);
+        if (trace) fprintf(stderr, "audio %02X %08X %08X -> %08X\n", w0 >> 24, w0, w1, address(w1));
         switch (w0 >> 24) {
         case 0x00: break; /* A_SPNOOP */
         case 0x01: adpcm(flags & 1, flags & 2, address(w1)); break;
@@ -392,5 +395,8 @@ int port_ai_register(uint32_t addr, int write, uint32_t value, uint32_t *read) {
     case 0x10: if (write && value) port_ai_frequency(49656530u / (value + 1)); else if (read) *read = 0; break;
     default: if (read) *read = 0;
     }
+    static int trace = -1; /* PORT_AI_TRACE: each access to the audio interface's registers */
+    if (trace < 0) trace = getenv("PORT_AI_TRACE") != NULL;
+    if (trace) fprintf(stderr, "AI %s %08X %08X\n", write ? "write" : "read", addr, write ? value : read ? *read : 0);
     return 1;
 }
