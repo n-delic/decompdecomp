@@ -453,15 +453,19 @@ class Build:
         elif self.own is None and (near := self.stand_in):
             bits = "64-bit " if self.x64 else ""
             year, theirs = VISUAL_STUDIO[self.version], f"{Build(self.machine, *near).compiler}{bits and ', 64-bit'}"
+            # (#278: the user's own copy of its version builds such a game exactly, a 64-bit one with the copy's
+            # 64-bit compiler: kits/visualcpp.py)
+            own = (f"; or set up your own Visual C++ {year} copy{' with its 64-bit compiler' if self.x64 else ''} in "
+                   "Setup (the Visual C++ kit)")
             if self.newer_than_pack:
                 newest = "64-bit compiler decompdecomp has" if self.x64 else "decompdecomp has"
                 out.append(f"it was built with {self.compiler}, newer than any {newest}: it builds with {theirs}, and "
                            f"what {year}'s compiler generates differently won't match until decompdecomp has it "
-                           "(ROADMAP.md, Newer Windows games)")
+                           f"(ROADMAP.md, Newer Windows games){own}")
             elif _version_key(self.version)[0] != _version_key(near[0])[0]:
                 out.append(f"it was built with {self.compiler}, and decompdecomp has no {bits}Visual C++ {year} "
                            f"yet: it builds with {theirs}, the nearest it has, so little of it matches until {year}'s "
-                           "comes (ROADMAP.md, Newer Windows games)")
+                           f"comes (ROADMAP.md, Newer Windows games){own}")
         if self.whole_program:
             out.append(f"{self.whole_program} of its {self.compiled} compiled files were built with whole-program "
                        "optimisation (/GL): their functions can't match")

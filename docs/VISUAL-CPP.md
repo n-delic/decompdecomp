@@ -1,8 +1,8 @@
 # Visual C++ builds for Windows PC games
 
-This page is about Windows PC games only: 32-bit x86 programs built with Microsoft Visual C++. It says which
-builds of Visual C++ decompdecomp has, how it picks one for a game, and where the code that Visual C++ makes
-changes from one build to the next.
+This page is about Windows PC games only: 32-bit x86 and 64-bit x64 programs built with Microsoft Visual C++. It
+says which builds of Visual C++ decompdecomp has, how it picks one for a game, and where the code that Visual C++
+makes changes from one build to the next.
 
 ## Why the build matters
 
@@ -15,13 +15,16 @@ import reads it and picks a compiler:
 
 1. The build the program names, if decompdecomp has it.
 2. Otherwise, your own copy of that Visual C++, if you set one up in Setup (your Visual Studio's VC folder): the very
-   build, or the nearest of your copies of the same version.
+   build, or the nearest of your copies of the same version. A 64-bit game takes a copy's 64-bit compiler
+   (`bin/x86_amd64` or `bin/amd64` before 2015, `bin/Hostx86/x64` or `bin/Hostx64/x64` after), so only a copy that has
+   one builds it.
 3. Otherwise, the closest build of the same version. Every 2017 update builds with 14.16 (15.9), the one 2017 build
    decompdecomp has.
 4. A game built with a version decompdecomp doesn't have yet builds with the nearest version it has, by year, and
    the import says so: 2012 and 2013 with 2010 SP1, 2015 and 2019 or newer with 2017. Its functions match only where
    the two compilers make the same code, which "Where the code changes" below says something about: little of a
-   2012 or 2013 game, more of a 2015 one. Its own version, once decompdecomp has it, matches the rest.
+   2012 or 2013 game, more of a 2015 one. Its own version, once decompdecomp has it, matches the rest. A 64-bit game
+   builds with 2017's 64-bit compiler (14.16-x64), the only one decompdecomp has, unless step 2 finds your own copy.
 
 A 32-bit game is never given 2017's 64-bit compiler (14.16-x64): the import, a project's Settings and `try_compiler`
 offer a game only the compilers for its processor. In a project's Settings you can choose another compiler for a
