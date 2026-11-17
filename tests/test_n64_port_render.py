@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
         w16(SPRITE + 12, 8 << 5); w16(SPRITE + 16, 1); w16(SPRITE + 18, 0);
         ram[SPRITE + 20] = 2; ram[SPRITE + 21] = 0; ram[SPRITE + 22] = 0; /* CI4, palette 0 */
         gfx(0xFF100000u | 319, 0x80000000u | FB);
-        gfx(0xEF000000u, 0);
+        gfx(0xEF000000u | 6 << 9, 0); /* G_TC_FILT */
         gfx(0xFC000000u | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,
             15u << 28 | 1 << 15 | 7 << 12 | 1 << 9 | 15u << 24 | 7 << 21 | 7 << 18 | 1 << 6 | 7 << 3 | 1);
         gfx(0xFD100000u, 0x80000000u | TLUT);
@@ -126,7 +126,7 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
-    gfx(0xEF000000u | (persp ? 0x80000 : 0) | (bilerp ? 0x2000 : 0) | (fog ? 1 << 20 : 0),
+    gfx(0xEF000000u | 6 << 9 | (persp ? 0x80000 : 0) | (bilerp ? 0x2000 : 0) | (fog ? 1 << 20 : 0),
         fog ? 3u << 30 | 2u << 26 | 1u << 20 | 1u << 16                 /* cycles, perspective, filter, blender */
             : pass ? 0x4000u | 3u << 26 | 2u << 18 | 3u << 24 | 2u << 16 : 0);
     gfx(0xFC000000u | 15 << 20 | 31 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,  /* D = TEXEL0; its second cycle the */

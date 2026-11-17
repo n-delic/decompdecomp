@@ -117,6 +117,8 @@ TOLERANCE = {
     "rect": (10.0, "a copy-mode rectangle reading TMEM past its tile, which GL's texture of the tile doesn't hold"),
     "two-cycle": (35.0, "the second cycle reading the next pixel's texel (the RDP's pipeline), and the dither"),
     "random": (3.0, "edges"), "random-aa": (3.0, "edges, and the coverage anti-aliasing GL doesn't do"),
+    "yuv": (21.0, "YUV texels sent converted, one colour a texel: unfiltered, the RDP takes Y and U, V from different corners"),
+    "yuv-filtconv": (9.0, "YUV texels converted, then filtered (the RDP filters, then converts; U and V at half the columns)"),
     "tilted-bilerp": (4.5, "edges: texture coordinates at a slant, a texel's border falls on another pixel"),
 }
 EDGES = 1.5  # every other scene: the edges GL rasterizes a pixel apart

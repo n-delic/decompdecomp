@@ -60,7 +60,7 @@ def test_f3dex2_lights_land_in_their_own_slots(renderer, tmp_path):
     mem = Memory()
     g = Gfx(mem)
     _f3dex2_start(mem, g)
-    g.othermode(0, 0)
+    g.othermode(6 << 9, 0)
     g(*SHADE)
     g(0xD9000000, 0x00020000 | 0x200000)                    # G_LIGHTING, smooth: only these
     g(0xDB020000, 24)                                       # G_MW_NUMLIGHT: one light
@@ -88,7 +88,7 @@ def _gbi1_start(mem: Memory, g: Gfx) -> None:
     g.frame().fill(0)
     g(0x01030040, 0x80000000 | ident)  # G_MTX: projection, load
     g(0x01020040, 0x80000000 | ident)  # model view, load
-    g.othermode(0, 0)
+    g.othermode(6 << 9, 0)
     g(*SHADE)
 
 
@@ -153,7 +153,7 @@ def test_s2dex_1x_draws_objects_with_its_own_opcodes(renderer, tmp_path):
     mem = Memory()
     g = Gfx(mem, "S2DEX")
     g.frame().fill(0)
-    g.othermode(0, 0)
+    g.othermode(6 << 9, 0)
     g(*TEX)
     load_texture(g, quadrant_texture(mem))
     g(0x05170000, 0x80000000 | _obj_matrix(mem))
@@ -171,7 +171,7 @@ def test_a_list_switches_microcode_with_g_load_ucode(renderer, tmp_path):
     mem = Memory()
     g = Gfx(mem)
     _f3dex2_start(mem, g)
-    g.othermode(0, 0)
+    g.othermode(6 << 9, 0)
     g(*TEX)
     load_texture(g, quadrant_texture(mem))
     g(0xE1000000, 0x80000000 | ucode_data(mem, "S2DEX2"))
@@ -200,7 +200,7 @@ def test_branch_z_draws_the_near_model_when_the_vertex_is_near(renderer, tmp_pat
     near_dl = 0x3000
     g = Gfx(mem)
     _f3dex2_start(mem, g)
-    g.othermode(0, 0)
+    g.othermode(6 << 9, 0)
     g(*SHADE)
     g(0xD9000000, 0x200000)
     green, red = _screen_quad(mem, [0x00FF00FF] * 4), _screen_quad(mem, [0xFF0000FF] * 4)
@@ -223,7 +223,7 @@ def test_g_mw_matrix_rewrites_one_element_of_the_combined_matrix(renderer, tmp_p
     mem = Memory()
     g = Gfx(mem)
     _f3dex2_start(mem, g)
-    g.othermode(0, 0)
+    g.othermode(6 << 9, 0)
     g(*SHADE)
     g(0xD9000000, 0x200000)
     g(0xDB000000 | 0, 0x00000000)          # the integer halves of m00 and m01: both 0
@@ -238,7 +238,7 @@ def test_g_mw_matrix_rewrites_one_element_of_the_combined_matrix(renderer, tmp_p
 
 # ---------------------------------------------------------------- the RDP
 
-NO_DITHER = 3 << 6  # other mode H: G_CD_DISABLE
+NO_DITHER = 3 << 6 | 6 << 9  # other mode H: G_CD_DISABLE, and G_TC_FILT as games set it (0 is YUV convert)
 
 
 def _texrect(g: Gfx, tile: int, x0: int, y0: int, x1: int, y1: int, s: float = 0, t: float = 0,

@@ -185,7 +185,8 @@ function fragmentShader(d) {
       int K4 = I1(u_misc.x), K5 = I1(u_misc.y), PLOD = I1(u_misc.z);
       int nz = ${uses.noise ? "rnd()" : "0"};
       ivec4 t0 = ivec4(255), t1 = ivec4(255); int lodFrac = 0;
-      ${textured ? `texels(t0, t1, lodFrac, ${uses.t1 && !(flags & FLAG.ONE_TEXEL) ? "true" : "false"});` : ""}
+      ${textured ? `texels(t0, t1, lodFrac, ${uses.t1 && !(flags & FLAG.ONE_TEXEL) && !(modeH & 0x200) ? "true" : "false"});` : ""}
+      ${modeH & 0x200 ? "t1 = t0; // G_TC_FILTCONV: the second cycle's texel is the first's, converted (render_gpu.h sent it so)" : ""}
       ${comb}
       c = ivec4(clamp9(c.r), clamp9(c.g), clamp9(c.b), clamp9(c.a));
       int alpha = c.a == 255 ? 256 : c.a, cvg = ${cvgXAlpha ? "(alpha >> 5) & 15" : "8"};
@@ -260,6 +261,7 @@ ivec4 textureTile(int i, vec2 st) {
   int fs = s32 & 31, ft = t32 & 31;
   int c1 = wrapped(si + 1, n.z, w.x, w.z), r1 = wrapped(ti + 1, n.w, w.y, w.w);
   ivec4 c10 = fetch(i, ivec2(c1, r0)), c01 = fetch(i, ivec2(c0, r1));
+  ${!(modeH & 0x800) ? "return fs + ft < 32 ? fetch(i, ivec2(c0, r0)) : fetch(i, ivec2(c1, r1)); // converted, not filtered: the corner of the point's triangle" : ""}
   ${filter === 3 ? "if (fs == 16 && ft == 16) return (fetch(i, ivec2(c0, r0)) + c10 + c01 + fetch(i, ivec2(c1, r1)) + 2) >> 2;" : ""}
   if (fs + ft < 32) return lerp3(fetch(i, ivec2(c0, r0)), c10, c01, fs, ft);
   return lerp3(fetch(i, ivec2(c1, r1)), c01, c10, 32 - fs, 32 - ft);`}
@@ -298,7 +300,7 @@ function programKey(d) {
   if (d.kind === KIND.FILL) return "fill";
   if (d.kind === KIND.COPY) return `copy ${d.flags & FLAG.COPY_ALPHA} ${d.modeL & 3}`;
   return [d.flags & (FLAG.ONE_TEXEL | FLAG.POINT | FLAG.TEXTURED), d.c0, d.c1, cyc, (d.modeH >>> 12) & 3,
-    d.modeH & 0x70000, d.modeL & 0xFFFF700F].join(" ");
+    d.modeH & 0x70A00, d.modeL & 0xFFFF700F].join(" ");
 }
 
 const PRESENT_VERTEX = `#version 300 es

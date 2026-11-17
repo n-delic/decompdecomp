@@ -112,10 +112,11 @@ static void gpu_tex_rect(int tile, float x0, float y0, float x1, float y1, float
 /* A channel's n bits as a fraction, by table: i / 255.0f and the like, each worked out once with the same division.
    Divided per texel and per pixel, these were a large part of the renderer's time. make_tables() fills them; the
    renderer's entry points (port_render_task, port_frame_shown) call it first. */
-static float by255[256], by31[32], by15[16], by7[8];
+static float by255[256], by31[32], by15[16], by7[8], by511[512]; /* by511: a 9-bit texel (YUV, converted) */
 static void make_tables(void) {
     if (by255[255] != 0) return;
     for (int i = 0; i < 256; i++) by255[i] = i / 255.0f;
+    for (int i = 0; i < 512; i++) by511[i] = i / 255.0f;
     /* a 5-bit texel channel widened as the RDP widens it, its top bits repeated below: (v << 3) | (v >> 2). Stretched
        by 255 / 31 instead, 3, 7, 24 and 28 came out a step off. */
     for (int i = 0; i < 32; i++) by31[i] = (float)(i << 3 | i >> 2) / 255.0f;
@@ -173,6 +174,18 @@ static HOT int wrapped(int s, int size, int cm, int mask) {
     WRAP_COORD(s, size, cm, mask);
     return s < 0 ? 0 : s;
 }
+/* YUV: a 16-bit YUV tile's texels are loaded split (load_tile, load_block), each pair's U and V in TMEM's low half
+   and its two Ys at the same place in the high half, a byte each; so a texel's Y is at its column and its U and V at
+   its pair's, half the columns. `uvs` is the column whose pair gives U and V (a bilinear filter's second column is
+   the next pair's). As the RDP returns them: U and V less 128 in red and green, Y in blue and alpha, each kept in 9
+   bits (a negative U or V with its high bits set). A YUV image drawn as RGBA16 came out as noise. */
+typedef struct { int r, g, b, a; } IC;
+#define SIGN9(v) (((v) & 0x100) ? ((v) | ~0x1FF) : ((v) & 0x1FF))
+static HOT IC yuv_texel(uint32_t row, int s, int uvs, uint32_t odd) {
+    uint32_t uv = ((((row + (uint32_t)uvs) >> 1) << 1) ^ odd) & 0x7FE;
+    int y = tmem[(((row + (uint32_t)s) ^ odd) & 0x7FF) | 0x800];
+    return (IC){(tmem[uv] - 0x80) & 0x1FF, (tmem[uv + 1] - 0x80) & 0x1FF, y, y};
+}
 /* The texel at wrapped (s, t), from TMEM as the loads left it. */
 static HOT Color texel_wrapped(const Tile *tile, int s, int t) {
     uint32_t row = (uint32_t)(tile->tmem * 8 + t * tile->line * 8);
@@ -194,6 +207,7 @@ static HOT Color texel_wrapped(const Tile *tile, int s, int t) {
         return (Color){i, i, i, i};
     }
     case 2: { /* 16-bit */
+        if (tile->fmt == 1) { IC c = yuv_texel(row, s, s, odd); return (Color){by511[c.r], by511[c.g], by511[c.b], by511[c.a]}; }
         uint32_t a = ((row + s * 2) ^ odd) & 4094;
         uint16_t v = (uint16_t)(tmem[a] << 8 | tmem[a + 1]);
         if (tile->fmt == 3) { float i = by255[v >> 8]; return (Color){i, i, i, by255[v & 255]}; }
@@ -239,20 +253,76 @@ static uint32_t texel_raw(const Tile *tile, int s, int t) {
    are s10.5), each neighbour weighted by it and the sum rounded at the 5th bit. G_TF_AVERAGE is bilinear but for a
    point exactly at a texel's centre, which takes the four texels' mean. Filtered in floats, a textured surface
    came out a step off the console's across a twentieth of its pixels; and the average filter always took the mean. */
-typedef struct { int r, g, b, a; } IC;
 #define C8(v) ((int)((v) * 255.0f + 0.5f))
 #define TOI(c) ((IC){C8((c).r), C8((c).g), C8((c).b), C8((c).a)})
 #define LERP3(a, b, c, fb, fc) ((a) + (((fb) * ((b) - (a)) + (fc) * ((c) - (a)) + 0x10) >> 5))
-static HOT Color sample(const Tile *tile, float s, float t) {
+/* A bilinear sample of a YUV tile: Y filtered as any texel, U and V at half the columns (their fraction in the
+   pair, `fr`; their own triangle of the square, `upr`); `bilerp` 0, the convert stage's corners unfiltered. */
+static HOT IC yuv_sample(const Tile *tile, int cols[2], int rows[2], int fs, int ft, int s0, int filter, int bilerp) {
+    uint32_t row0 = (uint32_t)(tile->tmem * 8 + rows[0] * tile->line * 8), row1 = (uint32_t)(tile->tmem * 8 + rows[1] * tile->line * 8);
+    uint32_t odd0 = (rows[0] & 1) ? 4 : 0, odd1 = (rows[1] & 1) ? 4 : 0;
+    int sd = cols[1] - cols[0], uv1 = cols[0] + 2 * sd;
+    IC t0 = yuv_texel(row0, cols[0], cols[0], odd0), t1 = yuv_texel(row0, cols[1], uv1, odd0);
+    IC t2 = yuv_texel(row1, cols[0], cols[0], odd1), t3 = yuv_texel(row1, cols[1], uv1, odd1);
+    int fr = (fs >> 1) | ((s0 & 1) << 4), up = (fs + ft) & 0x20, upr = (fr + ft) & 0x20, o[4];
+    if (!bilerp) { /* the convert stage takes the corner each half falls nearest */
+        const IC *y = up ? &t3 : &t0, *c = upr ? &t3 : &t0;
+        return (IC){c->r, c->g, y->b, y->a};
+    }
+    int mid = filter == 3, centre = mid && fs == 16 && ft == 16, centrerg = mid && fr == 16 && ft == 16;
+    const int *A = &t0.r, *B = &t1.r, *C = &t2.r, *D = &t3.r;
+    for (int k = 0; k < 4; k++) {
+        int f = k < 2 ? fr : fs, u = k < 2 ? upr : up, c = k < 2 ? centrerg : centre;
+        int a = SIGN9(A[k]), b = SIGN9(B[k]), cc_ = SIGN9(C[k]), d = SIGN9(D[k]);
+        if (k >= 2) { a = A[k]; b = B[k]; cc_ = C[k]; d = D[k]; }
+        if (c) o[k] = d + ((((b + cc_) << 6) - (d << 7) + ((~d + a) << 6) + 0xC0) >> 8);
+        else if (u) o[k] = d + (((32 - f) * (cc_ - d) + (32 - ft) * (b - d) + 0x10) >> 5);
+        else o[k] = a + ((f * (b - a) + ft * (cc_ - a) + 0x10) >> 5);
+    }
+    return (IC){o[0] & 0x1FF, o[1] & 0x1FF, o[2] & 0x1FF, o[3] & 0x1FF};
+}
+/* The convert stage (G_TC_CONV): YUV to RGB by G_SETCONVERT's K0 to K3, R = Y + K0 V, G = Y + K1 U + K2 V,
+   B = Y + K3 U, alpha Y, each kept in 9 bits; the combiner finishes it with K4 and K5. A texel that isn't YUV goes
+   through it as well (its red as U, green as V, blue as Y), as on the console. */
+static int conv_k[4];
+static HOT IC yuv_convert(IC t) {
+    int u = SIGN9(t.r), v = SIGN9(t.g), y = SIGN9(t.b);
+    return (IC){(y + ((conv_k[0] * v + 0x80) >> 8)) & 0x1FF, (y + ((conv_k[1] * u + conv_k[2] * v + 0x80) >> 8)) & 0x1FF,
+                (y + ((conv_k[3] * u + 0x80) >> 8)) & 0x1FF, y & 0x1FF};
+}
+static HOT Color from_ic(IC c) { return (Color){by511[c.r & 0x1FF], by511[c.g & 0x1FF], by511[c.b & 0x1FF], by511[c.a & 0x1FF]}; }
+static HOT Color sample_cycle(const Tile *tile, float s, float t, int bilerp);
+/* A texel of a tile at (s, t) for the texture pipeline's cycle: TEXEL0 the first, TEXEL1 the second. Other mode H's
+   texture convert bits say per cycle whether it filters (bi_lerp 0 and 1) or converts, and whether the second
+   converts the first's result (convert_one: G_TC_FILTCONV, the first filtering a YUV image and the second making it
+   RGB). G_TC_FILT, which nearly every game sets, filters in both. */
+static HOT Color sample(const Tile *tile, float s, float t, int cycle, const Color *prev) {
+    int bits = (int)((mode_h >> 9) & 7), bilerp = cycle ? (bits >> 1) & 1 : (bits >> 2) & 1;
+    if (cycle && (bits & 1) && prev) {
+        IC p = TOI(*prev);
+        return bilerp ? from_ic((IC){p.b, p.b, p.b, p.b}) : from_ic(yuv_convert(p)); /* filtering by prev: unmodelled */
+    }
+    return sample_cycle(tile, s, t, bilerp);
+}
+static HOT Color sample_cycle(const Tile *tile, float s, float t, int bilerp) {
     int filter = (int)((mode_h >> 12) & 3);
     int s32 = (int)floorf(s * 32.0f), t32 = (int)floorf(t * 32.0f), s0 = s32 >> 5, t0 = t32 >> 5;
-    if (!(filter & 2) || cycle_type() >= 2) return texel(tile, s0, t0);
+    int yuv = tile->fmt == 1 && tile->siz == 2;
+    if (!(filter & 2) || cycle_type() >= 2) {
+        Color c = texel(tile, s0, t0);
+        return bilerp || cycle_type() >= 2 ? c : from_ic(yuv_convert(TOI(c)));
+    }
     int fs = s32 & 31, ft = t32 & 31;
     /* the two columns and two rows, wrapped once each (as texel() wraps them) for the three or four texels */
     int w = (int)(tile->lrs - tile->uls) + 1, h = (int)(tile->lrt - tile->ult) + 1;
     int si = s0 - (int)tile->uls, ti = t0 - (int)tile->ult;
     int cols[2] = {wrapped(si, w, tile->cms, tile->masks), wrapped(si + 1, w, tile->cms, tile->masks)};
     int rows[2] = {wrapped(ti, h, tile->cmt, tile->maskt), wrapped(ti + 1, h, tile->cmt, tile->maskt)};
+    if (yuv) { IC c = yuv_sample(tile, cols, rows, fs, ft, s0, filter, bilerp); return from_ic(bilerp ? c : yuv_convert(c)); }
+    if (!bilerp) { /* converted unfiltered: the corner of the point's triangle */
+        int up = fs + ft >= 32;
+        return from_ic(yuv_convert(TOI(texel_wrapped(tile, cols[up], rows[up]))));
+    }
     Color c10 = texel_wrapped(tile, cols[1], rows[0]), c01 = texel_wrapped(tile, cols[0], rows[1]);
     IC b = TOI(c10), c = TOI(c01), out;
     if ((filter & 1) && fs == 16 && ft == 16) { /* average, at the texel's centre: the four texels' mean */
@@ -381,7 +451,6 @@ static void combiner_uses(void) {
    (negatives) as 0. Computed in floats with 255 as 1, a combined colour was a step off the console's on most of a
    surface: a texel by a shade of 255 came out a step brighter. */
 #define EXT9(v) ((((v) & 0x180) == 0x180) ? ((v) | ~0x1FF) : ((v) & 0x1FF))
-#define SIGN9(v) (((v) & 0x100) ? ((v) | ~0x1FF) : ((v) & 0x1FF))
 #define CLAMP9(v) ((((v) & 0x1FF) & 0x100) ? ((((v) & 0x1FF) & 0x80) ? 0 : 255) : ((v) & 0xFF))
 #define CC_EQ(a, b, c, d) ((((EXT9(a) - EXT9(b)) * SIGN9(c) + (EXT9(d) << 8) + 0x80) >> 8) & 0x1FF)
 static HOT IC combine(int cycle, IC comb, IC t0, IC t1, IC shade, int lod, int nz) {
@@ -801,9 +870,24 @@ static void tmem_texel32(uint32_t at, uint32_t src, int odd) {
     uint32_t a = (at ^ (odd ? 4u : 0u)) & 2046;
     tmem[a] = R[src]; tmem[a + 1] = R[src + 1]; tmem[a + 2048] = R[src + 2]; tmem[a + 2049] = R[src + 3];
 }
+/* A 64-bit word of a 16-bit YUV image (U Y V Y U Y V Y) into TMEM as the RDP splits it: the two pairs' U and V at
+   `at` in the low half, the four Ys at the same place in the high half. */
+static void tmem_yuv(uint32_t at, uint32_t src, int odd) {
+    uint32_t a = (at ^ (odd ? 4u : 0u)) & 2044;
+    for (int k = 0; k < 4; k++) { tmem[a + (uint32_t)k] = R[src + (uint32_t)k * 2]; tmem[a + 2048 + (uint32_t)k] = R[src + (uint32_t)k * 2 + 1]; }
+}
 static void load_block(int tile, int uls, int ult, int lrs, int dxt) {
     Tile *tl = &tiles[tile];
     gpu_gen++;
+    if (tl->fmt == 1 && timg_siz == 2) { /* YUV: each word's four texels a word's half in each half of TMEM */
+        uint32_t src = phys(timg_addr) + (uint32_t)((ult * timg_width + uls) * 2), line = 0;
+        uint32_t words = ((uint32_t)(lrs - uls + 1) * 2 + 7) / 8;
+        for (uint32_t i = 0; i < words && tl->tmem * 8 + i * 4 < 2048; i++) {
+            tmem_yuv(tl->tmem * 8 + i * 4, src + i * 8, (line >> 11) & 1);
+            line += (uint32_t)dxt;
+        }
+        return;
+    }
     if (timg_siz == 3) { /* each 64-bit word two texels; the line counter as below */
         uint32_t src = phys(timg_addr) + (uint32_t)((ult * timg_width + uls) * 4), line = 0;
         uint32_t words = (uint32_t)(lrs - uls + 2) / 2;
@@ -826,6 +910,13 @@ static void load_tile(int tile, int uls, int ult, int lrs, int lrt) {
     Tile *tl = &tiles[tile];
     gpu_gen++;
     int bpp4 = timg_siz == 0, bytes = bpp4 ? 1 : 1 << (timg_siz - 1);
+    if (tl->fmt == 1 && timg_siz == 2) {
+        for (int t = ult; t <= lrt; t++) {
+            uint32_t src = phys(timg_addr) + (uint32_t)((t * timg_width + uls) * 2), dst = (uint32_t)(tl->tmem * 8 + (t - ult) * tl->line * 8);
+            for (int i = 0; i < (lrs - uls + 1) * 2; i += 8) tmem_yuv(dst + (uint32_t)i / 2, src + (uint32_t)i, (t - ult) & 1);
+        }
+        return;
+    }
     if (timg_siz == 3) {
         for (int t = ult; t <= lrt; t++)
             for (int x = uls; x <= lrs; x++)
@@ -869,7 +960,12 @@ static void rdp(uint8_t op, uint32_t w0, uint32_t w1) {
             if (!images[i][0] || images[i][0] == cimg_addr) { images[i][0] = cimg_addr; images[i][1] = (uint32_t)cimg_width; break; }
         break;
     case 0xEE: prim_z = (float)((w1 >> 16) & 0x7FFF) * 8.0f; prim_dz = (float)(w1 & 0xFFFF) * 8.0f; break; /* G_SETPRIMDEPTH */
-    case 0xEC: k4 = (float)((int32_t)(w1 << 14) >> 23) / 255.0f; k5 = (float)((int32_t)(w1 << 23) >> 23) / 255.0f; break; /* G_SETCONVERT */
+    case 0xEC: { /* G_SETCONVERT: K0 to K3 for the convert stage (signed 9 bits, doubled plus one), K4 and K5 */
+        int k[4] = {(int)(w0 >> 13) & 0x1FF, (int)(w0 >> 4) & 0x1FF, (int)((w0 & 15) << 5 | w1 >> 27), (int)(w1 >> 18) & 0x1FF};
+        for (int i = 0; i < 4; i++) conv_k[i] = SIGN9(k[i]) * 2 + 1;
+        gpu_gen++; /* the GPU's converted YUV textures (render_gpu.h) */
+        k4 = (float)((int32_t)(w1 << 14) >> 23) / 255.0f; k5 = (float)((int32_t)(w1 << 23) >> 23) / 255.0f; break;
+    }
     case 0xEB: key_center.r = ((w1 >> 8) & 255) / 255.0f; key_scale.r = (w1 & 255) / 255.0f; break;   /* G_SETKEYR */
     case 0xEA: key_center.g = (w1 >> 24) / 255.0f; key_scale.g = ((w1 >> 16) & 255) / 255.0f;          /* G_SETKEYGB */
         key_center.b = ((w1 >> 8) & 255) / 255.0f; key_scale.b = (w1 & 255) / 255.0f; break;
@@ -1042,8 +1138,8 @@ static HOT Texels texels_at(int tile, float s, float t, float lod) {
         }
     }
     const Tile *a = &tiles[t0 & 7], *b = &tiles[t1 & 7];
-    out.t0 = sample(a, shifted(s, a->shifts), shifted(t, a->shiftt));
-    out.t1 = uses_t1 ? sample(b, shifted(s, b->shifts), shifted(t, b->shiftt)) : out.t0;
+    out.t0 = sample(a, shifted(s, a->shifts), shifted(t, a->shiftt), 0, NULL);
+    out.t1 = uses_t1 ? sample(b, shifted(s, b->shifts), shifted(t, b->shiftt), 1, &out.t0) : out.t0;
     return out;
 }
 

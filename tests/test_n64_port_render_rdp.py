@@ -502,7 +502,43 @@ def _scenes() -> dict:
                                                          1024, 1024)))
         g(0x02000000, 0x80000000 | _obj_sprite(mem, -20, -20, 5, 8, 8))
 
-    return {"random": random_triangles(False), "random-aa": random_triangles(True), "shade": shade, "flat": textured(False, False, False), "flat-persp": textured(True, False, False),
+    def yuv(two: bool):
+        """A 16x16 YUV image (U Y V Y pairs) through the texture convert stage, tilted so the filter's fractions
+        vary: one cycle converting each texel (G_TC_CONV) and the combiner finishing with K4 and K5
+        (G_CC_1CYUV2RGB), or two, the first filtering and the second converting its result (G_TC_FILTCONV)."""
+        def scene(mem, g):
+            data = bytearray()
+            for t in range(16):
+                for p in range(8):
+                    y0, y1 = 40 + t * 7 + p * 10, 45 + t * 7 + p * 10 + (t & 3) * 3   # video's range, 16 to 235
+                    data += bytes([70 + p * 14 + t * 2, y0, 190 - t * 7 + p * 3, y1])
+            image = mem.put(bytes(data))
+            g(0xFD000000 | 1 << 21 | 2 << 19 | 15, 0x80000000 | image)               # YUV, 16-bit, 16 wide
+            g(0xF5000000 | 1 << 21 | 2 << 19 | 2 << 9, 7 << 24)                      # the load tile
+            g(0xF4000000, 7 << 24 | (15 * 4) << 12 | 15 * 4)                         # LoadTile
+            g(0xF5000000 | 1 << 21 | 2 << 19 | 2 << 9, 4 << 14 | 4 << 4)            # tile 0: 16x16, wrapped
+            g(0xF2000000, (15 * 4) << 12 | 15 * 4)
+            k = [175, -43, -89, 222, 114, 42]                                        # libultra's G_CV_K0 to K5
+            k = [v & 0x1FF for v in k]
+            g(0xEC000000 | k[0] << 13 | k[1] << 4 | k[2] >> 5, (k[2] & 31) << 27 | k[3] << 18 | k[4] << 9 | k[5])
+            g(0xDA380007, 0x80000000 | mem.put(matrix([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, -1, 0, 0, -0.2, 0])))
+            g(0xDA380003, 0x80000000 | mem.put(matrix([1.2, 0, 0, 0, 0, 0.9, 0.3, 0, 0, 0, 1, 0, 0.1, 0, -1.6, 1])))
+            if two:
+                g.othermode(NO_DITHER | 1 << 20 | 5 << 9 | 2 << 12 | PERSP, 0)
+                # cycle 0: (TEXEL1 - K4) * K5 + TEXEL1 (TEXEL1 the converted texel); cycle 1: the combined colour
+                g(0xFC000000 | 2 << 20 | 15 << 15 | 7 << 12 | 7 << 9 | 15 << 5 | 31,
+                  7 << 28 | 15 << 24 | 7 << 21 | 7 << 18 | 2 << 15 | 7 << 12 | 4 << 9 | 0 << 6 | 7 << 3 | 0)
+            else:
+                g.othermode(NO_DITHER | 0 << 9 | 2 << 12 | PERSP, 0)
+                g(*combine(1, 7, 15, 1, 7, 7, 7, 4))                                  # (TEXEL0 - K4) * K5 + TEXEL0
+            g(0xD7000002, 0xFFFFFFFF)
+            g(0xD9000000, 0x200004)
+            white = 0xFFFFFFFF
+            q = [(-1, 1, 0, 0, 0, white), (1, 1, 0, 20, 0, white), (1, -1, 0, 20, 18, white), (-1, -1, 0, 0, 18, white)]
+            _triangles(mem, g, [q[0], q[1], q[2], q[0], q[2], q[3]])
+        return scene
+
+    return {"yuv": yuv(False), "yuv-filtconv": yuv(True), "random": random_triangles(False), "random-aa": random_triangles(True), "shade": shade, "flat": textured(False, False, False), "flat-persp": textured(True, False, False),
             "flat-bilerp": textured(False, True, False), "tilted-point": textured(True, False, True),
             "tilted-bilerp": textured(True, True, True), "depth": depth, "rect": rect, "blend": blend, "fog": fog,
             "combine": combined, "antialiased": antialiased, "two-cycle": two_cycle, "copy-scissor": copy_scissor,
