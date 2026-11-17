@@ -19,7 +19,7 @@ def candidate(net, agent, slug, function):
     fn = net._function(function, slug)
     store = net.project_store(fn["project_id"])
     row = store.one('SELECT id,source,created_at FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
-    claim = store.one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id)
+    claim = store.held_one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id)
     row = row if row and claim and row['created_at'] >= claim['claimed_at'] else None
     source = row['source'] if row else fn['matched_source'] or fn['best_source'] or fn['seed'] or ''
     if not source and net.fork_slug(slug):
@@ -692,7 +692,7 @@ def target_scope(net, fn, revision):
     from .. import candidate_scope, claim_stalls
     from ..candidate_work import current, remember
     store = net.project_store(fn['project_id'])
-    def load():return store.one('SELECT * FROM projects WHERE id=?', fn['project_id'])
+    def load():return store.held_one('SELECT * FROM projects WHERE id=?', fn['project_id'])
     if current() is not None and hasattr(store, 'read_version'):
         version = store.read_version('inputs', fn['project_id'])
         proj = remember(('scope-project', id(net), id(store), fn['project_id'], version), load)

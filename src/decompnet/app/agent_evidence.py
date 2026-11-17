@@ -11,7 +11,7 @@ from ..network import NetworkError
 
 def scope(net,agent,fn):
     from .agent_tokens import target_scope
-    claim=net.project_store(fn['project_id']).one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
+    claim=net.project_store(fn['project_id']).held_one('SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?',fn['id'],agent.id)
     return (agent.id,fn['id'],claim['claimed_at'] if claim else None,target_scope(net,fn,''),
             hashlib.sha256(repr((fn['target'],fn['relocs'],fn['vram'],getattr(net,'_generation',{}).get(fn['project_id'],0))).encode()).hexdigest())
 
@@ -27,7 +27,7 @@ def baseline(net,agent,slug,fn,source):
 def build_key(net, fn):
     from ..candidate_scope import key
     from .baseline_status import revision
-    proj=net.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+    proj=net.project_store(fn['project_id']).held_one('SELECT * FROM projects WHERE id=?',fn['project_id'])
     return key(net,proj,fn),hashlib.sha256((fn['best_source'] or '').encode()).hexdigest(),revision()
 
 

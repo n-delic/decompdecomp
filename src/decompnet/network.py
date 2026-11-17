@@ -713,7 +713,7 @@ class Network:
             row = rows[0] if rows else None
         else:
             store = self.project_store(project)
-            row = store.one(
+            row = store.held_one(  # (asked 17 times a compile: Store.held_one)
                 "SELECT f.* FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=?",
                 project, name,
             )
