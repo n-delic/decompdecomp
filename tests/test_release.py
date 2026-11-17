@@ -104,7 +104,7 @@ def test_a_session_of_refused_releases_made_no_progress(tmp_path, monkeypatch):
 
     def only_asks(s, token, workdir):
         assert _held(net, a) == "g"  # held through the sessions, not handed to the next one untried
-        for _ in range(3):  # the full advice twice, then the one-line refusal that ends the session
+        for _ in range(3):  # three refused asks (the count is per claim, so from session 2 on: the one line)
             net.release_function(a, "g", "out of tries", "game")
         return True
     monkeypatch.setattr(m, "_run_cli", only_asks)
