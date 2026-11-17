@@ -34,6 +34,8 @@ uint8_t *port_memory(void);
 uint64_t port_io_load(uint64_t addr);
 uint64_t port_io_store(uint64_t addr, uint64_t value);
 void port_safe_point(void);
+/* host.c's: park the running thread for good (its code jumps to itself); a build without threads spins on */
+__attribute__((weak)) void port_idle_forever(void) {}
 int port_thread_number(void);
 struct w2c_env;
 uint32_t w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e);
@@ -412,7 +414,16 @@ void port_mips_run(uint32_t entry, uint64_t *regs, uint32_t *fregs) {
         if (kind == 3) { pc += 8; continue; }    /* a likely branch not taken: its delay slot skipped */
         if (!kind) { pc += 4; goto counted; }
         /* the delay slot, then the jump */
-        { uint32_t ignored; uint32_t slot = lw(pc + 4); if (step(&c, pc + 4, slot, &ignored)) unknown(pc + 4, slot); c.r[0] = 0; }
+        uint32_t slot = lw(pc + 4);
+        { uint32_t ignored; if (step(&c, pc + 4, slot, &ignored)) unknown(pc + 4, slot); c.r[0] = 0; }
+        /* A jump to itself with nothing in its delay slot (an idle thread's `for (;;);`, `j .`) can't get anywhere:
+           on the console only an interrupt switches away from it. Spinning here took 41% of a racing game's
+           interpreted instructions, and in the browser the page's time between retraces, so the host parks the
+           thread instead; it comes back only if the game starts it again. */
+        if ((kind == 1 || kind == 2) && target == pc && slot == 0) {
+            port_idle_forever();
+            continue; /* (only if it comes back: the same jump again) */
+        }
         pc = target;
         if (kind == 4) { /* a call through a pointer is a safe point, as host.c's port_func is for the game's C: only
                             those (a direct call never is), or a thread the C starts runs before its creator is done */

@@ -26,6 +26,12 @@ uint8_t *port_memory(void) { return mem; }
 uint64_t port_io_load(uint64_t a) { return a; }
 uint64_t port_io_store(uint64_t a, uint64_t v) { (void)v; return a; }
 void port_safe_point(void) {}
+/* a thread whose code jumps to itself is parked for good (host.c): here, say so with the word at DATA, and end */
+void port_idle_forever(void) {
+    uint32_t w; memcpy(&w, mem + 0x%(data)08Xu, 4);
+    printf("idle %%08X\n", __builtin_bswap32(w));
+    exit(0);
+}
 int port_thread_number(void) { return -1; }
 struct w2c_env;
 uint32_t w2c_env_0x5F_builtin_mips_read_count(struct w2c_env *e) { (void)e; return 1234; }
@@ -124,7 +130,12 @@ def run(tmp_path_factory):
                              text=True, timeout=30, check=True).stdout.split()
         return {"v0": int(out[0], 16), "v1": int(out[1], 16), "f": [int(x, 16) for x in out[2:6]],
                 "data": [int(x, 16) for x in out[6:14]], "c_calls": int(out[14]), "varargs": [int(x, 16) for x in out[15:17]]}
+    def raw(words, *args):
+        (folder / "code.bin").write_bytes(b"".join(struct.pack(">I", w & 0xFFFFFFFF) for w in words))
+        return subprocess.run([str(program), str(folder / "code.bin"), *(str(a) for a in args)], capture_output=True,
+                              text=True, timeout=30, check=True).stdout.strip()
     go.typed = typed
+    go.raw = raw
     return go
 
 
@@ -221,6 +232,19 @@ def test_a_variadic_callees_buffer_is_the_words_after_the_fixed_ones(run):
 def test_running_off_into_empty_memory_ends_the_run(run):
     """No code where it was asked to run (no ROM there): the function returns rather than running nothing forever."""
     assert run([NOP] * 4)["v0"] == 0
+
+
+def j(target): return 2 << 26 | (target >> 2 & 0x3FFFFFF)
+
+
+@pytest.mark.parametrize("loop", ["j", "b"])
+def test_a_jump_to_itself_parks_the_thread_instead_of_spinning(run, loop):
+    """An idle thread's `for (;;);` (`j .` or `b .`, a nop in its delay slot) took 41% of a racing game's interpreted
+    instructions: the interpreter hands the thread to the host to park after what came before it ran."""
+    here = CODE + 4 * 4
+    jump = j(here) if loop == "j" else i_type(4, "zero", "zero", -1)  # beq $zero, $zero, .
+    prog = [*_data_base(), addiu("t0", "zero", 42), sw("t0", 0, "t9"), jump, NOP]
+    assert run.raw(prog) == "idle 0000002A"
 
 
 # ---------------------------------------------------------------- the generated bridges

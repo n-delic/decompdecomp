@@ -189,6 +189,20 @@ static void port_preempt(void) {
     pthread_mutex_unlock(&lock);
 }
 
+/* The running thread's code jumps to itself (mips.c): it can't do anything again, so it gives the CPU up for good
+   instead of spinning, as the console's idle thread does until an interrupt switches away. Stopped, not waiting:
+   no message wakes it, only osStartThread, which would send it back to the same jump. The boot code has no thread
+   to give up and returns. */
+void port_idle_forever(void) {
+    if (!self) return;
+    pthread_mutex_lock(&lock);
+    LOG("thread %d idles for good (its code jumps to itself): parked", self->number);
+    self->state = STOPPED;
+    schedule();
+    wait_turn(self);
+    pthread_mutex_unlock(&lock);
+}
+
 static PortThread *wake_one(uint32_t mq) {
     PortThread *best = NULL;
     for (PortThread *p = threads; p; p = p->next)
