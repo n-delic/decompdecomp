@@ -527,6 +527,71 @@ def import_cmd(args) -> int:
         time.sleep(IMPORT_POLL_SECONDS)
 
 
+AGENTS_WAIT_SECONDS = 30.0
+
+
+def agents_cmd(args) -> int:
+    """The running app's helpers, from the command line: list them, start new ones, restart stopped or paused ones.
+    It asks the app as the window does (server.json's secret, as `decomp stop` and `decomp import`): the helpers are
+    the app's processes, and only it starts them."""
+    import urllib.parse
+    # A busy app (just started, or at work) can take seconds to answer /health: wait for it, up to AGENTS_WAIT.
+    deadline = time.monotonic() + AGENTS_WAIT_SECONDS
+    while (running := _state(home_dir() / ".decomp" / "server.json")) is None and time.monotonic() < deadline:
+        if not (home_dir() / ".decomp" / "server.json").is_file():
+            break
+        time.sleep(1)
+    if running is None:
+        print(f"{edition.NAME} isn't running for {home_dir()} (or didn't answer in {AGENTS_WAIT_SECONDS:.0f} s): "
+              "start it (`decomp`) first", file=sys.stderr)
+        return 1
+
+    def ask(path, body=None, timeout=60):
+        try:
+            return _call(running, path, body, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            try:
+                message = json.loads(e.read() or b"{}").get("error") or str(e)
+            except ValueError:
+                message = str(e)
+            raise SystemExit(f"{edition.NAME} refused: {message}") from None
+        except OSError as e:
+            raise SystemExit(f"{edition.NAME} didn't answer: {e}") from None
+
+    def helpers(slug):
+        return ask("/api/live?" + urllib.parse.urlencode({"slug": slug, "only": "sessions"}), timeout=60).get("sessions") or []
+
+    try:
+        if args.action == "list":
+            shown = helpers(args.project)
+            for h in shown:
+                print(f"{h['id']}\t{h['state']:<8}\t{h.get('agent') or h.get('kind_name')}\t{h.get('model') or ''}\t"
+                      f"{(h.get('why') or '')[:100]}")
+            if not shown:
+                print(f"no helpers on {args.project}")
+            return 0
+        if args.action == "start":
+            options = {"model": args.model} if args.model else {}
+            started = ask("/api/agents/start", {"kind": args.agent, "slug": args.project, "count": args.count,
+                                                "options": options}, timeout=300)
+            ids = started.get("started") or []
+            print(f"started {len(ids)} {args.agent} helper{'s' if len(ids) != 1 else ''} on {args.project}: "
+                  + ", ".join(map(str, ids)))
+            return 0
+        # restart: the ones named, else every stopped or paused one on the project (--paused: paused only)
+        chosen = list(args.ids) or [h["id"] for h in helpers(args.project)
+                                    if h["state"] == "paused" or (h["state"] == "stopped" and not args.paused)]
+        for helper in chosen:
+            ask("/api/agents/restart", {"id": str(helper)})
+            print(f"restarted {helper}")
+        if not chosen:
+            print(f"nothing to restart on {args.project}")
+        return 0
+    except SystemExit as stop:
+        print(stop, file=sys.stderr)
+        return 1
+
+
 def shortcut(args) -> int:
     from .launcher import install_launcher
 
@@ -551,6 +616,19 @@ def main(argv: list[str] | None = None) -> int:
     im.add_argument("--toolchain", help="the compiler to start with (default: the app finds it)")
     im.add_argument("--yes", action="store_true", help="confirm it's your own legally obtained copy without asking")
     im.add_argument("--no-wait", action="store_true", help="start the import and return (the app shows its progress)")
+    ag = sub.add_parser("agents", help="list, start or restart the running app's helpers on a project")
+    ag_sub = ag.add_subparsers(dest="action", required=True)
+    ag_list = ag_sub.add_parser("list", help="the project's helpers: id, state, agent, model, why")
+    ag_list.add_argument("project", help="the project's slug")
+    ag_start = ag_sub.add_parser("start", help="start new helpers, as Start agents does")
+    ag_start.add_argument("project", help="the project's slug")
+    ag_start.add_argument("--agent", default="claude", help="the agent's kind (claude, codex, opencode, ...; default claude)")
+    ag_start.add_argument("--model", default="", help="its model, as the window lists it (e.g. haiku); default the agent's own")
+    ag_start.add_argument("--count", type=int, default=1, help="how many (default 1)")
+    ag_restart = ag_sub.add_parser("restart", help="start stopped or paused helpers again")
+    ag_restart.add_argument("project", help="the project's slug")
+    ag_restart.add_argument("ids", nargs="*", help="the helpers' ids (default: every stopped or paused one)")
+    ag_restart.add_argument("--paused", action="store_true", help="only paused ones, not ones stopped by hand")
     up = sub.add_parser("update", help="install the newest decompdecomp (the running app restarts into it)")
     up.add_argument("--check", action="store_true", help="only say whether there is one")
     he = sub.add_parser("hosted-export", help="write a project as a small hosted file, for decomp-mcp-gateway hosted serve")
@@ -582,6 +660,7 @@ def main(argv: list[str] | None = None) -> int:
     limits.raise_open_file_limit()
     limits.no_core_dumps()
     return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd, "import": import_cmd,
+            "agents": agents_cmd,
             "install-info": install_info, "hosted-export": hosted_export,
             "judge-worker": judge_worker, "hosted-link": hosted_link,
             "hosted-publish": hosted_publish}.get(args.cmd, run)(args)

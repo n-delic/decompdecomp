@@ -691,6 +691,14 @@ log and the new project's slug. `--name` names the project, `--toolchain` picks 
 `--no-wait` returns once the import has started. It talks to the app of the same home (`DECOMP_HOME`), which must be
 running.
 
+The running app's helpers can be managed from a terminal too:
+
+```bash
+decomp agents list south-park                                  # id, state, agent, model and why, per helper
+decomp agents start south-park --agent claude --model haiku    # --count 3 for three
+decomp agents restart south-park                               # every stopped or paused one; --paused, or name ids
+```
+
 It binds **127.0.0.1 only**. Direct LAN binding and public HTTPS serving are not enabled. Private HTTPS through Tailscale Serve uses
 the explicitly trusted remote address configured in Settings. A private SSH forward can reach a remote machine's localhost server while keeping the same forwarded port.
 Browser file uploads still work; folder/file-path chooser buttons ask for a path **on the server computer**.
