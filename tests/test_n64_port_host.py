@@ -465,3 +465,14 @@ def test_the_host_answers_libultras_underscored_labels():
     text = HOST.read_text()
     for name in ("0x5Fbzero", "0x5Fbcopy", "0x5Fbcmp", "0x5F_osSetHWIntrRoutine"):
         assert re.search(rf"\bw2c_env_{name}\(struct w2c_env", text), name
+
+
+def test_the_sdks_sample_scheduler_runs_as_the_games_own_code():
+    """A packed shooter's osCreateScheduler was left out as libultra glue the web host has none of, and its main
+    loop waited for a scheduler that was never made: sched.c is the SDK's sample, compiled as the game's own."""
+    from decompnet.consoles.n64 import port
+
+    for name in ("osCreateScheduler", "osScAddClient", "osScGetCmdQ", "__scMain", "__scSchedule"):
+        assert port._sdk_group(name) is None, name
+    assert port._sdk_group("osCreateThread") is not None
+    assert re.search(r"\bw2c_env_osSetIntMask\(struct w2c_env", HOST.read_text())
