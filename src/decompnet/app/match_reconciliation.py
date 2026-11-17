@@ -31,7 +31,17 @@ def bank(net, proj):
     return out
 
 
-def candidates(net, proj, fn, records):
+def candidates(net, proj, fn, records, current_header=False):
+    """`current_header`: only C judged with the function's header as it is today (an automatic resume must not bring an
+    old header back over a verdict the project's own checks gave), including the match a check reopened, which it kept
+    as the best attempt."""
+    if current_header:
+        header=net._context(proj['id'],fn['unit'])['header']
+        kept=[(function_names.canonical_source(fn,fn['best_source']),header,'match kept as best attempt')] if fn['best_source'] else []
+        out=[]
+        for item in candidates(net,proj,fn,records)+kept:
+            if item[1]==header and not any(x[:2]==item[:2] for x in out):out.append(item)
+        return out[:8]
     current=None
     out=[]
     def add(source, header, origin):
@@ -102,8 +112,9 @@ def _release(net, agent, functions, log):
         log(str(error))
 
 
-def run(net, slug, seconds, attempts, log):
-    """Overlap bounded compiles; synchronize and publish once per small recovery group."""
+def run(net, slug, seconds, attempts, log, names=None):
+    """Overlap bounded compiles; synchronize and publish once per small recovery group. `names`: only these
+    functions (the matches an interrupted saved-progress check reopened, progress.resume_reopened)."""
     from . import workers
     proj=validate(net,slug,seconds,attempts)
     stop=getattr(log,'cancel_event',threading.Event());started=time.monotonic()
@@ -152,6 +163,7 @@ def run(net, slug, seconds, attempts, log):
             with net.project_store(proj['id']).tx(wait=checkpoint) as db:db.execute(SCHEMA)
             visits={r['function_id']:r for r in net.project_store(proj['id']).all('SELECT * FROM reconcile_visits')}
             rows=net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
+            if names is not None:rows=[row for row in rows if row['name'] in names]
             rows.sort(key=lambda f:visits[f['id']]['visited'] if f['id'] in visits else 0)
         entries=deque(rows)
         while entries and result['attempts']<compile_limit:
@@ -168,7 +180,7 @@ def run(net, slug, seconds, attempts, log):
                     if not entries:break
                     row=entries.popleft()
                     checkpoint()
-                    pool=candidates(net,current_proj,row,records)
+                    pool=candidates(net,current_proj,row,records,names is not None)
                     if pool and next(remaining(enumerate(pool),row,current_proj),None) is not None:group.append(row)
                     else:done.add(row['id']);completed=len(done)
                     if len(done)%64==0:publish()
@@ -183,7 +195,7 @@ def run(net, slug, seconds, attempts, log):
                         proj=net.project_row(slug);fn=net.project_store(proj['id']).one('SELECT * FROM functions WHERE id=?',row['id'])
                         if not fn or fn['status']!='open':
                             done.add(row['id']);completed=len(done);continue
-                        pool=candidates(net,proj,fn,records)
+                        pool=candidates(net,proj,fn,records,names is not None)
                         pool_scope=hashlib.sha256(repr((candidate_scope.key(net,proj,fn),pool)).encode()).hexdigest()
                         prior=visits.get(fn['id']);cursor=prior['cursor'] if prior and prior['scope']==pool_scope else 0
                         ordered=list(enumerate(pool));ordered=ordered[cursor:]+ordered[:cursor]
@@ -249,6 +261,7 @@ def run(net, slug, seconds, attempts, log):
                     for job in jobs:
                         if job['future'] is not None:job['future'].cancel()
                     _release(net,agent,[job['fn'] for job in jobs],log)
+        result['finished']=not entries
     except _Stopped as error:
         log(str(error))
     finally:

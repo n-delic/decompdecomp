@@ -3671,3 +3671,127 @@ def test_a_compile_tool_call_checks_only_what_its_judge_reads(project, monkeypat
     assert forced == []
     tools._invoke(net, agent, "game", "add_note", {"function": "f"})
     assert forced == [1], "other work tools still check the whole folder first"
+
+
+# A big game lost 415 of its 658 matches over three restarts: a header its project no longer used
+# (include/common_main.h) made every sync recheck all saved C, quitting cut each pass off after under a minute,
+# and the matches it hadn't reached stayed open with their C gone from the folder.
+
+def test_a_leftover_header_nothing_includes_does_not_recheck_every_match():
+    from decompnet.app.progress import affected_functions, included_headers
+    old = {'headers': {'': 'common.h'}}
+    rows = [{'name': 'a', 'unit': '', 'vram': 4, 'rom_offset': 4}]
+    assert affected_functions(old, old, {'include/common_main.h'}, rows, set()) == set()
+    assert affected_functions(old, old, {'include/common_main.h'}, rows, {'common_main.h'}) is None
+    assert affected_functions(old, old, {'include/common_main.h'}, rows) is None  # (unknown: stay cautious)
+    files = {'src/a.c': '#include "common.h"\n', 'include/common.h': '  # include <helpers/extra.h>\n',
+             'README.md': '#include "readme.h"'}
+    assert included_headers(files) == {'common.h', 'extra.h'}
+
+
+def test_a_leftover_header_keeps_the_saved_matches(project):
+    net, folder, judged = project
+    (folder / "src").mkdir()
+    (folder / "src/f.c").write_text("good", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert net._function("f", "game")["status"] == "matched"
+    before = len(judged)
+    (folder / "include/common_main.h").write_text("/* a unit that went away */", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert net._function("f", "game")["status"] == "matched" and len(judged) == before
+
+
+def test_quitting_never_starts_a_saved_code_check(project):
+    net, folder, judged = project
+    (folder / "src").mkdir()
+    (folder / "src/f.c").write_text("good", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    before = len(judged)
+    (folder / "include/common.h").write_text("broken header", encoding="utf-8")
+    net.shutting_down = True
+    assert net.progress.sync("game", force=True) is False
+    fn = net._function("f", "game")
+    assert fn["status"] == "matched" and fn["matched_source"] == "good" and len(judged) == before
+    assert (folder / "src/f.c").read_text() == "good"
+    net.shutting_down = False  # the next start judges the changed header
+    net.progress.sync("game", force=True)
+    assert net._function("f", "game")["status"] == "open" and len(judged) == before + 1
+
+
+def test_an_interrupted_check_lists_the_matches_it_reopened_until_they_are_judged(project, monkeypatch):
+    from decompnet.app import match_reconciliation, progress
+    net, folder, _ = project
+    pid = net._project("game")["id"]
+    (folder / "src").mkdir()
+    (folder / "src/f.c").write_text("good", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    (folder / "include/common.h").write_text("still good", encoding="utf-8")
+    attempt = net.attempt
+
+    def unavailable(*_args, **_kwargs):
+        raise NetworkError("the compiler was cancelled")
+
+    monkeypatch.setattr(net, "attempt", unavailable)
+    queued = []
+    monkeypatch.setattr(net.progress, "_resume_reverify", lambda slug: queued.append(slug))
+    with pytest.raises(NetworkError, match="Saved files are retained"):
+        net.progress.sync("game", force=True)
+    store = net.project_store(pid)
+    assert progress.reopened(store, pid) == {"f"}
+    fn = store.one("SELECT * FROM functions WHERE name='f'")
+    assert fn["status"] == "open" and fn["best_source"] == "good"  # the match survives as the best attempt
+
+    runs = []
+    def run(net_, slug, seconds, attempts, log, names=None):
+        runs.append(set(names))
+        with store.tx() as db:
+            db.execute("UPDATE functions SET status='matched',matched_source=best_source WHERE name='f'")
+        return {"matched": 1, "attempts": 1, "finished": True}
+    monkeypatch.setattr(match_reconciliation, "run", run)
+    assert progress.resume_reopened(net, "game", lambda line: None)["matched"] == 1
+    assert runs == [{"f"}] and progress.reopened(store, pid) == set()
+
+    # A check that finishes gives every function it judged its verdict: none stays listed.
+    monkeypatch.setattr(net, "attempt", attempt)
+    (folder / "include/common.h").write_text("good again", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert progress.reopened(store, pid) == set() and net._function("f", "game")["status"] == "matched"
+
+
+def test_a_sync_resumes_an_interrupted_check_in_the_background_but_not_while_quitting(project):
+    from decompnet.app import progress
+    net, _, _ = project
+    pid = net._project("game")["id"]
+    tasks = []
+    net.startup = SimpleNamespace(add=lambda label, work, **kw: tasks.append((label, kw)), start=lambda: None)
+    net.progress._resume_reverify("game")
+    assert tasks == []  # nothing reopened: nothing to do
+    with net.project_store("game").tx() as db:
+        progress._remember_reopened(db, pid, ["f"])
+    net.shutting_down = True
+    net.progress._resume_reverify("game")
+    assert tasks == []
+    net.shutting_down = False
+    net.progress._resume_reverify("game")
+    net.progress._resume_reverify("game")  # (once at a time)
+    assert len(tasks) == 1 and tasks[0][1] == {"project": "game", "with_log": True}
+
+
+def test_an_automatic_resume_only_uses_c_judged_with_todays_header(project):
+    from decompnet.app import match_reconciliation
+    net, _, _ = project
+    pid = net._project("game")["id"]
+    with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,2,'today',1,'')",
+                   (pid,))
+        fid = db.execute("SELECT id FROM functions WHERE name='f'").fetchone()["id"]
+        db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) "
+                   "VALUES(?,NULL,0,1,1,'void f(void) {}',0)", (fid,))
+        db.execute("UPDATE functions SET best_source='void f(void) { }' WHERE id=?", (fid,))
+    proj = net.project_row("game")
+    fn = net.store.one("SELECT * FROM functions WHERE id=?", fid)
+    every = match_reconciliation.candidates(net, proj, fn, {})
+    assert any(header == "" for _, header, _ in every)  # (the manual recovery may bring an old header back)
+    current = match_reconciliation.candidates(net, proj, fn, {}, current_header=True)
+    assert current and all(header == "today" for _, header, _ in current)
+    assert [origin for *_, origin in current] == ["match kept as best attempt"]
