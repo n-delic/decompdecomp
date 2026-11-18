@@ -12,8 +12,8 @@ def main():
         try:
             args, kwargs = json.loads(line)
             if kwargs.pop('_background',False) and not background:
-                from decompnet.app.workers import lower_priority
-                lower_priority()
+                from decompnet.app.workers import started_priority
+                started_priority()
                 background = True
             labels = {}
             counts = compile_timing.Counts()
