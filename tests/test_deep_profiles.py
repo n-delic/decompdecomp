@@ -22,6 +22,34 @@ def test_default_first_then_matched_usage_unique_and_stable():
     assert [p['toolchain'] for p in deep_profiles.selected(net, {}, 2)] == ['default','b']
 
 
+def test_own_settings_first_then_the_default_as_a_probe():
+    # An N64 function with its own -fno-schedule-insns: with the default alone, nothing was ever scored.
+    cfg = {'compiler':{'toolchain':'default','flags':['-O2']},
+           'function_compilers':{'10:2147483904':{'vram':0x80000100,'function':'f','toolchain':'default',
+                                                  'flags':['-O2','-fno-schedule-insns']}}}
+    net = SimpleNamespace(cfg=lambda p:cfg, compiler_profile_usage=lambda p:[
+        {'toolchain':'b','flags':['-O2'],'matched':50}])
+    fn = {'name':'f','vram':0x80000100,'rom_offset':10}
+    own = {'toolchain':'default','flags':['-O2','-fno-schedule-insns']}
+    default = {'toolchain':'default','flags':['-O2']}
+    assert deep_profiles.selected(net, {}, 1, fn) == [own, default]
+    assert deep_profiles.selected(net, {}, 3, fn) == [own, default, {'toolchain':'b','flags':['-O2']}]
+    # a function on the project's settings: as before
+    assert deep_profiles.selected(net, {}, 1, {**fn, 'rom_offset':11, 'vram':0x80000200}) == [default]
+
+
+def test_cached_compile_failure_is_not_compiled_again(monkeypatch):
+    net = setup(monkeypatch)
+    calls = []
+    net._judge_with = lambda *args:(calls.append(1) or (False, None, 'parse error'))
+    fn = net.function(); proj = net.project_row('game')
+    search = deep_permuter.Search(net, 1, 20, Log(), fn)
+    profile = {'toolchain':'one','flags':['-O2']}
+    assert deep_profiles.probe(search, AGENT, proj, fn, 'broken', profile) is None
+    assert deep_profiles.probe(search, AGENT, proj, fn, 'broken', profile) is None
+    assert len(calls) == 1 and search.tested == 1 and search.skipped == 1
+
+
 @pytest.mark.parametrize('value', [True, 0, -1, 17, '2', 2.5])
 def test_invalid_counts(value):
     with pytest.raises(NetworkError):deep_profiles.validate(value)
