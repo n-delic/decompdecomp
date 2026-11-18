@@ -69,7 +69,8 @@ one claim; one function back is normal.)
    structs you worked out, rename_symbol for functions/data whose purpose is now clear, and share_knowledge
    for a convention every agent on this game should know (it reaches them once a model other than yours agrees).
    Right C that can't match because the project's compiler or flags look wrong? search_flags(function) tries
-   its compiler's flags at once, try_compiler(...) other compilers; then suggest(...) what matches to the user.
+   its compiler's flags at once (flags="..." only the ones you name), try_compiler(...) other compilers; then
+   suggest(...) what matches to the user.
 5. compile_and_diff says when to move on ({budget}): then
    release_function with precise notes (what you tried, what is left) and claim the next one. Before
    that, compile the next step instead of releasing. Needs another function done first (a callee, an inlined
@@ -334,8 +335,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
     "add_note": lambda net, agent, slug, text, function="": _add_note(net, agent, slug, text, function),
     "share_knowledge": lambda net, agent, slug, text="", supports=0: net.knowledge.share(agent, slug, text, supports),
-    "search_flags": lambda net, agent, slug, function, compiler="", source="":
-        net.search_flags(agent, slug, function, compiler, source),
+    "search_flags": lambda net, agent, slug, function, compiler="", source="", flags="":
+        net.search_flags(agent, slug, function, compiler, source, flags),
     "claim_readable": lambda net, agent, slug: net.readability.claim(agent, slug),
     "make_readable": lambda net, agent, slug, function, source: net.readability.submit(agent, slug, function, source),
     "tidy_done": lambda net, agent, slug, unit, summary: net.readability.tidy_done(agent, slug, unit, summary),
@@ -652,12 +653,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "add_note", text=text, function=function)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def search_flags(ctx: Context, function: str, compiler: str = "", source: str = "") -> str:
+    async def search_flags(ctx: Context, function: str, compiler: str = "", source: str = "", flags: str = "") -> str:
         """The function's C (its best attempt, or source) built with each of its compiler's flag variants
         (optimisation levels, small data, code-shape options), judged and ranked. For C that looks right but won't
-        match: the flags may be what's wrong. compiler: another one to try instead of the project's. PC games: the
-        function's source file's flags (/Oy- keeps the frame pointer, /O1, /Ob1); one that matches stays the file's."""
-        return await run(ctx, "search_flags", function=function, compiler=compiler, source=source)
+        match: the flags may be what's wrong. compiler: another one to try instead of the project's. flags: only the
+        ones you name ("/GS- /hotpatch", "-O3 -G0"), together and each alone; the error lists what the compiler may
+        take. PC and Xbox games: the source file's flags, any Visual C++ flag that changes code (/Oy-, /O1, /Ob1,
+        /GS-, /hotpatch, /Gy, /Oi, /fp:, /arch:, /Gz, ...; never /GL); one that matches stays the file's."""
+        return await run(ctx, "search_flags", function=function, compiler=compiler, source=source, flags=flags)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def claim_readable(ctx: Context) -> str:

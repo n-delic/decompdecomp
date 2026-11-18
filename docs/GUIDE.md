@@ -108,7 +108,7 @@ decompdecomp helps with these steps:
 | **Batches** | Agents write many small functions in one turn. decompdecomp judges them in one call. |
 | **Editor** | Each function has an editor. Write C, push Ctrl+Enter and look at the diff. |
 | **Suggestions** | Agents can suggest a different compiler, for the full game or for address ranges. decompdecomp tests each suggestion first. You apply it with one click, or let proven suggestions apply automatically (a setting of each game). |
-| **Flag search** | `search_flags` builds a function again with each flag of its compiler changed, one at a time (up to 12 builds), and says which change gets closer. MIPS for now. |
+| **Flag search** | `search_flags` builds a function again with each flag of its compiler changed, one at a time (up to 12 builds on MIPS), and says which change gets closer; an agent can name the flags to try (`flags="-O3 -G0"`). On PC and Xbox games started from scratch it works per source file over every Visual C++ flag that changes code (the ones its version takes, the common ones first, for up to two minutes), and a file keeps flags its function matches with. |
 | **Shared header** | Structs and prototypes go into one header. decompdecomp accepts a change only if all matches stay matches. |
 | **Safe names** | Matches use addresses. A new name for a function or data cannot break a match. |
 | **Look-alikes** | `find_similar` compares instruction sequences across the full game and finds copied and inlined code. |

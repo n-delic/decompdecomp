@@ -33,6 +33,8 @@ x64 one (own-<version>-x64), each before the pack's build.
   the code, and Ghidra's drafts made into C++ that compiles in the project (also in briefs, the background drafter and
   redraft). Each file may be built with more flags (file_flags: /Oy- where its functions keep an ebp frame, found by
   the import: scratch.frame_flags), which search_flags tries.
+- clflags.py: every Visual C++ flag that changes code, by version and target: what search_flags tries on a file (its
+  sweep) and what an agent may name to it.
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
 
@@ -376,18 +378,14 @@ class WindowsPC(Console):
         scratch.set_file_flags(fp.root, version, source, flags)
         return scratch.flags_file(fp.root, version).relative_to(fp.root).as_posix()
 
-    # What search_flags tries on a file: the frame pointer kept or not (/Oy-: about half of a 2010 game's code keeps
-    # it), optimised for size (/O1: some of a game's libraries were), and inlining only what's marked inline (/Ob1)
-    FLAG_TOGGLES = (("/Oy-",), ("/O1",), ("/Ob1",), ("/O1", "/Oy-"))
+    def flag_variants(self, flags: list[str], fp=None, source: str = "", named: str = "") -> list[list[str]]:
+        """Every flag of the file's Visual C++ that changes code, for the program's target (clflags.py): the agent's
+        `named` ones (checked against that list), else one choice changed at a time. Without a project: 6.0's, x86."""
+        from . import clflags, scratch
 
-    def flag_variants(self, flags: list[str]) -> list[list[str]]:
-        out = [list(flags)]
-        for toggle in self.FLAG_TOGGLES:
-            new = [f for f in flags if f not in toggle] if all(f in flags for f in toggle) else \
-                [*flags, *(f for f in toggle if f not in flags)]
-            if new not in out:
-                out.append(new)
-        return out
+        compiler = (self.file_compiler(fp, source) if fp is not None else None) or f"MSVC/{scratch.MSVC_DEFAULT}"
+        target = self.target(fp) if fp is not None else "x86"
+        return clflags.variants(flags, compiler, target, clflags.parse(named, compiler, target) if named.strip() else [])
 
     def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
         from . import scratch

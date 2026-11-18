@@ -166,7 +166,10 @@ def test_files_whose_functions_keep_a_frame_build_with_oy_minus():
 
 def test_pc_search_flags_tries_the_frame_pointer_size_and_inlining():
     pc = consoles.get("pc")
-    assert pc.flag_variants([]) == [[], ["/Oy-"], ["/O1"], ["/Ob1"], ["/O1", "/Oy-"]]
+    # first what files differ in most, then the rest of 6.0's catalogue one choice at a time (consoles/pc/clflags.py)
+    assert pc.flag_variants([])[:5] == [[], ["/Oy-"], ["/O1"], ["/Ob1"], ["/O1", "/Oy-"]]
+    rest = {f for v in pc.flag_variants([])[5:] for f in v}
+    assert {"/G6", "/Gz", "/Zp1", "/GR", "/J", "/Op"} <= rest and not {"/GS-", "/hotpatch"} & rest  # (2005's)
     assert pc.flag_variants(["/Oy-"])[:2] == [["/Oy-"], []]  # the file's own first, then without it
     assert consoles.get("gc").flag_variants(["-O4"]) == [["-O4"]] and consoles.get("gc").file_flags(None, "x") is None
 
@@ -301,6 +304,43 @@ def test_search_flags_finds_the_flags_a_file_was_built_with(demo):
         assert fn["status"] == "matched"
     with pytest.raises(Exception, match="already matches"):
         net.search_flags(agent, slug, fn["name"], source=code)
+
+
+@needs_tools
+def test_search_flags_tries_the_flags_an_agent_names(demo, monkeypatch):
+    """A file built with the wrong flag (/Od) for C that matches with the project's /O2: a named flag that's wrong
+    leaves the file as it is, one the compiler doesn't take is refused before anything builds, and the right one is
+    found and kept. Out of time, the sweep says what it didn't try."""
+    from decompnet.app import forkengine
+
+    net, slug = demo
+    agent, _ = net.local_agent("pc-agent")
+    _, fp, _ = net.forks.get(slug)
+    pc = consoles.get("pc")
+    rename = _addresses()
+    fn = net._function(next(n for n in (r["name"] for r in net.store.all(
+        "SELECT name FROM functions WHERE project_id=?", net.project_row(slug)["id"])) if rename["mix_score"] in n),
+        slug)  # (a __fastcall function's name: @func_...@8)
+    code = f"int __fastcall {rename['mix_score']}(int a, int b) {{\n    return (a * 31) ^ (b >> 3);\n}}\n"
+    source = fp.unit(fn["unit"]).source
+    pc.set_file_flags(fp, source, ["/Od"])
+    assert not net.forks.attempt(agent, slug, fn["name"], code, keep=False)["matched"]
+    with pytest.raises(Exception, match="isn't taken by Visual C\\+\\+ 6.0"):
+        net.search_flags(agent, slug, fn["name"], source=code, flags="/GS-")
+    with pytest.raises(Exception, match="isn't a flag search_flags may try"):
+        net.search_flags(agent, slug, fn["name"], source=code, flags="/FIwindows.h")
+    said = net.search_flags(agent, slug, fn["name"], source=code, flags="/Ob0")
+    assert "none matches" in said and "/Od /Ob0" in said, said
+    assert pc.file_flags(fp, source) == ["/Od"]
+    monkeypatch.setattr(forkengine, "TRY_ALL_SECONDS", 0)  # (only the file's own flags, then time's up)
+    said = net.search_flags(agent, slug, fn["name"], source=code)
+    assert "Not tried yet (time ran out): /Oy-, /O1, /Ob1" in said and "without /Od" in said, said
+    assert 'search_flags(function, flags="...")' in said and pc.file_flags(fp, source) == ["/Od"]
+    monkeypatch.undo()
+    said = net.search_flags(agent, slug, fn["name"], source=code, flags="-O2")
+    assert "is built with them from now on" in said and "/O2:" in said, said
+    assert pc.file_flags(fp, source) == ["/O2"] and net._function(fn["name"], slug)["status"] == "matched"
+    assert json.loads((fp.root / "config" / fp.manifest["version"] / "file_flags.json").read_text())[source] == ["/O2"]
 
 
 def test_on_start_reads_frames_only_for_files_without_matched_code(tmp_path):
