@@ -110,6 +110,9 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, pair: sessions.Se
             try:
                 if net.project_missing(row):
                     continue  # its folder is gone: only its records are left, and those are removed, not set up
+                # #260: after a restart no check is being weighed, so one saved as "checking" waits instead of spinning
+                net.rangechecks.normalise(row["slug"])
+                net.filecompilers.normalise(row["slug"])
                 if net.is_rom(row):
                     net.rangechecks.reopen(row["slug"])
                 net.console(row).on_start(net, row["slug"], log=jobs.logger.info)
@@ -199,8 +202,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, pair: sessions.Se
         except ValueError:
             return {}
 
+    gui_limiter = anyio.CapacityLimiter(50)
+
     async def call(fn, *args):
-        return await anyio.to_thread.run_sync(fn, *args)
+        return await anyio.to_thread.run_sync(fn, *args, limiter=gui_limiter)
 
     def fail(e: Exception, code: int = 400) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=code)

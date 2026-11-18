@@ -169,6 +169,8 @@ class Restorer:
             head = text[max(0, m.start() - 1):m.start()].strip()
             if m.group(2) and head not in ("", ";", "{", "}"):
                 continue
+            if m.group(2) and _prototype(text, m, types):  # #301: a prototype isn't a constructor call
+                continue
             out.append(text[last:m.start()])
             out.append(f"{m.group(1)}{m.group(2)} = DDctor(" if m.group(2) else f"DDnew_{m.group(1)}(")
             last = m.end()
@@ -389,6 +391,53 @@ def _call_args(text: str, at: int) -> tuple[list[str], int] | None:
             args.append(text[start:i])
             start = i + 1
     return None
+
+
+# what can come before a parameter's type (`const struct Foo *p`), and the declarator that may follow it (`*p`, `**`,
+# `name[4]`, `(*cb)(int)`)
+_TYPE_QUALIFIERS = frozenset({"const", "volatile", "struct", "union", "enum", "register", "static", "extern", "inline"})
+_PARAMETER_TYPE = re.compile(r"\s*(?:(?:" + "|".join(map(re.escape, sorted(_TYPE_QUALIFIERS))) + r")\s+)*"
+                             r"([A-Za-z_]\w*)")
+_DECLARATOR = re.compile(r"(?:\*\s*)+(?:[A-Za-z_]\w*)?|[A-Za-z_]\w*")
+
+
+def _parameter(argument: str, types: set[str]) -> bool:
+    """Whether `argument` (one of a call's, split at its own commas) is a function's parameter: a type, with the
+    declarator that may follow it (`s32`, `const char *name`, `Widget **`, `void (*cb)(int)`)."""
+    item = argument.strip()
+    if not item or item == "...":
+        return True
+    m = _PARAMETER_TYPE.match(item)
+    if not m or not (m.group(1) in C_TYPE_WORDS or m.group(1) in types):
+        return False
+    tail = item[m.end():].lstrip()
+    if not tail or tail[0] in "*[" or re.match(r"[A-Za-z_]", tail):
+        return True
+    if tail[0] != "(":
+        return False
+    # a declarator in parentheses (`T (name)`, `T (*name)(...)`); `T(1.0f, x)` is a temporary, a constructor's
+    # argument, and a parenthesis with a comma in it can't be a declarator
+    group = _call_args(tail, 0)
+    return group is not None and len(group[0]) == 1 and bool(_DECLARATOR.fullmatch(group[0][0].strip()))
+
+
+def _parameter_list(arguments: list[str], types: set[str]) -> bool:
+    """Whether the text between a call's parentheses (its arguments, split at its own commas) is a parameter list.
+    #301: a block-scope prototype has a local constructor's shape, and pycparser refused its rewritten
+    `T t = DDctor(void **, void *, void *)`; a constructor's arguments are expressions (`1.0f`, `&b`, `x`)."""
+    return all(_parameter(argument, types) for argument in arguments)
+
+
+def _prototype(text: str, match: re.Match, types: set[str]) -> bool:
+    """Whether `T t(...)` at `match` declares a function instead of building a local. #301: agent-written and
+    m2c-derived C has prototypes in a body (`extern s32 OSDisableInterrupts(void);`, `void fn_8011176C(void **,
+    void *, void *)`), which this took for `T t = DDctor(...)`: one such line made the permuter unable to read the
+    whole function."""
+    line = text[text.rfind("\n", 0, match.start()) + 1:match.start()]
+    if match.group(1) == "void" or re.match(r"\s*extern\b", line):
+        return True
+    call = _call_args(text, match.end() - 1)
+    return call is not None and _parameter_list(call[0], types)
 
 
 def expand_in_source(source: str, definitions: str, types: set[str]) -> str:

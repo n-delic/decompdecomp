@@ -204,6 +204,11 @@ def split(rom_path: Path, workdir: Path, log=print) -> list[GbaFunction]:
         while end + 4 <= limit and (end in literals or (end % 4 == 2 and end + 2 in literals and
                                                        rom[end:end + 2] in (b"\0\0", b"\xc0\x46"))):
             end += 2 if end % 4 == 2 and end not in literals else 4  # the literal pool after the code
+        if end <= off:
+            # #297: luvdis can name a literal-pool word (or the halfword after it) as a function start. bodies()
+            # steps over literal words, so there are no instructions to split; a size-0 function can be neither
+            # claimed nor saved, and asking agents to work on it only wasted their runs.
+            continue
         text, thumb = blocks.get(addr, (f"\tthumb_func_start sub_{addr:08X}\n", True))
         code = rom[off:end]
         helper = call_via(code)

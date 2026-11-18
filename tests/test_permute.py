@@ -487,6 +487,63 @@ def test_cxx_that_isnt_a_constructor_is_left_alone():
     assert Restorer(source, {"Vec2"}).source == source
 
 
+def test_a_block_scope_prototype_isnt_a_local_built_by_its_constructor():
+    """A prototype in a body has the shape of a local built by its constructor, and pycparser refused the rewritten
+    `T t = DDctor(...)`: 2,495 log lines and 276 of 287 on a GameCube project. `extern`, a `void` return, or a
+    parameter list (not expressions) tells the two apart; `T t(x)` with `x` a variable is still one."""
+    from decompnet.permuter_gen import Restorer
+
+    source = ("void use(void **p, s32 n)\n{\n"
+              "    extern s32 __OSUnlockSramEx(s32);\n"
+              "    void fn_8011176C(void **, void *, void *);\n"
+              "    extern s32 OSDisableInterrupts(void);\n"
+              "    extern void fn_802325CC(const char *, s32, const char *, ...);\n"
+              "    s32 Maybe(s32);\n"
+              "    Vec v(1.0f, n);\n"
+              "    Foo f(a, &b);\n"
+              "    Widget w(k);\n"
+              "    Vec2 d(Vec2(1.0f, 2.0f));\n"
+              "}\n")
+    r = Restorer(source, {"s32", "Vec", "Foo", "Widget", "Vec2"})
+    assert "extern s32 __OSUnlockSramEx(s32);" in r.source
+    assert "void fn_8011176C(void **, void *, void *);" in r.source
+    assert "extern s32 OSDisableInterrupts(void);" in r.source
+    assert "extern void fn_802325CC(const char *, s32, const char *, ...);" in r.source
+    assert "s32 Maybe(s32);" in r.source  # (no `extern` and not `void`: the parameter list says it)
+    assert not re.search(r"\b(?:__OSUnlockSramEx|fn_8011176C|OSDisableInterrupts|fn_802325CC|Maybe)\s*=", r.source)
+    assert "Vec v = DDctor(1.0f, n);" in r.source and "Foo f = DDctor(a, &b);" in r.source
+    assert "Widget w = DDctor(k);" in r.source  # (k is a variable, not a type)
+    # a temporary is one of a constructor's arguments, not a parameter: pycparser reads the constructor call after all
+    assert "Vec2 d = DDctor(DDnew_Vec2(1.0f, 2.0f));" in r.source
+    assert r.restore(r.source) == source
+
+
+@needs_tool
+def test_decomp_permuter_reads_a_body_with_a_prototype():
+    """The rewritten `extern s32 __OSUnlockSramEx = DDctor(s32);` made pycparser reject the whole function: one
+    block-scope prototype, and the permuter had nothing to do. The C is read, and each variant gives the prototypes
+    back as they were."""
+    source = ("void use(void **p, s32 n)\n{\n"
+              "    extern s32 __OSUnlockSramEx(s32);\n"
+              "    void fn_8011176C(void **, void *, void *);\n"
+              "    extern s32 OSDisableInterrupts(void);\n"
+              "    extern void fn_802325CC(const char *, s32, const char *, ...);\n"
+              "    n += __OSUnlockSramEx(n) + OSDisableInterrupts();\n"
+              "    fn_8011176C(p, p, p);\n"
+              "    fn_802325CC(\"x\", n, \"y\", n);\n"
+              "    if (n) return;\n"
+              "}\n")
+    job = {"header": permute.permuter_header(HEADER, source), "source": source, "function": "use", "family": "base",
+           "seed": 1, "count": 8}
+    gen = permute.Generator()
+    try:
+        variants = gen.batch(job)
+    finally:
+        gen.close()
+    assert variants and all("__OSUnlockSramEx(s32);" in v and "fn_802325CC(const char *, s32, const char *, ...);" in v
+                            and "DDctor" not in v and "DDnew_" not in v for v in variants)
+
+
 def test_macros_called_with_a_type_and_object_like_ones_are_put_in_the_functions_c():
     """`F(int, 0x20) = v` and `MATCH_VOLATILE bool found` aren't C pycparser reads: 13 of an Xbox game's near
     misses stopped at one. A macro called with values stays a call, for the randomizer to move."""
