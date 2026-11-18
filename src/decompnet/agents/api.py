@@ -391,9 +391,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "last_diff": ("Every differing row of your last compile_and_diff of a function (its result cuts long diffs). "
                       "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"))),
         "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
-                             "on (before that it answers once with what to try; call again to release anyway). A "
-                             "release with no compile since you claimed it is not taken, however often you ask: "
-                             "compile first, or end your session.",
+                             "on (before that it answers once with what to try; call it again once you've compiled "
+                             "it, to release anyway). A plain release with no compile since you claimed it is not "
+                             "taken, however often you ask: compile first, or end your session.",
                              s(function=st("function", True), notes=st("what you tried, what is left", True),
                                not_c=bo("true when you're sure no C makes its code (hand-written assembly); say why in notes"),
                                needs=st("optional: another function this one needs done first (a callee or inlined "
