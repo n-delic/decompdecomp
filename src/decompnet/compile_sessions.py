@@ -51,7 +51,7 @@ class Session:
             if path.name != 'include':
                 if path.is_dir() and not path.is_symlink():shutil.rmtree(path)
                 else:path.unlink()
-        compile_headers.stage(work/'include',files)
+        self.staged_files=compile_headers.stage(work/'include',files,getattr(self,'staged_files',None))
         if files!=self.headers:
             self.staged=[(name.encode(),data) for name,data in sorted(files.items())]
             self.headers=files

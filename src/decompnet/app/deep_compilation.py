@@ -7,7 +7,7 @@ import time
 from concurrent.futures import CancelledError, Future
 from contextlib import contextmanager, nullcontext
 
-from .. import compile_sessions, compile_sharing, compile_timing, compiler
+from .. import compile_sessions, compile_sharing, compile_timing, compile_worker, compiler
 from ..candidate_work import preparation as candidate_preparation
 
 
@@ -45,6 +45,7 @@ class Pool:
         self.proposals = None
         self.capacity = threading.BoundedSemaphore(self.count*2)
         self.admission = threading.Lock()
+        self.lanes = 0  # searches preparing or holding a window now
 
     def proposal_pool(self):
         with self.lock:
@@ -99,7 +100,10 @@ class Pool:
         from .workers import started_priority
         if not self.maximum:started_priority()
         from .deep_throughput import scope
-        with scope(self), compile_sessions.session(), compile_sharing.group(self.group):
+        # Each compile thread hands its compiles to a child process of its own (compile_worker.py): their Python
+        # no longer queues on the app's one interpreter lock.
+        with scope(self), compile_sessions.session(), compile_sharing.group(self.group), \
+                compile_worker.remote(background=not self.maximum):
             while (ticket := self.queue.get()) is not None:
                 if not ticket.future.set_running_or_notify_cancel():continue
                 try:
@@ -134,10 +138,14 @@ def chunk(search, agent, proj, fn, sources, fork):
         if time.monotonic() >= search.deadline:
             from .deep_permuter import SearchLimit
             raise SearchLimit('Time limit reached')
+    with pool.lock:pool.lanes += 1
+    # Each lane asks for its share of the capacity: one lane asking for all of it held the admission lock while the
+    # permits came back one by one, and the other lanes queued behind it. A lane alone still fills the pipeline.
+    with pool.lock:share = max(2, pool.count*2//max(1, pool.lanes))
     try:
         with candidate_preparation():
             for source in sources:
-                if len(tickets) >= min(pool.count*2, search.limit-search.tested):break
+                if len(tickets) >= min(share, search.limit-search.tested):break
                 if source in tickets or source == fn['best_source']:continue
                 if random_safety.unsafe_update(fn['best_source'], source) or invalid_call(source, fn['name'], header):continue
                 key = search._recent_key(proj, fn, source, fork)
@@ -166,6 +174,7 @@ def chunk(search, agent, proj, fn, sources, fork):
                 # Cancel before another lane is admitted into this window.
                 discard(search)
     finally:
+        with pool.lock:pool.lanes -= 1
         search._ahead = {}
         for ticket in tickets.values():
             if not ticket.counted and not ticket.cancel():

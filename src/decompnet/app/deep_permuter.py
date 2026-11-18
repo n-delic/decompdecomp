@@ -6,14 +6,13 @@ search space, so time/variant limits and cancellation always remain explicit.
 import copy
 import hashlib
 import json
-import os
 import sys
 import threading
 import time
 from collections import OrderedDict
 from contextlib import nullcontext
 
-from .. import compiler, scoring
+from .. import claim_stalls, compiler, scoring, stamped
 from ..candidate_work import preparation as candidate_preparation
 from ..candidate_work import trial
 from ..compile_sessions import batched
@@ -844,7 +843,7 @@ class Search(Permuter):
         if not compiler._stable_inputs([source.encode(), (ctx['header'] if ctx else '').encode()]):return None
         rules = remember(('repair-rules', claim_stalls.repair_rules), claim_stalls.repair_rules)
         version=self.net.project_store(proj['id']).read_version('inputs',proj['id'])
-        environment=_environment()
+        environment=stamped.environment()
         from ..candidate_work import current
         preparing = current() is not None and current().preparing
         identity = (remember(("prepared-compiler", compiler_identity, repr(own)), lambda:compiler_identity(own))
@@ -1021,21 +1020,6 @@ class Search(Permuter):
         return score
 
 
-_ENVIRONMENT = ({}, ())
-
-
-def _environment():
-    """os.environ, sorted, re-sorted only when it changes (a dict comparison in C, not a Python sort of every
-    variable for every candidate)."""
-    global _ENVIRONMENT
-    seen, ordered = _ENVIRONMENT
-    current = os.environ._data
-    if current != seen:
-        ordered = tuple(sorted(os.environ.items()))
-        _ENVIRONMENT = (dict(current), ordered)
-    return ordered
-
-
 def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0):
     deep_throughput.options(maximum_throughput, compile_slots)
     if maximum_throughput and getattr(log, 'compile_pool', None) is None and threads_per_function == 1:threads_per_function = min(max_variants, deep_throughput.width(True, compile_slots))
@@ -1072,6 +1056,7 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
 @deep_compilation.shared
 @buffered
 @batched
+@claim_stalls.snapshot_rules  # one function's search is one operation: its lane fingerprints the repair code once
 def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, lane=None):
     """Visit the supported local repairs, then spend the remaining budget on random permutations."""
     proj, fn = validate(net, slug, name, minutes, max_variants)
