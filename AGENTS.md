@@ -335,23 +335,30 @@ linting). In short:
 
 Always submit decompdecomp changes on a feature or fix branch through a pull request; do not commit directly to main.
 
-The user has asked that completed PRs be merged to main after inspection and required checks, until they
-revoke this preference. The user updates their running app themselves: merging a PR does not authorize
-pulling into its checkout, stopping, updating or restarting it. Leave the running app in
-`/Volumes/Data/Github/decompdecomp-rr` and its home `/Volumes/Data/Decomps/decompdecomp` alone unless the
-user explicitly requests deployment. This replaces the previous automatic-update authorization.
+The user has asked that completed PRs be merged to main right after creation, once any required checks pass,
+until they revoke this preference. The user updates their running app themselves: merging a PR does not authorize
+pulling into its checkout, stopping, updating or restarting it. Leave the running app alone unless the user
+explicitly requests deployment.
 
-When the user explicitly requests deployment, use `git pull origin main` followed by
-`DECOMP_HOME=/Volumes/Data/Decomps/decompdecomp /Volumes/Data/Github/decompdecomp-rr/.venv/bin/decomp`.
-Use a clean checkout of main (a detached origin/main runtime checkout is acceptable when main is held by
-another worktree), preserve all other branches and local changes, stop only this home's app gracefully,
-launch it persistently and verify health/revision. Experiments must still use isolated homes and must
-not mutate live projects.
+The user works on more than one computer, and the folders differ between them: never take a checkout or data home
+from a path written down here or remembered from another session. Find the running app on this machine instead:
+- `ps -E -o pid,command | grep -E 'bin/decomp( |$)'` shows each app's process, its checkout (the `.venv` it runs
+  from) and, in its environment, `DECOMP_HOME` and `DECOMP_PORT` (none: the defaults, `~/Decomp-RetroReversing`
+  on 6464 for an installed copy, `~/Decomp-RetroReversing-dev` on 6474 for a checkout, app/edition.py).
+- `<home>/.decomp/server.json` names the port and pid of the app serving that home.
+- More than one app running, or none: ask the user which one they mean.
+
+When the user explicitly requests deployment, in the checkout that app runs from: `git pull origin main`
+(a clean main; a detached origin/main runtime checkout is acceptable when main is held by another worktree),
+`uv sync`, stop only that home's app gracefully (SIGTERM, then wait for it to exit), and launch it again
+persistently with the same `DECOMP_HOME`/`DECOMP_PORT` it had: `DECOMP_HOME=<home> <checkout>/.venv/bin/decomp`.
+Preserve all other branches and local changes, then verify it serves its port again and runs the new revision.
+Experiments must still use isolated homes and must not mutate live projects.
 
 When a change requires clients to update, build a fresh shareable macOS app after testing
 with `bash packaging/macos/build.sh --app-only`. Deliver the .app folder directly in Downloads,
 without a ZIP unless requested. For Apple Silicon, always deliver to the stable folder
-`/Users/a/Downloads/decompdecomp_RetroReversing_macos_arm64/decompdecomp.app`, replacing
+`~/Downloads/decompdecomp_RetroReversing_macos_arm64/decompdecomp.app`, replacing
 the previous exported app instead of creating version/commit-named folders. State the
 architecture, version and source commit in the response. This export must not replace
 or restart the installed Applications app unless explicitly requested.
