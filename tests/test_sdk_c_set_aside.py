@@ -70,10 +70,19 @@ def status(net, fid):
     return net.project_store(1).one('SELECT status,meta FROM functions WHERE id=?', fid)
 
 
-def test_off_by_default_library_c_stays_open(example):
+def test_on_by_default_and_a_project_that_turned_it_off_keeps_its_library_c_open(example):
     net, fid = example
+    proj = net.project_row('game')
+    assert sdk_assembly.SETTING not in json.loads(proj['config']) and sdk_assembly.enabled(net, proj)
+    sdk_assembly.choose_c(net, 'game', False)
     assert sdk_assembly.discover_c(net, net.project_row('game')) == 0
     assert status(net, fid)['status'] == 'open'
+
+
+def test_by_default_the_background_check_sets_library_c_aside(example):
+    net, fid = example
+    assert sdk_assembly.discover_c(net, net.project_row('game')) == 1  # nobody chose: background maintenance's call
+    assert status(net, fid)['status'] == 'asm'
 
 
 def test_on_sets_aside_linked_library_c_and_off_gives_it_back(example):
@@ -200,3 +209,11 @@ def test_the_gui_shows_sdk_apart_from_assembly():
         pytest.skip('node unavailable')
     subprocess.run([node, str(Path(__file__).with_name('gui_sdk_category.js'))], check=True, capture_output=True,
                    text=True, timeout=60)
+
+
+def test_the_setting_is_on_unless_the_project_turned_it_off():
+    """No tools needed: the default every caller (background checks, Libraries panel) reads."""
+    from types import SimpleNamespace
+    for config, on in (({}, True), ({sdk_assembly.SETTING: True}, True), ({sdk_assembly.SETTING: False}, False)):
+        net = SimpleNamespace(cfg=lambda proj, config=config: config)
+        assert sdk_assembly.enabled(net, {}) is on

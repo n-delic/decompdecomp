@@ -199,11 +199,13 @@ def save(net,proj,fn,proof):
     return True
 
 
-SETTING='sdk_set_aside_c'  # project config: library C that library detection finds is set aside, not matched
+SETTING='sdk_set_aside_c'  # project config: library C that library detection finds is set aside, not matched (on unless turned off)
 
 
 def enabled(net,proj):
-    return bool(net.cfg(proj).get(SETTING))
+    # On unless the project turned it off: agents spent hours on Controller Pak functions a port replaces and a
+    # rebuild takes as assembly, while the game's own code waited.
+    return bool(net.cfg(proj).get(SETTING, True))
 
 
 def _lead(net,proj,fn,hint):

@@ -14,7 +14,7 @@ def sdk_case(tmp_path, monkeypatch):
     net = RomNetwork(tmp_path / 'app.db', tmp_path)
     with net.store.tx() as db:
         pid = db.execute('INSERT INTO projects(slug,name,arch,big_endian,root,config) VALUES(?,?,?,?,?,?)',
-                         ('demo', 'Demo', 'mips', 1, str(tmp_path), json.dumps({'kind':'rom'}))).lastrowid
+                         ('demo', 'Demo', 'mips', 1, str(tmp_path), json.dumps({'kind':'rom','compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}))).lastrowid
         fid = db.execute('INSERT INTO functions(project_id,name,size,n_insns,vram,meta) VALUES(?,?,?,?,?,?)',
                          (pid, 'func_80001000', 40, 10, 0x80001000, '{}')).lastrowid
         db.execute('INSERT INTO sdk_signatures(corpus,arch,big_endian,name,fingerprint,size) VALUES(?,?,?,?,?,?)',
