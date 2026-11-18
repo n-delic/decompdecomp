@@ -18,7 +18,7 @@ from ..arch.mips_code_recovery import called_extent, leaf_extent
 def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     """Keep all original instructions while joining/splitting strictly validated bodies."""
     if console.arch!='mips':return functions
-    from .split import _LOCAL_REF, _SYMBOL_LINE
+    from .split import _LOCAL_REF, _SYMBOL_LINE, AsmLine
     explicit={int(m[2],16) for text in symbols for m in _SYMBOL_LINE.finditer(text)}
     starts={f.vram for f in functions}
     order='big' if console.big_endian else 'little'
@@ -53,7 +53,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     for fn in sorted(functions,key=lambda f:(f.segment,f.rom)):
         if (groups and groups[-1][-1].segment==fn.segment
                 and fn.vram-fn.rom==groups[-1][0].vram-groups[-1][0].rom
-                and fn.rom<=group_end):
+                and (fn.rom<=group_end or fn.rom-group_end<=HOLE and not any(image[group_end:fn.rom]))):
             groups[-1].append(fn)
         else:
             groups.append([fn]);group_end=0
@@ -70,15 +70,23 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
                         or line.rom in lines and lines[line.rom].word!=line.word):consistent=False;break
                 lines[line.rom]=line
         lo=first.rom;hi=max(f.rom+f.size for f in group)
+        # Zero words the disassembler left after an endlabel as alignment, between two pieces that a call cut: kept
+        # out of every function unless a validated body runs through them (then they're its nops).
+        holes=[];covered=sorted((f.rom,f.rom+f.size) for f in group);reach=lo
+        for a,b in covered:
+            if a>reach:holes.append((reach,a))
+            reach=max(reach,b)
+        for a,b in holes:
+            for at in range(a,b,4):lines[at]=AsmLine(at,at+mapping,0,'nop','')
         owners=[s for s in segments if s.rom_start<=lo<hi<=s.rom_end and s.vram-s.rom_start==mapping]
         if (not consistent or len(owners)!=1 or len(lines)*4!=hi-lo
                 or any(s is not owners[0] and s.vram<hi+mapping and lo+mapping<s.vram+s.rom_end-s.rom_start for s in segments)):
             result.extend(group);continue
-        cuts={f.rom for f in group}|{hi};accepted=[]
+        cuts={f.rom for f in group}|{hi}|{x for hole in holes for x in hole};accepted=[]
         # A new interior entry needs the preceding balanced return, never a frame pattern alone.
         candidates=[at for at,line in lines.items() if is_frame(line.word) and (at in cuts or
                     at-8 in lines and lines[at-8].word==JR_RA and lines[at-4].word&0xffff0000==0x27bd0000)]
-        padding=set();proposed_padding={};leaves=set()
+        padding=set(holes);proposed_padding={};leaves=set()
         def seed(cut,hi=hi,lines=lines,mapping=mapping,leaves=leaves,proposed_padding=proposed_padding):
             at=cut
             while at<min(cut+12,hi) and at in lines and lines[at].word==0:at+=4
@@ -171,6 +179,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     return result
 
 
+HOLE = 12  # the most alignment a group of one segment's pieces may skip between two of them
 SHARED_SLOT_CALLS = 8  # calls from elsewhere into a segment before their fit says anything about it
 
 

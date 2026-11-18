@@ -215,3 +215,23 @@ def test_a_few_outside_calls_keep_an_ordinary_overlays_entries():
     image,functions,segments=shared_slot(callers=0)
     result=repair(functions,[],image,consoles.get('n64'),segments)
     assert [(f.vram,f.size) for f in result if f.segment=='code']==[(BASE,12),(BASE+12,20)]
+
+
+def test_a_zero_word_the_disassembler_left_between_pieces_joins_with_them():
+    """spimdisasm ends a piece before a nop it takes for alignment, so the next piece starts 4 bytes on: an N64 game's
+    overlay had a dozen such holes, each splitting its pieces into groups that could not be joined across."""
+    words=BODY[:3]+[0]+BODY[4:]
+    image,functions,segments=fixture(words,cuts=(0,12,32))
+    functions[1]=replace(functions[1],vram=BASE+16,rom=16,lines=functions[1].lines[1:])
+    result=repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(f.vram,f.size) for f in result]==[(BASE,32)]
+    assert [line.word for line in result[0].lines]==words
+
+
+def test_an_alignment_hole_stays_out_of_pieces_that_do_not_join():
+    words=BODY[:3]+[0]+BODY[4:]
+    words[4]=0x08000c00  # the second piece never closes: nothing joins
+    image,functions,segments=fixture(words,cuts=(0,12,32))
+    functions[1]=replace(functions[1],vram=BASE+16,rom=16,lines=functions[1].lines[1:])
+    result=repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(f.vram,f.size) for f in result]==[(BASE,12),(BASE+16,16)]
