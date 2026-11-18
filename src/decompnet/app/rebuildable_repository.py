@@ -17,6 +17,21 @@ def full(root):
                 and (root/'progress'/saves.MANIFEST).is_file())
 
 
+def moved_config(root) -> dict:
+    """A project's settings once its progress lives in the full repository at `root`."""
+    target = Path(root)/'progress'
+    return {'progress_folder': str(target), 'save_folder': str(target), 'repository_sync_folder': str(root)}
+
+
+def interrupted(folder):
+    """The repository root, when `folder` was a flat progress save upgraded in place whose project still points at
+    it: its files moved under progress/ but the setting that follows them was never written (an upgrade that stopped
+    between the two). None otherwise."""
+    folder = Path(folder)
+    if (folder/saves.MANIFEST).is_file() or not (folder/MARKER).is_file():return None
+    return folder if full(folder) else None
+
+
 def public(name):
     path = Path(name)
     if path.is_absolute() or '..' in path.parts:return False
@@ -144,10 +159,13 @@ def prepare(net, slug, path, root, log):
                 raise NetworkError('Repository generation would replace an existing file: '+name+'. Its contents were preserved.')
             baseline.setdefault(name, repository_sync.digest(target))
         destination.mkdir(parents=True, exist_ok=True)
-        # Old flat progress paths move under progress/, while .git and every unrelated file remain.
-        repository_sync.publish(destination, stage, generated | old.keys(), baseline, log)
-    target = destination/'progress'
-    net._update_cfg(slug, lambda current: current.update(progress_folder=str(target), save_folder=str(target),
-                                                       repository_sync_folder=str(destination)))
+        target = destination/'progress'
+        # Old flat progress paths move under progress/, while .git and every unrelated file remain. Move them and
+        # point the project at the new place as one step: a sync between the two (the config update's own, or an
+        # autosave) read the old folder without its manifest and failed with "Restore progress/decompdecomp.json"
+        # for good. The batch defers every sync of this project, then syncs once, in the new folder.
+        with net.progress.batch(slug, logger=log):
+            repository_sync.publish(destination, stage, generated | old.keys(), baseline, log)
+            net._update_cfg(slug, lambda current: current.update(**moved_config(destination)), synchronize=False)
     log('Full rebuildable repository prepared. Game images and extracted data remain ignored.')
     return target

@@ -517,3 +517,44 @@ def test_repository_creation_still_preserves_conflicting_source(project, monkeyp
         repository_setup.run(net, 'game', 'init', '', lambda _:None)
     assert target.read_text() == 'local source edit\n'
     assert not (root/'build.py').exists()
+
+
+def test_an_upgrade_in_place_never_syncs_between_moving_the_save_and_following_it(project, monkeypatch):
+    # A game's upgrade moved its flat save under progress/, then synced the old folder before pointing the project
+    # at the new one: "Restore progress/decompdecomp.json", and every later sync and retry failed the same way.
+    from decompnet.app import repository_sync
+    net, root, _ = project
+    publish = repository_sync.publish
+    def publish_then_sync(*args, **kwargs):
+        result = publish(*args, **kwargs)
+        net.progress.signatures.pop('game', None)  # (as a sync would after the folder changed on disk)
+        net.progress.sync('game', force=True)
+        return result
+    monkeypatch.setattr(repository_sync, 'publish', publish_then_sync)
+    state = repository_setup.run(net, 'game', 'init', '', lambda _:None)
+    assert state['rebuildable']
+    assert net.cfg(net.project_row('game'))['progress_folder'] == str(root/'progress')
+    assert (root/'progress'/saves.MANIFEST).is_file() and not (root/saves.MANIFEST).exists()
+
+
+def test_a_sync_finishes_an_upgrade_that_stopped_before_following_the_moved_save(project, monkeypatch):
+    from decompnet.app import rebuildable_repository
+    net, root, _ = project
+    update = net._update_cfg
+    def stopped(slug, change, **kwargs):
+        probe = {}
+        change(probe)
+        if 'repository_sync_folder' in probe:
+            raise RuntimeError('stopped between the move and the setting')
+        return update(slug, change, **kwargs)
+    monkeypatch.setattr(net, '_update_cfg', stopped)
+    with pytest.raises(RuntimeError):
+        repository_setup.run(net, 'game', 'init', '', lambda _:None)
+    monkeypatch.setattr(net, '_update_cfg', update)
+    assert rebuildable_repository.interrupted(root) == root
+    net.progress.signatures.pop('game', None)
+    net.progress.sync('game', force=True)
+    cfg = net.cfg(net.project_row('game'))
+    assert cfg['progress_folder'] == cfg['save_folder'] == str(root/'progress')
+    assert cfg['repository_sync_folder'] == str(root)
+    assert rebuildable_repository.interrupted(root/'progress') is None
