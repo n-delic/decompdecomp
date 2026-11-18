@@ -13,9 +13,11 @@
 - "ios": the browser build bundled in an offline iPhone/iPad Xcode project (ios.py), signed by the player.
 - "miyoo": the native build for the Miyoo Mini family (miyoo.py): the folders to copy to its SD card (App/ for the
   stock OS and Onion, Tools/ for MinUI), with the project's ROM beside the program.
+- "steamdeck": the native build for the Steam Deck (steamdeck.py), in a window of its own (SDL3, full screen): a
+  folder to copy to the Deck and add to Steam as a non-Steam game, with the project's ROM beside the program.
 
-The app and the browser build don't hold the ROM: each asks the player for their own. The Miyoo Mini's folder does,
-copied from the project, since a handheld has nothing to ask with: it's the user's own card. Both go to the save repository's port/wasm/export/,
+The app and the browser build don't hold the ROM: each asks the player for their own. The Miyoo Mini's and the Steam
+Deck's folders do, copied from the project, since a handheld has nothing to ask with: it's the user's own device. Both go to the save repository's port/wasm/export/,
 which git ignores (they're built from the game: game data). Exporting again replaces that kind's folder.
 """
 
@@ -31,7 +33,7 @@ from pathlib import Path
 
 from ...network import NetworkError
 
-KINDS = {"app": "a standalone app", "window": "a standalone app with its own window", "web": "a browser build", "miyoo": "a Miyoo Mini SD card folder", "ios": "an iPhone/iPad Xcode project"}
+KINDS = {"app": "a standalone app", "window": "a standalone app with its own window", "web": "a browser build", "miyoo": "a Miyoo Mini SD card folder", "steamdeck": "a Steam Deck folder", "ios": "an iPhone/iPad Xcode project"}
 PACKING = "Packing the export"
 
 
@@ -264,10 +266,10 @@ def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: di
          inputs: dict, simd: bool = False, log=print) -> tuple[Path, Path]:
     """Build the game in the save `repo` (only what changed) and pack it as `kind` into `dest` (replaced): (the
     folder, what to open in it). `inputs`: what the build takes besides the save (play.inputs); `rom`: the game's
-    title, region and SHA-1, for the Miyoo Mini's README; `rom_file`: the ROM the Miyoo Mini's pack carries, or
-    None (the player adds theirs)."""
+    title, region and SHA-1, for the handhelds' READMEs; `rom_file`: the ROM the Miyoo Mini's and the Steam Deck's
+    packs carry, or None (the player adds theirs)."""
     from ... import toolchains
-    from . import build, ios, miyoo, web
+    from . import build, ios, miyoo, steamdeck, web
 
     if kind == "window" and sys.platform != "darwin":
         raise NetworkError("An app with its own window is made on a Mac for now; on Linux and Windows, export the "
@@ -289,6 +291,14 @@ def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: di
         version = " ".join(x for x in (rom.get("title"), rom.get("region"), rom.get("sha1") and f"SHA-1 {rom['sha1']}") if x)
         folder = miyoo.package(program, dest, title, version, rom_file)
         return folder, folder / "README.txt"
+    if kind == "steamdeck":
+        steps = (*steamdeck.STEPS, PACKING)
+        program = steamdeck.build(repo, console=console, log=log, steps=steps, **inputs)
+        build.Progress(log, steps).start(PACKING)
+        log("packing the Steam Deck's folder")
+        version = " ".join(x for x in (rom.get("title"), rom.get("region"), rom.get("sha1") and f"SHA-1 {rom['sha1']}") if x)
+        folder = steamdeck.package(program, dest, title, version, rom_file)
+        return folder, folder / "README.txt"
     steps = (*web.STEPS, PACKING)
     folder = web.build(repo, console=console, log=log, steps=steps, simd=simd, **_game_c_only(inputs))
     build.Progress(log, steps).start(PACKING)
@@ -302,11 +312,11 @@ def make(repo: Path, kind: str, dest: Path, *, console: str, title: str, rom: di
 
 
 def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
-    """Build the project's game (only what changed) and export it as `kind` ("app", "window", "web", "ios" or "miyoo"): {"kind",
+    """Build the project's game (only what changed) and export it as `kind` ("app", "window", "web", "ios", "miyoo" or "steamdeck"): {"kind",
     "folder", "path" (what to open), "files"}. `simd`: a browser build also carries the faster build for browsers
     with WebAssembly SIMD (web.SIMD), which the page plays where it can. The project's repository also gets the
     workflow that makes the same export on GitHub for each release (workflows.py)."""
-    from . import build, ios, miyoo, play, workflows
+    from . import build, ios, miyoo, play, steamdeck, workflows
 
     if kind not in KINDS:
         raise NetworkError(f"export as one of: {', '.join(KINDS)}")
@@ -322,10 +332,12 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
     files = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file())
     size = sum((folder / f).stat().st_size for f in files)
     log(f"exported {KINDS[kind]} to {path} ({len(files)} files, {size / 1e6:.1f} MB)"
-        + ("; your ROM is in it" if kind == "miyoo" and any(f.endswith("/rom.z64") for f in files)
+        + ("; your ROM is in it" if kind in ("miyoo", "steamdeck") and any(f.endswith("/rom.z64") for f in files)
            else "; the ROM isn't in it: the player chooses their own"))
     if kind == "miyoo":
         steps_for_player = miyoo.instructions(folder, title)
+    elif kind == "steamdeck":
+        steps_for_player = steamdeck.instructions(folder, title)
     elif kind == "ios":
         steps_for_player = ios.instructions(folder)
     elif kind == "web":
@@ -362,7 +374,7 @@ def export(net, slug: str, kind: str, log=print, simd: bool = False) -> dict:
 def export_from_save(repo: Path, kind: str, out: Path, ultralib: bool = False, log=print) -> Path:
     """The export of `kind` made from a save repository alone, as a GitHub runner makes it (workflows.py): what the
     build took from the project comes from the save's port/wasm/export.json, which an export from decompdecomp
-    wrote. No ROM: the Miyoo Mini's pack asks the player for theirs, and the apps run the game's C alone.
+    wrote. No ROM: the handhelds' packs ask the player for theirs, and the apps run the game's C alone.
     `ultralib`: install libultra's source (proprietary) when the save builds library code from it, as the user
     accepted in Setup where they exported. Returns the folder."""
     from .. import ultralib as ul

@@ -297,18 +297,18 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
   Its saves stay in the build folder (`game.eep`);
 - the app's **Export…** (Porting, beside Play; `port/wasm/export.py`): the game as something to keep and share,
   into the save repository's `port/wasm/export/` (git ignores it: it's built from the game). App, browser and iOS
-  exports ask for the player's own ROM. The local Miyoo export can include your ROM.
+  exports ask for the player's own ROM. The local Miyoo and Steam Deck exports can include your ROM.
   Each export also adds a GitHub Actions workflow to the project's repository (`port/wasm/workflows.py`) that makes
   the same export again on every published release, never on pull requests or pushes: the browser build
   (`export-web.yml`) is deployed to the repository's GitHub Pages (Settings > Pages > Source: GitHub Actions, once),
-  the others (`export-app-<system>.yml` on that system's runner, `export-window-macos.yml`, `export-miyoo.yml`, `export-ios.yml`)
+  the others (`export-app-<system>.yml` on that system's runner, `export-window-macos.yml`, `export-miyoo.yml`, `export-steamdeck.yml`, `export-ios.yml`)
   are attached to the release. A runner has the save alone, so the export writes what its build took from the
   project into `port/wasm/export.json` (the library code the host provides, library code's own names, the functions
   built from ultralib's C, the game's title and version) and the workflow runs
   `python -m decompnet.port.wasm export SAVE --kind KIND --out FOLDER` with the decompdecomp it was exported with
   (its commit, or its release tag); `--ultralib` installs libultra's source there when the save builds library code
   from it. Both files are committed (those paths alone) and never pushed. What a runner can't make it leaves out:
-  the Miyoo Mini's pack has no ROM (the player puts theirs in it), and the apps have no C recompiled from the ROM:
+  the handhelds' packs have no ROM (the player puts theirs in it), and the apps have no C recompiled from the ROM:
   a function with no C yet runs from the player's ROM, interpreted ("Functions with no C yet", below).
   - *Standalone app for this computer*: the native program with a launcher. On macOS a universal app (`Game.app`,
     macOS 11 and up, for Apple Silicon and Intel Macs alike, whichever kind exported it) that asks for the ROM once, keeps its saves in its own Application Support folder and opens the game
@@ -373,6 +373,16 @@ The host is the console's (`PortKit.wasm`; N64: `consoles/n64/port_wasm/host.c`)
     the host turns .v64 and .n64 into .z64 as it reads them). What to copy where shows as numbered steps under the
     export's log, not in it. Under qemu-arm a racing game
     boots to its language menu with the PC build's frames; on a device it is untried;
+  - *For Steam Deck (non-Steam game)*: the native build for the Steam Deck (SteamOS, 64-bit x86 Linux),
+    `port/wasm/steamdeck.py`. The game's C is the native build's own wasm2c output; the PC's own host (`live.c`,
+    wasm2c's 64-bit memory, `window/sdl.c`) is compiled again by the pinned Zig for `x86_64-linux-gnu` (glibc 2.28,
+    the Deck's Zen 2), from whichever computer exports, with the recompiled C as the app export has it. The game
+    plays in its window of its own (`PORT_WINDOW`), full screen from the start (`PORT_FULLSCREEN`), the Deck's
+    controls a gamepad through Steam Input. SDL3 isn't in the pack: `launch.sh` takes `lib/libSDL3.so.0` beside it,
+    the system's, else the Steam client's own copy (`~/.steam/root/ubuntu12_64/`). The pack is `<Game>/` (program,
+    `launch.sh`, the project's ROM as `rom.z64`) and a README; the player adds `launch.sh` to Steam as a non-Steam
+    game in Desktop Mode and plays it in Game Mode. A racing game links whole for it from a Mac; on a Deck it is
+    untried;
 - `PORT_LIVE=8642`: the game played in a browser (`live.c`). The host serves `http://127.0.0.1:8642/`, this
   machine only, which shows each frame and sends the keyboard or a gamepad to the first controller (arrows steer, X is A,
   Z is B, Enter is Start; a gamepad in the browser's standard layout), and can go full screen. A key held wins over `PORT_INPUT`, so a script can bring the game to a race and leave it to

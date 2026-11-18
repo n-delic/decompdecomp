@@ -164,6 +164,10 @@ int port_sdl_start(void) {
     sdl.SetRenderDrawColor(renderer, 0, 0, 0, 255);
     sdl.RenderClear(renderer);
     sdl.RenderPresent(renderer);
+    /* PORT_FULLSCREEN=1: the whole screen from the start (the Steam Deck's launcher, steamdeck.py), for a handheld
+       with no key to make it so; F still leaves it */
+    const char *full = getenv("PORT_FULLSCREEN");
+    if (full && *full && *full != '0') sdl.SetWindowFullscreen(window, true);
     fps_since = sdl.GetTicksNS();
     fps_frames = 0;
     fprintf(stderr, "playing in a window of its own (SDL3)\n");

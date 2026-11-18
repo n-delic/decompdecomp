@@ -1177,7 +1177,7 @@ Left:
 - the browser build for consoles other than the N64: "—" until their kits have a host.
 
 Each export also adds a workflow to the project's repository that makes it again on GitHub for every published
-release (never pull requests): the browser build to GitHub Pages, the apps and the Miyoo Mini's pack attached to the
+release (never pull requests): the browser build to GitHub Pages, the apps and the handhelds' packs attached to the
 release (`port/wasm/workflows.py`, `python -m decompnet.port.wasm export`). Left: the browser build's workflow run
 end to end on GitHub (the command it runs is tried from a fresh clone of a racing game's save); the apps on a
 runner have no recompiled C (it comes from the ROM): a function with no C yet runs from the player's ROM, interpreted
@@ -1221,6 +1221,12 @@ host compiled for the handheld's 32-bit ARM by the pinned Zig, the game's memory
 stock OS, Onion and MinUI. A racing game boots to its language menu under qemu-arm with the PC build's frames.
 Left: the first run on a device (speed above all: next, "The Miyoo Mini export at full speed"), Allium and spruce's
 launchers, an icon, save states and the in-game menu Miyoo64's ports have.
+
+The Steam Deck is a fourth (Export… → For Steam Deck, `port/wasm/steamdeck.py`): the PC's own host with its SDL3
+window, compiled for x86-64 Linux by the pinned Zig from any computer, full screen, packed as a folder to add to Steam
+as a non-Steam game, SDL3 taken from the Steam client the Deck already has. A racing game links whole for it from a
+Mac. Left: the first run on a Deck (and on a Linux PC through the same pack), Steam artwork and a controller layout
+for the shortcut, the Deck's gyro and back buttons, and a pinned SDL3 in the pack for a Deck whose Steam has none.
 
 ### A finished game runs as a WebAssembly build
 

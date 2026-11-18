@@ -14,7 +14,7 @@ import yaml
 from decompnet.network import NetworkError
 from decompnet.port.wasm import export, workflows
 
-KINDS = [("web", "darwin"), ("miyoo", "darwin"), ("app", "darwin"), ("app", "linux"), ("app", "win32"),
+KINDS = [("web", "darwin"), ("miyoo", "darwin"), ("steamdeck", "darwin"), ("app", "darwin"), ("app", "linux"), ("app", "win32"),
          ("window", "darwin"), ("ios", "darwin"), ("ios", "linux"), ("ios", "win32")]
 
 
@@ -44,12 +44,13 @@ def test_the_browser_build_deploys_to_github_pages():
 
 @pytest.mark.parametrize("kind, platform, runner, asset", [
     ("miyoo", "darwin", "ubuntu-latest", "Rally-64-miyoo-miyoo.tar.gz"),
+    ("steamdeck", "win32", "ubuntu-latest", "Rally-64-steamdeck-steamdeck.tar.gz"),
     ("ios", "darwin", "ubuntu-latest", "Rally-64-ios-ios.tar.gz"),
     ("app", "darwin", "macos-latest", "Rally-64-app-macos.zip"),
     ("app", "linux", "ubuntu-latest", "Rally-64-app-linux.tar.gz"),
     ("app", "win32", "windows-latest", "Rally-64-app-windows.zip")])
 def test_the_others_are_attached_to_the_release(kind, platform, runner, asset):
-    """The apps build on the system they were exported for, the Miyoo Mini's pack on Linux; each is attached to the
+    """The apps build on the system they were exported for, the handhelds' packs on Linux; each is attached to the
     release that started it."""
     _, text = workflows.workflow(kind, platform, "Rally 64", ".", False)
     data = yaml.safe_load(text)

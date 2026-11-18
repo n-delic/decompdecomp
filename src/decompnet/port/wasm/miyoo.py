@@ -22,7 +22,6 @@ buttons as keys, sound through the audioserver, both cores at full clock) come f
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import stat
@@ -59,50 +58,16 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
         raise NetworkError(f"{consoles.get(console).name} has no Miyoo Mini host yet")
     native.Progress(log, steps).start(STEPS[-1])
     log("building the game for the Miyoo Mini (ARM, 32-bit Linux)")
-    zig = toolchains.binary("zig")
     wabt = toolchains.ensure("wabt", log=log)
     out = repo / "port" / "wasm" / "build"
-    dest = out / "miyoo"
-    (dest / "obj").mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "ZIG_GLOBAL_CACHE_DIR": str(out / "zig-cache"), "ZIG_LOCAL_CACHE_DIR": str(out / "zig-cache")}
     rt = wabt / "share" / "wabt" / "wasm2c"
     units = [*sorted((out / "c").glob("game_*.c")), rt / "wasm-rt-impl.c", rt / "wasm-rt-exceptions-impl.c",
              *(p for p in sorted(host.glob("*.c")) if p.name != "live.c"), *native.game_host(host, repo),
              *sorted((host / "miyoo").glob("*.c")),
              out / "funcs.c", out / "stubs.c", out / "interp.c"]
-    # the recompiled C the native build just prepared (and its interp.c and stubs.c leave to it), as that build
-    # compiles it: only when this build has it, since out/recomp stays behind from an earlier one
-    recompiled = []
-    if recomp and Path(recomp["folder"], "recomp.json").is_file():
-        recompiled = [*sorted((out / "recomp").glob("rec_*.c")), out / "recomp" / "bridges.c"]
-    units += recompiled
-    dirs = [wabt / "include", rt, out / "c"]
-    quiet = ["-w", "-I", out / "recomp"]  # thousands of generated functions: warnings off
-    includes = [a for d in dirs for a in ("-I", d)]
-    files = native._Files()
-
-    def compile_unit(unit: Path) -> str | None | bool:
-        obj = dest / "obj" / (unit.stem + ".o")
-        extra = quiet if unit in recompiled else []
-        key = files.key(unit, [*dirs, out / "recomp"], zig, *TARGET, *FLAGS, *extra)
-        if native._fresh(obj, key):
-            return False
-        native._unstamp(obj)
-        done = native._run([zig, "cc", *TARGET, *FLAGS, *extra, *includes, "-c", unit, "-o", obj], log, env=env)
-        if done.returncode:
-            return (done.stderr.strip().splitlines() or ["failed"])[0]
-        native._stamp(obj, key)
-        return None
-    if failed := native._parallel(units, compile_unit, log, "files for the Miyoo Mini", None):
-        raise NetworkError("building for the Miyoo Mini failed: " + "; ".join(failed[:3]))
-    program = dest / "game"
-    done = native._run([zig, "cc", *TARGET, "-o", program, *(dest / "obj" / (u.stem + ".o") for u in units),
-                        "-fno-pie", "-no-pie", f"-Wl,--image-base=0x{IMAGE_BASE:X}", "-lpthread", "-ldl", "-lm"],
-                       log, env=env)
-    if done.returncode:
-        raise NetworkError(f"linking for the Miyoo Mini failed: {done.stderr.strip()[-600:]}")
-    log(f"built {program} for the Miyoo Mini ({program.stat().st_size / 1e6:.1f} MB)")
-    return program
+    return native.cross_host(repo, "miyoo", "the Miyoo Mini", units, TARGET, FLAGS,
+                             ["-fno-pie", "-no-pie", f"-Wl,--image-base=0x{IMAGE_BASE:X}", "-lpthread", "-ldl", "-lm"],
+                             recomp, log)
 
 
 LAUNCH = r"""#!/bin/sh
