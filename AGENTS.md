@@ -194,6 +194,26 @@ project restored from them), `app/readable.py` (polishing matched code), `app/kn
 shared once two models agree), `app/drafts.py` + `app/permute.py` (background drafts and the permuter),
 `structs.py` (struct layouts from loads and stores), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, plain scripts loaded in order; `js/base.js` says which is which).
 
+## A reference for what the console does (N64)
+
+There is a reference emulator: mupenRE, RetroReversing's mupen64plus core with its debugger
+(`src/decompnet/consoles/n64/emulator/`, pinned as `[mupenre]` in toolchains.toml and installed under the toolchains
+folder; `emulator.installed()` says where). Reach for it before guessing whether the port, a decompiled function or
+the renderer is wrong: it runs the user's own ROM headless with a scripted controller, about 300 retraces a second.
+- What the game does: RAM at chosen retraces (`--dump VI:FILE`) or as the game hands over its nth frame
+  (`frame_dumps`); which code writes an address (`--watch`); what a function is called with (`--break`); recorded
+  calls for N64Recomp's differential tests. `python -m decompnet.consoles.n64.emulator ROM --vis N ...`,
+  docs/PORTING.md and docs/N64RECOMP.md.
+- What the console draws: its video plugin draws nothing, but `tools/n64_frame_compare.py` finds the graphics tasks in
+  its RAM and draws them with the port's renderer (which matches angrylion: `tools/n64_rdp_compare.py`), beside the
+  port's frame at the same retrace (`--vis`) or game frame (`--frames`). The two runs drift (the port loads in no
+  time and never drops a frame), so pair moments by their images (`--port-vis`, `--port-input`).
+- It found, for example, that a racing game's upside-down world was its anti-piracy reacting to the port's boot,
+  and that a purple patch on its island is the game's own decal.
+Its frontend and plugins (`frontend.c`, `input.c`, `video.c`) are rebuilt in the installed folder when they change,
+and that folder is the user's live app's too: test a change to them against a copy (`DECOMPNET_TOOLCHAINS=<scratch>`
+holding a copy of `mupenre/`), as with any other experiment.
+
 ## Compiler matching evidence
 
 When a match reveals a reusable compiler behaviour, update `docs/COMPILER_MATCHING_LEARNINGS.md`.

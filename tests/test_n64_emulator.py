@@ -27,9 +27,11 @@ def test_the_frontends_report_is_read():
            "watch 2452 8002DC78 8002DB3C 00000001 00000000 802A4594 00000003 802A4594\n"
            "break 2452 8002E148 80023100 800B3418 802C88EC 800B3450 801C16C0 00000000 00000800 10001C1C 802C7EC0 00000000\n"
            "dumped 2500 /tmp/a b/vi2500.bin\n"
+           "framedump 900 /tmp/a b/frame900.bin\n"
            "stopped 2525\n")
     run = emulator.parse(log)
     assert run.vis == 2525 and run.dumps == {2500: emulator.Path("/tmp/a b/vi2500.bin")}
+    assert run.frame_dumps == {900: emulator.Path("/tmp/a b/frame900.bin")}
     watch, brk = run.hits
     assert (watch.kind, watch.vi, watch.pc, watch.ra, watch.v0, watch.words) == ("watch", 2452, 0x8002DC78, 0x8002DB3C,
                                                                                 0x802A4594, ())
@@ -57,6 +59,7 @@ def test_a_run_hands_the_frontend_its_requests_and_keeps_a_cut_short_report(tmp_
     script.write_text("#!/bin/sh\n"
                       'echo "args $# $5" >&2\n'
                       'echo "env $EMU_VIS $EMU_WATCH $EMU_BREAK $EMU_DUMP $EMU_8MB" >&2\n'
+                      'echo "frames $EMU_FRAME_DUMP $EMU_INPUT_CLOCK" >&2\n'
                       'echo "break 0 80000400 0 0 0 0 0 0 1 2 3 4" >&2\n'
                       'if [ "$EMU_VIS" = 9 ]; then sleep 30; fi\n'
                       'echo "stopped $EMU_VIS" >&2\n')
@@ -73,6 +76,9 @@ def test_a_run_hands_the_frontend_its_requests_and_keeps_a_cut_short_report(tmp_
     assert run.vis == 3 and not run.timed_out and run.hits[0].pc == 0x80000400
     assert f"args 5 {rom}" in seen[-1]
     assert f"env 3 2A45C8:4 8002E148 2:{tmp_path / 'd.bin'} 1" in seen[-1]  # watches physical, breaks virtual
+    frames = emulator.run(rom, 3, frame_dumps={900: tmp_path / "f.bin"}, input_clock="frames", timeout=20)
+    assert not frames.timed_out
+    assert f"frames 900:{tmp_path / 'f.bin'} frames" in seen[-1]  # the game's 900th frame, input timed in frames
     cut = emulator.run(rom, 9, timeout=2)
     assert cut.timed_out and cut.vis == 0 and cut.hits[0].words == (1, 2, 3, 4)
 

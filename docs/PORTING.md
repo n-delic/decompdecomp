@@ -504,11 +504,14 @@ port's renderer, side by side with their difference:
 uv run python tools/n64_frame_compare.py baserom.z64 --port port/wasm/build/game --vis 1750 --input @menus.txt --out report
 ```
 
-Both frames come from the same renderer, so a difference is the game running differently, not the drawing. The
-port runs ahead of the console (its loads take no time, it never drops a frame): `--port-vis` pairs each of the
-console's retraces with the port's at the same moment, and `--port-input` gives the port its own script. Even
-aligned, what moves with time (scrolling clouds, a pulsing highlight) differs; menus where the game waits compare
-best.
+Both frames come from the same renderer, so a difference is the game running differently, not the drawing.
+`--frames` compares the game's own frames instead of retraces: the nth graphics task it hands over, the RAM written
+as it is handed over (the emulator's video plugin, `EMU_FRAME_DUMP`; the port's `PORT_FRAME_DUMPS`) and the input
+timed the same way (`EMU_INPUT_CLOCK` / `PORT_INPUT_CLOCK=frames`). Neither clock makes the runs one: the console
+drops frames and spends retraces loading, the port doesn't, so a game timed by retraces is elsewhere at the same
+frame, and further on at the same retrace. `--port-vis` pairs each of the console's retraces with the port's at the
+same moment, `--port-input` gives the port its own script; what moves with time (scrolling clouds, a pulsing
+highlight) still differs, and menus where the game waits compare best.
 
 When the port behaves differently from the console, the N64 reversing emulator (mupenRE, under Compilers & tools →
 Tools; `consoles/n64/emulator`) runs the user's own ROM headless with the same input script, timed in vertical

@@ -19,7 +19,9 @@
    EMU_MAX=n           report at most n hits (200)
    EMU_8MB=1           the Expansion Pak's 8 MB (default 4 MB, what the WebAssembly port's host gives a game)
    EMU_CONFIG=folder   the core's configuration folder (a scratch one: nothing is saved between runs)
-   EMU_INPUT           the input plugin's script (input.c)
+   EMU_INPUT           the input plugin's script (input.c); EMU_INPUT_CLOCK=frames times it in the game's frames
+   EMU_FRAME_DUMP=n:path,…  RDRAM dumps, each as the game hands over its nth graphics task (the video plugin, video.c;
+                       reported as "framedump <n> <path>")
    EMU_RECORD=dir:n    at the first n hits of each execution breakpoint (from EMU_FROM), the machine's state:
                        dir/<address>_<i>.state (one line: pc, the 32 GPRs, hi and lo as 64-bit hex, then the 32 FPRs'
                        single-precision words) and dir/<address>_<i>.rdram (RDRAM, big-endian). A breakpoint goes once
@@ -248,6 +250,7 @@ int main(int argc, char **argv) {
     if (!rom || fread(rom, 1, (size_t)size, f) != (size_t)size) { fprintf(stderr, "error can't read the ROM\n"); return 1; }
     fclose(f);
     if (do_command(M64CMD_ROM_OPEN, (int)size, rom) != M64ERR_SUCCESS) { fprintf(stderr, "error the core refused the ROM\n"); return 1; }
+    setenv("EMU_VIDEO_PLUGIN", argv[4], 1); /* where the input plugin finds the frame count (EMU_INPUT_CLOCK) */
     plugin(argv[4], core, M64PLUGIN_GFX); /* the core wants video, audio, input, then the RSP */
     plugin(argv[3], core, M64PLUGIN_INPUT);
     plugin(argv[2], core, M64PLUGIN_RSP);

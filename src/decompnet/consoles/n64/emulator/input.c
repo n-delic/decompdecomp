@@ -1,7 +1,8 @@
 /* decompdecomp's scripted input plugin for the reversing emulator (consoles/n64/emulator): the first controller's
    buttons and stick from EMU_INPUT, "vi:BUTTON+BUTTON+SX=n+SY=n,vi:..." (the port's PORT_INPUT format, timed in
-   vertical interrupts since boot as the core counts them, DecompGetViCount). The last entry at or before the
-   current VI wins. */
+   vertical interrupts since boot as the core counts them, DecompGetViCount; with EMU_INPUT_CLOCK=frames, in the
+   game's frames, the graphics tasks the video plugin has seen, DecompFrames). The last entry at or before the
+   current time wins. */
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,15 @@ EXPORT void CALL GetKeys(int control, BUTTONS *keys) {
     static const struct { const char *name; int bit; } names[] = {
         {"RIGHT", 0}, {"LEFT", 1}, {"DOWN", 2}, {"UP", 3}, {"START", 4}, {"Z", 5}, {"B", 6}, {"A", 7},
         {"CR", 8}, {"CL", 9}, {"CD", 10}, {"CU", 11}, {"R", 12}, {"L", 13}};
-    unsigned int now = vi_count();
+    static unsigned int (*frames)(void);
+    static int clock_read;
+    if (!clock_read) { /* EMU_INPUT_CLOCK=frames: the game's frames (the video plugin's count), not retraces */
+        clock_read = 1;
+        const char *clock = getenv("EMU_INPUT_CLOCK"), *video = getenv("EMU_VIDEO_PLUGIN");
+        void *h = clock && !strcmp(clock, "frames") && video ? dlopen(video, RTLD_NOW | RTLD_NOLOAD) : NULL;
+        if (h) frames = (unsigned int (*)(void))dlsym(h, "DecompFrames");
+    }
+    unsigned int now = frames ? frames() : vi_count();
     while (*p) {
         char *end;
         unsigned long at = strtoul(p, &end, 10);

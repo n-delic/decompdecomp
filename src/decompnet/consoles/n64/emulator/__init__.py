@@ -160,6 +160,7 @@ class Run:
     errors: list[str] = field(default_factory=list)
     timed_out: bool = False  # stopped by the timeout before its last VI (a game that never starts its video counts none)
     recorded: list[Path] = field(default_factory=list)  # EMU_RECORD: each call's <path>.state and <path>.rdram
+    frame_dumps: dict[int, Path] = field(default_factory=dict)  # EMU_FRAME_DUMP: {frame: file}
 
 
 def parse(log: str) -> Run:
@@ -175,6 +176,8 @@ def parse(log: str) -> Run:
                                 tuple(numbers[7:])))
         elif parts[0] == "dumped" and len(parts) >= 3:
             out.dumps[int(parts[1])] = Path(line.split(None, 2)[2])
+        elif parts[0] == "framedump" and len(parts) >= 3:
+            out.frame_dumps[int(parts[1])] = Path(line.split(None, 2)[2])
         elif parts[0] == "recorded" and len(parts) >= 4:
             out.recorded.append(Path(line.split(None, 3)[3]))
         elif parts[0] == "stopped" and len(parts) == 2:
@@ -193,16 +196,22 @@ def installed() -> Path | None:
 def run(rom: Path, vis: int, *, inputs: str = "", dumps: dict[int, Path] | None = None,
         watches: list[tuple[int, int]] | tuple = (), breaks: list[int] | tuple = (), report_from: int = 0,
         max_hits: int = 200, expansion_pak: bool = False, timeout: float = 1800,
-        record: tuple[Path, int] | None = None, stop=lambda: False, on_record=None, pending: int = 0) -> Run:
+        record: tuple[Path, int] | None = None, stop=lambda: False, on_record=None, pending: int = 0,
+        frame_dumps: dict[int, Path] | None = None, input_clock: str = "vi") -> Run:
     """Run the user's ROM in the reversing emulator for `vis` vertical interrupts. `inputs`: the input script
-    (input.c); `dumps`: {vi: file}; `watches`: (physical address, length) write breakpoints; `breaks`: virtual
+    (input.c), timed in retraces or, with `input_clock` "frames", in the game's frames (its graphics tasks); `dumps`:
+    {vi: file}; `frame_dumps`: {frame: file}, RDRAM as the game hands over that graphics task; `watches`: (physical address, length) write breakpoints; `breaks`: virtual
     addresses to stop at (breakpoints need the slower pure interpreter)."""
     folder = installed()
     if folder is None:
         raise EmulatorError("The reversing emulator isn't installed: install mupenRE under Compilers & tools → Tools (it builds from its source).")
     env = {**os.environ, "EMU_VIS": str(vis), "EMU_MAX": str(max_hits), "EMU_FROM": str(report_from)}
-    for key in ("EMU_INPUT", "EMU_DUMP", "EMU_WATCH", "EMU_BREAK", "EMU_8MB"):
+    for key in ("EMU_INPUT", "EMU_DUMP", "EMU_WATCH", "EMU_BREAK", "EMU_8MB", "EMU_FRAME_DUMP", "EMU_INPUT_CLOCK"):
         env.pop(key, None)
+    if input_clock == "frames":
+        env["EMU_INPUT_CLOCK"] = "frames"
+    if frame_dumps:
+        env["EMU_FRAME_DUMP"] = ",".join(f"{n}:{Path(p).resolve()}" for n, p in sorted(frame_dumps.items()))
     if inputs:
         env["EMU_INPUT"] = inputs
     if dumps:
