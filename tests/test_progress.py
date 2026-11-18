@@ -2681,8 +2681,9 @@ def test_tool_foreground_scope_resets_on_dispatch_error_and_keeps_sync_outside_r
         assert judged==[('f','good external import')]
         raise NetworkError('synthetic tool failure')
     monkeypatch.setattr(tools,'_dispatch',dispatch)
+    # (a work tool that isn't a compile reads the whole folder first; a compile reads only what its judge does)
     with pytest.raises(NetworkError,match='synthetic tool failure'):
-        tools._invoke(net,agent,'game','compile_and_diff',{'function':'f'})
+        tools._invoke(net,agent,'game','share_knowledge',{'function':'f'})
     assert not getattr(net.progress.local,'foreground',False)
 
 
@@ -3484,13 +3485,13 @@ def test_a_tool_call_reads_the_folder_once_per_project(project, monkeypatch):
     assert len(runs) >= 5  # (outside a tool call every sync runs, and its own lookup syncs again)
 
 
-@pytest.mark.parametrize('tool,expected', [('compile_and_diff', 0), ('get_function', 1)])
+@pytest.mark.parametrize('tool,expected', [('compile_and_diff', 0), ('get_function', 1), ('resolve_addresses', 0)])
 def test_a_judge_inside_a_tool_call_reads_the_folder_through_the_calls_own_checks(project, monkeypatch, tool, expected):
     """A compile read a 9,900-file save fully four times: the tool call before and after its work, and its judge
-    before and after again, milliseconds apart. The judge now relies on the call's checks; a read-only tool makes
-    none after its work, so a judge inside one still checks after. Neither checks after a judge that changed nothing
-    the saved files show (Progress.unchanged); a match is published. A compile's check before reads only what its
-    judge reads (Progress.check_for_judging)."""
+    before and after again, milliseconds apart. The judge now relies on the call's checks. A read-only tool reads
+    the database as it is, with no check at all (get_function and get_context read the folder first:
+    READS_SAVED_FILES); a compile's check before reads only what its judge reads
+    (Progress.check_for_judging), and the project's autosave worker publishes what it wrote."""
     from decompnet.app import tools
     net, _, _ = project
     worker = net.progress
@@ -3669,7 +3670,7 @@ def test_a_compile_tool_call_checks_only_what_its_judge_reads(project, monkeypat
     monkeypatch.setattr(tools, "_dispatch", lambda *_: "judged")
     assert tools._invoke(net, agent, "game", "compile_and_diff", {"function": "f"}) == "judged"
     assert forced == []
-    tools._invoke(net, agent, "game", "add_note", {"function": "f"})
+    tools._invoke(net, agent, "game", "share_knowledge", {"function": "f"})
     assert forced == [1], "other work tools still check the whole folder first"
 
 
@@ -3795,3 +3796,67 @@ def test_an_automatic_resume_only_uses_c_judged_with_todays_header(project):
     current = match_reconciliation.candidates(net, proj, fn, {}, current_header=True)
     assert current and all(header == "today" for _, header, _ in current)
     assert [origin for *_, origin in current] == ["match kept as best attempt"]
+
+
+def test_a_read_only_tool_never_waits_for_a_recheck(project, monkeypatch):
+    """read_data waited 601 s and resolve_addresses 188 s behind a full recheck of the folder, for nothing they read."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decompnet.app import tools
+    from decompnet.app.progress import _Recheck
+    net, folder, _ = project
+    agent, _ = net.local_agent("you")
+    net.progress.rechecking["game"] = _Recheck(folder, net.progress._signature(folder), ready=False)
+    monkeypatch.setattr(tools, "_dispatch", lambda *a: "read")
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            for tool in ("resolve_addresses", "read_data", "guess_struct", "last_diff"):
+                assert pool.submit(tools._invoke, net, agent, "game", tool, {"function": "f"}).result(timeout=5) == "read"
+    finally:
+        net.progress.rechecking.pop("game", None)
+
+
+def test_a_compile_leaves_publishing_to_the_autosave_and_a_header_edit_publishes_at_once(project, monkeypatch):
+    """Eight helpers each publishing their own call's change held the project's lock a third of a compile's time."""
+    from decompnet.app import tools
+    net, folder, _ = project
+    agent, _ = net.local_agent("you")
+    forced = []
+    real = net.progress.sync
+    monkeypatch.setattr(net.progress, "sync", lambda slug, **kw: (forced.append(1) if kw.get("force") else None) or real(slug, **kw))
+
+    def matching(*_):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source='int f(){return 3;}',best_score=4 WHERE name='f'")
+        return "better"
+    monkeypatch.setattr(tools, "_dispatch", matching)
+    assert tools._invoke(net, agent, "game", "compile_and_diff", {"function": "f"}) == "better"
+    assert forced == [], "the autosave worker publishes it"
+    assert not any("return 3" in p.read_text() for p in folder.rglob("*.c"))
+    net.progress.sync("game", force=True)  # (what the worker does)
+    assert any("return 3" in p.read_text() for p in folder.rglob("*.c"))
+    forced.clear()
+
+    def edited(*_):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source='int f(){return 5;}',best_score=3 WHERE name='f'")
+        return "edited"
+    monkeypatch.setattr(tools, "_dispatch", edited)
+    tools._invoke(net, agent, "game", "edit_context", {})
+    assert len(forced) >= 2, "checked before and published after (at most every DEFER_SECONDS inside a call)"
+
+
+def test_the_check_before_a_judge_ignores_other_functions_new_files(project):
+    net, folder, _ = project
+    worker = net.progress
+    (folder / "src").mkdir(exist_ok=True)
+    worker.sync("game", force=True)  # (the folder as acknowledged)
+    (folder / "src" / "another.c").write_text("int another(){return 0;}\n")
+    calls = []
+    real = worker.sync
+    worker.sync = lambda slug, **kw: calls.append(kw) or real(slug, **kw)
+    try:
+        assert worker.check_for_judging("game") is False and calls == []
+        assert worker.judge_checks.get("narrow", 0) >= 1
+    finally:
+        del worker.sync

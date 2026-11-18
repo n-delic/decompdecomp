@@ -7,7 +7,10 @@ and the manifest, while a claim, an event or an attempt that didn't improve the 
 validated before its files or database state are changed.
 
 Change detection guarantee: a non-forced check compares the manifest's and the three folders' stats and may skip an
-in-place file edit until the next periodic deep autosave check (at most 15 seconds); a forced check (judging, tools, routes, explicit saves, periodic deep autosave) compares
+in-place file edit until the next periodic deep autosave check (at most 15 seconds). Agents' tool calls don't publish
+their own changes: the project's autosave worker does, every few seconds (tools.PUBLISH_AFTER lists the few that do);
+a compile, claim or release checks only the manifest and headers first (check_for_judging), and most read-only tools
+read the database as it is. A forced check (judging outside a tool call, other tools, routes, explicit saves, periodic deep autosave) compares
 every file's name, size and mtime, so an editor's in-place write (which leaves its directory's mtime alone) is seen
 before code is judged or a write is acknowledged. Read-only UI views use the current database and show when
 verification is running. A file hash in the baseline is always compared for every file a
@@ -1382,31 +1385,42 @@ class Progress:
 
         A forced check stats every saved file (2,100 on an N64 game: 0.3 to 1.8 s a compile under load). The folder's
         change watch spares that, but on macOS it stops for the session once a fence takes over 2 s, which a busy
-        machine does. A judge's result depends only on the manifest and the headers, so those are stat'ed (with the
-        folders' own times, which a pull or a new file changes) and compared with the last acknowledged check; any
-        difference, or no check on record, runs the full one. An in-place edit of another function's file is read by
-        the next full check (a tool that isn't a compile, the periodic deep autosave check every 15 s); the folder's
-        revision still guards a result against a pull made meanwhile (judging, check_result)."""
+        machine does. A judge's result depends only on the manifest and the headers, so those are stat'ed and compared
+        with the last acknowledged check; any difference, or no check on record, runs the full one. src/ and best/ are
+        left out: with eight helpers on one game a match lands every few seconds, and each changed those folders'
+        times, so the full check ran before nearly every compile; a pull changes the manifest too. An edit of another
+        function's file is read by the next full check (a tool that isn't a compile, the periodic deep autosave check
+        every 15 s); the folder's revision still guards a result against a pull made meanwhile (judging,
+        check_result). `judge_checks` counts how often each way was taken."""
         self._check_paused(slug)  # (a pause the user chose holds judges as it holds the full check)
         cached = self.signatures.get(slug)
         if cached is not None and slug not in self.rechecking and slug not in self.blocked:
             try:
                 folder = saves.default_folder(self.net, slug)
-                wanted = {*saves.TOP_FILES, "src", "best", *self.JUDGE_FOLDERS}
+                wanted = {*saves.TOP_FILES, *self.JUDGE_FOLDERS}
                 kept = tuple(item for item in cached if item[0] in wanted
                              or item[0].split("/", 1)[0] in self.JUDGE_FOLDERS)
                 if kept and self._judge_signature(folder) == kept:
+                    self._judge_check("narrow")
                     return False
             except (OSError, NetworkError):
                 pass
+        self._judge_check("full" if cached is not None else "no full check on record")
         return self.sync(slug, force=True)
+
+    def _judge_check(self, way: str) -> None:
+        """Count which check a judge made, and log the counts now and then: whether the narrow check holds."""
+        counts = self.__dict__.setdefault("judge_checks", {})
+        counts[way] = counts.get(way, 0) + 1
+        if sum(counts.values()) % 500 == 0:
+            log.info("Checks before judging: %s", ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
 
     @classmethod
     @phase('progress_stat')
     def _judge_signature(cls, folder: Path) -> tuple:
         """_signature's items for the manifest, the folders, and the files in JUDGE_FOLDERS only."""
         items = []
-        for name in (*saves.TOP_FILES, "src", "best", "include"):
+        for name in (*saves.TOP_FILES, *cls.JUDGE_FOLDERS):
             path = folder / name
             try:
                 info = os.stat(path, follow_symlinks=False)

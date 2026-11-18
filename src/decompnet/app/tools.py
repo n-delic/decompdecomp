@@ -688,8 +688,21 @@ READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
                        "port_readiness", "get_data_unit", "check_for_pc", "watch_in_emulator"})
 
+# Read-only tools that read a function's saved C or the headers: they read the saved folder first (an edit made there
+# is imported and judged before it's shown) and wait during a recheck for its evidence. Other reads don't.
+READS_SAVED_FILES = frozenset({"get_function", "get_context"})
+
+# Tools whose change lands in files the user may open or edit next (a header, a name everywhere, a layout): published
+# before the call answers. Every other tool's change is published by the project's autosave worker.
+PUBLISH_AFTER = frozenset({"edit_context", "rename_symbol", "split_function", "join_functions", "edit_file",
+                           "split_file", "tidy_file", "redraft"})
+
 # Tools whose work is judging a candidate: the check before them reads only what a judge reads.
-JUDGE_TOOLS = frozenset({"compile_and_diff", "compile_patch", "compile_variants", "compile_family", "try_local_repairs"})
+JUDGE_TOOLS = frozenset({"compile_and_diff", "compile_patch", "compile_variants", "compile_family", "try_local_repairs",
+                         "try_compiler", "compiler_experiments",
+                         # (they read and write the database, not the saved files: release_function waited 3.2 s
+                         # a call for the project's lock, behind other helpers' full checks)
+                         "claim_function", "release_function", "add_note"})
 
 ROM_ONLY = {"watch_in_emulator","compare_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
@@ -866,17 +879,27 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
     # Enter before this wrapper's sync, not only inside the engine's attempt. Revisions are read once per call until
     # a write (Store.versions_held).
     from ..store import Store
+    progress = getattr(net, 'progress', None)
+    if progress is not None and name in READ_ONLY and name not in READS_SAVED_FILES:
+        # A read answers from the database as it is: it waited for the folder's checks and rechecks like a write
+        # (read_data 601 s, resolve_addresses 188 s behind a full recheck), for nothing it reads.
+        with _tool_foreground(net, agent, slug, name, args), Store.versions_held(), progress.view():
+            return _dispatch(net,agent,slug,name,args)
     with _tool_foreground(net, agent, slug, name, args), Store.versions_held():
-        progress = getattr(net, 'progress', None)
         if progress is not None:
             # (a compile reads only the manifest and the headers: Progress.check_for_judging)
             progress.check_for_judging(slug) if name in JUDGE_TOOLS else progress.sync(slug, force=True)
-        after = name not in READ_ONLY
-        before = progress.publish_token(slug) if progress is not None and after else None
-        with progress.checked_around(slug, after=after) if progress is not None else nullcontext():
+        publish = name in PUBLISH_AFTER
+        before = progress.publish_token(slug) if progress is not None and publish else None
+        # `after`: this call's publishing is taken care of (here, or by the project's autosave worker), so a judge
+        # inside doesn't make its own check after.
+        with progress.checked_around(slug, after=True) if progress is not None else nullcontext():
             result = _dispatch(net,agent,slug,name,args)
-        # (a call that changed nothing the saved files show, most compiles, has nothing to publish: Progress.unchanged)
-        if progress is not None and after and not progress.unchanged(slug, before):
+        # What a call wrote is in the database when it answers; the project's autosave worker writes it to the saved
+        # folder a few seconds later, many helpers' changes at once (Progress.deferring). Each call publishing its own
+        # held the project's lock: with eight helpers on a game, a third of a compile's time was spent waiting for
+        # it or writing files. The tools whose change the user edits next in the folder still publish at once.
+        if progress is not None and publish and not progress.unchanged(slug, before):
             progress.sync(slug, force=True)
         return result
 
