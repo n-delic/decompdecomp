@@ -506,3 +506,32 @@ def test_restore_reuses_adjacent_demo_game_with_independent_project_database(wor
     proj = fresh.project_row(result['slug'])
     assert fresh.project_store(proj['id']) is not fresh.store
     assert fresh.knowledge._store(proj['id']).one("SELECT text FROM knowledge WHERE status='accepted'")['text'] == 'Preserve verified knowledge'
+
+
+def test_concurrent_publishes_never_share_a_temporary_file(tmp_path, monkeypatch):
+    """A shared `<name>.tmp` let a short manifest written over a long one keep the long one's last bytes, so
+    progress/decompdecomp.json ended in a stray `}` (Extra data) and Commit saved progress failed."""
+    from decompnet.app import saves
+    target = tmp_path / "decompdecomp.json"
+    long_text, short_text = '{"a": 1}\n}\n', '{"a": 1}\n'
+    opened = []
+    real_open = saves.os.open
+
+    def recording_open(path, *args, **kwargs):
+        opened.append(Path(path).name)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(saves.os, "open", recording_open)
+    saves._replace_text(target, long_text)
+    saves._replace_text(target, short_text)
+    assert target.read_text(encoding="utf-8") == short_text
+    assert len(set(opened)) == 2 and all(name.endswith(".tmp") and name.startswith(".") for name in opened)
+    assert [p.name for p in tmp_path.iterdir()] == ["decompdecomp.json"]
+    assert target.stat().st_mode & 0o777 == 0o666 & ~_umask()
+
+
+def _umask():
+    import os
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask

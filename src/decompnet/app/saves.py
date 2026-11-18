@@ -19,11 +19,13 @@ import hashlib
 import itertools
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
+import uuid
 import weakref
 from collections import deque
 from contextlib import closing, nullcontext
@@ -254,6 +256,30 @@ def unexpected_files(folder: Path, names, expected: dict[str, str], *, first: bo
     return found
 
 
+def _replace_text(path: Path, text: str) -> None:
+    """Write `path` whole through a temporary file of this write's own, then rename it into place.
+
+    A shared `<name>.tmp` let two saves of one project interleave in the same temporary file: each wrote from the
+    start through its own handle, so a shorter manifest written over a longer one kept the longer one's last bytes,
+    and progress/decompdecomp.json ended in a stray `}` that every later sync refused (Extra data). The short random
+    name also stays under the 255-byte limit for long source names; it ends in `.tmp`, which the progress scanners
+    skip. Created with 0666 so the umask, not the temporary file, sets the saved file's permissions."""
+    while True:
+        temporary = path.with_name(f".{uuid.uuid4().hex[:12]}.tmp")
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            break
+        except FileExistsError:
+            continue
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | None = None,
              expected: dict[str, str] | None = None, *, chosen: bool = False, guarded=()) -> bool:
     """Only change owned files whose contents changed; keep git and contributors' other files intact.
@@ -307,9 +333,7 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
             if path.exists() and path.read_text(encoding="utf-8") == text:
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(path.name + ".tmp")
-            temporary.write_text(text, encoding="utf-8")
-            temporary.replace(path)
+            _replace_text(path, text)
             written[name] = text
         complete = True
     finally:

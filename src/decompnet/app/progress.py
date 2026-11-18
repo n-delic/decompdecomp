@@ -757,7 +757,7 @@ class Progress:
                 items.append((name, info.st_mtime_ns, info.st_size, info.st_mode, info.st_ctime_ns, info.st_ino))
                 if deep and stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
                     with os.scandir(path) as entries:
-                        # (a save writes `<file>.tmp` and renames it: that file is the app's own, not progress)
+                        # (a save writes a `.<random>.tmp` beside the file and renames it: that file is the app's own, not progress)
                         children = sorted((e for e in entries if not e.name.endswith(".tmp")), key=lambda entry: entry.name)
                     for child in children:
                         try:
