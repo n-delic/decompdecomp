@@ -26,6 +26,7 @@ from ..network import NetworkError
 
 log = logging.getLogger('decompdecomp')
 METRIC_SECONDS = .5  # how often a child reports its compile counters (the pass's live rates)
+PROGRESS_SECONDS = .25  # the most often a turn's progress crosses to the app
 COUNTERS = ('considered', 'generated', 'invocations', 'requests', 'execute', 'queue', 'setup', 'generation',
             'proposal_generation', 'cleanup_generation', 'local_generation', 'link', 'history_write',
             'history_transactions', 'history_statements')
@@ -49,8 +50,10 @@ class Lane:
         if background:
             argv.append('--background')
         with log_path.open('ab') as errors:
+            # Buffered: unbuffered, reading lines made a system call per byte, and that one reader thread used more
+            # of the app's processor than everything else together on a pass with 288 search threads.
             self.process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors,
-                                            bufsize=0, creationflags=NO_WINDOW)
+                                            creationflags=NO_WINDOW)
         self.messages = queue.Queue()
         self.lock = threading.Lock()
         threading.Thread(target=self._read, daemon=True, name='deep-lane-output').start()
@@ -255,6 +258,13 @@ def child(db_path, workspace, background):
         pool = pool_for(message['slots'], message['maximum'])
         sent = dict(pool.metrics.values)
         finished = threading.Event()
+        latest = {'sent': 0.0, 'value': None}
+
+        def last_progress():
+            with output:
+                value, latest['value'] = latest['value'], None
+            if value is not None:
+                emit({'kind': 'progress', 'ident': ident, 'value': value})
 
         def counters():
             nonlocal sent
@@ -278,6 +288,14 @@ def child(db_path, workspace, background):
 
             def progress(self, value):
                 self.check_cancel()  # (as the app's job log does: searches report often, so they stop promptly)
+                # At most a few a second: a search reports after nearly every candidate, and every report crosses
+                # the pipe and the app's interpreter. The last one is always sent before the reply.
+                now = time.monotonic()
+                with output:
+                    latest['value'] = value
+                    if now - latest['sent'] < PROGRESS_SECONDS:
+                        return
+                    latest['sent'], latest['value'] = now, None
                 emit({'kind': 'progress', 'ident': ident, 'value': value})
 
             def check_cancel(self):
@@ -289,10 +307,12 @@ def child(db_path, workspace, background):
                                        Log(), **options)
             finished.set()
             counters()
+            last_progress()
             emit({'kind': 'reply', 'ident': ident, 'result': result})
         except BaseException as error:
             finished.set()
             counters()
+            last_progress()
             if not isinstance(error, (_Cancelled, NetworkError)):
                 log.exception('Deep lane turn failed')
             emit({'kind': 'reply', 'ident': ident, 'error': str(error) or type(error).__name__,

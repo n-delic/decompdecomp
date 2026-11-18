@@ -672,7 +672,7 @@ class Permuter:
             start_src = best_src = cur_src = m2cfix.expand_macros(fn["best_source"], header)
             # (the simple rewrites name only the typedefs this C or its header has: zlib's uInt in an N64 game's C
             # didn't compile, 9,970 times in 10,000)
-            simple_header = header or ('' if fork else (self.net._context(proj['id'], fn['unit']) or {}).get('header', ''))
+            simple_header = header or ('' if fork else dict(self.net._context(proj['id'], fn['unit']) or {}).get('header', ''))  # (a database row: no .get)
             best = cur = fn["best_score"]
             deadline = time.monotonic() + seconds
             from . import adaptive_repairs, permuter_focus, repair_ranking
