@@ -1,4 +1,5 @@
 """Retain a reproducible last exact attempt; hashes describe evidence, never bypass a rejudge."""
+import copy
 import hashlib
 import json
 import math
@@ -33,20 +34,37 @@ def compiler_identity(settings):
     if not tool:
         return {'toolchain':None,'registry_sha256':None,'install_sha256':None,'executables':{}}
     try:
-        spec = toolchains.get(tool)
-        registry = repr(spec)
-        manifest = toolchains.path(tool)/toolchains.MANIFEST
-        installed = digest(manifest.read_bytes()) if manifest.is_file() else None
-        binaries = {}
         root = toolchains.path(tool)
-        for name in ('gcc','cc1','as','gcc.exe','cc1.exe','cc1n64.exe'):
-            path = root/name
-            if path.is_file():
-                stat = path.stat()
-                binaries[name] = binary_digest(path,stat.st_size,stat.st_mtime_ns)
-        return {'toolchain':tool,'registry_sha256':digest(registry),'install_sha256':installed,'executables':binaries}
+        # Keyed on what the identity reads: the deep search asks several times per candidate, and re-reading and
+        # hashing the manifest and registry each time cost about 1.3 ms of the app's one interpreter per candidate.
+        stamp = tuple(_stamp(root/name) for name in (toolchains.MANIFEST, *_BINARIES))
+        return copy.deepcopy(_identity(tool, stamp, repr(toolchains.get(tool))))
     except (toolchains.ToolchainError,KeyError,OSError):
         return {'toolchain':tool,'registry_sha256':None,'install_sha256':None,'executables':{}}
+
+
+_BINARIES = ('gcc','cc1','as','gcc.exe','cc1.exe','cc1n64.exe')
+
+
+def _stamp(path):
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return (stat.st_size, stat.st_mtime_ns, stat.st_ino)
+
+
+@lru_cache(maxsize=64)
+def _identity(tool, stamp, registry):
+    root = toolchains.path(tool)
+    manifest = root/toolchains.MANIFEST
+    installed = digest(manifest.read_bytes()) if stamp[0] is not None and manifest.is_file() else None
+    binaries = {}
+    for name, seen in zip(_BINARIES, stamp[1:]):
+        path = root/name
+        if seen is not None and path.is_file():
+            binaries[name] = binary_digest(path, seen[0], seen[1])
+    return {'toolchain':tool,'registry_sha256':digest(registry),'install_sha256':installed,'executables':binaries}
 
 
 def abi(proj, cfg):

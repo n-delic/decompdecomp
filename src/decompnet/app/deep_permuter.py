@@ -844,7 +844,7 @@ class Search(Permuter):
         if not compiler._stable_inputs([source.encode(), (ctx['header'] if ctx else '').encode()]):return None
         rules = remember(('repair-rules', claim_stalls.repair_rules), claim_stalls.repair_rules)
         version=self.net.project_store(proj['id']).read_version('inputs',proj['id'])
-        environment=sorted(os.environ.items())
+        environment=_environment()
         from ..candidate_work import current
         preparing = current() is not None and current().preparing
         identity = (remember(("prepared-compiler", compiler_identity, repr(own)), lambda:compiler_identity(own))
@@ -852,11 +852,14 @@ class Search(Permuter):
         capture=(version,tuple(dict(proj).items()),tuple(dict(fn).items()),identity,repr(rules),environment,
                  ctx['header'] if ctx else '')
         if capture!=getattr(self,'_recent_capture',None):
+            # Everything but the source is hashed once per capture: repr of the rows, rules and environment ran
+            # four times per candidate under the app's one interpreter, and grows with the function and project.
             self._recent_capture=capture;self._recent_keys=OrderedDict()
+            self._recent_base=hashlib.sha256(repr((dict(proj),dict(fn),identity,rules,environment)).encode()).digest()
         cache=self._recent_keys
         if source in cache:
             cache.move_to_end(source);return cache[source][0]
-        result=(version,hashlib.sha256(repr((dict(proj),dict(fn),source,identity,rules,environment)).encode()).digest())
+        result=(version,hashlib.sha256(self._recent_base+source.encode()).digest())
         cache[source]=(result,len(source.encode()))
         while len(cache)>64 or sum(size for _,size in cache.values())>8*1024*1024:cache.popitem(last=False)
         return result
@@ -1016,6 +1019,21 @@ class Search(Permuter):
                 while len(recent) > 128:recent.popitem(last=False)
         self.report()
         return score
+
+
+_ENVIRONMENT = ({}, ())
+
+
+def _environment():
+    """os.environ, sorted, re-sorted only when it changes (a dict comparison in C, not a Python sort of every
+    variable for every candidate)."""
+    global _ENVIRONMENT
+    seen, ordered = _ENVIRONMENT
+    current = os.environ._data
+    if current != seen:
+        ordered = tuple(sorted(os.environ.items()))
+        _ENVIRONMENT = (dict(current), ordered)
+    return ordered
 
 
 def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0):

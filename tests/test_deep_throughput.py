@@ -222,3 +222,27 @@ def test_deep_search_workers_avoid_macos_utility_qos(monkeypatch):
     for path in ('deep_sweep.py', 'deep_parallel.py', 'deep_compilation.py', 'deep_proposal_worker.py'):
         source = (Path(workers.__file__).parent / path).read_text()
         assert 'lower_priority' not in source, path
+
+
+def test_cached_compiler_identity_follows_toolchain_files(tmp_path, monkeypatch):
+    """The identity is cached for speed, but a changed compiler binary or manifest must change it."""
+    import os
+
+    from decompnet import match_bundle, toolchains
+    monkeypatch.setattr(toolchains, 'path', lambda tool: tmp_path)
+    monkeypatch.setattr(toolchains, 'get', lambda tool: {'name': tool})
+    (tmp_path/'cc1').write_bytes(b'one')
+    first = match_bundle.compiler_identity({'toolchain': 'gcc-test'})
+    assert match_bundle.compiler_identity({'toolchain': 'gcc-test'}) == first
+    (tmp_path/'cc1').write_bytes(b'two!')
+    os.utime(tmp_path/'cc1', ns=(1, 2))
+    assert match_bundle.compiler_identity({'toolchain': 'gcc-test'})['executables'] != first['executables']
+
+
+def test_cached_environment_follows_changes(monkeypatch):
+    from decompnet.app import deep_permuter
+    before = deep_permuter._environment()
+    monkeypatch.setenv('DECOMP_TEST_ENVIRONMENT_CACHE', '1')
+    assert ('DECOMP_TEST_ENVIRONMENT_CACHE', '1') in deep_permuter._environment()
+    monkeypatch.delenv('DECOMP_TEST_ENVIRONMENT_CACHE')
+    assert deep_permuter._environment() == before
