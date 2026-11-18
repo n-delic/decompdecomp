@@ -445,6 +445,10 @@ class JudgeMixin:
         if not move_on and not not_c and need is None and progress is not None and \
                 (push := self._push_back(agent, fn, progress, project)):
             return push
+        if notes.strip() and progress is not None and not progress['compiles'] and not not_c:
+            # A small model released a function it never compiled, with move_on and notes saying "no better score
+            # in 6 compiles", and those notes are what the next agent starts from. Say what the app knows.
+            notes = '[Released without compiling it once; notes not checked by a compile.] ' + notes
         said = self.release(agent, function, notes, project, not_c, claim_token=claim_token)
         if not not_c and need is None and progress is not None and progress['compiles']:
             from .. import release_repairs

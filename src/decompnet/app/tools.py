@@ -477,7 +477,14 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
         repair_note=f'[Original category: {repair_category}] '+repair_note
         repair_category='other'
     if repair_note and len(names) != 1:
-        raise NetworkError('Repair notes require one function and a valid category. Use report_repair after a batch.')
+        # A small model put the function's callees and data in `function` ("func_A, func_B, D_8010...") with a
+        # note, and the old "Repair notes require one function" read as being about the note: it gave up on the
+        # function without compiling once. Say what was wrong with `function` and how to send it.
+        listed = ', '.join(names[:4]) + (', …' if len(names) > 4 else '')
+        raise NetworkError(f'`function` names {len(names)} things ({listed}): give only the one function you are '
+                           'compiling, and declare its callees and data inside `source`. Nothing was compiled; '
+                           'send it again. (A batch of several claimed functions takes no repair_note; use '
+                           'report_repair after it.)')
     previous = net.project_store(slug).one('SELECT MAX(id) AS id FROM repair_examples')['id'] or 0
     previous_diff = None
     previous_attempt = None
