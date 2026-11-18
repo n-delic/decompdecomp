@@ -800,6 +800,14 @@
             <p id="compilerCleanupResult" class="small" role="status"></p>
             <pre id="compilerCleanupLog" class="joblog" hidden></pre>
           </div></details>
+          <details id="compilerRecheck" class="compiler-cleanup more" hidden>
+            <summary>Recheck unverified function settings <span class="disclosure-context" id="compilerRecheckContext"></span></summary><div class="more-body">
+            <p class="small muted">Find which function-only settings no match supports. Some functions got their own settings because they scored a little better on unmatched C, often m2c's draft, which says nothing about how the game was built, and searches then climb with the wrong settings.</p>
+            <p class="small muted">Each one is tried with its function's current C, with and without it. A setting stays if the function matches only with it. Otherwise it goes back to the project's settings and is kept as a hypothesis the deep permuter still tries for an exact match. Matched functions keep theirs, every affected match is checked before anything is saved, and saved scores are updated.</p>
+            <div class="row"><button id="compilerRecheckGo" class="primary" type="button">Recheck settings</button><button id="compilerRecheckStop" class="ghost" type="button" hidden>Stop</button><button id="compilerRecheckUndo" class="ghost" type="button" hidden>Restore removed settings</button></div>
+            <p id="compilerRecheckResult" class="small" role="status"></p>
+            <pre id="compilerRecheckLog" class="joblog" hidden></pre>
+          </div></details>
           <div id="compilerWaiting"></div>
           <details class="more"><summary>Automatic compiler changes</summary><div class="more-body"><label class="check" id="autoAdjustRow"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label></div></details>
           <details class="more" id="installedCompilerTest">

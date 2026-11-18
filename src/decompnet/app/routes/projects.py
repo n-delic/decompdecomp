@@ -217,6 +217,26 @@ def register(app: App) -> None:
         net._rom_only(slug, "compiler profile cleanup")
         return {"job": jobs.start("compiler-cleanup", lambda log: compiler_cleanup.cleanup(net, slug, limit, log, source_profile=data.get("profile")))}
 
+    def p_unverified_profiles(slug, request, data):
+        """Function-only compiler settings no match supports (GET: how many, any running recheck; POST: recheck
+        them, or undo the last one: app/unverified_profiles.py)."""
+        from .. import unverified_profiles
+        kinds = ("function-settings-recheck", "function-settings-undo")
+        if request.method == "GET":
+            with net.progress.view():
+                return {**unverified_profiles.summary(net, slug), "job": jobs.active(kinds, project=slug)}
+        net._rom_only(slug, "rechecking function compiler settings")
+        if (active := jobs.active(kinds, project=slug)) is not None:
+            return {"job": active["id"], "already_running": True}
+        action = data.get("action")
+        if action == "recheck":
+            return {"job": jobs.start(kinds[0], lambda log: unverified_profiles.recheck(net, slug, log), project=slug,
+                                      cancel_message="Recheck stopped. Settings already rechecked stay as they are now.")}
+        if action == "undo":
+            return {"job": jobs.start(kinds[1], lambda log: unverified_profiles.undo(net, slug, log), project=slug,
+                                      cancel_message="Restoring stopped before any setting changed.")}
+        raise NetworkError("Choose recheck or undo.")
+
     def p_compiler(slug, request, data):
         if data.get("function"):
             return net.apply_function_compiler(slug, str(data["function"]), str(data.get("toolchain", "")),
@@ -1210,7 +1230,8 @@ def register(app: App) -> None:
         "/api/symbol-names": (p_symbol_names, ["POST"]),
         "/api/compiler": (p_compiler, ["POST"]),
         "/api/compiler/test-default": (p_compiler_default_test, ["POST"]),
-        "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]),
+        "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]),
+        "/api/compiler/unverified": (p_unverified_profiles, ["GET", "POST"]), "/api/export": (p_export, ["POST"]),
         "/api/project-layout": (p_project_layout, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["GET", "POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
         "/api/recover-code": (p_recover_code, ["POST"]), "/api/missed-functions": (p_missed_functions, ["POST"]),

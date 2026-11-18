@@ -7355,4 +7355,6 @@ wrong: the matching C is 52 words off with it. From m2c's draft (91 words off at
 Under the function's own wrong setting the first step looked worse (48 -> 54 words), so a search climbing on it
 rejects the path. decomp-repair 0.5.7 adds `delay_slot_duplicate` and `symbol_access_width`, and
 `inferred_record_layout` now reads `M2C_FIELD`. In this game 302 functions had their own setting applied this way
-(non-exact gains, median +2.9 points) before auto-apply stopped doing so.
+(non-exact gains, median +2.9 points) before auto-apply stopped doing so. The Compiler panel's "Recheck unverified
+function settings" (`app/unverified_profiles.py`) removes such a setting unless the function matches only with it,
+and keeps it as a hypothesis the deep permuter still tries for an exact match; "Restore" puts them back.

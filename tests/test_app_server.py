@@ -3609,3 +3609,43 @@ def test_cross_game_admission_returns_job_without_saved_progress_sync(app, monke
         assert snapshot['state'] == 'running'
         assert snapshot['activity_project'] == 'cross-sync'
     finally:release.set()
+
+
+def test_function_settings_recheck_is_one_job_a_returning_panel_finds(app, monkeypatch):
+    """The Compiler panel's recheck (app/unverified_profiles.py): its count, one running job per project that a
+    fresh window finds and that asking again joins, and Stop."""
+    from decompnet.app import unverified_profiles
+
+    client, net, *_ = app
+    slug = 'settings-recheck'
+    with net.store.tx() as db:
+        db.execute('INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)',
+                   (slug, 'Recheck', '.', json.dumps({'kind':'rom', 'compiler':{'toolchain':'gcc-2.7.2-kmc', 'flags':['-O2']}})))
+    entered, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(unverified_profiles, 'summary', lambda net, slug: {'unverified': 302, 'hypotheses': 0})
+
+    def recheck(net, slug, log):
+        log.progress({'phase':'Rechecking function settings', 'done':1, 'total':302})
+        entered.set()
+        while not release.wait(.01):
+            log.check_cancel()
+        return {'reset':[]}
+    monkeypatch.setattr(unverified_profiles, 'recheck', recheck)
+    headers = {'X-Decomp':'1'}
+    try:
+        assert client.get('/api/compiler/unverified', params={'slug':slug}).json() == {'unverified':302, 'hypotheses':0, 'job':None}
+        job = client.post('/api/compiler/unverified', json={'slug':slug, 'action':'recheck'}, headers=headers).json()['job']
+        assert entered.wait(2)
+        found = client.get('/api/compiler/unverified', params={'slug':slug}).json()['job']
+        assert found['id'] == job and found['kind'] == 'function-settings-recheck' and found['progress']['total'] == 302
+        again = client.post('/api/compiler/unverified', json={'slug':slug, 'action':'undo'}, headers=headers).json()
+        assert again == {'job':job, 'already_running':True}
+        assert client.post('/api/job/cancel', json={'id':job}, headers=headers).json() == {'cancelled':True}
+    finally:
+        release.set()
+    for _ in range(200):
+        if client.get('/api/job', params={'id':job}).json()['state'] != 'running':
+            break
+        time.sleep(.01)
+    assert client.get('/api/job', params={'id':job}).json()['state'] == 'cancelled'
+    assert client.post('/api/compiler/unverified', json={'slug':slug, 'action':'other'}, headers=headers).status_code == 400
