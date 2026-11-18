@@ -297,7 +297,7 @@ def test_claim_order_does_not_wait_for_another_games_pass(monkeypatch):
     twin.net=SimpleNamespace(links={},recheck=lambda *a,**k:None)
     monkeypatch.setattr(twin,'set_aside_asm',lambda proj:ordered.append(proj) or 0)
     monkeypatch.setattr(twin,'update_boosts',lambda proj,pending=False:0)
-    twin.net.project_row=lambda slug:{'slug':slug}
+    twin.net.project_row=lambda slug,**k:{'slug':slug}
     passed=[]
     monkeypatch.setattr(twin,'_execute_full_pass',lambda slug,job:passed.append(slug))
     holding=threading.Event();release=threading.Event()
@@ -324,7 +324,7 @@ def test_claim_order_after_an_update_does_not_wait_for_the_recheck(monkeypatch):
     twin=Twins.__new__(Twins)
     twin._lock=threading.RLock();twin.jobs={}
     steps=[]
-    twin.net=SimpleNamespace(links={},project_row=lambda slug:{'slug':slug},
+    twin.net=SimpleNamespace(links={},project_row=lambda slug,**k:{'slug':slug},
                              recheck=lambda *a,**k:steps.append('recheck') or 'pieces joined')
     monkeypatch.setattr(twin,'set_aside_asm',lambda proj:steps.append('asm') or 0)
     monkeypatch.setattr(twin,'update_boosts',lambda proj,pending=False:steps.append(('boosts',pending)) or 0)
@@ -344,3 +344,20 @@ def test_claim_order_after_an_update_does_not_wait_for_the_recheck(monkeypatch):
     while 'pass' not in steps and time.time()<deadline:
         time.sleep(0.01)
     assert steps==['asm',('boosts',True),'recheck',('boosts',True),'pass']
+
+
+def test_claim_order_does_not_wait_for_saved_progress_sync(monkeypatch):
+    """Agents waited ~47 s at "Waiting for function ordering" while the project's saved files were judged again:
+    the order's project lookup synced saved progress first, queuing behind that verification. It reads the row as
+    stored."""
+    from types import SimpleNamespace
+
+    from decompnet.app.twins import Job, Twins
+    twin=Twins.__new__(Twins)
+    asked=[]
+    twin.net=SimpleNamespace(project_row=lambda slug,**k:asked.append(k) or {'slug':slug})
+    monkeypatch.setattr(twin,'set_aside_asm',lambda proj:0)
+    monkeypatch.setattr(twin,'update_boosts',lambda proj,pending=False:0)
+    job=Job()
+    twin.order('game',job)
+    assert job.ordered.is_set() and asked==[{'sync':False}]

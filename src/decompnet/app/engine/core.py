@@ -155,8 +155,10 @@ class Core(Network):
         """The project's console (consoles/): what the engine asks, instead of comparing platform names."""
         return consoles.of(self.cfg(proj))
 
-    def project_row(self, slug: str):
-        return self._project(slug)
+    def project_row(self, slug: str, *, sync: bool = True):
+        """A project's row. `sync=False`: as stored, without first syncing saved progress, which queues behind any
+        saved-file verification running (for a look that doesn't need it: the claim order, twins.order)."""
+        return self._project(slug) if sync else Network._project(self, slug)
 
     def recheck(self, slug: str, log=print, only_if_updated: bool = False) -> str | None:
         """Look at a project again with what this version of decompdecomp knows: its console's work for projects made

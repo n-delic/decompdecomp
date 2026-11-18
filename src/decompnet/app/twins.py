@@ -634,7 +634,10 @@ class Twins:
             return
         from .cross_game_progress import report
         report(job, 'Putting functions in order')
-        proj = self.net.project_row(slug)
+        # The bare row, not project_row: that first syncs saved progress, which queues behind any saved-file
+        # verification (a project's 1,000 saved functions judged again after a start), and starting agents
+        # waited out most of ORDER_WAIT for a look that takes a second or two. The full pass orders again after it.
+        proj = self.net.project_row(slug, sync=False)
         job.asm += self.set_aside_asm(proj)
         self.update_boosts(proj, pending=True)
         job.ordered.set()
