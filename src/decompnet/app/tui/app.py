@@ -272,6 +272,15 @@ class DecompApp(App):
         current = next((name for name in self.ORDER if self.screens.get(name) is self.screen), self.ORDER[0])
         self.switch_screen(self.ORDER[(self.ORDER.index(current) + 1) % len(self.ORDER)])
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Tab walks the screens only from a screen. Over a box (the keys, the link, the question, a search, the
+        picker) Tab is the box's, as 1 2 3 are: it moves between the search's box and its list. Tab is a priority
+        binding, so without this it fired there too, and switch_screen replaced the box while the screen under it
+        stayed in Textual's stack: one more copy of a screen at each press."""
+        if action == "next_screen" and self.screen.is_modal:
+            return False  # (False: the binding doesn't apply, and the key goes on to the box)
+        return True
+
     def action_link(self) -> None:
         self.push_screen(BrowserLink())
 

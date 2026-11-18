@@ -74,6 +74,28 @@ def seed(net: RomNetwork, home: Path) -> None:
                    "(1, 1, 1, 'match', 'func_80000010 matched', 1700000500.0)")
 
 
+def listening() -> tuple[socket.socket, int]:
+    """A socket on a free port of 127.0.0.1, kept open for the server (as cli._listen does): a port number freed and
+    asked for again could be taken by something else in between."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(128)
+    return sock, sock.getsockname()[1]
+
+
+def start(app, sock: socket.socket) -> uvicorn.Server:
+    """The app's server on `sock`, in a thread, once it serves (a server that doesn't start fails here, saying so,
+    not in every assertion after)."""
+    server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
+    threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True).start()
+    for _ in range(200):
+        if server.started:
+            return server
+        time.sleep(0.05)
+    server.should_exit = True
+    raise AssertionError("the app's server didn't start within 10 seconds")
+
+
 class Live:
     """The app, seeded and serving on a free port of 127.0.0.1, and the database to change under it."""
 
@@ -82,18 +104,11 @@ class Live:
         (home / ".decomp" / "logs").mkdir(parents=True)
         self.net = RomNetwork(home / ".decomp" / "decomp.db", home)
         seed(self.net, home)
-        with socket.socket() as free:
-            free.bind(("127.0.0.1", 0))
-            self.port = free.getsockname()[1]
+        sock, self.port = listening()
         mcp, _, security, _ = build(self.net, home / ".decomp", self.port, SECRET)
         (home / ".decomp" / "logs" / "decomp.log").open("a", encoding="utf-8").write(LOG_LINE + "\n")
         app = mcp.streamable_http_app(transport_security=security, host="127.0.0.1")
-        self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning"))
-        threading.Thread(target=self.server.run, daemon=True).start()
-        for _ in range(200):
-            if self.server.started:
-                break
-            time.sleep(0.05)
+        self.server = start(app, sock)
         self.client = Client(self.port, SECRET)
 
     def sql(self, statement: str, *args) -> None:
@@ -210,6 +225,39 @@ async def test_the_three_screens_switch_and_only_the_one_shown_polls(live):
             assert type(app.screen).__name__ == name
         assert not app.screens["map"].polling() and not app.screens["agents"].polling()
         assert app.screens["projects"].polling()
+
+
+@pytest.mark.anyio
+async def test_tab_over_a_box_is_the_boxs_and_leaves_the_screens_as_they_were(live):
+    """Tab walks the screens only from a screen. Over a box it's the box's, as 1 2 3 are: in the search it moves
+    from the box to the list. (Tab fired over a box too, and replaced the box while the screen under it stayed in
+    Textual's stack: one more copy of a screen at every press.)"""
+    async with tui_on(live) as pilot:
+        app = pilot.app
+        map_screen = await open_map(pilot)
+        stack = list(app.screen_stack)
+        for opens in (("question_mark",), ("b",), ("enter",), ("slash",)):  # the keys, the link, a cell, search
+            await pilot.press(*opens)
+            await settle(pilot)
+            box = app.screen
+            assert box.is_modal, opens
+            focused = app.focused
+            await pilot.press("tab")
+            await settle(pilot)
+            assert app.screen is box and app.screen_stack[:-1] == stack, opens
+            if opens == ("slash",):
+                assert app.focused is not focused  # Tab moved from the search's box to its list
+            await pilot.press("tab")  # (a second press: the screen under the box was copied once per press)
+            await settle(pilot)
+            assert app.screen is box and app.screen_stack[:-1] == stack, opens
+            await pilot.press("escape")
+            await settle(pilot)
+            assert app.screen_stack == stack, opens
+        await pilot.press("tab")  # and from a screen, Tab still walks them
+        await settle(pilot)
+        assert type(app.screen).__name__ == "AgentsScreen" and len(app.screen_stack) == len(stack)
+        assert map_screen not in app.screen_stack
+        assert not app.problems
 
 
 @pytest.mark.anyio
@@ -391,6 +439,53 @@ async def test_the_agents_screen_its_feed_and_the_log(live):
 
 
 @pytest.mark.anyio
+async def test_the_agents_screen_asks_only_for_live_events_it_hasnt_had(live):
+    """/api/live sends the project's events after `e` (60 of them for e=0). The agents screen's feed takes events
+    from /api/events, but each live ask without `e` still brought the last 60 again, every 2 seconds."""
+    real, asked = live.client.get, []
+
+    def get(path, **params):
+        answer = real(path, **params)
+        if path == "/api/live":
+            asked.append((params, answer))
+        return answer
+
+    live.client.get = get
+    async with tui_on(live) as pilot:
+        await open_map(pilot)
+        await pilot.press("3")
+        await settle(pilot)
+        agents = pilot.app.screens["agents"]
+        asked.clear()
+        agents.poll_live(always=True)
+        await settle(pilot)
+        params, answer = asked[-1]
+        assert params["e"] == 1 and answer["events"] == []  # the seeded event came once, and not again
+        assert agents.last_event == 1
+        assert not pilot.app.problems
+
+
+@pytest.mark.anyio
+async def test_more_attempts_than_one_live_answer_holds_bring_the_map_again(live):
+    """/api/live sends the newest LIVE_ATTEMPTS attempts and says `cut` when there were more: what came can't be
+    added onto the map's counts, so the map screen asks for the whole map again (mapview.took_live)."""
+    from decompnet.app.engine.gui import LIVE_ATTEMPTS
+
+    async with tui_on(live) as pilot:
+        map_screen = await open_map(pilot)
+        n, now = LIVE_ATTEMPTS + 5, time.time()
+        with live.net.store.tx() as db:  # (an agent's try writes both: the attempt, and the function's counts)
+            db.executemany("INSERT INTO attempts(id, function_id, agent_id, score, compiled, created_at) "
+                           "VALUES(?, 7, 1, ?, 1, ?)", [(10 + i, 100 + i, now) for i in range(n)])
+            db.execute("UPDATE functions SET attempts=?, best_score=100 WHERE id=7", (n,))
+        map_screen.poll_live(always=True)  # only the live poll: the map comes again because the answer was cut
+        await settle(pilot)
+        fn = next(fn for fn in map_screen.rows if fn["name"] == "func_80000060")
+        assert (fn["attempts"], fn["best"]) == (n, 100)  # added up from the 80 that came: 80, and best 105
+        assert not pilot.app.problems
+
+
+@pytest.mark.anyio
 async def test_the_events_feed_starts_when_its_first_ask_failed(live):
     """The agents screen asks where the notification centre's feed starts when it's first shown, which can be as
     `decomp serve` starts, before the app answers: an ask that failed is asked again, the feed isn't off for good."""
@@ -501,6 +596,63 @@ async def test_release_gives_the_terminal_back_when_the_app_ends_another_way(liv
     tui._leaving.clear()
 
 
+class Stuck:
+    """A TUI that never ends when asked (a hung event loop), or one that ended as it was asked (RuntimeError)."""
+
+    def __init__(self, error: Exception | None = None):
+        self.error, self.asked = error, 0
+
+    def exit(self) -> None:  # (never runs: call_from_thread below doesn't call it)
+        raise AssertionError("a stuck TUI's exit ran")
+
+    def call_from_thread(self, fn):
+        self.asked += 1
+        if self.error:
+            raise self.error
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("the app isn't running")])
+def test_release_gives_up_on_a_tui_that_doesnt_end(monkeypatch, error):
+    """release() runs before os._exit or execve: a TUI that doesn't end when asked holds the process for `timeout`
+    and no longer (then the process ends anyway), and one that ended meanwhile doesn't hold it at all."""
+    stuck = Stuck(error)
+    monkeypatch.setattr(tui, "_running", stuck)
+    tui._ended.clear()
+    try:
+        began = time.monotonic()
+        tui.release(timeout=0.3)
+        took = time.monotonic() - began
+        assert stuck.asked == 1 and tui._leaving.is_set()
+        assert (0.25 <= took < 2) if error is None else took < 0.25
+        tui._ended.set()  # a TUI that already ended isn't asked again
+        tui.release(timeout=0.3)
+        assert stuck.asked == 1
+    finally:
+        tui._leaving.clear()
+        tui._ended.clear()
+
+
+def test_the_tui_falls_back_to_the_printed_link_without_a_terminal_or_textual(monkeypatch):
+    """tui.run gives None — `decomp serve` prints the address and the link instead — with no terminal (a service,
+    a pipe), and in a terminal when the TUI can't be imported (a broken install)."""
+    import sys
+
+    class Terminal:
+        def __init__(self, tty: bool):
+            self.tty = tty
+
+        def isatty(self) -> bool:
+            return self.tty
+
+    monkeypatch.setattr(sys, "stdin", Terminal(False))
+    monkeypatch.setattr(sys, "stdout", Terminal(False))
+    assert tui.run(1, SECRET, lambda: "code") is None
+    monkeypatch.setattr(sys, "stdin", Terminal(True))
+    monkeypatch.setattr(sys, "stdout", Terminal(True))
+    monkeypatch.setitem(sys.modules, "decompnet.app.tui.app", None)  # (None in sys.modules: the import fails)
+    assert tui.run(1, SECRET, lambda: "code") is None
+
+
 def test_serve_keeps_running_when_the_tui_ends_by_an_error(monkeypatch, tmp_path, capsys):
     """Only the TUI's own "stop everything?" stops the app: a TUI that ends any other way leaves it serving the
     browser, with the link printed."""
@@ -552,15 +704,9 @@ async def test_serve_starts_on_the_browser_link_and_says_where_projects_are(tmp_
     home = tmp_path / "home"
     (home / ".decomp").mkdir(parents=True)
     net = RomNetwork(home / ".decomp" / "decomp.db", home)
-    with socket.socket() as free:
-        free.bind(("127.0.0.1", 0))
-        port = free.getsockname()[1]
+    sock, port = listening()
     mcp, _, security, _ = build(net, home / ".decomp", port, SECRET)
-    server = uvicorn.Server(uvicorn.Config(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
-                                           host="127.0.0.1", port=port, log_level="warning"))
-    threading.Thread(target=server.run, daemon=True).start()
-    while not server.started:
-        time.sleep(0.05)
+    server = start(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"), sock)
     try:
         app = DecompApp(Client(port, SECRET), lambda: "a-fresh-code", name="decompdecomp dev", home="~/Decomp-dev",
                         show_link=True)
@@ -603,7 +749,10 @@ def test_ctrl_break_stops_serve_gracefully_on_windows(tmp_path):
                 break
             time.sleep(0.1)
         assert any("/pair?code=" in line for line in printed), "".join(printed)
-        proc.send_signal(signal.CTRL_BREAK_EVENT)
+        try:
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        except OSError as e:  # GenerateConsoleCtrlEvent needs a console shared with the process: a runner may have none
+            pytest.skip(f"no console to send Ctrl-Break through: {e}")
         assert proc.wait(timeout=30) == 0, "".join(printed)
     finally:
         if proc.poll() is None:

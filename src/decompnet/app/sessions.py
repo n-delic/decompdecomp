@@ -25,15 +25,17 @@ import secrets
 import time
 
 COOKIE = "decomp_session"  # the browser's paired session, with the tunnel's port after it (cookie_for)
-TUNNEL = re.compile(r"(?:127\.0\.0\.1|localhost):(\d{1,5})")  # the Host a browser sends through an SSH tunnel
+TUNNEL = re.compile(r"(?:127\.0\.0\.1|localhost)(?::(\d{1,5}))?")  # the Host a browser sends through an SSH tunnel
 WAITING_CODES = 8  # `b` in the TUI shows one after another; more than this waiting is a stuck terminal
 CODE_SECONDS = 15 * 60  # how long a code shown and not used still works
 
 
 def tunnel_port(host: str | None) -> str | None:
-    """The port in a request's Host when it names this machine itself (127.0.0.1 or localhost), else None."""
+    """The port in a request's Host when it names this machine itself (127.0.0.1 or localhost), else None. A browser
+    leaves out port 80 (http's own), so a bare name is a tunnel on port 80: one a Windows user can open without
+    admin rights, since Windows reserves no ports."""
     found = TUNNEL.fullmatch(host or "")
-    return found[1] if found else None
+    return (found[1] or "80") if found else None
 
 
 def cookie_for(host: str | None) -> str | None:

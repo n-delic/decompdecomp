@@ -66,6 +66,7 @@ class AgentsScreen(Base):
         self.follow = True
         self.slug: str | None = None
         self.last_attempt = 0
+        self.last_event = 0  # /api/live sends its events after this one (the feed's come from /api/events)
         self.primed = False  # the first live answer of a project: where its attempts are up to, not news
         self.last_note: int | None = None  # the notification centre's feed: None until it said where it starts
 
@@ -96,7 +97,7 @@ class AgentsScreen(Base):
         """The project the map is on: the one this screen shows (its feed starts again when it changes)."""
         slug = getattr(self.app.screens.get("map"), "slug", None)
         if slug != self.slug:
-            self.slug, self.last_attempt, self.primed = slug, 0, False
+            self.slug, self.last_attempt, self.last_event, self.primed = slug, 0, 0, False
             if self.is_mounted:
                 for table in self.query(DataTable):
                     table.clear()
@@ -107,8 +108,9 @@ class AgentsScreen(Base):
     def poll_live(self, always: bool = False) -> None:
         if not (always or self.polling()) or (slug := self.project()) is None:
             return
-        a = self.last_attempt
-        self.fetch("live", lambda: self.client.get("/api/live", slug=slug, a=a), lambda d: self.took_live(slug, d))
+        e, a = self.last_event, self.last_attempt  # (e: without it, every answer brings the last 60 events again)
+        self.fetch("live", lambda: self.client.get("/api/live", slug=slug, e=e, a=a),
+                   lambda d: self.took_live(slug, d))
 
     def took_live(self, slug: str, data) -> None:
         if slug != self.slug or not data:
@@ -130,6 +132,8 @@ class AgentsScreen(Base):
         self.primed = True
         if attempts:
             self.last_attempt = attempts[-1]["id"]
+        if data.get("events"):
+            self.last_event = data["events"][-1]["id"]
 
     def poll_stats(self, always: bool = False) -> None:
         if not (always or self.polling()) or (slug := self.project()) is None:

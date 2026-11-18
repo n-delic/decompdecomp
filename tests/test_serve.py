@@ -19,7 +19,7 @@ from decompnet.app import sessions as sessions_module
 from decompnet.app import window
 from decompnet.app.engine import RomNetwork
 from decompnet.app.server import build
-from decompnet.app.sessions import COOKIE, Sessions
+from decompnet.app.sessions import COOKIE, Sessions, tunnel_port
 
 PORT, SECRET = 6499, "s3cret-for-tests"
 JAR = f"{COOKIE}_{PORT}"  # the session cookie of a browser that reaches the app on its own port
@@ -44,6 +44,7 @@ def pair(browser: TestClient, sessions: Sessions) -> str:
     assert redirected.status_code == 303 and redirected.headers["location"] == "/"
     set_cookie = redirected.headers["set-cookie"].lower()
     assert JAR.lower() in set_cookie and "httponly" in set_cookie and "samesite=strict" in set_cookie
+    assert "max-age" not in set_cookie and "expires" not in set_cookie  # the browser's session only: none on disk
     assert browser.get("/").status_code == 200  # the redirect's target, with the cookie the browser now carries
     return code
 
@@ -91,7 +92,7 @@ class Serve:
     """A real `decomp serve` in a subprocess of its own home, with no DISPLAY and no WAYLAND_DISPLAY, printing what
     it prints; the way it runs on a server, read here like a user would."""
 
-    def __init__(self, home: Path):
+    def __init__(self, home: Path, restart: dict | None = None):
         home.mkdir(parents=True, exist_ok=True)
         free = socket.socket()
         free.bind(("127.0.0.1", 0))
@@ -102,8 +103,14 @@ class Serve:
         env.pop("DECOMP_WINDOW", None)  # (the tests' "no window" would skip the desktop check serve must skip itself)
         env.pop("DISPLAY", None)
         env.pop("WAYLAND_DISPLAY", None)
+        argv = [sys.executable, "-m", "decompnet.app.cli", "serve"]
+        if restart is not None:  # as updates.restart starts the new version: that port exactly, that secret
+            restart = dict(restart, port=port)
+            env["DECOMP_RESTART"] = json.dumps(restart)
+            argv[-1:] = ["--port", str(port), "serve"]
+        self.asked = port
         self.lines: list[str] = []
-        self.proc = subprocess.Popen([sys.executable, "-m", "decompnet.app.cli", "serve"], env=env,
+        self.proc = subprocess.Popen(argv, env=env,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         threading.Thread(target=self._read, daemon=True).start()
         for _ in range(300):  # it answers /health once the server runs (the port it took is in server.json)
@@ -216,8 +223,31 @@ def test_a_tunnel_on_another_port_pairs_and_reads(serving):
     other = TestClient(browser.app, base_url="http://127.0.0.1:7778")
     other.cookies.set(f"{COOKIE}_7778", tunnel.cookies.get(f"{COOKIE}_7777"))
     assert other.get("/api/state").status_code == 200  # the same session, through a second tunnel
+    on_80 = TestClient(browser.app, base_url="http://localhost")  # (a Windows user needs no admin rights for it)
+    redirected = on_80.get(f"/pair?code={sessions.new_code()}", follow_redirects=False)
+    assert redirected.status_code == 303 and f"{COOKIE}_80=" in redirected.headers["set-cookie"]
+    assert on_80.get("/").status_code == 200 and on_80.get("/api/state").status_code == 200
     rebinding = TestClient(browser.app, base_url="http://attacker.example:7777")
     assert rebinding.get(f"/pair?code={sessions.new_code()}").status_code == 403
+
+
+@pytest.mark.parametrize("host, port", [
+    ("127.0.0.1:7777", "7777"), ("localhost:7777", "7777"), ("localhost:1", "1"),
+    ("127.0.0.1.evil.example:80", None), ("localhost.evil.example:7777", None),
+    ("localhost:7777.evil.example", None),  # (a prefix match, re.match for fullmatch, would take this one)
+    ("evil.localhost:7777", None), ("xlocalhost:7777", None), ("LOCALHOST:7777", None),  # browsers send lowercase
+    ("localhost", "80"), ("127.0.0.1", "80"),  # a tunnel on port 80: the browser leaves http's own port out
+    ("localhost:", None), ("[::1]:7777", None), ("localhost:7777 ", None),
+    ("localhost:123456", None), ("", None), (None, None)])
+def test_only_this_machines_own_names_are_a_tunnel(host, port):
+    """The Host a paired browser may use: 127.0.0.1 or localhost, with a port, and nothing else (sessions.TUNNEL)."""
+    assert tunnel_port(host) == port
+
+
+@pytest.mark.parametrize("host", ["localhost:7777.evil.example", "127.0.0.1.evil.example:80", "LOCALHOST:7777"])
+def test_a_name_that_only_looks_like_a_tunnel_pairs_nothing(serving, host):
+    browser, sessions = serving
+    assert browser.get(f"/pair?code={sessions.new_code()}", headers={"host": host}).status_code == 403
 
 
 def test_a_cookie_or_code_that_isnt_ascii_is_refused_not_an_error(serving):
@@ -272,6 +302,27 @@ def test_an_update_restarts_serve_as_serve(monkeypatch):
     assert windowed[-2:] == ["--port", "6464"]
 
 
+def test_serve_restarted_by_an_update_comes_back_on_its_port_with_its_secret(tmp_path):
+    """The other end of the test above: the new version, started as updates.restart starts it, listens on the old
+    port exactly and keeps the old secret (decomp's own commands and the agents' configs go on working), and is
+    `decomp serve` again: it pairs browsers, and says it was updated."""
+    serve = Serve(tmp_path / "home", restart={"secret": "the-old-secret", "window": False})
+    try:
+        assert (serve.port, serve.secret) == (serve.asked, "the-old-secret")
+        own = {"User-Agent": f"{window.TOKEN_AGENT}the-old-secret", "X-Decomp": "1"}
+        with httpx.Client(base_url=f"http://127.0.0.1:{serve.port}") as ask:
+            assert ask.post("/api/pair", headers=own).status_code == 200  # sessions: serve, not the windowed app
+        link = serve.link()
+        for _ in range(50):
+            if any("updated and restarted" in line for line in serve.lines):
+                break
+            time.sleep(0.1)
+        assert any("updated and restarted" in line for line in serve.lines), "\n".join(serve.lines)
+        assert link.startswith(f"http://127.0.0.1:{serve.port}/pair?code=")
+    finally:
+        serve.stop()
+
+
 def test_serve_builds_an_updater_that_restarts_as_serve(monkeypatch, tmp_path):
     """build(..., pair=...) — `decomp serve` — hands its updater `serve`, so an update's restart (the test above)
     comes back headless; the app with a window doesn't."""
@@ -291,6 +342,8 @@ def test_only_decomps_own_commands_get_a_fresh_code(serving):
     pair(browser, sessions)
     assert browser.post("/api/pair", headers={"X-Decomp": "1"}).status_code == 401  # a paired browser: no
     own = {"User-Agent": f"{window.TOKEN_AGENT}{SECRET}", "X-Decomp": "1"}
+    # the secret without the header: what a page from another site could make a browser send, if it had the secret
+    assert browser.post("/api/pair", headers={"User-Agent": own["User-Agent"]}).status_code == 401
     code = browser.post("/api/pair", headers=own).json()["code"]
     assert browser.get(f"/pair?code={code}", follow_redirects=False).status_code == 303
 
