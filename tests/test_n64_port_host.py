@@ -483,3 +483,54 @@ def test_the_host_answers_what_a_packed_shooters_boot_calls():
     text = HOST.read_text()
     for name in ("memset", "strlen", "osPfsNumFiles", "osPfsFreeBlocks", "osSpTaskLoad"):
         assert re.search(rf"\bw2c_env_{name}\(struct w2c_env", text), name
+
+
+def test_ram_is_dumped_at_the_retraces_asked_for(tmp_path):
+    """PORT_RAM_DUMPS="vi:file,...": the game's 8 MB of RAM, big-endian, written at those retraces, as the reversing
+    emulator writes its own (EMU_DUMP), for tools/n64_frame_compare.py."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = tmp_path / "t.c"
+    source.write_text("""#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static uint8_t ram[0x800000], *M;
+static unsigned long vi_count;
+""" + _function(HOST.read_text(), "ram_dumps") + """
+int main(void) {
+    M = ram - 0x80000000u;
+    for (vi_count = 1; vi_count <= 5; vi_count++) { ram[0] = (uint8_t)vi_count; ram_dumps(); }
+    return 0;
+}
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    env = {**os.environ, "PORT_RAM_DUMPS": f"2:{tmp_path / 'a.bin'},4:{tmp_path / 'b.bin'}"}
+    subprocess.run([str(tmp_path / "t")], env=env, check=True)
+    a, b = (tmp_path / "a.bin").read_bytes(), (tmp_path / "b.bin").read_bytes()
+    assert len(a) == len(b) == 0x800000 and a[0] == 2 and b[0] == 4
+    assert not (tmp_path / "c.bin").exists()
+
+
+def test_scripted_input_can_be_timed_in_retraces(tmp_path):
+    """PORT_INPUT counts frames shown; with PORT_INPUT_CLOCK=vi it counts retraces, as the reversing emulator's
+    scripts do, so one script drives both: START from retrace 10 is held at retrace 12 though only 6 frames were shown."""
+    cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    if not cc:
+        pytest.skip("no C compiler")
+    source = tmp_path / "t.c"
+    source.write_text("""#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static uint16_t buttons; static int8_t stick_x, stick_y;
+static unsigned long vi_count = 12, swaps = 6;
+""" + _function(HOST.read_text(), "script_input") + """
+int main(void) { script_input(); printf("%04X\\n", buttons); return 0; }
+""")
+    subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
+    for clock, want in (("vi", "1000"), ("", "0000")):
+        env = {**os.environ, "PORT_INPUT": "10:START", "PORT_INPUT_CLOCK": clock}
+        done = subprocess.run([str(tmp_path / "t")], env=env, check=True, capture_output=True, text=True)
+        assert done.stdout.strip() == want

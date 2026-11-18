@@ -493,8 +493,32 @@ u32 w2c_env_osViGetCurrentFramebuffer(struct w2c_env *e) { (void)e; return frame
 u32 w2c_env_osViGetNextFramebuffer(struct w2c_env *e) { (void)e; return frame_buffer; }
 
 static void port_timers(void);
+/* PORT_RAM_DUMPS="vi:file,vi:file": the game's RAM (8 MB from 0x80000000, big-endian) written at those retraces,
+   laid out as the reversing emulator writes its dumps at the same retraces (consoles/n64/emulator, EMU_DUMP), so the
+   two compare word by word and tools/n64_frame_compare.py draws each one's frame. */
+static void ram_dumps(void) {
+    static const char *spec;
+    static int loaded;
+    if (!loaded) { loaded = 1; spec = getenv("PORT_RAM_DUMPS"); }
+    for (const char *p = spec; p && *p;) {
+        char *end;
+        unsigned long at = strtoul(p, &end, 10);
+        if (*end != ':') return;
+        const char *path = end + 1, *next = strchr(path, ',');
+        size_t n = next ? (size_t)(next - path) : strlen(path);
+        if (at == vi_count && n < 1024) {
+            char name[1024];
+            memcpy(name, path, n); name[n] = 0;
+            FILE *f = fopen(name, "wb");
+            if (f) { fwrite(M + 0x80000000u, 1, 0x800000, f); fclose(f); }
+            else fprintf(stderr, "PORT_RAM_DUMPS: can't write %s\n", name);
+        }
+        p = next ? next + 1 : path + n;
+    }
+}
 static void retrace(void) {
     vi_count++;
+    ram_dumps();
     port_timers();
     if (vi.queue && vi_count % vi.every == 0) put(vi.queue, vi.msg, 0, 0);
 }
@@ -601,7 +625,9 @@ u32 w2c_env_osContInit(struct w2c_env *e, u32 mq, u32 bits, u32 status) {
 static void si_done(uint32_t mq) { if (!post_event(EV_SI) && mq) put(mq, 0, 0, 0); }
 u32 w2c_env_osContStartReadData(struct w2c_env *e, u32 mq) { (void)e; si_done(mq); return 0; }
 /* PORT_INPUT: the first controller, scripted by frame shown: "300:START,306:-,400:A+UP,500:SX=60+SY=-20".
-   Each entry sets the state from that frame on: buttons joined by +, "-" for none, SX/SY for the stick. */
+   Each entry sets the state from that frame on: buttons joined by +, "-" for none, SX/SY for the stick. With
+   PORT_INPUT_CLOCK=vi the times are retraces instead, as the reversing emulator's scripts count them (EMU_INPUT), so
+   one script drives both the same way. */
 static int8_t stick_x, stick_y;
 int port_live_input(uint16_t *buttons, int8_t *x, int8_t *y); /* live.c: the keyboard, with PORT_LIVE */
 void port_live_start(void);
@@ -617,7 +643,11 @@ static void scripted_input(void) {
 static void script_input(void) {
     static const char *script;
     static int loaded;
-    if (!loaded) { loaded = 1; script = getenv("PORT_INPUT"); }
+    static int by_vi;
+    if (!loaded) {
+        loaded = 1; script = getenv("PORT_INPUT");
+        by_vi = getenv("PORT_INPUT_CLOCK") && !strcmp(getenv("PORT_INPUT_CLOCK"), "vi");
+    }
     buttons = 0; stick_x = stick_y = 0;
     if (!script) return;
     static const struct { const char *name; uint16_t bit; } names[] = {
@@ -640,7 +670,7 @@ static void script_input(void) {
             p += n;
             if (*p == '+') p++;
         }
-        if (at <= swaps) { buttons = b; stick_x = (int8_t)sx; stick_y = (int8_t)sy; }
+        if (at <= (by_vi ? vi_count : swaps)) { buttons = b; stick_x = (int8_t)sx; stick_y = (int8_t)sy; }
         if (*p == ',') p++;
     }
 }
