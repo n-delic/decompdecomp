@@ -266,3 +266,25 @@ def test_recent_key_fast_path_notices_a_changed_function_row():
     search.net.cfg = lambda proj: calls.append(True) or {}
     assert search._recent_key(proj, dict(fn, best_source='b'), 'int f(void){return 1;}', None) is None  # slow path ran
     assert calls
+
+
+def test_equivalent_text_keeps_what_the_compiler_could_tell_apart():
+    from decompnet.app.deep_permuter import equivalent_text as same
+    assert same('int f(int x){ /* note */ return x+1; }') == same('int f(int x)\n{\n    return x + 1; // note\n}')
+    assert same('i++ + j') != same('i+ ++j') and same('a - -b') != same('a--b')
+    assert same('s = "a  b";') != same('s = "a b";') and same("c = ' ';") != same("c = '  ';")
+    for exact in ('#define N 1\nint a = N;', 'int line = __LINE__;'):
+        assert same(exact) == exact
+
+
+def test_layout_counts_when_the_header_reads_line_numbers():
+    from decompnet.app import deep_permuter
+    search = deep_permuter.Search.__new__(deep_permuter.Search)
+    search._recent_base = b'base'
+    keys = {}
+    for header in ('int x;', '#define ASSERT(c) check(c, __LINE__)'):
+        search._recent_keys = {}
+        one = search._recent_source('int f(void){return 1;}', 1, header)
+        two = search._recent_source('int f(void)\n{\n  return 1;\n}', 1, header)
+        keys[header] = one == two
+    assert keys == {'int x;': True, '#define ASSERT(c) check(c, __LINE__)': False}

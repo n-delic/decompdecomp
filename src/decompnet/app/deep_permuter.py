@@ -6,6 +6,7 @@ search space, so time/variant limits and cancellation always remain explicit.
 import copy
 import hashlib
 import json
+import re
 import sys
 import threading
 import time
@@ -874,7 +875,12 @@ class Search(Permuter):
             cache.move_to_end(source);return cache[source][0]
         from .. import compiler
         if not checked and not compiler._stable_inputs([source.encode(), header.encode()]):return None
-        result=(version,hashlib.sha256(self._recent_base+source.encode()).digest())
+        # Layout counts when the header's macros read line numbers (assert macros often do): there the exact text.
+        seen = getattr(self, '_header_layout', None)
+        if seen is None or seen[0] is not header:
+            seen = self._header_layout = (header, '__LINE__' in header or '__COUNTER__' in header)
+        layout = seen[1]
+        result=(version,hashlib.sha256(self._recent_base+(source if layout else equivalent_text(source)).encode()).digest())
         cache[source]=(result,len(source.encode()))
         while len(cache)>64 or sum(size for _,size in cache.values())>8*1024*1024:cache.popitem(last=False)
         return result
@@ -1034,6 +1040,21 @@ class Search(Permuter):
                 while len(recent) > 128:recent.popitem(last=False)
         self.report()
         return score
+
+
+_TOKENS = re.compile(r'"(?:\\.|[^"\\\n])*"|' r"'(?:\\.|[^'\\\n])*'|//[^\n]*|/\*[\s\S]*?\*/|"
+                     r"\.?\d(?:[eEpP][+-]|[\w.])*|[A-Za-z_]\w*|"
+                     r"\.\.\.|<<=|>>=|->|\+\+|--|<<|>>|<=|>=|==|!=|&&|\|\||[*/%+\-&^|]=|##|\S")
+
+
+def equivalent_text(source):
+    """`source` as the compiler's tokens, without comments or layout: two candidates that differ only there compile
+    to the same code, so the deep search scores one and skips the other. Operators are read longest first, as C's
+    lexer reads them (`i++ + j` is not `i+ ++j`). Anything with a preprocessor line or a line-number macro keeps its
+    exact text: there, layout can change what is compiled."""
+    if '#' in source or '__LINE__' in source or '__COUNTER__' in source:
+        return source
+    return ' '.join(token for token in _TOKENS.findall(source) if not token.startswith(('//', '/*')))
 
 
 def _row(row):
