@@ -254,11 +254,15 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/agents/restart", methods=["POST"])
     async def api_agents_restart(request: Request) -> Response:
-        """Start a stopped or paused helper again."""
+        """Start a stopped or paused helper again, or every paused helper on a project (restart_paused)."""
         if (bad := guard(request, write=True)):
             return bad
+        data = await body(request)
+        if data.get("restart_paused") and data.get("slug"):
+            started, skipped = await call(manager.restart_paused, str(data["slug"]))
+            return JSONResponse({"ok": True, "restarted": started, "skipped": skipped})
         try:
-            await call(manager.restart, str((await body(request)).get("id", "")))
+            await call(manager.restart, str(data.get("id", "")))
         except ValueError as e:
             return fail(e)
         return JSONResponse({"ok": True})
