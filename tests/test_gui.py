@@ -840,3 +840,11 @@ def test_a_ps4_drop_never_requests_codewarrior_and_explains_host_restrictions(gu
     assert unsupported["disabled"] and not unsupported["consent"] and "WSL 2" in unsupported["note"]
 
 
+
+
+def test_following_a_job_survives_a_lost_poll_but_not_a_stalled_one():
+    """A 502 from the window's proxy ended Commit saved progress's follow while its job ran on."""
+    if NODE is None:pytest.skip('needs node to run the GUI scripts')
+    for script in ('gui_job_poll_retry.js', 'gui_job_poll_timeout.js'):
+        subprocess.run([NODE, str(Path(__file__).with_name(script))], check=True, cwd=Path(__file__).resolve().parents[1],
+                       capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)

@@ -682,7 +682,9 @@ def child(db_path: str, workspace: str, port: int) -> None:
     sock.bind(("127.0.0.1", port))
     sock.listen(128)
     threading.Thread(target=listen, daemon=True, name="tool-reader-routes").start()
-    server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, lifespan="on"))
+    # Keep-alive outlasts the gateway's 30 s connection pool (cli.KEEP_ALIVE).
+    server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, lifespan="on",
+                                           timeout_keep_alive=75))
     with output:
         sys.stdout.write(f"LISTENING {port}\n")
         sys.stdout.flush()

@@ -308,6 +308,7 @@ function updateWorkProgress(log, progress) {
 }
 
 async function followJob(id, logEl, onUpdate, active = () => true) {
+  let failures = 0;
   for (;;) {
     if (!active()) return null;
     // A stalled fetch must not leave the panel following a job forever without
@@ -322,7 +323,17 @@ async function followJob(id, logEl, onUpdate, active = () => true) {
     });
     let job;
     try { job = await Promise.race([api(`/api/job?id=${id}`, {signal:controller?.signal}), expired]); }
+    catch (error) {
+      // One poll lost between the window's proxy and the app (a 502 "isn't answering", a dropped connection)
+      // ended the follow while the job ran on: the panel showed the error beside a live Stop. Asking again is
+      // safe (a read); only repeated failures, or a stalled poll, give up.
+      clearTimeout(timeout);
+      if (!transientPoll(error) || ++failures > JOB_POLL_RETRIES) throw error;
+      await sleep(JOB_POLL_MS * failures);
+      continue;
+    }
     finally { clearTimeout(timeout); }
+    failures = 0;
     if (!active()) return null;
     if (logEl) {
       const text = job.log.join("\n");
@@ -342,6 +353,12 @@ async function followJob(id, logEl, onUpdate, active = () => true) {
     }
     await sleep(JOB_POLL_MS);
   }
+}
+
+// Polls in a row that may fail on the way to the app before following gives up (about 7 s of retries).
+const JOB_POLL_RETRIES = 5;
+function transientPoll(error) {
+  return Boolean(error?.connectionFailure) || [502, 503].includes(error?.status);
 }
 
 /* A job started from a dialog or panel says why it failed right there, above its log, until it's tried again
