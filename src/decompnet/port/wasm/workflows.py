@@ -6,9 +6,10 @@ A runner has the save repository alone: none of the app's database and no ROM. S
 build took from the project into `port/wasm/export.json` (the library code the host provides, library code's own
 names, the functions built from ultralib's C, the game's title and version), and the workflow runs
 `python -m decompnet.port.wasm export` on it with the same decompdecomp the user exported with (its commit, or its
-release tag). What a runner can't do, it leaves out and says so: the Miyoo Mini's pack has no ROM in it (the player
-adds theirs), and the apps have no C recompiled from the ROM; a function with no C yet runs instead from the
-player's own ROM, interpreted as the game plays (consoles/n64/port_wasm/mips.c), as in every other build.
+release tag). What a runner can't do, it leaves out and says so: the handhelds' packs (the Miyoo Mini's, the Steam
+Deck's) have no ROM in them (the player adds theirs), and the apps have no C recompiled from the ROM; a function with
+no C yet runs instead from the player's own ROM, interpreted as the game plays (consoles/n64/port_wasm/mips.c), as in
+every other build.
 
 Both files are committed to the repository (those paths only: the user's other changes stay as they are), never
 pushed: the user's next push takes them.
@@ -165,22 +166,22 @@ def workflow(kind: str, platform: str, title: str, save: str, needs_ultralib: bo
         return "export-web.yml", text
     if kind == "ios":
         runner, system = RUNNERS["linux"][0], "ios"
-    elif kind == "miyoo":
-        runner, system = RUNNERS["linux"][0], "miyoo"
+    elif kind in ("miyoo", "steamdeck"):
+        runner, system = RUNNERS["linux"][0], kind
     else:
         runner, system = RUNNERS.get(platform, RUNNERS["linux"])
     asset = _asset(title, kind, system)
-    if kind in ("miyoo", "ios") or platform == "linux":
+    if kind in ("miyoo", "steamdeck", "ios") or platform == "linux":
         pack, asset = f'tar -czf "$RUNNER_TEMP/{asset}.tar.gz" .', f"{asset}.tar.gz"
     elif platform == "darwin":  # ditto keeps the app's signature and its links
         pack, asset = f'ditto -c -k --keepParent "$(ls -d *.app | head -1)" "$RUNNER_TEMP/{asset}.zip"', f"{asset}.zip"
     else:
         pack, asset = f'7z a -tzip "$RUNNER_TEMP/{asset}.zip" .', f"{asset}.zip"
     what = {"app": f"the standalone app for {system}", "window": f"the app with its own window for {system}",
-            "miyoo": "the Miyoo Mini's SD card folders", "ios": "the iPhone/iPad Xcode project (unsigned)"}[kind]
+            "miyoo": "the Miyoo Mini's SD card folders", "steamdeck": "the Steam Deck's folder", "ios": "the iPhone/iPad Xcode project (unsigned)"}[kind]
     text = RELEASE.format(what=what, name=_quote(f"Export {title}: {what}"), runner=runner, package=package, save=save,
                           kind=kind, extra=extra, pack=pack, asset=asset)
-    name = f"export-{kind}.yml" if kind in ("miyoo", "ios") else f"export-{kind}-{system.lower()}.yml"
+    name = f"export-{kind}.yml" if kind in ("miyoo", "steamdeck", "ios") else f"export-{kind}-{system.lower()}.yml"
     return name, text
 
 

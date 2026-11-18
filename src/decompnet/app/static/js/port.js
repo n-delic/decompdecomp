@@ -463,8 +463,8 @@ async function stopGame() {
 /* Export (port/wasm/export.py): the game as a standalone app for this computer, or a browser build (a folder with
    index.html), from the last save. Its bar counts the build's steps; Stop cancels it; Show the folder opens it. */
 let exportJob = null;
-const EXPORTS = { app: "a standalone app", window: "a standalone app with its own window", web: "a browser build", miyoo: "a Miyoo Mini SD card folder", ios: "an iPhone/iPad Xcode project" };
-const EXPORT_NEXT = { app: "Next: open the app", window: "Next: open the app", web: "Next: put it on a web server", miyoo: "Next: copy it to your Miyoo's SD card", ios: "Next: build in Xcode for your iPhone or iPad" };
+const EXPORTS = { app: "a standalone app", window: "a standalone app with its own window", web: "a browser build", miyoo: "a Miyoo Mini SD card folder", steamdeck: "a Steam Deck folder", ios: "an iPhone/iPad Xcode project" };
+const EXPORT_NEXT = { app: "Next: open the app", window: "Next: open the app", web: "Next: put it on a web server", miyoo: "Next: copy it to your Miyoo's SD card", steamdeck: "Next: copy it to your Steam Deck and add it to Steam", ios: "Next: build in Xcode for your iPhone or iPad" };
 
 /* What to do with the export, as numbered steps under the log (not in it: they're what the user acts on). */
 function showExportNext(result) {
@@ -494,7 +494,7 @@ async function exportGame(kind, existing = null, options = {}) {
   $("portExportActions").hidden = false; show.hidden = true; stop.hidden = false; stop.disabled = false;
   showExportNext(null);
   stop.textContent = "Stop the export";
-  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWindow"), $("portExportWeb"), $("portExportWebSimd"), $("portExportMiyoo"), $("portExportIos")],
+  const finish = beginWork(log, `Exporting ${EXPORTS[kind] || "the game"}`, [$("portExportApp"), $("portExportWindow"), $("portExportWeb"), $("portExportWebSimd"), $("portExportMiyoo"), $("portExportSteamDeck"), $("portExportIos")],
     "Exported.");
   if (existing?.progress) updateWorkProgress(log, existing.progress);
   try {
@@ -552,6 +552,7 @@ if ($("portPanel")) {
   $("portExportWebSimd").onclick = () => exportGame("web", null, { simd: true });
   if ($("portExportIos")) $("portExportIos").onclick = () => exportGame("ios");
   if ($("portExportMiyoo")) $("portExportMiyoo").onclick = () => exportGame("miyoo");
+  if ($("portExportSteamDeck")) $("portExportSteamDeck").onclick = () => exportGame("steamdeck");
   $("portExportStop").onclick = stopExport;
   $("portExportShow").onclick = showExport;
   $("portExportMenu").addEventListener("keydown", (e) => { if (e.key === "Escape") closeExportMenu(); });

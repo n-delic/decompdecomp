@@ -1,6 +1,6 @@
 """python -m decompnet.port.wasm SAVE [--console n64]: build the game in a save repository (port/wasm/build.py).
 
-python -m decompnet.port.wasm export SAVE --kind web|app|window|miyoo|ios --out FOLDER [--ultralib]: make an export
+python -m decompnet.port.wasm export SAVE --kind web|app|window|miyoo|steamdeck|ios --out FOLDER [--ultralib]: make an export
 from the save repository alone, as the workflow an export adds to the repository does on GitHub (workflows.py):
 what the build took from the project comes from the save's port/wasm/export.json."""
 import argparse

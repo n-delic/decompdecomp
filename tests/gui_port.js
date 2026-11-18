@@ -265,6 +265,19 @@ const report={console:'Nintendo 64',kit:{name:'libultraship and Torch',summary:'
    assert.ok(!t.c.$('portExportLog').children.some(x=>/rom\.z64/.test(String(x))),'not buried in the log');
    t.c.followJob=()=>new Promise(()=>{});t.run('exportGame("web")');for(let i=0;i<5;i++)await Promise.resolve();
    assert.equal(next.hidden,true,'a new export clears the last one\'s steps until it ends');}
+  {// The Steam Deck export is one more kind of the same job: its button waits while it runs, and its steps show
+   const t=setup(),bodies=[];t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
+   let follow;t.c.followJob=()=>new Promise(r=>{follow=r;});
+   t.c.reply=async(url,opts)=>{if(url==='/api/play-export'){bodies.push(opts.body);return {job:'e4'};}return report;};
+   const exporting=t.run('exportGame("steamdeck")');for(let i=0;i<5;i++)await Promise.resolve();
+   assert.equal(t.c.$('portExportSteamDeck').disabled,true,'its button waits while it exports');
+   assert.equal(JSON.stringify(bodies[0]),JSON.stringify({slug:'a',kind:'steamdeck'}));
+   follow({kind:'steamdeck',path:'/save/port/wasm/export/steamdeck/README.txt',folder:'/save/port/wasm/export/steamdeck',
+     instructions:['Copy the Rally64 folder to your Steam Deck.','Add Rally64/launch.sh to Steam as a non-Steam game.']});
+   await exporting;
+   assert.equal(t.c.$('portExportSteamDeck').disabled,false,'its button comes back');
+   const next=t.c.$('portExportNext'),text=JSON.stringify(next.children,(k,v)=>k==='parentNode'?undefined:v);
+   assert.ok(/Steam Deck/.test(text)&&/non-Steam game/.test(text),'its steps say where it goes');}
   {// "faster where it can" is the browser export with its SIMD modules as well: the same job, simd in its request
    const t=setup(),bodies=[];t.c.S.tab='porting';t.c.updateWorkProgress=()=>{};
    t.c.followJob=async()=>({kind:'web',path:'/save/port/wasm/export/web/index.html',folder:'/save/port/wasm/export/web'});

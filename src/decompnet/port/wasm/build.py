@@ -425,6 +425,54 @@ def game_host(host: Path, repo: Path) -> list[Path]:
     return [own] if len(sha1) >= 12 and own.is_file() else []
 
 
+def cross_host(repo: Path, name: str, label: str, units: list, target: list, flags: list, link: list, recomp,
+               log) -> Path:
+    """The host compiled again for another computer with the pinned Zig, from the game's C the native build just
+    made: the handhelds' exports (miyoo.py, steamdeck.py), into port/wasm/build/<name>/game. `units`: the host's
+    files for that computer; the recompiled C goes in only when this build has it (out/recomp stays behind from an
+    earlier one), with its warnings off. `target` (Zig's -target and -mcpu) builds and links for that computer,
+    `flags` compile every unit, `link` links them."""
+    repo = Path(repo).expanduser().resolve()
+    zig = toolchains.binary("zig")
+    wabt = toolchains.ensure("wabt", log=log)
+    out = repo / "port" / "wasm" / "build"
+    dest = out / name
+    (dest / "obj").mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "ZIG_GLOBAL_CACHE_DIR": str(out / "zig-cache"), "ZIG_LOCAL_CACHE_DIR": str(out / "zig-cache")}
+    rt = wabt / "share" / "wabt" / "wasm2c"
+    recompiled = []
+    if recomp and Path(recomp["folder"], "recomp.json").is_file():
+        recompiled = [*sorted((out / "recomp").glob("rec_*.c")), out / "recomp" / "bridges.c"]
+    units = [*units, *recompiled]
+    dirs = [wabt / "include", rt, out / "c"]
+    quiet = ["-w", "-I", out / "recomp"]  # thousands of generated functions: warnings off
+    includes = [a for d in dirs for a in ("-I", d)]
+    files = _Files()
+    flags = [*target, *flags]
+
+    def compile_unit(unit: Path) -> str | None | bool:
+        obj = dest / "obj" / (unit.stem + ".o")
+        extra = quiet if unit in recompiled else []
+        key = files.key(unit, [*dirs, out / "recomp"], zig, *flags, *extra)
+        if _fresh(obj, key):
+            return False
+        _unstamp(obj)
+        done = _run([zig, "cc", *flags, *extra, *includes, "-c", unit, "-o", obj], log, env=env)
+        if done.returncode:
+            return (done.stderr.strip().splitlines() or ["failed"])[0]
+        _stamp(obj, key)
+        return None
+    if failed := _parallel(units, compile_unit, log, f"files for {label}", None):
+        raise NetworkError(f"building for {label} failed: " + "; ".join(failed[:3]))
+    program = dest / "game"
+    done = _run([zig, "cc", *target, "-o", program, *(dest / "obj" / (u.stem + ".o") for u in units), *link], log,
+                env=env)
+    if done.returncode:
+        raise NetworkError(f"linking for {label} failed: {done.stderr.strip()[-600:]}")
+    log(f"built {program} for {label} ({program.stat().st_size / 1e6:.1f} MB)")
+    return program
+
+
 def linked(objects: Path, sources) -> list[Path]:
     """The objects of the files the build compiled, by name in any case: on a case-insensitive disk the object an old
     save's SelectStateReset.c made keeps that name when selectStateReset.o is written over it, and leaving it out
