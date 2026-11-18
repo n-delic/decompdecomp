@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import logging
+import os
 import sqlite3
 import sys
 import threading
@@ -814,18 +815,55 @@ class Store:
                 f"INSERT INTO read_revisions SELECT '{kind}:' || pid,1 FROM ({affected}) WHERE pid IS NOT NULL "
                 "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
 
+    def _wal_stamp(self):
+        """The WAL index header SQLite keeps at the start of the -shm file (its change counter, frame count and
+        salts), or None. Every connection's commit changes it, in this process or another: it is shared memory."""
+        if self.path == IN_MEMORY:
+            return None
+        fd = getattr(self, '_shm_fd', None)
+        try:
+            if fd is None:
+                fd = self._shm_fd = os.open(self.path + '-shm', os.O_RDONLY)
+            header = os.pread(fd, 48, 0)
+        except (OSError, AttributeError):
+            self._shm_fd = None
+            return None
+        return header if len(header) == 48 else None
+
+    def _snapshot_version(self, key):
+        """read_revisions from one whole-table read, kept until any commit changes the WAL index or this process
+        commits: a deep search asked about 24 revisions per candidate, each a query through the shared connection
+        lock, for numbers that change only on a write."""
+        stamp = self._wal_stamp()
+        if stamp is None:
+            return None
+        commits = getattr(self, '_commit_seq', 0)
+        kept = getattr(self, '_revision_snapshot', None)
+        if kept is None or kept[0] != (commits, stamp):
+            revisions = {row['kind']: row['revision'] for row in self.all('SELECT kind,revision FROM read_revisions')}
+            kept = self._revision_snapshot = ((commits, stamp), revisions)  # (stamp taken before the read)
+        return kept[1].get(key, 0)
+
     def read_version(self, kind, project=None):
         key = kind if project is None else f'{kind}:{project}'
         held = _held_versions.get()
-        if held is None or getattr(self._local, 'in_tx', False):
+        if getattr(self._local, 'in_tx', False):
+            row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
+            return row['revision'] if row else 0
+        if held is None:
+            found = self._snapshot_version(key)
+            if found is not None:
+                return found
             row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
             return row['revision'] if row else 0
         commits = getattr(self, '_commit_seq', 0)  # (taken before the read: a commit meanwhile makes it stale)
         kept = held.get((id(self), key))
         if kept is not None and kept[0] == commits:
             return kept[1]
-        row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
-        revision = row['revision'] if row else 0
+        revision = self._snapshot_version(key)
+        if revision is None:
+            row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
+            revision = row['revision'] if row else 0
         held[(id(self), key)] = (commits, revision)
         return revision
 
