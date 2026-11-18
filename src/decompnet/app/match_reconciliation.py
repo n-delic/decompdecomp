@@ -15,11 +15,14 @@ from .purpose_work import Executor
 SCHEMA = "CREATE TABLE IF NOT EXISTS reconcile_visits(function_id INTEGER PRIMARY KEY,scope TEXT,cursor INTEGER,visited REAL)"
 
 
-def bank(net, proj):
-    """Recorded exact source/header inputs in this project, including now-open donors."""
+def bank(net, proj, addresses=None):
+    """Recorded exact source/header inputs in this project, including now-open donors. `addresses`: only records
+    for these (the open functions'): reading every match's source and header took seconds on a big game."""
     if not net.project_store(proj['id']).one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):return []
+    only='' if addresses is None else " AND json_extract(v.details,'$.vram') IN (SELECT value FROM json_each(?))"
     rows=net.project_store(proj['id']).all('SELECT v.details,v.source,v.header,f.name,f.meta,f.vram FROM verified_matches v '
-                       'JOIN functions f ON f.id=v.function_id WHERE f.project_id=? ORDER BY v.attempt_id DESC',proj['id'])
+                       'JOIN functions f ON f.id=v.function_id WHERE f.project_id=?'+only+' ORDER BY v.attempt_id DESC',
+                       proj['id'],*(() if addresses is None else (json.dumps(sorted(addresses)),)))
     out={}
     for row in rows:
         try:proof=json.loads(row['details'])
@@ -81,8 +84,24 @@ def candidates(net, proj, fn, records, current_header=False):
     return out[:8]
 
 
+def _open_with_history(pid, records, names=None):
+    """The query for the open functions candidates() can offer something for: earlier matched C, a recorded exact
+    match at the address, or an exact attempt (and, for an automatic resume, the match a check kept as the best
+    attempt). A big game has hundreds of open functions with none; reading and inspecting each one took 80 s of a
+    2.5-minute recovery of 3 functions."""
+    kept=" OR f.best_source IS NOT NULL" if names is not None else ""
+    only=" AND f.name IN (SELECT value FROM json_each(?))" if names is not None else ""
+    sql=("SELECT f.* FROM functions f WHERE f.project_id=? AND f.status='open'"+only+" AND (f.matched_source IS NOT NULL"
+         " OR f.vram IN (SELECT value FROM json_each(?))"
+         " OR EXISTS(SELECT 1 FROM attempts a WHERE a.function_id=f.id AND a.score=0 AND a.compiled=1)"+kept+") ORDER BY f.id")
+    return (sql,pid,*((json.dumps(sorted(names)),) if names is not None else ()),json.dumps(sorted(records)))
+
+
 def validate(net, slug, seconds, attempts):
-    proj=net.project_row(slug)
+    # Read without syncing: the click returns its job at once, and the job syncs before it judges. (On a big game the
+    # request waited 54 s behind a repository sync before the job, its progress bar and Stop existed.)
+    view=getattr(getattr(net,'progress',None),'view',None)
+    with view() if view else nullcontext():proj=net.project_row(slug)
     if not net.is_rom(proj) or net.fork_slug(slug) or slug in net.links:
         raise NetworkError('Saved-match recovery currently needs a local ROM project. Imported builds own their source/header history.')
     if ((seconds is not None and (type(seconds)!=int or not 1<=seconds<=600))
@@ -159,11 +178,12 @@ def run(net, slug, seconds, attempts, log, names=None):
     try:
         with judging(), view():
             checkpoint()
-            proj=net.project_row(slug);records=bank(net,proj);agent,_=net.local_agent('autopilot')
-            with net.project_store(proj['id']).tx(wait=checkpoint) as db:db.execute(SCHEMA)
-            visits={r['function_id']:r for r in net.project_store(proj['id']).all('SELECT * FROM reconcile_visits')}
-            rows=net.project_store(proj['id']).all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",proj['id'])
-            if names is not None:rows=[row for row in rows if row['name'] in names]
+            proj=net.project_row(slug);store=net.project_store(proj['id'])
+            addresses={r['vram'] for r in store.all("SELECT vram FROM functions WHERE project_id=? AND status='open'",proj['id'])}
+            records=bank(net,proj,addresses);agent,_=net.local_agent('autopilot')
+            with store.tx(wait=checkpoint) as db:db.execute(SCHEMA)
+            visits={r['function_id']:r for r in store.all('SELECT * FROM reconcile_visits')}
+            rows=store.all(*_open_with_history(proj['id'],records,names))
             rows.sort(key=lambda f:visits[f['id']]['visited'] if f['id'] in visits else 0)
         entries=deque(rows)
         while entries and result['attempts']<compile_limit:
