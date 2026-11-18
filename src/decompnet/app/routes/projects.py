@@ -55,7 +55,7 @@ def register(app: App) -> None:
                 def perform():
                     if request.url.path in ('/api/priority', '/api/variants'):
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
-                    if request.url.path in ('/api/try', '/api/cross-game/run') or (request.method=='POST' and request.url.path=='/api/reimport'):
+                    if request.url.path in ('/api/try', '/api/cross-game/run', '/api/reconcile-matches') or (request.method=='POST' and request.url.path=='/api/reimport'):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.
                     if request.method == "GET" or request.url.path == "/api/permuter/pass":
                         # Deep-pass controls schedule local workers; the workers synchronize before judging.

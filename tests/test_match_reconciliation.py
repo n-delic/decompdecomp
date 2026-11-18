@@ -22,6 +22,9 @@ def setup(monkeypatch, *, best=20, exact=True, worker=False):
         db.execute('UPDATE functions SET best_score=?,matched_source=NULL', (best,))
     monkeypatch.setattr(recovery,'bank',lambda *a:[])
     monkeypatch.setattr(recovery,'candidates',lambda *a:[('int f(void){return 1;}','private types','historical')])
+    # (These stand-in candidates give every open function C: pass them all, as the SQL prefilter can't know that.)
+    monkeypatch.setattr(recovery,'_open_with_history',lambda pid,records,names=None:
+                        ("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY id",pid))
     monkeypatch.setattr(recovery.candidate_scope,'key',lambda *a:'scope')
     settings=json.loads(proj['config'])['compiler']
     net._compile=lambda *a:SimpleNamespace(ok=True,obj=b'fixture',effective_settings={'compiler':settings})
@@ -304,7 +307,9 @@ def test_real_empty_mips_function_is_recovered_through_the_ordinary_exact_judge(
         return sync(slug, **kwargs)
     monkeypatch.setattr(net.progress, 'sync', tracked_sync)
     result=recovery.run(net,'game',None,None,log)
-    assert len(implicit) == 2  # initial validation only, never preliminary per-function reads
+    # Validation reads without syncing (the click returns its job at once) and preliminary per-function reads never
+    # sync; the job synchronizes on purpose, forced, before it freezes compile inputs.
+    assert implicit == []
     assert not net.progress.viewing
     assert result['matched']==count and net._function('empty_return','game')['status']=='matched'
     assert net.store.one('SELECT via FROM attempts ORDER BY id DESC LIMIT 1')['via']=='saved-match-reconciliation'
@@ -557,3 +562,26 @@ def test_empty_recovery_pool_does_not_decode_the_current_header(monkeypatch):
     fn = dict(fn, matched_source=None)
     monkeypatch.setattr(net, '_context', lambda *a: pytest.fail('no historical candidate needs a current header'))
     assert recovery.candidates(net, proj, fn, {}) == []
+
+
+def test_only_open_functions_with_earlier_exact_c_are_read_and_inspected():
+    """A big game's 557 open functions had 3 with anything to try; inspecting each took 80 s of a 2.5-minute run."""
+    net, proj, fn = prepared_net()
+    pid = proj['id']
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open',matched_source=NULL,best_source=NULL")
+        for name, vram in (('nothing', 0x100), ('old_match', 0x200), ('exact_attempt', 0x300), ('recorded', 0x400),
+                           ('kept_best', 0x500), ('done', 0x600)):
+            db.execute("INSERT INTO functions(project_id,name,unit,vram,size,n_insns,status) VALUES(?,?,'',?,4,1,?)",
+                       (pid, name, vram, 'matched' if name == 'done' else 'open'))
+        db.execute("UPDATE functions SET matched_source='int a;' WHERE name='old_match'")
+        db.execute("UPDATE functions SET best_source='int b;' WHERE name='kept_best'")
+        db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) "
+                   "SELECT id,NULL,0,1,1,'int c;',0 FROM functions WHERE name='exact_attempt'")
+        db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) "
+                   "SELECT id,NULL,0,0,1,'int d;',0 FROM functions WHERE name='nothing'")  # (never compiled)
+    def names(*args):
+        return {row['name'] for row in net.store.all(*recovery._open_with_history(pid, *args))}
+    assert names({0x400: []}) == {'old_match', 'exact_attempt', 'recorded'}
+    # An automatic resume of named functions also tries the match a check kept as the best attempt.
+    assert names({}, {'kept_best', 'old_match', 'nothing', 'done'}) == {'kept_best', 'old_match'}
