@@ -27,6 +27,14 @@ vm.runInContext(code.slice(code.indexOf('function renderAutopilot('),code.indexO
  ctx.renderAutopilot({kind:'rom',matched:0});assert.equal(get('machineDraftIncludeAll').checked,true);
  ctx.S.slug='another-project';ctx.renderAutopilot({kind:'rom',matched:0});
  assert.equal(get('machineDraftIncludeAll').checked,false);
+ // A missing draft decompiler installs m2c and retries, instead of sending the user to Setup.
+ const calls=[];let missing=true;ctx.loadState=async()=>{};
+ ctx.api=async(url,options)=>{calls.push([url,options]);if(url==='/api/drafts'&&missing){missing=false;throw Error('Install the draft decompiler in Setup before regenerating this project.');}return {job:url==='/api/toolchain'?'install-job':'draft-job2'};};
+ ctx.followJob=async id=>id==='install-job'?{}:{completed:1,total:1,compiled:1,matched:0,skipped:0,failed:0};
+ await get('regenerateMachineDrafts').onclick();
+ assert.deepEqual(calls.map(c=>c[0]),['/api/drafts','/api/toolchain','/api/drafts']);
+ assert.equal(calls[1][1].body.id,'m2c');assert.equal(calls[1][1].body.accept_license,false);
+ assert(!errors.some(e=>/draft decompiler/.test(e)));assert.equal(finished,3);
  ctx.api=async()=>{throw Error('decompiler unavailable');};
- await get('regenerateMachineDrafts').onclick();assert.equal(finished,3);assert(errors.includes('decompiler unavailable'));
+ await get('regenerateMachineDrafts').onclick();assert.equal(finished,4);assert(errors.includes('decompiler unavailable'));
 })().catch(error=>{console.error(error);process.exitCode=1;});

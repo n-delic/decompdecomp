@@ -586,7 +586,19 @@ function renderAutopilot(ov) {
     const finish = beginWork(log, 'Regenerating machine drafts', [draftButton, $('machineDraftIncludeAll'), $('machineDraftThreads')], 'Draft refresh finished');
     showJobError(log, '');
     try {
-      const { job } = await api('/api/drafts', {method:'POST', body:{slug:S.slug, include_all:$('machineDraftIncludeAll').checked, threads:Number($('machineDraftThreads').value)}});
+      const start = () => api('/api/drafts', {method:'POST', body:{slug:S.slug, include_all:$('machineDraftIncludeAll').checked, threads:Number($('machineDraftThreads').value)}});
+      let job;
+      try { ({ job } = await start()); }
+      catch (error) {
+        // The draft decompiler (m2c) is open source and pinned: install it here instead of sending the user to Setup.
+        if (!/install the draft decompiler/i.test(error.message || '')) throw error;
+        if (log._workStatus) log._workStatus.textContent = 'Installing the draft decompiler (m2c)…';
+        const install = await api('/api/toolchain', {method:'POST', body:{id:'m2c', accept_license:false}});
+        await followJob(install.job, log);
+        await loadState();
+        if (log._workStatus) log._workStatus.textContent = 'Regenerating machine drafts';
+        ({ job } = await start());
+      }
       jobId = job;
       if (stop) stop.disabled = false;
       const result = await followJob(job, log, lines => { log.hidden = lines.length === 0; });
