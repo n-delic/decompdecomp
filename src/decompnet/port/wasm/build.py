@@ -203,6 +203,23 @@ def _unit_size(type_text: str) -> int | None:
     return _FIELD_TYPES.get(" ".join(w for w in words if w not in ("unsigned", "signed")))
 
 
+def _plain_bytes(unit) -> list[str] | None:
+    """A partly used unit's fields as plain members, when each is a whole byte or halfword at its own alignment:
+    the members declared after them then fill the unit's spare bytes, as IDO lays them out. `int cmd:8;` then three
+    `unsigned char`s is libultra's Gsetcolor: closed with a zero-width field it took a word of its own, the struct
+    grew to 12 bytes, Gfx to 16, and a packed shooter's text rectangles read padding as their texture coordinates."""
+    out, at = [], 0
+    for m in unit:
+        width = int(m.group(5))
+        if width not in (8, 16) or at % width:
+            return None
+        signed = not re.search(r"\bunsigned\b|\bu(8|16|32|64)\b", m.group(2))
+        kind = "char" if width == 8 else "short"
+        out.append(f"{m.group(1)}{'signed' if signed else 'unsigned'} {kind} {m.group(4) or f'_pad{at}'};{m.group(6)}")
+        at += width
+    return out
+
+
 def big_endian_bitfields(text: str) -> str:
     """Bitfields laid out as the console's compiler does: a big-endian MIPS compiler gives a unit's first field its
     top bits, wasm32 its bottom ones. Each unit's fields are declared in reverse (a unit left part-empty gets its
@@ -239,7 +256,12 @@ def big_endian_bitfields(text: str) -> str:
             result.extend(m.group(0) for m in run)
         else:
             units.append((unit, used, size))
+            nxt = lines[i + len(run)] if i + len(run) < len(lines) else ""
             for unit, used, size in units:
+                if (unit is units[-1][0] and used < size * 8 and not re.match(r"\s*}", nxt)
+                        and (plain := _plain_bytes(unit))):
+                    result.extend(plain)  # the members after it share its unit, as IDO packs them
+                    continue
                 if not any(m.group(4) for m in unit):  # only padding: nothing reads it, and it may start mid-unit
                     result.extend(m.group(0) for m in unit)
                     continue
