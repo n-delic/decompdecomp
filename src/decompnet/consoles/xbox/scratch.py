@@ -230,6 +230,9 @@ def pe_view(data: bytes) -> bytes:
     xbe = read_xbe(data)
     image = xbe.base - PE_HEADERS
     rows = [("XBEH", xbe.base, xbe.headers, 0, min(xbe.headers, len(data)), DATA)]
+    # (each section's VirtualSize is at least its bytes in the file, so the PC path's bound at the loaded code, its
+    # Section.loaded_size, doesn't apply to XBEs yet: the XBE's own VirtualSize here would change the view's bytes,
+    # and their SHA-1 is the game's identity)
     rows += [(s.name, s.va, max(s.vsize, s.size), s.offset, s.size, CODE if s.code else DATA if s.size else BSS)
              for s in xbe.sections]
     end = max(va + size for _, va, size, _, _, _ in rows)
