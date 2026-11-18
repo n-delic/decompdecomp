@@ -61,3 +61,33 @@ def test_branch_to_the_pre_return_pop_executes_the_full_epilogue():
 def test_a_leaf_cannot_have_a_transfer_inside_its_return_delay_slot():
     data=image([0x24020001,RETURN,0x10000000])
     assert leaf_extent(data,0,len(data),BASE) is None
+
+
+LUI_V0=0x3c028010  # lui $v0, 0x8010
+LBU_V0=0x904202a0  # lbu $v0, 0x2a0($v0)
+
+
+@pytest.mark.parametrize('platform',['n64','psx','ps2','psp'])
+def test_loads_scheduled_ahead_of_the_frame_stay_in_the_body(platform):
+    """An N64 game's GCC put `lui $v0; lbu $v0` before `addiu $sp`: the body still opens at the first load."""
+    console=consoles.get(platform)
+    words=[LUI_V0,LBU_V0,FRAME,0xafbf0014,0x8fbf0014,POP,RETURN,0]
+    data=image(words,console.big_endian)
+    assert called_extent(data,0,len(data),BASE,big_endian=console.big_endian,cpu=console.cpu_variant)==len(data)
+
+
+@pytest.mark.parametrize('lead',[
+    [0xafa40000],  # a store
+    [0x10000001,0],  # a transfer
+    [0x00808021],  # writes a saved register ($s0)
+    [0x8fa20010],  # reads $sp
+    [LUI_V0]*5,  # more than the compiler schedules
+])
+def test_only_scratch_loads_and_arithmetic_may_come_before_the_frame(lead):
+    data=image(lead+[FRAME,0xafbf0014,0x8fbf0014,POP,RETURN,0])
+    assert called_extent(data,0,len(data),BASE) is None
+
+
+def test_a_loop_back_into_scheduled_loads_is_no_entry():
+    words=[LUI_V0,FRAME,0x1000fffd,0,0x8fbf0014,POP,RETURN,0]  # the branch at 8 goes back to the lui
+    assert called_extent(image(words),0,32,BASE) is None

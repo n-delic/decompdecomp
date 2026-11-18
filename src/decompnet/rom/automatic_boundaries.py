@@ -109,10 +109,11 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             check()
             if accepted and at<accepted[-1][1]:continue
             # A switch's table is read where the config maps data, so a body with one closes (a shared overlay
-            # slot's switch functions stayed cut where outside calls had cut them).
-            extra={} if at in leaves else {'table_ranges':tables}
-            validate=leaf_extent if at in leaves else called_extent
-            size=validate(image,at,hi,at+mapping,big_endian=console.big_endian,cpu=console.cpu_variant,asm_check=console.asm_reason,**extra)
+            # slot's switch functions stayed cut where outside calls had cut them). An entry after a return that is
+            # no leaf can be a frame the compiler scheduled a load or two ahead of (called_extent's lead).
+            framed=dict(big_endian=console.big_endian,cpu=console.cpu_variant,asm_check=console.asm_reason)
+            size=(leaf_extent(image,at,hi,at+mapping,**framed) if at in leaves else None) or \
+                called_extent(image,at,hi,at+mapping,**framed,table_ranges=tables)
             if not size:continue
             end=at+size;address=at+mapping;finish=end+mapping
             if any(address<a<finish for a in explicit|pointers):continue
