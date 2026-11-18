@@ -1,5 +1,6 @@
 """Verified source repositories with portable app progress; game-derived files stay local."""
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -7,9 +8,13 @@ from ..network import NetworkError
 from . import repository_sync, saves
 
 MARKER = 'decompdecomp-repository.json'
+# A saved repository's own words at its root (a provenance notice, its agents' rules, a license) are public and stay
+# as written when it's upgraded: an N64 save tracking NOTICE.md was refused ("Untrack game/private files"), and its
+# hand-written AGENTS.md would then have collided with the export's own.
+KEPT_DOCS = ('AGENTS.md', 'NOTICE.md', 'CONTRIBUTING.md', 'LICENSE', 'LICENSE.md', 'LICENSE.txt')
 ROOT_FILES = frozenset({'build.py', 'build.json', 'splat.yaml', 'symbol_addrs.txt', 'reloc_addrs.txt',
                         'objdiff.json', 'functions.cfg', 'README.md', 'AGENTS.md', 'requirements.txt',
-                        'decompdecomp-sync.json', MARKER, '.gitignore'})
+                        'decompdecomp-sync.json', MARKER, '.gitignore', *KEPT_DOCS})
 
 
 def full(root):
@@ -144,6 +149,10 @@ def prepare(net, slug, path, root, log):
             if previous_ignore.startswith(block):previous_ignore = previous_ignore[len(block):]
         exclusions = '\n'.join(line for line in previous_ignore.splitlines() if not line.startswith('!') and line not in ('/*', '/src/*', '/best/*', '/include/*'))
         (stage/'.gitignore').write_text(ignore()+exclusions+'\n', encoding='utf-8')
+        for name in KEPT_DOCS:
+            mine = destination/name
+            if mine.is_file() and not mine.is_symlink():
+                shutil.copyfile(mine, stage/name)
         names = sorted(str(p.relative_to(stage)) for p in stage.rglob('*') if p.is_file() and public(str(p.relative_to(stage))))
         (stage/MARKER).write_text(json.dumps({'format': 1, 'files': sorted(set(names)|{MARKER}), 'hashes': {name:repository_sync.digest(stage/name) for name in names if not name.startswith('progress/')}, 'retired': sorted(set(old)-set(names))}, indent=1)+'\n', encoding='utf-8')
         if any(p.is_symlink() for p in stage.rglob('*')):

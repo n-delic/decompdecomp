@@ -558,3 +558,27 @@ def test_a_sync_finishes_an_upgrade_that_stopped_before_following_the_moved_save
     assert cfg['progress_folder'] == cfg['save_folder'] == str(root/'progress')
     assert cfg['repository_sync_folder'] == str(root)
     assert rebuildable_repository.interrupted(root/'progress') is None
+
+
+def test_upgrade_keeps_the_repositorys_own_notice_and_agents_rules(project):
+    """An N64 save tracking a hand-written NOTICE.md was refused ("Untrack game/private files"), and its own AGENTS.md
+    would then have collided with the export's."""
+    net, root, _ = project
+    console = net.console(net.project_row('game'))
+    export = console.export_project
+    def with_agents_rules(net, slug, out, log):
+        result = export(net, slug, out, log)
+        (out/'AGENTS.md').write_text('# generated rules\n')
+        return result
+    console.export_project = with_agents_rules
+    (root/'NOTICE.md').write_text('# Provenance\n')
+    (root/'AGENTS.md').write_text('# our own rules\n')
+    git(root, 'init', '--initial-branch=main')
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'existing portable history')
+    assert repository_setup.run(net, 'game', 'checkpoint', '', lambda _:None)['rebuildable']
+    assert (root/'NOTICE.md').read_text() == '# Provenance\n' and (root/'AGENTS.md').read_text() == '# our own rules\n'
+    assert {'NOTICE.md', 'AGENTS.md', 'build.py'} <= set(git(root, 'ls-files').splitlines())
+    assert git(root, 'status', '--porcelain', '--', 'NOTICE.md', 'AGENTS.md') == ''
