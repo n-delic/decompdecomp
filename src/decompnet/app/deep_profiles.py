@@ -11,16 +11,28 @@ def validate(count):
     return count
 
 
-def selected(net, proj, count):
-    """Default first, then distinct profiles ranked by verified matched-function usage."""
+def _profile(compiler):
+    return {'toolchain':compiler['toolchain'],
+            'flags':compiler['flags'].split() if isinstance(compiler['flags'], str) else list(compiler['flags'])}
+
+
+def selected(net, proj, count, fn=None):
+    """The function's own settings first (its range's or its own profile, as the judge builds it), then the project
+    default (always, when it differs), then distinct profiles ranked by verified matched-function usage. With one profile per candidate the
+    default alone left an N64 function with its own -fno-schedule-insns unscored: every candidate went to the
+    alternate-profile probe, which only reports exact matches, so 10,000 variants could never count as better."""
+    from ..project import compiler_for
     validate(count)
-    default = net.cfg(proj)['compiler']
-    default = {'toolchain':default['toolchain'], 'flags':default['flags'].split() if isinstance(default['flags'], str) else list(default['flags'])}
-    if count == 1:return [default]
+    cfg = net.cfg(proj)
+    default = _profile(cfg['compiler'])
+    first = _profile(compiler_for(cfg, fn['vram'], fn)) if fn is not None else default
     key = lambda p:(p['toolchain'], tuple(p['flags']))
+    # (a function whose own settings differ keeps the default as an exact-only probe even at one profile: an own
+    # setting once applied on a draft's score hid a match that only the default compiled)
+    result = [first] + ([default] if key(default) != key(first) else [])
+    if count <= len(result):return result
     others = sorted(net.compiler_profile_usage(proj), key=lambda p:(-p['matched'], key(p)))
-    result = [default]
-    seen = {key(default)}
+    seen = {key(p) for p in result}
     for profile in others:
         if profile['matched'] > 0 and key(profile) not in seen:
             result.append({'toolchain':profile['toolchain'], 'flags':list(profile['flags'])})
@@ -36,7 +48,8 @@ def probe(search, agent, proj, fn, source, profile):
     scope = agent_tokens.target_scope(search.net, {**dict(fn), 'best_source':source}, '')
     key = 'deep-profile-v1:'+hashlib.sha256(repr((scope, source, profile)).encode()).hexdigest()
     cached = search.net.project_store(proj['id']).one('SELECT outcome FROM reuse_trials WHERE function_id=? AND signature=?', fn['id'], key)
-    if cached and cached['outcome'] == 'miss':
+    # (a compile failure is as settled as a miss: retrying one recompiled 88 broken rewrites 9,844 times)
+    if cached and cached['outcome'] in ('miss', 'compile_failed'):
         search.skipped += 1
         return None
     header=search.net._context(proj['id'],fn['unit'])['header']

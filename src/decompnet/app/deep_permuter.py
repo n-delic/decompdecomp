@@ -1116,10 +1116,10 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
         search.random_salt = f"-lane-{lane.index}"
         search.parallel_lane = lane
     if not net.fork_slug(slug) and (slug not in net.links or compiler_profiles>1):
-        search.compiler_profiles = deep_profiles.selected(net, proj, compiler_profiles)
+        search.compiler_profiles = deep_profiles.selected(net, proj, compiler_profiles, fn)
         for profile in search.compiler_profiles:
             log('Selected profile: '+profile['toolchain']+' '+' '.join(profile['flags']))
-        log('Compiler profiles per candidate: '+str(len(search.compiler_profiles))+'. Default first; other profiles ranked by matched-function usage. Each profile test uses compile allowance.')
+        log('Compiler profiles per candidate: '+str(len(search.compiler_profiles))+". The function's own settings first, then the project default; other profiles ranked by matched-function usage. Each profile test uses compile allowance.")
     if sweeps:
         search.record_improvement = lambda score: sweeps.improvement(fn, score)
     search.report()
