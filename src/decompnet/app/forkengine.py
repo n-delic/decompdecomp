@@ -3245,7 +3245,8 @@ class ForkEngine:
                     self.net._record(fn, agent, None, code, 0)
                 why = "" if builds else ("\n(The file didn't build before your change either, so the error may be in "
                                          "other code of the file: fix that with edit_file.)")
-                return {"text": f"❌ BUILD ERROR (your change was undone){why}\n{log[-3000:]}", "score": None,
+                stall = self.net.stall_note(fn["id"], agent.id) if quiet is None else ""  # (#286, counted too)
+                return {"text": f"❌ BUILD ERROR (your change was undone){why}\n{log[-3000:]}{stall}", "score": None,
                         "matched": False}
             try:
                 d = fp.diff(unit, symbol)
@@ -3283,14 +3284,16 @@ class ForkEngine:
                             f"functions), they match again once {fn['name']} matches exactly: work from the diff "
                             "below. Otherwise check you replaced the right definition (overloads?) and didn't change "
                             f"shared code.\n{d.render()}")
-                return {"text": remembered(text, own), "score": None, "held_score": own, "matched": False,
+                stall = self.net.stall_note(fn["id"], agent.id) if quiet is None else ""
+                return {"text": remembered(text, own) + stall, "score": None, "held_score": own, "matched": False,
                         "broken": broken}
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
                 if quiet is None:
                     self.net._record(fn, agent, None, code, 0, compiled=True)
+                stall = self.net.stall_note(fn["id"], agent.id) if quiet is None else ""
                 return {"text": f"❌ REJECTED and undone: {unit.source} is linked into the game, and with your change "
-                                f"the game no longer builds byte for byte:\n{_tail(ok[1])}", "score": None,
+                                f"the game no longer builds byte for byte:\n{_tail(ok[1])}{stall}", "score": None,
                         "matched": False}
             pct = d.match_percent if d.match_percent is not None else 0.0
             score = max(1, len(d.literals)) if d.literals else scaled(pct, fn["n_insns"])

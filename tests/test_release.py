@@ -373,26 +373,41 @@ def test_a_brief_leaves_out_notes_that_only_say_an_open_function_matches(tmp_pat
     assert "[out of date" in section and "func_0206d4f8" in section
 
 
-def test_one_claim_gets_twice_the_move_on_number_of_compiles(tmp_path):
-    # #286: the move-on number counts compiles in a row without a better score, so an agent whose score kept moving,
-    # or whose own instructions said to keep going, never reached it; one spent a 5-hour plan limit on one function
+def test_one_claim_gets_twice_the_move_on_number_of_compiles_without_a_better_score(tmp_path):
+    # #286: the move-on number counts compiles without a better score in a row, so a better score now and then
+    # started it again; the limit counts them over the whole claim
     net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
     a, _ = net.local_agent("a")
     net.claim_row(a, "game", "f")
-    limit = compile_limit(stall_budget(10))
-    assert limit == 2 * stall_budget(10)
-    _attempts(net, a, "f", list(range(100, 100 - (limit - 1), -1)))  # each one better: never told to move on
-    assert net._over_compile_limit(a, "f", "game") is None  # one compile left
-    assert "Compiles left on this claim: 1" in net.stall_note(_fid(net, "f"), a.id)
-    _attempts(net, a, "f", [50])
-    assert "that was the last compile this claim gets" in net.stall_note(_fid(net, "f"), a.id)
+    after = stall_budget(10)
+    limit = compile_limit(after)
+    assert (after, limit) == (3, 6)
+    # a better score every third compile: never "move on", but 5 that beat nothing (a failed build counts)
+    _attempts(net, a, "f", [100, None, 120, 90, None, 95, 80, 85])
+    assert net._over_compile_limit(a, "f", "game") is None
+    note = net.stall_note(_fid(net, "f"), a.id)
+    assert "Move-on count: no better in 1/3" in note and "Compiles without a better score left on this claim: 1" in note
+    _attempts(net, a, "f", [None])  # a build that fails
+    assert "that was the last compile without a better score" in net.stall_note(_fid(net, "f"), a.id)
     res = net.attempt(a, "f", "int f(void) { return 1; }", "game")  # refused before anything is built
     assert res["score"] is None and not res["matched"]
-    assert res["text"].startswith("Not compiled: you've compiled f 6 times since you claimed it")
-    assert net.store.one("SELECT COUNT(*) AS n FROM attempts")["n"] == limit  # not recorded
-    # the release goes through at once, though the last compiles kept getting better
-    assert net.release_function(a, "f", "better each time, never matched", "game").startswith("Released f")
+    assert res["text"].startswith("Not compiled: 6 of your 9 compiles of f since you claimed it didn't beat")
+    assert net.store.one("SELECT COUNT(*) AS n FROM attempts")["n"] == 9  # not recorded
+    # the release goes through at once, though the move-on number was never reached
+    assert net.release_function(a, "f", "close twice, never matched", "game").startswith("Released f")
     assert _held(net, a) is None
+
+
+def test_compiles_that_keep_getting_better_are_never_cut_off(tmp_path):
+    # n-delic on #314: STALL_BUDGET stops growing at 256 instructions, so a flat count cut a 2000-instruction
+    # function off as soon as a 300-instruction one; a compile that beats the claim's best doesn't count
+    net, _ = _game(tmp_path, [("f", 2000, "open"), ("g", 10, "open")])
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    _attempts(net, a, "f", [1000 - 10 * i for i in range(40)] + [None] * (compile_limit(stall_budget(2000)) - 1))
+    assert net._over_compile_limit(a, "f", "game") is None
+    _attempts(net, a, "f", [999])
+    assert net._over_compile_limit(a, "f", "game")
 
 
 def test_the_compile_limit_is_per_claim_and_not_for_the_apps_own_workers(tmp_path):

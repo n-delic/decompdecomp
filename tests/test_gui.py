@@ -245,8 +245,11 @@ def test_the_project_can_choose_which_functions_helpers_take_first(gui):
     assert order["saved"] == {"url": "/api/claim-order", "body": {"slug": "a", "order": "untried"},
                               "value": "untried"}
     assert order["reverted"] == "untried" and "nobody has tried yet" in order["text"]
-    # #286: it names what comes before or after the order, whatever it is
-    assert "starred function" in order["text"] and "names a function gets it" in order["text"]
+    # #286: what comes before or after the order, whatever it is, is folded under the hint, which stays one line
+    assert "starred function" not in order["text"]
+    folded = html[html.index('id="claimOrderExceptions"'):]
+    folded = folded[:folded.index("</details>")]
+    assert "starred function" in folded and "gave back lately" in folded
     assert any("read-only" in note for note in order["notes"])
 
 

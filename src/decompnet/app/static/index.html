@@ -350,6 +350,16 @@
             </select>
           </label>
           <p class="muted small" id="claimOrderHint">Helpers that claim without naming a function follow this, whatever order they ask for; a function they name still comes.</p>
+          <!-- What goes before or after the order whatever it is (claim_row and Network.claim_row's queue): the
+               setting only said the order, and a helper handed a starred function or a twin looked like it ignored
+               it (#286). Folded so the hint stays one line. -->
+          <details class="more" id="claimOrderExceptions">
+            <summary>What comes before or after the order</summary>
+            <div class="more-body muted small">
+              <p>Before it: a starred function (★); a function another one waits for, or one whose wait is over; and, in every order but largest and closest first, a function the game has more than once (up to 400 instructions). A function given up on often goes to the strongest model at work.</p>
+              <p>After it: a function waiting for another to match, and one this helper, or a helper of the same model, gave back lately.</p>
+            </div>
+          </details>
           <div class="row"><button class="primary small-btn" id="instrSave" type="button">Save instructions</button></div>
         </div>
       </section>

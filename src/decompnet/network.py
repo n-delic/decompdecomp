@@ -42,11 +42,13 @@ MODEL_FAMILIES = {"opus": "claude", "sonnet": "claude", "haiku": "claude", "fabl
 STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
 STALL_BUDGET_BIGGEST = 10
 STALL_LOOKBACK = 16  # compiles stall_note reads back: more than the biggest budget
-# The most compiles one claim gets on a function, as a multiple of its move-on number (compile_limit). The move-on
-# number counts compiles in a row without a better score, so an agent whose score kept moving, or whose own
-# instructions said to keep trying, never reached it: one spent a 5-hour plan limit on one function (#286). Past
-# this, compile_and_diff refuses and release_function goes through. decompdecomp's own workers (MACHINE_AGENTS) are
-# not limited.
+# The most compiles without a better score one claim gets on a function, as a multiple of its move-on number
+# (compile_limit). The move-on number counts them in a row, so one better score now and then started it again, and
+# an agent whose own instructions said to keep trying went past it: one spent a 5-hour plan limit on one function
+# (#286). This one counts them over the whole claim (_no_gain); a compile that beats the claim's best doesn't count,
+# so a big function that keeps getting better is never cut off (STALL_BUDGET stops growing at 256 instructions, and
+# a flat count gave a 2000-instruction function as few compiles as a 300-instruction one). Past it, compile_and_diff
+# refuses and release_function goes through. decompdecomp's own workers (MACHINE_AGENTS) are not limited.
 COMPILE_LIMIT = 2
 # The game's own code (an SQL condition on `functions`): not what the project sets aside as library code, middleware
 # or the C runtime (config/<version>/set_aside.json, objdiff.game_measures; while its scope is the game's own code).
@@ -198,6 +200,18 @@ def _no_better(scores: list[int | None]) -> int:
         else:
             since += 1
     return since
+
+
+def _no_gain(scores: list[int | None]) -> int:
+    """How many compiles (oldest first in `scores`) didn't beat the best before them, in a row or not: the count
+    compile_limit caps. A compile that doesn't build counts; the first one with a score doesn't."""
+    best, n = None, 0
+    for s in scores:
+        if s is not None and (best is None or s < best):
+            best = s
+        else:
+            n += 1
+    return n
 
 
 # A note that says the function matches (written while a function that later stopped matching counted as matched,
@@ -364,14 +378,16 @@ def stall_budget_text() -> str:
     prompt used to say "3 compiles ... up to 10", and agents guessed which applied."""
     return ("no better score in N compiles in a row, where N is the function's own number: its brief names it, and "
             "every compile_and_diff result shows where you stand, as in \"no better in 2/6 compiles (move on at 6)\"; "
-            "one claim gets at most twice N compiles, then compile_and_diff stops and release_function goes through")
+            "one claim gets at most twice N compiles without a better score (in a row or not), then compile_and_diff "
+            "stops and release_function goes through")
 
 
 def move_on_brief(fn) -> str:
     """The brief's line naming the function's own move-on number (the one compile_and_diff counts against)."""
     after = stall_budget(fn["n_insns"] or 0)
     return (f"move on after {after} compiles in a row without a better score (this function's number, by its size; "
-            f"each compile_and_diff result shows the count); one claim gets at most {compile_limit(after)} compiles")
+            f"each compile_and_diff result shows the count); one claim gets at most {compile_limit(after)} compiles "
+            f"without a better score")
 
 
 def tried_brief(fn) -> list[str]:
@@ -401,7 +417,8 @@ def stall_line(since: int, after: int) -> str:
 
 
 def compile_limit(after: int) -> int:
-    """The most compiles one claim gets on a function: COMPILE_LIMIT times its move-on number (stall_budget)."""
+    """The most compiles without a better score one claim gets on a function (stall_status's no_gain):
+    COMPILE_LIMIT times its move-on number (stall_budget)."""
     return COMPILE_LIMIT * after
 
 
@@ -1136,7 +1153,9 @@ class Network:
             self._record(fn, agent, None, source, ctx["version"])
             text = f"❌ COMPILE ERROR (context v{ctx['version']})\n{result.log.strip()}"
             self.remember_compile(key, agent, fn, text, None)
-            return {"text": text, "score": None, "matched": False}
+            # it counts against the move-on number and the claim's compile limit, so it says where it stands too
+            # (#286); repeat_of adds it to the remembered text the same way
+            return {"text": text + self.stall_note(fn["id"], agent.id), "score": None, "matched": False}
 
         cand, verdict, problems = self._evaluate(fn, proj, result.obj)
         if cand is None:
@@ -1144,7 +1163,7 @@ class Network:
             text = (f"❌ Compiled, but the object has no function named `{fn['name']}`. "
                     f"Define it with exactly that name (non-static).")
             self.remember_compile(key, agent, fn, text, None)
-            return {"text": text, "score": None, "matched": False}
+            return {"text": text + self.stall_note(fn["id"], agent.id), "score": None, "matched": False}
         d = scoring.diff(self._target_obj(fn, proj), cand)
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
@@ -1233,7 +1252,8 @@ class Network:
             rows = self.store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC "
                                   f"LIMIT {STALL_LOOKBACK}", function_id, agent_id)
             scores = [r["score"] for r in reversed(rows)]
-        return {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores), "after": after,
+        return {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores),
+                "no_gain": _no_gain(scores), "after": after,
                 "best": min((s for s in scores if s is not None), default=None)}
 
     def stall_note(self, function_id: int, agent_id: int) -> str:
@@ -1246,13 +1266,14 @@ class Network:
         if not st["compiles"]:
             return ""
         since, after = st["no_better"], st["after"]
-        left = compile_limit(after) - st["compiles"] if st["claimed_at"] is not None else None
+        left = compile_limit(after) - st["no_gain"] if st["claimed_at"] is not None else None
         if left is not None and left <= 0:
-            return (f"\n\n⏭ Move on: that was the last compile this claim gets ({compile_limit(after)}, twice the "
-                    f"move-on number). release_function with notes (what you tried, what's left) now; then claim "
-                    "the next one.")
-        limit = (f"\nCompiles left on this claim: {left} (then compile_and_diff stops and release_function goes "
-                 "through)." if left is not None and left <= after else "")
+            return (f"\n\n⏭ Move on: that was the last compile without a better score this claim gets "
+                    f"({compile_limit(after)}, twice the move-on number). release_function with notes (what you tried, "
+                    "what's left) now; then claim the next one.")
+        limit = (f"\nCompiles without a better score left on this claim: {left} (then compile_and_diff stops and "
+                 "release_function goes through; a better score doesn't use one up)."
+                 if left is not None and left <= after else "")
         if since < after:
             return f"\n\nMove-on count: {stall_line(since, after)}.{limit}"
         return (f"\n\n⏭ Move on: {stall_line(since, after)}. release_function with notes (what you tried, what's "
