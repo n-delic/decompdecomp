@@ -23,7 +23,8 @@ class Batch:
 
     @property
     def pending(self):
-        return [statement for buffer in self.buffers for statement in buffer['pending']]
+        return [statement for buffer in self.buffers
+                for statement in (*buffer['pending'], *((sql, args) for (sql, _), args in buffer['counters'].items()))]
 
     @property
     def bytes(self):
@@ -32,16 +33,17 @@ class Batch:
     def buffer(self, store):
         found=next((buffer for buffer in self.buffers if buffer['store'] is store),None)
         if found is None:
-            found={'store':store,'pending':[],'values':{},'bytes':0}
+            found={'store':store,'pending':[],'values':{},'bytes':0,'counters':{}}
             self.buffers.append(found)
         return found
 
     def flush(self, store=None):
         for buffer in list(self.buffers):
             if store is not None and buffer['store'] is not store:continue
-            if buffer['pending']:
+            statements=[*buffer['pending'],*((sql,args) for (sql,_),args in buffer['counters'].items())]
+            if statements:
                 with compile_timing.phase('history_write'), buffer['store'].tx() as db:
-                    for sql, group in groupby(buffer['pending'],key=lambda statement:statement[0]):
+                    for sql, group in groupby(statements,key=lambda statement:statement[0]):
                         args=[arguments for _,arguments in group]
                         # Preserve statement ordering and the adapter's SQL semantics.
                         if len(args)>1 and hasattr(db,'executemany'):
@@ -49,7 +51,7 @@ class Batch:
                         else:
                             for arguments in args:db.execute(sql,arguments)
                 compile_timing.add('history_transactions',1)
-                compile_timing.add('history_statements',len(buffer['pending']))
+                compile_timing.add('history_statements',len(statements))
             self.buffers.remove(buffer)  # Never replay a committed store if another flush fails.
         if not self.buffers:self.started = time.monotonic()
 
@@ -86,6 +88,41 @@ def submit(store, statements, *, immediate=False, memo=None):
     buffer['bytes'] += size
     if immediate:value.flush(store)
     if value.bytes >= value.max_bytes or sum(len(b['pending']) for b in value.buffers) >= value.max_statements or time.monotonic()-value.started >= value.seconds:value.flush()
+
+
+@contextmanager
+def count(store, sql, args, key, merge, *, immediate=False):
+    """A counter upsert (attempted+N and the like): within a batch, one with the same SQL and key (`key` leading
+    arguments) is merged into the pending one by `merge(old, new)`, so a batch writes one row per key rather than
+    one per trial. The deep search wrote three counter rows for every candidate through the single writer."""
+    value = current()
+    if value is None:
+        submit(store, [(sql, args)], immediate=immediate)
+        return
+    buffer = value.buffer(store)
+    slot = (sql, tuple(args[:key]))
+    old = buffer['counters'].get(slot)
+    buffer['counters'][slot] = tuple(args) if old is None else tuple(merge(old, args))
+    if old is None:
+        buffer['bytes'] += len(sql.encode()) + 64*len(args)
+    if immediate:value.flush(store)
+    elif (value.bytes >= value.max_bytes or len(value.pending) >= value.max_statements
+          or time.monotonic()-value.started >= value.seconds):value.flush()
+
+
+def sums(old, new, key, *, first=(), last=(), newest=None):
+    """merge for count(): add every column after the key, except `first` (MIN), `last` (MAX) and the columns
+    taken from whichever row is newer by column `newest`."""
+    out = list(old)
+    newer = newest is not None and new[newest] >= old[newest]
+    for index in range(key, len(new)):
+        if index in first:out[index] = min(old[index], new[index])
+        elif index in last:out[index] = max(old[index], new[index])
+        elif newest is not None and not isinstance(new[index], (int, float)):
+            out[index] = new[index] if newer else old[index]
+        elif index == newest:out[index] = max(old[index], new[index])
+        else:out[index] = old[index] + new[index]
+    return out
 
 
 @contextmanager

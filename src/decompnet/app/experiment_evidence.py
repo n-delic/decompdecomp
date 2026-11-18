@@ -69,9 +69,8 @@ def record(net, fn, key, family, before, after, baseline, score, prior_output, m
                if compact and before != after else [] if compact else edits(before, after))
     improved = score is not None and score < baseline
     same = prior_output is not None and prior_output == measured_output
-    trial_bookkeeping.submit(store, [(
-        """INSERT INTO repair_input_effects VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(function_id,scope,family) DO UPDATE SET attempted=attempted+1,
+    trial_bookkeeping.count(store, """INSERT INTO repair_input_effects VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(function_id,scope,family) DO UPDATE SET attempted=attempted+excluded.attempted,
         no_edit=no_edit+excluded.no_edit,same_output=same_output+excluded.same_output,
         worse=worse+excluded.worse,failed=failed+excluded.failed,improved=improved+excluded.improved,
         elapsed_ms=elapsed_ms+excluded.elapsed_ms,
@@ -79,7 +78,8 @@ def record(net, fn, key, family, before, after, baseline, score, prior_output, m
         updated_at=MAX(updated_at,excluded.updated_at)""",
         (fn['id'],key,family,1,int(not changes),int(bool(changes) and same),
          int(score is not None and score > baseline),int(bool(changes) and score is None),
-         int(improved),max(0,round(elapsed_ms)),json.dumps(changes),time.time()))], immediate=improved)
+         int(improved),max(0,round(elapsed_ms)),json.dumps(changes),time.time()),
+        3, lambda old, new: trial_bookkeeping.sums(old, new, 3, newest=11), immediate=improved)
 
 
 def factors(net, proj, fn):

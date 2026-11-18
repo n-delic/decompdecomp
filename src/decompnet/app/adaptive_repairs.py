@@ -51,14 +51,16 @@ def record(net, key, focus, family, baseline, score, elapsed_ms=0, origin="local
     improved = isinstance(score, (int, float)) and 0 <= score < baseline
     matched = improved and score == 0 and (exact is None or exact is True)
     now = time.time()
-    trial_bookkeeping.submit(net.store, [(
-        """INSERT INTO repair_policy VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(profile,focus,family)
-        DO UPDATE SET attempted=attempted+1, improved=improved+excluded.improved,
+    trial_bookkeeping.count(net.store, """INSERT INTO repair_policy VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(profile,focus,family)
+        DO UPDATE SET attempted=attempted+excluded.attempted, improved=improved+excluded.improved,
         matched=matched+excluded.matched, failed=failed+excluded.failed,
         elapsed_ms=elapsed_ms+excluded.elapsed_ms""",
-        (key, focus, family, 1, int(improved), int(matched), int(score is None), max(0, int(elapsed_ms)))), (
-        "INSERT INTO repair_policy_coverage VALUES(?,?,?,?,?,?,?) ON CONFLICT(origin) DO UPDATE SET first_at=MIN(first_at,excluded.first_at),last_at=MAX(last_at,excluded.last_at),attempted=attempted+1,improved=improved+excluded.improved,matched=matched+excluded.matched,elapsed_ms=elapsed_ms+excluded.elapsed_ms",
-        (origin, now, now, 1, int(improved), int(matched), max(0, int(elapsed_ms))))], immediate=improved)
+        (key, focus, family, 1, int(improved), int(matched), int(score is None), max(0, int(elapsed_ms))),
+        3, lambda old, new: trial_bookkeeping.sums(old, new, 3))
+    trial_bookkeeping.count(net.store,
+        "INSERT INTO repair_policy_coverage VALUES(?,?,?,?,?,?,?) ON CONFLICT(origin) DO UPDATE SET first_at=MIN(first_at,excluded.first_at),last_at=MAX(last_at,excluded.last_at),attempted=attempted+excluded.attempted,improved=improved+excluded.improved,matched=matched+excluded.matched,elapsed_ms=elapsed_ms+excluded.elapsed_ms",
+        (origin, now, now, 1, int(improved), int(matched), max(0, int(elapsed_ms))),
+        1, lambda old, new: trial_bookkeeping.sums(old, new, 1, first={1}, last={2}), immediate=improved)
 
 
 def factors(net, key, focus):
