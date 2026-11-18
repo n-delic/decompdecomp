@@ -24,6 +24,7 @@ from decompnet.consoles.gba import GBA, candidates, header
 from decompnet.consoles.gba import split as gba_split
 from decompnet.forks import csource
 from decompnet.rom import RomError
+from decompnet.rom.split import Segment, SplitResult
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-gba"
@@ -131,6 +132,44 @@ def test_gba_candidates_keep_leaf_callbacks_in_a_table_known_code_loads():
     rom[0x4000:0x4004] = bytes.fromhex("01207047")  # movs r0, #1; bx lr (a leaf callback)
     found = candidates.candidates(bytes(rom), [header.BASE + 0xC0])
     assert header.BASE + 0x4000 in found
+
+
+def test_gba_split_leaves_out_a_start_in_another_functions_literal_pool(tmp_path, monkeypatch):
+    """#297: luvdis named a literal-pool word (here the halfword after the word) as a function. bodies() steps over
+    literal words, so the start had no code, and split() stored a size-0 function that could not be saved or claimed."""
+    rom = bytearray(0x400)
+    rom[0xC0:0xC4] = bytes.fromhex("0f487047")  # ldr r0, [pc, #60] (the word at 0x100); bx lr
+    rom[0x100:0x104] = (0x12345678).to_bytes(4, "little")
+    rom[0x104:0x108] = bytes.fromhex("00b500bd")  # push {lr}; pop {pc}
+    game = tmp_path / "game.gba"
+    game.write_bytes(rom)
+    monkeypatch.setattr(gba_split, "find_functions", lambda *args, **kwargs: (
+        "asm", [header.BASE + 0xC0, header.BASE + 0x102, header.BASE + 0x104]))
+    found = gba_split.split(game, tmp_path, log=lambda *_: None)
+    assert all(function.size > 0 for function in found), [(function.name, function.size) for function in found]
+    assert header.BASE + 0x102 not in {function.vram for function in found}
+
+
+def test_the_import_never_stores_a_function_with_no_bytes(tmp_path, monkeypatch):
+    """#297: whatever a console's splitter hands back, a start with no bytes has no target to judge. It is left out
+    before its symbol or row is written, so no console or later save has to carry it."""
+    rom = bytearray(_header())
+    rom[0xC0:0xC4] = bytes.fromhex("00b500bd")
+    rom[0x100:0x104] = bytes.fromhex("10b500bd")
+    game = tmp_path / "game.gba"
+    game.write_bytes(rom)
+    real = gba_split.GbaFunction("real", header.BASE + 0xC0, 0xC0, bytes(rom[0xC0:0xC4]),
+                                 "\tthumb_func_start real\n", 2, True, [], False, "rom")
+    empty = gba_split.GbaFunction("empty", header.BASE + 0x100, 0x100, b"", "", 1, True, [], False, "rom")
+    result = SplitResult([empty, real], [], [Segment("rom", 0, len(rom), header.BASE)], {},
+                         tmp_path / "functions.cfg", "", "", "gba", 0, "")
+    monkeypatch.setattr(GBA, "split_game", lambda *args, **kwargs: result)
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    said: list[str] = []
+    slug = net.import_rom(game, confirmed=True, log=said.append)
+    rows = net.store.all("SELECT name, size FROM functions WHERE project_id=?", net._project(slug)["id"])
+    assert [(row["name"], row["size"]) for row in rows] == [("real", 4)]
+    assert any("empty" in line and "no bytes" in line for line in said), said
 
 
 def test_the_gba_tools_are_pinned_free_builds():

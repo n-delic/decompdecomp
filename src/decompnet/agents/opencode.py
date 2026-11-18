@@ -89,13 +89,18 @@ class Opencode(Agent):
             if zen:  # a rejected ask ends the whole run unless this says otherwise: a free model reaching for `rg`
                 # or `ls` on its third step ended every session of a PC game's helpers, 20 seconds in
                 config["experimental"] = {"continue_loop_on_deny": True}
-        (workdir / "opencode.json").write_text(json.dumps({"$schema": "https://opencode.ai/config.json", **config}),
-                                               encoding="utf-8")
+        config_file = workdir / "opencode.json"
+        config_file.write_text(json.dumps({"$schema": "https://opencode.ai/config.json", **config}), encoding="utf-8")
         # --print-logs: opencode's JSON error only says "Unexpected server error"; the log line says what failed.
         # (No --dir: it runs in workdir, and OpenCode before 1.4 stops at the flag. No --log-level either: before
         # 2.0 it took only ERROR, from 2.0 only error, and either stops the other at once.)
         cmd = [exe, "run", *(["--standalone"] if self.standalone(exe) else []), "--format", "json", "--print-logs"]
-        return cmd + (["-m", model] if model else []), {}
+        # #282: on Windows the npm package the app's install button runs is opencode 1.x, which didn't find the
+        # helper's own opencode.json in the folder it started in, so the helper ran with no decompdecomp server;
+        # pointing OPENCODE_CONFIG at the file fixed it. Naming it on every platform also keeps a user's own
+        # OPENCODE_CONFIG from loading instead and shadowing the helper's server entry and token. opencode 2.x then
+        # loads the file both explicitly and by discovery: its merge leaves one server and one plugin (2.1.4).
+        return cmd + (["-m", model] if model else []), {"OPENCODE_CONFIG": str(config_file.resolve())}
 
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")

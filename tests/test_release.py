@@ -77,11 +77,14 @@ def test_a_boundary_report_after_two_refusals_still_releases_it(tmp_path):
     assert _held(net, a) is None
 
 
-def test_a_session_of_refused_releases_made_no_progress(tmp_path):
+def test_a_session_of_refused_releases_made_no_progress(tmp_path, monkeypatch):
     # so it fails like any session that compiled nothing: a pause between them, and after a few the helper stops
     # with the reason for the user, instead of a new session on the same function 3 s later
     from decompnet.app import agents
 
+    from .test_agents import Quick, _no_agent_settings
+
+    _no_agent_settings(monkeypatch)
     net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
     m = agents.Manager(net, tmp_path, "http://127.0.0.1:1/mcp")  # (first: it frees claims left from before)
     a, _ = net.local_agent("a")
@@ -92,6 +95,27 @@ def test_a_session_of_refused_releases_made_no_progress(tmp_path):
     assert m._progress(a.id) == before
     _attempts(net, a, "f", [40])
     assert m._progress(a.id) == before + 1
+    # the session outcome, not just the count: a helper whose sessions only ask to release, never compile, has
+    # each one fail, waits that grow between them, then pauses with the reason
+    assert net.release_function(a, "f", "tried the field stores", "game").startswith("Released f")
+    assert net.claim_row(a, "game", "g")["name"] == "g"
+    s = m._record("game", "opencode", "a", "a", {})
+    s.stop = Quick()
+
+    def only_asks(s, token, workdir):
+        assert _held(net, a) == "g"  # held through the sessions, not handed to the next one untried
+        for _ in range(3):  # three refused asks (the count is per claim, so from session 2 on: the one line)
+            net.release_function(a, "g", "out of tries", "game")
+        return True
+    monkeypatch.setattr(m, "_run_cli", only_asks)
+    m._run(s)
+    assert s.state == "paused" and "the session ended without compiling anything" in s.why
+    assert s.runs == agents.FAST_FAILURES_TO_PAUSE
+    rows = net.store.all("SELECT outcome FROM helper_sessions WHERE helper_id=?", s.id)
+    assert [r["outcome"] for r in rows] == ["failed"] * agents.FAST_FAILURES_TO_PAUSE
+    waits = [w for w in s.stop.waits if w]
+    assert len(waits) == agents.FAST_FAILURES_TO_PAUSE - 1 and all(w1 < w2 for w1, w2 in zip(waits, waits[1:]))
+    assert any("paused:" in f["text"] and "without compiling anything" in f["text"] for f in s.feed)
 
 
 def test_claiming_while_a_pushed_back_release_still_holds_says_so(tmp_path):

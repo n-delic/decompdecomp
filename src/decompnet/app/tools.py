@@ -476,9 +476,14 @@ def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str
 ALWAYS_LOAD = agents.TOOL_META
 
 
+HEAVY_TOOLS = frozenset({"compile_and_diff", "search_code", "search_flags", "try_compiler",
+                         "edit_file", "split_file", "join_functions"})
+
+
 def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]]) -> MCPServer:
     """MCP server for CLI agents. `agent_of` maps a request to (agent, project slug)."""
     mcp = MCPServer(name="decomp", title="decompdecomp", instructions=INSTRUCTIONS, version=__version__)
+    heavy_limiter = anyio.CapacityLimiter(16)
 
     async def run(ctx: Context, name: str, **args) -> str:
         try:
@@ -486,7 +491,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         except NetworkError as e:
             raise ToolError(str(e)) from None
         try:
-            return await anyio.to_thread.run_sync(lambda: _invoke(net, agent, slug, name, args))
+            limiter = heavy_limiter if name in HEAVY_TOOLS else None
+            return await anyio.to_thread.run_sync(lambda: _invoke(net, agent, slug, name, args), limiter=limiter)
         except NetworkError as e:
             raise ToolError(str(e)) from None
 
@@ -542,8 +548,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False) -> str:
         """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
         tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
-        the move-on rule), it answers once with what to try instead; call it again to release anyway. A release with
-        no compile since you claimed it is not taken, however often you ask: compile first, or end your session.
+        the move-on rule), it answers once with what to try instead; call it again once you've compiled it, to
+        release anyway. A plain release with no compile since you claimed it is not taken, however often you ask:
+        compile first, or end your session.
 
         Args:
             function: the function you hold
