@@ -495,7 +495,20 @@ Found on the first game, all things the judge can't see:
 ### 5. Play, and check that it runs
 
 A **Play port** button builds and starts it. A headless check runs N frames: it starts, doesn't crash, and the
-screen isn't one colour. Later: compare frames with an emulator running the original at the same inputs.
+screen isn't one colour. To compare its frames with the original's, `tools/n64_frame_compare.py` runs both with one
+input script (timed in retraces on both sides: `PORT_INPUT_CLOCK=vi`), writes each one's RAM at chosen retraces (the
+port's `PORT_RAM_DUMPS=vi:file,...`, the emulator's dumps), and draws the graphics tasks it finds there with the
+port's renderer, side by side with their difference:
+
+```bash
+uv run python tools/n64_frame_compare.py baserom.z64 --port port/wasm/build/game --vis 1750 --input @menus.txt --out report
+```
+
+Both frames come from the same renderer, so a difference is the game running differently, not the drawing. The
+port runs ahead of the console (its loads take no time, it never drops a frame): `--port-vis` pairs each of the
+console's retraces with the port's at the same moment, and `--port-input` gives the port its own script. Even
+aligned, what moves with time (scrolling clouds, a pulsing highlight) differs; menus where the game waits compare
+best.
 
 When the port behaves differently from the console, the N64 reversing emulator (mupenRE, under Compilers & tools →
 Tools; `consoles/n64/emulator`) runs the user's own ROM headless with the same input script, timed in vertical
