@@ -3860,3 +3860,18 @@ def test_the_check_before_a_judge_ignores_other_functions_new_files(project):
         assert worker.judge_checks.get("narrow", 0) >= 1
     finally:
         del worker.sync
+
+
+def test_a_saved_layout_joins_over_alignment_filler_the_new_analysis_left_out():
+    # An older analysis kept a non-zero alignment word inside a function; automatic_boundaries now leaves it out.
+    jr, nop, entry = 0x03E00008, 0, 0x27BDFFE8
+    head = split.RomFunction("f", 0x1000, 0, "", [split.AsmLine(0, 0x1000, entry, "addiu", "$sp, $sp, -0x18"),
+                                                   split.AsmLine(4, 0x1004, jr, "jr", "$ra"),
+                                                   split.AsmLine(8, 0x1008, nop, "nop", "")], Path("unused.s"))
+    tail = split.RomFunction("g", 0x1010, 0x10, "", [split.AsmLine(0x10, 0x1010, entry, "addiu", "$sp, $sp, -0x18")],
+                             Path("unused.s"))
+    image = {0x1004: jr.to_bytes(4, "big"), 0x100C: b"\x12\x34\x56\x78"}
+    joined = split.join_saved_functions([head, tail], 0x1000, 0x1014, lambda address, n: image[address])
+    assert [line.word for line in joined.lines] == [entry, jr, nop, 0x12345678, entry]
+    with pytest.raises(ValueError):  # a non-zero word anywhere else is still a real gap
+        split.join_saved_functions([head, tail], 0x1000, 0x1018, lambda address, n: b"\0\0\0\1")

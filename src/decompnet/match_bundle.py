@@ -51,7 +51,7 @@ def _stamp(path):
         stat = path.stat()
     except FileNotFoundError:
         return None
-    return (stat.st_size, stat.st_mtime_ns, stat.st_ino)
+    return (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
 
 
 @lru_cache(maxsize=64)

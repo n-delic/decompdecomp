@@ -28,7 +28,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import compile_timing
+from . import compile_timing, stamped
 
 FORMAT = 1
 MAGIC = b'DDOBJ\x00\x01\n'
@@ -81,7 +81,7 @@ def key(cfg, session_key: bytes, mode: str, pipeline: bytes) -> bytes | None:
     the compiler's view of its folder), `pipeline` the identity of the code that writes the compiler's input."""
     if limit_bytes() <= 0:
         return None
-    toolchain = _compiler_identity(cfg, mode)
+    toolchain = _stamped_identity(cfg, mode)
     if toolchain is None:
         return None
     digest = hashlib.sha256(b'decompdecomp object cache\0')
@@ -89,6 +89,38 @@ def key(cfg, session_key: bytes, mode: str, pipeline: bytes) -> bytes | None:
         digest.update(len(part).to_bytes(8, 'little'))
         digest.update(part)
     return digest.digest()
+
+
+_IDENTITIES = {}
+
+
+def _stamped_identity(cfg, mode: str) -> bytes | None:
+    """_compiler_identity, worked out again only when one of the files it reads changes (its folders' manifests
+    and the command's programs, by size, modification and change time and inode). A deep search keys every compile here, and
+    resolving and reading them all each time was a twelfth of the app's Python around each compile."""
+    from . import toolchains
+    folders = tuple(dict.fromkeys(filter(None, (*cfg.ro_paths, cfg.runtime32))))
+    files = [*folders, *(os.path.join(folder, toolchains.MANIFEST) for folder in folders)]
+    files += [arg for arg in cfg.cmd if os.path.isabs(arg)]
+    stamps = []
+    for name in files:
+        try:
+            st = os.stat(name)
+            stamps.append((name, st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino))
+        except OSError:
+            stamps.append((name, None))
+    key = (mode, folders, tuple(cfg.cmd))
+    stamps = tuple(stamps)
+    with _lock:
+        kept = _IDENTITIES.get(key)
+    if kept is not None and kept[0] == stamps:
+        return kept[1]
+    value = _compiler_identity(cfg, mode)
+    with _lock:
+        if len(_IDENTITIES) >= 256:
+            _IDENTITIES.clear()
+        _IDENTITIES[key] = (stamps, value)
+    return value
 
 
 def _compiler_identity(cfg, mode: str) -> bytes | None:
@@ -107,7 +139,7 @@ def _compiler_identity(cfg, mode: str) -> bytes | None:
         try:
             if manifest.is_file():
                 # A pinned install: its manifest records the archives' SHA-256 and the registry entry's fingerprint.
-                parts.append(('toolchain', str(where), manifest.read_bytes()))
+                parts.append(('toolchain', str(where), stamped.read_bytes(manifest)))
             elif where == _PACKAGE or _PACKAGE in where.parents:
                 # A driver shipped with the app (an N64 SDK's wrapper script): its folder's code, by content.
                 parts.append(('app', str(where), _folder_digest(where)))

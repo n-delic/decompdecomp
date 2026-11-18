@@ -7,6 +7,7 @@ every match is produced here, on the coordinator, with the project's pinned tool
 from __future__ import annotations
 
 import contextvars
+import functools
 import hashlib
 import importlib
 import os
@@ -23,7 +24,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-from . import compile_cache, compile_sessions, compile_timing, limits, linuxvm, spawner, wsl
+from . import compile_cache, compile_sessions, compile_timing, limits, linuxvm, spawner, stamped, wsl
 from .compile_admission import Admission
 from .request_timing import span
 
@@ -175,6 +176,17 @@ class CompileResult:
     effective_settings: dict | None = None
 
 
+@functools.lru_cache(maxsize=64)
+def _which_on(name: str, path: str | None) -> str | None:
+    return shutil.which(name, path=path)
+
+
+def _which(name: str) -> str | None:
+    """shutil.which, remembered per PATH: it stats every PATH folder, and a compile asked about bwrap and prlimit
+    about ten times, a sixth of the Python a deep search spent around each compile."""
+    return _which_on(name, os.environ.get("PATH"))
+
+
 def _sandbox_mode(cfg: CompilerConfig) -> str:
     if cfg.linux_vm:
         return "linux-vm"
@@ -182,7 +194,7 @@ def _sandbox_mode(cfg: CompilerConfig) -> str:
         return "wsl"
     if cfg.sandbox != "auto":
         return cfg.sandbox
-    return "bwrap" if shutil.which("bwrap") else "none"
+    return "bwrap" if _which("bwrap") else "none"
 
 
 def _root(cfg: CompilerConfig, work: Path) -> str:
@@ -193,7 +205,7 @@ def _root(cfg: CompilerConfig, work: Path) -> str:
 
 def _wrap(cfg: CompilerConfig, work: Path, argv: list[str]) -> list[str]:
     mode = _sandbox_mode(cfg)
-    if mode in ("none", "bwrap") and shutil.which("prlimit"):
+    if mode in ("none", "bwrap") and _which("prlimit"):
         argv = ["prlimit", *LIMITS, "--", *argv]
     if mode == "none":
         return argv
@@ -355,6 +367,15 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
     """Compile one function's C with the project's compiler in the sandbox, with the shared header as context.h.
     Agents' C (not `trusted`) is checked first. C++ is tried for what doesn't compile as C when the toolchain builds
     both."""
+    from .compile_worker import runner
+    if (remote := runner()) is not None and _ARTIFACT_SINK.get() is None:
+        # A deep search's compile thread: the work runs in its child process (compile_worker.py).
+        return remote(cfg, context_header, source, trusted,
+                      lambda: _compile_here(cfg, context_header, source, trusted))
+    return _compile_here(cfg, context_header, source, trusted)
+
+
+def _compile_here(cfg: CompilerConfig, context_header: str, source: str, trusted: bool = False) -> CompileResult:
     compile_timing.add('requests', 1)
     if check := _CANCEL_CHECK.get():check()
     if not trusted:
@@ -401,7 +422,7 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
         if share and _captured_include_paths(cfg.cmd) and _stable_inputs(
                 [*inputs, *(arg.encode() for arg in cfg.cmd)], [name for name, _ in staged]):
             from .compile_sharing import run as shared_compile
-            digest = hashlib.sha256(repr((cfg, sorted(os.environ.items()))).encode())
+            digest = hashlib.sha256(repr((cfg, list(stamped.environment()))).encode())
             for part in inputs:
                 digest.update(len(part).to_bytes(8,'little'))
                 digest.update(part)

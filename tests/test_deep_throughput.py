@@ -240,9 +240,8 @@ def test_cached_compiler_identity_follows_toolchain_files(tmp_path, monkeypatch)
 
 
 def test_cached_environment_follows_changes(monkeypatch):
-    from decompnet.app import deep_permuter
-    before = deep_permuter._environment()
+    before = __import__("decompnet.stamped").stamped.environment()
     monkeypatch.setenv('DECOMP_TEST_ENVIRONMENT_CACHE', '1')
-    assert ('DECOMP_TEST_ENVIRONMENT_CACHE', '1') in deep_permuter._environment()
+    assert ('DECOMP_TEST_ENVIRONMENT_CACHE', '1') in __import__("decompnet.stamped").stamped.environment()
     monkeypatch.delenv('DECOMP_TEST_ENVIRONMENT_CACHE')
-    assert deep_permuter._environment() == before
+    assert __import__("decompnet.stamped").stamped.environment() == before

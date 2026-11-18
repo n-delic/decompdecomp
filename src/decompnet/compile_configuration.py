@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from . import compile_sessions, compile_timing, toolchains
+from . import compile_sessions, compile_timing, stamped, toolchains
 
 
 def resolve(root,cfg,build):
@@ -28,14 +28,14 @@ def resolve(root,cfg,build):
         seen.add(dep);metadata=toolchains.get(dep)
         if metadata.via_vm or metadata.via_wsl or metadata.local or metadata.wine:return build(root,cfg)
         manifest=toolchains.path(dep)/toolchains.MANIFEST
-        try:contents=manifest.read_bytes()
+        try:contents=stamped.read_bytes(manifest)
         except OSError:return build(root,cfg)
         inputs.append((dep,repr(metadata),str(manifest),contents))
         pending.extend((*metadata.requires,*metadata.headers))
         if why:=toolchains.runtime_error(dep):raise toolchains.ToolchainError(why)
     layout=(str(root.resolve()),tuple((kind,name,str((root/name).resolve()))
         for kind in ('include_dirs','ro_paths') for name in compiler.get(kind,[])))
-    key=(layout,json.dumps(compiler,sort_keys=True),tuple(sorted(os.environ.items())),tuple(sorted(inputs)))
+    key=(layout,json.dumps(compiler,sort_keys=True),stamped.environment(),tuple(sorted(inputs)))
     cached=session.configurations.get(key)
     if cached is not None:
         invocation,paths,stamps=cached
