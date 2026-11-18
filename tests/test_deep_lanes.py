@@ -88,3 +88,10 @@ def test_lanes_are_off_when_disabled(monkeypatch):
     assert not deep_lanes.enabled()
     monkeypatch.setenv('DECOMP_DEEP_LANES', '1')
     assert deep_lanes.enabled()
+
+
+def test_each_lane_gets_its_share_of_the_machine(net, monkeypatch):
+    monkeypatch.setattr(deep_lanes.os, 'cpu_count', lambda: 18)
+    assert deep_lanes.Lanes(net, 24, 256).slots == 2  # not 256 // 24 = 10 compile threads each
+    assert deep_lanes.Lanes(net, 4, 256).slots == 9
+    assert deep_lanes.Lanes(net, 4, 8).slots == 2  # a smaller configured total still wins
