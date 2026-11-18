@@ -36,6 +36,17 @@ DISCARD = ["*(.reginfo)", "*(.MIPS.abiflags)", "*(.MIPS.options)", "*(.pdr)", "*
            "*(.gnu.attributes)", "*(.note*)", "*(.gptab.*)"]
 
 
+def _auto_addresses(texts, defined) -> dict[str, int]:
+    """The automatic names (func_8C000000, D_800A1234) these sources use that nothing defines, each at the address
+    its name carries, so the standalone link can resolve them."""
+    found = {}
+    for text in texts:
+        for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}\b", text)):
+            if (m := AUTO_NAME.match(word)) and word not in defined:
+                found.setdefault(word, int(m.group(1), 16))
+    return found
+
+
 class ExportError(RuntimeError):
     pass
 
@@ -430,9 +441,10 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
 
     # 4. what the linker needs: segments, pieces, functions, symbols (build.py writes game.ld from it)
     defined = set()
+    asm_texts = []
     for path in (out / "asm").glob("**/*.s"):
-        defined.update(next(x for x in m.groups() if x) for m in _DEFINES.finditer(path.read_text(errors="replace",
-                                                                                                  encoding="utf-8")))
+        asm_texts.append(path.read_text(errors="replace", encoding="utf-8"))
+        defined.update(next(x for x in m.groups() if x) for m in _DEFINES.finditer(asm_texts[-1]))
     defined.update(f["name"] for f in functions)
     layout = []
     for seg in segments:
@@ -476,15 +488,18 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
                     absolute.setdefault(m.group(1), int(m.group(2), 16))
     # automatic names matched C uses that no symbol has (a twin's data, D_088EA738): the judge reads their address
     # from the name (SymbolTable.resolve), and so does the link
-    for f in functions:
-        if f["kind"] == "c":
-            for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}\b", rows[f["vram"]]["matched_source"])):
-                if (m := AUTO_NAME.match(word)) and word not in defined:
-                    absolute.setdefault(word, int(m.group(1), 16))
-    for d in data_c:  # automatic names the data's C points at
-        for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}\b", (out / d["src"]).read_text(encoding="utf-8"))):
-            if (m := AUTO_NAME.match(word)) and word not in defined:
-                absolute.setdefault(word, int(m.group(1), 16))
+    for name, address in _auto_addresses((rows[f["vram"]]["matched_source"] for f in functions if f["kind"] == "c"),
+                                         defined).items():
+        absolute.setdefault(name, address)
+    # automatic names the assembly points at but nothing defines: splat names a data word that looks like an
+    # address outside every segment (func_8C000000 in a game's data, a hardware or cached-mirror address) without
+    # defining it, and undefined_funcs_auto.txt can miss it. The name carries the address, as for the C above.
+    for name, address in _auto_addresses(asm_texts, defined).items():
+        absolute.setdefault(name, address)
+    # automatic names the data's C points at
+    for name, address in _auto_addresses(((out / d["src"]).read_text(encoding="utf-8") for d in data_c),
+                                         defined).items():
+        absolute.setdefault(name, address)
     fn_json = []
     for f in functions:
         entry = {"name": f["name"], "seg": f["seg"], "vram": f["vram"], "rom": f["rom"], "asm": f["asm"]}

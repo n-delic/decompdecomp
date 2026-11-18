@@ -445,3 +445,13 @@ def test_exported_ra_link_words_assemble_byte_exactly(tmp_path, platform):
     with (tmp_path / "raw.o").open("rb") as obj:
         assert ELFFile(obj).get_section_by_name(".text").data() == b"".join(
             word.to_bytes(4, order) for word in words)
+
+
+def test_assembly_naming_an_address_outside_the_game_links():
+    """A game's data held the word 0x8C000000; splat named it func_8C000000 in the data's assembly without
+    defining it, and the rebuildable export's link stopped on the undefined reference."""
+    from decompnet.rom import export
+
+    text = ".word func_8C000000\n.word D_80001000\nglabel D_80001000\n.word .L80001234\n"
+    found = export._auto_addresses([text], {"D_80001000"})
+    assert found["func_8C000000"] == 0x8C000000 and "D_80001000" not in found
