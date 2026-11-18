@@ -304,6 +304,50 @@ def stop_group(proc: subprocess.Popen, remembered: set[int] | None = None) -> No
         signal_all(signal.SIGKILL)
 
 
+class _Monitor:
+    """One thread watching every running compiler. A thread of their own per compiler process cost a deep pass a
+    tenth of its processor: each compile starts three (preprocessor, cc1, assembler), hundreds a second."""
+
+    def __init__(self):
+        self.watches: set = set()
+        self.lock = threading.Lock()
+        self.wake = threading.Condition(self.lock)
+        self.thread: threading.Thread | None = None
+
+    def add(self, watch) -> None:
+        with self.lock:
+            self.watches.add(watch)
+            if self.thread is None or not self.thread.is_alive():
+                self.thread = threading.Thread(target=self.run, name="compiler-memory-watchdog", daemon=True)
+                self.thread.start()
+            self.wake.notify()
+
+    def remove(self, watch) -> None:
+        with self.lock:
+            self.watches.discard(watch)
+
+    def run(self) -> None:
+        while True:
+            with self.lock:
+                while not self.watches:
+                    self.wake.wait()
+            time.sleep(WATCH_SECONDS)
+            with self.lock:
+                due = [w for w in self.watches if time.monotonic() - w._started >= WATCH_SECONDS]
+            for watch in due:
+                try:
+                    ended = watch._check()
+                except Exception:  # (one process's look failing must not end everyone's watch)
+                    import logging
+                    logging.getLogger('decompdecomp').exception('Compiler watchdog check failed')
+                    ended = False
+                if ended:
+                    self.remove(watch)
+
+
+_MONITOR = _Monitor()
+
+
 class CompilerMemoryWatchdog:
     """Stop a compiler, or a whole build, that uses more memory than its limit on macOS, as Linux's prlimit and
     systemd scopes do there (see the module's docstring), or that runs past `timeout` on any system. `whole_tree`:
@@ -320,14 +364,29 @@ class CompilerMemoryWatchdog:
         self.timed_out = False
         self.timeout = timeout
         self.seen: set[int] = set()
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()  # held while the monitor checks or stops this process
+        self._done = False
+        self._started = 0.0
+        self._watched = False
 
     def __enter__(self):
         if sys.platform == "darwin" or self.timeout is not None:
-            self._thread = threading.Thread(target=self._watch, name="compiler-memory-watchdog", daemon=True)
-            self._thread.start()
+            self._started = time.monotonic()
+            self._watched = True
+            _MONITOR.add(self)
         return self
+
+    def _check(self) -> bool:
+        """One look, from the shared monitor: True when this watch has ended (stopped or finished)."""
+        with self._lock:
+            if self._done:
+                return True
+            self.timed_out = self.timeout is not None and time.monotonic() - self._started >= self.timeout
+            self.exceeded = self._over_limit()
+            if self.timed_out or self.exceeded:
+                self._stop_tree()
+                self._done = True
+            return self._done
 
     def _over_limit(self) -> bool:
         if sys.platform != "darwin":
@@ -336,15 +395,6 @@ class CompilerMemoryWatchdog:
         self.seen.update(pid for pid, _ in tree)
         sizes = [rss for _, rss in tree]
         return (sum(sizes) if self.whole_tree else max(sizes, default=0)) > self.limit
-
-    def _watch(self) -> None:
-        started = time.monotonic()
-        while not self._stop.wait(WATCH_SECONDS):
-            self.timed_out = self.timeout is not None and time.monotonic() - started >= self.timeout
-            self.exceeded = self._over_limit()
-            if self.timed_out or self.exceeded:
-                self._stop_tree()
-                return
 
     def _stop_tree(self) -> None:
         if self.whole_tree:
@@ -375,9 +425,10 @@ class CompilerMemoryWatchdog:
                     'Compiler watchdog child stop failed pid=%d errno=%s', self.proc.pid, fallback.errno)
 
     def __exit__(self, *_):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=STOP_GRACE_SECONDS + 3)
+        if self._watched:
+            with self._lock:  # (waits for a stop the monitor is making, as joining the watch's thread did)
+                self._done = True
+            _MONITOR.remove(self)
 
     def message(self) -> str:
         mb = self.limit >> 20
