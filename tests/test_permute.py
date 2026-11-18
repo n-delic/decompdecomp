@@ -254,6 +254,24 @@ def test_c_decomp_permuter_cant_read_falls_back_to_the_simple_rewrites(monkeypat
     assert len(jobs) == 1 and p.judged[0] != SOURCE and all("s32 f(s32 a)" in c for c in p.judged)
 
 
+def test_simple_rewrites_get_the_header_and_the_pass_says_the_generator_is_missing(monkeypatch):
+    """Without decomp-permuter the simple rewrites run alone: they get the header, so they name only the typedefs
+    the game has (zlib's uInt in an N64 game's C failed 9,970 times in 10,000), and the deep pass says why."""
+    net = FakeNet()
+    monkeypatch.setattr(permute, "available", lambda: False)
+    headers = []
+    def mutate(source, rng, focus="", header=None):
+        headers.append(header)
+        return None
+    monkeypatch.setattr(permute, "mutate", mutate)
+    p = ScriptedPermuter(net, {})
+    lines = []
+    p.log = lines.append
+    p._permute(AGENT, net.project_row("game"), net.function(), State())
+    assert headers and all(h == HEADER for h in headers)
+    assert any("decomp-permuter is not installed" in line for line in lines)
+
+
 def test_c_no_simple_rewrite_applies_to_ends_the_turn(monkeypatch):
     """Nothing in lerp's `return a + (b - a) * t;` is one of the simple rewrites: the turn ends, where it used to
     try for a whole minute on a core."""

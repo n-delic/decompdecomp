@@ -88,6 +88,9 @@ Things to try when registers differ (`r`)
   initial check.
 - Pre/post increment, `x += 1` vs `x++`, pointer walking (`*p++`) vs indexing (`p[i]`).
 - Early `return` vs `if/else` with one return at the end.
+  A null guard laid out as `beqz` to a `v0 = 0` block after the body, reached past `j` with an empty delay
+  slot (-O2), is `if (p == NULL) return 0; return f(..);` or one return through a local; m2c's
+  `if (p) return f(..); return 0;` gives `bnez` instead.
 - `if (a) { if (b) ... }` vs `if (a && b)`.
 
 Calls and prototypes
