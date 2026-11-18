@@ -482,12 +482,18 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     argv = [subst.get(a, a) for a in cfg.cmd]
     argv = [a.replace("{include}", subst["{include}"]) for a in argv]
     (work / "func.o").unlink(missing_ok=True)
+    from . import direct_gcc
+    # An old GCC's own steps without its driver, when a probe proved the same object (direct_gcc.py)
+    steps = direct_gcc.plan(argv, root, _sandbox_mode(cfg))
     try:
         with _slot():
             compile_timing.add("invocations", 1)
             with span("compile_execute"), compile_timing.phase("execute"):
-                proc = _exec(cfg, work, argv, cfg.timeout,
-                         **({"outputs": ["func.o"], "stage": root} if _sandbox_mode(cfg) in ("wsl", "linux-vm") else {}))
+                if steps:
+                    proc = direct_gcc.run(steps, root, lambda step: _exec(cfg, work, step, cfg.timeout))
+                else:
+                    proc = _exec(cfg, work, argv, cfg.timeout,
+                             **({"outputs": ["func.o"], "stage": root} if _sandbox_mode(cfg) in ("wsl", "linux-vm") else {}))
     except subprocess.TimeoutExpired:
         return CompileResult(False, None, f"compiler timed out after {cfg.timeout}s")
     log = (proc.stdout + proc.stderr).replace(root + "/", "")

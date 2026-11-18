@@ -29,10 +29,11 @@ class Ticket:
 
 
 class Pool:
-    def __init__(self, count=None, *, maximum=False):
+    def __init__(self, count=None, *, maximum=False, remote=True):
         from .deep_throughput import Metrics
         self.count = count or compiler.concurrency_limit()
         self.maximum = maximum
+        self.remote = remote  # compiles in child processes (compile_worker.py); a deep lane compiles in-thread
         self.slots = compiler.Admission(self.count)
         self.metrics = Metrics()
         self.metrics.gate = self.slots
@@ -103,7 +104,7 @@ class Pool:
         # Each compile thread hands its compiles to a child process of its own (compile_worker.py): their Python
         # no longer queues on the app's one interpreter lock.
         with scope(self), compile_sessions.session(), compile_sharing.group(self.group), \
-                compile_worker.remote(background=not self.maximum):
+                (compile_worker.remote(background=not self.maximum) if self.remote else nullcontext()):
             while (ticket := self.queue.get()) is not None:
                 if not ticket.future.set_running_or_notify_cancel():continue
                 try:

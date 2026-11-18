@@ -96,7 +96,11 @@ class Lanes:
 
     def __init__(self, net, count, slots, *, maximum=False):
         self.net, self.count, self.maximum = net, max(1, count), maximum
-        self.slots = max(2, min(256, slots // self.count if slots else 2))
+        # Each lane's share of the machine: compiles mostly wait on the compiler, so about two in flight per core
+        # keep every core busy. An equal slice of a large configured slot count (256 over 24 lanes) gave each lane
+        # 10 compile threads and as many helper processes, hundreds in all on 18 cores, mostly idle.
+        share = max(2, -(-2 * (os.cpu_count() or 1) // self.count))
+        self.slots = max(2, min(256, share, slots // self.count if slots else share))
         self.idle = queue.Queue()
         self.started = 0
         self.lock = threading.Lock()
@@ -249,7 +253,9 @@ def child(db_path, workspace, background):
 
     def pool_for(slots, maximum):
         if (slots, maximum) not in pools:
-            pools[(slots, maximum)] = deep_compilation.Pool(slots, maximum=maximum)
+            # In-thread compiles: this process is a lane of its own, so a child per compile thread
+            # (compile_worker.py, for the app's one interpreter) would only add a process and a round trip.
+            pools[(slots, maximum)] = deep_compilation.Pool(slots, maximum=maximum, remote=False)
         return pools[(slots, maximum)]
 
     def run(message):
