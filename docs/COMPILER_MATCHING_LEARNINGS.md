@@ -7290,3 +7290,22 @@ same as `observed_repairs`' narrower version, which needed `s32`/`int` prototype
 this for any short ordinary float, o32 flags only, when every call to the callee passes such a literal there.
 This is the "float-bit arguments to float literals with an `f32` parameter" repair listed as not reproduced in
 the 9-10 November record-table batch.
+
+### KMC GCC 2.7.2: byte offsets on symbols of unknown type (18 November 2026)
+
+Evidence level: one new match on an N64 game's 31-instruction function, checked offline with the pinned compiler
+and the project's own header (equal to the target apart from relocated `%hi`/`%lo` words, which resolve to the
+same addresses); plus a controlled regression test on homemade C (`tests/test_unknown_symbol_offsets.py`).
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. The draft (score 10) read three words of a table of 16-byte records
+as `*(&D_800C0784 + temp_a2)` with `temp_a2 = arg2 * 0x10` and the symbols declared `extern M2C_UNK`. m2c meant a
+byte offset; with `M2C_UNK` = `s32`, C scaled it by 4 again, so the draft had `sll 6` where the game has `sll 4`.
+- `temp_a2 = arg2 * 4` (offset in elements, everything else unchanged): **exact**.
+- `*(M2C_UNK *)((s8 *)&D + (arg2 * 0x10))`, the temporary folded into each use: **exact**.
+- The same byte form keeping the temporary: no match (the shift is scheduled at the top, in its own register).
+- A record array, `typedef struct { s32 active; u8 *items; s32 count; s32 pad; } Entry; extern Entry D_800C0784[];`
+  with `D_800C0784[arg2].count` etc.: **exact**, also with `arg1 >= 0 && arg2 >= 0` for m2c's `~x >> 31` tests.
+- Typing the symbols `s8` and casting each load: no match (the shift moves to the top).
+- `m2cfix.refine_draft`'s `extern char D[]` loads single bytes: not equivalent.
+decomp-repair 0.5.5's `unknown_symbol_offset_repairs` (label `unknown_symbol_offsets`) offers the element and byte
+forms, with the temporary folded where nothing reassigns its operands.
