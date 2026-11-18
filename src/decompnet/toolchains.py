@@ -982,7 +982,7 @@ def _build_wabt(archive: Path, dest: Path, subdir: str | None, log) -> None:
 
 
 def _build_mips_binutils(archive: Path, dest: Path, subdir: str | None, log) -> None:
-    """The v0.10 upstream has no Intel Mac archive. Build that same pinned source, never a tool from PATH.
+    """The v0.10 upstream has no usable Mac archive (none for Intel; Apple Silicon's needs Homebrew's zstd). Build that same pinned source, never a tool from PATH.
     Only the host build tools (Xcode's C compiler and make) come from the system; installed MIPS tools stay pinned.
     """
     if not shutil.which("make") or not shutil.which("clang"):

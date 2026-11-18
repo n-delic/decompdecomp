@@ -339,8 +339,10 @@ def test_intel_mac_linker_is_built_from_pinned_source(monkeypatch, tmp_path):
     assert all(p.stat().st_mode & 0o111 for p in dest.iterdir())
     assert len(calls) == 2 and all(kwargs["timeout"] == 900 for _, kwargs in calls)
     assert calls[0][1]["env"]["CC"] == "/usr/bin/clang"
-    part = toolchains.get("binutils-mips").parts_for("macos-x86_64")[0]
-    assert part["build"] == "mips-binutils" and len(part["sha256"]) == 64
+    # Both Macs build it: upstream's Apple Silicon archive links Homebrew's libzstd, missing on most Macs.
+    for plat in ("macos-x86_64", "macos-arm64"):
+        part, = toolchains.get("binutils-mips").parts_for(plat)
+        assert part["build"] == "mips-binutils" and len(part["sha256"]) == 64
 
 
 def _fake_make(monkeypatch, returncode=0, said=""):

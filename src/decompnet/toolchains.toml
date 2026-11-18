@@ -1272,17 +1272,15 @@ binary_name = "mips-ps2-decompals-ld"
 url = "https://github.com/decompals/binutils-mips-ps2-decompals/releases/download/v0.10/binutils-mips-ps2-decompals-linux-x86-64.tar.gz"
 sha256 = "9fe31ea3ee1a37536f9f0e2e12c668e7c3cb99e59f5154bd2f1fc4762473094c"
 platforms = ["linux-x86_64"]
-[[binutils-mips.parts]]
-url = "https://github.com/decompals/binutils-mips-ps2-decompals/releases/download/v0.10/binutils-mips-ps2-decompals-macos-arm64.tar.gz"
-sha256 = "948cc736e01b2c135168caabfb616f6ed8efe89f1dad1ed8ef1ca74acb1b742c"
-platforms = ["macos-arm64"]
-# Upstream v0.10 publishes Apple Silicon only. Intel Macs build the exact same source with Xcode's tools.
+# Upstream v0.10 publishes no Intel Mac build, and its Apple Silicon build links Homebrew's libzstd
+# (/opt/homebrew/opt/zstd), so its assembler dies at load on a Mac without Homebrew's zstd. Both Macs build the
+# exact same source with Xcode's tools, without zstd.
 [[binutils-mips.parts]]
 url = "https://github.com/decompals/binutils-mips-ps2-decompals/archive/1cb36733961d0ffa2d169ef16032066d94096ac0.tar.gz"
 sha256 = "83817a54570e6b62b87f9a7be31114965750894b547629e187f380079a96f988"
 file = "binutils-mips-source-v0.10.tar.gz"
 subdir = "binutils-mips-ps2-decompals-1cb36733961d0ffa2d169ef16032066d94096ac0"
-platforms = ["macos-x86_64"]
+platforms = ["macos-x86_64", "macos-arm64"]
 build = "mips-binutils"
 [[binutils-mips.parts]]
 url = "https://github.com/decompals/binutils-mips-ps2-decompals/releases/download/v0.10/binutils-mips-ps2-decompals-windows-x86-64.zip"
