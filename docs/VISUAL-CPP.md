@@ -16,8 +16,8 @@ import reads it and picks a compiler:
 1. The build the program names, if decompdecomp has it.
 2. Otherwise, your own copy of that Visual C++, if you set one up in Setup (your Visual Studio's VC folder): the very
    build, or the nearest of your copies of the same version. A 64-bit game takes a copy's 64-bit compiler
-   (`bin/x86_amd64` or `bin/amd64` before 2015, `bin/Hostx86/x64` or `bin/Hostx64/x64` after), so only a copy that has
-   one builds it.
+   (`bin/x86_amd64` or `bin/amd64` up to 2015, `bin/Hostx86/x64` or `bin/Hostx64/x64` from 2017 on), so only a copy
+   that has one builds it.
 3. Otherwise, the closest build of the same version. Every 2017 update builds with 14.16 (15.9), the one 2017 build
    decompdecomp has.
 4. A game built with a version decompdecomp doesn't have yet builds with the nearest version it has, by year, and

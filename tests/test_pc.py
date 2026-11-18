@@ -1231,6 +1231,7 @@ def test_a_game_builds_with_its_own_visual_cpp_or_the_nearest_the_packs_have_and
         older = game(product, build, linker=0xCC if year == "2012" else 0xDE)
         assert (older.pack_version, older.exact, older.blockers()) == ("10.0SP1", False, [])
         assert f"no Visual C++ {year} yet" in older.cannot_match()[0] and "2010 SP1" in older.cannot_match()[0]
+        assert f"set up your own Visual C++ {year} copy in Setup" in older.cannot_match()[0]  # (no 64-bit word)
     for build, year in ((30137, "2019"), (31937, "2022")):
         newer = game(0x105, build)
         assert (newer.pack_version, newer.exact, newer.blockers()) == ("14.16", False, [])
