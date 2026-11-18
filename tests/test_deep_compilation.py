@@ -220,16 +220,43 @@ def test_admission_is_bounded_across_lanes_without_partial_window_deadlock(monke
     monkeypatch.setattr(compiler,'concurrency_limit',lambda:2)
     pool=deep_compilation.Pool();lock=threading.Lock();active=[0];maximum=[0]
     def lane():
-        with pool.window(4,lambda:None):
+        tickets=[deep_compilation.Ticket(str(i),(),lambda:None,lambda:None) for i in range(4)]
+        with pool.window(tickets,lambda:None):
             with lock:
                 active[0]+=4;maximum[0]=max(maximum[0],active[0])
             time.sleep(.01)
             with lock:active[0]-=4
+            for ticket in tickets:ticket.future.set_result(None)  # the compiles end
     try:
         with ThreadPoolExecutor(8) as lanes:
             futures=[lanes.submit(lane) for _ in range(8)]
             for future in futures:future.result(timeout=5)
         assert maximum[0]==4 and active[0]==0
+    finally:pool.close()
+
+
+def test_a_lane_judging_finished_compiles_does_not_hold_the_capacity(monkeypatch):
+    """Permits return as each compile ends: one lane judging its chunk one candidate at a time must not keep
+    every other lane (and the idle compilers) waiting until it has judged them all."""
+    monkeypatch.setattr(compiler,'concurrency_limit',lambda:2)
+    pool=deep_compilation.Pool()
+    judging=threading.Event();admitted=threading.Event()
+    def slow_lane():
+        tickets=[deep_compilation.Ticket(str(i),(),lambda:None,lambda:None) for i in range(4)]
+        with pool.window(tickets,lambda:None):
+            for ticket in tickets:ticket.future.set_result(None)
+            judging.set()
+            assert admitted.wait(5)  # still inside its window, judging
+    def other_lane():
+        assert judging.wait(5)
+        tickets=[deep_compilation.Ticket(str(i),(),lambda:None,lambda:None) for i in range(4)]
+        with pool.window(tickets,lambda:None):
+            admitted.set()
+            for ticket in tickets:ticket.cancel()
+    try:
+        with ThreadPoolExecutor(2) as lanes:
+            for future in [lanes.submit(slow_lane),lanes.submit(other_lane)]:future.result(timeout=5)
+        for _ in range(4):assert pool.capacity.acquire(timeout=1)  # every permit came back
     finally:pool.close()
 
 

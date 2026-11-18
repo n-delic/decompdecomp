@@ -57,23 +57,32 @@ class Pool:
             return self.proposals
 
     @contextmanager
-    def window(self, count, check):
+    def window(self, tickets, check):
         # Admit a whole small chunk atomically. Partial windows held by several
         # lanes would otherwise deadlock while each waited to submit its remainder.
+        # Each permit returns when its own compile ends (or is canceled), not when the lane has judged the
+        # whole chunk: a lane judges one candidate at a time, and holding every permit until then let one lane
+        # occupy the entire capacity while the compilers sat idle and every other lane queued here. That capped
+        # a sweep at one lane's judging speed (about 100 candidates a second) whatever the compile slots.
         acquired = 0
         locked = False
+        handed = False
         try:
-            if count:
+            if tickets:
                 while not self.admission.acquire(timeout=.05):check()
                 locked = True
-                for _ in range(count):
+                for _ in tickets:
                     while not self.capacity.acquire(timeout=.05):check()
                     acquired += 1
                 self.admission.release();locked = False
+                for ticket in tickets:
+                    ticket.future.add_done_callback(lambda _:self.capacity.release())
+                handed = True
             yield
         finally:
             if locked:self.admission.release()
-            for _ in range(acquired):self.capacity.release()
+            if not handed:
+                for _ in range(acquired):self.capacity.release()
 
     def submit(self, ticket):
         with self.lock:
@@ -149,7 +158,7 @@ def chunk(search, agent, proj, fn, sources, fork):
                 ticket = Ticket(key[1], snapshot,
                                 lambda source=source:search.net._compile(proj, header, source, fn), check)
                 tickets[source] = ticket
-        with pool.window(len(tickets), check):
+        with pool.window(list(tickets.values()), check):
             for ticket in tickets.values():pool.submit(ticket)
             search._ahead = tickets
             try:yield
@@ -187,7 +196,10 @@ def prepared(function):
         try:
             # Policy/history reads around the judge use the same DB snapshot semantics;
             # they must not trigger saved-tree synchronization before each candidate.
-            with self.net.progress.view() if hasattr(self.net, "progress") else nullcontext():
+            # Revisions are read once per candidate, as within an agent's tool call (Store.versions_held): a
+            # candidate asked read_revisions 29 times, each through the connection lock every lane shares.
+            from ..store import Store
+            with (self.net.progress.view() if hasattr(self.net, "progress") else nullcontext()), Store.versions_held():
                 return function(self, agent, proj, fn, source, best, fork)
         finally:self._ahead_current = previous
     return run
