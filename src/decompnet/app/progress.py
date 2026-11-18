@@ -1682,6 +1682,11 @@ class Progress:
         after this one was asked for read every edit made before it and published every change committed before it.
         Each helper's tool call forces one before and one after its work; with 25 helpers on a 2,700-file save each
         call waited about a second for others' identical checks and then made its own, 4 s of a 5.6 s call."""
+        if getattr(self, 'passive', False):
+            # A worker process's engine (deep_lanes.py): the app syncs the saved tree for everyone. Many engines each
+            # checking it competed for the same claims and the single writer; what they change in the database is
+            # marked for the app's next sync by the progress_dirty triggers like any other write.
+            return False
         asked = next(self._asks)
         if force:
             self.local.began = None

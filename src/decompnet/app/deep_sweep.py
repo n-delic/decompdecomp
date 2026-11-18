@@ -427,6 +427,13 @@ class Sweeps:
         order = []
         futures = {}
         pool = Executor(max_workers=count, purpose='Deep search functions', project=slug, thread_name_prefix='deep-pass', initializer=None if maximum else workers.started_priority)
+        # Several functions at once each run in a child process of their own (deep_lanes.py): one interpreter
+        # judging every candidate capped a pass near a hundred a second. A room's project stays in the app (its
+        # host confirms matches through this engine's room connection).
+        from . import deep_lanes
+        compile_pool = getattr(log, 'compile_pool', None)
+        log.deep_lanes = (deep_lanes.Lanes(self.net, count, getattr(compile_pool, 'count', 0), maximum=maximum)
+                          if count > 1 and slug not in self.net.links and deep_lanes.enabled() else None)
         stats['activity'].publish({'cycle': cycle, 'loop': loop,
             'preparation': {'checked': 0, 'total': 0, 'eligible': 0, 'waiting': 0, 'done': False}}, force=True)
         try:
@@ -550,6 +557,9 @@ class Sweeps:
                     time.sleep(1)
         finally:
             pool.shutdown(wait=True, cancel_futures=True)
+            if getattr(log, 'deep_lanes', None) is not None:
+                log.deep_lanes.close()
+                log.deep_lanes = None
 
     def search_one(self, slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked):
         """One function's bounded turn, on whichever thread is free."""
@@ -574,13 +584,18 @@ class Sweeps:
         try:
             count = self.config(slug).get('compiler_profiles', 1)
             per_function = self.config(slug).get('threads_per_function', 1)
-            if per_function > 1:
-                result = deep_permuter.run(self.net, slug, fn['name'], minutes, variants, function_log,
-                                           compiler_profiles=count, threads_per_function=per_function)
-            elif count == 1:
-                result = deep_permuter.run(self.net, slug, fn['name'], minutes, variants, function_log)
-            else:
-                result = deep_permuter.run(self.net, slug, fn['name'], minutes, variants, function_log, compiler_profiles=count)
+            options = ({'compiler_profiles': count, 'threads_per_function': per_function} if per_function > 1 else
+                       {} if count == 1 else {'compiler_profiles': count})
+            lanes = getattr(log, 'deep_lanes', None)
+            result = None
+            if lanes is not None:
+                from .deep_lanes import Unavailable
+                try:
+                    result = lanes.search(slug, fn['name'], minutes, variants, function_log, **options)
+                except Unavailable:
+                    log(f'{fn["name"]}: no worker process could take this turn; it runs in the app.')
+            if result is None:
+                result = deep_permuter.run(self.net, slug, fn['name'], minutes, variants, function_log, **options)
             # Also records test backends and older search providers that do not publish history.
             # The actual single-function search uses the same completion gate.
             self.completed(slug, fn, minutes, variants, result, build_scope)
