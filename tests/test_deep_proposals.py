@@ -186,7 +186,7 @@ def test_worker_applies_background_priority_once_and_keeps_metadata_out_of_repai
     output = io.BytesIO();priorities = [];received = []
     monkeypatch.setattr(deep_proposal_worker, 'sys', SimpleNamespace(
         stdin=SimpleNamespace(buffer=io.BytesIO(data)), stdout=SimpleNamespace(buffer=output)))
-    monkeypatch.setattr(workers, 'lower_priority', lambda:priorities.append(True))
+    monkeypatch.setattr(workers, 'started_priority', lambda:priorities.append(True))
     def variants(*args, **kwargs):
         received.append(kwargs)
         return []

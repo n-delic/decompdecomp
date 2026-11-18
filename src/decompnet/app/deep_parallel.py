@@ -102,7 +102,7 @@ def run(net, slug, name, minutes, variants, log, profiles, count):
             lane.prepared()
 
     log(f'Searching {name} with {count} threads; sharing {minutes} minutes and {variants:,} candidate checks.')
-    with Executor(max_workers=count, purpose='Per-function deep search', project=slug, thread_name_prefix='deep-function', initializer=None if getattr(getattr(log, 'compile_pool', None), 'maximum', False) else workers.lower_priority) as pool:
+    with Executor(max_workers=count, purpose='Per-function deep search', project=slug, thread_name_prefix='deep-function', initializer=None if getattr(getattr(log, 'compile_pool', None), 'maximum', False) else workers.started_priority) as pool:
         futures = [pool.submit(work, index) for index in range(count)]
         for future in as_completed(futures):
             results.append(future.result())

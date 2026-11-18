@@ -65,6 +65,27 @@ def lower_priority() -> None:
         os.nice(NICE)
 
 
+def started_priority() -> None:
+    """Priority for work the user started and is waiting on (the Deep permuter): below the window, but not so low
+    that macOS parks it. On Apple Silicon a utility thread, and the compilers it starts (they inherit its QoS), run
+    mostly on the efficiency cores, so a deep search left the performance cores idle. QOS_CLASS_DEFAULT still lets
+    the interactive window go first. Elsewhere it is `lower_priority`, which costs the scheduler nothing similar."""
+    if sys.platform != "darwin":
+        lower_priority()
+        return
+    from ..compiler import background_thread
+    from .thread_lanes import mark_lowered, priority_lowered
+    background_thread()
+    if priority_lowered():
+        return
+    mark_lowered()
+    import ctypes
+
+    system = ctypes.CDLL(None)
+    system.pthread_set_qos_class_self_np.argtypes = (ctypes.c_uint, ctypes.c_int)
+    system.pthread_set_qos_class_self_np(0x15, 0)  # QOS_CLASS_DEFAULT
+
+
 def configure(threads=None) -> int:
     """Set the default width of newly created task groups; running groups keep theirs."""
     global WORKERS

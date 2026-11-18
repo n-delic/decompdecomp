@@ -18,7 +18,9 @@ def options(maximum=False, slots=0):
 
 
 def width(maximum, slots):
-    return slots or (min(256,max(1, os.cpu_count() or 1)) if maximum else min(4, compiler.concurrency_limit()))
+    # Balanced searches use the shared compiler limit (cores less one, kept for interactive compiles), like a
+    # sweep already did. A fixed 4 left an 18-core machine three-quarters idle on a single function's search.
+    return slots or (min(256,max(1, os.cpu_count() or 1)) if maximum else compiler.concurrency_limit())
 
 
 class Metrics:

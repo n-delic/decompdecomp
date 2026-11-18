@@ -31,7 +31,7 @@ class Ticket:
 class Pool:
     def __init__(self, count=None, *, maximum=False):
         from .deep_throughput import Metrics
-        self.count = count or min(4, compiler.concurrency_limit())
+        self.count = count or compiler.concurrency_limit()
         self.maximum = maximum
         self.slots = compiler.Admission(self.count)
         self.metrics = Metrics()
@@ -87,8 +87,8 @@ class Pool:
             except queue.Full:pass
 
     def work(self):
-        from .workers import lower_priority
-        if not self.maximum:lower_priority()
+        from .workers import started_priority
+        if not self.maximum:started_priority()
         from .deep_throughput import scope
         with scope(self), compile_sessions.session(), compile_sharing.group(self.group):
             while (ticket := self.queue.get()) is not None:

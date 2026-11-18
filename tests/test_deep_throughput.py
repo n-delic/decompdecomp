@@ -1,6 +1,7 @@
 """Throughput leases share hard limits, keep exact publication and restore normal scheduling."""
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,7 +16,8 @@ def test_cpu_defaults_and_validation(monkeypatch):
     monkeypatch.setattr(deep_throughput.os, 'cpu_count', lambda:10)
     assert deep_throughput.width(True,0)==10
     assert deep_throughput.width(True,7)==7
-    assert deep_throughput.width(False,0)<=4
+    monkeypatch.setattr(deep_throughput.compiler, 'concurrency_limit', lambda:17)
+    assert deep_throughput.width(False,0)==17  # balanced uses the machine, not a fixed 4
     for value in [-1,257,True,1.5,None]:
         with pytest.raises(NetworkError):deep_throughput.options(True,value)
     with pytest.raises(NetworkError):deep_throughput.options('yes',0)
@@ -207,3 +209,16 @@ def test_cancelled_gate_wait_clears_metrics_and_releases_partial_admission(monke
     assert metrics.snapshot()['compiler_waiting_shared'] == 0
     assert metrics.snapshot()['active_compiles'] == 0
     shared.release()
+
+
+def test_deep_search_workers_avoid_macos_utility_qos(monkeypatch):
+    """A user-started deep search must not drop to utility QoS on macOS (efficiency cores only)."""
+    from decompnet.app import workers
+    calls = []
+    monkeypatch.setattr(workers, 'lower_priority', lambda: calls.append('lower'))
+    monkeypatch.setattr(workers.sys, 'platform', 'linux')
+    workers.started_priority()
+    assert calls == ['lower']
+    for path in ('deep_sweep.py', 'deep_parallel.py', 'deep_compilation.py', 'deep_proposal_worker.py'):
+        source = (Path(workers.__file__).parent / path).read_text()
+        assert 'lower_priority' not in source, path
