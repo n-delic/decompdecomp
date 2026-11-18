@@ -304,16 +304,25 @@ def _start(args,home,internal,state_file,log,restarted,headless):
     return 0
 
 
+KEEP_ALIVE = 75  # seconds; longer than every client pool that reuses connections to the app (gateway: 30 s)
+
+
 def server_config(app):
     """The web server's settings. Its own logging setup gives its loggers a terminal of their own, so an error
     inside it ("Exception in ASGI application") never reached the app's log: none of its own setup, then, and
-    its messages go where every other one goes (support.file_log). No line per request: the page asks every second."""
+    its messages go where every other one goes (support.file_log). No line per request: the page asks every second.
+
+    Keep-alive outlasts the gateway's pooled connections (30 s idle, gateway/src/window.rs and main.rs): with
+    uvicorn's 5 s default the app closed connections the gateway still held, and a request sent on one as it closed
+    failed with "decompdecomp isn't answering (client error (SendRequest))", the Commit saved progress panel
+    losing its job while the job carried on (most often on a busy machine, where the close arrives late)."""
     import logging
 
     import uvicorn
 
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
-    return uvicorn.Config(app, log_config=None, access_log=False, timeout_graceful_shutdown=5)
+    return uvicorn.Config(app, log_config=None, access_log=False, timeout_graceful_shutdown=5,
+                          timeout_keep_alive=KEEP_ALIVE)
 
 
 def update_cmd(args) -> int:
