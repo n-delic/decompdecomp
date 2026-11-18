@@ -432,8 +432,12 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                      "know goes through share_knowledge.",
                      s(text=st("note", True), function=st("function", True))),
         "search_flags": ("Build the function's C with each flag variant of its compiler, ranked: for C that looks right "
-                         "but won't match.", s(function=st("function", True), compiler=st("another compiler"),
-                                                source=st("C (default: the best attempt)"))),
+                         "but won't match. flags: only the ones you name (\"/GS- /hotpatch\", \"-O3 -G0\"), together and "
+                         "each alone; the error lists what the compiler may take. PC and Xbox games: the source file's "
+                         "flags, any Visual C++ flag that changes code (/Oy-, /O1, /Ob1, /GS-, /hotpatch, /Gy, /Oi, "
+                         "/fp:, /arch:, /Gz, ...; never /GL); one that matches stays the file's.",
+                         s(function=st("function", True), compiler=st("another compiler"),
+                           source=st("C (default: the best attempt)"), flags=st("flags to try, space-separated"))),
         "claim_readable": ("Take the next matched function that isn't readable yet.", s()),
         "make_readable": ("A readable rewrite of a matched function (names, types, a comment); kept only if it still "
                           "matches byte for byte.", s(function=st("function", True), source=st("readable C", True))),

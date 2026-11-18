@@ -40,7 +40,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | ✓ | — | — |
 | Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | — | ✓ | ✓ | — | ✓ your Visual C++ (x86 and x64 copies): 32-bit and 64-bit games the pack's build doesn't match exactly | ✓ your XDK | — | the project's own build |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ (ps3dev GCC, your SDK's) | — | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | from scratch: per source file (`try_compiler`, Settings); else the project's build | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — (the project's flags only) | per source file (/Oy- on 32-bit, /O1, /Ob1) | per source file | — (the project's flags only) | the project's build |
+| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — (the project's flags only) | per source file: every Visual C++ flag that changes code, by version (`consoles/pc/clflags.py`), swept or named (`flags=`) | per source file (the PC's catalogue) | — (the project's flags only) | the project's build |
 | Find better compiler settings from saved C | ✓ | ✓ | ✓ | ✓ | — project mode | ✓ | ✓ | — project mode | — project mode | — project mode | — project mode | — public builds |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file; else the project's build | ✓ over source files | ✓ | ✓ from scratch: per source file; else the project's build | — |
@@ -247,8 +247,9 @@ Where to start on a gap:
 - **Windows PC: the frame pointer, per source file.** About half of a Visual C++ 2010 game's functions keep an ebp
   frame (/Oy-), which no C matched under the project's /O2. The import reads each source file's functions and builds
   the files that keep frames with /Oy- (`config/<version>/file_flags.json`, `scratch.frame_flags`); projects made
-  before get it when the app starts, but for files with matched code. `search_flags` tries a file's flags (/Oy-, /O1,
-  /Ob1) and keeps what matches, as `try_compiler` keeps a compiler.
+  before get it when the app starts, but for files with matched code. `search_flags` tries a file's flags (every
+  Visual C++ flag that changes code, by version and target: `consoles/pc/clflags.py`; one choice changed at a time
+  within a time budget, or the ones an agent names) and keeps what matches, as `try_compiler` keeps a compiler.
 - **Windows PC games bring their own DLLs.** Only the .exe was read, but many games keep much of their code in
   DLLs of their own (#12: a 2010 racing game's .exe is small; an engine and its game logic are two DLLs). Given by
   path, a game's folder or its .exe brings the DLLs beside it (two folders down, not in a launcher's or tool's own folder):
@@ -568,7 +569,9 @@ Where to start on a gap:
 - **Better drafts**: m2c drafts every function in the background, from the header declarations its code uses, and
   again when they change; `redraft` runs m2c with an agent's own declarations; methods of known C++ classes are
   drafted as `Class::method`. On GTA San Andreas, 37 of 40 sampled drafts read the header (none did before).
-- **Flag search** (`search_flags`, MIPS): each flag of the compiler changed once, up to 12 builds.
+- **Flag search** (`search_flags`, MIPS): each flag of the compiler changed once, up to 12 builds; an agent can
+  name the ones to try (`flags=`), from that same list. PC and Xbox games started from scratch: per source file,
+  over every Visual C++ flag that changes code, by version and target (`consoles/pc/clflags.py`).
 - **PS2 debug symbols** (#3): names and sizes from the symbol table; from STABS the source files as units,
   prototypes, parameters and locals in the brief, every type and global in the header; the same from the DWARF 1
   CodeWarrior writes (.debug, .line), with the line each function starts on. Big headers: the brief

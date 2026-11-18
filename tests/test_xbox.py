@@ -157,6 +157,28 @@ def test_a_kernel_call_is_an_import_and_c_calling_it_matches(demo, project):
     assert res["matched"], res["text"]
 
 
+def test_search_flags_tries_named_visual_cpp_71_flags_on_a_file(demo, project):
+    """An Xbox game's files build through the PC's project, with flags of their own: search_flags takes the flags
+    Visual C++ 7.1 takes (/G7 is 7.1's), refuses the others, and keeps the one that matches."""
+    _, symbols = demo
+    net, slug = project
+    xbox = consoles.get("xbox")
+    address = f"{next(a for s, a in symbols.items() if 'mix_score' in s):08X}"
+    name = next(r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=?",
+                                                 net.project_row(slug)["id"]) if address in r["name"].upper())
+    _, fp, _ = net.forks.get(slug)
+    source = fp.unit(net._function(name, slug)["unit"]).source
+    code = f"int __fastcall {name.strip('@').split('@')[0]}(int a, int b) {{\n    return (a * 31) ^ (b >> 3);\n}}\n"
+    agent, _ = net.local_agent("xbox-agent")
+    xbox.set_file_flags(fp, source, ["/Od"])
+    with pytest.raises(Exception, match=r"isn't taken by Visual C\+\+ 7.1"):
+        net.search_flags(agent, slug, name, source=code, flags="/hotpatch")
+    said = net.search_flags(agent, slug, name, source=code, flags="/G7")
+    assert "none matches" in said and xbox.file_flags(fp, source) == ["/Od"], said
+    said = net.search_flags(agent, slug, name, source=code, flags="/O2")
+    assert "is built with them from now on" in said and xbox.file_flags(fp, source) == ["/O2"], said
+
+
 def test_the_rebuild_gives_back_the_xbe(demo, project):
     net, slug = project
     assert net.forks.check_rom(slug, log=lambda *_: None)["identical"]

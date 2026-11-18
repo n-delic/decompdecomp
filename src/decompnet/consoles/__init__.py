@@ -537,8 +537,10 @@ class Console:
         """Build a source file with `flags` on top of the project's; returns the file that says so (to commit)."""
         raise RomError(f"{self.name} projects set their flags in their own build")
 
-    def flag_variants(self, flags: list[str]) -> list[list[str]]:
-        """A source file's flags (first) and the variants of them search_flags tries."""
+    def flag_variants(self, flags: list[str], fp=None, source: str = "", named: str = "") -> list[list[str]]:
+        """A source file's flags (first) and the variants of them search_flags tries, for the file `source` of `fp`:
+        `named`, the flags an agent named (checked against what the file's compiler takes; NetworkError otherwise),
+        else the console's own sweep."""
         return [flags]
 
     def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:

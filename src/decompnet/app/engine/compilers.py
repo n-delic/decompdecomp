@@ -723,26 +723,61 @@ class CompilerMixin:
         out += [[*base, extra] for extra in extras if extra not in base]
         return out[:MAX_FLAG_VARIANTS]
 
-    def search_flags(self, agent: Agent, slug: str, function: str, compiler: str = "", source: str = "") -> str:
+    def named_flag_variants(self, toolchain: str, base: list[str], named: str, more: tuple[str, ...] = ()) -> list[list[str]]:
+        """The variants of `base` an agent's `named` flags make (search_flags(flags=...)): all of them together, then
+        each alone when there are several, each replacing the flag of its kind (an optimisation level the level, -G<n>
+        the -G). Only flag_variants' own flags of the compiler may be named: anything else reaches no command line."""
+        family = next((f for prefix, f in FLAG_FAMILIES if toolchain.startswith(prefix)), "gcc")
+        levels, extras = FLAG_LEVELS[family], FLAG_EXTRAS[family] + tuple(more)
+        small = tuple(f"-G{g}" for g in SMALL_DATA_SIZES) if family in ("gcc", "ee", "snc") else ()
+        allowed = (*levels, *small, *extras)
+        wanted = list(dict.fromkeys(named.split()))
+        if bad := [f for f in wanted if f not in allowed]:
+            raise NetworkError(f"{bad[0]!r} isn't a flag search_flags tries on {consoles.compiler_name(toolchain)}: "
+                               f"name some of {' '.join(allowed)}")
+        for kind in (levels, small):
+            if len([f for f in wanted if f in kind]) > 1:
+                raise NetworkError(f"{' and '.join(f for f in wanted if f in kind)} are one choice: name one of them")
+
+        def put(flags: list[str], flag: str) -> list[str]:
+            kind = levels if flag in levels else small if flag in small else ()
+            return [f for f in flags if f not in kind and f != flag] + [flag] if kind else \
+                (flags if flag in flags else [*flags, flag])
+        together = list(base)
+        for flag in wanted:
+            together = put(together, flag)
+        out = [list(base)]
+        for v in [together, *([put(list(base), f) for f in wanted] if len(wanted) > 1 else [])]:
+            if v not in out:
+                out.append(v)
+        return out
+
+    def search_flags(self, agent: Agent, slug: str, function: str, compiler: str = "", source: str = "",
+                     flags: str = "") -> str:
         """A function's C (its best attempt, or `source`) built with the variants of its compiler's flags
-        (flag_variants), each judged like an attempt and recorded nowhere: when the C looks right but won't match,
-        the flags are often what's wrong, and agents tried them one compile at a time."""
+        (flag_variants, or the `flags` an agent named: named_flag_variants), each judged like an attempt and recorded
+        nowhere: when the C looks right but won't match, the flags are often what's wrong, and agents tried them one
+        compile at a time."""
         if self.fork_slug(slug):  # where the project lets each file have its own flags (PC), the fork engine's
-            return self.forks.search_flags(agent, slug, function, compiler, source)
+            return self.forks.search_flags(agent, slug, function, compiler, source, flags)
         proj = self._project(slug)
         cfg = self.cfg(proj)
         fn = self._function(function, slug)
         own = compiler_for(cfg, fn["vram"])
         tc = self._toolchain_named(cfg, compiler) if compiler else own["toolchain"]
         base = list(own["flags"]) if tc == own["toolchain"] else consoles.default_flags(cfg, tc)
+        variants = self.named_flag_variants(tc, base, flags, consoles.of(cfg).flag_extras) if flags.strip() else \
+            self.flag_variants(tc, base, consoles.of(cfg).flag_extras)
+        if flags.strip() and len(variants) == 1:
+            raise NetworkError(f"{fn['name']} builds with {flags.strip()} already")
         source = source.strip() or self._source_of(fn)
         if not source:
             raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
         results = []
-        for flags in self.flag_variants(tc, base, consoles.of(cfg).flag_extras):
-            ok, d, _ = self._judge_with(proj, fn, tc, flags, source)
+        for variant in variants:
+            ok, d, _ = self._judge_with(proj, fn, tc, variant, source)
             if d is not None:
-                results.append((0 if ok else max(1, d.score), flags))
+                results.append((0 if ok else max(1, d.score), variant))
         if not results:
             return f"{consoles.compiler_name(tc)}: the C doesn't compile with any of its flag variants"
         results.sort(key=lambda r: r[0])
