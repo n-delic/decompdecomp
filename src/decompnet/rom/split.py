@@ -757,6 +757,14 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     return SplitResult(unique, data, segments, named_symbols(workdir), config, compiler, out, console.id, gp, image, notes)
 
 
+def _left_out_filler(lines: dict, address: int) -> bool:
+    """One alignment word as automatic_boundaries.alignment_fill drops it: at an address ending in 4 or C, right after
+    a `jr $ra` and its delay slot, right before the next stored piece."""
+    previous = lines.get(address - 8)
+    return (address % 8 == 4 and previous is not None and previous.word == 0x03E00008
+            and address - 4 in lines and address + 4 in lines)
+
+
 def join_saved_functions(parts: list[RomFunction], start: int, end: int, read) -> RomFunction:
     """Join stored functions back into the first one, filling any zero gap from the game's bytes (saves.py).
 
@@ -770,10 +778,19 @@ def join_saved_functions(parts: list[RomFunction], start: int, end: int, read) -
     if missing:
         for address in sorted(missing):
             # split_function trims padding from the head; undoing that split must put its original NOPs back.
-            if read(address, 4) != b"\0\0\0\0":
-                raise ValueError("the saved layout crosses a gap in this analysis")
+            data = read(address, 4)
             previous = lines[max(at for at in lines if at < address)]
-            lines[address] = AsmLine(previous.rom + address - previous.vram, address, 0, "nop", "")
+            rom = previous.rom + address - previous.vram
+            if data == b"\0\0\0\0":
+                lines[address] = AsmLine(rom, address, 0, "nop", "")
+            elif _left_out_filler(lines, address):
+                # automatic_boundaries leaves non-zero alignment filler out of the functions; a layout saved before
+                # that kept it inside one, so it goes back as the game's own word.
+                order = "big" if read(address - 8, 4) == (0x03E00008).to_bytes(4, "big") else "little"
+                word = int.from_bytes(data, order)
+                lines[address] = AsmLine(rom, address, word, ".word", f"0x{word:08X}")
+            else:
+                raise ValueError("the saved layout crosses a gap in this analysis")
     if sorted(lines) != list(range(start, end, 4)):
         raise ValueError("the saved layout crosses a gap in this analysis")
     return replace(parts[0], lines=[lines[address] for address in sorted(lines)],
