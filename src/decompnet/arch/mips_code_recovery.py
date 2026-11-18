@@ -25,19 +25,22 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
     if start<0 or start%4 or end>len(image) or start+8>end:
         return None
     word=lambda at:int.from_bytes(image[at:at+4],order)
-    frame=word(start)
-    if not is_frame(frame):
+    lead=_lead(image,start,end,order,cpu)
+    if lead is None:
         return None
+    entry=start;start+=lead  # the frame's own address: the checks below are about the body it opens
+    frame=word(start)
     amount=0x10000-(frame&0xffff)
     if amount%8 or amount>0x1000:
         return None
-    info=extent(image,start,end,vram,order,cpu,table_ranges=table_ranges,max_steps=MAX_BYTES//4)
-    size=info['extent_bytes']
+    info=extent(image,entry,end,vram,order,cpu,table_ranges=table_ranges,max_steps=MAX_BYTES//4)
+    size=info['extent_bytes']-lead
     if not _closed(info,table_ranges) or info['step_limit'] or size<16:
         return None
-    body=image[start:start+size]
+    body=image[entry:start+size]
     if (asm_check(body) if asm_check else asm_reason(body,big_endian,cpu=cpu)):
         return None
+    vram+=lead
     # One frame, popped in the return delay slot or immediately before the
     # return. Pre-return pops cannot be delay slots or have edges bypassing them.
     pop=0x27BD0000|amount
@@ -81,9 +84,34 @@ def called_extent(image, start, end, vram, *, big_endian=True, cpu='', asm_check
                 protected_returns.update((at,at+4))
             else:return None
             returns+=1
-    if start in destinations or (pops|protected_returns) & destinations:
+    if destinations & {*range(entry,start+4,4)} or (pops|protected_returns) & destinations:
         return None  # no loop can allocate the entry frame again or enter a return delay slot
-    return size if returns else None
+    return size+lead if returns else None
+
+
+LEAD = 4  # instructions the compiler may schedule ahead of the frame
+
+
+def _lead(image, start, end, order, cpu):
+    """How many bytes come before the frame: GCC can schedule a load or two ahead of `addiu $sp` (an N64 game's
+    overlay: `lui $v0; lbu $v0; addiu $sp, -0x20`), and those stay part of the function. Only plain loads and
+    arithmetic into scratch registers qualify, never a transfer, a store, or anything touching $sp, $ra, $fp or a
+    saved register."""
+    import rabbitizer
+
+    from .mips import _mips_uses, rabbitizer_category
+
+    for n in range(LEAD+1):
+        at=start+4*n
+        if at+4>end:return None
+        w=int.from_bytes(image[at:at+4],order)
+        if is_frame(w):return 4*n
+        ins=rabbitizer.Instruction(w,0,rabbitizer_category(cpu))
+        uses=_mips_uses(w,cpu)
+        if (not ins.isValid() or ins.isBranch() or ins.isJump() or ins.hasDelaySlot() or ins.doesStore() or uses is None
+                or (uses[0]|uses[1])&{16,17,18,19,20,21,22,23,29,30,31}):
+            return None
+    return None
 
 
 def leaf_extent(image,start,end,vram,*,big_endian=True,cpu='',asm_check=None,table_ranges=()):

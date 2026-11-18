@@ -235,3 +235,10 @@ def test_an_alignment_hole_stays_out_of_pieces_that_do_not_join():
     functions[1]=replace(functions[1],vram=BASE+16,rom=16,lines=functions[1].lines[1:])
     result=repair(functions,[],image,consoles.get('n64'),segments)
     assert [(f.vram,f.size) for f in result]==[(BASE,12),(BASE+16,16)]
+
+
+def test_a_piece_whose_frame_comes_after_scheduled_loads_joins_its_tail():
+    words=[0x03e00008,0,0x3c028010,0x904202a0]+BODY  # a return, then loads ahead of the next frame
+    image,functions,segments=fixture(words,cuts=(0,8,24,48))
+    result=repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(f.vram,f.size) for f in result]==[(BASE,8),(BASE+8,40)]
