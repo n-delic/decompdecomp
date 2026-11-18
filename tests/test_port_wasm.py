@@ -644,3 +644,18 @@ def test_an_endless_empty_loop_parks_its_thread():
         out = ido_c(f"void idle(void) {{ start(); {loop} }}")
         assert "for (;;) port_idle_forever();" in out and out.startswith("void port_idle_forever(void);"), loop
     assert ido_c("void f(void) { for (;;) { work(); } }") == "void f(void) { for (;;) { work(); } }"
+
+
+def test_a_bitfield_shares_its_unit_with_the_members_after_it():
+    """libultra's Gsetcolor (`int cmd:8;` then three bytes and a word) is 8 bytes on the console: its bitfield closed
+    in a word of its own made it 12, Gfx 16, and a packed shooter's text rectangles read padding as their texture
+    coordinates. The struct keeps the console's size and the field its byte."""
+    from decompnet.port.wasm.build import big_endian_bitfields
+
+    text = ("typedef struct {\n  int cmd:8;\n  unsigned char pad;\n  unsigned char prim_min_level;\n"
+            "  unsigned char prim_level;\n  unsigned long color;\n} Gsetcolor;")
+    out = big_endian_bitfields(text)
+    assert "  signed char cmd;" in out and ": 0;" not in out
+    # a unit that closes the struct, or isn't whole bytes, is laid out in reverse as before
+    assert "int : 0;" in big_endian_bitfields("struct s {\n  int a:8;\n};")
+    assert "int : 0;" in big_endian_bitfields("struct s {\n  int a:3;\n  char b;\n};")
