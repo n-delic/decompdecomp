@@ -7245,3 +7245,28 @@ be plain (no calls, steps or assignment).
 Not reproduced for the new case (`func_801973D0`): the agent also changed float-bit arguments
 (`0x42B40000`) to float literals (`90.0f`) with a prototype parameter retyped to `f32`, and retyped
 four `u16` result globals; the table rewrite alone only improved it.
+
+### KMC GCC 2.7.2: a null guard's return layout, and why a found match went unused (18 November 2026)
+
+Evidence level: one new match on an N64 game's 19-instruction function, checked offline with the pinned
+compiler and the project's own header (bytes equal to the target apart from the two `jal` targets, which are
+filled in at link time). The app's own judge recorded the same pair as exact (`reuse_trials`); not yet saved
+as a match.
+
+Target: `beqz s0, Lzero` (delay slot `sw ra`), the body, then `j Lexit; nop`, `Lzero: addu v0, zero, zero`, `Lexit:`
+epilogue. With `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`:
+- m2c's `if (p != NULL) { return f(...); } return 0;` gives `bnez` and `j Lexit` with the zero in its delay slot:
+  no match. The same with two returns in an if/else, or a ternary: no match.
+- `if (p == NULL) { return 0; } return f(...);` (the existing `guard_shape` rewrite): **exact**.
+- `s32 ret; if (p != NULL) { ret = f(...); } else { ret = 0; } return ret;`: **exact**. With the arms the other
+  way round: no match. decomp-repair 0.5.3 adds this single-exit form to `guard_shape`, in both arm orders.
+- None of them match at `-O1`. The comparison job had moved the function to `-O1` on its own, because m2c's draft
+  scored 82.6% there against 70.5% at `-O2`. A draft follows whatever settings its shape happens to suit, so a
+  better draft score is no evidence of the game's settings; auto-apply now skips that case unless it is exact.
+
+The deep pass found the `guard_shape` pair exact at `-O2` (the project default) in its targeted repairs, but
+`-O2` was not the function's own setting, so the pair became an open compiler suggestion (automatic compiler
+changes off). The probe then reported "no score", and the pass spent 10,000 more variants reporting "0
+improvements". It now ends there, naming the suggestion. With decomp-permuter not installed, 9,970 of those
+variants came from the simple mutator casting to zlib's `uInt`/`uLong`, which the game never declares, and
+failed to compile; the mutator now uses only typedefs the source or header has.

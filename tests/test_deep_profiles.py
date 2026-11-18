@@ -65,9 +65,28 @@ def test_insufficient_budget_retains_exact_evidence_without_applying(monkeypatch
     net.suggest = lambda *args, **kwargs:pytest.fail('no verification budget')
     fn = net.function(); proj = net.project_row('game')
     search = deep_permuter.Search(net, 1, 1, Log(), fn)
-    assert deep_profiles.probe(search, AGENT, proj, fn, 'exact C', {'toolchain':'one','flags':['-O2']}) is None
+    # (the rest of the allowance can't reverify it either: the pass ends, saying what it found)
+    with pytest.raises(deep_permuter.SearchLimit, match='Exact match found with one -O2; run the pass again'):
+        deep_profiles.probe(search, AGENT, proj, fn, 'exact C', {'toolchain':'one','flags':['-O2']})
     row = net.store.one("SELECT feedback FROM reuse_trials WHERE signature LIKE 'deep-profile-v1:%'")
     assert 'exact C' in row['feedback']
+
+
+def test_exact_pair_waiting_for_approval_ends_the_pass_instead_of_counting_a_failure(monkeypatch):
+    # An N64 function: its exact pair became an open suggestion (automatic compiler changes off), the probe said
+    # "no score", and the pass ran 10,000 more variants to report "0 improvements".
+    net = setup(monkeypatch)
+    net._judge_with = lambda *args:(True, SimpleNamespace(score=0), '')
+    suggestions = []
+    net.suggest = lambda *args, **kwargs:(suggestions.append(kwargs) or
+                                          'Suggested function-only compiler bundle; automatic compiler changes are off.')
+    fn = net.function(); proj = net.project_row('game')
+    log = Log()
+    search = deep_permuter.Search(net, 1, 20, log, fn)
+    with pytest.raises(deep_permuter.SearchLimit, match='waits for your approval as a compiler suggestion'):
+        deep_profiles.probe(search, AGENT, proj, fn, 'exact C', {'toolchain':'one','flags':['-O2']})
+    assert len(suggestions) == 1 and net.function()['status'] == 'open'
+    assert any('automatic compiler changes are off' in line for line in log.lines)
 
 
 def test_each_selected_profile_visited_in_order_and_stops_at_exact(monkeypatch):

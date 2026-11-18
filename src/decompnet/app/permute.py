@@ -646,6 +646,10 @@ class Permuter:
                 # that ran out meanwhile, the function an agent's now, ends the turn)
                 if not self._renew(agent, fn, seconds):
                     return
+            if not available() and callable(getattr(self, 'log', None)):
+                # (the deep pass reports to its panel: without the generator only the simple rewrites run)
+                self.log('decomp-permuter is not installed (Compilers & tools): random rewrites use the simple '
+                         'built-in rewrites only.')
             if available():
                 # (a C function's as m2c reads it: what's only for C++ made pycparser refuse a PC game's whole
                 # header; a C++ function's with its C++ branch, where its classes are)
@@ -666,6 +670,9 @@ class Permuter:
                     log.info("permuter: decomp-permuter didn't start: %s", e)
             # (a draft still in m2c's macros isn't C decomp-permuter's parser reads: written out, it is the same code)
             start_src = best_src = cur_src = m2cfix.expand_macros(fn["best_source"], header)
+            # (the simple rewrites name only the typedefs this C or its header has: zlib's uInt in an N64 game's C
+            # didn't compile, 9,970 times in 10,000)
+            simple_header = header or ('' if fork else (self.net._context(proj['id'], fn['unit']) or {}).get('header', ''))
             best = cur = fn["best_score"]
             deadline = time.monotonic() + seconds
             from . import adaptive_repairs, permuter_focus, repair_ranking
@@ -745,7 +752,7 @@ class Permuter:
                         break
                 else:  # one simple rewrite, mostly of the last C kept
                     base = cur_src if rng.random() < 0.85 else best_src
-                    batch = [mutate(base, rng, focus)]
+                    batch = [mutate(base, rng, focus, header=simple_header)]
                     # none of them applies to this C (lerp's `a + (b - a) * t`): a minute of trying burnt a core
                     misses = 0 if batch[0] else misses + 1
                     if misses >= REWRITE_MISSES:

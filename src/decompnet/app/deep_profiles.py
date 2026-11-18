@@ -88,14 +88,23 @@ def probe(search, agent, proj, fn, source, profile):
                        (fn['id'], 'local-source-'+key, '0', 'deep compiler profile exact bundle', json.dumps(evidence)))
         # suggest rechecks inputs and respects the user's automatic-compiler-changes preference.
         # Reserve the two verification compiles used by suggest's check and atomic promotion.
+        from .deep_permuter import SearchLimit
+        settings = profile['toolchain']+' '+' '.join(profile['flags'])
         if search.limit-search.tested < 2:
             search.log('Exact profile evidence saved. More compile allowance is needed to reverify and apply it.')
-            return None
+            # (the rest of the allowance can't reverify it either: the next pass starts from the saved evidence)
+            raise SearchLimit(f'Exact match found with {settings}; run the pass again to reverify and apply it')
         search.check()
         search.tested += 2
-        search.net.suggest(agent, proj['slug'], 'Deep permuter found an exact source/compiler profile pair.',
-                           compiler=profile['toolchain'], flags=' '.join(profile['flags']),
-                           function=fn['name'], source=source)
+        said = search.net.suggest(agent, proj['slug'], 'Deep permuter found an exact source/compiler profile pair.',
+                                  compiler=profile['toolchain'], flags=' '.join(profile['flags']),
+                                  function=fn['name'], source=source)
         if search.net._function(fn['name'],proj['slug'])['status'] == 'matched':
             return 0
+        # The exact pair waits for the user (automatic compiler changes off) or was refused. Searching on spent the
+        # whole budget and reported "0 improvements" over a match waiting on the project page (an N64 function:
+        # 10,000 more variants after its exact pair turned up in the targeted repairs).
+        search.log(f'Exact match with {settings}, not applied: {said}')
+        raise SearchLimit(f'Exact match found with {settings}; it waits for your approval as a compiler '
+                          'suggestion on the project page')
     return None
