@@ -32,6 +32,24 @@ def test_the_game_picker_stays_above_existing_project_cards():
             assert not re.search(r"(?:^|;)\s*order\s*:", declarations), selector
 
 
+def test_a_long_target_assembly_line_scrolls_inside_its_column():
+    """#292: the target assembly column took its width from its longest line (a grid track's default minimum is its
+    content's), squishing the C beside it until it was unreadable. Both columns share the drawer's width now, and the
+    assembly scrolls sideways in its own box like the C does."""
+    static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
+    css = (static / "app.css").read_text(encoding="utf-8")
+    rules = list(re.findall(r"([^{}]+)\{([^{}]*)\}", css))
+    tracks = [re.search(r"grid-template-columns\s*:\s*([^;]+)", body).group(1)
+              for selector, body in rules if ".code-cols" in selector and "grid-template-columns" in body]
+    assert tracks, "app.css sets no .code-cols columns"
+    for value in tracks:  # the two side by side, and the one on a narrow screen
+        assert all(track.startswith("minmax(0,") for track in re.findall(r"minmax\([^)]*\)|\S+", value)), value
+    item = next(body for selector, body in rules if selector.strip() == ".code-cols > *")
+    assert re.search(r"(?:^|;)\s*min-width\s*:\s*0(?:px)?\s*;", item), item
+    code = next(body for selector, body in rules if selector.strip() == ".code")
+    assert re.search(r"(?:^|;)\s*overflow(?:-x)?\s*:\s*auto\s*;", code), code
+
+
 def test_foreground_progress_covers_delayed_starts_and_clears_on_every_outcome():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")

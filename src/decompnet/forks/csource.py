@@ -6,7 +6,9 @@ functions that aren't decompiled yet: `INCLUDE_ASM(...)`, `GLOBAL_ASM(...)` / `#
 
 from __future__ import annotations
 
+import bisect
 import re
+from functools import lru_cache
 
 _COMMENT_OR_STRING = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
 
@@ -31,6 +33,7 @@ def find(text: str, name: str) -> tuple[int, int] | None:
     """(start, end) of the definition of `name`, or of its asm stub; None when absent."""
     clean = _blank(text)
     simple = name.split("::")[-1]
+    fallback = None  # the first candidate, for a C++ method defined inside its class body (#300)
     if "::" in name:  # Class::method: match it exactly
         pat = re.compile(rf"(?<![\w:~]){re.escape(name)}\s*\(")
     else:  # plain name: also match a definition written as Class::name
@@ -87,8 +90,15 @@ def find(text: str, name: str) -> tuple[int, int] | None:
                 break
         if k < len(text) and text[k] == "\n":
             k += 1
-        return start, k
-    return _stub(text, simple)
+        # #300: a call followed by a block inside another function's body (`} else if (f(x) == 0) {`, `while (f() != 0)
+        # {`) passed every test above and was taken for f's definition: split_file then cut overlapping spans and
+        # mangled lines, compile_and_diff spliced the try into the call site. A definition at file scope is f's; the
+        # first candidate stays the answer for a C++ method defined inside its class body, which isn't at file scope.
+        if at_file_scope(text, start):
+            return start, k
+        if fallback is None:
+            fallback = (start, k)
+    return fallback if fallback is not None else _stub(text, simple)
 
 
 # a C++ constructor or destructor defined outside its class: CFoo::CFoo(, Outer::CFoo::~CFoo(
@@ -159,18 +169,30 @@ _IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
 _SCOPE_BLOCK = re.compile(r"(?<![\w:])(?:extern|namespace(?:\s+[\w:]+)?)\s*$")  # (`extern "C"`, blanked)
 
 
-def at_file_scope(text: str, at: int) -> bool:
-    """True when `at` isn't inside a block of code: only `namespace` and `extern "C"` blocks, which hold definitions,
-    are open there. find() takes a call followed by a block (`y = f(x) * 2.0;` then `if (y) { ... }`) for a
-    definition of `f`, and where one is looked for past the first, the next one may be such a call."""
-    clean, opened, last = _blank(text[:at]), [], 0
+@lru_cache(maxsize=4)
+def _scope_index(text: str) -> tuple[tuple[int, ...], tuple[bool, ...]]:
+    """Where each `{`, `}` or `;` in `text` ends, and whether only namespace and extern blocks are open after it:
+    at_file_scope at every delimiter, from one scan. #300: find() asks it of every function of a 54k-line file, and
+    rescanning the text up to each position took minutes."""
+    clean, ends, states, opened, last = _blank(text), [], [], [], 0
     for m in re.finditer(r"[{};]", clean):
         if m.group() == "{":
             opened.append(bool(_SCOPE_BLOCK.search(clean[last:m.start()])))
         elif m.group() == "}" and opened:
             opened.pop()
         last = m.end()
-    return all(opened)
+        ends.append(last)
+        states.append(all(opened))
+    return tuple(ends), tuple(states)
+
+
+def at_file_scope(text: str, at: int) -> bool:
+    """True when `at` isn't inside a block of code: only `namespace` and `extern "C"` blocks, which hold definitions,
+    are open there. find() takes a call followed by a block (`y = f(x) * 2.0;` then `if (y) { ... }`) for a
+    definition of `f`, and where one is looked for past the first, the next one may be such a call."""
+    ends, states = _scope_index(text)
+    i = bisect.bisect_right(ends, at) - 1
+    return True if i < 0 else states[i]
 
 
 def opens_body(text: str, span: tuple[int, int], name: str) -> bool:

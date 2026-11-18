@@ -51,8 +51,9 @@ class AutopilotMixin:
                 tc = self.cfg(proj)["compiler"]["toolchain"]
                 if not seeds.m2c_target(tc):
                     raise NetworkError("m2c can't read this project's code (no draft decompiler for it yet)")
-                ids = [r["id"] for r in self.store.all("SELECT id FROM functions WHERE project_id=? AND status='open' "
-                                                       "ORDER BY n_insns, vram", proj["id"])]
+                ids = [r["id"] for r in self.store.all(
+                    "SELECT id FROM functions WHERE project_id=? AND status='open' "
+                    "AND (size IS NULL OR size > 0) ORDER BY n_insns, vram", proj["id"])]
                 try_one = self._autopilot_one
             no_drafts = ""
         except NetworkError as e:

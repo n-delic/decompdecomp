@@ -493,6 +493,16 @@ class Network:
             self._event(db, row["project_id"], row["agent_id"], "expired", row["name"])
         db.execute("DELETE FROM claims WHERE expires_at < ?", (now,))
 
+    def _drop_dead_claims(self, db, agent_id: int, alive: tuple[str, ...] = ("open",)) -> None:
+        """Drop the claims an agent holds on functions it can no longer work through them (#283): most set-aside
+        paths (Check again's notes, ROM twins, a console's set-aside, a save's restore) change the status but keep
+        the claim, and renewing it handed the agent a function it couldn't work on while keeping it from claiming
+        another. A claim is a lease on work in one of `alive`'s statuses (polishing holds matched functions), so a
+        claim outside them is dead, never a hold."""
+        marks = ",".join("?" * len(alive))
+        db.execute(f"DELETE FROM claims WHERE agent_id=? AND function_id IN "
+                   f"(SELECT id FROM functions WHERE status NOT IN ({marks}))", (agent_id, *alive))
+
     def _event(self, db, project_id, agent_id, kind, detail) -> None:
         db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
                    (project_id, agent_id, kind, detail, time.time()))
@@ -610,7 +620,7 @@ class Network:
         if function:
             return ""
         held = self.store.one("SELECT f.name, c.claimed_at FROM claims c JOIN functions f ON f.id=c.function_id "
-                              "WHERE c.agent_id=?", agent.id)
+                              "WHERE c.agent_id=? AND f.status='open'", agent.id)
         if held is None or not self.store.one(
                 "SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND created_at >= ?",
                 agent.id, held["name"], held["claimed_at"] or 0):
@@ -631,20 +641,21 @@ class Network:
         long), ones it set aside itself (which it can still take by name), or really all done. A bare "nothing left"
         sent four helpers away from a project with ten open functions."""
         now = time.time()
-        n_open = self.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'",
-                                proj["id"])["n"]
+        n_open = self.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open' "
+                                "AND (size IS NULL OR size > 0)", proj["id"])["n"]
         if not n_open:
             return f"Nothing left to claim in {proj['slug']}: every function{scope} matches. 🎉"
         held = self.store.all(
             "SELECT f.name, a.name AS agent, c.expires_at FROM claims c JOIN functions f ON f.id=c.function_id "
-            "LEFT JOIN agents a ON a.id=c.agent_id WHERE f.project_id=? AND f.status='open' ORDER BY c.expires_at",
-            proj["id"])
+            "LEFT JOIN agents a ON a.id=c.agent_id WHERE f.project_id=? AND f.status='open' "
+            "AND (f.size IS NULL OR f.size > 0) ORDER BY c.expires_at", proj["id"])
         with self.store.tx() as db:
             cutoff = self._own_release_cutoff(db, agent.id, now)
         mine = self.store.all(
             "SELECT DISTINCT f.name FROM functions f JOIN events e ON e.project_id=f.project_id AND e.detail=f.name "
-            "WHERE f.project_id=? AND f.status='open' AND e.agent_id=? AND e.kind='release' AND e.created_at > ? "
-            "AND f.id NOT IN (SELECT function_id FROM claims) ORDER BY f.name", proj["id"], agent.id, cutoff)
+            "WHERE f.project_id=? AND f.status='open' AND (f.size IS NULL OR f.size > 0) AND e.agent_id=? "
+            "AND e.kind='release' AND e.created_at > ? AND f.id NOT IN (SELECT function_id FROM claims) "
+            "ORDER BY f.name", proj["id"], agent.id, cutoff)
         waiting = self.awaiting_verdict(proj)
         yours = [name for name, said in waiting.items() if agent.name in said]
         mine = [r for r in mine if r["name"] not in yours]  # (said below: a release of its own it may take back)
@@ -676,8 +687,9 @@ class Network:
         """The open functions agents said no C makes, short of the agreement that sets them aside (NOT_C_AGENTS of
         NOT_C_MODELS): name -> their verdicts by agent."""
         out = {}
-        for r in self.store.all("SELECT name, meta FROM functions WHERE project_id=? AND status='open' AND "
-                                "json_extract(meta, '$.not_c') IS NOT NULL", proj["id"]):
+        for r in self.store.all("SELECT name, meta FROM functions WHERE project_id=? AND status='open' "
+                                "AND (size IS NULL OR size > 0) "
+                                "AND json_extract(meta, '$.not_c') IS NOT NULL", proj["id"]):
             out[r["name"]] = json.loads(r["meta"])["not_c"]
         return out
 
@@ -707,10 +719,17 @@ class Network:
         if strategy not in STRATEGIES:
             raise NetworkError(f"strategy must be one of {', '.join(STRATEGIES)}")
         now = time.time()
+        with self.store.tx() as db:  # its own transaction: a claim by name of the set-aside function still drops it
+            self._drop_dead_claims(db, agent.id)  # #283: a function set aside while it held it isn't a hold
         with self.store.tx() as db:
             self._expire_claims(db)
             held = db.execute("SELECT f.* FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                               (agent.id,)).fetchone()
+            if held is not None and held["size"] is not None and held["size"] <= 0:
+                # #297: a claim from before the fix on a function a split gave no bytes must not keep the agent
+                # stuck on it; let it go and choose another below (or say so when it asks for this one by name).
+                db.execute("DELETE FROM claims WHERE function_id=?", (held["id"],))
+                held = None
             if held is not None:
                 if function and held["id"] != self._function(function, proj["slug"] if proj else None)["id"]:
                     want = self._function(function, proj["slug"] if proj else None)["name"]
@@ -725,6 +744,11 @@ class Network:
                     raise NetworkError(f"{fn['name']} is already matched; use get_function to read its source")
                 if fn["status"] == "asm":
                     raise NetworkError(f"{fn['name']} is set aside ({set_aside(fn)['set_aside']}): claim another")
+                if fn["size"] is not None and fn["size"] <= 0:
+                    # #297: nothing to compile or judge. An old split created these; never hand one to an agent.
+                    raise NetworkError(f"{fn['name']} has no bytes to decompile (its size is 0): the split gave it "
+                                       "no code. Claim another function; the project owner can set it aside or "
+                                       "reimport the game.")
                 other = db.execute("SELECT agent_id, expires_at FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
                 if other is not None:
                     raise NetworkError(f"{fn['name']} is claimed by {self._agent_name(other['agent_id'])} "
@@ -744,7 +768,8 @@ class Network:
                 # wait is over, first (after what the release rules put back, before model routing's escalations)
                 query = (
                     f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
-                        WHERE f.project_id=:pid AND f.status='open' AND (:weak = 0 OR f.abandons < :escalate)
+                        WHERE f.project_id=:pid AND f.status='open' AND (f.size IS NULL OR f.size > 0)
+                        AND (:weak = 0 OR f.abandons < :escalate)
                         AND f.id NOT IN (SELECT function_id FROM claims)
                         AND f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
                                            AND kind='release' AND created_at > :mine)
@@ -785,7 +810,7 @@ class Network:
         weak model fell back to the whole queue: 3,183 claims and $138 for 10 matches in a night, while the strong
         model matched 27 of its 138."""
         given_up = sorted(r[0] for r in db.execute("SELECT abandons FROM functions WHERE project_id=? AND "
-                                                   "status='open'", (project_id,)))
+                                                   "status='open' AND (size IS NULL OR size > 0)", (project_id,)))
         if not given_up or given_up[0] < ESCALATE_AFTER:
             return ESCALATE_AFTER
         return given_up[(len(given_up) - 1) // 2] + 1
@@ -1049,6 +1074,8 @@ class Network:
             scratch = fn["status"] == "matched"
             if not scratch:
                 if claim is None:
+                    # #283: a claim left on a set-aside function isn't a hold (a polishing claim on a matched one is)
+                    self._drop_dead_claims(db, agent.id, ("open", "matched"))
                     held = db.execute("SELECT 1 FROM claims WHERE agent_id=?", (agent.id,)).fetchone()
                     if held:
                         raise NetworkError("you hold another claim; release it before working on a different function")
