@@ -2273,6 +2273,16 @@ class Progress:
         before = baseline.disk if baseline is not None else None
         if saves.MANIFEST not in disk and (before is not None or cfg.get("progress_folder")
                                            or disk or (folder / ".git").exists()):
+            from . import rebuildable_repository
+            if (root := rebuildable_repository.interrupted(folder)) is not None:
+                # A repository upgrade moved this save under progress/ and stopped before pointing the project
+                # there. Finish that step instead of failing every sync (and every retry of the upgrade).
+                with store.tx() as db:
+                    current = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (pid,)).fetchone()["config"])
+                    current.update(rebuildable_repository.moved_config(root))
+                    db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(current), pid))
+                saves.log.info("%s: its progress moved to %s/progress with its repository; following it", slug, root)
+                raise _RestartSync
             raise NetworkError("Restore progress/decompdecomp.json before continuing this project.")
         if saves.MANIFEST in disk and (before is None or snapshot.files != before.files):
             destination = logger or (lambda line: saves.log.info("%s: %s", slug, line))
