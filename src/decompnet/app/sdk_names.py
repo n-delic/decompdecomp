@@ -30,6 +30,16 @@ def name_functions(net, slug, job=None):
 
 
 def _name_functions(net, slug, job=None):
+    renamed = _rename_functions(net, slug, job)
+    # Library C detection finds is set aside after naming, never before: set aside first, a function kept its
+    # func_ name and the port, which goes by names, never learned it was library code. discover_c returns at once
+    # for imported builds, other processors and projects whose setting is off.
+    from . import sdk_assembly
+    sdk_assembly.discover_c(net, net.project_row(slug), job.stop if job is not None else None)
+    return renamed
+
+
+def _rename_functions(net, slug, job=None):
     """Use a unique full-size identity from selected libraries; preserve deliberate names.
 
     ROM names are changed as a batch with matched-code checks. Imported builds use their normal
@@ -54,8 +64,6 @@ def _name_functions(net, slug, job=None):
         return 0
     from . import sdk_assembly
     sdk_assembly.discover(net,proj)
-    if not fork:
-        sdk_assembly.discover_c(net,proj,job.stop if job is not None else None)  # the project's choice: library C detection finds, set aside
     hints = identify(net, proj, {}, include_asm=True)
     if not hints:
         return 0
@@ -142,8 +150,6 @@ def _name_functions(net, slug, job=None):
         current = net.project_store(proj['id']).one('SELECT name FROM functions WHERE id=?', row['id'])
         net.add_note(agent, slug, evidence, current['name'])
         renamed += 1
-    if renamed and not fork:
-        sdk_assembly.discover_c(net, proj, job.stop if job is not None else None)  # names just given can change what detection finds
     return renamed
 
 

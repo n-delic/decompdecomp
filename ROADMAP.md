@@ -924,8 +924,8 @@ still take precedence. Identification uses recorded provenance or unambiguous fu
 without changing project settings or awarding matching C.
 Removing a managed folder removes its indexed references, while manual imports are preserved. The archive's source is never bundled; a signature is a hint until compiled C passes the judge.
 
-Library C that the user's own SDK archive reproduces can be set aside instead of matched (Libraries for this game,
-off by default, `sdk_assembly.SETTING`). An N64 racing game had its Controller Pak functions named from the user's
+Library C that the user's own SDK archive reproduces is set aside instead of matched (Libraries for this game,
+on unless the project turns it off, `sdk_assembly.SETTING`). An N64 racing game had its Controller Pak functions named from the user's
 libultra archive and still went to the agents for C that a port replaces and a rebuild needn't. The judge is the
 same as for SDK assembly: the archive's object linked at the function's address, every code and data byte
 compared. With a port kit only what it replaces or its glue supplies is set aside; its native code (libultra's
