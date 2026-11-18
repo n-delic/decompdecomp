@@ -91,3 +91,35 @@ def test_your_rom_runs_the_same_twice_and_stops_at_its_entry_point(tmp_path):
     assert len(a) == 4 << 20 and a == b, "the same run every time (no randomised interrupts)"
     hit = emulator.run(ROM, 2, breaks=[entry], max_hits=1, timeout=300).hits
     assert hit and hit[0].kind == "break" and hit[0].pc == entry
+
+
+def test_a_runs_output_stays_bounded_and_a_stuck_emulator_is_named():
+    # A homemade ROM the core can't run printed "core: not compiled exception" 800,000 times a second, all kept in
+    # memory: 1.4 GB a minute, and a test worker that imported it grew to 15 GB.
+    from decompnet.consoles.n64.emulator import _Output, parse
+    now = [0.0]
+    out = _Output(clock=lambda: now[0])
+    out.add("core: Unable to open rom database\n")
+    for _ in range(_Output.STUCK - 2):
+        out.add("core: not compiled exception\n")
+    assert out.stuck is None
+    out.add("watch 3 80001000 80002000 0 0 0 0 0 1\n")  # (report lines are always kept)
+    for _ in range(_Output.STUCK):
+        out.add("core: not compiled exception\n")
+    assert out.stuck == "core: not compiled exception"
+    text = out.text()
+    assert len(text) < 1000 and "more times" in text
+    assert len(parse(text).hits) == 1
+
+    # A warning printed once a frame repeats as often, but over minutes: not stuck, and still bounded.
+    slow = _Output(clock=lambda: now[0])
+    for _ in range(3 * _Output.STUCK):
+        now[0] += 1 / 60
+        slow.add("core: a once-a-frame warning\n")
+    assert slow.stuck is None and len(slow.text()) < 200
+
+    noisy = _Output(clock=lambda: now[0])
+    for index in range(100_000):
+        noisy.add(f"core: distinct message {index}\n")
+    noisy.add("stopped 30\n")
+    assert len(noisy.text()) < _Output.NOISE + 1000 and parse(noisy.text()).vis == 30

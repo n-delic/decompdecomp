@@ -98,3 +98,80 @@ def _no_progress_wait(monkeypatch):
     disturbance as an error would wait that long, so they get none. Tests of the wait set their own."""
     from decompnet.app import tools
     monkeypatch.setattr(tools, "PROGRESS_RETRY_SECONDS", 0)
+
+
+# A test that runs away with memory or never returns must not take the machine with it. One test grew a worker to
+# 15 GB (14 GB of it compressed, which resident-size checks miss) and kept it for over 15 minutes. Each test process
+# watches its own physical footprint and, above the limit, names the test, prints every thread's stack and ends
+# itself: the test fails ("worker crashed") and xdist carries on with a new worker. DECOMP_TEST_MEMORY_MB sets the
+# limit (0: off). The per-test time limit is pytest-timeout's (addopts).
+MEMORY_LIMIT_MB = int(os.environ.get("DECOMP_TEST_MEMORY_MB", "4096"))
+_running = {"test": None}
+_config = {}
+
+
+def memory_mb() -> float | None:
+    """This process's physical footprint in MB: what it holds in memory including what the system compressed or
+    swapped out for it (Activity Monitor's "Memory"). None where it can't be read."""
+    import sys
+    if sys.platform == "darwin":
+        import ctypes
+        class Usage(ctypes.Structure):  # rusage_info_v2's leading fields (sys/resource.h)
+            _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [(name, ctypes.c_uint64) for name in (
+                "user_time", "system_time", "pkg_idle_wkups", "interrupt_wkups", "pageins", "wired_size",
+                "resident_size", "phys_footprint", "proc_start_abstime", "proc_exit_abstime", "child_user_time",
+                "child_system_time", "child_pkg_idle_wkups", "child_interrupt_wkups", "child_pageins",
+                "child_elapsed_abstime", "diskio_bytesread", "diskio_byteswritten")]
+        try:
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+            usage = Usage()
+            if libproc.proc_pid_rusage(os.getpid(), 2, ctypes.byref(usage)) != 0:
+                return None
+            return usage.phys_footprint / 2**20
+        except OSError:
+            return None
+    try:
+        fields = dict(line.split(":", 1) for line in Path("/proc/self/status").read_text().splitlines() if ":" in line)
+        return sum(int(fields.get(key, "0 kB").split()[0]) for key in ("VmRSS", "VmSwap")) / 1024
+    except (OSError, ValueError):
+        return None
+
+
+def _watch_memory(limit_mb, interval=1.0, stop=None):
+    import faulthandler
+    import sys
+    import threading
+    import time
+    stop = stop or threading.Event()
+    while not stop.wait(interval):
+        used = memory_mb()
+        if used is None or used <= limit_mb:
+            continue
+        try:  # (pytest captures stderr at the descriptor, and an ended process never hands it back: show it now)
+            _config["config"].pluginmanager.getplugin("capturemanager").suspend_global_capture(in_=False)
+        except Exception:
+            pass
+        stream = sys.__stderr__
+        stream.write(f"\n{_running['test'] or 'pytest'} used {used:,.0f} MB, over the {limit_mb:,} MB a test may use "
+                     "(DECOMP_TEST_MEMORY_MB); ending this test process. Where every thread was:\n")
+        stream.flush()
+        faulthandler.dump_traceback(file=stream, all_threads=True)
+        stream.flush()
+        time.sleep(0.2)
+        os._exit(70)
+
+
+def pytest_configure(config):
+    _config["config"] = config
+    if MEMORY_LIMIT_MB > 0 and memory_mb() is not None:
+        import threading
+        threading.Thread(target=_watch_memory, args=(MEMORY_LIMIT_MB,), name="test-memory-guard", daemon=True).start()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    _running["test"] = item.nodeid
+    try:
+        yield
+    finally:
+        _running["test"] = None
