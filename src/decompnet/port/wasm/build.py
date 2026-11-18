@@ -261,10 +261,20 @@ UNTYPED_DECLARATION = re.compile(r"^([ \t]*(?!return\b|else\b|case\b|goto\b)[A-Z
 HEX_EXPONENT_SIGN = re.compile(r"\b(0[xX][0-9a-fA-F]*[eE])([+-])(?=[0-9A-Za-z_(])")
 
 
+# An endless loop that does nothing (an idle thread's `for (;;) {}`): on the console only an interrupt switches away
+# from it, and the host switches threads only at a call, so a packed shooter's idle thread (priority 0) held the CPU
+# and its scheduler, ready at priority 14, never ran. It parks instead, as the interpreter parks `j .` (mips.c).
+EMPTY_FOREVER = re.compile(r"\b(?:for\s*\(\s*;\s*;\s*\)|while\s*\(\s*1\s*\))\s*(?:\{\s*\}|;)")
+IDLE = "void port_idle_forever(void);\n"
+
+
 def ido_c(text: str) -> str:
-    """The game's C as clang reads what IDO took: m2c's untyped declarations unprototyped, and a hex constant
-    followed by a sign spaced apart."""
-    return HEX_EXPONENT_SIGN.sub(r"\1 \2 ", UNTYPED_DECLARATION.sub(r"\1()\2", text))
+    """The game's C as clang reads what IDO took: m2c's untyped declarations unprototyped, a hex constant followed
+    by a sign spaced apart, and an endless empty loop as the thread parking for good (EMPTY_FOREVER)."""
+    text = HEX_EXPONENT_SIGN.sub(r"\1 \2 ", UNTYPED_DECLARATION.sub(r"\1()\2", text))
+    if EMPTY_FOREVER.search(text):
+        text = IDLE + EMPTY_FOREVER.sub("for (;;) port_idle_forever();", text)
+    return text
 
 
 _PROTOTYPE = r"^([ \t]*)((?!static\b|extern\b|typedef\b|return\b)[A-Za-z_][\w \t*]*?[\s*]{name}\s*\([^;{{}}]*\)\s*;)"

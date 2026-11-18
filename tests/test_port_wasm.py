@@ -633,3 +633,14 @@ def test_every_automatic_data_name_says_its_address():
 
     for name in ("RO_00628350", "D_00626DD0", "STR_80012340", "FLT_80012340", "DBL_80012340", "jtbl_80012340"):
         assert _AUTO_TOKEN.fullmatch(name) and re.fullmatch(rf"(?:{AUTO_DATA})_[0-9A-F]+", name), name
+
+
+def test_an_endless_empty_loop_parks_its_thread():
+    """A packed shooter's idle thread ended in `for (;;) {}` at priority 0: the host switches threads only at a
+    call, so its scheduler, ready at 14, never ran and nothing was drawn."""
+    from decompnet.port.wasm.build import ido_c
+
+    for loop in ("for (;;) {}", "for(;;);", "while (1) { }", "while(1);"):
+        out = ido_c(f"void idle(void) {{ start(); {loop} }}")
+        assert "for (;;) port_idle_forever();" in out and out.startswith("void port_idle_forever(void);"), loop
+    assert ido_c("void f(void) { for (;;) { work(); } }") == "void f(void) { for (;;) { work(); } }"

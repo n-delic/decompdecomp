@@ -203,6 +203,9 @@ void port_idle_forever(void) {
     pthread_mutex_unlock(&lock);
 }
 
+/* the game's own C's endless empty loop, rewritten to call this (build.py, EMPTY_FOREVER) */
+void w2c_env_port_idle_forever(struct w2c_env *e) { (void)e; port_idle_forever(); }
+
 static PortThread *wake_one(uint32_t mq) {
     PortThread *best = NULL;
     for (PortThread *p = threads; p; p = p->next)
