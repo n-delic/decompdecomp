@@ -1462,6 +1462,7 @@ async function loadCompilerAnswer() {
   try { a = await api(`/api/compilermap?slug=${encodeURIComponent(slug)}`); } catch (e) { $("compilerAnswer").textContent = e.message; return; }
   if (slug !== S.slug || S.tab !== "settings") return;
   renderCompilerAnswer(a);
+  if (!compilerRecheckJob && S.ov?.kind !== "fork") loadCompilerRecheck();
   if (a.checking) S.answerTimer = setTimeout(loadCompilerAnswer, COMPILER_ANSWER_EVERY_MS);
 }
 
@@ -1483,6 +1484,64 @@ $("compilerCleanupGo").onclick = async () => {
     await loadCompilerAnswer();
   } catch (error) { if (S.slug === slug) showJobError(log, error.message); }
   finally { finish(); }
+};
+
+/* Function-only settings no match supports (app/unverified_profiles.py): recheck them, or restore the removed ones.
+   The job belongs to the server: a returning panel finds it (GET .job) and follows it again. */
+let compilerRecheckJob = null;
+function renderCompilerRecheck(data) {
+  const panel = $("compilerRecheck"), n = Number(data.unverified || 0), kept = Number(data.hypotheses || 0);
+  panel.hidden = !n && !kept && !compilerRecheckJob;
+  $("compilerRecheckContext").textContent = compilerRecheckJob ? "— running" : n ? `— ${n.toLocaleString()} unverified` : "";
+  $("compilerRecheckGo").textContent = n ? `Recheck ${n.toLocaleString()} settings` : "Recheck settings";
+  $("compilerRecheckGo").disabled = !n || Boolean(compilerRecheckJob);
+  $("compilerRecheckUndo").hidden = !kept;
+  $("compilerRecheckUndo").textContent = `Restore ${kept.toLocaleString()} removed settings`;
+  $("compilerRecheckUndo").disabled = Boolean(compilerRecheckJob);
+}
+async function loadCompilerRecheck() {
+  const slug = S.slug;
+  let data;
+  try { data = await api(`/api/compiler/unverified?slug=${encodeURIComponent(slug)}`); } catch { return; }
+  if (slug !== S.slug) return;
+  if (compilerRecheckJob) return;
+  renderCompilerRecheck(data);
+  if (data.job) followCompilerRecheck(data.job.kind === "function-settings-undo" ? "undo" : "recheck", data.job);
+}
+async function followCompilerRecheck(action, existing = null) {
+  if (compilerRecheckJob) return;
+  compilerRecheckJob = "starting";
+  const slug = S.slug, log = $("compilerRecheckLog"), stop = $("compilerRecheckStop"), result = $("compilerRecheckResult");
+  showJobError(log, ""); result.textContent = "";
+  $("compilerRecheck").open = true; $("compilerRecheck").hidden = false;
+  $("compilerRecheckContext").textContent = "— running";
+  log._showJobProgress = true;
+  const done = beginWork(log, action === "undo" ? "Restoring removed settings" : "Rechecking function settings",
+                         [$("compilerRecheckGo"), $("compilerRecheckUndo")],
+                         action === "undo" ? "Removed settings restored." : "Function settings rechecked.");
+  try {
+    const job = existing?.id || (await api("/api/compiler/unverified", {method:"POST", body:{slug, action}})).job;
+    compilerRecheckJob = job; stop.hidden = false;
+    if (existing?.progress) updateWorkProgress(log, existing.progress);
+    const out = await followJob(job, log, null, () => slug === S.slug);
+    if (out && slug === S.slug) {
+      result.textContent = action === "undo"
+        ? `${out.restored.length} settings restored · ${out.skipped.length} functions matched or have other settings now and keep them`
+        : `${out.reset.length} removed and kept as hypotheses · ${out.kept.length} kept (they match only with them) · ${out.matched.length} newly matched · ${out.skipped.length} skipped (busy, changed or no C)` + (out.failed.length ? ` · ${out.failed.length} not saved (code changed meanwhile: run again)` : "");
+    }
+  } catch (error) { if (slug === S.slug) showJobError(log, error.message); }
+  finally {
+    compilerRecheckJob = null; stop.hidden = true; stop.disabled = false; done();
+    if (slug === S.slug) { await loadCompilerRecheck(); await loadCompilerAnswer(); }
+  }
+}
+$("compilerRecheckGo").onclick = () => followCompilerRecheck("recheck");
+$("compilerRecheckUndo").onclick = () => followCompilerRecheck("undo");
+$("compilerRecheckStop").onclick = async () => {
+  if (!compilerRecheckJob || compilerRecheckJob === "starting") return;
+  $("compilerRecheckStop").disabled = true;
+  try { await api("/api/job/cancel", {method:"POST", body:{id:compilerRecheckJob}}); }
+  catch (error) { $("compilerRecheckStop").disabled = false; showJobError($("compilerRecheckLog"), error.message); }
 };
 
 function compilerFunctionLinks(functions) {

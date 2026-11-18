@@ -30,6 +30,10 @@ def selected(net, proj, count, fn=None):
     # (a function whose own settings differ keeps the default as an exact-only probe even at one profile: an own
     # setting once applied on a draft's score hid a match that only the default compiled)
     result = [first] + ([default] if key(default) != key(first) else [])
+    # (a function setting the recheck removed for want of evidence stays a hypothesis: tried for an exact match only)
+    from .unverified_profiles import hypothesis
+    if (guess := hypothesis(cfg, fn)) is not None and key(guess) not in {key(p) for p in result}:
+        result.append(guess)
     if count <= len(result):return result
     others = sorted(net.compiler_profile_usage(proj), key=lambda p:(-p['matched'], key(p)))
     seen = {key(p) for p in result}
