@@ -1231,11 +1231,13 @@ def test_a_game_builds_with_its_own_visual_cpp_or_the_nearest_the_packs_have_and
         older = game(product, build, linker=0xCC if year == "2012" else 0xDE)
         assert (older.pack_version, older.exact, older.blockers()) == ("10.0SP1", False, [])
         assert f"no Visual C++ {year} yet" in older.cannot_match()[0] and "2010 SP1" in older.cannot_match()[0]
+        assert f"set up your own Visual C++ {year} copy in Setup" in older.cannot_match()[0]  # (no 64-bit word)
     for build, year in ((30137, "2019"), (31937, "2022")):
         newer = game(0x105, build)
         assert (newer.pack_version, newer.exact, newer.blockers()) == ("14.16", False, [])
         assert f"Visual C++ {year}" in newer.cannot_match()[0] and "newer than" in newer.cannot_match()[0]
         assert "ROADMAP.md" in newer.cannot_match()[0]
+        assert f"set up your own Visual C++ {year} copy in Setup" in newer.cannot_match()[0]  # (no 64-bit word)
     assert all(not v.endswith("-x64") for v in scratch_pe.RICH_BUILDS.values())
 
 
@@ -1258,6 +1260,10 @@ def test_a_64_bit_game_builds_with_the_64_bit_compiler_the_packs_have_and_says_s
     vs2010 = game(0xAB, 40219, linker=0x9D)
     assert vs2010.pack_version == "14.16-x64" and not vs2010.exact
     assert "no 64-bit Visual C++ 2010 yet" in vs2010.cannot_match()[0]
+    # (#278: the user's own copy with its 64-bit compiler builds either exactly, which the import says)
+    for older_or_newer, year in ((vs2010, "2010"), (vs2019, "2019")):
+        assert f"set up your own Visual C++ {year} copy with its 64-bit compiler in Setup" in \
+            older_or_newer.cannot_match()[0]
     unknown = scratch_pe.describe(_windows_program(machine=0x8664, linker=(1, 0)))  # (no Rich header, no MS linker)
     assert unknown.version is None and unknown.pack_version == "14.16-x64"
     # the files the Rich header counts build with the 64-bit compiler too (try_compiler's list of the program's)
