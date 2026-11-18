@@ -7270,3 +7270,23 @@ changes off). The probe then reported "no score", and the pass spent 10,000 more
 improvements". It now ends there, naming the suggestion. With decomp-permuter not installed, 9,970 of those
 variants came from the simple mutator casting to zlib's `uInt`/`uLong`, which the game never declares, and
 failed to compile; the mutator now uses only typedefs the source or header has.
+
+### KMC GCC 2.7.2: float arguments m2c wrote as bit patterns (18 November 2026)
+
+Evidence level: one new match on an N64 game's 73-instruction function, checked offline with the pinned compiler
+and the project's own header (bytes equal to the target apart from the `jal` targets); plus a controlled
+regression test on homemade C (`tests/test_float_bit_arguments.py`, compiler output only).
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. The near miss (score 60) differed in two instructions only: before
+the last call, the target sets `lui $a1, 0x437A` and then `move $a0, $zero`; m2c's
+`h(0, 0x437A0000, ...)` with an `M2C_UNK` second parameter set them the other way round.
+- Second parameter `f32`, argument `250.0f`: **exact**. Same with the first parameter `void *` and `NULL`, or `s16`.
+- Unprototyped call, `(f32)` casts, other operand orders of the third argument: no match.
+- Retyping only another callee's `0x3F000000` to `0.5f` (same `lui` either way): no match on its own, harmless
+  together with the `250.0f` change.
+Under o32 an `f32` after an integer first argument travels in the same integer register with the same bits, so
+only the scheduling changes. decomp-repair 0.5.4's `float_bit_argument_repairs` (label `float_argument_bits`, the
+same as `observed_repairs`' narrower version, which needed `s32`/`int` prototypes and four known constants) does
+this for any short ordinary float, o32 flags only, when every call to the callee passes such a literal there.
+This is the "float-bit arguments to float literals with an `f32` parameter" repair listed as not reproduced in
+the 9-10 November record-table batch.
