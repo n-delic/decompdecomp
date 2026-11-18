@@ -16,7 +16,7 @@ import struct
 import threading
 
 from ... import arch, classes, kits, seeds, similarity, toolchains
-from ...network import NetworkError
+from ...network import NetworkError, state_text
 from ...project import compiler_for
 from ...rom import match
 from .common import _ADDRESS, _AUTO_TOKEN
@@ -487,8 +487,8 @@ class BriefMixin:
         # only these rows, 1.4-1.9 s)
         vrams = [int(key.split(":")[0]) for key, _ in ranked]
         rows = {(r["vram"], r["size"]): r for r in self.store.all(
-            f"SELECT name, vram, size, n_insns, status, best_score FROM functions WHERE project_id=? AND vram IN "
-            f"({','.join('?' * len(vrams))})", proj["id"], *vrams)} if vrams else {}
+            f"SELECT name, vram, size, n_insns, status, best_score, attempts FROM functions WHERE project_id=? AND "
+            f"vram IN ({','.join('?' * len(vrams))})", proj["id"], *vrams)} if vrams else {}
         out = []
         for key, sim in ranked:
             v, n = (int(x) for x in key.split(":"))
@@ -507,8 +507,8 @@ class BriefMixin:
             return f"No look-alikes found for {fn['name']}."
         lines = [f"Functions that look like {fn['name']}:"]
         for r, sim in hits:
-            state = "matched" if r["status"] == "matched" else f"best {r['best_score']}" if r["best_score"] is not None else "not started"
-            lines.append(f"- {r['name']}  {sim * 100:.0f}% similar  {state}  ({r['n_insns']} insns, 0x{r['vram']:08X})")
+            lines.append(f"- {r['name']}  {sim * 100:.0f}% similar  {state_text(r)}  "
+                         f"({r['n_insns']} insns, 0x{r['vram']:08X})")
         best = next((r for r, _ in hits if r["status"] == "matched"), None)
         if best is not None:
             src = self.store.one("SELECT matched_source FROM functions WHERE project_id=? AND name=?", proj["id"], best["name"])

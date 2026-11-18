@@ -280,3 +280,30 @@ def test_only_a_few_autopilots_compile_at_once_across_projects(tmp_path, monkeyp
     while states["c"]["state"] == "running" and time.time() < deadline:
         time.sleep(0.01)
     assert states["c"]["state"] == "done" and "c" in tried and "d" not in tried
+
+
+def test_compiles_that_built_nothing_are_not_not_started_to_agents(net):
+    # #286: a function whose 12 compiles all failed to build read "not started" in find_similar, and its brief said
+    # nothing of them (#288 fixed the GUI's badge and map tip). The module's other tests compile in this project
+    # (the autopilot's drafts), so the look-alike is one nobody has compiled yet, found when the test runs.
+    slug = "demo-quest-64"
+    proj = net._project(slug)
+    pair = None
+    for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='open' ORDER BY vram", proj["id"]):
+        alike = [h["name"] for h, _ in net.similar(proj, net._function(r["name"], slug), top=15)
+                 if h["status"] == "open" and h["best_score"] is None and not h["attempts"]
+                 and not net.store.one("SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id "
+                                       "WHERE f.project_id=? AND f.name=?", proj["id"], h["name"])]
+        if alike:
+            pair = (r["name"], alike[0])
+            break
+    if pair is None:
+        pytest.skip("every look-alike in the demo game was compiled by the tests before this one")
+    seen, other = pair
+    line = next(x for x in net.find_similar(slug, seen, 15).splitlines() if x.startswith(f"- {other} "))
+    assert "not started" in line  # nobody compiled it yet
+    agent, _ = net.local_agent("tester-286")
+    assert "COMPILE ERROR" in net.compile_and_diff(agent, other, "this is not C", slug)
+    line = next(x for x in net.find_similar(slug, seen, 15).splitlines() if x.startswith(f"- {other} "))
+    assert "1 compile, no best yet" in line and "not started" not in line
+    assert "tried before: 1 compile, no best yet" in net.get_function(other, slug)

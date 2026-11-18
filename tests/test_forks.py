@@ -1576,3 +1576,34 @@ def test_code_under_a_macro_the_compiler_defines_isnt_hidden(tmp_path, macro):
     text = f"#ifdef {macro}\nint f(void) {{ return 1; }}\n#endif\n"
     (tmp_path / "src" / "a.c").write_text(text)
     assert ForkEngine._hidden(ForkProject(tmp_path), text, text.index("int f")) is None
+
+
+@needs_tools
+def test_a_fork_function_whose_compiles_built_nothing_is_not_not_started(fork, monkeypatch):
+    """#286 (n-delic on #314): find_similar and the brief of a project-mode game say "N compiles, no best yet" for
+    a function whose compiles all failed, as the GUI does since #288, and a failed build says where it stands
+    against the move-on number. The demo game's functions are too unlike for a look-alike, so similarity says
+    they all look alike; the rows and the text are the real ones. The module's other tests compile and match
+    here, so the function is one nobody has compiled or claimed, found when the test runs."""
+    from decompnet.app import forkengine
+    net, slug, _ = fork
+    monkeypatch.setattr(forkengine.similarity, "rank", lambda target, cands, top: [(k, 0.9) for k in cands][:top])
+    proj = net._project(slug)
+    free = [r["name"] for r in net.store.all(
+        "SELECT name FROM functions f WHERE project_id=? AND status='open' AND best_score IS NULL AND attempts=0 "
+        "AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.function_id=f.id) ORDER BY name", proj["id"])]
+    if len(free) < 2:
+        pytest.skip("the module's other tests compiled every function of the demo fork")
+    seen, name = free[0], free[1]
+    agent, _ = net.local_agent("tester-286")
+
+    def line():
+        return next(x for x in net.find_similar(slug, seen, 15).splitlines() if x.startswith(f"- {name} "))
+
+    assert "not started" in line()  # nobody compiled it yet
+    head = _ref(name).split("{", 1)[0]
+    out = net.compile_and_diff(agent, name, head + "{ return no_such_name; }", slug)
+    assert "BUILD ERROR" in out and "Move-on count: no better in 1/" in out
+    assert "1 compile, no best yet" in line() and "not started" not in line()
+    assert "tried before: 1 compile, no best yet" in net.get_function(name, slug)
+    net.release(agent, name, "test only", slug)

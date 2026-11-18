@@ -56,6 +56,8 @@ from ..network import (
     model_of,
     move_on_brief,
     set_aside,
+    state_text,
+    tried_brief,
 )
 from ..rom import RomError
 from ..scoring import percent_text
@@ -1972,7 +1974,8 @@ class ForkEngine:
                     cands[f"{uname}\0{sym}"] = ops
         out = []
         rows = {(r["unit"], self._meta(r).get("symbol")): r for r in self.net.store.all(
-            "SELECT id, name, unit, status, best_score, meta, n_insns FROM functions WHERE project_id=?", proj["id"])}
+            "SELECT id, name, unit, status, best_score, attempts, meta, n_insns FROM functions WHERE project_id=?",
+            proj["id"])}
         for key, sim in similarity.rank(target, cands, top=top * 2):
             uname, sym = key.split("\0", 1)
             if (uname, sym) in rows:
@@ -1991,8 +1994,8 @@ class ForkEngine:
             return f"No look-alikes found for {fn['name']} {note}."
         lines = [f"Functions that look like {fn['name']} {note}:"]
         for r, sim in hits:
-            state = "matched" if r["status"] == "matched" else f"best {r['best_score']}" if r["best_score"] is not None else "not started"
-            lines.append(f"- {r['name']}  {sim * 100:.0f}% similar  {state}  ({r['unit']}, {r['n_insns']} insns)")
+            lines.append(f"- {r['name']}  {sim * 100:.0f}% similar  {state_text(r)}  "
+                         f"({r['unit']}, {r['n_insns']} insns)")
         best = next((r for r, _ in hits if r["status"] == "matched"), None)
         if best is not None:
             src = self._current_source(fp, best)
@@ -2593,6 +2596,7 @@ class ForkEngine:
         lines = [f"## {header}: {fn['name']}  ({proj['name']})", f"unit {unit.name}, {fn['size']} bytes"]
         if fn["status"] != "matched":
             lines.append(move_on_brief(fn))
+            lines += tried_brief(fn)
         if meta.get("demangled"):
             lines.append(f"C++ name: {meta['demangled']}")
         if unit.scratch:
@@ -3241,7 +3245,8 @@ class ForkEngine:
                     self.net._record(fn, agent, None, code, 0)
                 why = "" if builds else ("\n(The file didn't build before your change either, so the error may be in "
                                          "other code of the file: fix that with edit_file.)")
-                return {"text": f"❌ BUILD ERROR (your change was undone){why}\n{log[-3000:]}", "score": None,
+                stall = self.net.stall_note(fn["id"], agent.id) if quiet is None else ""  # (#286, counted too)
+                return {"text": f"❌ BUILD ERROR (your change was undone){why}\n{log[-3000:]}{stall}", "score": None,
                         "matched": False}
             try:
                 d = fp.diff(unit, symbol)
@@ -3279,14 +3284,16 @@ class ForkEngine:
                             f"functions), they match again once {fn['name']} matches exactly: work from the diff "
                             "below. Otherwise check you replaced the right definition (overloads?) and didn't change "
                             f"shared code.\n{d.render()}")
-                return {"text": remembered(text, own), "score": None, "held_score": own, "matched": False,
+                stall = self.net.stall_note(fn["id"], agent.id) if quiet is None else ""
+                return {"text": remembered(text, own) + stall, "score": None, "held_score": own, "matched": False,
                         "broken": broken}
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
                 if quiet is None:
                     self.net._record(fn, agent, None, code, 0, compiled=True)
+                stall = self.net.stall_note(fn["id"], agent.id) if quiet is None else ""
                 return {"text": f"❌ REJECTED and undone: {unit.source} is linked into the game, and with your change "
-                                f"the game no longer builds byte for byte:\n{_tail(ok[1])}", "score": None,
+                                f"the game no longer builds byte for byte:\n{_tail(ok[1])}{stall}", "score": None,
                         "matched": False}
             pct = d.match_percent if d.match_percent is not None else 0.0
             score = max(1, len(d.literals)) if d.literals else scaled(pct, fn["n_insns"])
