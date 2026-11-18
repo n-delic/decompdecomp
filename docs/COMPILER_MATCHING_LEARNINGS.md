@@ -7309,3 +7309,26 @@ byte offset; with `M2C_UNK` = `s32`, C scaled it by 4 again, so the draft had `s
 - `m2cfix.refine_draft`'s `extern char D[]` loads single bytes: not equivalent.
 decomp-repair 0.5.5's `unknown_symbol_offset_repairs` (label `unknown_symbol_offsets`) offers the element and byte
 forms, with the temporary folded where nothing reassigns its operands.
+
+### KMC GCC 2.7.2: u8 counters m2c masks, and an element index read before its base (18 November 2026)
+
+Evidence level: one new match on an N64 game's 44-instruction function, checked offline with the pinned compiler
+and the project's own header (equal to the target apart from the `jal` targets); plus controlled regression
+tests on homemade C (`tests/test_masked_counters.py`, compiler output only).
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2 -fno-schedule-insns` (the function's own setting; plain `-O2`,
+`-O1`, `-O3`, the other KMC/SN/PM/EGCS builds were all further away). m2c's draft scored 1243 (43 words off).
+- `s8 arg1` that m2c then masks (`temp_a1 = arg1 & 0xFF`) as `u8 arg1`: 32 words off.
+- m2c's word counter and masked copy (`var_s1 += 1; var_v0 = var_s1 & 0xFF; } while ((u32) (var_s1 & 0xFF) < n)`)
+  as `u8 var_s1; for (var_s1 = 0; var_s1 < n; var_s1++)`: 41 alone, **2** together with the `u8` parameter.
+- The last two: the target computes `i * 3`, loads the base (`lw`), then shifts by 2; every single-expression
+  form (`base + i * 12`, `&items[i]` of 12-byte records, `s32 *` plus `i * 3`, `(i * 3) * 4`, operand orders,
+  temporaries for the whole address or the comparison, callback signatures) scheduled the shift before the load.
+  `t = i * 3; p = base; cb(p + t * 4, ...)` (or `s32 *p`, `p + t`): **exact**. Loading the base first instead
+  moves the `lw` to the top. gcc 2.7.2's second scheduler keeps the source's order between equal priorities.
+decomp-repair 0.5.6 adds `masked_counter_loop`, `byte_parameter_sign` and `call_index_staging` for these.
+
+The deep pass could not have found it: with one profile per candidate it compiled only the project default
+(`-O2`), so with the function's own `-fno-schedule-insns` every candidate went to the exact-only profile probe and
+nothing was ever scored. It also recompiled 88 rewrites that failed to compile 9,844 times. Both are fixed: the
+function's own settings come first, and a cached compile failure is skipped.
