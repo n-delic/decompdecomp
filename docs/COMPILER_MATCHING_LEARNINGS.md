@@ -7332,3 +7332,27 @@ The deep pass could not have found it: with one profile per candidate it compile
 (`-O2`), so with the function's own `-fno-schedule-insns` every candidate went to the exact-only profile probe and
 nothing was ever scored. It also recompiled 88 rewrites that failed to compile 9,844 times. Both are fixed: the
 function's own settings come first, and a cached compile failure is skipped.
+
+### KMC GCC 2.7.2: delay-slot duplicates, char symbol widths, and struct members for scheduling (18 November 2026)
+
+Evidence level: one new match on an N64 game's 91-instruction function, checked offline with the pinned compiler
+and the project's own header with a relocation-aware comparison (every `%hi`/`%lo` addend resolves to the target's
+address); plus controlled regression tests on homemade C (`tests/test_delay_slot_duplicates.py`).
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` (the project default). The function's own setting,
+`-O2 -fno-schedule-insns -g3`, came from the compiler comparison's auto-apply on a 0.4-point draft gain and is
+wrong: the matching C is 52 words off with it. From m2c's draft (91 words off at `-O2`):
+- `var_v0 = arg0 * 2; if (c) { call(arg0); var_v0 = arg0 * 2; }`, gcc's delay-slot fill read twice, written once
+  after the `if`: 8 off (as m2c wrote it, the value lived across the call in `$s1`).
+- `*(D_8010D784 + off) = arg0` through m2c's refined `extern char D_8010D784[]` stores a byte; the target has `sw`:
+  `*(s32 *)(...)`: 7 off.
+- The last 7 were one block's order: the target loads a `u8` global before storing `1` through `temp_a0`. With
+  `temp_a0`'s fields as `M2C_FIELD` casts (or `*(u16 *)((u8 *)p + 2)`) the store came first; as struct members
+  (`((R *)temp_a0)->field_2`, or a typed `Slot *`): **exact**. gcc 2.7.2 treats a struct member reference
+  (`MEM_IN_STRUCT_P`) and a plain global as not aliasing, so the first scheduler may move the load past it.
+- Byte-offset forms of the record tables (`D_80117389` = `D_80117388 + 1`, `D_8010D7E1` = `D_8010D724 + 0xBD`) were
+  fine either way once the above held.
+Under the function's own wrong setting the first step looked worse (48 -> 54 words), so a search climbing on it
+rejects the path. decomp-repair 0.5.7 adds `delay_slot_duplicate` and `symbol_access_width`, and
+`inferred_record_layout` now reads `M2C_FIELD`. In this game 302 functions had their own setting applied this way
+(non-exact gains, median +2.9 points) before auto-apply stopped doing so.
