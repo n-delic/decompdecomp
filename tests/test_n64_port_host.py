@@ -497,11 +497,10 @@ def test_ram_is_dumped_at_the_retraces_asked_for(tmp_path):
 #include <stdlib.h>
 #include <string.h>
 static uint8_t ram[0x800000], *M;
-static unsigned long vi_count;
 """ + _function(HOST.read_text(), "ram_dumps") + """
 int main(void) {
     M = ram - 0x80000000u;
-    for (vi_count = 1; vi_count <= 5; vi_count++) { ram[0] = (uint8_t)vi_count; ram_dumps(); }
+    for (unsigned long n = 1; n <= 5; n++) { ram[0] = (uint8_t)n; ram_dumps("PORT_RAM_DUMPS", n); }
     return 0;
 }
 """)
@@ -515,7 +514,9 @@ int main(void) {
 
 def test_scripted_input_can_be_timed_in_retraces(tmp_path):
     """PORT_INPUT counts frames shown; with PORT_INPUT_CLOCK=vi it counts retraces, as the reversing emulator's
-    scripts do, so one script drives both: START from retrace 10 is held at retrace 12 though only 6 frames were shown."""
+    scripts do, so one script drives both: START from retrace 10 is held at retrace 12 though only 6 frames were shown.
+    With PORT_INPUT_CLOCK=frames it counts the graphics tasks the game has handed over (9 here: START from task 9 is
+    held), as the emulator's EMU_INPUT_CLOCK=frames does."""
     cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     if not cc:
         pytest.skip("no C compiler")
@@ -525,12 +526,15 @@ def test_scripted_input_can_be_timed_in_retraces(tmp_path):
 #include <stdlib.h>
 #include <string.h>
 static uint16_t buttons; static int8_t stick_x, stick_y;
-static unsigned long vi_count = 12, swaps = 6;
+static unsigned long vi_count = 12, swaps = 6, gfx_tasks = 9;
 """ + _function(HOST.read_text(), "script_input") + """
 int main(void) { script_input(); printf("%04X\\n", buttons); return 0; }
 """)
     subprocess.run([cc, "-o", str(tmp_path / "t"), str(source)], check=True, capture_output=True)
-    for clock, want in (("vi", "1000"), ("", "0000")):
+    for clock, want in (("vi", "1000"), ("", "0000"), ("frames", "0000")):
         env = {**os.environ, "PORT_INPUT": "10:START", "PORT_INPUT_CLOCK": clock}
+        if clock == "frames":
+            env["PORT_INPUT"] = "9:START"
+            want = "1000"
         done = subprocess.run([str(tmp_path / "t")], env=env, check=True, capture_output=True, text=True)
         assert done.stdout.strip() == want

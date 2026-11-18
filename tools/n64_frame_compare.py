@@ -8,20 +8,25 @@ display list and the microcode's data it names); this draws them with the port's
 console's frame and the port's are drawn by the same renderer from each one's own game state. Where they differ,
 the game ran differently (the port's code, its host or its input), not the renderer.
 
-    uv run python tools/n64_frame_compare.py ROM --port path/to/port/build/game --vis 2000,4000 \
+    uv run python tools/n64_frame_compare.py ROM --port path/to/port/build/game --frames 900,1200 \
         --input @script.txt --out REPORT
 
-The input script is the emulator's and the port's (`vi:BUTTON+BUTTON+SX=n+SY=n,...`), timed in retraces on both
-sides (the port runs with PORT_INPUT_CLOCK=vi). Without --port only the console's frames are drawn. For each retrace
-and each graphics task found in RAM, it writes the console's image, the port's and their difference (brightened)
-side by side, and prints how many pixels differ.
+--frames compares the game's own frames: the nth graphics task it hands over, counted the same way on both sides
+(the emulator's video plugin, the port's host), with the RAM written as that task is handed over (its display list
+finished, nothing half built) and the input script timed in frames too (`frame:BUTTON+BUTTON+SX=n+SY=n,...`). It
+needs nothing from the game. What it can't do is make the two runs one: the console drops frames and spends
+retraces loading, the port does neither, so a game that times its menus and animations by retraces is further on
+per frame on the console (a racing game: 5,023 retraces by its 2,300th frame on the console, 4,710 in the port), and
+a press lands on another screen. Compare where the game waits for the player, choose points from a first run's
+images, or give the port its own script (--port-input).
 
-A game builds its next display list while the last one is drawn, so a dump usually holds one finished list and one
-half built: the half-built one may run into old data and fail to draw, which is reported and skipped. The two runs
-are only as close as their timing: the port's retraces are the host's clock, the emulator's the console's, so a
-game that counts time by retraces stays in step, and one whose loading takes longer on one side drifts. Frames that
-show different moments of the same scene say little; choose retraces where the game waits (menus, a paused race),
-or pair each of the console's retraces with the port's at the same moment (--port-vis), found by a first run.
+--vis compares at retraces instead (PORT_RAM_DUMPS and PORT_INPUT_CLOCK=vi on the port's side), with --port-vis to
+pair each of the console's with the port's at the same moment and --port-input to give the port its own script.
+Without --port only the console's frames are drawn. For each point and each graphics task found in RAM, it writes
+the console's image, the port's and their difference (brightened) side by side, and prints how many pixels differ.
+
+A game builds its next display list while the last one is drawn, so a dump taken at a retrace may hold one half
+built: it may run into old data and fail to draw, which is reported and skipped.
 """
 
 from __future__ import annotations
@@ -150,25 +155,53 @@ def retraces_per_second(rom: Path) -> int:
     return 50 if chr(head[0x3E]) in "DFHIPSUWXY" else 60
 
 
-def run_port(game: Path, rom: Path, vis: list[int], inputs: str, folder: Path) -> dict[int, Path]:
-    """The port run (in real time) until the last retrace asked for, writing RAM at each."""
-    dumps = {vi: folder / f"port_{vi}.bin" for vi in vis}
-    env = {**os.environ, "PORT_RAM_DUMPS": ",".join(f"{vi}:{p}" for vi, p in dumps.items()), "PORT_INPUT_CLOCK": "vi"}
-    env.pop("PORT_INPUT", None)
+def run_port(game: Path, rom: Path, points: list[int], inputs: str, folder: Path, clock: str = "vi") -> dict[int, Path]:
+    """The port run (in real time) until its RAM is written at each point: retraces (PORT_RAM_DUMPS) or, with `clock`
+    "frames", the game's graphics tasks (PORT_FRAME_DUMPS), its input timed the same way. Stopped once the last is
+    written."""
+    import time
+    dumps = {n: folder / f"port_{clock}_{n}.bin" for n in points}
+    for path in dumps.values():
+        path.unlink(missing_ok=True)
+    var = "PORT_FRAME_DUMPS" if clock == "frames" else "PORT_RAM_DUMPS"
+    env = {**os.environ, var: ",".join(f"{n}:{p}" for n, p in dumps.items()), "PORT_INPUT_CLOCK": clock}
+    for key in ("PORT_INPUT", "PORT_RAM_DUMPS", "PORT_FRAME_DUMPS"):
+        if key != var:
+            env.pop(key, None)
     if inputs:
         env["PORT_INPUT"] = inputs
-    seconds = max(vis) / retraces_per_second(rom) + 3
-    subprocess.run([str(game.resolve()), str(rom.resolve()), f"{seconds:.0f}"], cwd=folder, env=env,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=seconds * 3 + 120)
-    return {vi: p for vi, p in dumps.items() if p.exists()}
+    # a frame takes at most 6 retraces (10 frames a second) in any game worth comparing
+    seconds = max(points) * (6 if clock == "frames" else 1) / retraces_per_second(rom) + 10
+    proc = subprocess.Popen([str(game.resolve()), str(rom.resolve()), f"{seconds:.0f}"], cwd=folder, env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    started = time.monotonic()
+    try:
+        while proc.poll() is None and time.monotonic() - started < seconds + 60:
+            if all(p.exists() and p.stat().st_size >= RAM for p in dumps.values()):
+                break
+            time.sleep(0.5)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    return {n: p for n, p in dumps.items() if p.exists() and p.stat().st_size >= RAM}
 
 
-def run_console(rom: Path, vis: list[int], inputs: str, folder: Path) -> dict[int, Path]:
+def run_console(rom: Path, points: list[int], inputs: str, folder: Path, clock: str = "vi") -> dict[int, Path]:
+    """The ROM in the reversing emulator, its RAM written at each point (retraces, or the game's frames)."""
     from decompnet.consoles.n64 import emulator
 
-    dumps = {vi: folder / f"console_{vi}.bin" for vi in vis}
-    emulator.run(rom, max(vis) + 1, inputs=inputs, dumps=dumps)
-    return {vi: p for vi, p in dumps.items() if p.exists()}
+    dumps = {n: folder / f"console_{clock}_{n}.bin" for n in points}
+    for path in dumps.values():
+        path.unlink(missing_ok=True)
+    if clock == "frames":
+        emulator.run(rom, max(points) * 6 + 1200, inputs=inputs, frame_dumps=dumps, input_clock="frames")
+    else:
+        emulator.run(rom, max(points) + 1, inputs=inputs, dumps=dumps)
+    return {n: p for n, p in dumps.items() if p.exists()}
 
 
 def side_by_side(path: Path, pictures: list[tuple[int, int, list] | None]) -> None:
@@ -193,20 +226,26 @@ def main(argv=None) -> int:
     p.add_argument("rom", type=Path)
     p.add_argument("--port", type=Path, help="the port's native build (port/wasm/build/game); without it, only the "
                                              "console's frames")
-    p.add_argument("--vis", required=True, help="retraces to compare at, comma-separated")
-    p.add_argument("--port-vis", help="the port's retraces to compare with each of --vis, when the two runs drift "
+    when = p.add_mutually_exclusive_group(required=True)
+    when.add_argument("--frames", help="the game's frames to compare (its graphics tasks, counted from 1), "
+                                       "comma-separated: the input script is timed in frames too")
+    when.add_argument("--vis", help="retraces to compare at, comma-separated: the input script is timed in retraces")
+    p.add_argument("--port-vis", help="with --vis, the port's retraces to compare with each, when the two runs drift "
                                       "apart (the port loads in no time and never drops a frame): the same count")
-    p.add_argument("--input", default="", help="vi:BUTTON+BUTTON+SX=n+SY=n,... or @file, timed in retraces")
-    p.add_argument("--port-input", help="the port's own script, when the runs drift apart (default: --input's)")
+    p.add_argument("--input", default="", help="vi:BUTTON+BUTTON+SX=n+SY=n,... or @file")
+    p.add_argument("--port-input", help="the port's own script (default: --input's)")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--work", type=Path, help="where the renderer is built and the dumps kept (default: a temporary "
                                              "folder)")
     args = p.parse_args(argv)
-    vis = [int(v) for v in args.vis.split(",") if v.strip()]
-    port_vis = [int(v) for v in args.port_vis.split(",") if v.strip()] if args.port_vis else vis
-    if len(port_vis) != len(vis):
+    clock = "frames" if args.frames else "vi"
+    points = [int(v) for v in (args.frames or args.vis).split(",") if v.strip()]
+    port_points = [int(v) for v in args.port_vis.split(",") if v.strip()] if args.port_vis and args.vis else points
+    if len(port_points) != len(points):
         raise SystemExit("--port-vis needs one retrace for each of --vis")
-    pairs = dict(zip(vis, port_vis))
+    pairs = dict(zip(points, port_points))
+    unit = "frame" if clock == "frames" else "VI"
+
     def script(text: str) -> str:
         return Path(text[1:]).read_text().strip() if text.startswith("@") else text
     inputs = script(args.input)
@@ -216,30 +255,32 @@ def main(argv=None) -> int:
         work = args.work or Path(tmp)
         work.mkdir(parents=True, exist_ok=True)
         program = build(work)
-        console = run_console(args.rom, vis, inputs, work)
-        port = run_port(args.port, args.rom, sorted(set(port_vis)), port_inputs, work) if args.port else {}
-        for vi in vis:
-            pv = pairs[vi]
-            if vi not in console:
-                print(f"VI {vi}: the emulator wrote no RAM (did it run that far?)")
+        console = run_console(args.rom, points, inputs, work, clock)
+        port = run_port(args.port, args.rom, sorted(set(port_points)), port_inputs, work, clock) if args.port else {}
+        for n in points:
+            pn = pairs[n]
+            label = f"{unit} {n}" + (f" (port {pn})" if pn != n else "")
+            if n not in console:
+                print(f"{label}: the emulator wrote no RAM (did it run that far?)")
                 continue
-            ours = frames(program, port[pv], work) if pv in port else {}
-            if args.port and pv not in port:
-                print(f"VI {pv}: the port wrote no RAM (did it run that far?)")
-            theirs = frames(program, console[vi], work)
+            ours = frames(program, port[pn], work) if pn in port else {}
+            if args.port and pn not in port:
+                print(f"{label}: the port wrote no RAM (did it run that far?)")
+            theirs = frames(program, console[n], work)
             for key in sorted(set(theirs) | set(ours)):
                 task, image = key
                 a, b = theirs.get(key), ours.get(key)
-                name = args.out / f"vi{vi:06d}{f'_port{pv:06d}' if pv != vi else ''}_task{task:08X}_image{image:06X}.png"
+                name = args.out / (f"{unit.lower()}{n:06d}{f'_port{pn:06d}' if pn != n else ''}"
+                                   f"_task{task:08X}_image{image:06X}.png")
                 if a and b and a[:2] == b[:2]:
                     c = compare(b[2], a[2])
                     side_by_side(name, [a, b, (a[0], a[1], difference(a[2], b[2]))])
-                    print(f"VI {vi}{f' (port {pv})' if pv != vi else ''} task {task:08X} image {image:06X} {a[0]}x{a[1]}: {c['differ_pct']:.2f}% of "
+                    print(f"{label} task {task:08X} image {image:06X} {a[0]}x{a[1]}: {c['differ_pct']:.2f}% of "
                           f"pixels differ, {c['beyond_pct']:.2f}% by more than one step")
                 else:
                     side_by_side(name, [a, b])
                     where = "the console's" if a and not b else "the port's" if b and not a else "both (sizes differ)"
-                    print(f"VI {vi}{f' (port {pv})' if pv != vi else ''} task {task:08X} image {image:06X}: drawn in {where} only")
+                    print(f"{label} task {task:08X} image {image:06X}: drawn in {where} only")
         print(f"images in {args.out}: the console's, the port's, their difference (x4)")
     return 0
 
