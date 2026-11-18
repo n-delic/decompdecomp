@@ -191,3 +191,14 @@ def test_page_follows_the_stream_and_backs_off_without_it():
     if not shutil.which("node"):
         pytest.skip("needs node")
     subprocess.run(["node", "tests/gui_live_stream.js"], check=True, capture_output=True, text=True)
+
+
+def test_agent_log_keeps_each_line_once():
+    """Overlapping polls answered with the same lines of a helper's log; each line shows once."""
+    import shutil
+    import subprocess
+
+    import pytest
+    if shutil.which("node") is None:
+        pytest.skip("node isn't installed")
+    subprocess.run(["node", "tests/gui_agent_log.js"], check=True, capture_output=True, text=True)

@@ -1226,14 +1226,18 @@ function renderLog() {
 function addThoughts(sessions, first) {
   if (first) S.feeds = {};  // a project opened again: the app sends each helper's whole log once more
   for (const s of sessions) {
-    if (!s.feed.length) continue;
     const kept = (S.feeds[s.id] ||= []);
-    kept.push(...s.feed);
+    // Two polls in flight at once (the timer's and one after a click) both ask for the lines after the same seq:
+    // keep only lines newer than the last one kept, or a local model's every step showed two or three times.
+    const last = kept.length ? kept[kept.length - 1].seq : -Infinity;
+    const feed = s.feed.filter((f) => f.seq > last);
+    if (!feed.length) continue;
+    kept.push(...feed);
     kept.splice(0, Math.max(0, kept.length - FEED_KEEP));
     if (s.id !== S.logFor || first) continue;
     const list = $("thoughts");
     list.querySelector(".placeholder")?.remove();
-    for (const f of s.feed) list.prepend(logLine(f, true));
+    for (const f of feed) list.prepend(logLine(f, true));
     while (list.children.length > FEED_KEEP) list.lastChild.remove();
   }
   if (first) renderLog();

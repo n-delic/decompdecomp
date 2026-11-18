@@ -382,7 +382,7 @@ async function poll(only) {
     S.sessions = live.sessions;
     if (S.fnDetail && !$("drawer").hidden) renderFunctionFocusedAgents(S.fnDetail, slug);
     for (const s of live.sessions) {
-      if (s.feed.length) S.seq[s.id] = s.feed[s.feed.length - 1].seq;
+      if (s.feed.length) S.seq[s.id] = Math.max(S.seq[s.id] || 0, s.feed[s.feed.length - 1].seq);  // (a late poll can't move it back)
     }
     addThoughts(live.sessions, first);
     if (S.tab === "agents" && (changed.sessions || changed.claims)) renderSessions(live.sessions);
