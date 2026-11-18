@@ -245,3 +245,24 @@ def test_cached_environment_follows_changes(monkeypatch):
     assert ('DECOMP_TEST_ENVIRONMENT_CACHE', '1') in __import__("decompnet.stamped").stamped.environment()
     monkeypatch.delenv('DECOMP_TEST_ENVIRONMENT_CACHE')
     assert __import__("decompnet.stamped").stamped.environment() == before
+
+
+def test_recent_key_fast_path_notices_a_changed_function_row():
+    """The fast path compares the rows: a function changed in memory never keeps the old key."""
+    from types import SimpleNamespace
+
+    from decompnet.app import deep_permuter
+    search = deep_permuter.Search.__new__(deep_permuter.Search)
+    store = SimpleNamespace(read_version=lambda kind, project: 3)
+    search.net = SimpleNamespace(project_store=lambda pid: store)
+    search.measuring_baseline = False
+    search._recent_keys = {}
+    search._recent_base = b'base'
+    proj, fn = {'id': 1}, {'id': 2, 'best_source': 'a'}
+    import time
+    search._recent_fast = (3, dict(proj), dict(fn), deep_permuter.stamped.environment(), '', time.monotonic())
+    assert search._recent_key(proj, fn, 'int f(void){return 1;}', None) is not None
+    calls = []
+    search.net.cfg = lambda proj: calls.append(True) or {}
+    assert search._recent_key(proj, dict(fn, best_source='b'), 'int f(void){return 1;}', None) is None  # slow path ran
+    assert calls

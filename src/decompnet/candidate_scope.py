@@ -2,6 +2,8 @@
 import hashlib
 import json
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 from .candidate_work import current, remember
@@ -191,6 +193,28 @@ def key(net,proj,fn,shared=None):
     if shared is not None or getattr(net, 'fork_slug', lambda _: None)(proj['slug']):return build()
     store = net.project_store(proj['id'])
     if not hasattr(store, 'read_version'):return build()
-    token = (id(net), id(store), store.read_version('inputs', proj['id']),
-             hashlib.sha256(repr((dict(proj), dict(fn))).encode()).digest())
-    return remember(('candidate-scope', token), build)
+    # Kept across candidates while nothing it reads has changed: every row, header and symbol it reads bumps the
+    # `inputs` revision, matched callees bump `matched_evidence`, and the rows themselves are compared. A deep
+    # search asked for it several times per candidate, each time hashing the whole function, project and symbols.
+    versions = (store.read_version('inputs', proj['id']), store.read_version('matched_evidence', proj['id']))
+    rows = (dict(proj), dict(fn))
+    slot = (id(net), id(store), proj['id'], fn['id'] if 'id' in fn.keys() else None)
+    with _KEYS_LOCK:
+        for kept_versions, kept_rows, kept_value in _KEYS.get(slot, ()):
+            if kept_versions == versions and kept_rows == rows:
+                _KEYS.move_to_end(slot)
+                return kept_value
+    token = (id(net), id(store), versions[0], hashlib.sha256(repr(rows).encode()).digest())
+    value = remember(('candidate-scope', token), build)
+    with _KEYS_LOCK:
+        # A few per function: callers hold their own copies of its row (the search's, a fresh read), and one
+        # entry each evicted the other's on every call.
+        entries = [entry for entry in _KEYS.pop(slot, ()) if entry[0] == versions][-3:]
+        _KEYS[slot] = [*entries, (versions, rows, value)]
+        while len(_KEYS) > 512:
+            _KEYS.popitem(last=False)
+    return value
+
+
+_KEYS = OrderedDict()
+_KEYS_LOCK = threading.Lock()

@@ -825,6 +825,15 @@ class Search(Permuter):
         # Imported files can change outside the database, so keep their full dependency scan.
         if fork or self.measuring_baseline:return None
         if not hasattr(self.net.project_store(proj['id']), 'read_version'):return None
+        fast = getattr(self, '_recent_fast', None)
+        if fast is not None:
+            # The same database inputs (every row, header and symbol a key reads bumps `inputs`), the same rows
+            # and environment, checked within the last second: only the source is new. Building the capture below
+            # ran four times per candidate; this check is a revision read and two dict comparisons in C.
+            version, rows_proj, rows_fn, environment, header, checked = fast
+            if (time.monotonic()-checked < 1 and environment is stamped.environment() and rows_proj == _row(proj)
+                    and rows_fn == _row(fn) and version == self.net.project_store(proj['id']).read_version('inputs', proj['id'])):
+                return self._recent_source(source, version, header)
         from .. import claim_stalls
         from ..candidate_work import remember
         from ..match_bundle import compiler_identity
@@ -855,9 +864,16 @@ class Search(Permuter):
             # four times per candidate under the app's one interpreter, and grows with the function and project.
             self._recent_capture=capture;self._recent_keys=OrderedDict()
             self._recent_base=hashlib.sha256(repr((dict(proj),dict(fn),identity,rules,environment)).encode()).digest()
+        header = ctx['header'] if ctx else ''
+        self._recent_fast = (version, dict(proj), dict(fn), environment, header, time.monotonic())
+        return self._recent_source(source, version, header, checked=True)
+
+    def _recent_source(self, source, version, header, checked=False):
         cache=self._recent_keys
         if source in cache:
             cache.move_to_end(source);return cache[source][0]
+        from .. import compiler
+        if not checked and not compiler._stable_inputs([source.encode(), header.encode()]):return None
         result=(version,hashlib.sha256(self._recent_base+source.encode()).digest())
         cache[source]=(result,len(source.encode()))
         while len(cache)>64 or sum(size for _,size in cache.values())>8*1024*1024:cache.popitem(last=False)
@@ -1018,6 +1034,10 @@ class Search(Permuter):
                 while len(recent) > 128:recent.popitem(last=False)
         self.report()
         return score
+
+
+def _row(row):
+    return row if isinstance(row, dict) else dict(row)
 
 
 def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, threads_per_function=1, maximum_throughput=False, compile_slots=0):
