@@ -184,3 +184,34 @@ def test_an_eight_byte_entry_is_kept_when_its_first_word_needs_no_delay_slot():
     image,functions,segments=fixture(words,cuts=(0,cut,cut+4,len(words)*4))
     functions[1].lines.append(functions[2].lines[0])
     assert any(f.rom==cut for f in repair(functions,[],image,consoles.get('n64'),segments))
+
+
+def shared_slot(callers):
+    """BODY cut at BASE+12 by calls from another segment, `callers` more of which land on its every word (a sibling
+    overlay's functions), with one call to the real entry."""
+    image,functions,segments=fixture()
+    lines=[]
+    targets=[BASE+12]+[BASE+4*(1+i%7) for i in range(callers)]
+    caller=0x1000
+    image+=bytes(caller-len(image))
+    for i,target in enumerate([BASE]+targets):
+        word=0x0c000000|(target>>2)&0x3ffffff
+        lines.append(AsmLine(caller+4*i,0x80100000+4*i,word,'jal',''))
+        image+=word.to_bytes(4,'big')
+    functions.append(RomFunction('caller',0x80100000,caller,'main',lines,Path()))
+    segments.append(Segment('main',caller,len(image),0x80100000))
+    return image,functions,segments
+
+
+def test_calls_into_a_shared_overlay_slot_prove_no_entry():
+    """An N64 game loads five overlays at one address and main calls all of them: most calls land mid-function in
+    the one image the split mapped there, and none of them proves an entry, so its fragments join."""
+    image,functions,segments=shared_slot(callers=12)
+    result=repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(f.vram,f.size) for f in result if f.segment=='code']==[(BASE,32)]
+
+
+def test_a_few_outside_calls_keep_an_ordinary_overlays_entries():
+    image,functions,segments=shared_slot(callers=0)
+    result=repair(functions,[],image,consoles.get('n64'),segments)
+    assert [(f.vram,f.size) for f in result if f.segment=='code']==[(BASE,12),(BASE+12,20)]

@@ -24,7 +24,10 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     order='big' if console.big_endian else 'little'
     fmt='>I' if console.big_endian else '<I'
     # A raw function-pointer entry is independent evidence even without a direct call.
-    pointers={w for w, in struct.iter_unpack(fmt,image[:len(image)//4*4]) if w in starts}
+    shared,slots=shared_slot_calls(functions,image,console,segments)
+    # A stored word equal to an address in a shared slot may be any sibling overlay's table entry, and the segment's
+    # own extent can run on over its siblings' images (the game above: five overlays in one segment's ROM range).
+    pointers={w for w, in struct.iter_unpack(fmt,image[:len(image)//4*4]) if w in starts and not any(s.contains(w,4) for s in slots)}
     references=defaultdict(set)
     names={f.name:f.vram for f in functions}
     for fn in functions:
@@ -39,7 +42,12 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
                 references[dest].add((line.rom,fn.segment))
             for token in re.findall(r'[\w.]+',line.operands):
                 if token in names:references[names[token]].add((line.rom,fn.segment))
+    for dest,offset,segment in shared:
+        references[dest].discard((offset,segment))
+        if not references[dest]:del references[dest]
     destinations=sorted(references)
+    tables=[dict(rom_start=s.rom_start,rom_end=s.rom_end,vram=s.vram) for s in segments
+            if 0<=s.rom_start<s.rom_end<=len(image) and not s.rom_start%4 and not s.rom_end%4]
     returns={fn.rom+fn.size for fn in functions if fn.size>=8 and fn.lines[-2].word==JR_RA}
     groups=[];group_end=0
     for fn in sorted(functions,key=lambda f:(f.segment,f.rom)):
@@ -82,7 +90,8 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             if not is_frame(lines[at].word):leaves.add(at)
             if at>cut:proposed_padding[at]=(cut,at)
             return at
-        for cut in sorted(cuts & returns):
+        # The group's first entry is known as well: a leaf there ends at its own return, not at a call's cut.
+        for cut in sorted(cuts & returns|{lo}):
             if (at:=seed(cut)) is not None:candidates.append(at)
         pending=list(set(candidates)|leaves);heapq.heapify(pending);seen=set()
         while pending:
@@ -91,8 +100,11 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
             seen.add(at)
             check()
             if accepted and at<accepted[-1][1]:continue
+            # A switch's table is read where the config maps data, so a body with one closes (a shared overlay
+            # slot's switch functions stayed cut where outside calls had cut them).
+            extra={} if at in leaves else {'table_ranges':tables}
             validate=leaf_extent if at in leaves else called_extent
-            size=validate(image,at,hi,at+mapping,big_endian=console.big_endian,cpu=console.cpu_variant,asm_check=console.asm_reason)
+            size=validate(image,at,hi,at+mapping,big_endian=console.big_endian,cpu=console.cpu_variant,asm_check=console.asm_reason,**extra)
             if not size:continue
             end=at+size;address=at+mapping;finish=end+mapping
             if any(address<a<finish for a in explicit|pointers):continue
@@ -157,6 +169,38 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         log(f'Left {dropped} alignment words out of the functions: filler between a return and the next entry, kept in the image.')
         return kept
     return result
+
+
+SHARED_SLOT_CALLS = 8  # calls from elsewhere into a segment before their fit says anything about it
+
+
+def shared_slot_calls(functions, image, console, segments):
+    """(target, caller rom, caller segment) of the calls from other segments into a segment that holds only one of
+    the overlays loaded at its address. Code elsewhere calls every overlay of the slot, so most of those calls land
+    mid-function in the one image the split mapped there, and none of them proves an entry in it. An N64 game loads
+    five overlays at one address: 17 of main's 112 calls into the slot fit the image placed there, the rest cut 87
+    of its functions into pieces. A segment whose outside calls mostly land on a stack frame, or right after a
+    return's delay slot, is an ordinary overlay: its calls stay evidence. Also returns those segments: a stored word that
+    equals an address in one (a sibling's function table) proves no entry either."""
+    fmt='>I' if console.big_endian else '<I'
+    def word(at):
+        return struct.unpack_from(fmt,image,at)[0] if 0<=at<=len(image)-4 else None
+    calls=defaultdict(list)
+    for fn in functions:
+        for line in fn.lines:
+            if line.word>>26!=3:continue
+            dest=((line.vram+4)&0xf0000000)|((line.word&0x3ffffff)<<2)
+            for s in segments:
+                if s.name!=fn.segment and s.contains(dest,4):
+                    calls[s.name].append((dest,line.rom,fn.segment,dest-s.vram+s.rom_start,s.rom_start))
+    out,slots=[],[]
+    for name,found in calls.items():
+        targets={c[3]:c[4] for c in found}
+        if len(targets)<SHARED_SLOT_CALLS:continue
+        fit=sum(1 for at,start in targets.items() if at==start or is_frame(word(at) or 0) or word(at-8)==JR_RA)
+        if fit*2<len(targets):
+            out+=[c[:3] for c in found];slots+=[s for s in segments if s.name==name]
+    return out,slots
 
 
 def alignment_fill(address, returned, entry_follows, referenced):
