@@ -77,6 +77,24 @@ class Opencode(Agent):
     def limit_wait_why(self) -> str:
         return "This provider account's usage limit is reached for this model"
 
+    def limit_alternative(self, model: str, reason: str, known: list[dict]) -> dict | None:
+        """A free OpenCode Zen model (opencode/...) out of its allowance: the same model on OpenCode Go
+        (opencode-go/...), when the user's Go sign-in lists it. Its effort comes along."""
+        base, separator, effort = model.partition("#")
+        provider, _, name = base.partition("/")
+        limited = re.search(r"provider\.free-limit|free usage limit|" + re.escape(FREE_ALLOWANCE) + r"|usage limit",
+                            reason or "", re.I)
+        if provider != "opencode" or not name or not limited:
+            return None
+        # (Go lists a free model under its own name, or without the free variant's "-free": deepseek-v4.1-flash-free
+        # is deepseek-v4.1-flash there)
+        names = [name] + ([name.removesuffix("-free")] if name.endswith("-free") else [])
+        ids = {row.get("id") for row in known}
+        other = next((f"opencode-go/{n}" for n in names if f"opencode-go/{n}" in ids), None)
+        if other is None:
+            return None
+        return {"model": other + (separator + effort if separator else ""), "label": GROUPS["opencode-go"]}
+
     def resolve_known_model(self, model: str, known: list[dict]) -> str:
         model = model.strip()
         base, separator, effort = model.partition('#')

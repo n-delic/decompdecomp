@@ -242,6 +242,31 @@ document.addEventListener('keydown', event => {
 });
 $("agentSort").onchange = () => { agentSort = $("agentSort").value; renderSessions(S.sessions || []); };
 
+/* A free model out of its allowance (opencode's free models): the same model on the user's other account, offered
+   as one button on the agent's card. It replaces the agent as Change model does; its history is kept. */
+function limitAlternativeButton(s) {
+  if (!s.limit_alternative) return "";
+  return `<button class="ghost" data-switch-model="${esc(s.id)}" type="button" title="Replaces this agent with ${esc(s.limit_alternative.model)}; its history is kept">Switch to the same model on ${esc(s.limit_alternative.label)}</button>`;
+}
+
+async function switchToAlternative(s, button) {
+  if (!s?.limit_alternative || button.disabled) return;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = `Switching to ${s.limit_alternative.label}…`;
+  try {
+    await api("/api/agents/start", { method: "POST", body: { kind: s.kind, slug: s.slug, count: 1,
+      options: { model: s.limit_alternative.model }, replace: s.id } });
+    toast(`${esc(s.label)} now runs ${esc(s.limit_alternative.model)}.`);
+  } catch (e) {
+    toast(esc(e.message), "err");
+    button.disabled = false;
+    button.textContent = label;
+  } finally {
+    poll(false);
+  }
+}
+
 function renderSessions(sessions, refreshCosts = true) {
   sessions = sessions.map(session => {
     const reset = agentMetricResets.get(session.id);
@@ -286,6 +311,7 @@ function renderSessions(sessions, refreshCosts = true) {
       <span class="state ${s.state === 'paused' ? 'err' : ''}">${helperState(s, claim)}</span>
       ${["starting", "working"].includes(s.state) && s.startup_stage ? `<progress class="workbar" aria-label="Agent startup"></progress>` : ""}
       ${todo ? `<span class="todo-line">${esc(todo)}</span>${s.can_login && !live && /login|sign.?in/i.test(s.todo || "") ? `<button class="ghost" type="button" data-login="${id}">Sign in to ${esc(s.kind_name)}</button>` : ""}` : ''}
+      ${limitAlternativeButton(s)}
       ${s.provider_waiting ? `<button class="ghost" data-retry-provider="${id}" type="button" ${s.provider_retry_requested ? "disabled" : ""}>${s.provider_retry_requested ? "Provider retry requested…" : "Retry provider now"}</button>` : !["readable","boundary","assets","data","port"].includes(s.task) && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
       ${agentUsage(s)}
       <details class="agent-details" data-agent-details="${id}" ${agentDetailsOpen.has(s.id) ? 'open' : ''}><summary>Details</summary><div class="agent-details-body">
@@ -325,6 +351,10 @@ function renderSessions(sessions, refreshCosts = true) {
     };
   });
   act('[data-retry-provider]', '/api/agents/retry-provider', b => ({id:b.dataset.retryProvider}));
+  // A free model out of its allowance: the same model on the user's other account replaces the agent (#1341 follow-up).
+  box.querySelectorAll('[data-switch-model]').forEach(button => {
+    button.onclick = () => switchToAlternative(sessions.find(x => x.id === button.dataset.switchModel), button);
+  });
   box.querySelectorAll('[data-agent-prompts]').forEach(button => { button.onclick = () => showAgentPrompts(sessions.find(s => s.id === button.dataset.agentPrompts)); });
   box.querySelectorAll('[data-retry-paused]').forEach(button => { button.onclick = () => showRetryPaused(sessions.find(s => s.id === button.dataset.retryPaused)); });
   box.querySelectorAll('[data-agent-tools]').forEach(button => { button.onclick = () => showAgentTools(sessions.find(s => s.id === button.dataset.agentTools)); });

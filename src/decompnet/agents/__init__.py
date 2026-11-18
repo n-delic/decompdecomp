@@ -253,6 +253,17 @@ class Agent:
         """Why helpers wait out a published usage-limit cooldown, given the connector's limit scope."""
         return "This provider account's usage limit is reached"
 
+    def limit_alternative(self, model: str, reason: str, known: list[dict]) -> dict | None:
+        """The same model on another account the user has, when `reason` says this model's allowance ran out:
+        {"model": its id, "label": the account's name}, offered on the helper's card as one button that replaces the
+        helper with it; None for none. `known` is what models() last listed (cached_models)."""
+        return None
+
+    def cached_models(self) -> list[dict]:
+        """What models() last listed, without running the agent's CLI (the helper cards ask on every refresh)."""
+        cached = _models.get(self.id)
+        return cached[1] if cached else []
+
     def resolve_model(self, model: str, path: str | None) -> str:
         """`model`, a name the agent's own settings hold, as the model id its own command line takes; "" when that
         can't be told without running its program. Then a helper started on that default isn't pinned to it: it

@@ -477,6 +477,17 @@ class Session:
         if kind in ("info", "error"):  # starts, waits, stops and errors outlive the session: why a night went as it did
             log.info("helper %s (%s): %s", self.agent_name, self.slug, text[:500])
 
+    def limit_alternative(self, kind) -> dict | None:
+        """The same model on another of the user's accounts, while this helper is held by its allowance (a free model
+        out of its limit): the card offers it as one button (Agent.limit_alternative)."""
+        if self.state not in ("paused", "waiting") or not self.model or self.options.get("model_replacement"):
+            return None
+        try:
+            return kind.limit_alternative(self.model, " ".join(str(part or "") for part in (self.why, self.error, self.todo)),
+                                          kind.cached_models())
+        except Exception:
+            return None
+
     def snapshot(self, since: int = 0) -> dict:
         kind = agents.get(self.kind)
         return {"id": self.id, "kind": self.kind, "kind_name": kind.name, "can_login": kind.supports_login, "label": self.label,
@@ -495,6 +506,7 @@ class Session:
                 "startup_stage": self.startup_stage, "startup_stage_at": self.startup_stage_at,
                 "started_at": self.started_at, "usd": round(self.usd, 4), "tokens": self.tokens,
                 "current_usage_coverage": self.usage.get("coverage", "unknown"),
+                "limit_alternative": self.limit_alternative(kind),
                 "feed": [f for f in self.feed if f["seq"] > since]}
 
 
