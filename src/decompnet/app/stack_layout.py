@@ -1,5 +1,8 @@
 """Frame diagnostics and an explicitly selected bitfield/helper experiment, never automatic padding."""
+import copy
 import re
+import threading
+from collections import OrderedDict
 
 from decomprepair.integer_repair_support import IDENT, edit
 from decomprepair.register_repairs import unwrap
@@ -9,8 +12,30 @@ from ..forks.csource import _blank, find
 
 
 def diagnose(arch, rows):
+    """The processor's stack-layout reading of these rows, kept for the last few hundred rows: it reads only its
+    arguments, and a deep search asked for the same rows' layout several times per candidate."""
     reader = arches.get(arch).stack_layout
-    return reader(rows) if reader else None
+    if not reader:
+        return None
+    try:
+        key = (arch, tuple(tuple(row) if isinstance(row, (list, tuple)) else row for row in rows))
+        hash(key)
+    except TypeError:
+        return reader(rows)
+    with _LAYOUTS_LOCK:
+        if key in _LAYOUTS:
+            _LAYOUTS.move_to_end(key)
+            return copy.deepcopy(_LAYOUTS[key])
+    found = reader(rows)
+    with _LAYOUTS_LOCK:
+        _LAYOUTS[key] = found
+        while len(_LAYOUTS) > 256:
+            _LAYOUTS.popitem(last=False)
+    return copy.deepcopy(found)
+
+
+_LAYOUTS = OrderedDict()
+_LAYOUTS_LOCK = threading.Lock()
 
 
 def text(arch, rows):

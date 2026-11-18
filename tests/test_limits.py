@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -216,8 +217,27 @@ def test_the_memory_watchdog_only_runs_on_macos(monkeypatch):
     """Elsewhere prlimit and systemd cap memory, and Windows has no ps to read it with."""
     monkeypatch.setattr(limits.sys, "platform", "win32")
     with limits.CompilerMemoryWatchdog(subprocess.Popen([sys.executable, "-c", "pass"])) as watchdog:
-        assert watchdog._thread is None
+        assert not watchdog._watched and watchdog not in limits._MONITOR.watches
         watchdog.proc.wait()
+
+
+def test_one_monitor_thread_watches_every_compiler(monkeypatch):
+    """Not a thread per compiler process: a deep pass starts hundreds a second."""
+    monkeypatch.setattr(limits.sys, "platform", "darwin")
+    before = {t.ident for t in threading.enumerate() if t.name == "compiler-memory-watchdog"}
+    procs = [subprocess.Popen([sys.executable, "-c", "import time; time.sleep(.6)"]) for _ in range(5)]
+    watches = [limits.CompilerMemoryWatchdog(proc, limit=1 << 40) for proc in procs]
+    for watch in watches:
+        watch.__enter__()
+    try:
+        names = [t for t in threading.enumerate() if t.name == "compiler-memory-watchdog"]
+        assert len(names) <= max(1, len(before))
+        assert all(w in limits._MONITOR.watches for w in watches)
+    finally:
+        for proc, watch in zip(procs, watches):
+            proc.wait()
+            watch.__exit__(None, None, None)
+    assert not any(w in limits._MONITOR.watches for w in watches) and not any(w.exceeded for w in watches)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="the memory watchdog is macOS's")

@@ -1,13 +1,41 @@
 """Allocator and scheduling clues from displayed MIPS rows, never a match verdict."""
+import copy
 import re
-from collections import Counter
+import threading
+from collections import Counter, OrderedDict
 
 from . import permuter_focus
 
 REGISTER = re.compile(r'\$[A-Za-z0-9]+\b')
 
 
+_DIAGNOSES = OrderedDict()
+_DIAGNOSES_LOCK = threading.Lock()
+
+
 def diagnose(rows, arch=None):
+    """The clues for these rows. It reads only its arguments, and a deep search asked for the same rows' clues
+    several times per candidate (search frontier, allocation search, carriers, the winner): its stack-layout and
+    register analysis was a third of a lane's processor time. Kept for the last few hundred rows, copied out."""
+    try:
+        key = (arch, tuple(tuple(row) if isinstance(row, (list, tuple)) else row for row in rows))
+        hash(key)
+    except TypeError:
+        return _diagnose(rows, arch)
+    with _DIAGNOSES_LOCK:
+        found = _DIAGNOSES.get(key)
+        if found is not None:
+            _DIAGNOSES.move_to_end(key)
+    if found is None:
+        found = _diagnose(rows, arch)
+        with _DIAGNOSES_LOCK:
+            _DIAGNOSES[key] = found
+            while len(_DIAGNOSES) > 256:
+                _DIAGNOSES.popitem(last=False)
+    return copy.deepcopy(found)
+
+
+def _diagnose(rows, arch=None):
     rows = permuter_focus.normalized(rows)
     from ..arch import get
     reader=get(arch or "mips").repair_search_hints
