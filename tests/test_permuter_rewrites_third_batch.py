@@ -1,4 +1,4 @@
-"""decomprepair 0.5.12 and 0.5.13's families reach the repairs the deep pass and autopilot try. Each comes from N64 functions
+"""decomprepair 0.5.12 to 0.5.15's families reach the repairs the deep pass and autopilot try. Each comes from N64 functions
 that used a whole 10,000-variant deep pass with no improvement; the library's own tests hold their shapes."""
 from decompnet import seeds
 from decompnet.app import draft_repairs
@@ -7,7 +7,11 @@ FAMILIES = ('assignment_at_use', 'comparison_sides', 'narrow_shift_pair', 'point
             'goto_search_loop', 'signed_division', 'stack_object_extent', 'stack_object_size', 'switch_range',
             'target_string_symbol', 'comma_flag_condition', 'compound_global_update',
             'conditional_ternary', 'duplicate_return_node', 'field_load_hoist', 'flag_returns', 'float_zero_local',
-            'narrow_widening', 'narrowed_call_argument', 'reloaded_global', 'short_counter_loop', 'unknown32_float')
+            'narrow_widening', 'narrowed_call_argument', 'reloaded_global', 'short_counter_loop', 'unknown32_float',
+            # 0.5.14 and 0.5.15
+            'goto_backward_loop', 'goto_forward_else', 'goto_shared_tail', 'float_unsigned_conversion',
+            'target_call_arity', 'symbol_address_local', 'field_width', 'integer_pointer_sum', 'word_block_copy',
+            'guard_inversion', 'stored_return_value')
 FLAGS = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
 HEADER = 'typedef int s32;\ntypedef unsigned int u32;\ntypedef short s16;\ntypedef float f32;\n'
 
