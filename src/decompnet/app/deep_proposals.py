@@ -53,6 +53,8 @@ class Worker:
             if line is None:raise NetworkError('Local proposal generator stopped. Start the deep search again.')
             result = json.loads(line)
             if 'error' in result:raise NetworkError('Local proposal generation failed: '+result['error'])
+            from .repair_generation import report_cut_off
+            report_cut_off(result.pop('cut_off',None) or ())
             return result
         except BaseException:
             self.close()
