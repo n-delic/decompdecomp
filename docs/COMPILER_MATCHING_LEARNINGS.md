@@ -7630,3 +7630,34 @@ All under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, adopted as exact by the 
   could have filled the gap (`lbu $v1,($a0); addiu $a0,1; lbu $v0,($a1); subu ...`). Scheduled gcc never leaves
   that. compiler_fingerprints reads it as "unscheduled loads"; a leaf without a frame shows no other habit.
 - **Evidence:** controlled, one function; byte-exact under the judge's linked verdict on a scratch copy.
+
+## KMC gcc 2.7.2: seven more hand matches from m2c drafts (N64, a game with about 1,600 functions)
+
+All under the game's own `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, adopted as exact by the judge; one function
+each unless noted.
+
+- **A display-list command's two words in the macro's order** (20 → 0). m2c wrote `w1` (the converted address)
+  before `w0`; the game's `gSPMatrix`-shaped code stores `w0 = 0xDA380003` first and `w1 = addr - 0x80000000`
+  second, the subtraction scheduled before both stores.
+- **Early returns instead of a result variable** (415 → 0, and a twin function the same). m2c's `v = 0; if (a) if (b)
+  v = p & -(c != 0); return v;` keeps `v` in `$v0` from the start, which moves the argument registers; writing
+  `if (c) return p; ... return 0;` lets gcc keep the argument where the game did. Writing the select as an `if` or
+  a ternary into the same variable doesn't help.
+- **if/else arms in the game's order** (410 → 0): the arm m2c put second (`field -= 9`) came first in the game,
+  with the inverted test; gcc 2.7.2 keeps source order for the fall-through arm.
+- **A `u16` loop counter** (430 → 0): m2c's `var = 0 & 0xFFFF; do { ... i += 1; var = i & 0xFFFF; } while ((i &
+  0xFFFF) < n)` is `for (u16 i = 0; i < n; i++)`.
+- **A `for` loop and an unsigned conversion written as one** (436 → 0): m2c's `f = (f64) x; if (x < 0) f += 2^32;`
+  is `(f32) (u32) x`; together with a `for` loop in place of `if (n) do ... while` the frame lost the 8 bytes m2c's
+  form cost.
+- **A global pointer read once into a local** (445 → 0): reading `D` again in the loop gave a second register and a
+  copy; a local `p = D;` used throughout matches, with the half-word global typed `u16` (`lhu`, m2c said `u8`) and
+  no temporary for `f & 0xF` (the game recomputes it).
+- **Two repair families since decomp-repair 0.5.31** (`read_before_assign`, `irregular_case`): see the earlier entry.
+
+Improved, not exact: `(u8)` mask on a shifted value held in a `u8` local (225 → 15; the last 15 are one
+register), a `u64` zero pair kept across a call with the call result in a temporary (285 → 140), a stack argument
+block as one struct (491 → 276). Tried without success: a flag copied into `$v0` before its test (`move $v0, $v1`,
+two functions: statement expressions, an inline helper, and moving the copy don't reproduce it), a library-style
+`f64` routine whose constants and compare come before the frame is made, and a `u8` global tested `== 0` then
+`< 0` (`lbu` then `bltz`).
