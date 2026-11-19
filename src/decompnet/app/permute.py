@@ -61,6 +61,7 @@ GENERATOR_SECONDS = 30  # a batch that takes longer is stuck: its randomizer ret
 READ_BYTES = 1 << 16
 MAX_SEED = 2**31  # seeds of the generator's runs: the same function and turn write the same variants
 REWRITE_MISSES = 200  # simple rewrites in a row that change nothing: none applies to the C
+SIMPLE_BATCH = 8  # simple rewrites written together, so they compile ahead (and together) while earlier ones are judged
 MAX_INSNS = 400  # default size ceiling; larger functions cost more time per variant
 REPAIR_MAX_INSNS = 1024  # deterministic hypotheses keep their own 32-attempt / 20-second cap
 IDLE_SECONDS = 180  # with no near misses, how long until the permuter looks again
@@ -750,13 +751,18 @@ class Permuter:
                         continue
                     if not batch:  # nothing new left to write from this C
                         break
-                else:  # one simple rewrite, mostly of the last C kept
+                else:  # simple rewrites, siblings of the last C kept (mostly)
                     base = cur_src if rng.random() < 0.85 else best_src
-                    batch = [mutate(base, rng, focus, header=simple_header)]
+                    # Several siblings at a time, as the generator's batches are: one at a time, each was compiled and
+                    # judged before the next was written, so a deep search's compile slots sat idle (99.7% of a lane's
+                    # compiles ran inline on a game whose C decomp-permuter couldn't read).
+                    written = [mutate(base, rng, focus, header=simple_header) for _ in range(SIMPLE_BATCH)]
                     # none of them applies to this C (lerp's `a + (b - a) * t`): a minute of trying burnt a core
-                    misses = 0 if batch[0] else misses + 1
+                    misses = 0 if any(written) else misses + len(written)
                     if misses >= REWRITE_MISSES:
                         break
+                    written = list(dict.fromkeys(cand for cand in written if cand))
+                    batch = self._stream_variants((chunk for chunk in [written]), agent, proj, fn, fork) if written else []
                 for cand in batch:
                     if cand is None or time.monotonic() >= deadline or st.stop.is_set():
                         break
@@ -1044,6 +1050,26 @@ class Permuter:
                 d = scoring.diff(target, cand)
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+        if getattr(result, 'batched', False) and (d.score < best or d.bytes_match):
+            # Compiled with other candidates (batch_compile.py): what is kept is always judged from its own compile.
+            batched_score = d.score
+            result = self.net._compile(proj, ctx["header"], source, fn)
+            if not result.ok:
+                self._trial_outcome = 'compile_failed'
+                return None
+            with search_evaluation():
+                cand, verdict, _ = self.net._evaluate(fn, proj, result.obj)
+            if cand is None:
+                return None
+            self._trial_output = output(cand)
+            with compile_timing.phase('score'):
+                d = scoring.diff(target, cand)
+            if verdict is not None:
+                d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+            compile_timing.add('batch_rechecks', 1)
+            if d.score != batched_score:
+                compile_timing.add('batch_disagreements', 1)
+                log.warning('%s: a batched compile scored %s, alone %s; the alone result is kept', fn['name'], batched_score, d.score)
         if d.score < best or d.bytes_match or source == fn['best_source']:
             # Winners and baselines feed subsequent local repairs and saved evidence.
             # Ordinary misses skip export/address reports; search feedback remains available.

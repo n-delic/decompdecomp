@@ -40,6 +40,11 @@ class JudgeMixin:
             source = canonical_source(fn, source)
         return super()._compile(proj, header, source, fn)
 
+    def _compile_batch(self, proj, header: str, sources, fn):
+        if self.is_rom(proj):
+            sources = [canonical_source(fn, source) for source in sources]
+        return super()._compile_batch(proj, header, sources, fn)
+
     def _rom_target(self, fn) -> match.RomTarget:
         cfg = self.cfg(self.project_store(fn['project_id']).one("SELECT config FROM projects WHERE id=?", fn["project_id"]))
         session = compile_sessions.current()
