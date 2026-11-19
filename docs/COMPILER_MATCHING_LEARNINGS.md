@@ -7700,7 +7700,7 @@ switch whose tails the game keeps apart (560; one shared call block scored 900).
 
 ### KMC gcc 2.7.2 `-O2`: round 10 hand matches in one N64 game (2026-11-20)
 
-Controlled: each result is the judge's linked verdict on a scratch copy, then adopted by the app's Try. Twenty-four
+Controlled: each result is the judge's linked verdict on a scratch copy, then adopted by the app's Try. Twenty-three
 new exact matches. Most came from rewriting m2c's pointer arithmetic as plain typed C (structs with the game's field
 offsets, prototypes with the right argument types); the notes below are what that alone did not give.
 
@@ -7743,3 +7743,36 @@ Wrong per-function settings, not changed: the release function of the sound-tabl
 project's default `-O2` with its saved C, but has an override that makes it miss (490). Two others score better under
 the default than under their override (a guard that reaches 300 instead of 420, and one that reached 285 instead of
 470 earlier).
+
+### A twelfth round on an N64 racing game: eight more exact functions (KMC gcc 2.7.2 `-O2`)
+
+Controlled: each result is the judge's linked verdict on a scratch copy, then adopted by the app's Try. Eight new
+exact matches, all under the functions' own settings; most came from writing m2c's draft as plain typed C.
+
+- **A loop-invariant mask kept in its own local** (60 → 0): an inlined table search returning `i | (id &
+  0x80000000)` hoists the mask and the game initialises the byte offset after it; `s32 hi = id & 0x80000000;`
+  declared before `off = 0` gives that order, the inline expression or a later declaration does not.
+- **A float wrapper passed through int registers** (1702 → 0): `void f(f32 *out, f32 x, f32 y, f32 z)` with the
+  floats arriving in `$a1`-`$a3` because the first argument is a pointer; nested calls `g(y, h(x, z)) * K` match.
+- **A `u16` loop counter compared with an `s32` count** (1740 → 0), and a struct-array walk `D[i]` rather than
+  m2c's scaled offset.
+- **A struct copy for three words** (1236 → 0): `obj->pos = cam->pos;` gives the game's three `lw` then three `sw`.
+- **Early `return 0` before the final dereference** (1290 → 0): `r = f(...); G = r; if (r == NULL) return 0;
+  return *r;`, where `if (r != NULL) return *r;` or a result variable both miss; a pointer local for the stored
+  global (`s16 *p = &G; *p = arg0; f((u8 *)p - 4, ...)`) and a plain `s32` for a `u16` field avoid an extra `andi`.
+- **A switch with a single `return` per case** (1440 → 0): `switch (x) { case 7: return 0x76; case 4: return 0x9F;
+  case 9: return 0x75; }` followed by a `for` loop with both conditions in its header.
+- **Nested null checks** (1510 → 0): `if (buf != NULL) { if (obj != NULL) { ... } else { *buf = 0; } }`, and the
+  remainder taken of the `s16` value: `(s16)((s16)t % 60)`.
+- **A search loop written as `for` with the counter in the increment** (1379 → 0): the increment then fills the
+  null test's delay slot; the copied fields written in the game's order with the zero store after the second
+  field.
+
+Improved, not exact: a three-way chance switch (1470 → 410, `case 0: default:` last), a sin/cos vector (1255 →
+875, frame and store order left), a scaled float call (1720 → 45, `$f0`/`$f2` swapped) and a guarded update whose
+two float tails the game cross-jumps (1620 → 1265).
+
+Tried without a match: a sound-table setter whose search returns through a separate register copy (395), a display
+list built through a global pointer whose four updates the game stores last (1440), a matrix push (1540), an audio
+init whose symbol addresses the game recomputes instead of keeping in a saved register (1745), and a saved-register
+order difference (35).
