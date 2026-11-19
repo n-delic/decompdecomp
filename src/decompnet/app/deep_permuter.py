@@ -83,6 +83,8 @@ def validate(net, slug, name, minutes, max_variants):
     from .boundary_repairs import blocked
     if fn['id'] in blocked(net,proj):raise NetworkError('Review this function boundary before starting a deep pass.')
     fn = prepare_source(net, proj, fn)
+    from .untyped_register import restore
+    fn = restore(net, proj, fn)
     if fn['status'] != 'open' or not fn['best_source'] or fn['best_score'] is None:
         raise NetworkError('Choose an unmatched function with saved, scored C first.')
     return proj, fn
