@@ -2360,6 +2360,11 @@ class Progress:
                            and not (name.startswith("best/") and "src/"+name[5:] in changed)
                            and name != "README.md"}
                 pending.update(initial_pending)
+                # (a header the save names but the folder lacks is written again, whatever the last sync recorded:
+                # the record said it was written, the folder had no such file, and every sync after refused the
+                # folder: "header 'common_local_source_….h' is not a file in include/")
+                pending.update({name: text for name, text in rendered.items()
+                                if name.startswith("include/") and name not in disk and name not in pending})
                 if before is None:
                     # A first sync upgrades the folder's manifest in one write: the merge above kept the database's
                     # work, and the new revision/saved_at make later first syncs safe (#101 review).
@@ -2623,7 +2628,11 @@ class Progress:
             moved = {name: text for name, text in rendered.items()
                      if name in judged_files and name in disk and saves._source_text(disk[name]) != saves._source_text(text)}
             foreground_files.update(moved)
-            if promoted or demoted or moved or (recheck is not None and recheck.foreground):
+            # (and a header the save names but the folder lacks: see the merge above)
+            missing_headers = {name: text for name, text in rendered.items()
+                               if name.startswith("include/") and name not in disk}
+            foreground_files.update(missing_headers)
+            if promoted or demoted or moved or missing_headers or (recheck is not None and recheck.foreground):
                 obsolete = {"best/"+name[4:]: disk["best/"+name[4:]] for name in promoted}
                 obsolete.update({"src/"+name[5:]: disk["src/"+name[5:]] for name in demoted})
                 obsolete.update({name: text for name, text in disk.items()
