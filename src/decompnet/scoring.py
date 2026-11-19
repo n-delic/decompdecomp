@@ -144,17 +144,24 @@ def asm_text(fn: FunctionObj) -> str:
     return "\n".join(f"{i.offset:5x}:  {i.text}" for i in disassemble(fn))
 
 
-def _classify(a: Insn, b: Insn) -> tuple[int, str]:
-    if a.text == b.text:
-        return 0, " "
-    ta, tb = _TOKEN.findall(a.operands), _TOKEN.findall(b.operands)
+def operand_marker(target: str, candidate: str) -> str:
+    """How two differing operand lists of one mnemonic differ: "r" (only registers), "s" (only stack offsets) or "i".
+    objdiff marks all of these "i"; the processor observations (arch/advice.py) sort its rows with this too."""
+    ta, tb = _TOKEN.findall(target), _TOKEN.findall(candidate)
     if len(ta) == len(tb):
         diffs = [(x, y) for x, y in zip(ta, tb) if x != y]
         if all(_REG.match(x) and _REG.match(y) for x, y in diffs):
-            return PENALTY_REGALLOC, "r"
-        if all(_NUM.match(x) and _NUM.match(y) for x, y in diffs) and _STACK.search(a.operands):
-            return PENALTY_STACKDIFF, "s"
-    return PENALTY_OPERAND, "i"
+            return "r"
+        if all(_NUM.match(x) and _NUM.match(y) for x, y in diffs) and _STACK.search(target):
+            return "s"
+    return "i"
+
+
+def _classify(a: Insn, b: Insn) -> tuple[int, str]:
+    if a.text == b.text:
+        return 0, " "
+    mark = operand_marker(a.operands, b.operands)
+    return {"r": PENALTY_REGALLOC, "s": PENALTY_STACKDIFF, "i": PENALTY_OPERAND}[mark], mark
 
 
 @dataclass

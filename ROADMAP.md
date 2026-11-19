@@ -46,6 +46,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file; else the project's build | ✓ over source files | ✓ | ✓ from scratch: per source file; else the project's build | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ (named by RTTI where the program has it) | ✓ (RTTI where the program has it) | — | — |
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ | ✓ | — | — |
+| Processor observations in briefs and compile feedback (stack frames, register chains, blocks, return paths) | ✓ | ✓ (not run on a PS1 game yet) | ✓ | — | — | ✓ (not run on a PSP game yet) | — | — | — | — | — | MIPS projects (objdiff's rows read as the ROM judge's; no argument-register shifts) |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | names (types and prototypes: —) | — | ✓ symbol table, DWARF 1 | — | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols (64-bit games': untested) | — (an XBE has none) | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ (between project-mode games; not run on two GameCube games yet) | ✓ (between PC projects) | ✓ (as PC's; not run on two Xbox games yet) | ✓ (between project-mode games; not run on two DS games yet) | — |
 | Named Claude accounts, assigned per helper; recorded usage per account | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -69,6 +70,10 @@ Where to start on a gap:
   component, but ROM exports still write the full symbol name (`rom/export_build.py`), and the save change does not
   account for Windows' 260-character path limit. Extend the same safe naming and path handling to exports and check
   complete paths on Windows.
+- **Processor observations** (`arch/advice.py`) read MIPS only: PowerPC, x86 and ARM need their own stack-frame,
+  register-chain, block and return-path readers (the `Arch` fields `stack_layout`, `repair_search_hints`,
+  `instruction_regions`, `source_return_paths`). In project mode the argument-register shift reader has no candidate
+  and target bytes to compare: objdiff gives the diff as text.
 - **C++ method drafts on N64 and PS1 (#232).** Their packed compilers build C only, so their briefs keep m2c's C
   instead of a `Class::method` draft that can never compile. Packing a C++-capable build (its `cc1plus`) and marking
   it `cplusplus` in `toolchains.toml` would give them method drafts, as the PS2's compilers already do.
@@ -123,6 +128,12 @@ Where to start on a gap:
 
 ## Recently done
 
+- **MIPS processor observations** in ROM and MIPS project-mode briefs and compile feedback: stack-frame and
+  saved-register shifts, register mismatch chains, delay-slot/control-flow observations, and bounded return paths.
+  Project mode reads objdiff's rows as the ROM judge's (registers, register and stack-offset differences, branch
+  destinations from the function's start). Raw ROM comparisons can also describe consistent argument-register
+  position shifts. These readers supply
+  advisory evidence through `Arch`; they do not edit source, infer a C ABI, change scores or accept a match.
 - **Browse compiler profiles.** Group applied ranges by compiler and arguments, compiler family, or address;
   sort by range count, verification status, compiler name, or address. Expand profiles and the default settings to see function links,
   argument lists and verification details. ROM profiles can be compared with the default, tested as a replacement,
