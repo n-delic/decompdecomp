@@ -348,8 +348,10 @@ as models. That indexed layout requires both RNC CRCs when compressed.
 
 The Model browser also recognizes EMshV010 meshes in byte-sum RNC blocks. It checks the
 decoded byte sum, table extents, corner indexes and optional ATEX trailer, then reconstructs
-local positions from signed deltas and triangulates the polygons. These previews show
-untextured geometry in local space.
+local positions from signed deltas and triangulates the polygons. For effect meshes, the
+mesh group and texture resource tables can identify a bank in the same checked directory.
+The preview uses each polygon’s texture slot and each corner’s UVs. Meshes with unresolved
+scene materials still display in local space.
 
 Open a model region, choose **Model mesh**, then **Preview asset**. Changing the mesh prepares
 its wireframe. The selector shows node, part and section identity; **Save notes** retains the

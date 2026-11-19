@@ -62,7 +62,8 @@ Open **Model browser** to rotate a local mesh or a supported assembled model, sw
 between textured, vertex-colour and wireframe rendering, follow related files and export
 a self-contained glTF. Supported PD3V cars use stored transforms; split scenery uses
 CRC-checked coordinate streams named by loader scripts. Texture matches require explicit
-loader-folder links. Missing or ambiguous links stay unresolved. First texture frames and
+loader-folder links for PD3V or matching effect resource tables for EMsh. Missing or
+ambiguous links stay unresolved. First texture frames and
 palettes are shown; animation, runtime lighting and special strip commands remain planned.
 A supported indexed cartridge directory is also recognized by structure: animations, collision,
 object placements, grid sections/bounds, music sequences and demo recordings gain typed labels
