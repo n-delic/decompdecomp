@@ -250,6 +250,37 @@ async function prepareLinuxVm() {
 }
 
 /* ------------------------------------------------------------------ settings page */
+function renderMapColorSettings() {
+  const choices = typeof window.mapColorChoices === "function" ? window.mapColorChoices() : [];
+  let group = "";
+  const rows = choices.map((choice) => {
+    const head = choice.group === group ? "" : `<p class="map-color-group">${esc(choice.group)}</p>`;
+    group = choice.group;
+    return `${head}<label class="map-color-row"><input type="color" data-map-color="${esc(choice.key)}" value="${esc(choice.value)}" aria-label="${esc(choice.label)} colour"><span>${esc(choice.label)}</span></label>`;
+  }).join("");
+  return `<p class="muted small">These colours are for the function map only. Changing them leaves the rest of the app alone; custom colours stay the same in light and dark. Reset follows the theme again.</p>
+    <div class="map-color-grid">${rows}</div>
+    <div class="row"><button class="ghost small-btn" id="mapColorsReset" type="button">Use theme colours</button></div>`;
+}
+function wireMapColorSettings(save) {
+  const root = $("setMapColors"), collect = () => Object.fromEntries(
+    [...root.querySelectorAll("[data-map-color]")].map((input) => [input.dataset.mapColor, input.value]));
+  root.querySelectorAll("[data-map-color]").forEach((input) => {
+    input.onchange = () => {
+      const colors = collect();
+      if (typeof window.applyMapColors === "function") window.applyMapColors(colors);
+      save({ map_colors: colors }, "Function map colours saved.");
+    };
+  });
+  $("mapColorsReset").onclick = () => {
+    if (typeof window.applyMapColors === "function") window.applyMapColors({});
+    save({ map_colors: {} }, "Function map colours follow the theme again.").then(() => {
+      if (!$("setMapColors") || !$("setMapColors").isConnected) return;
+      setHtml($("setMapColors"), renderMapColorSettings());
+      wireMapColorSettings(save);
+    });
+  };
+}
 async function showSettingsPage() {
   show("settingsPage");
   const st = await loadState();
@@ -294,6 +325,8 @@ async function showSettingsPage() {
   wireCopies($("setComputer"));
   $("themeSeg").querySelectorAll("[data-theme]").forEach((b) => { b.onclick = () => { setTheme(b.dataset.theme); $("themeSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); }; });
   const save = (body, msg) => api("/api/settings", { method: "POST", body }).then((s) => { S.st.settings = s; toast(msg); }).catch((e) => toast(esc(e.message), "err"));
+  setHtml($("setMapColors"), renderMapColorSettings());
+  wireMapColorSettings(save);
   $("romLibrary").value = st.settings.rom_library || "";
   $("romLibrarySave").onclick = () => save({ rom_library: $("romLibrary").value.trim() }, "ROM library saved.");
   $("romLibraryPick").onclick = async () => {

@@ -2,6 +2,23 @@
 /* ------------------------------------------------------------------ map */
 let colors = null, geo = null, animating = false;
 
+/* The compiler map (MIPS ROM projects): each square in the colour of the compiler its code looks like, the game's
+   main compiler in grey; a ringed square looks built by another compiler than the one it's built with today. */
+const CC_COLORS = Array.from({ length: 8 }, (_, i) => `--map-cc-${i}`);
+const MAP_COLOR_FIELDS = [
+  { key: "open", label: "To do", group: "Progress", css: "--map-open" },
+  { key: "tried", label: "Tried", group: "Progress", css: "--map-tried" },
+  { key: "close", label: "Close to matching", group: "Progress", css: "--map-close" },
+  { key: "work", label: "Working", group: "Progress", css: "--map-work" },
+  { key: "match", label: "Matched", group: "Progress", css: "--map-match" },
+  { key: "polished", label: "Polished", group: "Progress", css: "--map-polished" },
+  { key: "aside", label: "Set aside", group: "Progress", css: "--map-aside" },
+  { key: "not_c", label: "Not C", group: "Progress", css: "--map-not-c" },
+  { key: "ink", label: "Outline", group: "Progress", css: "--map-ink" },
+  ...CC_COLORS.map((css, i) => ({ key: `cc${i}`, label: `Compiler ${i + 1}`, group: "Compiler map", css })),
+];
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
 // a 1×1 canvas turns any CSS colour (oklch, color-mix, color(srgb …)) into the sRGB bytes the map is drawn with
 const swatch = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
 function cssColor(name) {
@@ -14,14 +31,35 @@ function cssColor(name) {
   probe.remove();
   return [...swatch.getImageData(0, 0, 1, 1).data.slice(0, 3)];
 }
-function readColors() {
-  colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), match: cssColor("--match"), polished: cssColor("--polished"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
-             notC: cssColor("--not-c"), cc: CC_COLORS.map(cssColor) };
+function colorHex(value) {
+  return "#" + value.map((part) => Math.max(0, Math.min(255, Number(part) || 0)).toString(16).padStart(2, "0")).join("");
 }
+function mapColorChoices() {
+  return MAP_COLOR_FIELDS.map((field) => ({ key: field.key, label: field.label, group: field.group,
+                                            value: colorHex(cssColor(field.css)) }));
+}
+// Overrides live on the root as map-only variables: Settings can recolour the map without restyling the app.
+function applyMapColors(overrides) {
+  const root = document.documentElement;
+  for (const field of MAP_COLOR_FIELDS) {
+    const value = overrides && typeof overrides[field.key] === "string" && HEX_COLOR.test(overrides[field.key])
+      ? overrides[field.key].toLowerCase() : null;
+    if (value) root.style.setProperty(field.css, value);
+    else if (root.style.removeProperty) root.style.removeProperty(field.css);
+  }
+  colors = null; baseDirty = true;
+  if (S.map.length) drawMap();
+  return mapColorChoices();
+}
+window.mapColorChoices = mapColorChoices;
+window.applyMapColors = applyMapColors;
 
-/* The compiler map (MIPS ROM projects): each square in the colour of the compiler its code looks like, the game's
-   main compiler in grey; a ringed square looks built by another compiler than the one it's built with today. */
-const CC_COLORS = ["--cc-0", "--cc-1", "--cc-2", "--cc-3", "--cc-4", "--cc-5", "--cc-6", "--cc-7"];  // app.css
+function readColors() {
+  colors = { open: cssColor("--map-open"), tried: cssColor("--map-tried"), work: cssColor("--map-work"),
+             match: cssColor("--map-match"), polished: cssColor("--map-polished"), hi: cssColor("--map-close"),
+             ink: cssColor("--map-ink"), aside: cssColor("--map-aside"), notC: cssColor("--map-not-c"),
+             cc: CC_COLORS.map(cssColor) };
+}
 let ccIndex = new Map();
 const PROGRESS_LEGEND = $("mapLegend").innerHTML;
 function compilerKinds() {
@@ -72,6 +110,7 @@ $("mapView").addEventListener("click", (ev) => {
   S.mapView = b.dataset.view;
   renderMapView(); mapChanged(); drawMap();
 });
+$("mapColorsBtn").onclick = () => { location.hash = "#/settings"; };
 const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
 const rgb = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
@@ -122,7 +161,7 @@ function cellColor(f) {
   if (S.mapView === "compiler" && f.cc) return [colors.cc[ccIndex.get(f.cc) ?? 0], 1];
   if (f.status === "matched") return [f.polished ? colors.polished : colors.match, 1];
   // set aside: red, as no C makes it; lighter when its shape told (assembly, a piece), full when agents agreed
-  if (f.status === "asm") return [colors.notC, f.not_c ? 1 : 0.45];
+  if (f.status === "asm") return [colors.aside, f.not_c ? 1 : 0.45];
   if (f.best != null) return [mix(colors.tried, colors.hi, Math.pow(pctOf(f.best, f.insns) || 0, 3)), 1];
   return [colors.open, 1];
 }

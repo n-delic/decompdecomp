@@ -300,6 +300,8 @@ async function copyText(text) {
 
 async function loadState() {
   S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`;
+  // The palette is saved with the other settings. Apply it before the map or Settings paints again.
+  if (typeof window.applyMapColors === "function") window.applyMapColors(S.st.settings?.map_colors || {});
   const i = S.st.install || {}, branch = !S.st.dev && i.channel === "branch";
   $("navBranch").hidden = !branch;
   if (branch) {
