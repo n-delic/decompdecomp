@@ -3,6 +3,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 from ..network import NetworkError
 from ..rom.export_process import progress_step
@@ -174,12 +175,25 @@ def prepare(net, slug, path, root, log):
         # repository inputs, and may differ from an earlier export's build cache.
         generated = {str(p.relative_to(stage)) for p in stage.rglob('*')
                      if p.is_file() and p.relative_to(stage).parts[0] != 'build'}
-        # Refuse collisions with files not owned by the old portable save.
-        for name in generated:
+        # The verified build needs the current extraction. Save earlier local
+        # copies in the same publication transaction so a cancelled upgrade
+        # restores the original files. Both trees are outside the Git allowlist.
+        backup_root = Path('.decomp-extraction-backups')/uuid4().hex
+        backups = set()
+        for name in sorted(generated):
             target = repository_sync.inside(destination, name)
-            if target.exists() and name not in old and name != '.gitignore' and repository_sync.digest(target) != repository_sync.digest(stage/name):
-                raise NetworkError('Repository generation would replace an existing file: '+name+'. Its contents were preserved.')
-            baseline.setdefault(name, repository_sync.digest(target))
+            previous = repository_sync.digest(target)
+            if target.exists() and name not in old and name != '.gitignore' and previous != repository_sync.digest(stage/name):
+                if previous is None or Path(name).parts[0] not in ('asm', 'assets'):
+                    raise NetworkError('Repository generation would replace an existing file: '+name+'. Its contents were preserved.')
+                backup = (backup_root/name).as_posix()
+                copy = stage/backup
+                copy.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(target, copy)
+                if repository_sync.digest(copy) != previous:
+                    raise NetworkError('An extracted file changed while saving its local copy: '+name+'. Retry.')
+                backups.add(backup)
+            baseline.setdefault(name, previous)
         destination.mkdir(parents=True, exist_ok=True)
         target = destination/'progress'
         # Old flat progress paths move under progress/, while .git and every unrelated file remain. Move them and
@@ -188,9 +202,11 @@ def prepare(net, slug, path, root, log):
         # for good. The batch defers every sync of this project, then syncs once, in the new folder.
         with net.progress.batch(slug, logger=log):
             repository_sync.publish(
-                destination, stage, generated | old.keys(), baseline, log,
+                destination, stage, generated | backups | old.keys(), baseline, log,
                 progress=lambda done, total: progress_step(log, 5, "Publishing repository files", done=done, total=total),
             )
             net._update_cfg(slug, lambda current: current.update(**moved_config(destination)), synchronize=False)
+    if backups:
+        log(f'Previous extracted files saved locally in {backup_root.as_posix()}.')
     log('Full rebuildable repository prepared. Game images and extracted data remain ignored.')
     return target
