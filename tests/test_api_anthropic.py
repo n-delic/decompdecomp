@@ -140,7 +140,6 @@ def test_the_helper_loop_runs_through_the_messages_api(tmp_path, monkeypatch):
     from tests.test_agents import _game
     net = _game(tmp_path)
     manager = agents.Manager(net, tmp_path, "http://127.0.0.1:9/mcp")
-    monkeypatch.setattr(manager, "prepare_session", lambda *a, **kw: None)
     monkeypatch.setattr(manager, "prompt", lambda s: "match a function")
     monkeypatch.setattr(manager, "app_instructions", lambda s: "rules")
     s = agents.Session("api-a", "api", "Anthropic #1", "game", "api-a", {
