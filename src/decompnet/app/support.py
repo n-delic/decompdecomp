@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging.handlers
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -22,6 +23,13 @@ from ..agents.api import API_PRESETS, endpoint_entry
 from ..network import NetworkError
 from ..rom import RomError
 from .agents import PER_SESSION
+
+# Map-only colour overrides. They stay separate from the app's theme tokens so a map stays readable without
+# changing buttons, badges or the rest of the interface.
+MAP_COLOR_KEYS = ("open", "tried", "close", "work", "match", "polished", "aside", "not_c", "ink") + tuple(
+    f"cc{i}" for i in range(8)
+)
+HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}\Z")
 
 MAX_DISC = 16 * 1024 * 1024 * 1024  # dual-layer DVD and then some
 
@@ -289,6 +297,28 @@ class Settings:
     def remove_endpoint(self, eid: str) -> None:
         self.data["endpoints"] = [e for e in self.endpoints() if e["id"] != eid]
 
+    def map_colors(self) -> dict[str, str]:
+        stored = self.data.get("map_colors")
+        if not isinstance(stored, dict):
+            return {}
+        return {key: value.lower() for key, value in stored.items()
+                if key in MAP_COLOR_KEYS and isinstance(value, str) and HEX_COLOR.fullmatch(value)}
+
+    def save_map_colors(self, value) -> dict[str, str]:
+        """Validate the whole palette before saving it: a bad colour must not half-change app settings."""
+        if value is None or value == {}:
+            colors = {}
+        elif isinstance(value, dict) and set(value) <= set(MAP_COLOR_KEYS):
+            colors = {}
+            for key, color in value.items():
+                if not isinstance(color, str) or not HEX_COLOR.fullmatch(color):
+                    raise ValueError(f"{key} must be a six-digit hex colour such as #3355cc.")
+                colors[key] = color.lower()
+        else:
+            raise ValueError("Choose only the listed function-map colours as six-digit hex values.")
+        self.data["map_colors"] = colors
+        return colors
+
     def public(self) -> dict:
         def masked(e: dict) -> dict:
             out = {k: v for k, v in e.items() if k != "api_key"}
@@ -304,6 +334,7 @@ class Settings:
                 "auto_update": bool(self.data.get("auto_update")), "check_updates": self.data.get("check_updates", True) is not False,
                 "auto_compiler": bool(self.data.get("auto_compiler")),
                 "rom_library": str(self.data.get("rom_library") or ""),
+                "map_colors": self.map_colors(),
                 "bridges_removed_seen": bool(self.data.get("bridges_removed_seen")),
                 "launcher": _launcher(self.data.get("launcher") or {}), "recent_models": self.data.get("recent_models") or {}}
 

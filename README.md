@@ -132,6 +132,8 @@ with `/login`, and choose the account when you start a helper agent.
 **ROM library.** In **Settings → ROM library**, choose a folder with your extracted game files. Click **Search ROM library** on an imported project's setup page to fill in a
 verified match.
 
+**Function map colours.** If the map's states are hard to tell apart, open **Settings → Function map colours**. Choose a colour for each state or compiler; **Use theme colours** goes back to the current light or dark palette. These choices change the map and its legend only.
+
 **Reference sources.** Open a project's **Reference sources** tab to add local C/C++ files and headers, Markdown, text, or HTML.
 Search returns private, read-only snapshots with relative paths and line numbers. Refresh updates ordinary text snapshots;
 disabling hides them from search. Agents cannot read a source until you explicitly allow access. Opted-in excerpts are sent

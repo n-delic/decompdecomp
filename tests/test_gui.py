@@ -94,6 +94,13 @@ def test_a_big_games_map_redraws_what_changed_and_polls_dont_pile_up():
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_function_map_colors_can_be_picked_saved_and_reset_without_restyling_the_app():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_map_colors.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_the_function_view_opens_on_best_and_switches_to_latest_after_a_manual_compile():
     """A DS game's function drawer had no latest/best switch: every fork's function was hidden from it. It shows
     wherever a best attempt differs from the source now, opens on the best (what someone fixing a function builds
