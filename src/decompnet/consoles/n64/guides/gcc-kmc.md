@@ -1633,3 +1633,8 @@ When the target loads through an argument (`lwc1 $f.., 0($a0)`) between its regi
 `addiu $sp`, and your build keeps every save at the top, the function is still KMC's: write the pointers it only
 reads as `const` (`const f32 *arg0`, or `M2C_FIELD(arg0, const f32 *, 0)` for each read, writes left plain). gcc
 2.7.2's scheduler moves only read-only loads among the stack stores. Three such functions went from 580-1275 to exact.
+
+## A constant added to a global lands on the wrong operand: give the sum its own statement
+
+combine reassociates `a + g + 0xFFFC` and may put the constant on `a`. When the target adds it to the loaded global,
+write `t = g + 0xFFFC; return (a + t) & 0xFFFF;`: a separate statement keeps the constant where it was written.
