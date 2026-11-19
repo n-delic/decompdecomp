@@ -7697,3 +7697,49 @@ unmasked (670 → 180); a `goto` to a shared block after an early `return` (535 
 Tried without success: a bitfield-shaped `lw`/`and`/`sw` whose store the game delays past two other stores (535),
 a 12-byte table walk whose offset the game copies each pass (540; a struct array scored 1665), and a nested
 switch whose tails the game keeps apart (560; one shared call block scored 900).
+
+### KMC gcc 2.7.2 `-O2`: round 10 hand matches in one N64 game (2026-11-20)
+
+Controlled: each result is the judge's linked verdict on a scratch copy, then adopted by the app's Try. Twenty-four
+new exact matches. Most came from rewriting m2c's pointer arithmetic as plain typed C (structs with the game's field
+offsets, prototypes with the right argument types); the notes below are what that alone did not give.
+
+- **A sound table's search loop is a `static inline` helper that the callers assign back into their argument**
+  (a family of eleven functions, 455–1790 → 0). The game walks eight 0xFF8-byte entries with a separate byte offset
+  (`addiu $v1, $v1, 0xFF8`), keeps the counter in the result's register and copies the argument first. All three
+  had to be written: `u32 i = 0; s32 key = id & 0x7FFFFFFF; s32 off = 0; for (; i < 8; i++, off += sizeof(E)) if
+  (*((u8 *)&tbl[0].busy + off) == 0 && *(s32 *)((u8 *)&tbl[0].id + off) == key) return i | (id & 0x80000000); return
+  -1;` and the caller `arg0 = find(arg0);`. Indexing `tbl[i]` left the multiply in the loop (900); a separate
+  result local lost the copy (660); declaring `key` before `i` or `off` before `i` cost 5. The locked variants are
+  `lock(); inline_body(arg0, ...); unlock();` with the unlocked function's body as a second `static inline`.
+  `return find(id) != -1;` is the whole of the query (`nor`/`sltu`).
+- **Reusing one local for two values** (two functions, 770 and 887 → 0). The game keeps the frequency a call
+  returned and the value later passed to another call in the same register: `v = f(); D = v; *p = v; if (...) v =
+  2; ... g(..., v);`. Separate locals put the second in `$a3` directly. Likewise `v = s->b30; if (v) v = tbl[v];
+  else { ...; v = s->b32; }` where m2c read the field twice.
+- **A switch's compare constant kept across a call** (887 → 0 with the previous fix): the game holds `1` in `$s3`
+  for both the switch dispatch and an `== 1` test after a call. `s32 one = 1;` compared with `v == one` gives it.
+- **An `if` whose arms are written in the game's order matters for `bnel`** (950 → 0): `if (!s->b2D) w |= 1; else
+  s->h30 = 0;`, not the negated form.
+- **Bitfields for masked word stores** (720 → 0): `p->w = (p->w & 0xFFFF0FFF) | 0x1000` then `& ~0xF00 | 0x100` is
+  two 4-bit fields of a `u32` set to 1 (`hi:16, b:4, c:4, lo:8`).
+- **A global byte reached as an element of its array** (960 → 0): the game hoists `&D_8010A4C2` into a saved
+  register in a loop; `D_8010A4C0[2] &= 0xDE` does it, `D_8010A4C2 &= 0xDE` reloads, a pointer local scored 320.
+- **A switch's cases written so that two identical cases stay apart** (1160 → 0): two cases with the same body
+  merge; one written `if (f) id = K; else id = rnd(); goto play;` and the other `id = K; if (!f) goto rnd; goto
+  play;` keep the game's two copies.
+- **`(a || b)` folded into one condition** (1125 → 0): `if (x == -1 && (y >= z || u < w)) return 1; return 0;`;
+  nested ifs or a returned expression miss.
+- **A `u16` parameter whose callers pass an `s32`** (700 → 0): the game passes the incoming register straight on
+  (`move`), so the parameter is `s32` even though it is stored with `sh`.
+
+Improved, not exact: a find loop whose result picks between two variables (1000 → 155), a task-setup loop whose
+two equal addresses the game loads twice (1000 → 515; `D_800AC1E0 - func_800AC110` and `D_800AC1E0` would need two
+symbol names for one address), an inlined guard returning a flag (940 → 420, 1062 → 640), a sound call whose last
+copy is `andi` instead of `move` (551 → 200), and a register swap that only the temporary's statement order moved
+(30 → 25).
+
+Wrong per-function settings, not changed: the release function of the sound-table family matches exactly under the
+project's default `-O2` with its saved C, but has an override that makes it miss (490). Two others score better under
+the default than under their override (a guard that reaches 300 instead of 420, and one that reached 285 instead of
+470 earlier).
