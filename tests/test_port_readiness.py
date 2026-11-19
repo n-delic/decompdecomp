@@ -144,6 +144,9 @@ def test_the_kit_says_where_each_libultra_function_comes_from():
         "native"}
     assert {_sdk_group(n) for n in ("osSpTaskYielded", "__osLeoResume", "osRomBase", "__osPiAccessQueue")} == {"glue"}
     assert _sdk_group("osCreateThread") == "replaced"  # decompdecomp's glue for libultraship has threads
+    # libultra's printf is the host's, every helper of its xprintf.c and xldtob.c with it: an N64 game's _Ldunscale,
+    # _Genld and _Putfld were left as its own code, so library detection's set-aside never took them
+    assert {_sdk_group(n) for n in ("_Printf", "_Litob", "_Ldtob", "_Ldunscale", "_Genld", "_Putfld")} == {"replaced"}
     assert _sdk_group("draw_hud") is None and "osCreateThread" not in LIBULTRASHIP
 
 

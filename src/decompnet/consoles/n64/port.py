@@ -62,7 +62,9 @@ def _sdk_group(name: str) -> str | None:
         return None
     if name in _MATH:  # before the C library: libultra's __cosf is its own, not the host's cosf
         return "native"
-    if name in LIBULTRASHIP or name in GLUE_PROVIDES or bare in _LIBC or name in _OS_INTERNAL or re.match(r"(Printf|Litob|Ldtob)$", bare):
+    # (libultra's printf is the host's: _Printf and every helper of its xprintf.c and xldtob.c; an N64 game's _Ldunscale,
+    # _Genld and _Putfld were left as its own code, and deep passes spent whole budgets on them)
+    if name in LIBULTRASHIP or name in GLUE_PROVIDES or bare in _LIBC or name in _OS_INTERNAL or re.match(r"(Printf|Litob|Ldtob|Ldunscale|Genld|Putfld)$", bare):
         return "replaced"
     if (re.match(r"gu[A-Z]", bare) or name in _MATH or re.match(r"(n_)?al[A-Z]|Mus[A-Z]", bare)
             or name in _SYNTH_INTERNAL):
