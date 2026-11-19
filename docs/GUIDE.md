@@ -231,15 +231,14 @@ different build, which is planned.
   2017's (what their compilers generate differently can't match until they come), 2012 and 2013 with 2010's (little
   matches). 64-bit games start too, and build with Visual C++ 2017's 64-bit compiler, the only 64-bit one decompdecomp
   has (a game built with another says so, unless your own x64 copy has it: your own copies build 64-bit games too):
-  their functions come from the program's
-  own table (.pdata), not a guess. Programs for other processors (ARM), mostly-/GL ones and protected ones aren't
-  started, and the import says why. Visual C++ 2017 (32- and 64-bit) runs through wine on Linux and macOS, which you
-  install. decompdecomp never removes or gets around DRM. A game that keeps code in DLLs of its own comes with them when
-  you give its path (the game's folder, or its .exe; a dropped file comes alone): each DLL is a program of the project,
-  with its source files in `src/auto/<its name>/`, its exports' names and its own Visual C++. The C runtime, DirectX
-  wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI plugins and DLLs built long after the game (mods)
-  are left out, and the import's log says which and why. [VISUAL-CPP.md](VISUAL-CPP.md) lists the Visual C++ builds
-  decompdecomp has, how it picks one, and where their code changes.
+  their functions come from the program's own table (.pdata), not a guess. Programs for other processors (ARM),
+  mostly-/GL ones and protected ones aren't started, and the import says why. Visual C++ 2017 (32- and 64-bit) runs
+  through wine on Linux and macOS, which you install. decompdecomp never removes or gets around DRM. A game
+  that keeps code in DLLs of its own comes with them when you give its path (the game's folder, or its .exe; a dropped
+  file comes alone): each DLL is a program of the project, with its source files in `src/auto/<its name>/`, its exports'
+  names and its own Visual C++. The C runtime, DirectX wrappers, middleware (Miles, Bink, FMOD...), copy protection,
+  ASI plugins and DLLs built long after the game (mods) are left out, and the import's log says which and why.
+  [VISUAL-CPP.md](VISUAL-CPP.md) lists the Visual C++ builds decompdecomp has, how it picks one, and where their code changes.
 
 Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status of its own project.
 
@@ -268,14 +267,14 @@ projects. They build the game again on each build.
 
 ## Installation details
 
-On Linux, the installer installs [uv](https://docs.astral.sh/uv/), the app, the compilers and the m2c draft
-decompiler. On Windows, the release MSI bundles Python and the app. All compilers are pinned and have
-checksums. To start the app, use your apps menu or type `decomp` in a terminal.
+On Linux, the installer installs [uv](https://docs.astral.sh/uv/), the app, the compilers and the m2c draft decompiler. On Windows, the release MSI
+bundles Python and the app. All compilers are pinned and have checksums. To start the app, use your apps menu or
+type `decomp` in a terminal.
 
-**The .deb, the .rpm and the AppImage.** Each [release](https://github.com/n-delic/decompdecomp/releases) also has a
-`.deb` (`sudo apt install ./decompdecomp_*.deb`), an `.rpm` (`sudo dnf install ./decompdecomp-*.rpm`) and an AppImage
-for x86_64 Linux. They contain their own Python and uv. The app's Setup gets the compilers. These copies do not
-update themselves: the app tells you when a new version is available, and you download it from the releases.
+**The .deb, the .rpm and the AppImage.** Each [release](https://github.com/n-delic/decompdecomp/releases) also has a `.deb` (`sudo apt install ./decompdecomp_*.deb`),
+an `.rpm` (`sudo dnf install ./decompdecomp-*.rpm`) and an AppImage for x86_64 Linux. They contain their
+own Python and uv. The app's Setup gets the compilers. These copies do not update themselves: the app tells you
+when a new version is available, and you download it from the releases.
 
 **Windows.** The release setup bundle installs missing WebView2 and .NET Framework 4.8 runtimes, then opens the app
 installer, which lets you choose an installation folder and whether to add a desktop shortcut. Linux-only period
@@ -298,19 +297,81 @@ window; the tray icon where available (or `decomp`) brings it back. **Quit** end
 **Updates.** When a new version is available, the app asks you one time. One click installs it and restarts the app.
 Helper agents continue their work. To change this behavior, go to Settings.
 
+## On a server: decomp serve
+
+decompdecomp needs no desktop. On a machine with no screen to open a window on — a server in a colo, say —
+`decomp serve` runs the same app in a terminal: the server, the agents and the autopilot, with a text front end (the
+TUI) in place of the window. The full GUI reaches your own browser through an SSH tunnel. Use the TUI, the browser,
+or both at once.
+
+`decomp serve` takes no options and stays in the foreground, so run it inside `screen` or `tmux` to keep it running
+after you log out:
+
+```
+screen -S decomp
+decomp serve
+```
+
+Detach with `Ctrl-A d` (`tmux`: `Ctrl-B d`) and log out; later, `screen -r decomp` (`tmux attach`) brings the TUI
+back. When it updates itself, it comes back as `decomp serve` again.
+
+**The TUI.** Three screens — `1` your projects, `2` the function map, `3` the agents at work and the app's log —
+with `?` listing the keys. This first version only reads: everything that changes a project is done in the browser.
+`q` stops decompdecomp and its agents (it asks first); to leave it running, detach from `screen` or `tmux` instead.
+`kill` or `decomp stop` in another shell stops it cleanly too: helpers stopped and progress saved, as Quit does.
+What the screens show is in [TUI.md](TUI.md).
+
+**The browser.** On your own machine, open a tunnel to the server and browse to the address at the tunnel's end:
+
+```
+ssh -L 6464:127.0.0.1:6464 user@server
+```
+
+The second 6464 is the app's port on the server: it's 6464 unless something else there holds it, and the TUI's top
+line shows the one it took. The first is the port on your machine, and any free one will do — if your own
+decompdecomp already holds 6464, use `ssh -L 6465:127.0.0.1:6464 user@server` and browse to
+`http://127.0.0.1:6465`.
+
+The TUI opens on a one-time link for the browser: select it with the mouse and copy it as anywhere in your terminal
+(`Escape` closes it; `b` shows a fresh one). Open it through the tunnel — on another port at your end, change the
+port in the link to that one. It pairs that browser with the app, and everything works as in the window. Each link
+works once, within 15 minutes; after a restart, pair again. Running `decomp serve` again in another shell, while the
+first one runs, prints a fresh link too. Browsing to the app without pairing shows a page saying how to get a link.
+
+The app still listens on `127.0.0.1` only: nothing is exposed on the network, and reaching it takes a login to the
+server. A paired browser is accepted only under the names `127.0.0.1` and `localhost`, so a web page can't reach the
+app by pointing a name of its own at your machine, and changes still need a header a page from another site can't
+send. Sessions live in the app's memory: a browser stays paired until the app stops. A SOCKS proxy
+(`ssh -D 1080 user@server`) works as well: point the browser at `127.0.0.1:1080`, have it send localhost through
+the proxy, and browse to the app's own address.
+
+Two things the browser can't do on a server: the **Browse…** buttons open a file chooser on the server's screen,
+which a server doesn't have — type the path instead. And a game to import has to be on the server already (copy it
+there with `scp`).
+
+**Colours.** The map uses the window's colours where the terminal shows 256 colours or more, and one basic colour per
+status where it doesn't (the Linux console, or `screen` without `term screen-256color` in `~/.screenrc`). Its colours
+are the dark theme's; for a light terminal, `Ctrl-P` in the TUI picks a light theme.
+
+A copy run from a git checkout is a development copy, with its own projects folder (`~/Decomp-dev`) and port
+(6474): the TUI's top line and its empty projects screen say so.
+
+Where there's no terminal at all (a service, or output to a pipe), `decomp serve` serves the browser only: it prints
+the address and the pairing link, and waits. `Ctrl-C` (on Windows, `Ctrl-Break` too), `kill` or `decomp stop` stops
+it cleanly.
+
 ## Your work
 
 **Saving.** decompdecomp saves the work on each N64, PlayStation and PlayStation 2 project by itself as it changes, as plain
-files in the project's `progress/` folder: matched C, best attempts, headers, names, notes, compiler ranges and
-settings. It never saves the game. **Save now**, in the project's Settings, saves at once, also to another folder.
-You can edit files in `progress/` or pull another contributor's changes into it; decompdecomp reads them on the next
-project action and checks the saved functions again. `progress/` is the only part of a project to share or keep in git:
-matched C in `src/`, best attempts in `best/`, the shared headers in `include/`, and `decompdecomp.json` (the game's
-fingerprint, compiler, layout, names, notes and settings). The rest of the project's folder (the ROM, `asm/`, `assets/`, the
-build files) is made from your copy of the game: keep it to yourself. To continue on another computer, copy the folder (or
-push it to git) and click **New project → Open a saved project**. decompdecomp checks that your copy is the same game,
-and judges every saved function again. GameCube, Wii and PC projects and public decomps keep their work in their own
-git repository.
+files in the project's `progress/` folder: matched C, best attempts, headers, names, notes, compiler ranges and settings.
+It never saves the game. **Save now**, in the project's Settings, saves at once, also to another folder. You can edit files in
+`progress/` or pull another contributor's changes into it; decompdecomp reads them on the next project action and
+checks the saved functions again. `progress/` is the only part of a project to share or keep in git: matched C in `src/`,
+best attempts in `best/`, the shared headers in `include/`, and `decompdecomp.json` (the game's fingerprint, compiler,
+layout, names, notes and settings). The rest of the project's folder (the ROM, `asm/`, `assets/`, the build files) is made from
+your copy of the game: keep it to yourself. To continue on another computer, copy the folder (or push it to git) and click
+**New project → Open a saved project**. decompdecomp checks that your copy is the same game, and judges every saved
+function again. GameCube, Wii and PC projects and public decomps keep their work in their own git repository.
 
 **Polish.** Matched C proves the code is right, but it starts raw: `func_80000A0C`, `D_8004AE30`, `arg0`, padded
 structs and raw offsets. Once half of a ROM project matches, **Start agents** offers a second task: **Polish matched

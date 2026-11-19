@@ -245,27 +245,28 @@ def _stream(cmd: list[str], log, failure: str) -> None:
         raise RuntimeError(f"{failure} (exit code {proc.returncode}): {' / '.join(tail[-3:])}")
 
 
-def restart(port: int, secret: str, window: bool) -> None:
-    """Become the newly installed version: same process, same port and secret, and the window again when it was
-    open (the old one closes as this process is replaced). Never returns."""
+def restart(port: int, secret: str, window: bool, serve: bool = False) -> None:
+    """Become the newly installed version: same process, same port and secret, the window again when it was open
+    (the old one closes as this process is replaced), and `serve` again when this was `decomp serve`. Never returns."""
     env = dict(os.environ, DECOMP_RESTART=json.dumps({"port": port, "secret": secret, "window": window}))
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.flush()
         except (OSError, ValueError, AttributeError):
             pass
-    argv = [sys.executable, "-m", "decompnet.app.cli", "--port", str(port)]
+    argv = [sys.executable, "-m", "decompnet.app.cli", "--port", str(port), *(["serve"] if serve else [])]
     if not Path(sys.executable).exists():  # the environment moved: its decomp command starts the same way
         bindir = subprocess.run([uv() or "uv", "tool", "dir", "--bin"], capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
-        argv = [str(Path(bindir) / ("decomp.exe" if sys.platform == "win32" else "decomp")), "--port", str(port)]
+        argv = [str(Path(bindir) / ("decomp.exe" if sys.platform == "win32" else "decomp")), "--port", str(port),
+                *(["serve"] if serve else [])]
     os.execve(argv[0], argv, env)
 
 
 class Updater:
     """The app's update state: the last check (cached) and an update being installed."""
 
-    def __init__(self, before_restart, port: int, secret: str):
-        self.before_restart, self.port, self.secret = before_restart, port, secret
+    def __init__(self, before_restart, port: int, secret: str, serve: bool = False):
+        self.before_restart, self.port, self.secret, self.serve = before_restart, port, secret, serve
         self.last: dict | None = None
         self.job = {"state": "idle", "log": [], "error": None}
         self._lock = threading.Lock()
@@ -306,7 +307,7 @@ class Updater:
             time.sleep(1)  # the page sees "restarting" before the server goes away
             try:
                 self.before_restart()
-                restart(self.port, self.secret, window.is_open())
+                restart(self.port, self.secret, window.is_open(), self.serve)
             except OSError as e:  # still the old version: say so (`decomp` starts the new one)
                 self.job.update(state="error", error=f"the update is installed, but restarting failed ({e}): "
                                                        "quit decompdecomp and start it again")

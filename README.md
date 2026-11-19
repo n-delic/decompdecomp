@@ -14,8 +14,8 @@
   <img alt="Agents: Claude Code, Codex, Cursor, Kimi, opencode, Antigravity, ZCode, Oh My Pi, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Cursor%20%C2%B7%20Kimi%20%C2%B7%20opencode%20%C2%B7%20Antigravity%20%C2%B7%20ZCode%20%C2%B7%20Oh%20My%20Pi%20%C2%B7%20API%20models-157a49?style=flat-square">
 </p>
 
-decompdecomp is an app that decompiles games you own. Helper agents write C or C++, the game's original compiler builds it, and a function is matched only when
-the result is byte-identical to the game. The export builds your game again.
+decompdecomp is an app that decompiles games you own. Helper agents write C or C++, the game's original compiler
+builds it, and a function is matched only when the result is byte-identical to the game. The export builds your game again.
 
 <p align="center">
   <img alt="decompdecomp on Demo Quest 64: the autopilot matches 20 functions for free, then a helper matches six more, each judged byte for byte." src=".github/assets/demo.webp" width="900">
@@ -25,8 +25,8 @@ the result is byte-identical to the game. The export builds your game again.
 </p>
 
 ## Install
-decompdecomp runs on Linux and Windows 10/11 on x86-64, and on macOS 12+ on Intel or Apple Silicon. The Linux installer also gets the free compilers
-and keeps decompdecomp up to date.
+decompdecomp runs on Linux and Windows 10/11 on x86-64, and on macOS 12+ on Intel or Apple Silicon. The Linux
+installer also gets the free compilers and keeps decompdecomp up to date.
 
 ### Linux
 Run this command in a terminal:
@@ -69,7 +69,8 @@ decomp
 
 ### macOS (Intel and Apple Silicon)
 For an app in `/Applications`, download `macos_arm64` (Apple Silicon) or `macos_x86_64` (Intel) from the
-[latest release](https://github.com/n-delic/decompdecomp/releases/latest). Unzip it, move `decompdecomp.app` to Applications. macOS may ask for approval on the first launch. Install the free compilers and tools from Setup.
+[latest release](https://github.com/n-delic/decompdecomp/releases/latest). Unzip it, move `decompdecomp.app` to Applications. macOS may ask for approval on the first launch.
+Install the free compilers and tools from Setup.
 
 To install the current source instead, run:
 
@@ -93,15 +94,19 @@ For PS2 Sony EE-GCC, run `brew install colima docker`, then choose **Prepare Lin
 Linux-only PS1 compilers need a Linux computer. Xcode Command Line Tools (`xcode-select --install`) are needed for some Mac tools.
 
 ## Start
-Type `decomp`, or open decompdecomp from your apps menu. It opens in its own window.
+Type `decomp`, or open decompdecomp from your apps menu. It opens in its own window (on a machine with no desktop, see
+**On a server** below).
 
-1. **Open a game.** Pick a ROM, a disc image or a program file of a game that you own. To try the app first, open Demo Quest 64. For an N64, PlayStation or
-   PlayStation 2 game, the app offers to install that console's compilers first. Tick the box only if you accept the proprietary ones.
-2. **Start helper agents.** Click **Start agents**. Choose any API model (DeepSeek, OpenRouter, OpenAI, or a local model), or a CLI helper agent: Claude Code,
-   Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI, ZCode CLI or Oh My Pi. Run several; they work on different functions at the same time.
-3. **Watch the map.** Each square is a function and turns green when it matches. The autopilot matches the easy functions at no cost before any helper agent
-   starts. For a difficult function with saved C, open its **Deep permuter** tab. Give a time and variant limit. It
-   tries local rewrites with the same compiler and byte check, saves each better result, and uses no AI tokens.
+1. **Open a game.** Pick a ROM, a disc image or a program file of a game that you own. To try the app first, open
+   Demo Quest 64. For an N64, PlayStation or PlayStation 2 game, the app offers to install that console's
+   compilers first. Tick the box only if you accept the proprietary ones.
+2. **Start helper agents.** Click **Start agents**. Choose any API model (DeepSeek, OpenRouter, OpenAI, or a local
+   model), or a CLI helper agent: Claude Code, Codex, Cursor Agent, Kimi Code, opencode, Antigravity CLI, ZCode CLI
+   or Oh My Pi. Run several; they work on different functions at the same time.
+3. **Watch the map.** Each square is a function and turns green when it matches. The autopilot matches the easy
+   functions at no cost before any helper agent starts. For a difficult function with saved C, open its **Deep permuter** tab.
+   Give a time and variant limit. It tries local rewrites with the same compiler and byte check, saves each better result, and
+   uses no AI tokens.
 4. **Export.** Use **Export** in the project header. You get a decomp project that builds your game again, byte for byte.
 
 No whole game has been decompiled yet. The export uses matched C and assembly for the rest, so it still builds the game.
@@ -123,35 +128,41 @@ No whole game has been decompiled yet. The export uses matched C and assembly fo
 | Game Boy Advance | Beta | ROM (`.gba`) |
 | 3DS, Switch, Xbox 360 | Public decomps only | Community decomp fork |
 
-Read [ROADMAP.md](ROADMAP.md#what-works-where) for each feature and console. Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after
-you accept their licenses in Setup. Visual C++ 2017 needs [wine](https://www.winehq.org/) on Linux and macOS; see [Visual C++ builds](docs/VISUAL-CPP.md).
-PS4 projects need the Linux x86-64 app, including inside WSL 2; the native Windows and macOS apps cannot build them. They use the free pinned
-Clang 5.0.2 pack and strict objdiff, tested on leaf functions and same-file, cross-file and import calls. decompdecomp includes no Sony SDK
-and no game files. Many other features are still gaps; encrypted SELF, PKG and PRX modules are not supported.
+Read [ROADMAP.md](ROADMAP.md#what-works-where) for each feature and console. Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++)
+install only after you accept their licenses in Setup. Visual C++ 2017 needs [wine](https://www.winehq.org/) on Linux and macOS; see
+[Visual C++ builds](docs/VISUAL-CPP.md). PS4 projects need the Linux x86-64 app, including inside WSL 2; the native Windows and
+macOS apps cannot build them. They use the free pinned Clang 5.0.2 pack and strict objdiff, tested on leaf functions
+and same-file, cross-file and import calls. decompdecomp includes no Sony SDK and no game files. Many other
+features are still gaps; encrypted SELF, PKG and PRX modules are not supported.
 
 ## Other tasks
 **Update.** It tells you when a new version is available; one click installs and restarts it. See [Installation details](docs/GUIDE.md#installation-details).
 
-**From decomp.wtf or an older 1.0.x version.** decompdecomp reads the same `~/Decomp` folder and database. On Windows, copy the old
-`\\wsl.localhost\decomp-wtf\home\decomp\Decomp` folder to `%USERPROFILE%\Decomp`, with its hidden `.decomp` folder. Start your helper agents again after the
-first start.
+**From decomp.wtf or an older 1.0.x version.** decompdecomp reads the same `~/Decomp` folder and database. On
+Windows, copy the old `\\wsl.localhost\decomp-wtf\home\decomp\Decomp` folder to `%USERPROFILE%\Decomp`,
+with its hidden `.decomp` folder. Start your helper agents again after the first start.
 
-**Move to another computer.** Copy the whole `~/Decomp` folder, including the hidden `.decomp` folder. To move one project, copy its `progress/` folder or push
-its git repository, then choose **Open a saved project** with your own copy of the game.
+**On a server.** On a machine with no desktop, `decomp serve` runs the whole app (helper agents, autopilot, updates) in a
+terminal, with a text front end there and the full GUI in your own browser through an SSH tunnel. Run it inside `screen` or
+`tmux`. See [On a server](docs/GUIDE.md#on-a-server-decomp-serve) and [the TUI](docs/TUI.md).
 
-**Multiple Claude accounts.** In **Agents & models → Claude Code → Additional accounts**, click **Add account**. Give it a label, run the command shown, sign in
-with `/login`, and choose the account when you start a helper agent.
+**Move to another computer.** Copy the whole `~/Decomp` folder, including the hidden `.decomp` folder. To move one
+project, copy its `progress/` folder or push its git repository, then choose **Open a saved project** with your own copy of the
+game.
+
+**Multiple Claude accounts.** In **Agents & models → Claude Code → Additional accounts**, click **Add account**. Give it a
+label, run the command shown, sign in with `/login`, and choose the account when you start a helper agent.
 
 **Change the prompts and tools of helper agents.** In **Agents & models**, edit the prompt templates for all helper agents,
-or override them for one helper agent. **Agent tools & usage** shows the tools, how often agents use them, and lets you turn off
-the optional tools. A change applies when the next session of a helper agent starts.
+or override them for one helper agent. **Agent tools & usage** shows the tools, how often agents use them, and lets you turn
+off the optional tools. A change applies when the next session of a helper agent starts.
 
 **Connect another AI tool with MCP.** In **Agents & models**, choose **Connect another AI tool with MCP**, select a project and
 click **Create connection**. Copy the URL and the token into your tool. Keep the token private: it can change the work of that
 project. Keep decompdecomp open while the tool works. Click **Revoke** to stop the connection.
 
-**ROM library.** In **Settings → ROM library**, choose a folder with your extracted game files. Click **Search ROM library** on an imported project's setup page to fill in a
-verified match.
+**ROM library.** In **Settings → ROM library**, choose a folder with your extracted game files. Click **Search ROM library** on an
+imported project's setup page to fill in a verified match.
 
 ## Use it responsibly
 - Use only games that you own. decompdecomp contains no game code and supplies no ROMs.
@@ -169,12 +180,13 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 decompdecomp continues [decomp.wtf](https://github.com/i12bp8/decomp.wtf) by [Sam Wolfs (@i12bp8)](https://github.com/i12bp8), who made it up to version 0.10.6
 and then archived it. Thank you, Sam. decompdecomp is not related to decomp.wtf, and its author does not endorse it.
 
-decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo, wine and the decompals compilers. The
-[guide](docs/GUIDE.md#built-on) lists them.
+decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo, wine and the
+decompals compilers. The [guide](docs/GUIDE.md#built-on) lists them.
 
 ## License
-decompdecomp is free software under the [GNU Affero General Public License version 3](LICENSE) © 2026 NDelic. Anyone who gives or sells a copy, changed or not,
-must give its full source under the same license. So must anyone who runs a changed copy for others over a network.
+decompdecomp is free software under the [GNU Affero General Public License version 3](LICENSE) © 2026 NDelic. Anyone who
+gives or sells a copy, changed or not, must give its full source under the same license. So must anyone who runs a
+changed copy for others over a network.
 
 The code from decomp.wtf was released under the MIT license by Sam Wolfs; its notice is in [LICENSE-decomp.wtf](LICENSE-decomp.wtf).
 

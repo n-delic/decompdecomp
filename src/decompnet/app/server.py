@@ -1,8 +1,10 @@
 """The local decompdecomp server: the GUI, its API, and the MCP endpoint agents connect to.
 
 It listens on 127.0.0.1 only. The GUI answers only the app's own window, whose user agent carries the per-launch
-secret (window.py); managed and manual agents need their own project-scoped bearer token. Host headers are checked on every request, so web
-pages can't reach it through DNS rebinding.
+secret (window.py); managed and manual agents need their own project-scoped bearer token. Host headers are checked
+on every request, so web pages can't reach it through DNS rebinding. The one other client is a browser that paired
+with `decomp serve` (sessions.py), which passes its own sessions to build(): it may come through its SSH tunnel's own
+port, but still only as 127.0.0.1 or localhost.
 
 build() sets up what the routes share (the engine, helper agents, jobs, settings, the request checks) and hands it to
 the modules in routes/, one per part of the app; what they share beyond that is in support.py.
@@ -14,6 +16,7 @@ import os
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
@@ -25,7 +28,7 @@ from starlette.responses import JSONResponse, Response
 from .. import agents as kinds
 from .. import hostenv, wine
 from ..network import NetworkError
-from . import agents, collab, routes, saves, tools, updates, window
+from . import agents, collab, routes, saves, sessions, tools, updates, window
 from .engine import RomNetwork
 from .routes import forks, life, pages, projects, rooms, setup, state
 from .support import Jobs, Settings, session_options
@@ -33,7 +36,10 @@ from .support import Jobs, Settings, session_options
 START_PAUSE_SECONDS = 0.02  # between projects in the console work at start (consoles_start)
 
 
-def build(net: RomNetwork, home: Path, port: int, secret: str):
+def build(net: RomNetwork, home: Path, port: int, secret: str, pair: sessions.Sessions | None = None,
+          on_exit: Callable[[], None] | None = None):
+    """`pair`: `decomp serve`'s browser sessions. The app with its own window passes nothing, and never accepts one.
+    `on_exit`: run first when the process is about to end or restart (`decomp serve` gives its terminal back)."""
     mcp_url = f"http://127.0.0.1:{port}/mcp"
     build_id = (updates.installed().get("commit") or "")[:12]  # a branch install: the commit it came from
     manager = agents.Manager(net, home, mcp_url)
@@ -53,6 +59,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
 
     def quit_app() -> None:
         """Quit means quit: the window, every helper with everything it started, then the server."""
+        if on_exit is not None:
+            on_exit()
         window.close_app()
         manager.shutdown()
         flush_progress()
@@ -180,9 +188,12 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     mcp._lowlevel_server.add_request_handler("tools/list", PaginatedRequestParams, scoped_tools)
 
     def guard(request: Request, write: bool = False) -> Response | None:
-        if request.headers.get("host") not in allowed_hosts:
+        # a browser that paired with `decomp serve` reads like the window, through its tunnel's own port
+        # (sessions.py); writes still need the header below
+        paired = pair is not None and pair.paired(request)
+        if not paired and request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"error": "bad host"}, status_code=403)
-        if not secrets.compare_digest(window.request_token(request), secret):
+        if not paired and not secrets.compare_digest(window.request_token(request), secret):
             return JSONResponse({"error": "decompdecomp only answers its own window: open it with `decomp`"},
                                 status_code=401)
         if write and request.headers.get("x-decomp") != "1":
@@ -205,14 +216,16 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         return JSONResponse({"error": str(e)}, status_code=code)
 
     def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
+        if on_exit is not None:
+            on_exit()
         manager.shutdown()
         flush_progress()
 
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,
     # whose autopilot and with_project they use
     app = routes.App(net, mcp, home, port, secret, mcp_url, build_id, manager, jobs, settings, allowed_hosts,
-                     guard, body, call, fail, updater=updates.Updater(before_restart, port, secret),
-                     busy=busy, quit_app=quit_app)
+                     guard, body, call, fail, updater=updates.Updater(before_restart, port, secret, serve=pair is not None),
+                     busy=busy, quit_app=quit_app, sessions=pair)
     for part in (pages, state, projects, forks, setup, life, rooms):
         part.register(app)
 

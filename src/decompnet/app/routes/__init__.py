@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from .. import agents, updates
     from ..engine import RomNetwork
+    from ..sessions import Sessions
     from ..support import Jobs, Settings
 
 
@@ -48,6 +49,7 @@ class App:
     updater: updates.Updater | None = None
     busy: Callable[[], bool] | None = None  # whether helpers or a job are working
     quit_app: Callable[[], None] | None = None  # quit: the window, every helper, the server
+    sessions: Sessions | None = None  # `decomp serve`'s browser sessions (None: the app has its own window)
     # what one part of the app lends another (set by the module that defines it)
     autopilot: Callable[[str], None] | None = None  # state: start autopilot on a project
     invalidate_map: Callable[[str], None] | None = None  # state: discard a removed or reimported project's map

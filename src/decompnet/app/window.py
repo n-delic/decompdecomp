@@ -5,7 +5,8 @@ Cocoa/WebKit through the app's Python on macOS. The app starts it, talks to it o
 the app asking (it crashed, or the page couldn't answer a close), the app quits, unless helpers or a job are still
 working; then they carry on in the background, the tray icon or `decomp` opens the window again.
 
-No browser is involved: the page is served only to a window whose user agent carries the per-launch secret.
+No browser is involved: the page is served only to a window whose user agent carries the per-launch secret. The one
+exception is `decomp serve` (sessions.py), which pairs a browser once through a link shown in its terminal.
 """
 
 from __future__ import annotations
@@ -265,5 +266,6 @@ def token_of(user_agent: str) -> str:
 
 
 def request_token(request) -> str:
-    """The window secret a request's user agent carries; URLs and cookies must not grant access to the app."""
+    """The window secret a request's user agent carries; URLs and cookies must not grant access to the app — the one
+    exception is `decomp serve`, where a one-time link's cookie is all a browser can carry (sessions.py, cli.py)."""
     return token_of(request.headers.get("user-agent", ""))
