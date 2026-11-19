@@ -237,3 +237,27 @@ def test_a_header_the_folder_lacks_is_written_again(project):
     assert header.is_file()
     data = json.loads((folder / saves.MANIFEST).read_text(encoding="utf-8"))
     assert all((folder / "include" / f).is_file() for f in data["headers"].values())
+
+
+def test_a_header_entry_nothing_needs_any_more_is_dropped_in_the_merge(project):
+    """The last sync's manifest named a function's private header; the function matched, so the database's render
+    dropped it and the folder never had the file, but the three-way merge kept the entry, and every sync after refused
+    the folder ("header 'common_local_source_….h' is not a file in include/")."""
+    net, folder, _, _, _ = project
+    assert net.progress.sync("game", force=True) is not None
+    from decompnet.app import progress as progress_module
+    pid = net._project("game")["id"]
+    baseline = net.progress._baseline(pid)
+    old = json.loads(baseline.projected.manifest)
+    old.setdefault("headers", {})["local_source_1"] = "common_local_source_1.h"
+    net.progress.baselines[pid] = progress_module._Baseline(
+        baseline.disk, progress_module._Snapshot(baseline.projected.files, saves.manifest_text(old)),
+        baseline.dirty_token, baseline.config_key, baseline.stored)
+    edited = json.loads((folder / saves.MANIFEST).read_text(encoding="utf-8"))
+    edited["instructions"] = "from a pull"  # a change in the folder, so the sync merges it with the database
+    (folder / saves.MANIFEST).write_text(json.dumps(edited), encoding="utf-8")
+    with net.store.tx() as db:  # and a change in the database, so the merged manifest is written
+        db.execute("UPDATE progress_dirty SET token='x', metadata=1 WHERE project_id=?", (pid,))
+    net.progress.sync("game", force=True)
+    data = json.loads((folder / saves.MANIFEST).read_text(encoding="utf-8"))
+    assert all((folder / "include" / f).is_file() for f in data["headers"].values())

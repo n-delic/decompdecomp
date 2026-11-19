@@ -2383,6 +2383,15 @@ class Progress:
                 removed = {name: None for name in previous.files
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
+                # (the merge keeps a header entry the last sync's manifest had, after its function matched and the
+                # database's render dropped it: no file anywhere, and every sync after refused the folder)
+                if saves.MANIFEST in pending:
+                    merged = json.loads(pending[saves.MANIFEST])
+                    kept = {unit: file for unit, file in (merged.get("headers") or {}).items()
+                            if "include/" + file in candidate or "include/" + file in rendered}
+                    if kept != (merged.get("headers") or {}):
+                        merged["headers"] = kept
+                        pending[saves.MANIFEST] = candidate[saves.MANIFEST] = saves.manifest_text(merged)
                 merged_manifest = _manifest(candidate, cfg, known_names)
                 function_rows = metadata_rows(store, ('name', 'unit', 'vram', 'rom_offset'),
                     'SELECT name,unit,vram,rom_offset FROM functions WHERE project_id=?', pid)
