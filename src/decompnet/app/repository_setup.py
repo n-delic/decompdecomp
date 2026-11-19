@@ -182,9 +182,11 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
     with repository_operations.push(root_at(path) or path, slug, log, check, label='Setting up progress repository') as output:
         log = output
         with net.progress._project_lock(slug):
+            from . import rebuildable_repository
+            if net.is_rom(proj) and (moved := rebuildable_repository.follow(net, slug, path, log)) != path:
+                path, proj = moved, net.project_row(slug)
             root = root_at(path)
             if action in ('init', 'checkpoint', 'github') and net.is_rom(proj):
-                from . import rebuildable_repository
                 if not rebuildable_repository.full(root):
                     if (path/saves.MANIFEST).is_file():bind(net, slug, path, proj, log)
                     path = rebuildable_repository.prepare(net, slug, path, root, log)
