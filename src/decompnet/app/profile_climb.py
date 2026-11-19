@@ -25,23 +25,36 @@ RANDOM_PER_ROUND = 24  # random rewrites tried after each round of local proposa
 
 
 def lead(search, agent, proj, fn, source, own_score):
-    """(profile, score) of the measured profile that scores the current C best, when strictly better than
-    `own_score` (the function's own settings); None otherwise."""
+    """(profile, score) to climb under: the measured profile that scores the current C best, when strictly better
+    than `own_score` (the function's own settings); else the best-scoring profile whose habits agree with the code
+    strictly more than the function's own settings do (compiler_fingerprints), even though the current C, tuned to
+    the own settings, scores worse there. None when neither.
+
+    The second case is a library built with scheduling off inside a scheduled game: its saved C (a strcmp) was 130
+    off under the game's settings and 890 off with scheduling off, written in the order the scheduler had made, while
+    plain C was exact with scheduling off. Only ever climbing toward better scores never went there."""
     from ..project import compiler_for
     from . import compiler_fingerprints
     cfg = search.net.cfg(proj)
     own = compiler_for(cfg, fn['vram'], fn)
-    best = None
-    for _, profile in compiler_fingerprints.ranked(search.net, proj, cfg, fn, own, limit=PROFILES_MEASURED):
+    floor = compiler_fingerprints.own_agreement(proj, fn, own)
+    best = closer = None
+    for agree, profile in compiler_fingerprints.ranked(search.net, proj, cfg, fn, own, limit=PROFILES_MEASURED):
         search.check()
         if search.tested >= search.limit:
             break
         score = _judge(search, proj, fn, profile, source)
-        if score is not None:
-            search.log(f"Profile {profile['toolchain']} {' '.join(profile['flags'])} on the current C: score {score}")
-        if score is not None and score < own_score and (best is None or score < best[1]):
+        if score is None:
+            continue
+        search.log(f"Profile {profile['toolchain']} {' '.join(profile['flags'])} on the current C: score {score}")
+        if score < own_score and (best is None or score < best[1]):
             best = (profile, score)
-    return best
+        if floor is not None and agree > floor and (closer is None or score < closer[1]):
+            closer = (profile, score)
+    if best is None and closer is not None:
+        search.log(f"Its code looks built with {closer[0]['toolchain']} {' '.join(closer[0]['flags'])} rather than its "
+                   'own settings: climbing under it too, though the current C scores worse there.')
+    return best or closer
 
 
 def _judge(search, proj, fn, profile, source):
@@ -74,8 +87,7 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0):
         return score
     header = search.net._context(proj['id'], fn['unit'])['header']
     key = profile['toolchain'] + ' ' + ' '.join(profile['flags'])
-    search.log(f'Climbing under {key}: it scores the current C {score}, better than the function\'s own settings '
-               f'(at most {budget} compiles).')
+    search.log(f'Climbing under {key} from score {score} (at most {budget} compiles).')
     rng = random.Random(f"{fn['id']}-{key}-{seed}")
     seen = {hashlib.sha256(source.encode()).hexdigest()}
     best_source, best = source, score
@@ -117,4 +129,8 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0):
             break
     search.profile_bests[key] = (best, best_source)
     search.log(f'Under {key}: best {best} after {spent} compiles.')
+    from .matching_preflight import closer
+    if note := closer(search.net, agent, proj['slug'], fn['name'], profile,
+                       fn['best_score'] if 'best_score' in fn.keys() else None, best):
+        search.log(note)
     return best

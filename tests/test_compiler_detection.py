@@ -76,7 +76,7 @@ class Search:
 
 
 FN = {'id': 1, 'name': 'f', 'vram': 0, 'unit': '', 'asm': '', 'best_source': 'int f(void) { return 1; }'}
-PROJ = {'id': 1, 'arch': 'mips'}
+PROJ = {'id': 1, 'arch': 'mips', 'slug': 'game'}
 LATE = {'toolchain': 'late-cc', 'flags': ['-O2']}
 
 
@@ -117,3 +117,49 @@ def test_a_profile_that_already_matches_goes_straight_to_the_recheck(monkeypatch
     search = Search({})
     assert profile_climb.climb(search, None, PROJ, FN, FN['best_source'], LATE, 0) == 0
     assert probed == [LATE] and search.tested == 0
+
+
+# A byte-compare loop: lbu $v1,($a0); addiu $a0,1; lbu $v0,($a1); subu $a2,$v1,$v0. Scheduling off keeps the C's
+# order, so the second load's result is waited for while the addiu before it could have filled the gap.
+LBU_A0, ADDIU_A0, LBU_A1, SUBU = 0x90830000, 0x24840001, 0x90A20000, 0x00623023
+
+
+def test_a_load_left_waiting_is_read_as_scheduling_off():
+    assert cf.traits(code(LBU_A0, ADDIU_A0, LBU_A1, SUBU, JR_RA, NOP))['unscheduled loads'] is True
+    # (scheduled: the two loads first, the addiu between them and the use)
+    assert cf.traits(code(LBU_A0, LBU_A1, ADDIU_A0, SUBU, LBU_A0, ADDIU_A0, JR_RA, NOP)) \
+        .get('unscheduled loads') is False
+
+
+def test_a_profile_its_code_points_to_is_climbed_even_when_the_current_c_scores_worse(monkeypatch):
+    """A library strcmp built with scheduling off: its saved C, written in the scheduler's order, scored 130 under
+    the game's settings and 890 with scheduling off, where plain C was exact. Only ever climbing toward better
+    scores never went there."""
+    off = {'toolchain': 'own-cc', 'flags': ['-O2', '-fno-schedule-insns', '-fno-schedule-insns2']}
+    monkeypatch.setattr('decompnet.project.compiler_for', lambda cfg, vram, fn: {'toolchain': 'own-cc', 'flags': ['-O2']})
+    monkeypatch.setattr(cf, 'ranked', lambda *a, **k: [(2, off), (0, LATE)])
+    monkeypatch.setattr(cf, 'own_agreement', lambda *a: 1)
+    search = Search({('own-cc', FN['best_source']): 890, ('late-cc', FN['best_source']): 2000})
+    assert profile_climb.lead(search, None, PROJ, FN, FN['best_source'], 130) == (off, 890)
+    monkeypatch.setattr(cf, 'own_agreement', lambda *a: 2)  # (agreeing no more than its own: no reason to go there)
+    assert profile_climb.lead(search, None, PROJ, FN, FN['best_source'], 130) is None
+
+
+def test_a_much_closer_profile_is_told_once_in_words_and_never_applied():
+    from decompnet.app.matching_preflight import closer
+    said = []
+    cfg = {'suggestions': []}
+
+    def suggest(agent, slug, text, **kw):
+        assert not kw  # (words only: no compiler, so nothing can apply)
+        said.append(text)
+        cfg['suggestions'].append({'status': 'open', 'text': text})
+        return 'Suggested'
+    net = SimpleNamespace(suggest=suggest, cfg=lambda proj: cfg, project_row=lambda slug: {})
+    profile = {'toolchain': 'kmc', 'flags': ['-O2', '-fno-schedule-insns2']}
+    assert closer(net, None, 'game', 'f', profile, 130, 10)
+    assert said == ['f comes closer under kmc -O2 -fno-schedule-insns2: 130 → 10, not exact yet. '
+                    'Its C still needs work under those settings before they can apply to it.']
+    assert closer(net, None, 'game', 'f', profile, 130, 10) is None and len(said) == 1  # already on the page
+    assert closer(net, None, 'game', 'f', profile, 130, 80) is None  # not much closer
+    assert closer(net, None, 'game', 'f', profile, 130, 0) is None  # exact goes through the recheck instead
