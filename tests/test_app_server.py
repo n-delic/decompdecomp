@@ -3287,6 +3287,7 @@ def test_github_setup_duplicate_and_reopen_attach(app, monkeypatch):
     try:
         first = client.post('/api/repository-setup', json=data, headers={'X-Decomp':'1'}).json()
         assert entered.wait(2)
+        assert first['action'] == 'github'
         assert client.post('/api/repository-setup', json=data, headers={'X-Decomp':'1'}).json() == first
         assert client.get('/api/repository-setup?slug=game').json() == first
         assert calls == [('github', {'github_name':'owner/progress', 'visibility':'public'})]

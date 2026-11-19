@@ -249,7 +249,13 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
     datum_of = {d["src"]: d for d in B.get("data", [])}
     configs = {}
     as_ = binutils("as")
-    for kind, src, obj in todo:
+    from decompnet.rom.export_process import report_build
+
+    total = len(todo)
+    interval = max(1, total // 100)
+    for done, (kind, src, obj) in enumerate(todo):
+        if done % interval == 0:
+            report_build(4, 'Building exported objects', done=done, total=total)
         target = ROOT / obj
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists() and target.stat().st_mtime > (ROOT / src).stat().st_mtime and kind == "asm":
@@ -466,6 +472,9 @@ def build() -> bool:
     setup()
     todo, provides, placed = objects()
     build_objects(todo)
+    from decompnet.rom.export_process import report_build
+
+    report_build(5, 'Linking and comparing the exported image')
     gaps = fill_gaps(placed)
     (ROOT / "build" / "game.ld").write_text(linker_script(provides, placed, gaps), encoding="utf-8")
     objs = sorted({obj for _, _, obj in todo} | {obj for _, obj in gaps})

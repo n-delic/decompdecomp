@@ -135,7 +135,13 @@ def own_config(fn: dict, configs: dict):
 def build_objects() -> tuple[list[dict], dict[str, str]]:
     """Assemble every piece and compile every C function: (pieces, function name -> its C object)."""
     pieces = json.loads((ROOT / "asm" / "pieces.json").read_text(encoding="utf-8"))
-    for p in pieces:
+    from decompnet.rom.export_process import report_build
+
+    total = len(pieces) + len(B["functions"])
+    interval = max(1, total // 100)
+    for done, p in enumerate(pieces):
+        if done % interval == 0:
+            report_build(4, 'Building exported objects', done=done, total=total)
         p["obj"] = f"build/{Path(p['src']).with_suffix('.o').as_posix()}"
         target = ROOT / p["obj"]
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -143,7 +149,9 @@ def build_objects() -> tuple[list[dict], dict[str, str]]:
             run([arm("as"), *AS_FLAGS, "-o", p["obj"], p["src"]])
     configs = {}
     c_objs = {}
-    for fn in B["functions"]:
+    for done, fn in enumerate(B["functions"], start=len(pieces)):
+        if done % interval == 0:
+            report_build(4, 'Building exported objects', done=done, total=total)
         src = c_source(fn)
         cfg = own_config(fn, configs)
         if not src:
@@ -235,6 +243,9 @@ def linker_script(items: list[tuple[int, str, str]], c_objs: dict[str, str]) -> 
 def build() -> bool:
     setup()
     pieces, c_objs = build_objects()
+    from decompnet.rom.export_process import report_build
+
+    report_build(5, 'Linking and comparing the exported image')
     items = layout(pieces, c_objs)
     (ROOT / "build" / "game.ld").write_text(linker_script(items, c_objs), encoding="utf-8")
     objs = sorted({obj for _, obj, _ in items} | set(c_objs.values()))

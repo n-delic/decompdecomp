@@ -102,8 +102,17 @@ def test_export_rebuilds_the_game(tmp_path, platform):
         # The alias still has a fixed address in the original splat symbol file.
         with (Path(net._project(slug)["root"]) / "symbol_addrs.txt").open("a") as stream:
             stream.write("\nstartup_alias = 0x80000400; // type:func\n")
-    out = net.export_rom(slug, log=lambda *_: None)
+    events = []
+
+    def log(_):
+        pass
+
+    log.progress = events.append
+    out = net.export_rom(slug, log=log)
     assert out["identical"], out["log"]
+    assert [event["step"] for event in events] == sorted(event["step"] for event in events)
+    counts = [event for event in events if event["step"] == 4 and "total" in event]
+    assert counts and counts[-1]["total"] > counts[-1]["done"] > 0
     assert out["matched"] == len(matched(platform)) and not out["fallback"]
     tree = Path(out["path"])
     if platform == "n64":

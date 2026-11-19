@@ -384,11 +384,12 @@ def update_objdiff(stage, manifest):
     path.write_text(json.dumps(data,indent=2)+'\n',encoding='utf-8')
 
 
-def publish(root,stage,files,baseline,log):
+def publish(root,stage,files,baseline,log,*,progress=None):
     """Publish owned files atomically and roll back earlier writes if another destination changed."""
     backups={};written=[]
     try:
-        for name in sorted(files):
+        for done, name in enumerate(sorted(files)):
+            if progress is not None:progress(done, len(files))
             check=getattr(log,'check_cancel',None)
             if check:check()
             target=inside(root,name)

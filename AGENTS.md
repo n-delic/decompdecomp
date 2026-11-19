@@ -305,10 +305,11 @@ linting). In short:
   cancellation is supported. Reuse `beginWork`, `followJob`, `showJobError` and `.workbar`; clean up in
   `finally`. Show real progress when totals exist, otherwise indeterminate progress. Keep errors actionable
   and visible. Distinguish the current run from saved totals and never show stale data from another project.
-- Disable the clicked button on its first click, before the request goes out, and keep it disabled until the
-  work ends (pass it to `beginWork`), so the user sees at once that the click registered and can't start it
-  twice. A toast alone isn't feedback for work that takes more than a moment: the banner's "Install all…"
-  showed only an "Installing…" toast for minutes of downloads and looked like it did nothing (#1239).
+- Disable the start action on its first click, before the request goes out, and keep it unavailable until the
+  work ends so the user can't start it twice. If the button switches to Stop, enable it when the job can be
+  cancelled and disable it while cancellation is pending. A toast alone isn't feedback for work that takes
+  more than a moment: the banner's "Install all…" showed only an "Installing…" toast for minutes of downloads
+  and looked like it did nothing (#1239).
 - User-started jobs must remain visible at their originating panel when the user navigates away
   and returns or reopens the window. Discover active work from server-owned job IDs and explicit
   task/project scope before loading potentially slow statistics; do not rely on browser variables.
