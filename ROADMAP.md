@@ -2110,6 +2110,19 @@ reuse the saved map. See [ROM Explorer](docs/ROM_EXPLORER.md) for support and li
 
 ## Next
 
+### Deep passes that climb under a closer compiler profile
+
+A deep pass scores candidates only under the function's own settings; other profiles are exact-only probes. An N64
+game's `strcmp`, from a library built with GCC's scheduling off, matched with `-fno-schedule-insns
+-fno-schedule-insns2` and three loops' loads reordered together, but under the function's `-O2` every reorder looks
+like no change, and with the stored C that profile scores worst of all (83.5% against 97.2%), so neither the flag
+search nor the permuter can find it (docs/COMPILER_MATCHING_LEARNINGS.md, 19 November 2026). Next: when a flag
+variant comes closer than the function's own settings (the flag search now tries both scheduling flags; `-fno-schedule-insns2`
+alone took it to 99.1%), let the deep pass score a share of its candidates under that profile, and under the
+scheduling-off profile try statement orders that follow the target's instruction order; a match there goes through
+the existing profile-bundle recheck before the function's settings change. Every console whose compiler has
+scheduling flags (GCC and EE-GCC, SNC's `-Xsched=0`).
+
 ### ROM projects as project folders: editable units
 
 Importing a ROM can now also lay it out as a project folder (`rom/project_layout.py`): the rebuildable export plus

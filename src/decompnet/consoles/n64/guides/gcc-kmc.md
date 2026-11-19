@@ -1615,3 +1615,14 @@ identifies a current donor and source hash; for a large body, retrieve all of it
 `get_function(function="donor_name", section="matched")`. Avoid flattening or cleaning
 up a proven donor before testing it. These source-shape features were verified as a
 bundle, not independently established compiler rules.
+
+### A library built with scheduling off: the C's order is the instruction order
+
+When a twin or reference C differs only in load order (a load placed after an
+increment the scheduler would hoist it past) and reordering the C changes nothing,
+run `search_flags`: if `-fno-schedule-insns2` comes closer, try
+`-fno-schedule-insns -fno-schedule-insns2` with the statements in the target's
+instruction order (`c = *s1++; d = *s2++;`, an increment before the next load).
+Under both flags the stored C can look worse than under `-O2`; judge the reordered
+C, not the flags alone. One N64 `strcmp` matched this way; other compilers were far
+off. Suggest the flags for that function only, with that C.

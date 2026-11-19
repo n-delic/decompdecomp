@@ -753,7 +753,7 @@ def local_family(net, agent, slug, function, revision, family, old='', declarati
         source, actual = candidate(net, agent, slug, function)
         if revision != actual:
             raise stale(net,agent,fn,revision,source,actual,old)
-        if family in ('typed_temporary','branch_orientation','narrowing','source_lines','address_temporary','constant_local','comparison_load','stack_array','loop_induction','parameter_width','value_lifetime','sum_shape','call_result_inline'):
+        if family in ('typed_temporary','branch_orientation','narrowing','source_lines','address_temporary','operand_temporary','constant_local','comparison_load','stack_array','loop_induction','parameter_width','value_lifetime','sum_shape','call_result_inline'):
             if old or declaration or occurrence or target not in ('','next'):
                 raise NetworkError('Pattern families use function and revision only; omit target/old/declaration/occurrence.')
             proj = net._project(slug)
