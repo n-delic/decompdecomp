@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const source=fs.readFileSync('src/decompnet/app/static/js/function.js','utf8');
 const section=source.slice(source.indexOf('const functionAttemptFollowers'),source.indexOf('/* The function stays yours'));
 function harness() {
-  const nodes=Object.fromEntries(['tryBtn','tryMsg','fnEdit'].map(id=>[id,{disabled:false,hidden:true,className:'',textContent:'',value:'candidate'}]));
+  const nodes=Object.fromEntries(['tryBtn','tryMsg','tryWork','fnEdit'].map(id=>[id,{disabled:false,hidden:true,className:'',textContent:'',value:'candidate'}]));
   const state={slug:'game',fn:'f',gen:1,fnNav:1,fnDetail:{},fnLoading:false,myClaim:null,editDirty:true};
   let resolve,reject,progress,polls=0,starts=0,refreshes=0,toasts=0;
   const context={Map,Set,Promise,S:state,$:id=>nodes[id],esc:x=>x,
@@ -22,7 +22,7 @@ function harness() {
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
   const h=harness();const work=h.context.tryIt();await tick();
-  assert.equal(h.nodes.tryBtn.disabled,true);assert.match(h.nodes.tryMsg.textContent,/verification/);
+  assert.equal(h.nodes.tryBtn.disabled,true);assert.match(h.nodes.tryMsg.textContent,/Preparing/);assert.equal(h.nodes.tryWork.hidden,false);
   h.progress({message:'Compiling candidate…'});assert.match(h.nodes.tryMsg.textContent,/Compiling/);
   h.state.fn='other';h.state.fnNav=2;h.nodes.tryMsg.textContent='other function';
   h.progress({message:'Checking linked bytes…'});assert.equal(h.nodes.tryMsg.textContent,'other function');
@@ -30,12 +30,12 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
   const attached=h.context.discoverFunctionAttempt('game','f',1,3);await tick();
   assert.equal(h.counts().polls,1);assert.equal(h.nodes.tryBtn.disabled,true);
   h.done({matched:true,score:0,text:'exact',checks:{}});await Promise.all([work,attached]);
-  assert.equal(h.nodes.tryBtn.disabled,false);assert.match(h.nodes.tryMsg.textContent,/Byte-identical/);
+  assert.equal(h.nodes.tryBtn.disabled,false);assert.equal(h.nodes.tryWork.hidden,true);assert.match(h.nodes.tryMsg.textContent,/Byte-identical/);
   assert.equal(h.counts().toasts,1);assert.equal(h.counts().refreshes,1);assert.equal(h.state.editDirty,true);
   const fresh=harness();const reattached=fresh.context.discoverFunctionAttempt('game','f',1,1);await tick();
   assert.equal(fresh.counts().starts,0);assert.equal(fresh.counts().polls,1);
   fresh.fail(new Error('Compiler failed'));await reattached;
-  assert.equal(fresh.nodes.tryBtn.disabled,false);assert.match(fresh.nodes.tryMsg.textContent,/Compiler failed/);
+  assert.equal(fresh.nodes.tryBtn.disabled,false);assert.equal(fresh.nodes.tryWork.hidden,true);assert.match(fresh.nodes.tryMsg.textContent,/Compiler failed/);
   const stale=harness();const pending=stale.context.discoverFunctionAttempt('game','f',1,1);
   stale.state.fn='other';await pending;assert.equal(stale.counts().polls,0);
   console.log('function attempt stages, navigation, reattachment, duplicate followers, edits and errors passed');

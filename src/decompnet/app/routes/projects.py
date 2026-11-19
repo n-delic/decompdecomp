@@ -65,7 +65,7 @@ def register(app: App) -> None:
                         with net.progress.view():
                             return fn(slug, request, data)
                     # These operations need no second import while a saved-code recheck is active.
-                    foreground = request.url.path in ("/api/try", "/api/note", "/api/release")
+                    foreground = request.url.path in ("/api/note", "/api/release")
                     with net.progress.foreground() if foreground else nullcontext():
                         result = fn(slug, request, data)
                         if foreground:
@@ -617,10 +617,7 @@ def register(app: App) -> None:
             observer = watch(name, log.progress) if log is not None else nullcontext()
             with observer, net.progress.foreground():
                 agent, _ = net.local_agent("you")
-                res = net.attempt(agent, name, str(data.get("source", "")), slug)
-                if log is not None:
-                    net.progress.foreground_changed(slug, name)
-                    net.progress.sync(slug, force=True)
+                res = net.attempt(agent, name, str(data.get("source", "")), slug, publish=False)
                 return {"score": res["score"], "matched": res["matched"], "exact": res.get('exact',False),
                         "new_match": res.get('new_match',False), "adopted": res.get('adopted',False),
                         "text": res["text"][-4000:], "checks": res.get("checks", {})}

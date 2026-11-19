@@ -249,7 +249,7 @@ function prepareProjectPeers(detail) {
 
 async function openFn(name) {
   const again = S.fn === name && !$("drawer").hidden;
-  if (!again) { giveBack(name); S.editDirty = false; $("tryMsg").hidden = true; }
+  if (!again) { giveBack(name); S.editDirty = false; $("tryMsg").hidden = true; $("tryWork").hidden = true; }
   S.fn = name;
   if (!again) {
     S.fnNav = (S.fnNav || 0) + 1;
@@ -646,12 +646,12 @@ async function discoverFunctionAttempt(slug, name, gen, nav) {
     const state = await api(`/api/try/status?slug=${encodeURIComponent(slug)}&name=${encodeURIComponent(name)}`);
     if (!active() || !state.job) return;
     const msg = $("tryMsg");
-    $("tryBtn").disabled = true; msg.hidden = false; msg.className = "try-msg";
-    msg.textContent = state.progress?.message || "Waiting for saved-file verification…";
+    $("tryBtn").disabled = true; $("tryWork").hidden = false; msg.hidden = false; msg.className = "try-msg";
+    msg.textContent = state.progress?.message || "Preparing candidate…";
     try {
       const r = await followFunctionAttempt(state.job, slug, name);
       await finishFunctionAttempt(r, slug, name, active, msg, state.job);
-    } finally { if (active()) $("tryBtn").disabled = false; }
+    } finally { if (active()) { $("tryBtn").disabled = false; $("tryWork").hidden = true; } }
   } catch (e) {
     if (active()) { $("tryMsg").hidden = false; $("tryMsg").className = "try-msg bad"; $("tryMsg").textContent = e.message; }
   }
@@ -662,8 +662,8 @@ async function tryIt() {
   const active = () => slug === S.slug && gen === S.gen && nav === S.fnNav;
   const name = S.fn, source = $("fnEdit").value, msg = $("tryMsg");
   if (!name || !source.trim() || $("tryBtn").disabled) return;
-  $("tryBtn").disabled = true;
-  msg.hidden = false; msg.className = "try-msg"; msg.textContent = "Waiting for saved-file verification…";
+  $("tryBtn").disabled = true; $("tryWork").hidden = false;
+  msg.hidden = false; msg.className = "try-msg"; msg.textContent = "Preparing candidate…";
   try {
     const started = await api("/api/try", { method: "POST", body: { slug, name, source, background: true } });
     const r = started.job ? await followFunctionAttempt(started.job, slug, name) : started;
@@ -671,7 +671,7 @@ async function tryIt() {
   } catch (e) {
     if (!active()) return;
     msg.className = "try-msg bad"; msg.textContent = e.message;
-  } finally { if (active()) $("tryBtn").disabled = false; }
+  } finally { if (active()) { $("tryBtn").disabled = false; $("tryWork").hidden = true; } }
 }
 /* The function stays yours only while you're on it: give it back when you move on. */
 function giveBack(next) {

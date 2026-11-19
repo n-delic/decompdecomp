@@ -3875,3 +3875,44 @@ def test_a_saved_layout_joins_over_alignment_filler_the_new_analysis_left_out():
     assert [line.word for line in joined.lines] == [entry, jr, nop, 0x12345678, entry]
     with pytest.raises(ValueError):  # a non-zero word anywhere else is still a real gap
         split.join_saved_functions([head, tail], 0x1000, 0x1018, lambda address, n: b"\0\0\0\1")
+
+
+@pytest.mark.parametrize("manifest_changed", [False, True])
+def test_editor_attempt_checks_inputs_once_and_leaves_publication_to_autosave(project, monkeypatch, manifest_changed):
+    from decompnet.app.engine.judging import JudgeMixin
+    from decompnet.attempt_status import watch
+
+    net, folder, _ = project
+    agent, _ = net.local_agent("you")
+    source = "int f(void) { return 4; }"
+    if manifest_changed:
+        path = folder / saves.MANIFEST
+        stamp = path.stat().st_mtime_ns
+        os.utime(path, ns=(stamp, stamp + 1_000_000_000))
+
+    syncs, stages = [], []
+    real_sync = net.progress.sync
+
+    def sync(slug, **kwargs):
+        syncs.append(kwargs.get("force", False))
+        return real_sync(slug, **kwargs)
+
+    def record_attempt(agent, function, source, project):
+        fn = net._function(function, project)
+        version = net._context(fn["project_id"])["version"]
+        net._record(fn, agent, 0, source, version, matched=True)
+        return {"matched": True}
+
+    monkeypatch.setattr(net.progress, "sync", sync)
+    monkeypatch.setattr(net, "_attempt", record_attempt)
+    with watch("f", lambda progress: stages.append(progress["stage"])):
+        assert JudgeMixin.attempt(net, agent, "f", source, "game", publish=False)["matched"]
+
+    assert syncs == ([True] if manifest_changed else [])
+    assert stages == ["starting", *(["waiting"] if manifest_changed else []), "compiling", "saving"]
+    with net.progress.view():
+        assert net._function("f", "game")["matched_source"] == source
+    assert not (folder / "src" / "f.c").exists()
+
+    saves.Autosave(net).run_once(force=False)
+    assert source in (folder / "src" / "f.c").read_text()
