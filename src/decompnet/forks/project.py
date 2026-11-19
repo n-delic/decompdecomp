@@ -94,11 +94,38 @@ _CHECK = re.compile(r"^build (\S+[/\\]ok): check\b")  # dtk-template writes buil
 # build.ninja's top-level variables (`PY = /path/python`) and rules' commands (`  command = /path/tool ...`): the
 # program each runs first (build_problem)
 _NINJA_PROGRAM = re.compile(r"^(?:([A-Za-z_][\w.-]*)|\s+command)\s*=\s*(.*)$")
+# a line ending in an odd number of $ goes on, after the next line's indent ($$ before it is a dollar)
+_NINJA_CONTINUATION = re.compile(r"(?<!\$)((?:\$\$)*)\$\r?\n[ \t]*")
+# ninja's escapes for a space, a colon and a dollar ($PY and ${cc} are variables, left as they are)
+_NINJA_ESCAPE = re.compile(r"\$([ :$])")
 # A target the build couldn't make: ninja's "FAILED: out.o", make's "make: *** [Makefile:12: out.o] Error 1"
 _FAILED = re.compile(r"^FAILED: (.+)$|^make(?:\[\d+\])?: \*\*\* \[(?:[^\]]*?:\d+: )?([^\]]+)\] Error")
 # CodeWarrior's linker warns about every FORCEACTIVE symbol and unknown section: harmless, and thousands of lines
 _NOISE = re.compile(r"^#{1,3}\s*(mwldeppc\.exe Linker Warning:|FORCEACTIVE symbol|(doesn't )?exist\.\s+Ignored\.|"
                     r"Section '\.note\.split' is unknown)")
+
+
+def _command_program(command: str) -> str:
+    """The program a command line runs first, read the way it runs: ninja undoes its escapes first ($  a space,
+    $: a colon, $$ a dollar), then the shell takes the first word, with its quotes ("a path/tool") undone.
+    Without the quotes its first word ends at the space of ~/Library/Application Support, where macOS keeps
+    this app's toolchains, and a project that builds fine looks broken (#320). A "$ " outside quotes is a
+    space the shell splits at, so the word ends there, as it does when the build runs it."""
+    word: list[str] = []
+    quote = ""
+    for c in _NINJA_ESCAPE.sub(r"\1", command):
+        if quote:  # inside "..." or '...': spaces don't split the word
+            if c == quote:
+                quote = ""
+            else:
+                word.append(c)
+        elif c in "'\"":
+            quote = c
+        elif c.isspace():
+            break
+        else:  # a variable ninja expands ($PY, ${cc}) stays as it is: not a path to check
+            word.append(c)
+    return "".join(word)
 
 
 def _said(out: list[str]) -> str:
@@ -740,18 +767,20 @@ class ForkProject:
             return None
         missing: list[str] = []
         try:
-            with open(ninja, errors="replace", encoding="utf-8") as f:
-                for line in f:
-                    m = _NINJA_PROGRAM.match(line)
-                    if m is None:
-                        continue
-                    first = m.group(2).strip().strip("'\"").split()[0] if m.group(2).strip() else ""
-                    prog = first.strip("'\"")
-                    # (a folder path, /home/...: not an MSVC flag like /O2 or /DNDEBUG)
-                    if re.match(r"^/[^/\s]+/", prog) and prog not in missing and not Path(prog).exists():
-                        missing.append(prog)
+            text = ninja.read_text(errors="replace", encoding="utf-8")
         except OSError as e:
             return f"build.ninja can't be read: {e}"
+        # ninja_syntax wraps a line past 78 columns at a space, even one inside a quoted path, with "$" at the end
+        # and the rest indented on the next line: join those back first, the way ninja reads them (#320)
+        text = _NINJA_CONTINUATION.sub(r"\1", text)
+        for line in text.split("\n"):
+            m = _NINJA_PROGRAM.match(line)
+            if m is None:
+                continue
+            prog = _command_program(m.group(2))
+            # (a folder path, /home/...: not an MSVC flag like /O2 or /DNDEBUG)
+            if re.match(r"^/[^/\s]+/", prog) and prog not in missing and not Path(prog).exists():
+                missing.append(prog)
         if missing:
             return (f"build.ninja runs {', '.join(missing[:3])}, which {'is' if len(missing) == 1 else 'are'} not on "
                     "this computer (the project was set up elsewhere, or decompdecomp moved)")
