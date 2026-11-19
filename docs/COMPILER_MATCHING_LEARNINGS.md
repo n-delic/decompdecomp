@@ -7512,3 +7512,39 @@ app's linked verdict on a copy of the project; a new match (10 -> 0).
 `addiu` on the global's load came out on the argument instead. Writing the constant sum as its own statement,
 `t = D_801002B8 + 0xFFFC; return (arg0 + t) & 0xFFFF;`, kept it on the global and matched. Inline forms with
 casts or parentheses alone did not.
+
+### KMC GCC 2.7.2: twelve near misses closed by hand on one game (19 November 2026)
+
+Evidence level: eleven new matches and one improvement on an N64 game built with KMC GCC 2.7.2
+`-G0 -mips3 -mgp32 -mfp32 -O2`, each judged with the app's linked verdict on a copy of the project and adopted by
+the live app. The causes, one per function:
+
+- **Stack frame layout** (13 -> 0): `f32 pad[3]; f32 ang[2];` placed `ang` 8 bytes too high; `f32 pad[2]; f32 ang[3];`
+  (same frame size, the slack moved after the array) put every slot where the game's were.
+- **A wrong struct offset and a dropped argument** (15 -> 0): m2c's struct put a halfword at 0x14 where the game
+  stored 0x20, and the call passed `arg0` where the game passed 0 (`addu $a0, $zero, $zero` before the `jal`).
+- **Parameter types decide register order** (20 -> 0): `s16 arg2, s32 arg3` with `(s16)(arg3 & 0xFF)` swapped `$s1` and
+  `$s2`; `u8 arg3` stored plainly, with the two stores in the game's order, matched.
+- **Shared constant return** (20 -> 0): two `return 1;` paths each loaded the constant into `$v1`; the game jumped from
+  one path to the other's `return 1;` (decomp-repair 0.5.29 `shared_return`).
+- **A sum split into a statement, plus an integer cast** (30 -> 0): `*(s32 *)(s2 + ((i * 0x10) + (char *)&T))` let
+  gcc reassociate the base; `char *q = (i * 0x10) + (char *)&T; *(s32 *)(s2 + (s32)q)` kept the game's `addu`
+  operand order (the cast to an integer was needed: `s2 + q` kept the operands swapped).
+- **A constant in a local of the guarded block** (60 -> 0): `s32 one = 1;` inside `if (arg1 != 0)` scheduled the load
+  of 1 where the game's was; the literal let gcc share it with the `return 1;`.
+- **Block order through a jump into an `if (0)`** (80 -> 0): the game's three-way choice placed the third arm last;
+  `if (t != 1) { if (A) {...} else goto b; } else {...} if (0) { b: ... }` gave that order where every `if`/`switch`
+  arrangement placed it second.
+- **m2c's `for (;;)` pointer walks as indexed `for` loops** (80 -> 0, twice): a pointer bumped by 4 with `goto` exits
+  hoisted the `-1` store constant or the loop bound before the base address; `for (i = 0; i < N; i++) if (T[i] ...)`
+  with an early `return` matched both.
+- **Every caller argument passed on** (40 -> 0): a first call `f()` to an unprototyped callee was `f(arg0, arg1, arg2)`
+  in the game, which left the arguments' registers live and set the caller's saves in its order (0.5.29
+  `passthrough_argument`).
+- **Min/max updated in place** (50 -> 0): `a = x1 - n1; b = x0 - n0; D = (a < b) ? b : a;` took fresh registers; the
+  game subtracted into the maxima, `x0 -= n0; x1 -= n1; if (x1 < x0) D = x0; else D = x1;`.
+
+Not closed: a `goto`-shaped guard whose delay slot copies a variable known to be zero (15 -> 5: gcc folds the copy to
+`$zero` however the C names it), and register swaps where the allocator's choice did not follow statement order,
+declaration order or parameter types (a CSE'd string address and global base, 40; two argument registers, 40 -> 0
+only through the passthrough above).
