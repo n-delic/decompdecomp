@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import itertools
 import json
 import threading
 import time
@@ -15,6 +16,8 @@ from . import rom_explorer
 TASK='assets'
 INSTANCE=uuid.uuid4().hex
 LEASE=900
+EVIDENCE_PAGE_CHARS=12_000
+EVIDENCE_INLINE_CHARS=8_000
 TOOLS=frozenset({'project_info','claim_asset_region','inspect_asset_region','preview_asset_region',
                  'propose_asset_region','defer_asset_region','get_assembly','guide'})
 INSTRUCTIONS=('You discover and name data regions in a game the user owns. Use only the supplied read-only '
@@ -204,10 +207,76 @@ def claim(net,agent,slug):
     return json.dumps(packet)
 
 
+def _evidence_link(path):
+    return dict(evidence_path=path)
+
+
+def _evidence_child(path,key):
+    return path+'/'+str(key).replace('~','~0').replace('/','~1')
+
+
+def _evidence_page(detail,path,offset):
+    value=detail
+    try:
+        for part in path.split('/')[1:]:
+            key=part.replace('~1','/').replace('~0','~')
+            value=value[int(key)] if isinstance(value,list) and key.isdecimal() else value[key]
+    except (KeyError,IndexError,TypeError,ValueError):
+        raise NetworkError('Choose an evidence_path returned by the asset inspection tools.') from None
+
+    if isinstance(value,str):
+        # JSON escaping can use up to twelve characters per Unicode code point.
+        end=min(len(value),offset+EVIDENCE_PAGE_CHARS//12)
+        page=value[offset:end]
+    elif isinstance(value,(dict,list)):
+        entries=value.items() if isinstance(value,dict) else enumerate(value)
+        page={}
+        end=offset
+        size=0
+        for key,item in itertools.islice(entries,offset,None):
+            if len(json.dumps(item))>EVIDENCE_INLINE_CHARS:
+                item=_evidence_link(_evidence_child(path,key))
+            size+=len(json.dumps({key:item}))
+            if size>EVIDENCE_PAGE_CHARS and page:
+                break
+            page[key]=item
+            end+=1
+        if isinstance(value,list):
+            page=list(page.values())
+    else:
+        return dict(evidence_path=path,evidence=value,next_evidence_offset=None)
+    return dict(evidence_path=path,evidence=page,next_evidence_offset=end if end<len(value) else None)
+
+
+def _region_summary(detail,prefix='/region'):
+    # Keep the fields a worker needs on every claim. Large fields are available
+    # by path so the first response cannot consume the whole conversation budget.
+    summary={}
+    size=0
+    for key,value in detail.items():
+        chars=len(json.dumps({key:value}))
+        if size+chars<=EVIDENCE_INLINE_CHARS:
+            summary[key]=value
+            size+=chars
+        else:
+            summary[key]=_evidence_link(_evidence_child(prefix,key))
+    return summary
+
+
 @current
-def inspect(net,agent,slug,region,claim_token,offset=None,length=256):
+def inspect(net,agent,slug,region,claim_token,offset=None,length=256,evidence_path=None,evidence_offset=0):
     session,store,saved,report=_worker(net,agent,slug);held=_held(store,session,agent,region,claim_token)
     detail=rom_explorer.detail(net,slug,region,report['image_hash'])
+    at=next(i for i,r in enumerate(report['regions']) if r['id']==region)
+    neighbours=[{k:r[k] for k in ('id','start','end','kind','symbols','functions')} for r in report['regions'][max(0,at-1):at+2]]
+    if evidence_path is not None:
+        if not isinstance(evidence_path,str) or not evidence_path.startswith('/'):
+            raise NetworkError('Choose an evidence_path returned by the asset inspection tools.')
+        try:
+            page_offset=integer(evidence_offset,'Evidence offset',0,2**31-1)
+        except AssetError as exc:
+            raise NetworkError(str(exc)) from None
+        return json.dumps(_evidence_page(dict(region=detail,neighbours=neighbours),evidence_path,page_offset))
     # A bounded extra window supports tables beyond the initial hex preview.
     try:
         start=integer(offset if offset is not None else detail['start'],'ROM offset',detail['start'],detail['end']-1)
@@ -218,9 +287,9 @@ def inspect(net,agent,slug,region,claim_token,offset=None,length=256):
     with (Path(proj['root'])/net.cfg(proj)['rom']['file']).open('rb') as stream:stream.seek(start);raw=stream.read(end-start)
     reads=json.loads(held['reads']);reads=(reads+[[start,end]])[-64:]
     with store.tx() as db:db.execute('UPDATE asset_queue SET reads=? WHERE run=? AND region=?',(json.dumps(reads),held['run'],region))
-    at=next(i for i,r in enumerate(report['regions']) if r['id']==region)
-    neighbours=[{k:r[k] for k in ('id','start','end','kind','symbols','functions')} for r in report['regions'][max(0,at-1):at+2]]
-    return json.dumps(dict(region=detail,window=dict(start=start,end=end,hex=raw.hex(' ')),neighbours=neighbours,
+    summary=_region_summary({k:detail[k] for k in ('id','start','end','kind')} | detail)
+    neighbours=[_region_summary(row,f'/neighbours/{index}') for index,row in enumerate(neighbours)]
+    return json.dumps(dict(region=summary,window=dict(start=start,end=end,hex=raw.hex(' ')),neighbours=neighbours,
                            instructions='Cite inspected ROM offsets or original instruction addresses. Submit a proposal or defer with a distinct approach and findings; then claim the next region. Do not repeat failed approaches from history.'))
 
 
@@ -430,6 +499,7 @@ def review(net,slug,identity,action='read',edits=None,annotation_version='',feed
 
 def prompt(session):
     return (INSTRUCTIONS+'\nGuide asset-discovery describes proposal fields and supported layouts. First call project_info(detail=false), then claim_asset_region(). Use its claim_token for inspection and findings. '
+            'Follow evidence_path links with inspect_asset_region and use next_evidence_offset to continue a page. '
             'Inspect nearby bytes, symbols, usage and loader chains; get_assembly reads original functions. If claim returns review_target, follow review_instructions instead of proposing a new name. A different worker independently challenges each proposal; use another agent identity for review. '
             'preview_asset_region(action="textures") compares layouts and palettes without flooding context with base64; '
             'action="preview" validates image/audio settings; action="model" tests a vertex/index layout. '

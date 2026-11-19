@@ -7,6 +7,9 @@ you do not edit files, compile, rename linker symbols or accept findings. ROM st
    static usage/loader evidence and previous_attempts. Recover your held claim with the same call.
 2. `inspect_asset_region(region, claim_token, offset, length)` reads another original window inside
    that region (maximum 4096 bytes). Inspect citations before proposing them.
+   Large fields return an `evidence_path`. Pass it to `inspect_asset_region` with the same region
+   and claim token to read an evidence page. Use `next_evidence_offset` as `evidence_offset` until
+   it is null. Follow nested paths the same way to read large entries.
 3. `get_assembly(function)` follows original loader/consumer instructions. A passed buffer does not
    prove successful loading or rendering. Unknown functions, overlays and asynchronous DMA remain uncertain.
 4. `preview_asset_region` shares the normal local preview decoders. `action="textures"` compares
