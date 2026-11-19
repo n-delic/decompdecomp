@@ -1,4 +1,4 @@
-"""decomprepair 0.5.12 to 0.5.15's families reach the repairs the deep pass and autopilot try. Each comes from N64 functions
+"""decomprepair 0.5.12 to 0.5.18's families reach the repairs the deep pass and autopilot try. Each comes from N64 functions
 that used a whole 10,000-variant deep pass with no improvement; the library's own tests hold their shapes."""
 from decompnet import seeds
 from decompnet.app import draft_repairs
@@ -13,7 +13,12 @@ FAMILIES = ('assignment_at_use', 'comparison_sides', 'narrow_shift_pair', 'point
             'target_call_arity', 'symbol_address_local', 'field_width', 'integer_pointer_sum', 'word_block_copy',
             'guard_inversion', 'stored_return_value',
             # 0.5.16
-            'u16_counter_loop', 'float_prototype', 'switch_default_in_if')
+            'u16_counter_loop', 'float_prototype', 'switch_default_in_if',
+            # 0.5.18
+            'pointer_index_after_call', 'split_case_labels', 'comma_temporary_inline', 'deferred_stores',
+            'global_pointer_local', 'loop_address_inline', 'do_constant_body', 'double_unsigned_conversion',
+            'result_debris', 'saved_register_argument', 'stack_argument_record', 'double_padding_parameter',
+            'call_into_arms', 'unknown_table_index')
 FLAGS = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
 HEADER = 'typedef int s32;\ntypedef unsigned int u32;\ntypedef short s16;\ntypedef float f32;\n'
 
