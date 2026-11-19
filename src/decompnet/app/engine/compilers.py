@@ -31,7 +31,11 @@ FLAG_FAMILIES = (("ido", "ido"), ("mwcps2", "mwcps2"), ("mwccpsp", "mwcps2"), ("
 FLAG_LEVELS = {"gcc": ("-O1", "-O2", "-O3", "-Os"), "ee": ("-O1", "-O2", "-O3", "-Os"),
                "ido": ("-O1", "-O2", "-O3", "-g"), "mwcps2": ("-O1", "-O2", "-O3", "-O4"),
                "snc": ("-O0", "-O1", "-O2", "-O4")}  # SNC: -O3 builds as -O2 and -O5 as -O4; it has no -Os
-FLAG_EXTRAS = {"gcc": ("-fno-strength-reduce", "-fno-schedule-insns"),
+# (an entry with a space is one variant of several flags. A library function in an N64 game was built with GCC's
+# scheduling off: -fno-schedule-insns2 took its strcmp from 97.2% to 99.1%, and both passes off matched it once the
+# C read its loads in the game's order)
+FLAG_EXTRAS = {"gcc": ("-fno-strength-reduce", "-fno-schedule-insns", "-fno-schedule-insns2",
+                       "-fno-schedule-insns -fno-schedule-insns2"),
                "ee": ("-fno-strength-reduce", "-fno-schedule-insns", "-fno-common"),
                "ido": (), "mwcps2": (), "snc": ("-Xsched=0",)}  # SNC's instruction scheduling off
 SMALL_DATA_SIZES = (0, 8)
@@ -953,7 +957,7 @@ class CompilerMixin:
                 if base[at] != str(g):
                     out.append(base[:at] + [str(g)] + base[at + 1:])
         out += [v for v in CompilerMixin.debug_flag_variants(toolchain, base) if v not in out]
-        out += [[*base, extra] for extra in extras if extra not in base]
+        out += [[*base, *extra.split()] for extra in extras if not set(extra.split()) <= set(base)]
         return out[:MAX_FLAG_VARIANTS]
 
     def search_flags(self, agent: Agent, slug: str, function: str, compiler: str = "", source: str = "") -> str:

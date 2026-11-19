@@ -7373,3 +7373,34 @@ outgoing argument slots, the object, `$ra`), so gcc placed it above a frame of i
 union, the narrow one matched 3 and brought 11 closer; 3 compiled further away and 2 were unchanged, so new
 drafts get both (`initial_stack_frame`, `initial_stack_frame_whole`), and saved C gets `initial_frame_narrowed`
 as a repair the judge keeps only when it helps.
+
+### KMC GCC 2.7.2: four functions the deep pass left at m2c's draft, and a library built without scheduling (19 November 2026)
+
+Evidence level: four new matches in an N64 game, checked offline with the pinned compiler, the project's own header
+and the app's judge (a copy of the project, `RomNetwork._compile` + `_evaluate` + `scoring.diff`); each had just
+finished a deep pass of 10,000 variants with no improvement. Controlled regression tests on homemade C:
+`tests/test_exit_returns_and_operand_temporaries.py` here, and decomp-repair 0.5.8's own tests.
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` (the project default) for the first three:
+- A 30-instruction function at 96.1%, m2c's `if (a || b || (t = g(), v = t, t == -1)) { v = -1; } return v;`: the
+  -1 went through `$v1` and a copy. `if (...) return -1; return v;` alone was worse (88.8%); with m2c's copy
+  `v = t,` dropped and `return t;` as well: **exact**. decomp-repair `constant_exit_return` offers both.
+- A 19-instruction function at 88.9%, `p = (i * 0x18) + M2C_FIELD(M2C_FIELD(o, void **, 0x6C), s32 *, 4);`: the
+  index was scheduled between the two loads. Operands swapped, or a `Rec *` array index: 87.1%. The load chain in
+  a statement of its own first (`s32 base = ...; p = (i * 0x18) + base;`): **exact**; as `s8 *base`: 98.2%.
+  `address_temporary` (the whole address in a temporary) never splits one operand; `operand_temporary` does.
+- A 70-instruction function at 92.0%, m2c's delay-slot duplicate of a comparison, `var_v0 = arg0 != 0` before and
+  inside an `if`: carried in a variable it lived in `$s0` and was tested with `andi`. Moved after the `if` (as
+  `delay_slot_duplicate` does for arithmetic): 92.1%. Written in the condition where it's used,
+  `((arg0 != 0) & (arg2 != NULL)) && ...`, or `arg0 != 0 && arg2 != NULL && ...`: **exact**. The repair now accepts
+  comparisons (its value pattern refused any `=`) and offers that form.
+- A 65-instruction `strcmp` adapted from a matched twin in another game (same compiler, `-O2 -g3` there) at 97.2%:
+  only load order differed, the second pointer's load after the first pointer's increment, in all three loops.
+  Reordering the C changed nothing under `-O2`; nor did `-g`, `-g3`, `-O3`, `-fno-strength-reduce` or
+  `-fno-schedule-insns` alone. `-fno-schedule-insns2`: 99.1% (the byte loops exact). `-fno-schedule-insns
+  -fno-schedule-insns2` with the stored C: 83.5%, worse; with each pointer read and advanced in turn (`c = *s1++;
+  d = *s2++;`, and `s1 += 4` before the second word load): **exact**. A library built with scheduling off: the C's
+  statement order is the instruction order. Other compilers were far off (gcc 2.8.1 68.6%, egcs 52.1%, SN 72.1%).
+The flag search now tries `-fno-schedule-insns2` and both scheduling passes off. Still open: the deep pass scores
+candidates under the function's own settings only, where both reorders look like no change, and the right profile
+looks worst with the stored C, so it can't climb there by itself (ROADMAP).
