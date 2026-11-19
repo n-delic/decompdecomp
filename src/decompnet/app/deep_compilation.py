@@ -4,6 +4,7 @@ import functools
 import queue
 import threading
 import time
+from collections import deque
 from concurrent.futures import CancelledError, Future
 from contextlib import contextmanager, nullcontext
 
@@ -12,6 +13,8 @@ from ..candidate_work import preparation as candidate_preparation
 
 
 class Ticket:
+    batch = None  # (group, net, proj, header, fn) when it may compile with others (Pool._run_batch)
+
     def __init__(self, key, snapshot, run, check):
         self.key, self.snapshot, self.run, self.check = key, snapshot, run, check
         self.future = Future()
@@ -34,17 +37,22 @@ class Pool:
         self.count = count or compiler.concurrency_limit()
         self.maximum = maximum
         self.remote = remote  # compiles in child processes (compile_worker.py); a deep lane compiles in-thread
+        # A lane's compile threads compile several candidates of one function per compiler run (batch_compile.py):
+        # one run takes one compile slot for up to MAX candidates, so as many more may wait for it.
+        from ..batch_compile import MAX as BATCH
+        self.batching = 1 if remote else BATCH
+        self.unbatchable = set()  # groups whose candidates a batch can't give (their code refers to file-local data)
         self.slots = compiler.Admission(self.count)
         self.metrics = Metrics()
         self.metrics.gate = self.slots
         self.metrics.maximum = maximum
-        self.queue = queue.Queue(maxsize=self.count*2)
+        self.queue = queue.Queue(maxsize=self.count*2*self.batching)
         self.group = compile_sharing.Group()
         self.workers = []
         self.lock = threading.Lock()
         self.baselines = {}
         self.proposals = None
-        self.capacity = threading.BoundedSemaphore(self.count*2)
+        self.capacity = threading.BoundedSemaphore(self.count*2*self.batching)
         self.admission = threading.Lock()
         self.lanes = 0  # searches preparing or holding a window now
 
@@ -105,16 +113,66 @@ class Pool:
         # no longer queues on the app's one interpreter lock.
         with scope(self), compile_sessions.session(), compile_sharing.group(self.group), \
                 (compile_worker.remote(background=not self.maximum) if self.remote else nullcontext()):
-            while (ticket := self.queue.get()) is not None:
+            pending = deque()
+            while (ticket := pending.popleft() if pending else self.queue.get()) is not None:
                 if not ticket.future.set_running_or_notify_cancel():continue
-                try:
-                    ticket.checkpoint()
-                    with compiler.cancellable(ticket.checkpoint), compile_timing.collect(ticket.compile_counts, append=True):
-                        result = ticket.run()
-                    ticket.checkpoint()
-                    ticket.future.set_result(result)
-                except BaseException as error:
-                    ticket.future.set_exception(error)
+                group = [ticket]
+                if (self.batching > 1 and getattr(ticket, 'batch', None) is not None
+                        and ticket.batch[0] not in self.unbatchable):
+                    # Queued candidates of the same function and header join this compiler run.
+                    while len(group) < self.batching:
+                        try:
+                            other = self.queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        if other is None or getattr(other, 'batch', None) is None or other.batch[0] != ticket.batch[0]:
+                            pending.append(other)
+                            break
+                        if other.future.set_running_or_notify_cancel():
+                            group.append(other)
+                if len(group) > 1:
+                    self._run_batch(group)
+                else:
+                    self._run_one(ticket)
+
+    def _run_one(self, ticket):
+        try:
+            ticket.checkpoint()
+            with compiler.cancellable(ticket.checkpoint), compile_timing.collect(ticket.compile_counts, append=True):
+                result = ticket.run()
+            ticket.checkpoint()
+            ticket.future.set_result(result)
+        except BaseException as error:
+            ticket.future.set_exception(error)
+
+    def _run_batch(self, group):
+        """One compiler run for `group`; a candidate the batch can't take compiles on its own after it."""
+        _, net, proj, header, fn = group[0].batch
+        results = None
+        try:
+            group[0].check()
+            with compiler.cancellable(group[0].check), compile_timing.collect(group[0].compile_counts, append=True):
+                results = net._compile_batch(proj, header, [t.batch_source for t in group], fn)
+        except BaseException as error:
+            for ticket in group:
+                ticket.future.set_exception(error)
+            return
+        alone = sum(1 for index in range(len(group)) if not results or results[index] is None)
+        if alone:
+            compile_timing.add('batch_alone', alone)
+        if results and alone == len(group) and all(r is None for r in results) and _all_local(group):
+            # It compiled, and none could be used: a function that refers to its file's own data. One by one.
+            with self.lock:
+                self.unbatchable.add(group[0].batch[0])
+        for index, ticket in enumerate(group):
+            result = results[index] if results else None
+            if result is None:
+                self._run_one(ticket)
+                continue
+            if ticket.stopped.is_set():
+                ticket.future.set_exception(CancelledError())
+            else:
+                ticket.future.set_result(result)
 
     def close(self):
         # Search chunk contexts cancel their own pending/running tickets first.
@@ -142,7 +200,7 @@ def chunk(search, agent, proj, fn, sources, fork):
     with pool.lock:pool.lanes += 1
     # Each lane asks for its share of the capacity: one lane asking for all of it held the admission lock while the
     # permits came back one by one, and the other lanes queued behind it. A lane alone still fills the pipeline.
-    with pool.lock:share = max(2, pool.count*2//max(1, pool.lanes))
+    with pool.lock:share = max(2, pool.count*2*getattr(pool, 'batching', 1)//max(1, pool.lanes))
     try:
         with candidate_preparation():
             for source in sources:
@@ -166,6 +224,10 @@ def chunk(search, agent, proj, fn, sources, fork):
                 snapshot = search.net._compile_snapshot(proj, fn, header, source)
                 ticket = Ticket(key[1], snapshot,
                                 lambda source=source:search.net._compile(proj, header, source, fn), check)
+                if hasattr(search.net, '_compile_batch'):
+                    # what batch_compile needs: the run's group (one function, one header) and this candidate
+                    ticket.batch = ((id(search.net), proj['id'], fn['id'], header), search.net, proj, header, fn)
+                    ticket.batch_source = source
                 tickets[source] = ticket
         with pool.window(list(tickets.values()), check):
             for ticket in tickets.values():pool.submit(ticket)
@@ -185,6 +247,11 @@ def chunk(search, agent, proj, fn, sources, fork):
                 ticket.counted = True
             else:ticket.cancel()
 
+
+
+def _all_local(group):
+    """Whether the last batch's candidates were all set aside for referring to file-local data (batch_compile)."""
+    return group[0].compile_counts.values.get('batch_alone_local', 0) >= len(group)  # (this batch's own counts)
 
 
 def discard(search):

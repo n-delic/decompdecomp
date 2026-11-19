@@ -908,9 +908,10 @@ class Network:
         row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
         return row["name"] if row else "?"
 
-    @timed_build
-    def _compile(self, proj, header: str, source: str, fn=None):
-        """Compiled with the project's compiler, or for `fn` the one its address range is built with."""
+    @staticmethod
+    def _invocation(proj, fn=None):
+        """(project config, compiler invocation) for compiling `fn`: its address range's compiler, the resolved
+        command, and the identity the compile caches key on. Shared by single and batched compiles."""
         cfg = json.loads(proj["config"])
         if fn is not None and (cfg.get("compiler_ranges") or cfg.get('function_compilers')):
             cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"], fn)}
@@ -931,6 +932,12 @@ class Network:
             # hashes in full (compiler.py), as the judge's identity already relies on (engine/judging.py).
             invocation.identity = (proj['id'], proj['root'], json.dumps(c, sort_keys=True),
                                    *(identity.get(k) for k in ('id','name','vram','meta','target','relocs')))
+        return cfg, invocation
+
+    @timed_build
+    def _compile(self, proj, header: str, source: str, fn=None):
+        """Compiled with the project's compiler, or for `fn` the one its address range is built with."""
+        cfg, invocation = Network._invocation(proj, fn)
         try:
             result = compile_source(invocation, header, source)
         except OSError as error:
@@ -942,6 +949,21 @@ class Network:
         result.effective_settings = {'compiler':cfg['compiler'], 'effective_command':list(invocation.cmd),
                                      'language':getattr(result,'language','unknown'), 'settings_source':'compile invocation snapshot'}
         return result
+
+    def _compile_batch(self, proj, header: str, sources: list[str], fn):
+        """[CompileResult or None] for several candidates of `fn` in one compiler run (batch_compile.py), None
+        where a candidate must compile alone; None when the batch can't be used at all."""
+        from .batch_compile import compile_batch
+        cfg, invocation = Network._invocation(proj, fn)
+        try:
+            results = compile_batch(invocation, header, sources, fn['name'])
+        except OSError:
+            return None  # (the candidates compile one by one, which reports host failures as usual)
+        for result in results or ():
+            if result is not None:
+                result.effective_settings = {'compiler':cfg['compiler'], 'effective_command':list(invocation.cmd),
+                                             'language':'c', 'settings_source':'compile invocation snapshot (batched)'}
+        return results
 
     @staticmethod
     def _compile_snapshot(proj, fn, header, source):
