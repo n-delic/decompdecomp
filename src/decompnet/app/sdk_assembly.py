@@ -229,6 +229,39 @@ def _lead(net,proj,fn,hint):
     return names[0],list(hint.get('corpora') or []),{'ultralib':path.relative_to(ultralib.root()).as_posix(),'build':build}
 
 
+def ultralib_needed(net,proj,limit=None):
+    """The open functions library detection named that the N64 port builds as libultra's C (`PortKit.sdk_group`
+    "native": its math and synthesizer), while the user's ultralib isn't installed: `_lead` sets those aside only
+    from ultralib's own C, so without it they stay open, and agents and deep passes spend whole budgets on SDK code
+    (an N64 game's guMtxIdent, guTranslateF and guPosition). The project then requires the `ultralib-source` pack like
+    its compiler (the overview's `library_pack`, Engine.install_compilers). Read from the recorded identities only
+    (`Network.sdk_functions`'s cached ones), so the overview can ask: no fingerprinting here. [] when none, the pack
+    is installed, or the project's library setting is off."""
+    # (the console first: one whose port compiles no libultra C never needs the pack, and asks nothing more)
+    kit=net.console(proj).port_kit
+    if kit is None or kit.sdk_group('guMtxIdent')!='native':return []
+    if not enabled(net,proj) or proj['arch']!='mips' or not net.is_rom(proj) or net.fork_slug(proj['slug']):return []
+    from ..port import ultralib
+    if ultralib.root() is not None:return []
+    hints=_recorded(net,proj)
+    if not hints:return []
+    names=[]
+    for row in net.project_store(proj['id']).all("SELECT id,name,meta FROM functions WHERE project_id=? AND status='open' AND "
+                                                  "id IN (SELECT value FROM json_each(?)) ORDER BY vram",proj['id'],json.dumps(sorted(hints))):
+        if json.loads(row['meta'] or '{}').get('reopened'):continue
+        found=hints[row['id']].get('names') or []
+        if len(found)==1 and found[0] and kit.sdk_group(found[0])=='native':
+            names.append(row['name'])
+            if limit is not None and len(names)>=limit:break
+    return names
+
+
+def _recorded(net,proj):
+    """The recorded SDK identities alone (Network.sdk_functions, cached), not the engine's live fingerprinting."""
+    from ..network import Network
+    return Network.sdk_functions(net,proj)
+
+
 def ultralib_set_aside(net,proj):
     """{function: (ultralib's file, build)} of the functions set aside for the port to build from ultralib's C."""
     out={}

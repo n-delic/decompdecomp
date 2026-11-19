@@ -712,6 +712,16 @@ function renderCompilerNotice(ov) {
   n._html = null;
   // the console's other compilers too, until the project has matches: the compiler test tries every one installed
   const missing = ov.compiler.missing || [];
+  // libultra code library detection named, which only libultra's own source (a proprietary pack) sets aside:
+  // required like the compiler, so agents and deep passes don't spend budgets on SDK code (sdk_assembly.ultralib_needed)
+  const pack = ov.library_pack;
+  if (ov.kind !== "fork" && pack && ov.compiler.installed && (!missing.length || ov.matched)) {
+    n.hidden = false; n.className = "notice";
+    const shown = (pack.examples || []).map((x) => `<code>${esc(x)}</code>`).join(", ");
+    n.innerHTML = `<span>${plural(pack.functions, "function")} of this game ${pack.functions > 1 ? "are" : "is"} libultra's own code (${shown}${pack.functions > (pack.examples || []).length ? ", …" : ""}). They're set aside as SDK library code once <b>${esc(pack.name)}</b> is installed; until then they stay open work.${pack.proprietary ? " It's proprietary software (SGI's and Nintendo's C): install it only if you accept that." : ""}</span><span class="grow"></span><button class="primary small-btn" id="tcInstall" type="button">Install…</button>`;
+    $("tcInstall").onclick = () => installToolchain(pack.id, pack.proprietary);
+    return;
+  }
   if (ov.kind === "fork" || (ov.compiler.installed && (!missing.length || ov.matched))) { n.hidden = true; return; }
   n.hidden = false;
   // #118: the project came from another tool and names a compiler decompdecomp doesn't have: it opens, and says so

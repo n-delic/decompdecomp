@@ -865,8 +865,18 @@ class CompilerMixin:
             log(f"installing {consoles.compiler_name(tid)}")
             toolchains.install(tid, accept_license=accept_license, log=log)
             installed.append(tid)
+        # (and the library pack the project needs, when detection named libultra C only it sets aside)
+        from ...port import ultralib
+        from ..sdk_assembly import ultralib_needed
+        if self.is_rom(proj) and ultralib_needed(self, proj, limit=1):
+            if accept_license or not toolchains.get(ultralib.PACK).proprietary:
+                log(f"installing {toolchains.get(ultralib.PACK).name}")
+                toolchains.install(ultralib.PACK, accept_license=accept_license, log=log)
+                installed.append(ultralib.PACK)
+            else:
+                left_out.append(ultralib.PACK)
         if left_out:
-            log(f"left out, as proprietary: {', '.join(consoles.compiler_name(t) for t in left_out)}")
+            log(f"left out, as proprietary: {', '.join(toolchains.get(t).name if t == ultralib.PACK else consoles.compiler_name(t) for t in left_out)}")
         counts = self.test_compilers(slug, console.installable_compilers(), log=log) if retest and self.is_rom(proj) else {}
         return {"installed": installed, "left_out": left_out, "test": counts}
 

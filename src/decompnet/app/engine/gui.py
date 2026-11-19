@@ -342,6 +342,8 @@ class GuiMixin:
                          "why": None if tc is None or tc.supported else toolchains.unsupported_cpu(),
                          "missing": [{"id": t, "name": consoles.compiler_name(t), "proprietary": toolchains.get(t).proprietary}
                                      for t in console.installable_compilers() if toolchains.installed(t) is None]},
+            # (library code only a pack the user hasn't installed sets aside: required like the compiler)
+            "library_pack": self._library_pack(proj),
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
             "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
             "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
@@ -353,6 +355,22 @@ class GuiMixin:
             "exportable": consoles.EXPORT in console.features,
             "room": self._room_info(proj["slug"], refresh=room_members),
         }
+
+    def _library_pack(self, proj) -> dict | None:
+        """The `ultralib-source` pack when detection named libultra C that only it sets aside (sdk_assembly.
+        ultralib_needed), for the project's notice: what it is, that it's proprietary, and which functions wait."""
+        from ...port import ultralib
+        from ..sdk_assembly import ultralib_needed
+        try:
+            needed = ultralib_needed(self, proj)
+        except Exception:  # noqa: BLE001 - a notice never breaks the overview
+            logging.getLogger("decompdecomp").debug("library pack check failed", exc_info=True)
+            return None
+        if not needed:
+            return None
+        tc = toolchains.get(ultralib.PACK)
+        return {"id": tc.id, "name": tc.name, "proprietary": bool(tc.proprietary), "functions": len(needed),
+                "examples": needed[:5]}
 
     @contextmanager
     def summary_batch(self):
