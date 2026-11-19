@@ -78,7 +78,7 @@ const ctx = {
 ctx.window = ctx;
 vm.createContext(ctx);
 const js = process.env.GUI_JS || path.join(__dirname, "..", "src", "decompnet", "app", "static", "js");
-for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "steering", "pages"]) {
+for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "deep-permuter", "steering", "pages"]) {
   vm.runInContext(fs.readFileSync(path.join(js, `${name}.js`), "utf8"), ctx, { filename: `${name}.js` });
 }
 ctx.drawMap = () => {};
@@ -96,6 +96,7 @@ const which = () => vm.runInContext("S.which", ctx);
   assert.equal(buttons[0].classList.contains("on"), false);
   assert.equal(buttons[1].classList.contains("on"), true);
   assert.ok(asked.some((url) => url.includes("/api/diff") && url.includes("which=best")), asked.join(" "));
+  assert.equal(get("fnPin").hidden, false); // ★ the star shows on an open function of a fork project (PR #290)
 
   // The same function's refresh keeps the choice (a live poll calls refreshFn(false)).
   await ctx.refreshFn(false);
@@ -115,6 +116,7 @@ const which = () => vm.runInContext("S.which", ctx);
   await ctx.openFn("f2");
   await settle();
   assert.equal(get("diffWhich").hidden, true);
+  assert.equal(get("fnPin").hidden, true); // ...and not on a matched one.
   assert.equal(which(), "latest");
 
   // Nor does one with no best attempt yet.
@@ -124,6 +126,20 @@ const which = () => vm.runInContext("S.which", ctx);
   await settle();
   assert.equal(get("diffWhich").hidden, true);
   assert.equal(which(), "latest");
+  // its badge says it was tried, not "not started" (a report: 12 compiles, none built, said "not started")
+  assert.equal(get("fnStatus").textContent, "1 compile, no best yet");
+
+  // Nor is one whose compile built and scored but was undone for breaking a matched neighbour: it has no best either.
+  detail = { ...detail, name: "f5", scores: [{ score: 40, t: 0, agent: "claude" }] };
+  await ctx.openFn("f5");
+  await settle();
+  assert.equal(get("fnStatus").textContent, "1 compile, no best yet");
+
+  // A function nobody compiled is not started.
+  detail = { ...detail, name: "f4", scores: [] };
+  await ctx.openFn("f4");
+  await settle();
+  assert.equal(get("fnStatus").textContent, "not started");
 
   console.log("ok");
 })().catch((e) => { console.error(e); process.exit(1); });

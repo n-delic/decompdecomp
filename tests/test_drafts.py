@@ -1,5 +1,6 @@
 """Machine drafts (m2c): what they are made from, when they are made again, and how agents get them."""
 
+import json
 import shutil
 import threading
 import time
@@ -250,6 +251,8 @@ def test_a_big_header_brief_carries_only_the_declarations_used(net, monkeypatch)
 def test_a_method_of_a_known_class_is_drafted_as_cplusplus(net, monkeypatch):
     proj = net._project(SLUG)
     fn = net.store.one("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns LIMIT 1", proj["id"])
+    # #232: the method draft is C++, so it follows the function's compiler, not just the class recovery.
+    monkeypatch.setattr(briefs, "compiler_for", lambda cfg, vram: {"toolchain": "ee-gcc-2.96", "flags": []})
     base, derived = 0x80100000, 0x80100100
     found = classes.Classes()
     found.by_vtable[base] = classes.Class(base, 8, [fn["vram"]])
@@ -265,6 +268,38 @@ def test_a_method_of_a_known_class_is_drafted_as_cplusplus(net, monkeypatch):
     assert f"{label}::{fn['name']}(s32 arg1)" in shown and "virtual function 0" in shown and "s32 unk4;" in shown
     header[base] = b"\x80\x00\x10\x00\x80\x00\x10\x04"  # a C table of functions: no zero in its first two words
     assert net._draft_shown(dict(fn) | {"seed": draft}, proj) == draft
+
+
+@pytest.mark.parametrize("compiler, ranges, cplusplus", [
+    pytest.param("gcc-2.7.2-kmc", [], False, id="an-n64-c-only-compiler"),
+    pytest.param("ee-gcc-3.2", [], True, id="a-ps2-cplusplus-compiler"),
+    pytest.param("ee-gcc-3.2", [{"start": 0x80100000, "end": 0x80100100, "toolchain": "gcc-2.7.2-kmc",
+                                 "flags": []}], False, id="a-c-only-compiler-range"),
+    pytest.param("not-a-real-compiler", [], False, id="a-compiler-this-copy-doesnt-know"),
+])
+def test_a_method_draft_is_shown_only_where_the_functions_compiler_builds_cplusplus(
+        compiler, ranges, cplusplus, tmp_path, monkeypatch):
+    """#232: `Class::method` is C++, so a brief shows it only where the function's own compiler can build C++: N64's
+    and PS1's packed compilers build C, and their briefs keep m2c's C draft."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    vram = 0x80100000
+    name = "func_80100000"
+    fn = {"vram": vram, "name": name, "seed": DRAFT.replace("func_80000400", name)}
+    proj = {"id": 1, "config": json.dumps({
+        "kind": "rom", "big_endian": True,
+        "compiler": {"toolchain": compiler, "flags": []},
+        "compiler_ranges": ranges,
+    })}
+    found = classes.Classes()
+    found.by_vtable[vram] = classes.Class(vram, 8, [vram])
+    found.roles[vram].append((vram, "slot 0"))
+    monkeypatch.setattr(net, "classes", lambda proj: found)
+    monkeypatch.setattr(net, "reader", lambda proj: lambda addr, n: b"\0" * 8)
+    shown = net._draft_shown(fn, proj)
+    if cplusplus:
+        assert f"::{name}(s32 arg1)" in shown and "this->unk4" in shown
+    else:
+        assert shown == fn["seed"] and "::" not in shown
 
 
 @needs_demo

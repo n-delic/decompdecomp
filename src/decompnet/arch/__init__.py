@@ -68,6 +68,11 @@ class Arch:
     argument_register_evidence: Callable[..., tuple | None] | None = None
     source_return_contract: Callable[..., dict | None] | None = None
     source_return_paths: Callable[..., dict | None] | None = None
+    # whether a block of code is all this processor's alignment padding — its nop/filler: (code, big_endian) -> bool
+    is_padding: Callable[[bytes, bool], bool] | None = None
+    # whether this code's last instruction has a delay slot, so the next word belongs to the function (MIPS):
+    # (code, big_endian) -> bool. Architectures without delay slots leave it None.
+    ends_in_delay_branch: Callable[[bytes, bool], bool] | None = None
 
 
 ARCHES = [
@@ -76,15 +81,16 @@ ARCHES = [
          variants={mips.ALLEGREX: mips.allegrex_lines}, stack_frame_growth=mips_stack.frame_growth,
          stack_layout=mips_stack.layout, instruction_regions=mips_regions.read, repair_search_hints=mips_search.read,
          argument_register_evidence=mips_arguments.evidence, source_return_contract=mips_returns.result,
-         source_return_paths=mips_return_paths.read),
-    Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
-    Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES})),
+         source_return_paths=mips_return_paths.read, is_padding=mips.is_padding,
+         ends_in_delay_branch=mips.ends_in_delay_branch),
+    Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason, is_padding=ppc.is_padding),
+    Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES}), is_padding=ppc.is_padding),
     Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, features=frozenset({CLASSES, STRUCTS}),
-         field_accesses=x86_fields.read_facts, float_operands=x86.float_operands, method_draft=x86.method_draft),
-    Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64),
-    Arch("arm", "ARM", arm.CAPSTONE, arm.RELOC_MASKS, arm.asm_reason, features=frozenset({BOUNDARIES})),
+         field_accesses=x86_fields.read_facts, float_operands=x86.float_operands, method_draft=x86.method_draft, is_padding=x86.is_padding),
+    Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64, is_padding=x86.is_padding),
+    Arch("arm", "ARM", arm.CAPSTONE, arm.RELOC_MASKS, arm.asm_reason, features=frozenset({BOUNDARIES}), is_padding=arm.arm_is_padding),
     Arch("thumb", "Thumb", arm.THUMB_CAPSTONE, arm.THUMB_RELOC_MASKS, arm.asm_reason,
-         features=frozenset({BOUNDARIES})),
+         features=frozenset({BOUNDARIES}), is_padding=arm.thumb_is_padding),
 ]
 _BY_ID = {a.id: a for a in ARCHES}
 UNKNOWN = Arch("", "an unknown processor", {})
