@@ -152,8 +152,6 @@ def _open_when_ready(port: int) -> None:
 
 
 def run(args) -> int:
-    import uvicorn
-
     from . import cleanup
     from .engine import RomNetwork
     from .server import build
@@ -208,13 +206,28 @@ def run(args) -> int:
     if not restarted or restarted.get("window", True):
         _open_when_ready(port)
     try:
-        uvicorn.Server(server_config(app)).run(sockets=[sock])
+        serve(app, sock)
     except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
         log.exception("the server stopped")
         traceback.print_exc()
     finally:
         quit_app()
     return 0
+
+
+def serve(app, sock: socket.socket) -> None:
+    """Serve the window and MCP on the socket reserved at startup."""
+    import asyncio
+
+    import uvicorn
+
+    server = uvicorn.Server(server_config(app))
+    if sys.platform == "win32":
+        # A reset before AcceptEx completes can close the Proactor listener (CPython #93821).
+        with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+            runner.run(server.serve(sockets=[sock]))
+    else:
+        server.run(sockets=[sock])
 
 
 def server_config(app):
