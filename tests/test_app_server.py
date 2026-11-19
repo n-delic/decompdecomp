@@ -747,6 +747,48 @@ def test_builtin_api_agent_matches_a_function(app, monkeypatch):
     assert "byte-identical" in seen[-1]["messages"][-1]["content"]
 
 
+@needs_demo
+def test_builtin_api_agent_matches_a_function_through_anthropics_own_api(app, monkeypatch):
+    """The same scripted match through Anthropic's Messages API (agents/api_anthropic.py): the loop's conversation is
+    translated at the edge, the prefix is cached, and the model's thinking goes back with its calls."""
+    client, net, manager = app
+    slug = net.store.one("SELECT slug FROM projects")["slug"]
+    source = "s32 func_800007F4(s32 v) { return v < 0 ? -v : v; }"
+    script = iter([
+        [{"type": "thinking", "thinking": "Claim it first.", "signature": "sig1"},
+         {"type": "tool_use", "id": "toolu_1", "name": "claim_function", "input": {"function": "func_800007F4"}}],
+        [{"type": "tool_use", "id": "toolu_2", "name": "compile_and_diff", "input": {"function": "func_800007F4", "source": source}}],
+        [{"type": "text", "text": "Matched."}],
+    ])
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        assert request.url.path == "/v1/messages" and request.headers["x-api-key"] == "test-key"
+        assert "authorization" not in request.headers and body["tools"] and body["system"][0]["cache_control"]
+        blocks = next(script)
+        stop = "tool_use" if any(b["type"] == "tool_use" for b in blocks) else "end_turn"
+        return httpx.Response(200, json={"id": "msg", "model": body["model"], "content": blocks, "stop_reason": stop,
+                                         "usage": {"input_tokens": 5, "cache_read_input_tokens": 100, "output_tokens": 3}})
+
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    s = agents.Session("api-a", "api", "Test", slug, "api-anthropic", {
+        "provider": "anthropic", "base_url": "https://api.anthropic.com/v1/messages", "model": "claude-opus-5-5",
+        "api_key": "test-key", "effort": "high"})
+    agent, _ = net.local_agent("api-anthropic")
+    net.claim(agent, slug, "func_800007F4")
+    manager._session_begin(s)
+    assert api.API.run(manager, s, agent) is True
+    assert net._function("func_800007F4", slug)["status"] == "matched"
+    assert all(b["output_config"] == {"effort": "high"} for b in seen)
+    assert seen[1]["messages"][1]["content"][0] == {"type": "thinking", "thinking": "Claim it first.", "signature": "sig1"}
+    last = seen[-1]["messages"][-1]
+    assert last["role"] == "user" and "byte-identical" in last["content"][0]["content"]
+    assert s.usage["cache_read"] >= 300 and 'test-key' not in json.dumps(manager.transcripts.read(slug, s.id))
+
+
 def test_an_agent_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch):
     """Claude Code without a sign-in exits at once: say that (not "exited with code 1") and don't keep retrying."""
     manager = agents.Manager(RomNetwork(tmp_path / "app.db", tmp_path), tmp_path, "http://127.0.0.1:9/mcp")
