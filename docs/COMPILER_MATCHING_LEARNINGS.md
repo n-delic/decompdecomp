@@ -7404,3 +7404,33 @@ finished a deep pass of 10,000 variants with no improvement. Controlled regressi
 The flag search now tries `-fno-schedule-insns2` and both scheduling passes off. Still open: the deep pass scores
 candidates under the function's own settings only, where both reorders look like no change, and the right profile
 looks worst with the stored C, so it can't climb there by itself (ROADMAP).
+
+### KMC GCC 2.7.2: five more functions the deep pass left unimproved (19 November 2026)
+
+Evidence level: five new matches in an N64 game, checked offline with the pinned compiler, the project's own header
+and the app's judge on a copy of the project; each had just finished a 10,000-variant deep pass with no improvement.
+Controlled tests on homemade C: `tests/test_permuter_rewrites_second_batch.py` here, decomp-repair 0.5.9's own.
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` throughout:
+- 40 instructions at 98.7%, C borrowed from a matched sibling: only immediates differed (`0x2C00, 0xD, 0x1640,
+  0xC0, 0x2C` against the sibling's `0x3C00, 0xC, 0xF00, 0x40, 0x3C`). Paired in order of appearance: 99.5% (the
+  loop's step and bound are scheduled in the other order); smallest with smallest: **exact** (`target_constant`).
+- 31 instructions at 92.2%, a table of unknown type read as m2c's `*((M2C_UNK *)((s8 *)&D + i * 2))`: word loads
+  of the low half (`lh %lo(D+2)`). All as `s16`: 93.5% (the negated read is `lhu`); each as the target's load in
+  order (`s16, s16, u16`), or `-*(s16 *)...` for the negated one: **exact** (`symbol_access_width`).
+- 32 instructions at 96.2%: `D_800E1A68 = 0; D_800C7E6C = M2C_FIELD(arg0, u8 *, 0x44);` stored before the load,
+  which gcc won't move above a store the pointer could alias. Swapped, or the load in a temporary first:
+  **exact** (`load_before_store`).
+- 38 instructions at 95.0%: the game called `g(arg0, D, arg2, x, y)`, its `$a2` the caller's own and untouched, so
+  m2c wrote `g(arg0, D, x, y)` (one argument short, the last off the stack). With `arg2` passed: **exact**; at the
+  other positions 88.3-94.7% (`passthrough_argument`).
+- 21 instructions at 75.7%, m2c's `loop_1:` with two `if`s sharing a skip label: as `do { if (A && B) return 1;
+  step; } while (i < 0x21U); return 0;`: **exact**; as a `for` loop with the steps in its header: 98.1%; with the
+  counter initialised in another order: 97.9% (`goto_loop`).
+Tried and not matched: a 65-instruction function whose m2c `goto`/duplicate-return structure, written as plain
+`if`s, went from 95.1% to 99.6% (two parameters in swapped saved registers; parameter types and store order did not
+settle it; the general goto-to-return rewrite alone was worse, 86.3%); a 31-instruction float distance whose
+prologue the game scheduled after the arithmetic (no flag variant changed it); a flag test whose best C held
+`register D_80102ED4 = 0;`, a declaration shadowing the global that a rewrite had left (the plain store: 71.3%; read
+through a pointer, as the target's `addiu $a1, %lo(D)` suggests: 80.0%). Five open functions' best C in this game
+holds such a `register X = ...;` line.
