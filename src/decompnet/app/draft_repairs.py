@@ -6,6 +6,7 @@ preprocessor lines are opaque.
 """
 
 import re
+import threading
 
 from decomprepair import (
     address_association_repairs,
@@ -269,8 +270,61 @@ _IDENT = r'[A-Za-z_]\w*'
 _MEMBER = rf'{_IDENT}(?:\s*(?:->|\.)\s*{_IDENT})*'
 
 
-@compile_timing.timed('proposal_generation')
+_IDLE_WORKERS = []
+_IDLE_LOCK = threading.Lock()
+IDLE_WORKERS_KEPT = 4
+
+
+def _in_worker(source, name, arch, asm, flags, labels, kwargs):
+    """variants() generated in a proposal worker process (deep_proposal_worker), where each family runs on the main
+    thread under repair_generation's time cap. A family stuck on another thread can't be interrupted at all: a
+    regular expression holds the interpreter lock until it ends, so not even a watchdog thread runs. None when the
+    request can't go there (arguments that aren't plain data) or the worker failed, and the caller generates here."""
+    import json
+
+    from ..network import NetworkError
+    from .deep_proposals import Worker
+    try:
+        request = json.dumps([[source, name, arch, asm, list(flags)], kwargs], ensure_ascii=False).encode()
+    except (TypeError, ValueError):
+        return None
+    with _IDLE_LOCK:
+        worker = _IDLE_WORKERS.pop() if _IDLE_WORKERS else None
+    try:
+        if worker is None or worker.closed.is_set():
+            worker = Worker()
+        result = worker.run(request, lambda: None)
+    except (NetworkError, OSError):
+        return None  # (Worker.run closed it)
+    with _IDLE_LOCK:
+        if len(_IDLE_WORKERS) < IDLE_WORKERS_KEPT:
+            _IDLE_WORKERS.append(worker)
+            worker = None
+    if worker is not None:
+        worker.close()
+    choices = []
+    for text, family in result['candidates']:
+        choices.append(text)
+        if family and labels is not None:
+            labels[text] = family
+    return choices
+
+
 def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
+    from .repair_generation import ACTIVE, FAMILY_SECONDS, PARTITION
+    if (FAMILY_SECONDS > 0 and threading.current_thread() is not threading.main_thread() and ACTIVE.get() is None
+            and PARTITION.get() is None):
+        # (on another thread a stuck family can't be cut off here: generate where it can be; _in_worker)
+        kwargs = dict(limit=limit, header=header, tables=tables, callees=callees, entry_scope=entry_scope)
+        delegated = _in_worker(source, name, arch, asm, flags, labels, kwargs)
+        if delegated is not None:
+            return delegated
+    return _variants(source, name, arch, asm, flags, labels, limit=limit, header=header, tables=tables,
+                     callees=callees, entry_scope=entry_scope)
+
+
+@compile_timing.timed('proposal_generation')
+def _variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=None, *, limit=LIMIT, header='', tables=(), callees='', entry_scope=None) -> list[str]:
     span = find(source, name)
     if span is None:
         return []
