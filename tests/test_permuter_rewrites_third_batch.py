@@ -1,4 +1,4 @@
-"""decomprepair 0.5.12 to 0.5.23's families reach the repairs the deep pass and autopilot try. Each comes from N64 functions
+"""decomprepair 0.5.12 to 0.5.24's families reach the repairs the deep pass and autopilot try. Each comes from N64 functions
 that used a whole 10,000-variant deep pass with no improvement; the library's own tests hold their shapes."""
 from decompnet import seeds
 from decompnet.app import draft_repairs
@@ -28,7 +28,9 @@ FAMILIES = ('assignment_at_use', 'comparison_sides', 'narrow_shift_pair', 'point
             # 0.5.22
             'assignment_tree_switch', 'range_case_switch', 'register_carrier_argument', 'shared_constant_store', 'ternary_argument',
             # 0.5.23
-            'busy_wait_volatile', 'global_record_copy')
+            'busy_wait_volatile', 'global_record_copy',
+            # 0.5.24
+            'call_site_prototype', 'masked_flag_test', 'row_subscript', 'shared_product_local', 'stack_run_array')
 FLAGS = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
 HEADER = 'typedef int s32;\ntypedef unsigned int u32;\ntypedef short s16;\ntypedef float f32;\n'
 
