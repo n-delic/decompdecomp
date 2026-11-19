@@ -36,7 +36,7 @@ def callback_context(source, context, asm, processor):
     return context+'\n'+'\n'.join(additions) if additions else None
 
 
-def stack_frame(source, name, asm, processor):
+def stack_frame(source, name, asm, processor, whole=False):
     """Represent all named stack views in one union, including evidenced overlapping halfwords.
 
     No zero initializers or synthetic independent locals: address-taken views share the
@@ -62,18 +62,25 @@ def stack_frame(source, name, asm, processor):
     if not unknown or len(names) > 32 or 'm2c_initial_frame' in clean:
         return None
     views = []
+    typed = {}
     for local in sorted(names):
         offset = int(re.search(r'sp([0-9A-F]+)$', local)[1], 16)
         ctype = declarations.get(local) or proof.get('stack_loads', {}).get(offset)
         width = SCALARS.get(ctype, 0)
         if not width or offset % width or offset+width > frame:
             return None
+        typed[local] = (offset, ctype)
         # Unknown views must overlap a known object or follow an escaped frame view.
         # Otherwise an undeclared temporary may reflect a different decompiler failure.
         if local in unknown and not any(int(re.search(r'sp([0-9A-F]+)$', n)[1],16) <= offset
                                        and re.search(r'&\s*'+re.escape(n)+r'\b', body) for n in declarations):
             return None
-        pad = f'unsigned char pad[{offset}]; ' if offset else ''
+    # (narrow, from its lowest view to the saved registers, unless `whole`: three functions of an N64 game matched
+    # only narrow, a few were closer whole, so new drafts offer both and the judge keeps what compiles closer)
+    base, size = (0, frame) if whole else _extent([offset for offset, _ in typed.values()],
+                                                    [o+SCALARS[t] for o, t in typed.values()], proof, frame)
+    for local, (offset, ctype) in typed.items():
+        pad = f'unsigned char pad[{offset-base}]; ' if offset > base else ''
         views.append(f'        struct {{ {pad}{ctype} value; }} view_{local};')
     text = source
     for start, end in sorted(edits, reverse=True):
@@ -84,8 +91,60 @@ def stack_frame(source, name, asm, processor):
     changes = list(re.finditer(r'\b'+STACK_NAME+r'\b', masked))
     for hit in reversed(changes):
         body = body[:hit.start()]+'m2c_initial_frame.view_'+hit[0]+'.value'+body[hit.end():]
-    declaration = '\n    union {\n        unsigned char bytes['+str(frame)+'];\n'+'\n'.join(views)+'\n    } m2c_initial_frame;\n'
+    declaration = '\n    union {\n        unsigned char bytes['+str(size)+'];\n'+'\n'.join(views)+'\n    } m2c_initial_frame;\n'
     return text[:opening+1]+declaration+body+text[span[1]:]
+
+
+def _extent(starts, ends, proof, frame):
+    """(first byte, size) of the stack object: from its lowest view to where the saved registers start.
+
+    The whole frame (outgoing argument slots, `$ra` and saved registers included) as one object made gcc place
+    it above a frame of its own: an N64 function's 0x38-byte frame became 0x50, every stack offset 0x10 off.
+    The object the source had spans its views and ends at the saved-register area, which the prologue's stores
+    name; without that evidence, or with a view inside it, the whole frame stays the safe answer."""
+    saved = proof.get('saved', 0)
+    if starts and saved and max(ends) <= saved and min(starts) < saved:
+        return min(starts), saved - min(starts)
+    return 0, frame
+
+
+VIEW = re.compile(r'struct\s*{\s*(?:unsigned\s+char\s+pad\s*\[\s*(\d+)\s*\]\s*;\s*)?(\w+)\s+value\s*;\s*}\s*view_(\w+)\s*;')
+
+
+def narrowed_frame(source, name, asm, processor):
+    """An `m2c_initial_frame` union already in saved C (whole-frame sized), as the narrower object `stack_frame`
+    makes now: same views, same accesses, only its size and their offsets within it change."""
+    proof = evidence(asm, processor)
+    span = find(source, name)
+    if not span or not proof.get('frame'):
+        return None
+    clean = _blank(source)
+    union = re.search(r'union\s*{\s*unsigned\s+char\s+bytes\s*\[\s*(\d+)\s*\]\s*;(.*?)}\s*m2c_initial_frame\s*;',
+                      clean[span[0]:span[1]], re.S)
+    if not union or int(union[1]) != proof['frame']:
+        return None
+    views = [(int(pad or 0), ctype, local) for pad, ctype, local in VIEW.findall(union[2])]
+    if not views or any(ctype not in SCALARS for _, ctype, _ in views):
+        return None
+    base, size = _extent([o for o, _, _ in views], [o+SCALARS[t] for o, t, _ in views], proof, proof['frame'])
+    if size == proof['frame']:
+        return None
+    lines = []
+    for offset, ctype, local in views:
+        pad = f'unsigned char pad[{offset-base}]; ' if offset > base else ''
+        lines.append(f'        struct {{ {pad}{ctype} value; }} view_{local};')
+    text = ('union {\n        unsigned char bytes['+str(size)+'];\n'+'\n'.join(lines)+'\n    } m2c_initial_frame;')
+    start, end = span[0]+union.start(), span[0]+union.end()
+    return source[:start]+text+source[end:]
+
+
+FRAME_FAMILY = 'initial_frame_narrowed'
+
+
+def frame_variants(source, name, asm, processor):
+    """The repair search's view of `narrowed_frame`: saved C written before it, whose union is the whole frame."""
+    out = narrowed_frame(source, name, asm, processor) if asm and 'm2c_initial_frame' in source else None
+    return [(FRAME_FAMILY, out)] if out and out != source else []
 
 
 def forwarded_arguments(source, name, asm, processor, header=''):
@@ -127,11 +186,14 @@ def variants(source, name, asm, processor, header=''):
     frame = stack_frame(source, name, asm, processor)
     if frame:
         result.append(('initial_stack_frame', frame))
+        whole = stack_frame(source, name, asm, processor, whole=True)
+        if whole and whole != frame:
+            result.append(('initial_stack_frame_whole', whole))
     if result and frame and result[0][0] == 'initial_arguments':
         combined = stack_frame(result[0][1], name, asm, processor)
         if combined and combined != frame:
             result.append(('initial_arguments_stack', combined))
-    return result[:3]
+    return result[:4]
 
 
 def recovery_drafts(draft, name, asm, processor, toolchain, context, data, report, generate=None):

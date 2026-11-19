@@ -12,6 +12,8 @@ def read(asm):
     lines = [re.sub(r'/\*.*?\*/|#.*', '', s).strip() for s in abi_register_names(asm).splitlines()]
     lines = [s for s in lines if s and not s.startswith(('.', 'glabel', 'endlabel')) and not s.endswith(':')]
     registers = {}; tables = set(); slots = {}; adjustments = []; valid = True
+    saved = []  # (prologue stores of $ra and callee-saved registers: the locals end where they start)
+    prologue = True
     for line in lines:
         parts = line.split(None, 1)
         if len(parts) < 2:
@@ -32,7 +34,11 @@ def read(asm):
         slot = re.fullmatch(r'(-?0x[\da-fA-F]+|-?\d+)\(\$sp\)', args[-1])
         if op in WIDTHS and slot:
             slots.setdefault(int(slot[1], 0), set()).add(WIDTHS[op])
+        if prologue and op in ('sw', 'sd', 'sdc1', 'swc1') and slot and re.fullmatch(
+                r'\$(?:ra|s[0-8]|fp|f2[0-9]|f3[01])', dest):
+            saved.append(int(slot[1], 0))
         if op.startswith(('b', 'j')):
+            prologue = False
             if op in ('jal', 'jalr'):
                 for reg in ['$v0', '$v1', *('$a'+str(n) for n in range(4)), *('$t'+str(n) for n in range(10))]:
                     registers.pop(reg, None)
@@ -54,7 +60,8 @@ def read(asm):
     negatives = [n for n in adjustments if n < 0]
     frame = -negatives[0] if valid and len(negatives) == 1 and all(n in (negatives[0], -negatives[0]) for n in adjustments) else 0
     return {'first_call': first_call(asm), 'callback_tables': sorted(tables), 'frame': frame if 0 < frame <= 4096 else 0,
-            'stack_loads': {offset: next(iter(types)) for offset, types in slots.items() if len(types) == 1}}
+            'stack_loads': {offset: next(iter(types)) for offset, types in slots.items() if len(types) == 1},
+            'saved': min(saved) if frame and saved else 0}
 
 
 def first_call(asm):

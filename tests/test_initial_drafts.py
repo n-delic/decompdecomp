@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from decompnet import limits, seeds, toolchains
-from decompnet.app import draft_data, draft_regeneration, draft_reports
+from decompnet.app import draft_data, draft_regeneration, draft_repairs, draft_reports
 from decompnet.app import initial_draft_repairs as repairs
 from decompnet.arch import mips_drafts
 from decompnet.rom.symbols import Symbol, SymbolTable
@@ -376,3 +376,103 @@ def test_completed_autopilot_receipt_skips_seed_preparation(network,monkeypatch)
     draft_reports.save(net,fn['id'],{'key':key,'complete':True},project_id=proj['id'])
     agent,_=net.local_agent('autopilot')
     assert net._autopilot_one_work(agent,proj,fn['id'])=='skip'
+
+
+# (shaped like an N64 game's near miss: a 0x20-byte stack object at sp+0x10, `$ra` saved at 0x30)
+CALL_ASM = '''glabel f
+addiu $sp, $sp, -0x38
+addiu $v0, $zero, 0x1
+sw $a0, 0x14($sp)
+addiu $a0, $sp, 0x10
+sw $ra, 0x30($sp)
+jal fill
+sw $v0, 0x24($sp)
+lw $v0, 0x2C($sp)
+bnez $v0, .L1
+addu $v0, $zero, $zero
+lw $v0, 0x18($sp)
+.L1:
+lw $ra, 0x30($sp)
+jr $ra
+addiu $sp, $sp, 0x38
+'''
+WIDE = '''void fill(s32 *);
+
+s32 f(s32 arg0) {
+    union {
+        unsigned char bytes[56];
+        struct { unsigned char pad[16]; s32 value; } view_sp10;
+        struct { unsigned char pad[20]; s32 value; } view_sp14;
+        struct { unsigned char pad[24]; s32 value; } view_sp18;
+        struct { unsigned char pad[36]; s32 value; } view_sp24;
+        struct { unsigned char pad[44]; s32 value; } view_sp2C;
+    } m2c_initial_frame;
+    s32 var_v0;
+
+    m2c_initial_frame.view_sp14.value = arg0;
+    m2c_initial_frame.view_sp24.value = 1;
+    fill(&m2c_initial_frame.view_sp10.value);
+    if (m2c_initial_frame.view_sp2C.value != 0) { var_v0 = 0; } else {
+        var_v0 = m2c_initial_frame.view_sp18.value;
+    }
+    return var_v0;
+}
+'''
+
+
+def test_the_frame_union_spans_its_views_up_to_the_saved_registers():
+    assert mips_drafts.read(CALL_ASM)['saved'] == 0x30
+    (family, out), = repairs.frame_variants(WIDE, 'f', CALL_ASM, 'mips')
+    assert family == 'initial_frame_narrowed'
+    assert 'unsigned char bytes[32];' in out and 'struct { s32 value; } view_sp10;' in out
+    assert 'struct { unsigned char pad[28]; s32 value; } view_sp2C;' in out
+    assert out.count('m2c_initial_frame.view_') == WIDE.count('m2c_initial_frame.view_')
+    # already narrow, no saved-register evidence, or a view reaching into the saved area: nothing
+    assert repairs.frame_variants(out, 'f', CALL_ASM, 'mips') == []
+    assert repairs.frame_variants(WIDE, 'f', CALL_ASM.replace('sw $ra, 0x30($sp)', 'nop'), 'mips') == []
+    assert repairs.frame_variants(WIDE.replace('pad[44]', 'pad[48]'), 'f', CALL_ASM, 'mips') == []
+    labels = {}
+    texts = draft_repairs.variants(WIDE, 'f', 'mips', CALL_ASM, ['-O2'], labels, limit=None, header='typedef int s32;')
+    assert any(labels.get(t) == 'initial_frame_narrowed' for t in texts)
+
+
+def test_new_frame_unions_are_narrow_too():
+    source = '''void fill(s32 *);
+
+s32 f(s32 arg0) {
+    s32 sp10;
+    fill(&sp10);
+    return sp18;
+}
+'''
+    asm = CALL_ASM.replace('lw $v0, 0x2C($sp)', 'lw $v0, 0x18($sp)')
+    out = repairs.stack_frame(source, 'f', asm, 'mips')
+    assert out and 'unsigned char bytes[32];' in out and 'struct { unsigned char pad[8]; s32 value; } view_sp18;' in out
+    # both are offered: the judge keeps whichever compiles closer
+    families = [family for family, _ in repairs.variants(source, 'f', asm, 'mips')]
+    assert families == ['initial_stack_frame', 'initial_stack_frame_whole']
+    assert 'unsigned char bytes[56];' in repairs.variants(source, 'f', asm, 'mips')[1][1]
+
+
+def test_kmc_places_the_narrow_object_where_the_game_has_it(tmp_path):
+    import io
+
+    import capstone
+    from elftools.elf.elffile import ELFFile
+
+    from decompnet.compiler import compile_source
+    from decompnet.project import compiler_config
+    if not toolchains.installed('gcc-2.7.2-kmc'):
+        pytest.skip('Pinned KMC compiler is not installed; never download it here.')
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'gcc-2.7.2-kmc',
+                                                  'flags': ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']}})
+
+    def first(text):
+        result = compile_source(cfg, 'typedef int s32;\n', text)
+        assert result.ok, result.log
+        code = ELFFile(io.BytesIO(result.obj)).get_section_by_name('.text').data()
+        md = capstone.Cs(capstone.CS_ARCH_MIPS, capstone.CS_MODE_MIPS64 + capstone.CS_MODE_BIG_ENDIAN)
+        return next(f'{i.mnemonic} {i.op_str}' for i in md.disasm(code, 0))
+    (_, narrow), = repairs.frame_variants(WIDE, 'f', CALL_ASM, 'mips')
+    # the whole frame as one object grew the frame to 0x50; spanning its views it is the game's 0x38
+    assert first(WIDE) == 'addiu $sp, $sp, -0x50' and first(narrow) == 'addiu $sp, $sp, -0x38'
