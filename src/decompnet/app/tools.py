@@ -1097,9 +1097,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx,"claim_asset_region")
 
     @tool
-    async def inspect_asset_region(ctx: Context, region: str, claim_token: str, offset: int | None = None, length: int = 256) -> str:
-        """Inspect a held region, neighbours and static usage; up to 4096 original bytes per window."""
-        return await run(ctx,"inspect_asset_region",region=region,claim_token=claim_token,offset=offset,length=length)
+    async def inspect_asset_region(ctx: Context, region: str, claim_token: str, offset: int | None = None, length: int = 256, evidence_path: str | None = None, evidence_offset: int = 0) -> str:
+        """Read up to 4096 original bytes or follow an evidence path for a held region."""
+        return await run(ctx,"inspect_asset_region",region=region,claim_token=claim_token,offset=offset,length=length,evidence_path=evidence_path,evidence_offset=evidence_offset)
 
     @tool
     async def preview_asset_region(ctx: Context, region: str, claim_token: str, action: str = "textures", options: dict | None = None, model_settings: dict | None = None) -> str:

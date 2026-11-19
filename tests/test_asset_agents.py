@@ -53,6 +53,36 @@ def test_worker_scope_claim_recovery_proposal_review_and_no_judging(discovered,m
     with pytest.raises(NetworkError,match='already reviewed'):discovery.review(net,'game',result['proposal'],'reject')
 
 
+def test_large_evidence_pages_leave_room_to_finish_a_claim(discovered,monkeypatch):
+    from decompnet.app.session_budget import start
+
+    net,_,_,_,agent,_=discovered
+    original_detail=rom_explorer.detail
+    entries=[{'source':i,'description':'x'*1000} for i in range(400)]
+
+    def detail(*args):
+        return {**original_detail(*args),'loader_flow':{'chains':entries}}
+
+    monkeypatch.setattr(rom_explorer,'detail',detail)
+    budget=start(net,agent.id,'game',{})
+    first=call(net,agent,'claim_asset_region')
+    args=dict(region=first['region']['id'],claim_token=first['claim_token'])
+    assert not budget.ready()
+    path=first['region']['loader_flow']['evidence_path']
+    flow=call(net,agent,'inspect_asset_region',**args,evidence_path=path)
+    path=flow['evidence']['chains']['evidence_path']
+    page=call(net,agent,'inspect_asset_region',**args,evidence_path=path)
+    second=call(net,agent,'inspect_asset_region',**args,evidence_path=path,
+                evidence_offset=page['next_evidence_offset'])
+    assert page['evidence']+second['evidence']==entries[:second['next_evidence_offset']]
+    assert not budget.ready()
+    outcome=tools.call(net,agent,'game','defer_asset_region',
+                       dict(args,approach='Trace loader references',findings='No confirmed layout.'))
+    assert 'recorded' in outcome
+    next_claim=call(net,agent,'claim_asset_region')
+    assert next_claim['region']['id']!=args['region']
+
+
 def test_two_workers_get_unique_claims_and_bad_tokens_cannot_submit(discovered):
     net,pid,root,run,agent,session=discovered
     other,_=net.local_agent('asset-other');second=SimpleNamespace(**{**session.__dict__,'id':'2','label':'Other'})
