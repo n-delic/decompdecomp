@@ -7578,3 +7578,16 @@ each adopted by the app's own Try.
 Not closed: a phi copy gcc folds to `$zero` where the game kept `move $v0, $a2` (15, two functions); `neg.s` scheduled
 before `cvt.s.w` (60); a call result copied to `$a2` right after the call (75, three similar functions); a global
 reloaded after an aliasing store (100); zero stores that reuse the argument registers set for a later call (190).
+
+## KMC gcc 2.7.2: one complete call in each branch, not a shared call with a chosen argument
+
+- Compiler: `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2` (N64, a game with about 1,600 functions).
+- Case: a function calls the same three-argument callee on both arms of an `if`, with a different string and a
+  different count. The machine draft chose the arguments into temporaries and made one call after the `if`; it
+  scored 150.
+- Change: write the whole call in each branch (`f(base + 0x28, strA, n)` / `f(base + 0x28, strB, g(0x5F))`), with
+  the callee declared to return `s32`. Exact.
+- Why: the game's code sets up `$a0`/`$a1` separately on each path and has two `jal`s; gcc 2.7.2 doesn't merge two
+  identical calls into one (no cross-jump at -O2 for calls), and won't split one either, so the number of calls in
+  the C has to equal the number in the target.
+- Evidence: controlled, one function; adopted as an exact match by the judge.
