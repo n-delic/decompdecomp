@@ -96,6 +96,8 @@ _CHECK = re.compile(r"^build (\S+[/\\]ok): check\b")  # dtk-template writes buil
 _NINJA_PROGRAM = re.compile(r"^(?:([A-Za-z_][\w.-]*)|\s+command)\s*=\s*(.*)$")
 # a line ending in an odd number of $ goes on, after the next line's indent ($$ before it is a dollar)
 _NINJA_CONTINUATION = re.compile(r"(?<!\$)((?:\$\$)*)\$\r?\n[ \t]*")
+# ninja's escapes for a space, a colon and a dollar ($PY and ${cc} are variables, left as they are)
+_NINJA_ESCAPE = re.compile(r"\$([ :$])")
 # A target the build couldn't make: ninja's "FAILED: out.o", make's "make: *** [Makefile:12: out.o] Error 1"
 _FAILED = re.compile(r"^FAILED: (.+)$|^make(?:\[\d+\])?: \*\*\* \[(?:[^\]]*?:\d+: )?([^\]]+)\] Error")
 # CodeWarrior's linker warns about every FORCEACTIVE symbol and unknown section: harmless, and thousands of lines
@@ -104,15 +106,14 @@ _NOISE = re.compile(r"^#{1,3}\s*(mwldeppc\.exe Linker Warning:|FORCEACTIVE symbo
 
 
 def _command_program(command: str) -> str:
-    """The program a command line runs first: its first word, with shell quotes ("a path/tool") and
-    ninja's escapes ($  and $$) undone. Without that its first word ends at the space of
-    ~/Library/Application Support, where macOS keeps this app's toolchains, and a project that
-    builds fine looks broken (#320)."""
+    """The program a command line runs first, read the way it runs: ninja undoes its escapes first ($  a space,
+    $: a colon, $$ a dollar), then the shell takes the first word, with its quotes ("a path/tool") undone.
+    Without the quotes its first word ends at the space of ~/Library/Application Support, where macOS keeps
+    this app's toolchains, and a project that builds fine looks broken (#320). A "$ " outside quotes is a
+    space the shell splits at, so the word ends there, as it does when the build runs it."""
     word: list[str] = []
     quote = ""
-    i = 0
-    while i < len(command):
-        c = command[i]
+    for c in _NINJA_ESCAPE.sub(r"\1", command):
         if quote:  # inside "..." or '...': spaces don't split the word
             if c == quote:
                 quote = ""
@@ -120,14 +121,10 @@ def _command_program(command: str) -> str:
                 word.append(c)
         elif c in "'\"":
             quote = c
-        elif c == "$" and command[i + 1:i + 2] in (" ", "$"):  # $  is a space in a path, $$ a dollar
-            word.append(" " if command[i + 1] == " " else "$")
-            i += 1
         elif c.isspace():
             break
         else:  # a variable ninja expands ($PY, ${cc}) stays as it is: not a path to check
             word.append(c)
-        i += 1
     return "".join(word)
 
 
@@ -776,7 +773,7 @@ class ForkProject:
         # ninja_syntax wraps a line past 78 columns at a space, even one inside a quoted path, with "$" at the end
         # and the rest indented on the next line: join those back first, the way ninja reads them (#320)
         text = _NINJA_CONTINUATION.sub(r"\1", text)
-        for line in text.splitlines():
+        for line in text.split("\n"):
             m = _NINJA_PROGRAM.match(line)
             if m is None:
                 continue

@@ -42,7 +42,7 @@ def test_build_problem_finds_programs_build_ninja_runs_that_arent_here(tmp_path)
 
 def test_build_problem_keeps_a_path_with_spaces_whole(tmp_path):
     """#320: macOS keeps this app's toolchains in ~/Library/Application Support, and the first word of a
-    command ended at the space, so a project that built fine looked broken (quoted and $-escaped alike)."""
+    command ended at the space, so a project that built fine looked broken."""
     tool = tmp_path / "My Tools" / "cc"
     tool.parent.mkdir(parents=True)
     tool.write_text("#!/bin/sh\n")
@@ -53,13 +53,21 @@ def test_build_problem_keeps_a_path_with_spaces_whole(tmp_path):
     fp = ForkProject(root)
     escaped = tool.as_posix().replace(" ", "$ ")
     for ninja in (f'rule cc\n  command = "{tool}" -c $in\n',  # shell-quoted: the DS template's style
-                  f"rule cc\n  command = {escaped} -c $in\n",  # ninja's own escaping of a space
+                  f'rule cc\n  command = "{escaped}" -c $in\n',  # ninja's escape too: ninja reads it before sh
                   f'PY = "{tool}"\nrule cc\n  command = $PY -c $in\n'):  # a top-level variable too
         (root / "build.ninja").write_text(ninja)
         assert fp.build_problem() is None, ninja
     (root / "build.ninja").write_text(f'rule cc\n  command = "{gone}" -c $in\n')
     why = fp.build_problem()
     assert why is not None and gone in why  # the whole path, not its start at the space
+    (root / "build.ninja").write_text('rule cc\n  command = "/home/olduser/No$ Such$:Tool/cc" -c $in\n')
+    why = fp.build_problem()
+    assert why is not None and "/home/olduser/No Such:Tool/cc" in why  # ninja's $  and $: undone
+    # outside quotes ninja's "$ " is a space sh splits at: ninja runs /home/olduser/My, and says
+    # "/bin/sh: 1: /home/olduser/My: not found", so pre-flight names that
+    (root / "build.ninja").write_text("rule cc\n  command = /home/olduser/My$ Tools/cc -c $in\n")
+    why = fp.build_problem()
+    assert why is not None and "/home/olduser/My," in why
 
 
 def _ninja_syntax():
@@ -72,16 +80,19 @@ def _ninja_syntax():
     return module
 
 
+def _wrap_width(command: str) -> int:
+    """The width a long home gives at 78 columns: the last space before it is the one in "Application Support"
+    (tmp_path's own length would move it)."""
+    return len("  command = ") + command.index(" ") + len(" $") + 1
+
+
 def _wrapped_project(tmp_path, program: str) -> ForkProject:
     root = tmp_path / "ws" / "p"
     root.mkdir(parents=True, exist_ok=True)
     (root / "objdiff.json").write_text(json.dumps({"units": []}))
     command = f'"{program}" rom extract --rom $in --output-path extract/aekx'
-    # the width a long home gives at 78 columns: the last space before it is the one in "Application Support"
-    # (tmp_path's own length would move it)
-    width = len("  command = ") + command.index(" ") + len(" $") + 1
     with open(root / "build.ninja", "w", encoding="utf-8") as f:
-        _ninja_syntax().Writer(f, width=width).rule("extract", command)
+        _ninja_syntax().Writer(f, width=_wrap_width(command)).rule("extract", command)
     assert "Application $\n" in (root / "build.ninja").read_text()  # it really was wrapped inside the quotes
     return ForkProject(root)
 
@@ -105,10 +116,11 @@ def test_build_problem_finds_a_ninja_syntax_wrapped_path_thats_here(tmp_path):
 
 
 def test_preflight_and_helpers_start_on_a_toolchain_path_with_a_space(tmp_path):
-    """#320, the whole road at once: a macOS DS project's configure.py writes build.ninja running
-    a tool from ~/Library/Application Support (quoted and $-escaped), and pre-flight — which had
-    just reconfigured the project, another computer's paths in its build.ninja — must let a
-    helper start a session, not pause it on a path cut off at the space."""
+    """#320, the whole road at once: a macOS DS project's configure.py writes build.ninja through the
+    template's ninja_syntax, running a tool from ~/Library/Application Support (wrapped inside the
+    quotes, as a long home does), and pre-flight — which had just reconfigured the project, another
+    computer's paths in its build.ninja — must let a helper start a session, not pause it on a path
+    cut off at the space."""
     tool = tmp_path / "Library" / "Application Support" / "decompnet" / "toolchains" / "mwccarm" / "mwccarm"
     tool.parent.mkdir(parents=True)
     tool.write_text("#!/bin/sh\n")
@@ -117,13 +129,20 @@ def test_preflight_and_helpers_start_on_a_toolchain_path_with_a_space(tmp_path):
     (root / "objdiff.json").write_text(json.dumps({"units": []}))
     (root / ".decomp.wtf.json").write_text(json.dumps({"platform": "pc", "setup": [["python", "tools/configure.py"]]}))
     (root / "build.ninja").write_text(f"PY = {GONE}\nrule cc\n  command = $PY -c $in\n")  # another computer's
-    escaped = tool.as_posix().replace(" ", "$ ")
-    ninja = f'rule cc\n  command = "{tool}" -c $in\nrule link\n  command = {escaped} $in\n'
-    (root / "tools" / "configure.py").write_text("open('build.ninja', 'w').write(" + repr(ninja) + ")\n")
+    (root / "tools" / "ninja_syntax.py").write_text(Path(_ninja_syntax().__file__).read_text(encoding="utf-8"),
+                                                     encoding="utf-8")
+    command = f'"{tool.as_posix()}" -c $in -o $out'
+    (root / "tools" / "configure.py").write_text(
+        "import ninja_syntax\n"  # tools/, next to this script, as the DS template has it
+        "with open('build.ninja', 'w', encoding='utf-8') as f:\n"
+        f"    ninja_syntax.Writer(f, width={_wrap_width(command)}).rule('cc', {command!r})\n")
     net = RomNetwork(tmp_path / "d.db", tmp_path / "ws")
     net.forks._register("p", "P", "fork", root, {"kind": "fork", "ready": True, "platform": "pc"}, "x")
     assert net.forks.preflight("p") is None  # reconfigured, and its spaced paths check out
-    assert str(tool) in (root / "build.ninja").read_text()  # by running configure, not by skipping the check
+    text = (root / "build.ninja").read_text()
+    assert "rule cc" in text and GONE not in text  # by running configure, not by skipping the check
+    if sys.platform != "win32":
+        assert "Application $\n" in text  # wrapped inside the quotes, as #320's build.ninja was
     fake = types.SimpleNamespace(net=net)
     assert agents_mod.Manager._build_problem(fake, "p") is None  # so a helper starts a session
 
