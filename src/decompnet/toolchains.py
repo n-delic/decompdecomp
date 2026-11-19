@@ -935,17 +935,17 @@ def _build_sdl3(archive: Path, dest: Path, subdir: str | None, log) -> None:
 
 
 def _build_wabt(archive: Path, dest: Path, subdir: str | None, log) -> None:
-    """WABT publishes no Intel Mac build since 1.0.36, and the port's C (port/wasm/bemem.py) is written against the
-    pinned version's wasm2c, so an Intel Mac builds that same pinned source with the pinned CMake: its wasm2c writes
-    the same C as the release's. Only the host's C++ compiler and make come from the system. What the port reads is
-    laid out as in the release: bin/wasm2c (and wat2wasm), include/wasm-rt*.h, share/wabt/wasm2c."""
+    """Build pinned wasm2c with its internal SHA-256 so it works without a system OpenSSL.
+
+    Keep the release layout for the translators, runtime headers and runtime C files.
+    """
     mac = current_platform().startswith("macos")
     tools = ("WABT's wasm2c is built from its source on this computer, which needs "
              + ("Xcode Command Line Tools: run `xcode-select --install`, then try again." if mac else
-                "a C++17 compiler and make (on Debian or Ubuntu: `sudo apt install g++ make`), then try again."))
+                "a C++20 compiler and make (on Debian or Ubuntu: `sudo apt install g++ make`), then try again."))
     if not shutil.which("make") or not shutil.which("c++"):
         raise ToolchainError(tools)
-    ensure("cmake", log=log)  # only Intel Macs build WABT, so the pack itself doesn't require CMake
+    ensure("cmake", log=log)
     cmake = str(binary("cmake"))
     log("  building WABT's wasm2c from its pinned source (first install only, a minute or two)")
     with tempfile.TemporaryDirectory(prefix="decomp-wabt-") as tmp:
@@ -953,7 +953,7 @@ def _build_wabt(archive: Path, dest: Path, subdir: str | None, log) -> None:
         source.mkdir()
         _extract(archive, source, subdir)
         configure = [cmake, "-S", str(source), "-B", str(build), "-G", "Unix Makefiles", "-DCMAKE_BUILD_TYPE=Release",
-                     "-DBUILD_TESTS=OFF", "-DBUILD_LIBWASM=OFF", "-DWITH_WASI=OFF"]
+                     "-DBUILD_TESTS=OFF", "-DBUILD_LIBWASM=OFF", "-DWITH_WASI=OFF", "-DUSE_INTERNAL_SHA256=ON"]
         steps = (configure, [cmake, "--build", str(build), "--parallel", str(min(8, os.cpu_count() or 1)),
                              "--target", "wasm2c", "wat2wasm"])
         for argv in steps:

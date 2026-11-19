@@ -240,9 +240,9 @@ class Nintendo64(Console):
 
     def export_asm(self, text: str) -> str:
         text = super().export_asm(text)
-        # Some inferred code ranges include data decoded as a later MIPS `pref`.
-        # VR4300 cannot assemble it; retain its original non-relocating word.
-        return re.sub(r"^(\s*/\* [0-9A-Fa-f]+ [0-9A-Fa-f]{8} ([0-9A-Fa-f]{8}) \*/\s*)pref\b[^\n]*",
+        # Some inferred code ranges include data decoded as later MIPS hints
+        # or conditional moves. Preserve their words for the VR4300 build.
+        return re.sub(r"^(\s*/\* [0-9A-Fa-f]+ [0-9A-Fa-f]{8} ([0-9A-Fa-f]{8}) \*/\s*)(?:pref|movn|movz)\b[^\n]*",
                       lambda m: f"{m[1]}.word 0x{m[2]}", text, flags=re.M)
 
 

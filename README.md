@@ -795,7 +795,7 @@ The installer uses uv and Python 3.12, installs the Cocoa/WebKit bridge, gets th
 `~/Applications/decompdecomp.app`. Open it from Finder or run `decomp`. Projects stay in `~/Decomp-RetroReversing`;
 toolchains live in `~/Library/Application Support/decompnet/toolchains`. Xcode Command Line Tools
 (`xcode-select --install`) are needed on Intel Macs for N64's MIPS binutils, and on both Mac architectures to
-build PS1 GCC 2.6.0, 2.6.3 and 2.8.0 from pinned source on first use. The ready-made 2.7.2 (PSX and CDK) and 2.8.1 compiler binaries are for
+build PS1 GCC 2.6.0, 2.6.3 and 2.8.0 and the native port’s wasm2c from pinned source on first use. The ready-made 2.7.2 (PSX and CDK) and 2.8.1 compiler binaries are for
 Apple Silicon. Finder launches preserve the PATH
 from installation so your installed Node and helper CLIs remain available; rerun `decomp shortcut` after
 changing their locations. This source install has no signed DMG.

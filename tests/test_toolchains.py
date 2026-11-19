@@ -781,13 +781,12 @@ def test_single_toolchain_lookup_keeps_metadata_fresh(monkeypatch):
 
 
 def test_wabt_has_a_build_for_every_desktop():
-    """Exporting a port (port/wasm) needs wasm2c everywhere the app runs. WABT publishes no Intel Mac build since
-    1.0.36, so an Intel Mac builds the pinned version's source instead: exporting there failed with "has no build for
-    this computer" until it did."""
+    """Both Mac architectures use the pinned source build with internal SHA-256."""
     from decompnet import toolchains
 
     tc = toolchains.get("wabt")
     for plat in ("macos-arm64", "macos-x86_64", "linux-x86_64", "linux-aarch64", "windows-x86_64"):
         assert tc.parts_for(plat), plat
-    (source,) = tc.parts_for("macos-x86_64")
-    assert source["build"] == "wabt" and "1.0.42" in source["url"] and source["sha256"]
+    for mac in ("macos-x86_64", "macos-arm64"):
+        (source,) = tc.parts_for(mac)
+        assert source["build"] == "wabt" and source["url"].endswith("/wabt-1.0.42.tar.xz") and source["sha256"]
