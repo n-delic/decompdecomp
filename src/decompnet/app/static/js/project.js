@@ -784,7 +784,17 @@ function renderOverview() {
     $("paceNum").textContent = `${ph[23]}`;
     $("paceBars").innerHTML = ph.map((n, i) => `<rect x="${i * 10 + 1}" y="${28 - Math.max(n ? 3 : 1, (26 * n) / max)}" width="8" height="${Math.max(n ? 3 : 1, (26 * n) / max)}" rx="1.5" class="${n ? "on" : ""}"><title>${n} matched ${23 - i ? `${23 - i} h ago` : "this hour"}</title></rect>`).join("");
     $("paceSub").textContent = `matched in the last hour · ${plural(st.compiles_last_hour, "compile")}` + (steady && togo > 0 ? ` · ≈\u00a0${duration(togo / last3)} to go at this pace` : "");
-    $("board").innerHTML = st.agents.length ? st.agents.slice(0, 8).map((r) => `<li><span class="who">${esc(r.agent)}</span><span class="grow"></span>
+    // Deep searches use separate identities for each function and parallel lane.
+    const contributors = new Map();
+    for (const row of st.agents) {
+      const agent = /^permuter-[0-9]+(?:-lane-[0-9]+)?$/.test(row.agent) ? "deep-permuter" : row.agent;
+      const totals = contributors.get(agent) || { agent, matched: 0, compiles: 0 };
+      totals.matched += row.matched;
+      totals.compiles += row.compiles;
+      contributors.set(agent, totals);
+    }
+    const board = [...contributors.values()].sort((a, b) => b.matched - a.matched || b.compiles - a.compiles);
+    $("board").innerHTML = board.length ? board.slice(0, 8).map((r) => `<li><span class="who">${esc(r.agent)}</span><span class="grow"></span>
         <span class="mono small">${r.matched ? `<b class="ok">${r.matched.toLocaleString()}</b> matched · ` : ""}${plural(r.compiles, "compile")}</span></li>`).join("")
       : `<li class="muted small">Nobody yet. Matches by agents, the autopilot and you show up here.</li>`;
   }

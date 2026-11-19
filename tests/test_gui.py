@@ -848,3 +848,9 @@ def test_following_a_job_survives_a_lost_poll_but_not_a_stalled_one():
     for script in ('gui_job_poll_retry.js', 'gui_job_poll_timeout.js'):
         subprocess.run([NODE, str(Path(__file__).with_name(script))], check=True, cwd=Path(__file__).resolve().parents[1],
                        capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+@pytest.mark.skipif(NODE is None, reason="needs node to run the GUI's scripts")
+def test_overview_groups_deep_permuter_workers():
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_match_attribution.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
