@@ -51,7 +51,7 @@ class Monitor:
                 progress = job.get('progress') or {}
                 stopping = self.jobs.cancel_events.get(jid)
                 add('job', jid, job['kind'], 'stopping' if stopping and stopping.is_set() else 'running',
-                    project=progress.get('slug',''), detail=progress.get('phase') or 'Working; stop takes effect at the next cancellation checkpoint.')
+                    project=progress.get('slug') or job.get('activity_project') or '', detail=progress.get('phase') or 'Working; stop takes effect at the next cancellation checkpoint.')
         for attr, label in [('drafter','Machine drafts'), ('permuter','Background permuter'), ('twins','Identical-function reuse')]:
             component = getattr(self.net, attr, None)
             for slug, state in list(getattr(component, 'jobs', {}).items()):

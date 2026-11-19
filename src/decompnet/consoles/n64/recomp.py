@@ -399,6 +399,8 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
     everything = usable + found
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    # An interrupted rebuild leaves generated files without a completed summary.
+    (out / "recomp.json").unlink(missing_ok=True)
     (out / "syms.toml").write_text(symbols(segments, everything), encoding="utf-8")
     log(f"N64Recomp: {len(usable)} of the split's functions, {len(found)} more found by the calls into them")
     refused: dict[str, str] = {}
@@ -424,7 +426,9 @@ def recompile(program: Path, rom_path: Path, segments: list[dict], functions: li
                "refused": [{"name": n, "why": w} for n, w in refused.items()], "renamed": sorted(renamed),
                "runtime": provided, "errors": errors[:40], "error_count": len(errors),
                "between": [f["name"] for f in outside], "unusable": unusable, "files": written, "folder": str(out)}
-    (out / "recomp.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+    pending = out / "recomp.json.pending"
+    pending.write_text(json.dumps(summary, indent=1), encoding="utf-8")
+    pending.replace(out / "recomp.json")
     log(f"N64Recomp: {len(everything) - len(refused)} functions as C in {written} files; {len(refused)} set aside "
         f"as stubs, {len(found)} found that the split doesn't list, {len(provided)} for the runtime to provide; "
         + (f"{len(errors)} compile errors" if errors else "the C compiles"))
@@ -439,8 +443,8 @@ def load(root: Path) -> dict | None:
     """The last run's summary for a project folder, or None."""
     f = folder(root) / "recomp.json"
     try:
-        return json.loads(f.read_text(encoding="utf-8")) if f.is_file() else None
-    except ValueError:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
         return None
 
 

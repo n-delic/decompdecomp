@@ -177,11 +177,10 @@ def _sides(net, slug: str, proj, console, log, stop=lambda: False):
     """The recompiled C's harness (Recompile first, when it never ran) and the port's program, with its ROM."""
     root = Path(proj["root"])
     rom = root / net.cfg(proj)["rom"]["file"]
-    if console.recompiler.load(root) is None:
-        from .recompile import run as recompile
-        recompile(net, slug, log)
+    from . import recompile
     entry = int.from_bytes(rom.read_bytes()[8:12], "big")
-    harness = console.recompiler.harness(console.recompiler.folder(root), entry, log, stop)
+    with recompile.ready(net, slug, proj, console.recompiler, log, stop) as folder:
+        harness = console.recompiler.harness(folder, entry, log, stop)
     program, port_rom = _port(net, slug, log)
     return rom, harness, program, port_rom
 

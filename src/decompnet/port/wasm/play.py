@@ -221,20 +221,15 @@ def recompiled(net, slug: str, log=print) -> dict | None:
     recompiler = net.console(proj).recompiler
     if recompiler is None or not net.is_rom(proj):
         return None
-    root = Path(proj["root"])
-    if recompiler.load(root) is None:
-        log("recompiling the game with N64Recomp first, for the functions with no C yet (once, about a minute)")
-        from ...app import recompile
-        try:
-            recompile.run(net, slug, log)
-        except Exception as error:  # noqa: BLE001  the port still builds from the game's C alone
-            log(f"recompiling failed, so functions with no C stop the game where they run: {error}")
-            return None
+    from ...app import recompile
     try:
-        header = recompiler.toolchain_folder() / "include" / "recomp.h"
-    except Exception:  # noqa: BLE001
+        with recompile.ready(net, slug, proj, recompiler, log) as folder:
+            header = recompiler.toolchain_folder() / "include" / "recomp.h"
+    except Exception as error:  # noqa: BLE001  the interpreter can still run functions missing C
+        getattr(log, "check_cancel", lambda: None)()
+        log(f"Could not prepare recompiled functions: {error}. The port will use the ROM interpreter for them.")
         return None
-    return {"folder": str(recompiler.folder(root)), "header": str(header)} if header.is_file() else None
+    return {"folder": str(folder), "header": str(header)} if header.is_file() else None
 
 
 def library_c(net, slug: str) -> dict:

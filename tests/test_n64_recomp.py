@@ -2,6 +2,9 @@
 the calls into it, the pinned build, and a real run on a homemade ROM when the tool is installed (CI has none)."""
 import hashlib
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +12,7 @@ from decompnet import toolchains
 from decompnet.app import recompile
 from decompnet.app.engine import RomNetwork
 from decompnet.consoles.n64 import recomp
+from decompnet.network import NetworkError
 from decompnet.port.readiness import describe, readiness
 
 JR_RA, NOP = 0x03E00008, 0
@@ -184,3 +188,53 @@ def test_a_function_named_as_the_c_library_or_main_is_renamed_not_set_aside(line
     from decompnet.consoles.n64.recomp import CONFLICT
     m = CONFLICT.search(line)
     assert m and next(g for g in m.groups() if g) == name
+
+def test_port_jobs_wait_for_and_reuse_the_first_recompile(tmp_path, monkeypatch):
+    folder = tmp_path / 'build' / 'recomp'
+    built, waited, finish = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+
+    def output_ready(*_):
+        calls.append(1)
+        built.set()
+        assert finish.wait(5)
+        folder.mkdir()
+        (folder / 'recomp.json').write_text('{}')
+
+    monkeypatch.setattr(recompile, '_run', output_ready)
+    recompiler = SimpleNamespace(folder=lambda _: folder, load=recomp.load)
+
+    def read(log):
+        with recompile.ready(None, 'game', {'root': tmp_path}, recompiler, log) as output:
+            assert (output / 'recomp.json').is_file()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        play = pool.submit(read, lambda _: None)
+        try:
+            assert built.wait(5)
+            behaviour = pool.submit(read, lambda _: waited.set())
+            assert waited.wait(5)
+            assert not behaviour.done()
+        finally:
+            finish.set()
+        play.result(timeout=5)
+        behaviour.result(timeout=5)
+
+    assert len(calls) == 1
+
+
+def test_port_job_can_cancel_while_waiting_for_recompile(tmp_path):
+    folder = tmp_path / 'build' / 'recomp'
+    waited = threading.Event()
+    stop = threading.Event()
+
+    def queued():
+        with recompile.build_turn(folder, lambda _: waited.set(), stop.is_set):
+            pytest.fail('Cancelled job entered the build directory')
+
+    with ThreadPoolExecutor(max_workers=1) as pool, recompile.build_turn(folder, print):
+        future = pool.submit(queued)
+        assert waited.wait(5)
+        stop.set()
+        with pytest.raises(NetworkError, match='Stopped'):
+            future.result(timeout=5)
