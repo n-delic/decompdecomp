@@ -7548,3 +7548,33 @@ Not closed: a `goto`-shaped guard whose delay slot copies a variable known to be
 `$zero` however the C names it), and register swaps where the allocator's choice did not follow statement order,
 declaration order or parameter types (a CSE'd string address and global base, 40; two argument registers, 40 -> 0
 only through the passthrough above).
+
+### KMC gcc 2.7.2: order-and-register near misses (an N64 game, round 17)
+
+Compiler `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, judged with the linked verdict on a scratch copy; nine exact,
+each adopted by the app's own Try.
+
+- **m2c passing a leftover argument register** (75-220 -> 0, three functions): the draft passed `$a0`/`$a1` to a call
+  whose target never set them for it; the value had only been stored (`sb $a0, D`, a word copied through `$a1`) or
+  compared by a switch (`beq $a0, $v0`). Dropping the argument (and the prototype's parameter) matched; decomp-repair
+  0.5.30 `target_call_arity` offers that reading. A store *through* the register (`sw $v0, 0xC($a0)`) stays an
+  argument.
+- **A call m2c read backwards** (104 -> 0): `f(arg0, &frame)` was `f(&frame, buf)`: `$a0` held the frame and `$a1` a
+  stack buffer declared before it (`char buf[0x30]` first put the frame at the game's 0x50).
+- **An argument tested by `(arg4 << 0x18) != 0` is a char parameter** (55 -> 0): `s8 arg4` and `if (arg4)` gave the
+  game's saved-register assignment; `u8` was 570.
+- **Passed-through parameters as `s32`** (135 -> 0): a callee given `(x, arg1, arg2, f)` with `$a1`/`$a2` untouched since
+  entry; `s16` parameters re-extended them (635), `s32 arg1, s32 arg2` matched.
+- **A packed word written as a bitfield** (140 -> 0): `w = (w & 0xF) | (T[i] << 4) | 0x0FB00000` was
+  `struct { unsigned hi:12; unsigned tbl:16; unsigned lo:4; }` with `->tbl = T[i]; ->hi = 0xFB;` (the reverse order of
+  the two stores scored 1760).
+- **A stored call result re-read inside its guard** (70 -> 0): `p->x8 = r = f(); if (r) { use r }` copied `r` before
+  the branch; `if (r) { q = r; use q }` (or reading `p->x8` again) put the copy after it, as the game did.
+- **A global pointer held in a local across a store** (135 -> 0 with the arity fix above): `{ s32 *p = D; x->f |= 0x200;
+  g(*p, ...); }` loaded `D` before the read-modify-write.
+- **Two counters started in the game's order** (60 -> 0): `j = 0; cur = base; for (; j < N; j++)` where
+  `for (j = 0; ...)` after `cur = base` swapped their registers.
+
+Not closed: a phi copy gcc folds to `$zero` where the game kept `move $v0, $a2` (15, two functions); `neg.s` scheduled
+before `cvt.s.w` (60); a call result copied to `$a2` right after the call (75, three similar functions); a global
+reloaded after an aliasing store (100); zero stores that reuse the argument registers set for a later call (190).
