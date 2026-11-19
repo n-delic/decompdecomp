@@ -6,6 +6,7 @@ import random
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, wait
+from contextlib import nullcontext
 
 from .. import candidate_scope, claim_stalls, scoring
 from ..network import IN_BUILD, NetworkError
@@ -22,6 +23,18 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS deep_permutation_passes(
  function_id INTEGER PRIMARY KEY, scope TEXT NOT NULL, state TEXT NOT NULL,
  minutes INTEGER NOT NULL, max_variants INTEGER NOT NULL, completed_at REAL,
  result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '')'''
+
+
+def looking(net):
+    """The pass's own bookkeeping reads the database as it stands, without first syncing the saved folder.
+
+    A pass on a 3,000-function game waited 25,000 s in all (up to 327 s at a time) for saved-folder verification
+    before each function's turn, with its worker processes idle, and one such check that failed ("you hold another
+    claim") ended the whole pass. The app's autosave and folder watch keep syncing the folder, and the lanes
+    already search without it (Progress.passive); what a turn changes is marked for that sync by the progress_dirty
+    triggers."""
+    progress = getattr(net, 'progress', None)
+    return progress.view() if progress is not None else nullcontext()
 
 
 def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=None):
@@ -166,12 +179,14 @@ class Sweeps:
         return [dict(row) | {'provenance': json.loads(row['provenance'])} for row in rows]
 
     def config(self, slug):
-        proj = self.net.project_row(slug)
+        with looking(self.net):  # (its settings row: no saved files needed)
+            proj = self.net.project_row(slug)
         row = self._store(slug).one('SELECT value FROM settings WHERE key=?', f'deep-sweep:{proj["id"]}')
         return {'threads': 0, 'threads_per_function': 1, 'compiler_profiles': 1, 'loop': False} | (json.loads(row['value']) if row else {'enabled': False, 'minutes': 5, 'max_variants': 10000})
 
     def save(self, slug, cfg):
-        proj = self.net.project_row(slug)
+        with looking(self.net):
+            proj = self.net.project_row(slug)
         with self._store(slug).tx() as db:
             db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',
                        (f'deep-sweep:{proj["id"]}', json.dumps(cfg)))
@@ -439,7 +454,8 @@ class Sweeps:
         try:
             while True:
                 log.check_cancel()
-                proj = self.net.project_row(slug)
+                with looking(self.net):
+                    proj = self.net.project_row(slug)
                 pending = waiting = 0
                 # Shuffle lightweight identities first. Never fingerprint the entire project before
                 # dispatching work; keep at most two turns per worker queued ahead of execution.
@@ -468,7 +484,8 @@ class Sweeps:
                     if not fn or fn['status'] != 'open' or fn['gone_mark'] is not None:
                         return
                     # Dispatch always uses fresh inputs, never the producer's shared snapshot.
-                    scope = signature(self.net, proj, fn, minutes, variants)
+                    with looking(self.net):
+                        scope = signature(self.net, proj, fn, minutes, variants)
                     previous = self._store(slug).one('SELECT scope,state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
                     if previous and previous['scope'] == scope and (previous['state'] == 'error' or (not loop and previous['state'] == 'completed')):
                         return
@@ -506,14 +523,15 @@ class Sweeps:
                         fn = rows.get(fid)
                         if fn is None or fid in visited_turns or fid in futures.values():
                             continue
-                        fn = deep_permuter.prepare_source(self.net, proj, fn)
-                        if not fn['best_source'] or fn['best_score'] is None:
-                            waiting += 1
-                            continue
-                        # Never-tried/pending candidates need no costly historical-scope comparison.
-                        if (fn['pass_state'] == 'error' or (not loop and fn['pass_state'] == 'completed')) and fn['pass_scope'] == signature(
-                                self.net, proj, fn, minutes, variants, profiles, shared):
-                            continue
+                        with looking(self.net):
+                            fn = deep_permuter.prepare_source(self.net, proj, fn)
+                            if not fn['best_source'] or fn['best_score'] is None:
+                                waiting += 1
+                                continue
+                            # Never-tried/pending candidates need no costly historical-scope comparison.
+                            if (fn['pass_state'] == 'error' or (not loop and fn['pass_state'] == 'completed')) and fn['pass_scope'] == signature(
+                                    self.net, proj, fn, minutes, variants, profiles, shared):
+                                continue
                         pending += 1
                         if slug in self.net.links and (fn['claim_expires'] or 0) > time.time():
                             waiting += 1
@@ -566,7 +584,8 @@ class Sweeps:
         log.check_cancel()
         activity = stats["activity"]
         activity.update(fn["name"])
-        build_scope = candidate_scope.key(self.net, proj, fn)
+        with looking(self.net):
+            build_scope = candidate_scope.key(self.net, proj, fn)
         self.record(fn, scope, 'running', minutes, variants)
         log(f'Deep pass: {fn["name"]} · up to {minutes} minutes / {variants:,} variants')
 
@@ -598,7 +617,8 @@ class Sweeps:
                 result = deep_permuter.run(self.net, slug, fn['name'], minutes, variants, function_log, **options)
             # Also records test backends and older search providers that do not publish history.
             # The actual single-function search uses the same completion gate.
-            self.completed(slug, fn, minutes, variants, result, build_scope)
+            with looking(self.net):
+                self.completed(slug, fn, minutes, variants, result, build_scope)
             activity.update(fn['name'], {'phase': 'matched' if result['matched'] else 'finished', **result}, finished=True)
             with lock:
                 stats['visited'] += 1
