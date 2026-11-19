@@ -7601,6 +7601,11 @@ All under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, adopted as exact by the 
   misplacement, never the game's.
 - **m2c's "irregular" `case 0: break;`** (240 → 0). Dropping the invented case, and keeping the two equal
   `case 0x38` / `case 0x37` bodies separate (not merged as fall-through labels), reproduces the game's compare tree.
+- Both are repair families since decomp-repair 0.5.31: `read_before_assign` moves a top-level assignment above the
+  first statement that reads its local (only when nothing it reads changes in between and no control flow
+  separates them); `irregular_case` drops a case whose body is only `break;` in a switch without `default`, when
+  the case before doesn't fall into it. Each regenerates its function's exact C from the m2c draft (235 and 240
+  points off before).
 - **A subtraction written as a negated add, subtrahend first** (`-(x >> 1) + (s32)f`): the last 30 points of a
   register swap closed. Same allocator rule as the operand-order findings: the result takes the first operand's
   register.

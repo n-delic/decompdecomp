@@ -36,7 +36,9 @@ FAMILIES = ('assignment_at_use', 'comparison_sides', 'narrow_shift_pair', 'point
             # 0.5.26 and 0.5.27
             'const_read',
             # 0.5.29
-            'shared_return')
+            'shared_return',
+            # 0.5.31
+            'read_before_assign', 'irregular_case')
 FLAGS = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
 HEADER = 'typedef int s32;\ntypedef unsigned int u32;\ntypedef short s16;\ntypedef float f32;\n'
 
