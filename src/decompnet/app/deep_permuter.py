@@ -101,6 +101,10 @@ def _candidate_source(fn, best):
     return source
 
 
+# a deep pass that found C exact only under another compiler profile (profile_climb): the suggestion waits for review
+PROFILE_LEAD = 'Exact under another compiler profile; its suggestion waits for review'
+
+
 class Search(Permuter):
     def __init__(self, net, minutes, max_variants, log, fn=None):
         super().__init__(net)
@@ -123,6 +127,7 @@ class Search(Permuter):
         self.improvements = 0
         self.baseline_measured = False
         self.phase = 'local repairs'
+        self.profile_bests = {}  # (score, C) per other compiler profile climbed under (profile_climb)
         self.measuring_baseline = False
         self.record_improvement = lambda score: None
         self.recorded_best = None
@@ -1192,6 +1197,18 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     from .stack_layout import text as stack_text
                     if diagnostic := stack_text(proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
                         log(diagnostic)
+                    if not fork:
+                        # (code built with other settings: before the local repairs spend their half of the time,
+                        # measure the profiles its habits point to and climb under one that scores the C better than
+                        # the function's own; profile_climb. At most a few compiles when none does.)
+                        from . import profile_climb
+                        search.phase = 'other compiler profiles'
+                        found = profile_climb.lead(search, agent, proj, fn, fn['best_source'], baseline)
+                        if found is not None and profile_climb.climb(search, agent, proj, fn, fn['best_source'], *found) == 0:
+                            # (exact only under another profile: a compiler suggestion waits; the function isn't
+                            # matched under its own settings, so the matched-only steps below must not run)
+                            reason = PROFILE_LEAD
+                if baseline != 0 and reason not in ('Matched', PROFILE_LEAD):
                     search.phase = 'local repairs'
                     search.log('Baseline measured; trying targeted local repairs before random rewriting.')
                     remaining = max(0, search.deadline-time.monotonic())
@@ -1203,7 +1220,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                         reason = 'Matched'
             finally:
                 search._let_go(agent, fn)
-        if reason not in ('Matched', 'Exact diagnostic needs ordinary review'):
+        if reason not in ('Matched', 'Exact diagnostic needs ordinary review', PROFILE_LEAD):
             search.check()
             search.phase = 'random rewrites'
             search.log('Local repairs finished; generating random rewrites and judging each compiled candidate.')

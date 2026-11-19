@@ -2123,6 +2123,14 @@ scheduling-off profile try statement orders that follow the target's instruction
 the existing profile-bundle recheck before the function's settings change. Every console whose compiler has
 scheduling flags (GCC and EE-GCC, SNC's `-Xsched=0`).
 
+Done for every console's installed compilers (`app/compiler_fingerprints.py`, `app/profile_climb.py`): the deep
+pass reads a function's habits from its bytes (where the frame is made, save order, delay slots, branch-likely,
+moves, frame rounding, multiply/divide result reads), compares them with what each installed profile and its own
+compiler's flag variants make of a small probe, measures the best-agreeing ones on the current C and, when one
+scores it strictly better than the function's own settings, climbs under it with the same proposals before the
+local repairs; an exact pair goes through `deep_profiles.probe`'s recheck and suggestion. Still to do: statement
+orders that follow the target's instruction order under a scheduling-off profile (the `strcmp` needs them).
+
 ### ROM projects as project folders: editable units
 
 Importing a ROM can now also lay it out as a project folder (`rom/project_layout.py`): the rebuildable export plus
