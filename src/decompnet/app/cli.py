@@ -1,7 +1,8 @@
 """`decomp`: open decompdecomp in its window (starting the app, or bringing the running one's window to the front).
 
 `decomp serve` runs the same engine as a localhost webserver without a window or tray. The other commands act on the app: `decomp stop`, `decomp update`, `decomp setup` (the
-free compilers and tools), `decomp shortcut` (the apps menu entry). A development copy (run from a git checkout) is
+free compilers and tools), `decomp shortcut` (the apps menu entry), `decomp commit` and `decomp push` (a project's
+save repository). A development copy (run from a git checkout) is
 a separate app with its own home, port and wine prefix, and never touches the installed one (edition.py).
 """
 
@@ -601,6 +602,94 @@ def agents_cmd(args) -> int:
         return 1
 
 
+REPOSITORY_POLL_SECONDS = 1.0
+
+
+def _running_app(wait: float = AGENTS_WAIT_SECONDS) -> dict | None:
+    """This home's running app, waited for up to `wait` seconds: a busy one (just started, or at work) can take
+    seconds to answer /health."""
+    state = home_dir() / ".decomp" / "server.json"
+    deadline = time.monotonic() + wait
+    while (running := _state(state)) is None and time.monotonic() < deadline and state.is_file():
+        time.sleep(1)
+    return running
+
+
+def _ask(running: dict, path: str, body: dict | None = None, timeout: float = 60) -> dict:
+    """One request to the running app, its refusal as the sentence it gave (SystemExit)."""
+    try:
+        return _call(running, path, body, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        try:
+            message = json.loads(e.read() or b"{}").get("error") or str(e)
+        except ValueError:
+            message = str(e)
+        raise SystemExit(f"{edition.NAME} refused: {message}") from None
+    except OSError as e:
+        raise SystemExit(f"{edition.NAME} didn't answer: {e}") from None
+
+
+def _follow(running: dict, job_id: str, poll: float = REPOSITORY_POLL_SECONDS) -> dict:
+    """Print a job's log as it goes, and return it once it has ended (done, error or cancelled)."""
+    import urllib.parse
+    shown = 0
+    while True:
+        try:
+            job = _call(running, "/api/job?id=" + urllib.parse.quote(str(job_id)), timeout=30)
+        except OSError as e:
+            # a busy app can answer late: ask again while it still listens
+            if _listening(running["port"]):
+                time.sleep(poll)
+                continue
+            raise SystemExit(f"{edition.NAME} stopped answering ({e}); the job may not have finished") from None
+        log = job.get("log") or []
+        for line in log[shown:]:
+            print(line)
+        shown = len(log)
+        if job.get("state") in ("done", "error", "cancelled"):
+            return job
+        time.sleep(poll)
+
+
+def _repository_job(running: dict, path: str, body: dict, what: str) -> dict:
+    """Start one of the save repository's jobs as its button does, follow it, and return its result."""
+    job = _follow(running, _ask(running, path, body)["job"])
+    if job.get("state") != "done":
+        raise SystemExit(f"{what} failed: {job.get('error') or job.get('state')}")
+    return job.get("result") or {}
+
+
+def repository_cmd(args) -> int:
+    """Commit a project's saved progress (the save repository's Commit button) and push it (its Push button), from
+    the command line. It asks the running app as the window does (server.json's secret, as `decomp agents`): the
+    commit is the app's work, under its project lock and repository queue, so the app must be running, and nothing
+    restarts. A push sends only commits that are already made, to the origin the repository has."""
+    import urllib.parse
+    running = _running_app()
+    if running is None:
+        print(f"{edition.NAME} isn't running for {home_dir()}: start it (`decomp`) first", file=sys.stderr)
+        return 1
+    try:
+        if args.cmd == "commit":
+            state = _repository_job(running, "/api/repository-setup",
+                                    {"slug": args.project, "action": "checkpoint", "origin": ""}, "Commit")
+            if not args.push:
+                return 0
+        else:
+            state = _ask(running, "/api/repository-setup?" + urllib.parse.urlencode({"slug": args.project}))
+        if not state.get("root"):
+            raise SystemExit(f"{args.project} has no save repository yet: set one up in its Settings first")
+        if not state.get("origin"):
+            raise SystemExit(f"{args.project}'s save repository has no origin to push to: add one in its Settings")
+        result = _repository_job(running, "/api/repository-push", {"slug": args.project, "folder": state["root"]}, "Push")
+        if (status := result.get("status") or {}).get("destination"):
+            print(f"pushed to {status['destination']}")
+        return 0
+    except SystemExit as stop:
+        print(stop, file=sys.stderr)
+        return 1
+
+
 def shortcut(args) -> int:
     from .launcher import install_launcher
 
@@ -638,6 +727,11 @@ def main(argv: list[str] | None = None) -> int:
     ag_restart.add_argument("project", help="the project's slug")
     ag_restart.add_argument("ids", nargs="*", help="the helpers' ids (default: every stopped or paused one)")
     ag_restart.add_argument("--paused", action="store_true", help="only paused ones, not ones stopped by hand")
+    co = sub.add_parser("commit", help="commit a project's saved progress to its save repository (the running app does it)")
+    co.add_argument("project", help="the project's slug")
+    co.add_argument("--push", action="store_true", help="push to its origin after committing")
+    pu = sub.add_parser("push", help="push a project's save repository to its origin (the running app does it)")
+    pu.add_argument("project", help="the project's slug")
     up = sub.add_parser("update", help="install the newest decompdecomp (the running app restarts into it)")
     up.add_argument("--check", action="store_true", help="only say whether there is one")
     he = sub.add_parser("hosted-export", help="write a project as a small hosted file, for decomp-mcp-gateway hosted serve")
@@ -669,7 +763,7 @@ def main(argv: list[str] | None = None) -> int:
     limits.raise_open_file_limit()
     limits.no_core_dumps()
     return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd, "import": import_cmd,
-            "agents": agents_cmd,
+            "agents": agents_cmd, "commit": repository_cmd, "push": repository_cmd,
             "install-info": install_info, "hosted-export": hosted_export,
             "judge-worker": judge_worker, "hosted-link": hosted_link,
             "hosted-publish": hosted_publish}.get(args.cmd, run)(args)

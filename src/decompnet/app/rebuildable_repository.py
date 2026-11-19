@@ -37,6 +37,17 @@ def interrupted(folder):
     return folder if full(folder) else None
 
 
+def follow(net, slug, path, log=lambda line:None):
+    """The progress folder to use from `path`: where an interrupted upgrade moved it (pointing the project there
+    first), else `path` itself. Commit used to work this out from the old folder and put it back in the settings
+    before a sync moved it again."""
+    if (root := interrupted(path)) is None:return path
+    moved = moved_config(root)
+    net._update_cfg(slug, lambda cfg: cfg.update(**moved), synchronize=False)
+    log(f'Saved progress moved to {moved["progress_folder"]} with its repository; following it.')
+    return Path(moved['progress_folder'])
+
+
 def public(name):
     path = Path(name)
     if path.is_absolute() or '..' in path.parts:return False
