@@ -273,6 +273,7 @@ _MEMBER = rf'{_IDENT}(?:\s*(?:->|\.)\s*{_IDENT})*'
 _IDLE_WORKERS = []
 _IDLE_LOCK = threading.Lock()
 IDLE_WORKERS_KEPT = 4
+IDLE_WORKER_SECONDS = 300  # a kept worker unused this long is closed at the next request (bounded either way)
 
 
 def _in_worker(source, name, arch, asm, flags, labels, kwargs):
@@ -288,8 +289,14 @@ def _in_worker(source, name, arch, asm, flags, labels, kwargs):
         request = json.dumps([[source, name, arch, asm, list(flags)], kwargs], ensure_ascii=False).encode()
     except (TypeError, ValueError):
         return None
+    import time
+    now = time.monotonic()
     with _IDLE_LOCK:
+        stale = [w for w in _IDLE_WORKERS if now - w.idle_since > IDLE_WORKER_SECONDS]
+        _IDLE_WORKERS[:] = [w for w in _IDLE_WORKERS if w not in stale]
         worker = _IDLE_WORKERS.pop() if _IDLE_WORKERS else None
+    for old in stale:
+        old.close()
     try:
         if worker is None or worker.closed.is_set():
             worker = Worker()
@@ -298,6 +305,7 @@ def _in_worker(source, name, arch, asm, flags, labels, kwargs):
         return None  # (Worker.run closed it)
     with _IDLE_LOCK:
         if len(_IDLE_WORKERS) < IDLE_WORKERS_KEPT:
+            worker.idle_since = time.monotonic()
             _IDLE_WORKERS.append(worker)
             worker = None
     if worker is not None:

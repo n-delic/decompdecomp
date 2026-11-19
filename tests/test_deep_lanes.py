@@ -95,3 +95,45 @@ def test_each_lane_gets_its_share_of_the_machine(net, monkeypatch):
     assert deep_lanes.Lanes(net, 24, 256).slots == 2  # not 256 // 24 = 10 compile threads each
     assert deep_lanes.Lanes(net, 4, 256).slots == 9
     assert deep_lanes.Lanes(net, 4, 8).slots == 2  # a smaller configured total still wins
+
+
+def test_idle_lanes_are_trimmed_and_started_again_on_demand(net):
+    """#leak: a looping pass that waited for scored C kept every idle lane, each with its proposal workers (about 70
+    idle processes in one app). Lanes idle past the limit close, the count stays bounded, and a new turn starts one."""
+    lanes = deep_lanes.Lanes(net, 3, 6)
+    barrier = threading.Barrier(3)
+
+    def turn():
+        barrier.wait()
+        with pytest.raises(NetworkError):
+            lanes.search('game', 'no_such_function', 1, 10, Log())
+
+    class Cancelled(Log):
+        def check_cancel(self):
+            raise KeyboardInterrupt
+
+    try:
+        threads = [threading.Thread(target=turn) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        with pytest.raises((KeyboardInterrupt, NetworkError)):  # a cancelled turn, whatever its lane answered first
+            lanes.search('game', 'no_such_function', 1, 10, Cancelled())
+        assert lanes.started <= 3
+        children = []
+        while not lanes.idle.empty():
+            children.append(lanes.idle.get_nowait())
+        for lane in children:
+            lanes.idle.put(lane)
+        lanes.trim()  # (just used: kept)
+        assert lanes.idle.qsize() == len(children)
+        lanes.trim(0)
+        assert lanes.started == 0 and lanes.idle.qsize() == 0
+        assert all(lane.process.poll() is not None for lane in children)  # the children (and their workers) ended
+        with pytest.raises(NetworkError):  # started again when a turn needs one
+            lanes.search('game', 'no_such_function', 1, 10, Log())
+        assert lanes.started == 1
+    finally:
+        lanes.close()
+    assert lanes.started == 0
