@@ -57,7 +57,7 @@ and libmus PtrTablesV2 banks and their sample tables.
 Banks without a stored rate use a labelled, editable preview rate. Archived sequence candidates
 are listed separately; music sequencing, pitch, mixing and loops are not rendered. Open an audio
 region to choose a sample and prepare a local WAV preview; playback starts only with Play.
-Supported indexed N64 geometry is detected automatically, including RNC-compressed models.
+Supported indexed N64 geometry is detected automatically, including EMsh meshes in byte-sum RNC blocks.
 Open **Model browser** to rotate a local mesh or a supported assembled model, switch
 between textured, vertex-colour and wireframe rendering, follow related files and export
 a self-contained glTF. Supported PD3V cars use stored transforms; split scenery uses
