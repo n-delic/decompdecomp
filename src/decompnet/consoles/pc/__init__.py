@@ -1,12 +1,14 @@
-"""Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010 and 2017 (2015's and
+"""Windows PC games: 32-bit x86 and 64-bit x64 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010 and 2017 (2015's and
 newer's with 2017's, the nearest), PROJECT mode. Only the game is a Windows program: decompdecomp runs on Linux and
 macOS, and so do the compilers (through wibo; Visual C++ 2017's, which wibo can't run, through wine: wine.py).
 Visual C++ 2017 (its 32-bit and 64-bit compilers) can also be chosen for a source file in Settings; its 64-bit
-compiler builds every 64-bit x64 game (the packs have no other 64-bit one), whose functions come from its .pdata,
-not Ghidra's guesses (scratch._analyse_x64). The user's own Visual C++ copies
+compiler builds a 64-bit x64 game the packs' build matches or nearly (they have no other 64-bit one; an own x64 copy
+builds the rest), whose functions come from its .pdata, not Ghidra's guesses (scratch._analyse_x64). The user's own
+Visual C++ copies
 (kits/visualcpp.py, any number, any version from 2.0 on) build a game whose compiler build the packs don't have:
 its Rich header's build picks the copy (scratch.own_copy) before the nearest pack's, and the project stores
-MSVC/own-<version>. A copy is read for its 32-bit compiler only, so a 64-bit game builds with the pack's.
+MSVC/own-<version>. Both its x86 and x64 compilers are read: a 32-bit game takes the x86 copy, a 64-bit game the
+x64 one (own-<version>-x64), each before the pack's build.
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object
@@ -160,7 +162,9 @@ class WindowsPC(Console):
     def kit_compilers(self) -> tuple[Compiler, ...]:
         from ... import kits
 
-        return tuple(Compiler(f"MSVC/{c.version}", c.name, "your own copy") for c in kits.compilers(self.kits))
+        return tuple(Compiler(f"MSVC/{c.version}", c.name, "your own copy",
+                              target="x64" if c.version.endswith(X64_SUFFIX) else "x86")
+                     for c in kits.compilers(self.kits))
 
     def build_env(self) -> dict[str, str]:
         """Where wine and the app's prefix are, which tools/compile.py reads when a Visual C++ 2015+ file builds: read

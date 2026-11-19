@@ -34,7 +34,9 @@ function canvas(name) {
     },
     set() { return true; },
   });
-  return { width: 0, height: 0, style: {}, getContext: () => ctx, getBoundingClientRect: () => ({ left: 0, top: 0 }), addEventListener() {} };
+  const heard = {};  // the page's own listeners, so a test can move the mouse over the map
+  return { width: 0, height: 0, style: {}, getContext: () => ctx, getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    heard, addEventListener(type, fn) { heard[type] = fn; } };
 }
 const page = canvas("map");
 const document = stub();
@@ -44,6 +46,11 @@ document.getElementById = (id) => { if (!elements.has(id)) elements.set(id, stub
 
 const keys = ["name", "vram", "size", "insns", "unit", "status", "best", "attempts", "agent", "matched_at", "matched_by", "not_c", "polished"];
 const rows = Array.from({ length: FUNCTIONS }, (_, i) => [`f${i}`, 0x1000 + 16 * i, 16, 4, "", "open", null, 0, null, null, null, false, false]);
+// four the hover tip tells apart: compiled 12 times with no best, set aside, not C, and set aside after compiles
+rows[1][7] = 12;
+rows[2][5] = "asm";
+rows[3][5] = "asm"; rows[3][11] = true;
+rows[4][5] = "asm"; rows[4][7] = 5;
 const ov = { slug: "a", title: "a", kind: "rom", platform: "ps2", platform_name: "PlayStation 2", ready: true, rom: { game_code: "X" },
   compiler: { name: "gcc", flags: [], installed: true, supported: true, missing: [] }, functions: FUNCTIONS, matched: 0, bytes: 1,
   matched_bytes: 0, attempts: 0, priority: [], suggestions: [], boundaries: [], compiler_ranges: [], compilers: [] };
@@ -74,7 +81,7 @@ const ctx = {
 ctx.window = ctx;
 vm.createContext(ctx);
 const js = process.env.GUI_JS || path.join(__dirname, "..", "src", "decompnet", "app", "static", "js");
-for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "steering", "pages"]) {
+for (const name of ["base", "sidebar", "home", "project", "map", "agents", "function", "deep-permuter", "compiler-groups", "steering", "pages"]) {
   vm.runInContext(fs.readFileSync(path.join(js, `${name}.js`), "utf8"), ctx, { filename: `${name}.js` });
 }
 const settle = async () => { for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r)); };
@@ -86,6 +93,19 @@ const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
   await settle();
   // the first drawing: every cell once
   assert.equal(fills("base"), FUNCTIONS);
+
+  // the hover tip: a function compiled with no best says so (it said "not started"), one nobody compiled is not
+  // started, and one set aside says that, as its badge does, whatever its compiles
+  const hover = (i) => {
+    const { size, gap, cols } = vm.runInContext("geo", ctx);
+    page.heard.mousemove({ clientX: (i % cols) * (size + gap) + 1, clientY: Math.floor(i / cols) * (size + gap) + 1 });
+    return document.getElementById("tip").innerHTML;
+  };
+  assert.ok(hover(0).endsWith("<br>not started"), hover(0));
+  assert.ok(hover(1).startsWith("<b>f1</b>") && hover(1).endsWith("<br>12 compiles, no best yet"), hover(1));
+  assert.ok(hover(2).endsWith("<br>set aside"), hover(2));
+  assert.ok(hover(3).endsWith("<br>not C"), hover(3));
+  assert.ok(hover(4).endsWith("<br>set aside"), hover(4));
 
   // a poll that brings a better score for one function and a claim on another: those two cells, not all 2,000
   reset();
@@ -133,11 +153,35 @@ const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
   ctx.loadNav(true);
   ctx.loadNav(true);
   await settle();
-  assert.equal(asked.filter((u) => u === "/api/projects").length, 1);
+  assert.equal(asked.filter((u) => u.startsWith("/api/projects")).length, 1);
   ctx.loadNav();
   held.shift()();
   await settle();
-  assert.equal(asked.filter((u) => u === "/api/projects").length, 2);
+  assert.equal(asked.filter((u) => u.startsWith("/api/projects")).length, 2);
+
+  // hundreds of projects: the timer asks with the list's signature, and "the same" redraws nothing
+  const nav = document.getElementById("navProjects");
+  let drawnNav = 0, navHtml = "";
+  elements.set("navProjects", new Proxy(nav, { set(t, k, v) { if (k === "innerHTML") { drawnNav++; navHtml = v; } t[k] = v; return true; } }));
+  const many = Array.from({ length: 300 }, (_, i) => ({ slug: `g${i}`, title: `Game ${i}`, functions: 10, matched: i % 10,
+    bytes: 10, matched_bytes: i % 10, platform_short: "PS2" }));
+  answers["/api/projects"] = (url) => (url.includes("since=s1") ? { sig: "s1", same: true } : { sig: "s1", projects: many });
+  asked.length = 0;
+  await ctx.loadNav();
+  await ctx.loadNav(true);
+  await ctx.loadNav(true);
+  assert.deepEqual(asked.filter((u) => u.startsWith("/api/projects")),
+    ["/api/projects?since=", "/api/projects?since=s1", "/api/projects?since=s1"]);
+  assert.equal(drawnNav, 1);
+  assert.equal(vm.runInContext("S.projects.length", ctx), 300);
+  assert.equal(vm.runInContext("colourOf('g299')", ctx), 0);  // the oldest keeps the first colour
+  // the same list again (another page asked for it) isn't rebuilt either
+  vm.runInContext("renderNav()", ctx);
+  assert.equal(drawnNav, 1);
+  // the filter box: only the projects whose name has what's typed
+  vm.runInContext("navFilter = 'game 29'; renderNav()", ctx);
+  assert.equal(drawnNav, 2);
+  assert.equal((navHtml.match(/class="nav-proj"/g) || []).length, 11);  // Game 29, 290-299
 
   // the stats: one ask at a time
   asked.length = 0;

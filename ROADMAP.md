@@ -38,9 +38,10 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | partly: code no C makes set aside; no new analysis yet | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | ✓ import stubs (NIDs) and `sc` calls | — | set aside, named by library and NID | set aside (BIOS calls) | — | ✓ import thunks | ✓ import thunks, named from the kernel export list | — (BIOS calls set aside, not named) | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | ✓ | — | — |
-| Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | — | ✓ | ✓ | — | ✓ your Visual C++, for 32-bit games (64-bit ones build with the pack's 2017) | ✓ your XDK | — | the project's own build |
+| Your own compiler (Setup: another build of one it has) | ✓ | ✓ | ✓ | ✓ your SDK | — | ✓ | ✓ | — | ✓ your Visual C++ (x86 and x64 copies): 32-bit and 64-bit games the pack's build doesn't match exactly | ✓ your XDK | — | the project's own build |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ (ps3dev GCC, your SDK's) | — | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | from scratch: per source file (`try_compiler`, Settings); else the project's build | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — (the project's flags only) | per source file (/Oy- on 32-bit, /O1, /Ob1) | per source file | — (the project's flags only) | the project's build |
+| Find better compiler settings from saved C | ✓ | ✓ | ✓ | ✓ | — project mode | ✓ | ✓ | — project mode | — project mode | — project mode | — project mode | — public builds |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | ✓ from scratch: per source file (its own compilers, nearest first); else the project's build | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ from scratch: per source file; else the project's build | ✓ over source files | ✓ | ✓ from scratch: per source file; else the project's build | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | — | ✓ | — | — | ✓ (named by RTTI where the program has it) | ✓ (RTTI where the program has it) | — | — |
@@ -92,9 +93,10 @@ Where to start on a gap:
   Ghidra drafts a delinked object without its callees' prototypes, so a method call loses `this` and a callee's
   arguments are guessed (a draft fed the project's headers, through a Ghidra script that applies them, is the next
   step). Games built with Visual C++ 6.0 to 2010 and 2017 can match; 2015's and 2019 and newer's build with 2017's,
-  2012-2013's with 2010's, every 64-bit game with 2017's 64-bit compiler: Newer Windows games, below, is the plan for
-  their own compilers. A class’s constructors are one real name (`CFoo::CFoo`), so of two at two addresses (a copy
-  constructor) only one can be written as a constructor: names.py would need the mangled signature in "names". A
+  2012-2013's with 2010's, a 64-bit game with 2017's 64-bit compiler or, for any other build, your own x64 copy: Newer
+  Windows games, below, is the plan for the packs' own compilers. A class’s constructors are one real name
+  (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor:
+  names.py would need the mangled signature in "names". A
   game's own DLLs come along when its folder or .exe is given by path; a dropped .exe comes alone (a browser doesn't
   hand over the folder), a project made before can't take its DLLs in yet (Reimport analyses the programs
   a project has), a project restored or cloned asks only for the .exe (`ForkProject.needs` names one file: the DLLs go in
@@ -108,7 +110,8 @@ Where to start on a gap:
   method only through a declaration in the class), and optimised code's register locals (2005's S_LOCAL ranges)
   aren't listed. A game's PDB has to be beside its program, or dropped with it, at import: a project made before
   can't take one in yet.
-- **Function-end reports** cut MIPS functions (`engine._cut`) and, in project mode, a console's own
+- **Compiler comparison in project mode** needs a source-file trial and an objdiff-backed apply path for each project console. The current saved-C comparison panel runs on ROM projects, including GBA and PS3.
+- **Function-end reports** cut MIPS, ARM/Thumb and PPC functions (`engine._cut`) and, in project mode, a console's own
   (`Console.cut_function`: PC's functions.json). DS and GameCube/Wii projects need theirs, so their agents aren't
   offered `report_boundary` yet.
 - **Tidying a ROM project**: its C is the database's, one function at a time, with one shared header per segment
@@ -128,9 +131,21 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Browse compiler profiles.** Group applied ranges by compiler and arguments, compiler family, or address;
+  sort by range count, verification status, compiler name, or address. Expand profiles and the default settings to see function links,
+  argument lists and verification details. ROM profiles can be compared with the default, tested as a replacement,
+  or tried against saved unmatched C; changing settings rechecks affected matches before publishing.
+
+- **Agents & models controls.** Collapsible sections show installed agent apps, prompt templates, optional tool
+  visibility and recorded usage, manual project-scoped MCP connections, and saved API endpoints. Global and
+  per-helper prompt and tool choices take effect on new sessions; disabled tool calls are rejected immediately.
+- **Portable Windows app.** A release ZIP bundles a relocatable `decompdecomp.exe`, Python and app dependencies. It needs the Microsoft window prerequisites already installed. CI extracts the ZIP to a different path and checks the EXE, server import and isolated startup/Stop.
+
 - **64-bit Windows games (x64).** A 64-bit program (PE32+) imports like a 32-bit one and builds with Visual C++
   2017's 64-bit compiler, the packs' only one: a game built with 2015, 2019 and newer, or 2005 to 2013's 64-bit
-  compilers builds with it, and the import says how near that is. Its functions come from the program, not
+  compilers builds with it, and the import says how near that is; a build the pack doesn't have exactly reaches
+  your own x64 Visual C++ copy (kits/visualcpp.py) when you've added one, as a 32-bit game reaches your x86 copy. Its
+  functions come from the program, not
   Ghidra's guesses: the exception directory (`.pdata`) has the start and end of every function that uses the stack
   (a function's chained parts joined to it, its jump tables in it), and the leaf functions between them are read
   from the code, one after another (on the 64-bit demo Ghidra finds 7 of 18 functions; a test compares the two).
@@ -556,6 +571,8 @@ Where to start on a gap:
 - **A real permuter**: decomp-permuter rewrites near misses on the parse tree, weighted per compiler, on spare
   cores at a low priority. On nine near misses made from the demo ROM's functions it matched all nine, the old
   regex rewrites five. They stay as the fallback, for C decomp-permuter can't parse.
+  A user can also start a bounded deep search for one unmatched function. It shares the background worker pool,
+  honours the time and variant limits, and records only improvements that pass the normal judge.
 - **Better drafts**: m2c drafts every function in the background, from the header declarations its code uses, and
   again when they change; `redraft` runs m2c with an agent's own declarations; methods of known C++ classes are
   drafted as `Class::method`. On GTA San Andreas, 37 of 40 sampled drafts read the header (none did before).
@@ -724,7 +741,8 @@ functions as C. What's left:
 
 - **Compilers and ranges.** agbcc's release also has `old_agbcc` and `agbcc_arm`, but the console lists only `agbcc`:
   selecting them per file and the compiler map/range checks/suggestions (`try_compiler`, `search_flags`) are MIPS
-  only. GBA games built with another of the three need them.
+  only. GBA games built with another of the three need them. The local saved-C compiler comparison works in ROM
+  mode on GBA, but project mode does not yet have this comparison panel.
 - **Free matches.** ARM/Thumb look-alikes and twins, and the permuter's GBA weights (`agbcc` now maps to GCC's
   weights, but it wasn't run here); twins across games need the per-function Thumb mode too.
 - **Code readers.** C++ classes (`get_class`), struct layouts (`guess_struct`, no `Arch.field_accesses` for ARM) and
@@ -769,12 +787,14 @@ naming its SDK in `headers`), and goes into `RICH_BUILDS`, so its games build wi
   /Zi with /FS fails (C1902: no mspdbsrv), which no project's build uses.
 - **F, 64-bit games, what's left** (64-bit games start: Recently done). Each Visual Studio version's own 64-bit
   compiler, with its pack (2017's builds every 64-bit game until then); your own Visual C++ copies (the `visualcpp` kit)
-  are read for their 32-bit compiler only, so they don't build 64-bit games yet. Visual C++ 2019 and newer write a
-  64-bit C++ function's exception data in another form (`__CxxFrameHandler4`'s, their default), which `funclets_x64`
-  doesn't read yet: such a game's funclets stay functions of their own, which no C makes. Autopilot's exact drafts of
-  tiny shapes (`drafts.exact`) read 32-bit code only: a 64-bit game gets Ghidra's drafts. PDBs and maps of 64-bit games
-  are read as 32-bit ones are, untested on a real game's. A whole-program optimised game's cold parts of functions,
-  which `.pdata` chains to a function elsewhere, stay functions of their own.
+  are now read for both their 32-bit and 64-bit compilers, including an x64-only copy, with distinct ids and
+  target-filtered choices (user-supplied Wine compilers get the build environment even without a downloaded pack).
+  Visual C++ 2019 and newer write a 64-bit C++ function's exception data in another form (`__CxxFrameHandler4`'s,
+  their default), which `funclets_x64` doesn't read yet: such a game's funclets stay functions of their own, which no
+  C makes. Autopilot's exact drafts of tiny shapes (`drafts.exact`) read 32-bit code only: a 64-bit game gets Ghidra's
+  drafts. PDBs and maps of 64-bit games are read as 32-bit ones are, untested on a real game's. A whole-program
+  optimised game's cold parts of functions, which `.pdata` chains to a function elsewhere, stay functions of their
+  own.
 
 ### PSP: encrypted programs, ZSO images, imported names
 Most retail PSP programs (EBOOT.BIN) are encrypted, and decrypting them takes Sony's keys: decompdecomp doesn't
@@ -927,6 +947,10 @@ The answer goes here: build it, build part of it, or not, and why.
 
 ## Later
 
+- **Padding by processor (x86).** Retiring a pure-padding split head (editing.py `_cut`) asks the processor
+  (`arch/`) for its own filler: MIPS zero, ARM/Thumb and PPC nops are now recognised and those padding heads
+  retired. x86's reader exists (`arch/x86.py` — `0xCC`/`0x90` and the standard multi-byte nops) but isn't wired into a split path yet: `_cut` is
+  ROM-only and PC/Xbox are project mode, so x86 padding heads aren't retired.
 - **Better look-alikes.** A second measure (edit distance over opcodes) next to today's, and shared runs of
   instructions, which find inlined helpers and macros. Needs PowerPC and x86 opcode readers.
 - **Decoders for data formats.** Tools that decode N64 display lists, PS2 GS/VIF packets and GameCube GX command
@@ -937,4 +961,7 @@ The answer goes here: build it, build part of it, or not, and why.
   doesn't use them yet.
 - **A Flatpak** on the GNOME runtime.
 - **macOS signed/notarized** distribution and a menu bar tray icon.
-- **macOS memory, CPU and file-size caps** for compiler processes (Linux currently uses systemd scopes).
+- **macOS CPU and file-size caps** for compiler processes (Linux uses prlimit; macOS has the memory watchdog,
+  `limits.CompilerMemoryWatchdog`).
+- **Windows memory caps** for compilers and project builds: the Job Object each one already runs in (`limits.attach_job`,
+  which stops the whole tree at the time limit) can also cap its memory, as Linux's scopes and macOS's watchdog do.

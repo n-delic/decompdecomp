@@ -552,6 +552,28 @@ def test_opencode_2_helpers_get_a_plugin_that_waits_for_the_apps_tools(tmp_path,
     assert not (old / opencode.PLUGIN_DIR).exists()
 
 
+def test_every_opencode_helper_names_its_own_config_so_opencode_finds_it(tmp_path, monkeypatch):
+    """#282: on Windows the npm install's opencode 1.x didn't find the helper's own opencode.json in its folder, so
+    the helper started without the decompdecomp server; pointing OPENCODE_CONFIG at the file fixed it. Every session
+    names its own file, whichever config shape its version writes, and a user's OPENCODE_CONFIG doesn't win."""
+    monkeypatch.setenv("OPENCODE_CONFIG", str(tmp_path / "users-own-opencode.json"))
+    for version, standalone in (("0.15.4", False), ("opencode v2.0.32", True)):
+        monkeypatch.setitem(kinds.known_versions, "opencode", (0, version))
+        m = _manager(tmp_path, monkeypatch, "opencode")
+        s = agents.Session("opencode-1", "opencode", "o", "demo", "opencode-1", {"model": "fake/fake"})
+        work = tmp_path / f"oc-config-{standalone}"
+        work.mkdir()
+        cmd, env, _ = m._command(s, "tok", work)
+        written = work / "opencode.json"
+        assert Path(env["OPENCODE_CONFIG"]).is_absolute()
+        assert Path(env["OPENCODE_CONFIG"]) == written.resolve()
+        assert ("--standalone" in cmd) is standalone  # the same version tells which config shape it wrote
+        config = json.loads(written.read_text(encoding="utf-8"))
+        mcp = config["mcp"]["servers"] if standalone else config["mcp"]
+        assert set(mcp) == {opencode.MCP_SERVER}
+        assert mcp[opencode.MCP_SERVER]["headers"] == {"Authorization": "Bearer tok"}
+
+
 def test_codex_helpers_cannot_search_the_web(tmp_path, monkeypatch):
     """Helpers that searched the web pulled a public decomp's code instead of working the function out."""
     m = _manager(tmp_path, monkeypatch, "codex")

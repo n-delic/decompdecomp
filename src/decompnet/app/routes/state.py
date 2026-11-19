@@ -4,12 +4,14 @@ game, the function map (every function, sent only when it changed), the log and 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import shutil
 import uuid
 from pathlib import Path
 
+import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -89,11 +91,134 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/projects", methods=["GET"])
     async def api_projects(request: Request) -> Response:
-        return guard(request) or JSONResponse(await call(project_list))
+        """The project list. With `since` (the signature of the list the GUI has): {sig, projects}, or just
+        {sig, same: true} when nothing changed, so the sidebar's ask every 5 s redraws nothing for hundreds of games.
+        Without it, the list itself, as before."""
+        if (bad := guard(request)):
+            return bad
+        projects = await call(project_list)
+        if "since" not in request.query_params:
+            return JSONResponse(projects)
+        sig = hashlib.sha1(json.dumps(projects, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        if request.query_params["since"] == sig:
+            return JSONResponse({"sig": sig, "same": True})
+        return JSONResponse({"sig": sig, "projects": projects})
 
     @mcp.custom_route("/api/state", methods=["GET"])
     async def api_state(request: Request) -> Response:
         return guard(request) or JSONResponse(await call(state))
+
+    @mcp.custom_route('/api/agent-prompts', methods=['GET', 'POST'])
+    async def agent_prompts(request: Request) -> Response:
+        from dataclasses import replace
+
+        from .. import prompt_settings
+        if (bad := guard(request, write=request.method == 'POST')):
+            return bad
+        try:
+            data = await body(request) if request.method == 'POST' else request.query_params
+            helper = manager.sessions.get(str(data.get('helper', ''))) if data.get('helper') else None
+            if data.get('helper') and helper is None:
+                raise NetworkError('This agent no longer exists. Refresh the agents list.')
+            if request.method == 'POST':
+                action = data.get('action', 'save')
+                overrides = prompt_settings.validate(data.get('overrides', {}))
+                if action not in {'save', 'preview'}:
+                    raise ValueError('Choose save or preview.')
+                if action == 'preview':
+                    if helper:
+                        draft = replace(helper, options={**helper.options, 'prompts': overrides}, prompt_config=None)
+                        return JSONResponse({'initial': await call(manager.prompt, draft),
+                                             'instructions': manager.app_instructions(draft)})
+                    templates = prompt_settings.defaults() | overrides
+                    return JSONResponse({'initial': '\n\n'.join(prompt_settings.LABELS[k] + '\n' + templates[k]
+                                         for k in prompt_settings.FIELDS if k != 'instructions'),
+                                         'instructions': templates['instructions']})
+                if helper:
+                    await call(manager.set_prompts, helper.id, overrides)
+                else:
+                    await call(prompt_settings.save_global, net, overrides)
+            return JSONResponse(await call(prompt_settings.view, net, helper))
+        except (NetworkError, ValueError, KeyError) as error:
+            return fail(error)
+
+    @mcp.custom_route('/api/agent-tools', methods=['GET', 'POST'])
+    async def agent_tools(request: Request) -> Response:
+        from .. import tool_policy, tools
+        if (bad := guard(request, write=request.method == 'POST')):
+            return bad
+        try:
+            await call(tool_policy.ensure, net)
+            data = await body(request) if request.method == 'POST' else request.query_params
+            helper = manager.sessions.get(str(data.get('helper', ''))) if data.get('helper') else None
+            if data.get('helper') and helper is None:
+                raise NetworkError('This agent no longer exists. Refresh the agents list.')
+            if request.method == 'POST':
+                if 'preset' in data:
+                    names = tool_policy.preset_disabled(data['preset'])
+                    if helper:
+                        await call(manager.set_tools, helper.id, names)
+                    else:
+                        await call(tool_policy.set_preset, net, data['preset'])
+                else:
+                    name, enabled = data.get('name'), data.get('enabled')
+                    tool_policy.validate([name])
+                    if type(enabled) is not bool:
+                        raise NetworkError('Tool enabled must be true or false.')
+                    if helper:
+                        await call(manager.set_tool, helper.id, name, enabled)
+                    else:
+                        await call(tool_policy.set_global, net, name, enabled)
+            blocked = tool_policy.disabled(net)
+            own = set(helper.options.get('disabled_tools', [])) if helper else set()
+            usage = await call(tool_policy.usage, net)
+            definitions = await mcp.list_tools()
+            if helper:
+                names = set(tools.project_tools(net, helper.slug, include_disabled=True))
+                definitions = [t for t in definitions if t.name in names]
+            entries = []
+            for t in definitions:
+                item = t.model_dump(mode='json', by_alias=True)
+                name = t.name
+                item.update(calls=usage.get(name, {}).get('calls', 0), required=name in tool_policy.REQUIRED,
+                            global_disabled=name in blocked, enabled=name not in blocked | own,
+                            schema_chars=len(json.dumps(item)))
+                entries.append(item)
+            return JSONResponse({'tools': entries, 'helper': helper.id if helper else None,
+                                 'presets': [{'id': key, 'label': label,
+                                              'tools': sum(t.name not in tool_policy.preset_disabled(key)
+                                                           for t in definitions)}
+                                             for key, (label, _) in tool_policy.PRESETS.items()],
+                                 'coverage': 'Local counts begin when tool tracking starts. Earlier calls may not be recorded.'})
+        except (NetworkError, ValueError, KeyError) as error:
+            return fail(error)
+
+    @mcp.custom_route("/api/manual-mcp", methods=["GET", "POST"])
+    async def manual_mcp_connection(request: Request) -> Response:
+        from .. import manual_mcp, prompt_settings, tools
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        try:
+            if request.method == "POST":
+                data = await body(request)
+                if data.get('action') == 'revoke':
+                    await call(manual_mcp.revoke, net, settings, int(data['id']))
+                    return JSONResponse({'ok': True})
+                if data.get('action') != 'create':
+                    raise ValueError('Choose create or revoke.')
+                item = await call(manual_mcp.create, net, settings, str(data.get('slug') or ''))
+                return JSONResponse({**item, 'url': mcp_url,
+                                     'instructions': prompt_settings.effective(net, {})['instructions']})
+            slug = request.query_params.get('slug')
+            if slug:
+                await call(net.project_row, slug)
+            keep = set(tools.project_tools(net, slug)) if slug else set()
+            definitions = await mcp.list_tools()
+            return JSONResponse({'url': mcp_url, 'transport': 'Streamable HTTP',
+                                 'connections': manual_mcp.connections(settings),
+                                 'tools': [t.model_dump(mode='json', by_alias=True) for t in definitions if t.name in keep]})
+        except (NetworkError, ValueError, KeyError) as e:
+            return fail(e)
 
     @mcp.custom_route("/api/restore", methods=["POST"])
     async def api_restore(request: Request) -> Response:
@@ -233,27 +358,73 @@ def register(app: App) -> None:
                             headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
         return Response(raw, media_type="application/json")
 
+    _map_cache: dict[str, tuple[str, bytes, bytes | None]] = {}
+    _map_lock = anyio.Lock()
+
+    def invalidate_map(slug: str) -> None:
+        _map_cache.pop(slug, None)
+
+    app.invalidate_map = invalidate_map
+
+    def map_response(request: Request, raw: bytes, gz: bytes | None) -> Response:
+        if gz is not None and "gzip" in request.headers.get("accept-encoding", ""):
+            return Response(gz, media_type="application/json",
+                            headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+        return Response(raw, media_type="application/json", headers={"Vary": "Accept-Encoding"})
+
     @mcp.custom_route("/api/map", methods=["GET"])
     async def api_map(request: Request) -> Response:
         """Every function, for the map and the table. `since`: the signature the GUI has; when nothing changed, the
         answer is just that (a big game's map is megabytes, and the GUI asks every few seconds). Rows go as arrays
-        under `keys`, gzipped when the browser takes it."""
+        under `keys`, gzipped when the browser takes it. A request without `since` is a forced refresh: renames,
+        splits and live-feed gaps aren't in the signature, so its full answer must never come from the cache."""
         if (bad := guard(request)):
             return bad
         slug = request.query_params.get("slug", "")
+        since = request.query_params.get("since")
 
-        def build() -> dict:
-            sig = net.map_signature(slug)
-            if request.query_params.get("since") == sig:
-                return {"sig": sig, "same": True}
-            rows = net.function_map(slug)
-            keys = list(rows[0]) if rows else []  # every field function_map gives: a list of them here lost polished and not_c
-            return {"sig": sig, "keys": keys, "rows": [[r[k] for k in keys] for r in rows]}
         try:
-            data = await call(build)
+            sig = await call(net.map_signature, slug)
         except (NetworkError, ValueError) as e:
             return fail(e)
-        return packed(request, data)
+
+        if since == sig:
+            return Response(b'{"sig":"' + sig.encode() + b'","same":true}', media_type="application/json")
+
+        entry = _map_cache.get(slug)
+        if since is not None and entry is not None and entry[0] == sig:
+            return map_response(request, entry[1], entry[2])
+
+        async with _map_lock:
+            # A request may have waited behind another build while helpers changed the project.
+            try:
+                sig = await call(net.map_signature, slug)
+            except (NetworkError, ValueError) as e:
+                return fail(e)
+            if since == sig:
+                return JSONResponse({"sig": sig, "same": True})
+            entry = _map_cache.get(slug)
+            if since is not None and entry is not None and entry[0] == sig:
+                return map_response(request, entry[1], entry[2])
+
+            def build() -> tuple[bytes, bytes | None]:
+                rows = net.function_map(slug)
+                keys = list(rows[0]) if rows else []  # every field function_map gives: a list of them here lost polished and not_c
+                data = {"sig": sig, "keys": keys, "rows": [[r[k] for k in keys] for r in rows]}
+                raw = json.dumps(data, separators=(",", ":")).encode()
+                gz = None
+                if len(raw) > GZIP_FROM_BYTES:
+                    import gzip
+                    gz = gzip.compress(raw, 1)
+                return raw, gz
+
+            try:
+                raw_bytes, gz_bytes = await call(build)
+                _map_cache[slug] = (sig, raw_bytes, gz_bytes)
+            except (NetworkError, ValueError) as e:
+                return fail(e)
+
+        return map_response(request, raw_bytes, gz_bytes)
 
     @mcp.custom_route("/api/mapcolumns", methods=["GET"])
     async def api_map_columns(request: Request) -> Response:

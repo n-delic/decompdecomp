@@ -42,6 +42,82 @@ def test_a_release_without_a_compile_is_pushed_back_until_it_compiles_once_more(
     assert _held(net, a) is None
 
 
+def test_asking_again_and_again_without_a_compile_is_told_to_stop(tmp_path):
+    # an agent whose own instructions said it was out of tries asked 7 times in 90 seconds, each answer the full
+    # advice, until the user's session quota ran out
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    for _ in range(2):
+        assert "a release with no compile isn't taken" in net.release_function(a, "f", "out of tries", "game")
+    for _ in range(2):
+        said = net.release_function(a, "f", "out of tries", "game")
+        assert said.startswith("Not released yet: you haven't compiled f since you claimed it")
+        assert "end your session here" in said and "isn't taken" not in said
+    assert _held(net, a) == "f"
+    time.sleep(0.01)
+    _attempts(net, a, "f", [40])  # compiled after all: the next ask goes through, as before
+    assert net.release_function(a, "f", "tried it", "game").startswith("Released f")
+
+
+def test_a_boundary_report_after_two_refusals_still_releases_it(tmp_path):
+    # report_boundary's own answer says "release it or work on with its current size": the one-line refusal came
+    # before the check for functions compiling can't help with, so that release was told "Compile it now" instead
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    with net.store.tx() as db:  # (boundary reports: a MIPS game, and a function with an address and its bytes)
+        db.execute("UPDATE projects SET arch='mips'")
+        db.execute("UPDATE functions SET vram=?, target=? WHERE name='f'", (0x80001000, bytes(40)))
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    for _ in range(2):
+        assert "a release with no compile isn't taken" in net.release_function(a, "f", "out of tries", "game")
+    assert "release it" in net.request_boundary(a, "game", "f", "0x80001020", "zero padding after the jr ra")
+    said = net.release_function(a, "f", "ends at 0x80001020, the rest is padding", "game")
+    assert said.startswith("Released f")
+    assert _held(net, a) is None
+
+
+def test_a_session_of_refused_releases_made_no_progress(tmp_path, monkeypatch):
+    # so it fails like any session that compiled nothing: a pause between them, and after a few the helper stops
+    # with the reason for the user, instead of a new session on the same function 3 s later
+    from decompnet.app import agents
+
+    from .test_agents import Quick, _no_agent_settings
+
+    _no_agent_settings(monkeypatch)
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    m = agents.Manager(net, tmp_path, "http://127.0.0.1:1/mcp")  # (first: it frees claims left from before)
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    before = m._progress(a.id)
+    for _ in range(3):
+        net.release_function(a, "f", "out of tries", "game")
+    assert m._progress(a.id) == before
+    _attempts(net, a, "f", [40])
+    assert m._progress(a.id) == before + 1
+    # the session outcome, not just the count: a helper whose sessions only ask to release, never compile, has
+    # each one fail, waits that grow between them, then pauses with the reason
+    assert net.release_function(a, "f", "tried the field stores", "game").startswith("Released f")
+    assert net.claim_row(a, "game", "g")["name"] == "g"
+    s = m._record("game", "opencode", "a", "a", {})
+    s.stop = Quick()
+
+    def only_asks(s, token, workdir):
+        assert _held(net, a) == "g"  # held through the sessions, not handed to the next one untried
+        for _ in range(3):  # three refused asks (the count is per claim, so from session 2 on: the one line)
+            net.release_function(a, "g", "out of tries", "game")
+        return True
+    monkeypatch.setattr(m, "_run_cli", only_asks)
+    m._run(s)
+    assert s.state == "paused" and "the session ended without compiling anything" in s.why
+    assert s.runs == agents.FAST_FAILURES_TO_PAUSE
+    rows = net.store.all("SELECT outcome FROM helper_sessions WHERE helper_id=?", s.id)
+    assert [r["outcome"] for r in rows] == ["failed"] * agents.FAST_FAILURES_TO_PAUSE
+    waits = [w for w in s.stop.waits if w]
+    assert len(waits) == agents.FAST_FAILURES_TO_PAUSE - 1 and all(w1 < w2 for w1, w2 in zip(waits, waits[1:]))
+    assert any("paused:" in f["text"] and "without compiling anything" in f["text"] for f in s.feed)
+
+
 def test_claiming_while_a_pushed_back_release_still_holds_says_so(tmp_path):
     # an agent read its held function coming back as the queue handing back what it had just released
     net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])

@@ -1,6 +1,7 @@
 """A collaborator's files take precedence over SQLite, without an import button or a second on-disk copy."""
 
 import json
+import logging
 import shutil
 import threading
 import time
@@ -52,6 +53,44 @@ def manifest(folder, **changes):
     data = json.loads(path.read_text())
     data.update(changes)
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_a_zero_size_function_left_by_an_old_split_does_not_stop_a_save(project):
+    """#297: a row a splitter gave no bytes cannot be a layout entry (a saved entry needs a size above 0). Saving
+    leaves it out and sets it aside, so the project saves instead of refusing every time."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'empty',4104,0,1,'open','')", (pid,))
+    saves.save(net, "game")
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    assert [entry["name"] for entry in data["layout"]] == ["f", "g"]
+    assert all(entry["size"] > 0 for entry in data["layout"])
+    row = net.store.one("SELECT status, meta FROM functions WHERE project_id=? AND name='empty'", pid)
+    assert row["status"] == "asm" and "#297" in json.loads(row["meta"])["asm_code"]
+
+
+def test_a_saved_layout_with_a_zero_size_function_still_opens(project, caplog):
+    """#297: a folder saved before the fix has a size-0 entry. Reading it leaves that entry out, with a log line,
+    instead of refusing the whole project (the sources of an entry left out are ignored too)."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'empty',4104,0,1,'open','')", (pid,))
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    data["layout"].append({"name": "empty", "vram": 4104, "size": 0, "status": "open"})
+    (folder / saves.MANIFEST).write_text(json.dumps(data), encoding="utf-8")
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/empty.c").write_text("void empty(void) {}\n", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger="decompdecomp")
+    net.progress = Progress(net)
+    assert net.progress.sync("game", force=True)
+    saved = json.loads((folder / saves.MANIFEST).read_text())
+    assert "empty" not in [entry["name"] for entry in saved["layout"]]
+    assert not (folder / "src/empty.c").exists() and (folder / "unlisted/src/empty.c").exists()
+    assert any("size 0" in record.getMessage() and "empty" in record.getMessage() for record in caplog.records)
 
 
 def test_long_template_names_survive_saves_edits_and_deletions(project):
@@ -1205,3 +1244,92 @@ def test_a_piece_named_by_its_label_saves_and_opens_again(project):
     net.progress.sync("game", force=True)
     names = [row["name"] for row in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
     assert ".L00001004" in names
+
+
+def test_the_autosave_reads_every_file_only_of_projects_in_use_and_the_rest_in_turns(project, monkeypatch):
+    """Hundreds of projects: reading every file of each, every second, cost 300 ms a pass with 200 small ones. A
+    project in use is read whole each pass; the quiet ones get the cheap check, and the deep one in turns."""
+    net, _, _ = project
+    for n in range(3):
+        with net.store.tx() as db:
+            pid = db.execute("INSERT INTO projects(slug,name,root,config) SELECT ?,name,root||?,config FROM projects "
+                             "WHERE slug='game'", (f"quiet{n}", str(n))).lastrowid
+            db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                       "VALUES(?,1,'',0,'')", (pid,))
+        net.progress.sync(f"quiet{n}", force=True, background=True)
+    folders = {saves.default_folder(net, slug): slug for slug in ("game", "quiet0", "quiet1", "quiet2")}
+    deep = []
+    signature = Progress._signature
+
+    def counted(folder, *, deep_read=True, **kwargs):
+        if kwargs.get("deep", deep_read):
+            deep.append(folders.get(folder))
+        return signature(folder, **kwargs)
+    monkeypatch.setattr(Progress, "_signature", staticmethod(counted))
+    monkeypatch.setattr(saves.Autosave, "DEEP_BUDGET_SECONDS", 0)  # one quiet project's deep read per pass
+    net.progress.used.clear()
+    net.progress.touch("game")  # its page is open
+    autosave = saves.Autosave(net)
+    turns = []
+    for _ in range(3):
+        deep.clear()
+        autosave.run_once()
+        turns.append(sorted(set(deep) - {"game"}))
+        assert "game" in deep
+    assert turns == [["quiet0"], ["quiet1"], ["quiet2"]]
+    net._project("quiet0")  # the sidebar reading a project doesn't make it one in use
+    assert not net.progress.hot("quiet0", saves.Autosave.HOT_SECONDS)
+
+
+def test_a_quiet_projects_database_change_is_still_saved_on_the_next_pass(project):
+    net, folder, _ = project
+    net.progress.used.clear()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='new attempt',best_score=10 WHERE name='f'")
+    assert saves.Autosave(net).run_once() == ["game"]
+    assert (folder / "best/f.c").read_text() == "new attempt\n"
+    assert net.progress.hot("game", saves.Autosave.HOT_SECONDS)  # work arrived: watched closely for a while
+
+
+def test_a_project_unused_for_a_while_lets_go_of_its_baseline_and_still_saves(project, monkeypatch):
+    """Hundreds of games: each one's baseline (every file's hashes) was kept in memory for good."""
+    net, folder, _ = project
+    pid = net._project("game")["id"]
+    assert net.progress._baseline(pid) is not None and pid in net.progress.baselines
+    net.progress.touch("game")
+    saves.Autosave(net).run_once()
+    assert pid in net.progress.baselines  # in use: kept
+    net.progress.used.clear()
+    saves.Autosave(net).run_once()
+    assert pid not in net.progress.baselines
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='later attempt',best_score=10 WHERE name='g'")
+    assert saves.Autosave(net).run_once() == ["game"]  # read again from the database, and saved as before
+    assert (folder / "best/g.c").read_text() == "later attempt\n"
+
+
+def test_a_folder_check_that_fails_doesnt_stop_the_autosave(project, monkeypatch):
+    """Review of #279: the folder check moved out of the per-project try, so one failure ended the thread."""
+    net, folder, _ = project
+    monkeypatch.setattr(net, "project_missing", lambda row: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    synced = []
+    monkeypatch.setattr(net.progress, "sync", lambda slug, **kw: synced.append(slug))
+    saves.Autosave(net).run_once()  # (raised, and the thread died)
+    assert synced == ["game"]  # the check counts as present and the pass goes on
+
+
+def test_a_failed_autosave_pass_doesnt_end_the_thread(project, monkeypatch):
+    net, _, _ = project
+    autosave = saves.Autosave(net)
+    passes = []
+
+    def run_once():
+        passes.append(1)
+        if len(passes) >= 2:
+            autosave.stop.set()
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(autosave, "run_once", run_once)
+    monkeypatch.setattr(autosave.stop, "wait", lambda seconds: None)
+    autosave._loop()
+    assert len(passes) == 2
