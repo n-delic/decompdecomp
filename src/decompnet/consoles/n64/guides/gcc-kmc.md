@@ -1626,3 +1626,10 @@ instruction order (`c = *s1++; d = *s2++;`, an increment before the next load).
 Under both flags the stored C can look worse than under `-O2`; judge the reordered
 C, not the flags alone. One N64 `strcmp` matched this way; other compilers were far
 off. Suggest the flags for that function only, with that C.
+
+## Loads between the prologue's saves: make the read-only pointers `const`
+
+When the target loads through an argument (`lwc1 $f.., 0($a0)`) between its register saves, or even before
+`addiu $sp`, and your build keeps every save at the top, the function is still KMC's: write the pointers it only
+reads as `const` (`const f32 *arg0`, or `M2C_FIELD(arg0, const f32 *, 0)` for each read, writes left plain). gcc
+2.7.2's scheduler moves only read-only loads among the stack stores. Three such functions went from 580-1275 to exact.

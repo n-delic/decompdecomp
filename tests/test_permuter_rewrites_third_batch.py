@@ -32,7 +32,9 @@ FAMILIES = ('assignment_at_use', 'comparison_sides', 'narrow_shift_pair', 'point
             # 0.5.24
             'call_site_prototype', 'masked_flag_test', 'row_subscript', 'shared_product_local', 'stack_run_array',
             # 0.5.25
-            'carried_store_arms', 'compared_load_inline', 'if_tree_switch')
+            'carried_store_arms', 'compared_load_inline', 'if_tree_switch',
+            # 0.5.26 and 0.5.27
+            'const_read')
 FLAGS = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
 HEADER = 'typedef int s32;\ntypedef unsigned int u32;\ntypedef short s16;\ntypedef float f32;\n'
 
@@ -60,3 +62,33 @@ f32 f(f32 arg0) {
     labels = {}
     texts = draft_repairs.variants(source, 'f', 'mips', '', FLAGS, labels, limit=None, header=HEADER)
     assert any(labels.get(t) == 'signed_division' for t in texts), sorted(set(labels.values()))
+
+
+
+def test_const_reads_come_first_when_the_target_loads_between_its_prologue_saves():
+    # the signed remainder of the test above, read through a pointer: two families, in an order the target decides
+    source = seeds.M2C_MACROS + '''
+s32 g();
+f32 f(f32 *arg0) {
+    s32 temp_v0;
+    s32 var_v0;
+
+    temp_v0 = g();
+    var_v0 = temp_v0 >> 0x10;
+    if (temp_v0 < 0) {
+        var_v0 = (s32) (temp_v0 + 0xFFFF) >> 0x10;
+    }
+    return (f32) (temp_v0 - (var_v0 << 0x10)) * 0.000015258789f * arg0[0];
+}
+'''
+    early = ('glabel f\n/* 0 0 0 */  addiu      $sp, $sp, -0x28\n/* 4 4 0 */  sw         $s0, 0x14($sp)\n'
+             '/* 8 8 0 */  lwc1       $fs0, 0x0($a0)\n/* C C 0 */  sw         $ra, 0x10($sp)\n')
+    late = ('glabel f\n/* 0 0 0 */  addiu      $sp, $sp, -0x28\n/* 4 4 0 */  sw         $s0, 0x14($sp)\n'
+            '/* 8 8 0 */  sw         $ra, 0x10($sp)\n/* C C 0 */  lwc1       $fs0, 0x0($a0)\n')
+    for asm, first in ((early, True), (late, False)):
+        labels = {}
+        texts = draft_repairs.variants(source, 'f', 'mips', asm, FLAGS, labels, limit=None, header=HEADER)
+        families = [labels.get(t) for t in texts]
+        assert 'const_read' in families and 'signed_division' in families
+        assert 'const f32 *arg0' in texts[families.index('const_read')]
+        assert (families.index('const_read') < families.index('signed_division')) is first
