@@ -7472,3 +7472,18 @@ one function exact with its C unchanged (120 -> 0), two at 10 (155 and 120 befor
 first and 8-byte frame rounding, which is what these functions show; `-fno-schedule-insns2` or `-O1` under KMC
 reverse its save order (the return address no longer saved last). The fingerprints now rank profiles by such habits
 so the deep pass measures and climbs under the right one.
+
+### EGCS: squaring the first term into its own variable picks the float registers (19 November 2026)
+
+Evidence level: two N64 functions of a game built mostly with KMC GCC 2.7.2, judged with the app's linked verdict on
+a copy of the project, under `gcc-egcs-2.91.66` `-G0 -mips3 -mgp32 -mfp32 -O2 -mno-abicalls -fno-pic`.
+
+Both functions sum squared differences of two float vectors and pass the sum to a call, and both sat at 10 points:
+one load of the second vector took `$f0`/`$f2` where the target uses `$f4`/`$f6`. Reordering the statements,
+loading the second vector into its own variables first, or writing `x -= b[0]` gave no change or worse (40).
+Squaring the leading terms into their own variables before the sum matched both:
+`x = a[0]-b[0]; z = a[2]-b[2]; x = x * x; f(x + z * z);` (two terms, 10 -> 0) and
+`... x = x * x; y = y * y; f(x + y + z * z);` (three terms, 10 -> 0). Squaring only `x` in the three-term function
+stayed at 10; folding `x*x + y*y` into `x` scored 60. The remaining "late prologue" functions of the same game
+(float code whose frame is made after its arithmetic) are not EGCS: they score 580-1275 under the game's KMC
+settings and 1387-8397 under EGCS at `-O2`/`-O3`, with or without `-mgp32 -mfp32`.
