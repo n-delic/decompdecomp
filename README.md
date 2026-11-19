@@ -52,7 +52,8 @@ can contain both CI4 and RGBA32 textures.
 Open **Texture browser** for a thumbnail gallery, format/dimension filters and reference links.
 Select any frame, palette or mip level in a bank; animate frames at a chosen preview rate.
 Open **Audio browser** to filter detected samples, prepare WAV previews and listen with Play.
-N64 scans recognize supported B1 and libmus PtrTablesV2 sound banks and their sample tables.
+N64 scans recognize supported B1 sound banks, including wrapped banks with relocated control pointers,
+and libmus PtrTablesV2 banks and their sample tables.
 Banks without a stored rate use a labelled, editable preview rate. Archived sequence candidates
 are listed separately; music sequencing, pitch, mixing and loops are not rendered. Open an audio
 region to choose a sample and prepare a local WAV preview; playback starts only with Play.
