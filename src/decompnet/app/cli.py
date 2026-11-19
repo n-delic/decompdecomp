@@ -1,8 +1,10 @@
 """`decomp`: open decompdecomp in its window (starting the app, or bringing the running one's window to the front).
 
-That's the one way to run it. The other commands act on the app: `decomp stop`, `decomp update`, `decomp setup` (the
-free compilers and tools), `decomp shortcut` (the apps menu entry). A development copy (run from a git checkout) is
-a separate app with its own home, port and wine prefix, and never touches the installed one (edition.py).
+That's the one way to run it on a desktop. The other commands act on the app: `decomp stop`, `decomp update`,
+`decomp setup` (the free compilers and tools), `decomp shortcut` (the apps menu entry). `decomp serve` is the app
+itself with no window, for a machine without a desktop (a server in a colo): everything runs, and the GUI is paired
+to a browser through an SSH tunnel (sessions.py). A development copy (run from a git checkout) is a separate app
+with its own home, port and wine prefix, and never touches the installed one (edition.py).
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ import urllib.request
 from pathlib import Path
 
 from .. import hostenv
-from . import edition, tray, window
+from . import edition, sessions, tray, window
 
 PORTS_TO_TRY = 50
 OLD_COOKIE = "decomp_live"  # 1.0.2 and older took the secret in this cookie
@@ -151,7 +153,7 @@ def _open_when_ready(port: int) -> None:
     threading.Thread(target=wait, daemon=True, name="open-window").start()
 
 
-def run(args) -> int:
+def run(args, serve: bool = False) -> int:
     import uvicorn
 
     from . import cleanup
@@ -175,6 +177,15 @@ def run(args) -> int:
     state_file = internal / "server.json"
     restarted = _restart_state()
     prev = None if restarted else replace_older(state_file)
+    if prev and serve:  # one app per home: `decomp serve` again shows a fresh link to the running one
+        try:
+            code = _call(prev, "/api/pair", {}).get("code")
+        except (OSError, ValueError):
+            code = None
+        print(f"{edition.NAME} is already running" + (
+            f"; a fresh one-time link for the browser:\n  {link(prev['port'], code)}" if code else
+            " with a window of its own: it doesn't pair browsers (stop it with `decomp stop` to serve instead)"))
+        return 0
     if prev:
         try:
             shown = _call(prev, "/api/window", {}).get("window")
@@ -182,7 +193,7 @@ def run(args) -> int:
             shown = False
         print(f"{edition.NAME} is already running" + ("" if shown else ": its window couldn't open (see above)"))
         return 0
-    if window.wanted() and (why := window.missing()):
+    if not serve and window.wanted() and (why := window.missing()):
         log.error("no window: %s", why)
         print(why, file=sys.stderr)
         window.tell_desktop(f"{edition.NAME} can't open its window", why)
@@ -198,15 +209,23 @@ def run(args) -> int:
     os.chmod(state_file, 0o600)
     cleanup.old_registrations(internal)
     net = RomNetwork(internal / "decomp.db", home)
-    mcp, manager, security, quit_app = build(net, internal, port, secret)
+    pair = sessions.Sessions() if serve else None
+    mcp, manager, security, quit_app = build(net, internal, port, secret, pair=pair)
     app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
-    # with a tray icon, helpers kept working without the window have a way back to it
-    window.IN_TRAY = tray.start(window.open_app, quit_app)
-    print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
-          + ("\nupdated and restarted" if restarted else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
-    # (1.0.2 and older restart into a new version without saying: they had a browser tab, which can't follow)
-    if not restarted or restarted.get("window", True):
-        _open_when_ready(port)
+    if not serve:
+        # with a tray icon, helpers kept working without the window have a way back to it
+        window.IN_TRAY = tray.start(window.open_app, quit_app)
+        print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
+              + ("\nupdated and restarted" if restarted else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
+        # (1.0.2 and older restart into a new version without saying: they had a browser tab, which can't follow)
+        if not restarted or restarted.get("window", True):
+            _open_when_ready(port)
+    else:
+        print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
+              + f"\nserving the GUI to a browser through an SSH tunnel (ssh -L {port}:127.0.0.1:{port});"
+              + f" open this link there, once, within {sessions.CODE_SECONDS // 60} minutes:\n  {link(port, pair.new_code())}"
+              + "\n(`decomp serve` again, in another shell, shows a fresh one)"
+              + ("\nupdated and restarted" if restarted else "\nstop with Ctrl-C"), flush=True)
     try:
         uvicorn.Server(server_config(app)).run(sockets=[sock])
     except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
@@ -321,6 +340,18 @@ def shortcut(args) -> int:
     return 0
 
 
+def link(port: int, code: str) -> str:
+    """`decomp serve`'s one-time link, as it's opened through the tunnel."""
+    return f"http://127.0.0.1:{port}/pair?code={code}"
+
+
+def serve(args) -> int:
+    """`decomp serve`: the app itself with no window and no tray icon, for a machine without a desktop (the server,
+    the agents, the autopilot). Run it inside `screen` or `tmux` to keep it after logging out; the GUI reaches a
+    browser through an SSH tunnel, paired by the one-time link it prints (sessions.py)."""
+    return run(args, serve=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="decomp", description="decompdecomp: AI agents decompile the games you own, byte for byte")
     ap.add_argument("--port", type=int, default=edition.FIRST_PORT, help=argparse.SUPPRESS)
@@ -330,6 +361,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("setup", help="install the compilers and tools this computer needs")
     sub.add_parser("stop", help="quit the running app (and every helper it started)")
     sub.add_parser("shortcut", help="add decompdecomp to your apps menu")
+    sub.add_parser("serve", help="run without a window, on a server: the GUI in a browser through an SSH tunnel")
     up = sub.add_parser("update", help="install the newest decompdecomp (the running app restarts into it)")
     up.add_argument("--check", action="store_true", help="only say whether there is one")
     ii = sub.add_parser("install-info", help=argparse.SUPPRESS)  # the installers: where updates come from
@@ -340,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     __import__("decompnet").utf8_output()
     __import__("decompnet.limits").limits.no_core_dumps()
-    return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd,
+    return {"setup": setup, "stop": stop, "shortcut": shortcut, "serve": serve, "update": update_cmd,
             "install-info": install_info}.get(args.cmd, run)(args)
 
 
