@@ -266,7 +266,8 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
     datum_of = {d["src"]: d for d in B.get("data", [])}
     configs = {}
     as_ = binutils("as")
-    from decompnet.rom.export_process import report_build
+    from decompnet.compiler import cancellable
+    from decompnet.rom.export_process import check_build_stop, report_build
     from decompnet.rom.export_workers import ordered
 
     names = ({*B["symbols"], *(f["name"] for f in B["functions"])}
@@ -279,6 +280,18 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
         if not target.exists() or target.stat().st_mtime <= (ROOT / src).stat().st_mtime:
             run([as_, *B["as_flags"], "-o", obj, src])
 
+    # The pinned KMC driver's default command only writes the named object.
+    # Custom and per-file profiles may use shared intermediate names.
+    default = B["compiler"]
+    independent_c = (default.get("toolchain") == "gcc-2.7.2-kmc"
+                     and default.keys() <= {"toolchain", "flags", "timeout"}
+                     and set(default.get("flags", ())) <= set(toolchains.get("gcc-2.7.2-kmc").flags)
+                     and not B.get("compiler_ranges") and not B.get("function_compilers")
+                     and any(kind == "c" for kind, _, _ in todo))
+    if independent_c:
+        key = json.dumps(default, sort_keys=True)
+        configs[key] = compiler_config(ROOT, {"compiler": default})
+
     def compile_object(item):
         _, src, obj = item
         target = ROOT / obj
@@ -289,7 +302,8 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
         key = json.dumps(compiler, sort_keys=True)
         cfg = configs.get(key) or configs.setdefault(key, compiler_config(ROOT, {"compiler": compiler}))
         argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "include") for a in cfg.cmd]
-        res = run_in(cfg, ROOT, argv, inputs=[src, "include"], outputs=[obj])
+        with cancellable(check_build_stop):
+            res = run_in(cfg, ROOT, argv, inputs=[src, "include"], outputs=[obj])
         if res.returncode != 0 or not target.exists():
             fail(f"compiling {src} failed:\n{(res.stdout + res.stderr)[-3000:]}")
         if src.endswith(".cpp"):  # C++ names back to the game's, as decompdecomp judged it
@@ -311,24 +325,21 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
         if done < total and done % interval == 0:
             report_build(4, 'Building exported objects', done=done, total=total)
 
-    # Assemblers read a prepared source tree and write distinct paths. Keep compiler
-    # commands in order because a custom driver can have shared intermediate files.
     for kind, group in groupby(todo, key=lambda item: item[0]):
-        if kind == "asm":
+        work = assemble if kind == "asm" else compile_object
+        if kind == "asm" or independent_c:
             batch = list(group)
             outputs = {(ROOT / obj).resolve() for _, _, obj in batch}
             if len(outputs) == len(batch):
                 report()
-                with ordered(assemble, batch) as results:
+                with ordered(work, batch, check_build_stop) as results:
                     for _ in results:
                         done += 1
                         report()
                 continue
-            work = assemble
             group = batch
-        else:
-            work = compile_object
         for item in group:
+            check_build_stop()
             report()
             work(item)
             done += 1

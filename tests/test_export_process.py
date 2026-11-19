@@ -8,13 +8,18 @@ from decompnet.rom import export_process
 CHILD = """
 import time
 from pathlib import Path
-from decompnet.rom.export_process import report_build
+from decompnet.rom.export_process import check_build_stop, report_build
 
 report_build(4, 'Building exported objects', done=3, total=8)
 deadline = time.monotonic() + 5
 while not Path('continue').exists():
     if time.monotonic() >= deadline:
         raise RuntimeError('Parent never received live progress')
+    try:
+        check_build_stop()
+    except RuntimeError:
+        Path('stopped').touch()
+        raise
     time.sleep(.01)
 report_build(5, 'Linking and comparing the exported image')
 print('identical')
@@ -60,3 +65,4 @@ def test_verify_can_cancel_while_waiting_for_an_object(tmp_path):
     with pytest.raises(RuntimeError, match='Stopped during rebuild'):
         export_process.verify([sys.executable, '-c', CHILD], tmp_path, log)
     assert not (tmp_path / 'continue').exists()
+    assert (tmp_path / 'stopped').exists()

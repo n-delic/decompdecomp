@@ -28,6 +28,11 @@ def report_build(step, phase, **counts):
             stream.write(json.dumps({'step': step, 'phase': phase, **counts}) + '\n')
 
 
+def check_build_stop():
+    if (path := os.environ.get(BUILD_PROGRESS)) and Path(path).with_suffix('.stop').exists():
+        raise RuntimeError('Export verification stopped.')
+
+
 def verify(argv, cwd, log):
     progress_step(log, 4, 'Rebuilding exported image')
     if not hasattr(log, 'progress'):
@@ -71,6 +76,14 @@ def _run(argv, cwd, log, timeout, env=None, stream=None, progress=None):
                     if hasattr(log, 'check_cancel'):log.check_cancel()
                     return result
         finally:
+            if proc.poll() is None and env is not None:
+                # Compiler drivers can start sessions of their own. Give them time
+                # to observe cancellation and reap their children before the hard stop.
+                try:
+                    Path(env[BUILD_PROGRESS]).with_suffix('.stop').touch()
+                    proc.wait(timeout=.75)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
             if proc.poll() is None:
                 if os.name != 'nt':
                     try:os.killpg(proc.pid, signal.SIGKILL)
