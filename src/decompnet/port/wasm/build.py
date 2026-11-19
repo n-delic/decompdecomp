@@ -34,7 +34,7 @@ import re
 import shutil
 import subprocess
 import sys
-import threading
+from contextlib import nullcontext
 from pathlib import Path
 
 from ... import consoles, limits, toolchains
@@ -786,10 +786,6 @@ def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, s
     return _parallel(lls, place, log, "functions", step)
 
 
-_builds: dict[str, threading.Lock] = {}
-_builds_guard = threading.Lock()
-
-
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
           library_c=None, library_names=None, recomp=None, function_headers=None) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
@@ -802,17 +798,12 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     functions with no C (renames). `recomp`: {"folder", "header"} of the console's recompiler's output, whose C the
     host runs for functions with no C yet (port/wasm/recomp.py)."""
     repo = Path(repo).expanduser().resolve()
-    with _builds_guard:
-        lock = _builds.setdefault(str(repo), threading.Lock())
-    if not lock.acquire(blocking=False):
-        log("waiting for another build of this game to finish")
-        lock.acquire()
-    try:
+    from ...app.recompile import build_turn
+    recomp_turn = build_turn(recomp["folder"], log) if recomp else nullcontext()
+    with build_turn(repo / "port" / "wasm" / "build", log, resource="native port build"), recomp_turn:
         return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
                       library_c=library_c or {}, library_names=library_names or {}, recomp=recomp,
                       function_headers=function_headers)
-    finally:
-        lock.release()
 
 
 def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,

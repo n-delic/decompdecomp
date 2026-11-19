@@ -7,13 +7,70 @@ the ROM, so it goes in the project's build folder, which git ignores.
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from .. import toolchains
 from ..network import IN_BUILD, NetworkError
+from ..writer_gate import WriterGate
+
+
+@contextmanager
+def build_turn(folder, log, stop=lambda: False, *, resource="N64Recomp output", slug=""):
+    """Keep the generated directory stable until its writer or reader is done."""
+    folder = Path(folder).resolve()
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    cancel_event = getattr(log, "cancel_event", None)
+    check_cancel = getattr(log, "check_cancel", lambda: None)
+    waiting = False
+    progress = getattr(log, "progress", lambda value: None)
+
+    def check():
+        check_cancel()
+        if stop() or (cancel_event is not None and cancel_event.is_set()):
+            raise NetworkError("Stopped.")
+
+    def wait():
+        nonlocal waiting
+        check()
+        if not waiting:
+            waiting = True
+            phase = f"Waiting for another job using this game's {resource}"
+            log(phase)
+            progress(dict(phase=phase, slug=slug))
+
+    check()
+    with WriterGate(folder).hold(wait=wait):
+        check()
+        if waiting:
+            progress(dict(phase=f"Preparing {resource}", slug=slug))
+        yield
 
 
 def run(net, slug: str, log=print) -> dict:
+    proj = net.project_row(slug, sync=False)
+    recompiler = net.console(proj).recompiler
+    if recompiler is None:
+        return _run(net, slug, log)
+    if not net.is_rom(proj):
+        return _run(net, slug, log)
+    with build_turn(recompiler.folder(Path(proj["root"])), log, slug=slug):
+        return _run(net, slug, log)
+
+
+@contextmanager
+def ready(net, slug, proj, recompiler, log, stop=lambda: False):
+    """Build once on demand, then keep the result stable while the caller reads it."""
+    root = Path(proj["root"])
+    folder = recompiler.folder(root)
+    with build_turn(folder, log, stop, slug=slug):
+        if recompiler.load(root) is None:
+            log("Recompiling the game with N64Recomp for the functions with no C yet")
+            _run(net, slug, log, stop)
+        yield folder
+
+
+def _run(net, slug: str, log, stop=lambda: False) -> dict:
     with net.progress.view():
         proj = net.project_row(slug)
         console = net.console(proj)
@@ -33,10 +90,10 @@ def run(net, slug: str, log=print) -> dict:
     tool = console.recompiler.TOOL
     toolchains.ensure(tool, log=log)
     functions = [{"name": r["name"], "vram": r["vram"], "rom": r["rom_offset"], "size": r["size"] or 0} for r in rows]
-    stop = getattr(log, "cancel_event", None) or threading.Event()
+    cancel = getattr(log, "cancel_event", None) or threading.Event()
     try:
         return console.recompiler.recompile(toolchains.binary(tool), rom, cfg.get("segments") or [], functions,
-                                            console.recompiler.folder(root), log, stop.is_set)
+                                            console.recompiler.folder(root), log, lambda: stop() or cancel.is_set())
     except console.recompiler.RecompError as error:
         raise NetworkError(str(error)) from None
 
