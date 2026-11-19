@@ -64,6 +64,7 @@ class Worker:
         if os.name!='nt' and self.process.poll() is None:
             try:os.killpg(self.process.pid,signal.SIGTERM)
             except ProcessLookupError:pass
+            except PermissionError:pass  # (macOS: it exited since poll, a zombie group; stop_process_tree follows)
         stop_process_tree(self.process)
         self.reader.join(timeout=2)
         for stream in (self.process.stdin,self.process.stdout):
