@@ -258,3 +258,96 @@ async function stalePathAndTimeoutRegression() {
 
 const markup=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8');
 for(const id of ['repositoryAutoCommitGroup','repositoryScoreCommitGroup','repositoryAutoPushGroup','repositoryPublish'])assert.match(markup,new RegExp('id="'+id+'" hidden'),'Git settings must be hidden before the first status response');
+
+(async () => {
+  const fields = {};
+  const field = id => fields[id] ??= {value:"", textContent:"", hidden:true, disabled:false, replaceChildren(){}};
+  const ready = {folder:"/save", portable:true, repository:false};
+  const progress = {phase:"Building exported objects", step:4, steps:5, done:10, total:20};
+  let resolveStart, resolveCancel, rejectCancel, rejectBuild, update;
+  let attached = false, starts = 0, stops = 0, follows = 0, displayed;
+  const context = {
+    $:field, S:{slug:"game", ov:{save_folder:"/save"}}, Date, encodeURIComponent, setTimeout, clearTimeout,
+    refreshRepositoryPush() {},
+    updateWorkProgress(_log, value) { displayed = value; },
+    showJobError(log, error) { log.textContent = error; },
+    beginWork(log) {
+      log._workStatus = {hidden:false};
+      log._workBar = {hidden:false};
+      return () => { log._workBar = null; };
+    },
+    api(url, options) {
+      if (url === "/api/job/cancel") {
+        stops++;
+        assert.equal(options.body.id, "export");
+        return new Promise((resolve, reject) => { resolveCancel = resolve; rejectCancel = reject; });
+      }
+      if (options?.method === "POST") {
+        starts++;
+        assert.equal(options.body.action, "init");
+        return new Promise(resolve => { resolveStart = resolve; });
+      }
+      return Promise.resolve(attached ? {job:"export", action:"init"} : ready);
+    },
+    followJob(job, _log, callback) {
+      assert.equal(job, "export");
+      follows++;
+      update = callback;
+      return new Promise((_, reject) => { rejectBuild = reject; });
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(source, context);
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  await context.refreshRepositorySetup();
+  const button = field("repositoryInit");
+  const work = button.onclick();
+  assert.equal(button.textContent, "Stop");
+  assert.equal(button.disabled, true);
+  resolveStart({job:"export", action:"init"});
+  await tick();
+  assert.equal(button.disabled, false);
+  assert.equal(field("repositorySetupStop").hidden, true);
+  update([], {progress});
+  assert.equal(displayed, progress);
+
+  context.S.slug = "other";
+  await context.refreshRepositorySetup();
+  assert.equal(button.hidden, true);
+  context.S.slug = "game";
+  await context.refreshRepositorySetup();
+  assert.equal(button.textContent, "Stop");
+  assert.equal(field("repositorySetupLog")._workBar.hidden, false);
+  assert.equal(displayed, progress);
+  assert.equal(follows, 1);
+
+  const badStop = button.onclick();
+  assert.equal(button.textContent, "Stopping…");
+  assert.equal(button.disabled, true);
+  await button.onclick();
+  assert.equal(stops, 1);
+  rejectCancel(new Error("Connection lost. Retry Stop."));
+  await badStop;
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, "Stop");
+  const stop = button.onclick();
+  resolveCancel({cancelled:true});
+  await stop;
+  rejectBuild(new Error("Repository setup stopped."));
+  await work;
+  await tick();
+  assert.equal(button.textContent, "Create rebuildable repository");
+  assert.equal(button.disabled, false);
+
+  // A fresh window discovers the operation's action and puts Stop in the same slot.
+  attached = true;
+  vm.runInContext("repositorySetupChecked = 0", context);
+  await context.refreshRepositorySetup();
+  assert.equal(button.hidden, false);
+  assert.equal(button.textContent, "Stop");
+  assert.equal(button.disabled, false);
+  assert.equal(field("repositorySetupStop").hidden, true);
+  assert.equal(starts, 1);
+  attached = false;
+  rejectBuild(new Error("Repository setup stopped."));
+})().catch(e => { console.error(e); process.exitCode = 1; });

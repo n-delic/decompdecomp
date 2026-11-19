@@ -12,17 +12,18 @@ import hashlib
 import json
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 from ...arch import arm
-from ...limits import capped
+from ...rom.export_process import progress_step
+from ...rom.export_process import verify as verify_build
 from ...rom.symbols import AUTO_NAME
 from .split import BASE
 
 
 def export_gba(net, slug: str, out: Path, log=print) -> dict:
+    progress_step(log, 1, "Preparing export inputs")
     proj = net._project(slug)
     cfg = net.cfg(proj)
     work = Path(proj["root"])
@@ -41,7 +42,9 @@ def export_gba(net, slug: str, out: Path, log=print) -> dict:
 
     log("checking the matched functions and writing them as C")
     functions, fallback = [], []
-    for row in rows:
+    for index, row in enumerate(rows):
+        if hasattr(log, 'check_cancel'):log.check_cancel()
+        progress_step(log, 2, 'Checking exported functions', done=index, total=len(rows), function=row['name'])
         thumb = "arm_func_start" not in (row["asm"] or "")
         f = {"name": row["name"], "addr": row["vram"], "size": len(row["target"]), "thumb": thumb}
         functions.append(f)
@@ -56,6 +59,7 @@ def export_gba(net, slug: str, out: Path, log=print) -> dict:
         src.write_text(f'#include "common.h"\n\n{row["matched_source"].strip()}\n', encoding="utf-8")
         f["c"] = src.relative_to(out).as_posix()
 
+    progress_step(log, 3, 'Writing data and layout')
     names = {f["name"] for f in functions}
     symbols = {s.name: s.address for s in syms.by_name.values() if s.name not in names and not AUTO_NAME.match(s.name)}
     # luvdis writes the project's names: every function by name, ARM or Thumb
@@ -75,8 +79,7 @@ def export_gba(net, slug: str, out: Path, log=print) -> dict:
     (out / ".gitignore").write_text("build/\nbaserom*\nasm/\n", encoding="utf-8")
 
     log("building the exported project to check it rebuilds the game byte for byte")
-    proc = subprocess.run(capped([sys.executable, "build.py"]), cwd=out, capture_output=True, text=True, timeout=3600,
-                          encoding="utf-8", errors="replace")
+    proc = verify_build([sys.executable, "build.py"], out, log)
     identical = proc.returncode == 0 and "identical" in proc.stdout
     if not identical:
         log((proc.stdout + proc.stderr)[-3000:])

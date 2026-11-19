@@ -1,7 +1,7 @@
 /* Full source repositories retain portable app progress in their progress/ subfolder. */
 let repositorySetupSlug = "", repositorySaveRoot = "", repositorySetupBusy = false, repositorySetupChecked = 0, repositorySetupRequest = 0, repositorySetupJob = null;
 let repositorySaveEdited = false, repositorySetupState = null, repositorySetupLoading = false;
-let repositorySetupAbort = null;
+let repositorySetupAbort = null, repositorySetupRun = null;
 function repositorySavedFolder(state) {
   return state.save_folder ?? (state.portable ? state.folder : S.ov?.save_folder) ?? "";
 }
@@ -25,15 +25,27 @@ function renderRepositoryControls(){
   $('repositoryAutoPushGroup').hidden=!ready || !state.origin;
   $('repositoryPublish').hidden=!ready || !state.origin;
 }
+function renderRepositoryInit() {
+  const button = $("repositoryInit"), state = repositorySetupState;
+  const run = repositorySetupRun?.slug === S.slug ? repositorySetupRun : null;
+  if (run?.action === "init") {
+    button.hidden = false;
+    button.disabled = !run.job || run.stopping;
+    button.textContent = run.stopping ? "Stopping…" : "Stop";
+    return;
+  }
+  button.hidden = !!state?.rebuildable || !state?.portable;
+  button.disabled = repositorySetupBusy || !!(state?.portable && $("saveFolder").value.trim() !== state.folder);
+  button.textContent = state?.repository ? "Upgrade to rebuildable repository" : "Create rebuildable repository";
+}
 function renderRepositorySetup(state) {
   if (state.slug && state.slug !== S.slug) return;
   repositorySetupState = state;
   if (!repositorySaveEdited) $("saveFolder").value = repositorySavedFolder(state);
   const unsaved = state.portable && $("saveFolder").value.trim() !== state.folder;
   repositorySaveRoot = unsaved ? "" : state.root || "";
-  for (const id of ["repositoryInit", "repositoryCheckpoint", "repositoryOriginGo", "repositoryGithubGo"]) $(id).disabled = unsaved || repositorySetupBusy;
-  $("repositoryInit").hidden = !!state.rebuildable || !state.portable;
-  $("repositoryInit").textContent = state.repository ? "Upgrade to rebuildable repository" : "Create rebuildable repository";
+  for (const id of ["repositoryCheckpoint", "repositoryOriginGo", "repositoryGithubGo"]) $(id).disabled = unsaved || repositorySetupBusy;
+  renderRepositoryInit();
   $("repositoryCheckpoint").hidden = !state.repository || !state.portable;
   $("repositoryOriginGroup").hidden = !state.repository || state.origin;
   $("repositoryAutoCommit").disabled = repositorySetupBusy || unsaved || (!$("repositoryAutoCommit").checked && !state.portable);
@@ -90,7 +102,18 @@ async function refreshRepositorySetup(shown = false) {
     $("repositoryBuildPath").textContent = "";
     $("repositoryDestination").hidden = true;
   }
-  if (repositorySetupBusy) return;
+  if (repositorySetupBusy) {
+    const run = repositorySetupRun;
+    if (run?.slug === slug) {
+      const log = $("repositorySetupLog");
+      renderRepositoryInit();
+      $("repositorySetupStop").hidden = run.action === "init" || !run.job;
+      if (log._workStatus) log._workStatus.hidden = false;
+      if (log._workBar) log._workBar.hidden = false;
+      updateWorkProgress(log, run.progress);
+    }
+    return;
+  }
   repositorySetupChecked = Date.now();
   const request = ++repositorySetupRequest;
   repositorySetupLoading = true;
@@ -111,7 +134,7 @@ async function refreshRepositorySetup(shown = false) {
     if (S.slug !== slug || request !== repositorySetupRequest) return;
     if (state.job) {
       repositorySetupLoading = false; $("repositorySetupLoading").hidden = true;
-      setupRepository(null, state.job); return;
+      setupRepository(state.action, state.job); return;
     }
     renderRepositorySetup(state);
   } catch (error) {
@@ -133,34 +156,63 @@ $("repositorySetupRetry").onclick = () => { repositorySetupChecked = 0; return r
 async function setupRepository(action, existingJob = null) {
   if (repositorySetupBusy) return;
   const slug = S.slug, log = $("repositorySetupLog");
-  if (action === "github") {
+  if (action === "github" && !existingJob) {
     if (!repositorySetupState?.github_create) { showJobError(log, "Close and reopen decompdecomp after updating, then reload Settings. The running backend does not support GitHub repository creation."); return; }
     if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test($("repositoryGithubOwner").value.trim())) { showJobError(log, "Choose or enter the GitHub account or organization that will own this repository."); return; }
     if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$/.test($("repositoryGithubName").value.trim())) { showJobError(log, "Enter a repository name without an owner or slash."); return; }
   }
   repositorySetupBusy = true; ++repositorySetupRequest;
-  const finish = beginWork(log, "Updating save repository", [$("repositoryInit"), $("repositoryCheckpoint"), $("repositoryOriginGo"), $("repositoryGithubGo"), $("saveGo"), $("repositoryAutoCommit"), $("repositoryPolishedCommit")], "Save repository updated.");
+  const run = repositorySetupRun = {slug, action, job:existingJob, stopping:false, progress:null};
+  const finish = beginWork(log, "Updating save repository", [$("repositoryCheckpoint"), $("repositoryOriginGo"), $("repositoryGithubGo"), $("saveGo"), $("repositoryAutoCommit"), $("repositoryPolishedCommit")], "Save repository updated.");
+  renderRepositoryInit();
   try {
-    const {job} = existingJob ? {job:existingJob} : await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:$("repositoryOrigin").value.trim(), github_name:$("repositoryGithubOwner").value.trim()+"/"+$("repositoryGithubName").value.trim(), visibility:$("repositoryGithubVisibility").value}});
-    repositorySetupJob = job;
-    if (S.slug === slug) $("repositorySetupStop").hidden = false;
+    const started = existingJob ? {job:existingJob} : await api("/api/repository-setup", {method:"POST", body:{slug, action, origin:$("repositoryOrigin").value.trim(), github_name:$("repositoryGithubOwner").value.trim()+"/"+$("repositoryGithubName").value.trim(), visibility:$("repositoryGithubVisibility").value}});
+    const {job} = started;
+    run.action = started.action ?? run.action;
+    run.job = repositorySetupJob = job;
+    if (S.slug === slug) {
+      renderRepositoryInit();
+      $("repositorySetupStop").hidden = run.action === "init";
+    }
     const state = await followJob(job, null, (lines, snapshot) => {
-      if (S.slug === slug) { log.textContent = lines.join("\n"); updateWorkProgress(log, snapshot.progress); }
+      run.progress = snapshot.progress;
+      if (S.slug === slug) {
+        log.textContent = lines.join("\n");
+        if (log._workStatus) log._workStatus.hidden = false;
+        if (log._workBar) log._workBar.hidden = false;
+        updateWorkProgress(log, run.progress);
+      }
     });
     if (S.slug === slug && state) renderRepositorySetup(state);
   } catch (error) {
     if (S.slug === slug) showJobError(log, error.message);
   } finally {
-    finish(); repositorySetupJob = null; $("repositorySetupStop").hidden = true; repositorySetupBusy = false; repositorySetupChecked = 0;
+    finish(); repositorySetupRun = null; repositorySetupJob = null; $("repositorySetupStop").hidden = true; repositorySetupBusy = false; repositorySetupChecked = 0;
     if (S.slug !== slug) {
       log.hidden = true;
       if (log._workStatus) log._workStatus.hidden = true;
       if (log._workBar) log._workBar.hidden = true;
     }
+    renderRepositoryInit();
     refreshRepositorySetup();
   }
 }
-$("repositoryInit").onclick = () => setupRepository("init");
+$("repositoryInit").onclick = async () => {
+  const run = repositorySetupRun;
+  if (run?.slug !== S.slug || run.action !== "init") return setupRepository("init");
+  if (!run.job || run.stopping) return;
+  run.stopping = true;
+  renderRepositoryInit();
+  try {
+    await api("/api/job/cancel", {method:"POST", body:{id:run.job}});
+  } catch (error) {
+    run.stopping = false;
+    if (repositorySetupRun === run && S.slug === run.slug) {
+      showJobError($("repositorySetupLog"), error.message);
+      renderRepositoryInit();
+    }
+  }
+};
 $("repositoryCheckpoint").onclick = () => setupRepository("checkpoint");
 $("repositoryOriginGo").onclick = () => setupRepository("origin");
 $("repositoryGithubGo").onclick = () => setupRepository("github");

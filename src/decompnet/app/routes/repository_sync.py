@@ -15,7 +15,7 @@ def register(app):
 
     def active_setup(slug):
         job = app.jobs.jobs.get(setups.get(slug), {})
-        return job.get("id") if job.get("state") == "running" else None
+        return {"job":job["id"], "action":job["scope"]["action"]} if job.get("state") == "running" else None
 
     def active_push(slug):
         with app.jobs._lock:
@@ -32,22 +32,23 @@ def register(app):
                 slug = str(request.query_params.get('slug', ''))
                 def pending_setup():
                     with app.jobs._lock:
-                        if job := active_setup(slug):return JSONResponse({'job':job})
+                        if job := active_setup(slug):return JSONResponse(job)
                 if (reserved := await app.control(pending_setup)) is not None:
                     return reserved
                 return JSONResponse(await (app.fast_call or app.ui_call or app.call)(repository_setup.status, app.net, slug))
             data = await app.body(request)
             slug = str(data.get('slug', ''))
+            action = str(data.get('action', ''))
             def start_setup():
                 with app.jobs._lock:
-                    if job := active_setup(slug):return JSONResponse({'job':job})
+                    if job := active_setup(slug):return JSONResponse(job)
                     job = app.jobs.start('repository-setup', lambda log: repository_setup.run(
-                        app.net, slug, str(data.get('action', '')), str(data.get('origin', '')).strip(), log,
+                        app.net, slug, action, str(data.get('origin', '')).strip(), log,
                         github_name=str(data.get('github_name', '')).strip(), visibility=str(data.get('visibility', 'private'))),
-                        cancel_message='Repository setup stopped. A created GitHub repository, Git metadata or completed commit may remain; check the log before retrying.')
-                    app.jobs.jobs[job]['scope'] = {'slug':slug}
+                        project=slug, cancel_message='Repository setup stopped. A created GitHub repository, Git metadata or completed commit may remain; check the log before retrying.')
+                    app.jobs.jobs[job]['scope'] = {'slug':slug, 'action':action}
                     setups[slug] = job
-                return JSONResponse({'job': job})
+                return JSONResponse({'job': job, 'action':action})
             return await app.control(start_setup)
         except (NetworkError, ValueError, KeyError, OSError) as error:
             return app.fail(error)

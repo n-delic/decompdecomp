@@ -16,7 +16,6 @@ import hashlib
 import json
 import re
 import shutil
-import subprocess
 from pathlib import Path
 
 import yaml
@@ -24,7 +23,7 @@ from elftools.elf.elffile import ELFFile
 
 from .. import toolchains
 from ..candidate_work import elf as candidate_elf
-from ..hostenv import NO_WINDOW, console_python
+from ..hostenv import console_python
 from ..project import compiler_for
 from . import match, split
 from .symbols import AUTO_NAME
@@ -315,6 +314,10 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     out.mkdir(parents=True, exist_ok=True)
 
     # 1. splat again, with the project's names
+    from .export_process import progress_step, run
+    from .export_process import verify as verify_build
+
+    progress_step(log, 1, "Extracting assembly and data")
     log("writing the assembly with the project's names (splat)")
     split_config = yaml.safe_load(configs[0].read_text(encoding='utf-8'))
     known = net.project_store(proj['id']).all('SELECT vram,size FROM functions WHERE project_id=?', proj['id'])
@@ -324,8 +327,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         if (work / extra).exists():
             shutil.copyfile(work / extra, out / extra)
     (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj)) + "\n", encoding="utf-8")
-    res = subprocess.run([console_python(), "-m", "splat", "split", "splat.yaml"], cwd=out, capture_output=True,
-                         text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+    res = run([console_python(), "-m", "splat", "split", "splat.yaml"], out, log)
     if res.returncode != 0:
         raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
     for generated in (out / "src").glob("*.c"):
@@ -360,8 +362,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
     objects, private, as_fallback = [], [], []
     for index, f in enumerate(functions):
         if hasattr(log, 'check_cancel'):log.check_cancel()
-        if hasattr(log, 'progress'):
-            log.progress({'phase': 'Checking exported functions', 'done': index, 'total': len(functions), 'function': f['name']})
+        progress_step(log, 2, 'Checking exported functions', done=index, total=len(functions), function=f['name'])
         row = rows.get(f["vram"])
         f["obj_asm"] = f"build/{Path(f['asm']).with_suffix('.o').as_posix()}"
         if row is None or row["status"] != "matched" or not row["matched_source"]:
@@ -414,8 +415,7 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
         f["obj"] = f"build/src/{f['seg']}/{f['name']}.o"
         private += [(f["obj"], section, base) for section, base in bases.items()]
 
-    if hasattr(log, 'progress'):
-        log.progress({'phase': 'Writing data and layout', 'done': len(functions), 'total': len(functions)})
+    progress_step(log, 3, 'Writing data and layout')
 
     # 3. everything else splat wrote: entry code, data, bss, binary blobs
     config = yaml.safe_load((out / "splat.yaml").read_text(encoding="utf-8"))
@@ -588,8 +588,6 @@ def export_rom(net, slug: str, out: Path, console, log=print, *, sources=None) -
 
     # 6. prove it
     log("building the exported project to check it rebuilds the game byte for byte")
-    if hasattr(log, 'progress'):log.progress({'phase': 'Rebuilding exported image'})
-    from .export_process import run as verify_build
     proc = verify_build([console_python(), "build.py"], out, log)
     identical = proc.returncode == 0 and "identical" in proc.stdout
     if not identical:

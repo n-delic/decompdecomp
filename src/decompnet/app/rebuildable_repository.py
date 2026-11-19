@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from ..network import NetworkError
+from ..rom.export_process import progress_step
 from . import repository_sync, saves
 
 MARKER = 'decompdecomp-repository.json'
@@ -143,6 +144,7 @@ def prepare(net, slug, path, root, log):
         if not result.get('identical'):
             raise NetworkError('The rebuildable export did not reproduce the original game bytes. No repository was created or upgraded. '+str(result.get('log', ''))[-1200:])
         getattr(log, 'check_cancel', lambda: None)()
+        progress_step(log, 5, "Saving the verified repository")
         progress = stage/'progress'
         saved, _ = saves._render(net, slug, progress, chosen=True)
         if not saves._publish(progress, saved, chosen=True):
@@ -185,7 +187,10 @@ def prepare(net, slug, path, root, log):
         # autosave) read the old folder without its manifest and failed with "Restore progress/decompdecomp.json"
         # for good. The batch defers every sync of this project, then syncs once, in the new folder.
         with net.progress.batch(slug, logger=log):
-            repository_sync.publish(destination, stage, generated | old.keys(), baseline, log)
+            repository_sync.publish(
+                destination, stage, generated | old.keys(), baseline, log,
+                progress=lambda done, total: progress_step(log, 5, "Publishing repository files", done=done, total=total),
+            )
             net._update_cfg(slug, lambda current: current.update(**moved_config(destination)), synchronize=False)
     log('Full rebuildable repository prepared. Game images and extracted data remain ignored.')
     return target
