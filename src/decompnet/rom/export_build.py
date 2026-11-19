@@ -20,6 +20,9 @@ import os
 import re
 import subprocess
 import sys
+from bisect import bisect_left
+from itertools import groupby
+from operator import itemgetter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -264,39 +267,71 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
     configs = {}
     as_ = binutils("as")
     from decompnet.rom.export_process import report_build
+    from decompnet.rom.export_workers import ordered
+
+    names = ({*B["symbols"], *(f["name"] for f in B["functions"])}
+             if any(src.endswith(".cpp") for kind, src, _ in todo if kind == "c") else set())
+
+    def assemble(item):
+        _, src, obj = item
+        target = ROOT / obj
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists() or target.stat().st_mtime <= (ROOT / src).stat().st_mtime:
+            run([as_, *B["as_flags"], "-o", obj, src])
+
+    def compile_object(item):
+        _, src, obj = item
+        target = ROOT / obj
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fn = function_of.get(src)
+        datum = datum_of.get(src)
+        compiler = compiler_for(B, fn['vram'] if fn else datum['vram'] if datum else None, fn)
+        key = json.dumps(compiler, sort_keys=True)
+        cfg = configs.get(key) or configs.setdefault(key, compiler_config(ROOT, {"compiler": compiler}))
+        argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "include") for a in cfg.cmd]
+        res = run_in(cfg, ROOT, argv, inputs=[src, "include"], outputs=[obj])
+        if res.returncode != 0 or not target.exists():
+            fail(f"compiling {src} failed:\n{(res.stdout + res.stderr)[-3000:]}")
+        if src.endswith(".cpp"):  # C++ names back to the game's, as decompdecomp judged it
+            target.write_bytes(unmangle(target.read_bytes(), lambda n: n in names or bool(AUTO_NAME.match(n))))
+        entry = entry_of.get(src)
+        if datum:
+            trim_data(target, datum["name"], datum["size"])
+        elif entry and entry.get('entry_only'):
+            normalize_entry(entry,target)
+        else:
+            trim(target)
+            weaken_data(obj)
 
     total = len(todo)
     interval = max(1, total // 100)
-    for done, (kind, src, obj) in enumerate(todo):
-        if done % interval == 0:
+    done = 0
+
+    def report():
+        if done < total and done % interval == 0:
             report_build(4, 'Building exported objects', done=done, total=total)
-        target = ROOT / obj
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists() and target.stat().st_mtime > (ROOT / src).stat().st_mtime and kind == "asm":
-            continue
+
+    # Assemblers read a prepared source tree and write distinct paths. Keep compiler
+    # commands in order because a custom driver can have shared intermediate files.
+    for kind, group in groupby(todo, key=lambda item: item[0]):
         if kind == "asm":
-            run([as_, *B["as_flags"], "-o", obj, src])
+            batch = list(group)
+            outputs = {(ROOT / obj).resolve() for _, _, obj in batch}
+            if len(outputs) == len(batch):
+                report()
+                with ordered(assemble, batch) as results:
+                    for _ in results:
+                        done += 1
+                        report()
+                continue
+            work = assemble
+            group = batch
         else:
-            fn = function_of.get(src)
-            datum = datum_of.get(src)
-            compiler = compiler_for(B, fn['vram'] if fn else datum['vram'] if datum else None, fn)
-            key = json.dumps(compiler, sort_keys=True)
-            cfg = configs.get(key) or configs.setdefault(key, compiler_config(ROOT, {"compiler": compiler}))
-            argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "include") for a in cfg.cmd]
-            res = run_in(cfg, ROOT, argv, inputs=[src, "include"], outputs=[obj])
-            if res.returncode != 0 or not target.exists():
-                fail(f"compiling {src} failed:\n{(res.stdout + res.stderr)[-3000:]}")
-            if src.endswith(".cpp"):  # C++ names back to the game's, as decompdecomp judged it
-                names = {*B["symbols"], *(f["name"] for f in B["functions"])}
-                target.write_bytes(unmangle(target.read_bytes(), lambda n: n in names or bool(AUTO_NAME.match(n))))  # noqa: B023  called within this pass of the loop
-            entry = entry_of.get(src)
-            if datum:
-                trim_data(target, datum["name"], datum["size"])
-            elif entry and entry.get('entry_only'):
-                normalize_entry(entry,target)
-            else:
-                trim(target)
-                weaken_data(obj)
+            work = compile_object
+        for item in group:
+            report()
+            work(item)
+            done += 1
 
 
 def normalize_entry(fn, path):
@@ -330,18 +365,31 @@ def _size(obj: str, sections: tuple[str, ...]) -> int:
         return sum(s["sh_size"] for s in elf.iter_sections() if s.name in sections and s["sh_type"] != "SHT_NOBITS")
 
 
+def placements_by_rom(placed):
+    """Index the mapped objects once so each overlay looks up just its own ROM range."""
+    offset = itemgetter(1)
+    ordered = sorted((item for item in placed if item[1] is not None), key=offset)
+
+    def between(start, end):
+        first = bisect_left(ordered, start, key=offset)
+        last = bisect_left(ordered, end, key=offset, lo=first)
+        return ordered[first:last]
+
+    return between
+
+
 def fill_gaps(placed: list[tuple[int, int, str]]) -> list[tuple[int, str]]:
     """Bytes of a code segment no object covers (a splitter can miss a few at an odd segment end): assemble them
     from your copy of the game, so the build never depends on what the splitter got exactly right."""
     image = (ROOT / B["image"]).read_bytes()
     extra = []
+    placements = placements_by_rom(placed)
     for seg in B["segments"]:
         if seg["kind"] != "code":
             continue
         end = seg["end"] if seg["end"] is not None else len(image)
         covered = [(p["vram"], _size(p["obj"], (".text", ".data", ".rodata", ".sdata", ".rdata"))) for p in seg["pieces"]]
-        covered += [(vram, _size(obj, (".text",))) for vram, rom, obj in placed
-                    if rom is not None and seg["start"] <= rom < end]
+        covered += [(vram, _size(obj, (".text",))) for vram, _, obj in placements(seg["start"], end)]
         pos = seg["vram"]
         for vram, size in sorted(covered) + [(seg["vram"] + end - seg["start"], 0)]:
             if vram > pos:
@@ -402,6 +450,7 @@ def segment_addresses() -> dict[str, int]:
 def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], gaps: list[tuple[int, str]]) -> str:
     lines = ["/* Generated by build.py from build.json: every function and data block at its original address. */",
              "SECTIONS", "{"]
+    placements = placements_by_rom(placed)
     for seg in B["segments"]:
         if seg["kind"] == "raw":
             objs = " ".join(f"{o}(.data .text .rodata)" for o in seg["objects"])
@@ -411,7 +460,7 @@ def linker_script(provides: dict[str, str], placed: list[tuple[int, int, str]], 
         end = seg["end"] if seg["end"] is not None else 1 << 32
         items = [(p["vram"], f"{p['obj']}(.text .data .rodata .sdata .rdata)") for p in seg["pieces"]]
         items += [(v, f"{obj}(.data)") for v, obj in gaps if vram <= v < vram + end - start]
-        items += [(v, f"{obj}(.text)") for v, rom, obj in placed if rom is not None and start <= rom < end]
+        items += [(v, f"{obj}(.text)") for v, _, obj in placements(start, end)]
         lines += [f"    .{seg['name']} 0x{vram:08X} : AT(0x{start:X}) SUBALIGN({seg.get('subalign', 4)})", "    {"]
         lines += [f"        . = 0x{v - vram:X}; {what}" for v, what in sorted(items)]
         lines.append("    }")

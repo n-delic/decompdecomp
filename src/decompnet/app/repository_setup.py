@@ -191,7 +191,10 @@ def run(net, slug, action, origin, log, *, github_name="", visibility="private")
             root = root_at(path)
             if action in ('init', 'checkpoint', 'github') and net.is_rom(proj):
                 if not rebuildable_repository.full(root):
-                    if (path/saves.MANIFEST).is_file():bind(net, slug, path, proj, log)
+                    # prepare verifies the authoritative folder itself. Only a separate backup
+                    # needs binding (and its contribution/ownership checks) before that verification.
+                    if (path/saves.MANIFEST).is_file() and path != saves.default_folder(net, slug).resolve():
+                        bind(net, slug, path, proj, log)
                     try:
                         path = rebuildable_repository.prepare(net, slug, path, root, log)
                     except ExportError as unsupported:

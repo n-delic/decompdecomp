@@ -656,3 +656,26 @@ def test_upgrade_keeps_the_repositorys_own_notice_and_agents_rules(project):
     assert (root/'NOTICE.md').read_text() == '# Provenance\n' and (root/'AGENTS.md').read_text() == '# our own rules\n'
     assert {'NOTICE.md', 'AGENTS.md', 'build.py'} <= set(git(root, 'ls-files').splitlines())
     assert git(root, 'status', '--porcelain', '--', 'NOTICE.md', 'AGENTS.md') == ''
+
+
+def test_rebuildable_setup_verifies_the_linked_save_once_before_export(project, monkeypatch):
+    net, _, _ = project
+    checks = []
+    sync = net.progress.sync
+    console = net.console(net.project_row('game'))
+    export = console.export_project
+
+    def record_sync(slug, **kwargs):
+        checks.append(bool(kwargs.get('force')))
+        return sync(slug, **kwargs)
+
+    def verify_then_export(net, slug, out, log):
+        assert checks.count(True) == 1
+        before = list(checks)
+        net._project(slug)
+        assert checks == before
+        return export(net, slug, out, log)
+
+    monkeypatch.setattr(net.progress, 'sync', record_sync)
+    monkeypatch.setattr(console, 'export_project', verify_then_export)
+    assert repository_setup.run(net, 'game', 'init', '', lambda _: None)['rebuildable']

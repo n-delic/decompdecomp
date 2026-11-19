@@ -120,3 +120,16 @@ def test_mips_abi_retry_requires_only_abi_diagnostics(tmp_path, monkeypatch):
     assert module.mixed_mips_abi(diagnostics)
     assert not module.mixed_mips_abi(diagnostics + 'ld: undefined reference to missing\n')
     assert not module.mixed_mips_abi('ld: cannot find entry.o\n')
+
+
+def test_placement_index_uses_rom_offsets_for_overlays(tmp_path, monkeypatch):
+    module = builder(tmp_path, [], monkeypatch)
+    placements = module.placements_by_rom([
+        (0x80000000, 0x200, 'overlay2.o'),
+        (0x80000000, 0x100, 'overlay1.o'),
+        (0x80000004, 0x104, 'tail.o'),
+        (0x80000008, None, 'unmapped.o'),
+    ])
+    assert placements(0x100, 0x200) == [(0x80000000, 0x100, 'overlay1.o'), (0x80000004, 0x104, 'tail.o')]
+    assert placements(0x200, 0x204) == [(0x80000000, 0x200, 'overlay2.o')]
+    assert placements(0x105, 0x200) == []
