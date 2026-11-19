@@ -7614,3 +7614,14 @@ All under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, adopted as exact by the 
 - **Wrong per-function compiler settings.** Five unmatched functions are exact with their stored C under the
   game's default `-O2` but carry a per-function override (`-O1`, or `-fno-schedule-insns` with `-g`/`-g3`) that
   makes them miss: an override a suggestion applied is worth re-checking against the default before more C work.
+## A library built with scheduling off, inside a scheduled KMC game (N64)
+
+- **Compiler:** KMC gcc 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -fno-schedule-insns -fno-schedule-insns2`, for one
+  function of a game otherwise built with `-O2` (a libc strcmp: a byte loop to word-align, then a word loop).
+- **Measured:** the saved C, tuned under `-O2`, scored 130 there, 10 with `-fno-schedule-insns2` alone and 890 with
+  both scheduling passes off. Plain C in the natural order (load, increment, load, compare) is exact with both off.
+  The 10-point `-fno-schedule-insns2` result was a wrong turn: the scheduler's order had been written into the C.
+- **Sign in the bytes:** a load whose result the very next instruction waits for while the instruction before it
+  could have filled the gap (`lbu $v1,($a0); addiu $a0,1; lbu $v0,($a1); subu ...`). Scheduled gcc never leaves
+  that. compiler_fingerprints reads it as "unscheduled loads"; a leaf without a frame shows no other habit.
+- **Evidence:** controlled, one function; byte-exact under the judge's linked verdict on a scratch copy.

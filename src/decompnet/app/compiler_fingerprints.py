@@ -12,7 +12,11 @@ habits are read from the target, each also read from what every installed profil
 - branch-likely instructions used or not;
 - register moves as `or` or `addu`;
 - frames rounded to 8 or to 16 bytes;
-- how far a multiply or divide's result is read after it (`mflo`/`mfhi`).
+- how far a multiply or divide's result is read after it (`mflo`/`mfhi`);
+- a load whose result the very next instruction waits for while the instruction before it could have filled the
+  gap: a build with scheduling off (`-fno-schedule-insns -fno-schedule-insns2`, as libraries were often built)
+  keeps the C's order, where a scheduled build never leaves that. A leaf with no frame shows no other habit, so this alone told a library strcmp built that way from its game's
+  scheduled code (its saved C was 130 off under the game's settings and exact, as plain C, with scheduling off).
 
 A habit the target doesn't show (no call, no division) counts neither way. Ranking only orders the profiles the
 deep pass measures (profile_climb); only the judge's linked verdict decides a match, and only the existing
@@ -30,7 +34,7 @@ JR_RA = 0x03E00008
 NOP = 0
 
 # One small function per habit: calls with saved registers, a counting loop, a division and a product, a stack
-# buffer, float arithmetic, and arithmetic before a single call (the shape where a compiler may make the frame late).
+# buffer, float arithmetic, arithmetic before a single call, and a byte-compare loop (where scheduling shows) (the shape where a compiler may make the frame late).
 # Plain C every MIPS compiler of the era reads.
 PROBE = """
 extern int g(int, int);
@@ -41,6 +45,7 @@ int p_frame(int a) { int buf[5]; buf[0] = a; buf[4] = a + 1; return g((int) buf,
 float p_float(float x, float y) { return x * y + x; }
 extern void h(float);
 void p_late(float *a, float *b) { float x = a[0] - b[0], y = a[1] - b[1]; h(x * x + y * y); }
+int p_cmp(const unsigned char *a, const unsigned char *b) { int c, d; do { c = *a++; d = *b++; } while (c == d && c); return c - d; }
 """
 
 _seen: dict[tuple[str, tuple[str, ...], bool], dict | None] = {}
@@ -105,7 +110,67 @@ def traits(code: bytes, big_endian: bool = True) -> dict:
                 gaps.append(gap)
     if gaps:
         out['result read right after'] = min(gaps) <= 2
+    loads, idle = load_evidence(words)
+    if idle:
+        out['unscheduled loads'] = True
+    elif loads >= 3:
+        out['unscheduled loads'] = False
     return out
+
+
+def load_evidence(words: list[int]) -> tuple[int, int]:
+    """(loads that could show scheduling, those left waiting while the instruction before could have filled the
+    gap)."""
+    loads = idle = 0
+    for k, w in enumerate(words[:-1]):
+        # (loads through the stack pointer are the epilogue's restores, ordered by the frame, not the scheduler)
+        if w >> 26 not in LOADS or (w >> 21) & 31 == 29 or not (rt := (w >> 16) & 31):
+            continue
+        before, after = (words[k - 1] if k else NOP), words[k + 1]
+        if (k > 1 and _slot(words[k - 2])) or _slot(before):
+            continue  # (a delay slot's contents are the filler's choice)
+        loads += 1
+        written = _writes(before)
+        # the next instruction waits on the load while the one before it could have filled the gap: nothing it
+        # writes is read by the load or its use, and it reads nothing they write. A scheduler never leaves that.
+        if rt in _reads(after) and written and not (written & (_reads(w) | _reads(after) | {rt})) \
+                and not (_reads(before) & ({rt} | _writes(after))) and before >> 26 not in LOADS and not _store(before):
+            idle += 1
+    return loads, idle
+
+
+LOADS = (0x20, 0x21, 0x23, 0x24, 0x25, 0x27)  # lb lh lw lbu lhu lwu (integer loads; their result is rt)
+
+
+def _slot(w: int) -> bool:
+    """A branch or jump: the next instruction is its delay slot, placed by the delay-slot filler."""
+    return _is_branch(w) or _is_jump(w)
+
+
+def _store(w: int) -> bool:
+    return 0x28 <= w >> 26 <= 0x3F and w >> 26 not in (0x30, 0x31, 0x34, 0x35, 0x37)
+
+
+def _writes(w: int) -> set[int]:
+    """The general register an ALU instruction or load writes (empty for anything else: branches, stores, moves to
+    and from the coprocessors, which this reading doesn't follow)."""
+    op = w >> 26
+    if op == 0:
+        fn = w & 63
+        return {(w >> 11) & 31} - {0} if fn not in (8, 9, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0xC, 0xD) else set()
+    if 8 <= op <= 0xF or op in LOADS or op in (0x18, 0x19):
+        return {(w >> 16) & 31} - {0}
+    return set()
+
+
+def _reads(w: int) -> set[int]:
+    """The general registers an instruction reads (rs, and rt where the instruction reads it)."""
+    op, rs, rt = w >> 26, (w >> 21) & 31, (w >> 16) & 31
+    if op == 0:
+        return {rs, rt} - {0}
+    if op in (4, 5, 0x14, 0x15) or op >= 0x28:  # beq/bne(l) compare rt; stores read the value stored
+        return {rs, rt} - {0}
+    return {rs} - {0}
 
 
 def _functions(obj: bytes) -> dict[str, bytes]:
@@ -145,9 +210,17 @@ def profile_traits(toolchain: str, flags, big_endian: bool = True) -> dict | Non
                 functions = _functions(result.obj)
                 for name, code in functions.items():
                     for habit, value in traits(code, big_endian).items():
-                        if habit != 'frame first':
+                        if habit not in ('frame first', 'unscheduled loads'):
                             found.setdefault(habit, set()).add(value)
                 found = {habit: values.pop() for habit, values in found.items() if len(values) == 1}
+                # (one unscheduled load anywhere shows the scheduler was off: the other probes may simply have none)
+                # (summed over the probes: each alone may have too few loads to say)
+                loads = idle = 0
+                for code in functions.values():
+                    n, i = load_evidence(_words(code, big_endian))
+                    loads, idle = loads + n, idle + i
+                if idle or loads >= 2:
+                    found['unscheduled loads'] = bool(idle)
                 # (where the frame is made shows only where work comes before the first call: p_late alone)
                 late = traits(functions['p_late'], big_endian) if 'p_late' in functions else {}
                 if 'frame first' in late:
@@ -187,6 +260,19 @@ def candidates(net, proj, cfg: dict, fn, own: dict) -> list[dict]:
             seen.add(key(profile))
             out.append(profile)
     return out
+
+
+def own_agreement(proj, fn, own: dict) -> int | None:
+    """How well the function's own settings agree with its code's habits (None when its code shows none)."""
+    code = fn['target'] if 'target' in fn.keys() else None
+    if not code:
+        return None
+    big_endian = bool(proj['big_endian']) if 'big_endian' in proj.keys() else True
+    target = traits(bytes(code), big_endian)
+    if not target:
+        return None
+    own_flags = own['flags'].split() if isinstance(own['flags'], str) else list(own['flags'])
+    return agreement(target, profile_traits(own['toolchain'], own_flags, big_endian))
 
 
 def ranked(net, proj, cfg: dict, fn, own: dict, limit: int = 6) -> list[tuple[int, dict]]:

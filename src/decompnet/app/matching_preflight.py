@@ -146,6 +146,9 @@ def _run(net, proj, fn, log, check, max_profiles):
                         said = str(error)
                         result['suggestion_rejected'] = said
                         log('Compiler preflight kept the working settings and will continue source search: '+str(error))
+                        if not best['exact'] and (note := closer(net, agent, proj['slug'], fn['name'], best,
+                                                                  fn['best_score'], best['score'])):
+                            log(note)
                     if best['exact']:
                         result['applied'] = net._function(fn['name'],proj['slug'])['status']=='matched'
                         if not result['applied']:log(said)
@@ -157,3 +160,28 @@ def _run(net, proj, fn, log, check, max_profiles):
                 log('Compiler preflight found a better source/profile hypothesis: '+' '.join(best['flags'])+
                     '. Partial results need review; exact results also respect automatic compiler settings.')
     return result
+
+
+CLOSER = 2  # a profile that scores the saved C at most 1/CLOSER of its own settings' score is worth telling the user
+
+
+def closer(net, agent, slug, name, profile, before, after):
+    """Tell the user, in words on the project page, that `name` comes much closer under another profile though not
+    exactly: the exact-only gate (suggest refuses a compiler its C doesn't match with) kept that silent, and a
+    library strcmp went from 130 to 10 under -fno-schedule-insns2 with nobody hearing of it. A words-only suggestion
+    applies nothing; the same note again is the same suggestion. None when it isn't much closer."""
+    from ..network import NetworkError
+    if before is None or after is None or after <= 0 or after * CLOSER > before:
+        return None
+    settings = profile['toolchain'] + ' ' + ' '.join(profile['flags'])
+    lead = f'{name} comes closer under {settings}:'
+    if any(item.get('status') == 'open' and str(item.get('text', '')).startswith(lead)
+           for item in net.cfg(net.project_row(slug)).get('suggestions', [])):
+        return None  # (already on the project page: each pass would add it again)
+    try:
+        said = net.suggest(agent, slug, f'{lead} {before} → {after}, not exact yet. '
+                                        'Its C still needs work under those settings before they can apply to it.')
+    except NetworkError as error:
+        return f'Closer profile not noted: {error}'
+    return f'{name} closer under {settings}: {before} → {after}. {said}'
+
