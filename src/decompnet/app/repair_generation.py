@@ -16,10 +16,12 @@ ACTIVE = contextvars.ContextVar('repair_generation', default=None)
 PARTITION = contextvars.ContextVar('repair_generation_partition',default=None)
 MAX_CACHE_BYTES = 16000000
 CACHE_LOCK = threading.RLock()
-# Seconds one repair family may spend generating proposals for one function. Families take milliseconds; one that
-# runs for seconds is a bug (decomp-repair 0.5.27: a pattern that backtracked exponentially over a long run of plain
-# statements held a deep pass for hours), so it is cut off for that function and the other families go on.
-FAMILY_SECONDS = float(os.environ.get('DECOMP_REPAIR_FAMILY_SECONDS') or 5)
+# Seconds one repair family may spend generating proposals for one function before it is cut off there and the other
+# families go on. decomp-repair 0.5.27 had a pattern that backtracked exponentially over a long run of plain
+# statements and held a deep pass for hours. Most families take milliseconds, but record_layout_search legitimately
+# takes up to about 30 seconds on a large function (measured on 151 functions of an N64 game), so the cap is four
+# times that: it never changes what a working family proposes, and turns a stuck one's hours into two minutes.
+FAMILY_SECONDS = float(os.environ.get('DECOMP_REPAIR_FAMILY_SECONDS') or 120)
 CUT_OFF = []  # (family, function) cut off in this process since the last `cut_off()`; reported once each
 _REPORTED = set()
 _DEPTH = threading.local()
