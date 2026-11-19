@@ -299,6 +299,26 @@ def test_functions_are_searched_on_several_threads_at_once(sweep, monkeypatch):
     assert all(obj.history('game', net._function(n, 'game'))['completed'] for n in ('f0', 'f1'))
 
 
+def test_the_pass_bookkeeping_never_waits_on_or_dies_of_a_saved_folder_sync(sweep, monkeypatch):
+    """A pass's threads waited minutes at a time for saved-folder verification before each turn, and one that failed
+    ("you hold another claim") ended the pass: only its start syncs the folder; the app's autosave does the rest."""
+    obj, net, calls, _ = sweep
+    synced = []
+
+    def sync(slug, **kwargs):
+        synced.append(slug)
+        if len(synced) > 1:
+            raise NetworkError('Could not verify saved C for f1: you hold another claim: f0.')
+        return False
+
+    monkeypatch.setattr(net.progress, 'sync', sync)
+    result = obj.run('game', 1, 10, Log(), 2)
+    assert result['functions_tested'] == 2 and sorted(calls) == ['f0', 'f1']
+    assert synced == ['game']  # (the start's: Sweeps.run's recover_room_transport)
+    with deep_sweep.looking(net):
+        assert all(obj.history('game', net._function(n, 'game'))['state'] == 'completed' for n in ('f0', 'f1'))
+
+
 def test_one_thread_searches_serially_and_zero_means_what_the_computer_can_spare(sweep, monkeypatch):
     from decompnet.app import workers
 
