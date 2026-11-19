@@ -62,6 +62,13 @@ def headers(api_key: str, model: str) -> dict:
     return out
 
 
+def models_request(entry: dict) -> tuple[str, dict]:
+    """Where and how to list an Anthropic endpoint's models for the launcher's Model choice: /v1/models takes the
+    API's own headers, not OpenAI's Bearer token (which it refuses, so the launcher offered only the default), and the
+    address without a typed /messages. `limit`: its default page is 20 models."""
+    return base_url(str(entry.get("base_url") or "")) + "/models?limit=1000", headers(entry.get("api_key") or "", "")
+
+
 def request(chat: dict) -> dict:
     """A chat-completions request (model, messages, tools, tool_choice, reasoning_effort, max_tokens) as a Messages
     request."""
