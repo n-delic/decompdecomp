@@ -7502,3 +7502,13 @@ parameters `const` alone changed nothing). gcc 2.7.2 treats a load from read-onl
 the prologue's stack stores, so the scheduler may lift it among them. EGCS and every gcc 2.8.1 and SN build scored
 far worse. The deep pass tries `const_read` first when the target shows an argument-based load before its last
 prologue save (`const_read_repairs.early_load`).
+
+### KMC GCC 2.7.2: a constant sum in its own statement keeps its place in a masked add (19 November 2026)
+
+Evidence level: one N64 function of a game built with KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2`, judged with the
+app's linked verdict on a copy of the project; a new match (10 -> 0).
+
+`return (arg0 + D_801002B8 + 0xFFFC) & 0xFFFF;` let combine reassociate the constant onto `arg0`, so the target's
+`addiu` on the global's load came out on the argument instead. Writing the constant sum as its own statement,
+`t = D_801002B8 + 0xFFFC; return (arg0 + t) & 0xFFFF;`, kept it on the global and matched. Inline forms with
+casts or parentheses alone did not.
