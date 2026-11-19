@@ -656,3 +656,40 @@ def test_upgrade_keeps_the_repositorys_own_notice_and_agents_rules(project):
     assert (root/'NOTICE.md').read_text() == '# Provenance\n' and (root/'AGENTS.md').read_text() == '# our own rules\n'
     assert {'NOTICE.md', 'AGENTS.md', 'build.py'} <= set(git(root, 'ls-files').splitlines())
     assert git(root, 'status', '--porcelain', '--', 'NOTICE.md', 'AGENTS.md') == ''
+
+
+def test_repository_upgrade_preserves_previous_extraction_locally(project, monkeypatch):
+    net, root, _ = project
+    console = net.console(net.project_row('game'))
+    export = console.export_project
+    asm = 'asm/nonmatchings/code/function.s'
+    asset = 'assets/extracted.bin'
+
+    def verified_export(net, slug, out, log):
+        result = export(net, slug, out, log)
+        (out/asm).parent.mkdir(parents=True)
+        (out/asm).write_bytes(b'verified assembly')
+        return result
+
+    monkeypatch.setattr(console, 'export_project', verified_export)
+    originals = {asm: b'previous assembly', asset: b'previous extraction'}
+    for name, data in originals.items():
+        (root/name).parent.mkdir(parents=True, exist_ok=True)
+        (root/name).write_bytes(data)
+
+    state = repository_setup.run(net, 'game', 'init', '', lambda _: None)
+    assert state['rebuildable']
+    assert (root/asm).read_bytes() == b'verified assembly'
+    assert (root/asset).read_bytes() == b'PRIVATE DATA'
+    backup, = (root/'.decomp-extraction-backups').iterdir()
+    for name, data in originals.items():
+        saved = backup/name
+        assert saved.read_bytes() == data
+        relative = saved.relative_to(root).as_posix()
+        assert git(root, 'check-ignore', relative) == relative
+
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    repository_setup.run(net, 'game', 'checkpoint', '', lambda _: None)
+    tracked = git(root, 'ls-files').splitlines()
+    assert all(not name.startswith(('asm/', 'assets/', '.decomp-extraction-backups/')) for name in tracked)
