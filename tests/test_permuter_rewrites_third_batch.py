@@ -11,7 +11,9 @@ FAMILIES = ('assignment_at_use', 'comparison_sides', 'narrow_shift_pair', 'point
             # 0.5.14 and 0.5.15
             'goto_backward_loop', 'goto_forward_else', 'goto_shared_tail', 'float_unsigned_conversion',
             'target_call_arity', 'symbol_address_local', 'field_width', 'integer_pointer_sum', 'word_block_copy',
-            'guard_inversion', 'stored_return_value')
+            'guard_inversion', 'stored_return_value',
+            # 0.5.16
+            'u16_counter_loop', 'float_prototype', 'switch_default_in_if')
 FLAGS = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
 HEADER = 'typedef int s32;\ntypedef unsigned int u32;\ntypedef short s16;\ntypedef float f32;\n'
 
