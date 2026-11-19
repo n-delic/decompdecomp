@@ -7661,3 +7661,39 @@ block as one struct (491 → 276). Tried without success: a flag copied into `$v
 two functions: statement expressions, an inline helper, and moving the copy don't reproduce it), a library-style
 `f64` routine whose constants and compare come before the frame is made, and a `u8` global tested `== 0` then
 `< 0` (`lbu` then `bltz`).
+
+## KMC gcc 2.7.2: seven more hand matches from m2c drafts, round 9 (N64, a game with about 1,600 functions)
+
+All under the game's own `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, adopted as exact by the judge.
+
+- **A search loop written as a `static inline` helper** (620 → 0). m2c's `for (;;) { v = p; if (p->id != id) { p +=
+  p->size; v = NULL; if (*p != -1) continue; } break; }` is a small `find(base, id)` returning the chunk or `NULL`,
+  inlined. Written as one loop with `found = c; break;` it scored 710; only the inline helper gives the game's
+  `move $v0, $a1` on a hit and `move $v0, $zero` in the back-branch's delay slot.
+- **A `volatile` counter incremented as its own statement** (595 → 0). The game reloads a `u8` global for the bound
+  check, for the index and again after the increment (an `lbu` in a call's delay slot, unused). `extern volatile u8`
+  with `x++;` gives exactly that; `x += 1` and `x = x + 1` score 595 and 280.
+- **Early returns instead of an `else if` chain** (530 → 0): `if (a && b) { f = 0; return 0; } if (c && !d) { if
+  (!g()) { f = 0; return 0; } } h();` puts each store in a `j end` delay slot as the game does; m2c's chain gave
+  `beql` and a moved jump.
+- **One store after both arms, its value chosen in each** (530 → 0): `if (t & 0x7000) { ...; if (n >= 8) return; v =
+  x | 1; } else { v = t | 1; } x = v;` – the game's shared `sw` at the end, with the `ori` in each arm. Storing in each
+  arm, or `v = t; ... x = v | 1;`, misses.
+- **A switch whose cases share one call through a `goto`, each case setting both arguments** (595 → 0): the game
+  sets `$a0` in every case before the jump, so `var_a0 = arg0; var_a1 = K; goto call;` per case, not `f(arg0, a1)`.
+- **A `u16` loop counter over two `u16` arrays** (585 → 0): m2c's widened index and stored-before-increment copy
+  is `for (i = 0; i < 4; i++) { dst[i] = src[i]; f(i); }`.
+- **Stack arrays declared in frame order and filled just before the call that takes them** (643 → 0): `char
+  buf[0x30]; s16 s[3]; f32 v[3];` (in that order) and `s[0..2] = arg3..arg5;` written right before `f(s, buf)`.
+  m2c's three separate `s16` locals were dropped (only the first was passed by address), and the truncations moved.
+
+Improved, not exact (adopted live): a store pulled ahead of the arithmetic into its own pointer local (`p = &D; *p =
+...; f(D2, p, 4)`, the callee taking three arguments, 540 → 190); a global's address kept in a local for three byte
+reads (645 → 30, the last 30 two saved registers swapped); a pointer local for `obj + 0x84` made before the first
+call (two twin functions, 654 → 170); a `u8` field read from a table where m2c read an `s32` and a product left
+unmasked (670 → 180); a `goto` to a shared block after an early `return` (535 → 105); a `return` value's type (an
+`u8` declared callee returning `s32`, 535 → 270).
+
+Tried without success: a bitfield-shaped `lw`/`and`/`sw` whose store the game delays past two other stores (535),
+a 12-byte table walk whose offset the game copies each pass (540; a struct array scored 1665), and a nested
+switch whose tails the game keeps apart (560; one shared call block scored 900).
