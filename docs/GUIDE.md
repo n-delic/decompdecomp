@@ -152,7 +152,7 @@ These additional searches currently support MIPS ROM projects; imported reposito
 
 | Agent | Connection |
 | :-- | :-- |
-| **API key** (recommended) | The main helper. The app talks to the model's API itself, with your key: nothing else to install, and no other program's update can break it. Each OpenAI-compatible API works: DeepSeek, OpenRouter, OpenAI, or a local model with llama.cpp, Ollama or LM Studio. |
+| **API key** (recommended) | The main helper. The app talks to the model's API itself, with your key: nothing else to install, and no other program's update can break it. Each OpenAI-compatible API works: DeepSeek, OpenRouter, OpenAI, Anthropic, or a local model with llama.cpp, Ollama or LM Studio. |
 | **Claude Code** | Operates without a window, through the local MCP server of the app. |
 | **Codex CLI** | The same. It can approve only the tools of decompdecomp. |
 | **Antigravity CLI** | The same, through the MCP configuration of the workspace (`agy`). |

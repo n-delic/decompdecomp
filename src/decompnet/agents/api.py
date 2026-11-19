@@ -27,6 +27,9 @@ API_PRESETS = {
     "lmstudio": {"name": "LM Studio (local)", "base_url": "http://127.0.0.1:1234/v1", "model": "local-model", "key": False},
     "llamacpp": {"name": "llama.cpp (local)", "base_url": "http://127.0.0.1:8080/v1", "model": "local", "key": False},
     "openai": {"name": "OpenAI", "base_url": "https://api.openai.com/v1", "model": "gpt-5", "key": True},
+    # Anthropic's OpenAI-compatible endpoint (/v1/chat/completions, Bearer key). Its native /v1/messages isn't this
+    # format: a base address ending in /messages got a 404 from /v1/messages/chat/completions.
+    "anthropic": {"name": "Anthropic", "base_url": "https://api.anthropic.com/v1", "model": "claude-opus-5-5", "key": True},
     "custom": {"name": "Custom", "base_url": "", "model": "", "key": True},
 }
 
