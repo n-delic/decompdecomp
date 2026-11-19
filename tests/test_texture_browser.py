@@ -3,6 +3,7 @@ import base64
 import copy
 import hashlib
 import json
+import struct
 
 import pytest
 
@@ -12,6 +13,7 @@ from decompnet.network import NetworkError
 from decompnet.rom import asset_formats
 
 from .test_native_textures import bank, indexed_set, literal2
+from .test_rnc import literal_block
 from .test_rom_assets import pixels
 from .test_rom_explorer import Log, project  # noqa: F401
 
@@ -108,3 +110,29 @@ def test_saved_native_selection_reopens_from_a_display_page_inside_the_bank(proj
     assert result['details']['width']==256 and result['settings']['offset']==65504
     reopened=rom_explorer.asset_preview(net,'game',{**request,'options':result['settings']})
     assert reopened['data_url']==result['data_url']
+
+
+def test_byte_sum_rnc_bank_can_select_each_texture(project):  # noqa: F811
+    net,pid,root=project
+    first=struct.pack('>B3sBBBBII',1,b'\xff'*3,8,8,3,3,32,32)
+    second=struct.pack('>B3sBBBBII',0,b'\xff'*3,8,8,3,3,288,320)
+    raw=first+second+b'\xff\0\0\xff'*64+b'\x00\x3f'*16+bytes(32)
+    payload=bytearray(literal_block(raw))
+    struct.pack_into('>I',payload,12,sum(raw))
+    image=bytes(128)+payload
+    (root/'game.rom').write_bytes(image)
+    cfg=copy.deepcopy(net.cfg(net.project_row('game')))
+    cfg['rom']['sha1']=hashlib.sha1(image).hexdigest()
+    cfg['segments'][0]['rom_end']=len(image)
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),pid))
+    rom_explorer.run(net,'game',Log())
+    report=rom_explorer.listing(net,'game')
+    row=next(r for r in report['regions'] if (r.get('detected_asset') or {}).get('layout')=='rnc-sum32-texture-bank')
+    assert len(row['detected_asset']['textures'])==2
+    for texture,color in enumerate((b'\xff\0\0\xff',b'\0\0\xff\xff')):
+        result=rom_explorer.asset_preview(net,'game',dict(region=row['id'],image_hash=report['image_hash'],
+                                                         options=dict(format='auto',texture=texture)))
+        assert result['decoded']['codec']=='RNC method 1 (32-bit byte sum)'
+        assert result['settings']['texture']==texture
+        assert pixels(base64.b64decode(result['data_url'].split(',')[1]))==color*64

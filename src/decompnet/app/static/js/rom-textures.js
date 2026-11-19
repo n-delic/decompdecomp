@@ -82,7 +82,10 @@ function renderRomTextureGallery(view=romView()) {
   if(!report?.available){panel.hidden=true;stopRomTextureGallery();return;}
   panel.hidden=false;
   view.textures ||= {query:'',format:'',dimensions:'',page:0};const state=view.textures;
-  const banks=romTextureBanks(report);$('romTextureContext').textContent=`— ${banks.length.toLocaleString()} banks`;
+  const banks=romTextureBanks(report);
+  const textureCount=banks.reduce((count,bank)=>count+(bank.asset.textures?.length || 1),0);
+  $('romTextureContext').textContent=`— ${banks.length.toLocaleString()} banks`+
+    (textureCount>banks.length ? ` · ${textureCount.toLocaleString()} textures` : '');
   const choice=(id,values,selected)=>{const node=$(id);node.innerHTML='<option value="">All</option>'+values.map(value=>`<option value="${esc(value)}">${esc(value)}</option>`).join('');node.value=selected;};
   choice('romTextureFormat',[...new Set(banks.map(b=>b.format))].sort(),state.format);
   choice('romTextureDimensions',[...new Set(banks.filter(b=>b.width && b.height).map(b=>`${b.width} × ${b.height}`))].sort((a,b)=>Number(a.split(' ')[0])-Number(b.split(' ')[0]) || a.localeCompare(b)),state.dimensions);
