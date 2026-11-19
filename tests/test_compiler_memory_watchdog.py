@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -130,7 +131,8 @@ def test_denied_group_cleanup_preserves_cancellation_closes_pipes_and_unregister
     def start(*args,**kwargs):
         proc=popen(*args,**kwargs);processes.append(proc);return proc
     monkeypatch.setattr(compiler.spawner,'Popen',start)
-    def deny_group(pid,sig):raise PermissionError(errno.EPERM,'Synthetic signal permission denied')
+    # (not EPERM: macOS gives that for a group of exited processes, which finish treats as nothing left)
+    def deny_group(pid,sig):raise OSError(errno.EINVAL,'Synthetic signal permission denied')
     monkeypatch.setattr(compiler.os,'killpg',deny_group)
     removed=[]
     monkeypatch.setattr(compiler_processes,'untrack',removed.append)
@@ -138,7 +140,7 @@ def test_denied_group_cleanup_preserves_cancellation_closes_pipes_and_unregister
         if cancelled:raise SearchLimit('Time limit reached')
     try:
         with compiler.cancellable(check), caplog.at_level(logging.WARNING,logger='decompdecomp'):
-            with pytest.raises(SearchLimit if cancelled else PermissionError,match='Time limit reached' if cancelled else 'Synthetic signal permission denied'):
+            with pytest.raises(SearchLimit if cancelled else OSError,match='Time limit reached' if cancelled else 'Synthetic signal permission denied'):
                 compiler._exec(compiler.CompilerConfig(cmd=[],sandbox='none'),tmp_path,
                                [sys.executable,'-c','import time;time.sleep(30)' if cancelled else 'pass'],10)
         proc=processes[0]
@@ -167,14 +169,15 @@ def test_imported_build_denied_group_signal_still_reaps_child_and_preserves_canc
     def start(*args,**kwargs):
         proc=popen(*args,**kwargs);processes.append(proc);return proc
     monkeypatch.setattr(subprocess,'Popen',start)
-    def denied(*args):raise PermissionError(errno.EPERM,'private command text must not be logged')
+    # (not EPERM: macOS gives that for a group of exited processes, which finish treats as nothing left)
+    def denied(*args):raise OSError(errno.EINVAL,'private command text must not be logged')
     monkeypatch.setattr(compiler_processes.os,'killpg',denied)
     monkeypatch.setattr(compiler_processes,'untrack',removed.append)
     def log(line):
         if line=='ready' and cancelled:raise RuntimeError('Synthetic build cancellation')
     try:
         with caplog.at_level(logging.WARNING,logger='decompdecomp'):
-            with pytest.raises(RuntimeError if cancelled else PermissionError,match='Synthetic build cancellation' if cancelled else 'private command'):
+            with pytest.raises(RuntimeError if cancelled else OSError,match='Synthetic build cancellation' if cancelled else 'private command'):
                 ForkProject(tmp_path).run([sys.executable,'-c',"import time;print('ready',flush=True);"+('time.sleep(30)' if cancelled else 'pass')],log=log,platform='n64')
         proc=processes[0]
         assert proc.poll() is not None and proc.stdout.closed
@@ -298,3 +301,48 @@ def test_slow_or_failed_scan_is_not_kept_as_fresh(monkeypatch):
     clock[0] += .101
     assert limits._process_memory_tree(10) == [(10,102400)]
     assert len(calls) == 3
+
+
+@pytest.mark.skipif(os.name=='nt',reason='POSIX process groups')
+def test_a_finished_compile_whose_group_is_only_exited_processes_succeeds():
+    """macOS refuses killpg (EPERM) for a group whose members have exited but aren't reaped: that failed 38 deep-lane
+    turns in one log after compiles that had succeeded. Elsewhere the group is simply gone; either way, no error."""
+    from decompnet import compiler_processes
+    proc=subprocess.Popen([sys.executable,'-c','pass'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+    time.sleep(.3)  # exited, not yet reaped: a zombie, its group's only member
+    compiler_processes.finish(proc)
+    assert proc.returncode==0 and proc.stdout.closed
+
+
+@pytest.mark.skipif(os.name=='nt',reason='POSIX process groups')
+@pytest.mark.skipif(os.name=='nt',reason='POSIX process groups')
+def test_a_group_signal_refused_still_stops_what_is_left_running(tmp_path,monkeypatch):
+    """An EPERM isn't taken as 'nothing left': a process the compiler left running in its session is still stopped."""
+    import errno
+
+    from decompnet import compiler_processes
+    marker=tmp_path/'orphan.pid'
+    (tmp_path/'orphan.py').write_text(f"import os,time\nopen({str(marker)+'.tmp'!r},'w').write(str(os.getpid()))\n"
+                                       f"os.replace({str(marker)+'.tmp'!r},{str(marker)!r})\ntime.sleep(60)\n")
+    (tmp_path/'driver.py').write_text(
+        "import os,subprocess,sys,time\n"
+        f"subprocess.Popen([sys.executable,{str(tmp_path/'orphan.py')!r}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+        f"while not os.path.exists({str(marker)!r}):time.sleep(.02)\n")
+    proc=subprocess.Popen([sys.executable,str(tmp_path/'driver.py')],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+    proc.communicate(timeout=10)
+    orphan=int(marker.read_text())
+    time.sleep(.2)  # (past limits' shared process snapshot, which a watchdog may have taken just before it started)
+    def refused(*args):raise PermissionError(errno.EPERM,'refused')
+    monkeypatch.setattr(compiler_processes.os,'killpg',refused)
+    try:
+        compiler_processes.finish(proc)
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            try:os.kill(orphan,0)
+            except ProcessLookupError:break
+            if os.getsid(orphan)!=proc.pid:break
+            time.sleep(.05)
+        else:pytest.fail('the orphan kept running')
+    finally:
+        try:os.kill(orphan,9)
+        except OSError:pass

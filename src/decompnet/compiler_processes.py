@@ -123,6 +123,14 @@ def finish(proc, *, failed=False):
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            except PermissionError:
+                # macOS refuses a signal to a group whose members have all exited but aren't reaped yet (EPERM): the
+                # compiler's own children, orphaned to launchd for a moment. That failed 38 deep-lane turns in one
+                # log after builds that had succeeded. stop_group signals one by one whatever is still running in
+                # the session (a zombie has no session to read, so none are left: nothing to do).
+                from .limits import stop_group
+                try:stop_group(proc)
+                except OSError as error:remember('group_signal', error)
             except OSError as error:
                 remember('group_signal', error)
         if proc.poll() is None:
