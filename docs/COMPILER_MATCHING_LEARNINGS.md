@@ -7434,3 +7434,26 @@ prologue the game scheduled after the arithmetic (no flag variant changed it); a
 `register D_80102ED4 = 0;`, a declaration shadowing the global that a rewrite had left (the plain store: 71.3%; read
 through a pointer, as the target's `addiu $a1, %lo(D)` suggests: 80.0%). Five open functions' best C in this game
 holds such a `register X = ...;` line.
+
+### KMC GCC 2.7.2: what decides the registers of the last near misses (19 November 2026)
+
+Evidence level: RTL dumps of the pinned `cc1` (`gcc -B<toolchain>/ -S -dl -dg -da`, which works natively), checked
+against the judge on N64 functions at 96–99.9% that every source rewrite left unchanged (decomp-repair 0.5.24's
+`row_subscript` and `allocation_lever` were built from them; the second found nothing the permuter's single swaps
+don't already try).
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`:
+- A commutative operation's operand order (`+`, `&`, ...) survives from the first RTL to allocation and decides
+  `addu`/`and` operand order: `(plus 75 72)` unchanged through `greg`.
+- The result takes the register of an operand that dies there, the first one preferred: `temp + (temp >> 31)` put the
+  sum in `temp`'s `$v0` because `temp` died there; in the game `temp` was still live, so it took the shift's register.
+- The first scheduling pass (before allocation) decides which operand dies: it moved an independent global store above
+  the operation, so the same operand swap scored 5 or 280 depending on it. Register choice follows sched1 placement,
+  not only source order.
+- `base[i]` builds `(i * size) + base`; `base + i * size` builds it the other way round. A target `addu` with the index
+  first says the source used a subscript (`row_subscript`: one function 5 → exact).
+- A literal goes second in a commutative operation, and a local holding it doesn't change that: CSE propagates the
+  literal back (four forms, unchanged).
+- combine folds `x + (D + K)` with a large `K` as `(x + K) + D`; eight source forms didn't prevent it.
+So the register-only misses that remain come from sched1, CSE and combine together; no single rewrite reached any of
+the 20 measured (one function: 64 shapes tried, best still 5 points off).
