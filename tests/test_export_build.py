@@ -76,3 +76,47 @@ def test_check_accepts_the_c_symbol_and_old_splitter_name(tmp_path, monkeypatch)
     assert module.check('old_entry')
     assert module.check('renamed_entry')
     assert not module.B['functions'][0].get('entry_only')
+
+
+def test_rebuild_verifies_image_with_mixed_mips_abis(tmp_path, monkeypatch):
+    import subprocess
+
+    import pytest
+
+    from decompnet import toolchains
+
+    if toolchains.installed('binutils-mips') is None:
+        pytest.skip('needs binutils-mips')
+    module = builder(tmp_path, [], monkeypatch)
+    prefix = toolchains.binary('binutils-mips').parent / 'mips-ps2-decompals-'
+    monkeypatch.setattr(module, 'binutils', lambda tool: str(prefix) + tool)
+    (tmp_path / 'build').mkdir()
+    todo = []
+    expected = bytes.fromhex('03e0000800000000')
+    for abi, word in [('32', '0x03e00008'), ('eabi', '0')]:
+        src, obj = f'{abi}.s', f'build/{abi}.o'
+        (tmp_path / src).write_text(f'.text\n.word {word}\n')
+        subprocess.run([module.binutils('as'), '-EB', '-march=vr4300', f'-mabi={abi}',
+                        '-no-pad-sections', '-o', obj, src], cwd=tmp_path, check=True)
+        todo.append(('asm', src, obj))
+    (tmp_path / 'baserom').write_bytes(expected)
+    module.B.update(image='baserom', output='build/game.bin', ld_flags=['-EB'])
+    monkeypatch.setattr(module, 'setup', lambda: None)
+    monkeypatch.setattr(module, 'objects', lambda: (todo, {}, []))
+    monkeypatch.setattr(module, 'build_objects', lambda _: None)
+    monkeypatch.setattr(module, 'fill_gaps', lambda _: [])
+    monkeypatch.setattr(module, 'linker_script', lambda *_: f'SECTIONS {{ .text 0x80000000 : {{ *(.text) }} /DISCARD/ : {{ {module.DISCARD} }} }}')
+    assert module.build()
+    assert (tmp_path / 'build/game.bin').read_bytes() == expected
+
+    (tmp_path / 'baserom').write_bytes(bytes(len(expected)))
+    assert not module.build()
+
+
+def test_mips_abi_retry_requires_only_abi_diagnostics(tmp_path, monkeypatch):
+    module = builder(tmp_path, [], monkeypatch)
+    diagnostics = ('ld: entry.o: linking 32-bit code with 64-bit code\n'
+                   'ld: entry.o: failed to merge target specific data of file entry.o\n')
+    assert module.mixed_mips_abi(diagnostics)
+    assert not module.mixed_mips_abi(diagnostics + 'ld: undefined reference to missing\n')
+    assert not module.mixed_mips_abi('ld: cannot find entry.o\n')
