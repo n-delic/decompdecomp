@@ -83,3 +83,9 @@ def test_without_a_clean_attempt_the_c_is_cleaned_and_judged():
     fn = untyped_register.restore(net, {'id': 1, 'slug': 'game'}, net._function('h', 'game'))
     assert fn['best_source'] == CLEAN and fn['best_score'] == 830
     assert net.judged == ('gcc-2.7.2-kmc', ['-O2'], CLEAN)
+
+
+def test_the_other_permuter_bugs_count_too():
+    assert untyped_register.damaged('void f(u32 *p) {\n    p[0] = (unsigned short)0xDA380003;\n}\n')
+    assert untyped_register.damaged('void f(void) {\n    g((char *)((unsigned short)D) + 0xFC);\n}\n')
+    assert not untyped_register.damaged('void f(u16 *p) {\n    p[0] = (u16)0x8000;\n}\n')

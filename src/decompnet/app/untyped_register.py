@@ -1,11 +1,13 @@
-"""Best C that a permuter bug left holding `register NAME = ...;`, put back to the attempt before it.
+"""Best C that a permuter bug left changed in meaning, put back to the attempt before it.
 
 decomp-repair's permuter read `D_80102ED4 = 0;` as a declaration (type `D_80102ED`, name `4`) and toggled `register`
 onto it: `register D_80102ED4 = 0;` declares a new local where the C stored to a global. Dropping the store raised the
 byte score, so 35 functions of an N64 game kept it as their best, and every correct candidate scores worse than that
 (fixed in decomp-repair 0.5.11). A declaration with `register` and no type is never in C anyone wrote, so before a deep
 pass searches from such a best, the function's best goes back to its best attempt without one, or to that C with the
-stray `register` taken out, judged.
+stray `register` taken out, judged. The same holds for the other bugs `decomprepair.debris.clean` takes out (0.5.16-17): a
+pointer cut to 16 bits inside a pointer cast, casts on type names, narrowed hex literals (`(unsigned short)0xDA380003`
+storing 3 where the game stored a display-list command; 12 bests in that game).
 """
 import re
 
@@ -13,7 +15,8 @@ UNTYPED = re.compile(r'(?<![\w.])register\s+[A-Za-z_]\w*\s*=(?!=)')
 
 
 def damaged(source: str | None) -> bool:
-    return bool(source) and bool(UNTYPED.search(source))
+    from decomprepair import debris
+    return bool(source) and (bool(UNTYPED.search(source)) or debris.clean(source) is not None)
 
 
 def restore(net, proj, fn):
@@ -29,7 +32,8 @@ def restore(net, proj, fn):
     else:
         # (most such bests have no clean attempt left: the C with the stray `register` taken out, judged as an attempt
         # would be; a lower stored score than the C's real one would make the search reject every true improvement)
-        source = UNTYPED.sub(lambda m: m[0][len('register'):].lstrip(), fn['best_source'])
+        from decomprepair import debris
+        source = debris.clean(fn['best_source']) or fn['best_source']
         from ..project import compiler_for
         own = compiler_for(net.cfg(proj), fn['vram'], fn)
         flags = own['flags'].split() if isinstance(own['flags'], str) else list(own['flags'])
