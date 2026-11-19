@@ -344,7 +344,12 @@ material extent, byte-plane vertex stream and polygon stream. Triangle commands 
 32-slot cache: the decoder loads the first 32 vertices, then alternates 16-slot replacements.
 Every reference must resolve to a loaded vertex; every run must terminate and consume the
 complete stream. Positions alone never establish a model. Empty containers are not labelled
-as models. Compressed candidates must pass both RNC checksums.
+as models. That indexed layout requires both RNC CRCs when compressed.
+
+The Model browser also recognizes EMshV010 meshes in byte-sum RNC blocks. It checks the
+decoded byte sum, table extents, corner indexes and optional ATEX trailer, then reconstructs
+local positions from signed deltas and triangulates the polygons. These previews show
+untextured geometry in local space.
 
 Open a model region, choose **Model mesh**, then **Preview asset**. Changing the mesh prepares
 its wireframe. The selector shows node, part and section identity; **Save notes** retains the
