@@ -7,7 +7,9 @@ from . import get, mips_regions
 
 MAX_ROWS = 8192
 _MIPS_REGISTER = re.compile(r'(?<![\w$])(zero|at|v[01]|a[0-3]|t[0-9]|s[0-8]|k[01]|gp|sp|fp|ra)(?!\w)')
-_DESTINATION = re.compile(r'(0x[0-9a-fA-F]+|\d+)\s*$')
+# A whole operand only: a relocated tail call prints its symbol (`j func_00100108`), whose digits aren't an offset
+# (#246 review: int("00100108", 0) raised and failed get_function; an N64 name was rewritten to a wrong address).
+_DESTINATION = re.compile(r'(?<![\w$.])(0x[0-9a-fA-F]+|\d+)\s*$')
 _BRANCHES = mips_regions.CONDITIONAL | {'b', 'j'}
 
 
@@ -17,7 +19,7 @@ def _objdiff_mips(text, address=None):
     the section's first read as one leaving it, and no block or return path was observed)."""
     text = _MIPS_REGISTER.sub(r'$\1', text)
     if address and text.split(None, 1)[0:1] and text.split(None, 1)[0] in _BRANCHES:
-        if (dest := _DESTINATION.search(text)) and (offset := int(dest[1], 0) - address) >= 0:
+        if (dest := _DESTINATION.search(text)) and (offset := int(dest[1], 16 if dest[1][:2] == '0x' else 10) - address) >= 0:
             text = text[:dest.start()] + hex(offset)
     return text
 

@@ -187,3 +187,13 @@ def test_compile_feedback_keeps_original_score_and_verdict(tmp_path, monkeypatch
     output = net.attempt(agent, 'f', 'void f(void) {}', 'game')
     assert output['score'] == expected.score and output['matched'] is False
     assert 'Processor observations' in output['text'] and 'target 40 bytes, candidate 32 bytes' in output['text']
+
+
+def test_objdiff_branch_to_a_symbol_is_left_alone():
+    """#246 review: a relocated tail call prints its symbol; its digits are not an offset to rebase."""
+    assert advice._objdiff_mips('j func_00100108', 0x100) == 'j func_00100108'
+    assert advice._objdiff_mips('j func_80001000', 0x100) == 'j func_80001000'
+    assert advice._objdiff_mips('b 0x110', 0x100) == 'b 0x10'
+    assert advice._objdiff_mips('beqz v0, 272', 0x100) == 'beqz $v0, 0x10'
+    rows = [('i', 'j func_00100108', 'j func_00100108x'), (' ', 'nop', 'nop')]
+    advice.diff_lines('mips', rows, objdiff=True, addresses=(0x100, 0x100))
