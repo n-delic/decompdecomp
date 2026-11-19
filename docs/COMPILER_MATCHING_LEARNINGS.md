@@ -7744,7 +7744,7 @@ project's default `-O2` with its saved C, but has an override that makes it miss
 the default than under their override (a guard that reaches 300 instead of 420, and one that reached 285 instead of
 470 earlier).
 
-### A twelfth round on an N64 racing game: eight more exact functions (KMC gcc 2.7.2 `-O2`)
+### KMC gcc 2.7.2 `-O2`: round 11 hand matches in one N64 game (2026-11-20)
 
 Controlled: each result is the judge's linked verdict on a scratch copy, then adopted by the app's Try. Eight new
 exact matches, all under the functions' own settings; most came from writing m2c's draft as plain typed C.
