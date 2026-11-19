@@ -759,6 +759,11 @@ function fnCounts() {
   return c;
 }
 
+// Deep searches use separate identities for each function and parallel lane.
+function overviewContributor(name) {
+  return /^permuter-[0-9]+(?:-lane-[0-9]+)?$/.test(name) ? "deep-permuter" : name;
+}
+
 /* The overview's numbers: function states, pace, who matched what, recent matches. */
 function renderOverview() {
   if (!S.ov || S.tab !== "overview") return;
@@ -784,10 +789,9 @@ function renderOverview() {
     $("paceNum").textContent = `${ph[23]}`;
     $("paceBars").innerHTML = ph.map((n, i) => `<rect x="${i * 10 + 1}" y="${28 - Math.max(n ? 3 : 1, (26 * n) / max)}" width="8" height="${Math.max(n ? 3 : 1, (26 * n) / max)}" rx="1.5" class="${n ? "on" : ""}"><title>${n} matched ${23 - i ? `${23 - i} h ago` : "this hour"}</title></rect>`).join("");
     $("paceSub").textContent = `matched in the last hour · ${plural(st.compiles_last_hour, "compile")}` + (steady && togo > 0 ? ` · ≈\u00a0${duration(togo / last3)} to go at this pace` : "");
-    // Deep searches use separate identities for each function and parallel lane.
     const contributors = new Map();
     for (const row of st.agents) {
-      const agent = /^permuter-[0-9]+(?:-lane-[0-9]+)?$/.test(row.agent) ? "deep-permuter" : row.agent;
+      const agent = overviewContributor(row.agent);
       const totals = contributors.get(agent) || { agent, matched: 0, compiles: 0 };
       totals.matched += row.matched;
       totals.compiles += row.compiles;
@@ -799,7 +803,7 @@ function renderOverview() {
       : `<li class="muted small">Nobody yet. Matches by agents, the autopilot and you show up here.</li>`;
   }
   const recent = S.map.filter((f) => f.status === "matched" && f.matched_at).sort((a, b) => b.matched_at - a.matched_at).slice(0, 8);
-  $("recentMatches").innerHTML = recent.length ? recent.map((f) => `<li><span class="ok">✓</span>${fnLink(f.name)}<span class="grow"></span><span class="muted small">${esc(f.matched_by || "")} · ${esc(since(f.matched_at))}</span></li>`).join("")
+  $("recentMatches").innerHTML = recent.length ? recent.map((f) => `<li><span class="ok">✓</span>${fnLink(f.name)}<span class="grow"></span><span class="muted small">${esc(overviewContributor(f.matched_by || ""))} · ${esc(since(f.matched_at))}</span></li>`).join("")
     : `<li class="muted small">No matches yet.</li>`;
   $("recentMatches").querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
 }
