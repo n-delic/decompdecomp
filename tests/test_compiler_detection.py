@@ -108,3 +108,12 @@ def test_the_climb_keeps_its_own_best_and_stops_when_nothing_helps(monkeypatch):
     search = Search({('late-cc', FN['best_source']): 10, ('late-cc', closer): 4})
     assert profile_climb.climb(search, None, PROJ, FN, FN['best_source'], LATE, 10) == 4
     assert search.profile_bests['late-cc -O2'] == (4, closer)
+
+
+def test_a_profile_that_already_matches_goes_straight_to_the_recheck(monkeypatch):
+    probed = []
+    monkeypatch.setattr('decompnet.app.deep_profiles.probe', lambda search, agent, proj, fn, source, profile:
+                        probed.append(profile))
+    search = Search({})
+    assert profile_climb.climb(search, None, PROJ, FN, FN['best_source'], LATE, 0) == 0
+    assert probed == [LATE] and search.tested == 0

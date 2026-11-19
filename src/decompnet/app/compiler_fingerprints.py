@@ -30,7 +30,8 @@ JR_RA = 0x03E00008
 NOP = 0
 
 # One small function per habit: calls with saved registers, a counting loop, a division and a product, a stack
-# buffer, float arithmetic. Plain C every MIPS compiler of the era reads.
+# buffer, float arithmetic, and arithmetic before a single call (the shape where a compiler may make the frame late).
+# Plain C every MIPS compiler of the era reads.
 PROBE = """
 extern int g(int, int);
 int p_call(int a, int b) { int x = g(a, b); if (x) x = g(b, a); return x + a + b; }
@@ -38,6 +39,8 @@ int p_loop(int *p, int n) { int s = 0; while (n-- > 0) s += *p++; return s; }
 int p_div(int a, int b) { return a / b + a * b; }
 int p_frame(int a) { int buf[5]; buf[0] = a; buf[4] = a + 1; return g((int) buf, a); }
 float p_float(float x, float y) { return x * y + x; }
+extern void h(float);
+void p_late(float *a, float *b) { float x = a[0] - b[0], y = a[1] - b[1]; h(x * x + y * y); }
 """
 
 _seen: dict[tuple[str, tuple[str, ...], bool], dict | None] = {}
@@ -139,10 +142,16 @@ def profile_traits(toolchain: str, flags, big_endian: bool = True) -> dict | Non
             result = compile_source(cfg, '', PROBE)
             if result.ok:
                 found = {}
-                for code in _functions(result.obj).values():
+                functions = _functions(result.obj)
+                for name, code in functions.items():
                     for habit, value in traits(code, big_endian).items():
-                        found.setdefault(habit, set()).add(value)
+                        if habit != 'frame first':
+                            found.setdefault(habit, set()).add(value)
                 found = {habit: values.pop() for habit, values in found.items() if len(values) == 1}
+                # (where the frame is made shows only where work comes before the first call: p_late alone)
+                late = traits(functions['p_late'], big_endian) if 'p_late' in functions else {}
+                if 'frame first' in late:
+                    found['frame first'] = late['frame first']
     except Exception:  # noqa: BLE001 - a profile that can't be read is simply not ranked
         found = None
     with _lock:

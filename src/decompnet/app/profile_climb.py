@@ -64,6 +64,11 @@ def climb(search, agent, proj, fn, source, profile, score, seed=0):
     from decomprepair.permuter import mutate
 
     from . import deep_profiles, draft_repairs
+    if score == 0:
+        # (the current C already matches under it: recheck and suggest the pair the ordinary way)
+        search.profile_bests[profile['toolchain'] + ' ' + ' '.join(profile['flags'])] = (0, source)
+        deep_profiles.probe(search, agent, proj, fn, source, profile)
+        return 0
     budget = min(CLIMB_MAX, max(0, (search.limit - search.tested) // CLIMB_SHARE))
     if budget <= 0:
         return score
