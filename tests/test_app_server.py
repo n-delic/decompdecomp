@@ -889,7 +889,10 @@ def test_builtin_api_agent_matches_a_function(app, monkeypatch):
 
     real = httpx.Client
     monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
-    s = agents.Session("api-t", "api", "Test", slug, "api-test", {"base_url": "http://mock/v1", "model": "m", "api_key": "test-key"})
+    # a mock host without a dot reads as a local server, assumed to run 16K tokens: our tools and prompt fill that,
+    # so the compile result was trimmed to its notice. This test is about the loop, not a small model's context.
+    s = agents.Session("api-t", "api", "Test", slug, "api-test", {"base_url": "http://mock/v1", "model": "m",
+                                                                 "api_key": "test-key", "context_tokens": 128000})
     agent, _ = net.local_agent("api-test")
     net.claim(agent, slug, "func_800007F4")  # The scripted model targets this function explicitly.
     manager._session_begin(s)
