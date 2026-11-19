@@ -711,6 +711,45 @@ def test_an_endpoint_lists_at_most_100_models(tmp_path, monkeypatch):
     assert models[0]["id"] == "model-0" and models[-1]["id"] == f"model-{setup.MAX_ENDPOINT_MODELS - 1}"
 
 
+def test_anthropic_endpoint_lists_its_models_with_its_own_headers(tmp_path, monkeypatch):
+    """The launcher's Model choice offered only the default for Anthropic: the list was asked for with OpenAI's Bearer
+    token, which Anthropic refuses, and a Custom address typed with /messages asked .../messages/models."""
+    from decompnet.app import support
+    from decompnet.app.routes import setup
+
+    from .test_loading import tiny_game
+
+    settings = support.Settings(tmp_path / "settings.json")
+    entry = settings.save_endpoint({"provider": "custom", "name": "claude", "api_key": "sk-test",
+                                    "base_url": "https://api.anthropic.com/v1/messages", "model": "claude-opus-5-5"})
+    settings.save()
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, _, security, _ = build(net, tmp_path, PORT, SECRET)
+    asked = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"type": "model", "id": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5"}],
+                    "has_more": False}
+
+    def get(url, **kwargs):
+        asked.update(url=url, headers=kwargs["headers"])
+        return Response()
+
+    monkeypatch.setattr(setup.httpx, "get", get)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    models = client.get(f"/api/endpoints/models?id={entry['id']}").json()["models"]
+    assert models == [{"id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5"}]
+    assert asked["url"] == "https://api.anthropic.com/v1/models?limit=1000"
+    assert asked["headers"]["x-api-key"] == "sk-test" and asked["headers"]["anthropic-version"]
+    assert "Authorization" not in asked["headers"]
+
+
 def test_a_picked_api_model_survives_restart_and_resume(tmp_path, monkeypatch):
     """A helper started on the endpoint's second model came back on its default after a restart, which recorded its
     costs against the wrong model."""
