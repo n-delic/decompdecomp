@@ -605,6 +605,35 @@ def test_commit_follows_an_upgrade_that_stopped_before_following_the_moved_save(
     assert git(root, 'status', '--porcelain', '--', 'progress') == ''
 
 
+def test_commit_keeps_the_flat_layout_when_the_game_cant_be_exported_yet(project):
+    # An N64 game with overlapping overlay banks has no rebuildable export yet, and Commit refused it altogether:
+    # 1,098 matches stayed out of its repository. It now commits the saved progress where it is.
+    from decompnet.rom.export import ExportError
+    net, root, _ = project
+    console = net.console(net.project_row('game'))
+    def unsupported(net, slug, out, log):
+        raise ExportError('Rebuildable export does not yet support overlapping overlay banks.')
+    console.export_project = unsupported
+    git(root, 'init', '--initial-branch=main')
+    git(root, 'config', 'user.name', 'Test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    git(root, 'add', '.')
+    git(root, 'commit', '-qm', 'existing portable history')
+    before = git(root, 'rev-parse', 'HEAD')
+    net._update_cfg('game', lambda cfg: cfg.update(instructions='Progress since the last commit'))
+    lines = []
+    state = repository_setup.run(net, 'game', 'checkpoint', '', lines.append)
+    assert state['checkpoint'] and not state['rebuildable']
+    assert git(root, 'rev-parse', 'HEAD~1') == before
+    assert saves.MANIFEST in git(root, 'ls-files').splitlines() and not (root/'build.py').exists()
+    assert any('current layout instead' in line for line in lines)
+    assert 'Progress since the last commit' in git(root, 'show', f'HEAD:{saves.MANIFEST}')
+    assert net.cfg(net.project_row('game'))['progress_folder'] == str(root)
+    # creating a repository still needs the export: it would only make a flat one
+    with pytest.raises(ExportError):
+        repository_setup.run(net, 'game', 'init', '', lambda _:None)
+
+
 def test_upgrade_keeps_the_repositorys_own_notice_and_agents_rules(project):
     """An N64 save tracking a hand-written NOTICE.md was refused ("Untrack game/private files"), and its own AGENTS.md
     would then have collided with the export's."""
