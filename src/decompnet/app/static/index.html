@@ -1217,7 +1217,8 @@
             <button class="primary small-btn" id="tryBtn" type="button">Compile and compare</button>
             <span class="muted small" id="tryHint">Ctrl+Enter · edit it yourself: you're judged like an agent</span>
           </div>
-          <p class="try-msg" id="tryMsg" hidden></p>
+          <div class="workbar" id="tryWork" role="progressbar" aria-label="Compile and compare" hidden><i></i></div>
+          <p class="try-msg" id="tryMsg" role="status" hidden></p>
         </div>
       </div>
       <section id="deepPermuterPanel" class="deep-panel" hidden aria-labelledby="deepTitle">

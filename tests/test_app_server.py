@@ -40,7 +40,7 @@ def test_try_route_keeps_exact_credit_and_adoption_separate(app,monkeypatch):
     from .test_loading import tiny_game
     client,net,_=app
     tiny_game(net,'exact-recheck-fields')
-    monkeypatch.setattr(net,'attempt',lambda *a:{'score':0,'matched':False,'exact':True,'new_match':False,
+    monkeypatch.setattr(net,'attempt',lambda *a,**kw:{'score':0,'matched':False,'exact':True,'new_match':False,
         'adopted':False,'text':'Exact scratch recheck','checks':{'linked_bytes':{'exact':True}}})
     response=client.post('/api/try',headers={'X-Decomp':'1'},json={'slug':'exact-recheck-fields','name':'f','source':'candidate'})
     assert response.status_code==200,response.text
@@ -2954,7 +2954,7 @@ def test_foreground_routes_do_not_wait_for_saved_recheck_publication(app, tmp_pa
     from decompnet.app.progress import _Recheck
     active = _Recheck(folder, net.progress._signature(folder), ready=True)
     net.progress.rechecking[slug] = active
-    def attempt(*args):
+    def attempt(*args, **kwargs):
         assert net.progress.local.foreground
         return {'score': 0, 'matched': True, 'text': 'controlled exact verdict'}
     monkeypatch.setattr(net, 'attempt', attempt)
@@ -3399,7 +3399,7 @@ def test_project_directory_history_requires_guard_and_native_switch(app,tmp_path
     assert not (tmp_path/'locations.json').exists()
 
 
-def test_background_attempt_returns_before_verification_and_is_rediscoverable(app, monkeypatch):
+def test_background_attempt_returns_before_compilation_and_is_rediscoverable(app, monkeypatch):
     from decompnet.attempt_status import update
 
     from .test_loading import tiny_game
@@ -3407,7 +3407,8 @@ def test_background_attempt_returns_before_verification_and_is_rediscoverable(ap
     tiny_game(net,'attempt-stages')
     entered,finish=threading.Event(),threading.Event()
     calls=[]
-    def attempt(agent,name,source,slug):
+    def attempt(agent,name,source,slug,*,publish):
+        assert not publish
         calls.append((name,source,slug))
         entered.set()
         assert finish.wait(5)
@@ -3416,7 +3417,9 @@ def test_background_attempt_returns_before_verification_and_is_rediscoverable(ap
         update('saving',name)
         return {'score':0,'matched':True,'exact':True,'new_match':True,'adopted':True,'text':'exact','checks':{}}
     monkeypatch.setattr(net,'attempt',attempt)
-    monkeypatch.setattr(net.progress,'sync',lambda *a,**k:False)
+    def unexpected_sync(*args, **kwargs):
+        pytest.fail('The route must leave publication to autosave')
+    monkeypatch.setattr(net.progress,'sync',unexpected_sync)
     body={'slug':'attempt-stages','name':'f','source':'candidate','background':True}
     try:
         response=client.post('/api/try',json=body,headers={'X-Decomp':'1'})
@@ -3424,7 +3427,7 @@ def test_background_attempt_returns_before_verification_and_is_rediscoverable(ap
         job=response.json()['job']
         assert entered.wait(5)
         status=client.get('/api/try/status?slug=attempt-stages&name=f').json()
-        assert status['job']==job and status['progress']['stage']=='waiting'
+        assert status['job']==job and status['progress']['stage']=='starting'
         assert status['scope']=={'slug':'attempt-stages','function':'f'}
         assert client.get('/api/try/status?slug=attempt-stages&name=another').json()['job'] is None
         assert client.post('/api/try',json=body,headers={'X-Decomp':'1'}).json()['job']==job
@@ -3446,7 +3449,7 @@ def test_synchronous_attempt_keeps_final_response_and_exposes_running_job(app, m
     tiny_game(net,'sync-attempt-stages')
     entered,finish=threading.Event(),threading.Event()
     responses=[]
-    def attempt(*args):
+    def attempt(*args, **kwargs):
         entered.set()
         assert finish.wait(5)
         return {'score':7,'matched':False,'text':'score 7'}
@@ -3458,7 +3461,7 @@ def test_synchronous_attempt_keeps_final_response_and_exposes_running_job(app, m
     try:
         assert entered.wait(5) and not responses
         state=client.get('/api/try/status?slug=sync-attempt-stages&name=f').json()
-        assert state['job'] and state['progress']['stage']=='waiting'
+        assert state['job'] and state['progress']['stage']=='starting'
         different=client.post('/api/try',json={**body,'background':True,'source':'different'},headers={'X-Decomp':'1'})
         assert different.status_code==400 and 'already compiling' in different.text
     finally:

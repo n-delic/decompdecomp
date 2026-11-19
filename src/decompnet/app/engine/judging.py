@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -326,11 +326,12 @@ class JudgeMixin:
                 return
             time.sleep(0.2)
 
-    def attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
-        with self.progress.foreground():
+    def attempt(self, agent: Agent, function: str, source: str, project: str | None = None, *, publish: bool = True) -> dict:
+        # The editor leaves saved-folder publication to autosave. Its judge still checks the inputs explicitly.
+        with self.progress.foreground(), (nullcontext() if publish else self.progress.view()):
             fn = self._function(function, project)
             slug = self.project_store(fn['project_id']).one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
-            with self.progress.judging(slug):
+            with self.progress.judging(slug, publish=publish):
                 from ...attempt_status import update
                 update('compiling', fn['name'])
                 try:

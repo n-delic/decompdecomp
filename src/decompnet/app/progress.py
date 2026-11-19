@@ -1351,11 +1351,12 @@ class Progress:
         return result, active
 
     @contextmanager
-    def judging(self, slug: str, *, synchronize: bool = True):
+    def judging(self, slug: str, *, synchronize: bool = True, publish: bool = True):
         """Compiles may run together, but a result from before a pull must never replace its contribution.
 
         Scoped DB publishers can leave file imports/exports to the watcher with synchronize=False;
         revision and active saved-file recheck guards still apply to their ordinary recorder.
+        With publish=False, check inputs as usual and leave the durable dirty state for autosave.
         """
         if self.applying:
             yield
@@ -1368,12 +1369,12 @@ class Progress:
             self.check_for_judging(slug)
         previous = getattr(self.local, "judging", None)
         self.local.judging = (slug, self.revisions.get(slug, 0))
-        before = self.publish_token(slug) if synchronize else None
+        before = self.publish_token(slug) if synchronize and publish else None
         try:
             yield
         finally:
             self.local.judging = previous
-        if synchronize and not (covered and around[1]) and not self.unchanged(slug, before):
+        if synchronize and publish and not (covered and around[1]) and not self.unchanged(slug, before):
             self.sync(slug, force=True)
 
     # What a judge reads from the saved folder: the manifest (its compiler, flags and layout) and the headers. Another
@@ -1406,6 +1407,8 @@ class Progress:
             except (OSError, NetworkError):
                 pass
         self._judge_check("full" if cached is not None else "no full check on record")
+        from ..attempt_status import update
+        update("waiting")
         return self.sync(slug, force=True)
 
     def _judge_check(self, way: str) -> None:
