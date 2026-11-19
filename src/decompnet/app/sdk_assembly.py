@@ -237,9 +237,10 @@ def ultralib_needed(net,proj,limit=None):
     its compiler (the overview's `library_pack`, Engine.install_compilers). Read from the recorded identities only
     (`Network.sdk_functions`'s cached ones), so the overview can ask: no fingerprinting here. [] when none, the pack
     is installed, or the project's library setting is off."""
-    if not enabled(net,proj) or proj['arch']!='mips' or not net.is_rom(proj) or net.fork_slug(proj['slug']):return []
+    # (the console first: one whose port compiles no libultra C never needs the pack, and asks nothing more)
     kit=net.console(proj).port_kit
-    if kit is None:return []
+    if kit is None or kit.sdk_group('guMtxIdent')!='native':return []
+    if not enabled(net,proj) or proj['arch']!='mips' or not net.is_rom(proj) or net.fork_slug(proj['slug']):return []
     from ..port import ultralib
     if ultralib.root() is not None:return []
     hints=_recorded(net,proj)
