@@ -554,6 +554,9 @@ class Sweeps:
                     stats['activity'].publish({'cycle': cycle}, force=True)
                     log(f'Starting deep pass {cycle} with the same settings.')
                     continue
+                if getattr(log, 'deep_lanes', None) is not None:
+                    # (lanes left without a turn hold processes: close the ones idle for a while, all when waiting)
+                    log.deep_lanes.trim(deep_lanes.IDLE_SECONDS if futures else 0)
                 if futures:
                     # Recheck blocked inputs periodically even while a slow turn is running.
                     finished, _ = wait(futures, timeout=1, return_when=FIRST_COMPLETED)
