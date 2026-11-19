@@ -29,6 +29,8 @@ def restore(net, proj, fn):
     clean = next((r for r in rows if r['source'] and not damaged(r['source'])), None)
     if clean is not None:
         score, source = clean['score'], clean['source']
+    elif not hasattr(net, '_judge_with'):
+        return fn  # (a stand-in network that can't judge: leave the best as it is)
     else:
         # (most such bests have no clean attempt left: the C with the stray `register` taken out, judged as an attempt
         # would be; a lower stored score than the C's real one would make the search reject every true improvement)
