@@ -141,7 +141,11 @@ def prepare(net, slug, path, root, log):
     with tempfile.TemporaryDirectory(prefix='.decomp-repository-', dir=destination.parent) as temporary:
         stage = Path(temporary)/'tree'
         log('Generating the complete source tree and verifying its rebuild against your game…')
-        result = net.console(proj).export_project(net, slug, stage, log=log)
+        # The project lock and explicit sync above cover this stage. Avoid implicit
+        # saved-folder scans from project lookups while producing the staged tree.
+        proj = net.project_row(slug)
+        with net.progress.view():
+            result = net.console(proj).export_project(net, slug, stage, log=log)
         if not result.get('identical'):
             raise NetworkError('The rebuildable export did not reproduce the original game bytes. No repository was created or upgraded. '+str(result.get('log', ''))[-1200:])
         getattr(log, 'check_cancel', lambda: None)()

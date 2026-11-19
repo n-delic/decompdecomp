@@ -120,3 +120,43 @@ def test_mips_abi_retry_requires_only_abi_diagnostics(tmp_path, monkeypatch):
     assert module.mixed_mips_abi(diagnostics)
     assert not module.mixed_mips_abi(diagnostics + 'ld: undefined reference to missing\n')
     assert not module.mixed_mips_abi('ld: cannot find entry.o\n')
+
+
+def test_placement_index_uses_rom_offsets_for_overlays(tmp_path, monkeypatch):
+    module = builder(tmp_path, [], monkeypatch)
+    placements = module.placements_by_rom([
+        (0x80000000, 0x200, 'overlay2.o'),
+        (0x80000000, 0x100, 'overlay1.o'),
+        (0x80000004, 0x104, 'tail.o'),
+        (0x80000008, None, 'unmapped.o'),
+    ])
+    assert placements(0x100, 0x200) == [(0x80000000, 0x100, 'overlay1.o'), (0x80000004, 0x104, 'tail.o')]
+    assert placements(0x200, 0x204) == [(0x80000000, 0x200, 'overlay2.o')]
+    assert placements(0x105, 0x200) == []
+
+
+def test_pinned_default_compiler_rebuilds_distinct_objects_concurrently(tmp_path, monkeypatch):
+    from threading import Event
+
+    from decompnet.rom import export_workers
+
+    functions = [{'name': name, 'vram': i * 8, 'c': f'{name}.c'} for i, name in enumerate(('one', 'two'))]
+    module = builder(tmp_path, functions, monkeypatch)
+    module.B['compiler'] = {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2'], 'timeout': 20}
+    for fn in functions:
+        (tmp_path / fn['c']).touch()
+    monkeypatch.setattr(export_workers.os, 'cpu_count', lambda: 4)
+    monkeypatch.setattr(export_workers.compiler, 'concurrency_limit', lambda: 2)
+    compile_object = module.run_in
+    second_started = Event()
+
+    def wait_for_second(cfg, root, argv, *, inputs, outputs):
+        if outputs == ['one.o']:
+            assert second_started.wait(3)
+        else:
+            second_started.set()
+        return compile_object(cfg, root, argv, inputs=inputs, outputs=outputs)
+
+    monkeypatch.setattr(module, 'run_in', wait_for_second)
+    module.build_objects([('c', fn['c'], f"{fn['name']}.o") for fn in functions])
+    assert (tmp_path / 'one.o').read_bytes() == (tmp_path / 'two.o').read_bytes() == b'object'
