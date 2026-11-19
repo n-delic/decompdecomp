@@ -34,6 +34,12 @@ def selected(net, proj, count, fn=None):
     from .unverified_profiles import hypothesis
     if (guess := hypothesis(cfg, fn)) is not None and key(guess) not in {key(p) for p in result}:
         result.append(guess)
+    # (the target's own moves can name another compiler: an IDO library in a GCC game, never probed before)
+    if fn is not None and proj:
+        from .move_fingerprints import profiles as fingerprinted
+        for guess in fingerprinted(net, proj, cfg, fn, first):
+            if key(guess) not in {key(p) for p in result}:
+                result.append(guess)
     if count <= len(result):return result
     others = sorted(net.compiler_profile_usage(proj), key=lambda p:(-p['matched'], key(p)))
     seen = {key(p) for p in result}
