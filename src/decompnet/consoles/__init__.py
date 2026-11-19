@@ -402,11 +402,14 @@ class Console:
         writes it (coprocessor 2's instructions), or would place elsewhere (8-byte data), becomes the raw words it is."""
         from ..arch.mips import raw_cop2, raw_doubles  # (splat's consoles are MIPS)
 
-        # Inferred code can contain data decoded as a link branch through $ra. GNU as rejects this
-        # unpredictable encoding; keep its bytes rather than changing the register or branch target.
+        # Inferred code can include link instructions whose source is also their destination.
+        # GNU as rejects them; the rebuild still needs the original bytes.
         def link_word(match: re.Match) -> str:
             word = int.from_bytes(bytes.fromhex(match[2]), "big" if self.big_endian else "little")
-            if word >> 26 == 1 and (word >> 21) & 31 == 31 and (word >> 16) & 31 in (16, 17, 18, 19):
+            source = (word >> 21) & 31
+            link_branch = word >> 26 == 1 and source == 31 and ((word >> 16) & 31) in (16, 17, 18, 19)
+            self_link = (word & 0xFC1F07FF) == 9 and source == ((word >> 11) & 31)
+            if link_branch or self_link:
                 return f"{match[1]}.word 0x{word:08X}"
             return match[0]
 
