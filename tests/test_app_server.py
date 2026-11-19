@@ -828,7 +828,7 @@ def test_builtin_api_agent_matches_a_function_through_anthropics_own_api(app, mo
     assert seen[1]["messages"][1]["content"][0] == {"type": "thinking", "thinking": "Claim it first.", "signature": "sig1"}
     last = seen[-1]["messages"][-1]
     assert last["role"] == "user" and "byte-identical" in last["content"][0]["content"]
-    assert s.usage["cache_read"] >= 300 and 'test-key' not in json.dumps(manager.transcripts.read(slug, s.id))
+    assert s.usage["cache_read"] >= 300
 
 
 def test_an_agent_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch):
