@@ -817,6 +817,9 @@ def test_builtin_api_agent_matches_a_function_through_anthropics_own_api(app, mo
         "provider": "anthropic", "base_url": "https://api.anthropic.com/v1/messages", "model": "claude-opus-5-5",
         "api_key": "test-key", "effort": "high"})
     agent, _ = net.local_agent("api-anthropic")
+    # the module's app is shared: the OpenAI-compatible test before this one matched the same function
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open' WHERE name='func_800007F4'")
     net.claim(agent, slug, "func_800007F4")
     manager._session_begin(s)
     assert api.API.run(manager, s, agent) is True
