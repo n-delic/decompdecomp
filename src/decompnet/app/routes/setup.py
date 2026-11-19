@@ -290,6 +290,12 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
+        if not isinstance(data, dict):
+            return fail(ValueError("Send a JSON object of settings to save."))
+        try:
+            colors = settings.save_map_colors(data["map_colors"]) if "map_colors" in data else None
+        except ValueError as e:
+            return fail(e)
         if isinstance(data.get("api"), dict):  # (before 0.10.1: the one endpoint there was) the first one
             first = settings.endpoints()[0]["id"] if settings.endpoints() else ""
             settings.save_endpoint(data["api"] | {"id": first})
@@ -318,5 +324,7 @@ def register(app: App) -> None:
             settings.data["bridges_removed_seen"] = bool(data["bridges_removed_seen"])
         if "rom_library" in data:
             settings.data["rom_library"] = str(data["rom_library"] or "").strip()
+        if colors is not None:
+            settings.data["map_colors"] = colors
         settings.save()
         return JSONResponse(settings.public())

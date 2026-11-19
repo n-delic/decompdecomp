@@ -33,6 +33,13 @@
   --cc-4: var(--color-status-success-fill); --cc-5: var(--color-status-warning-fill);
   --cc-6: color-mix(in oklch, var(--color-status-info-fill) 50%, var(--color-status-danger-fill));
   --cc-7: color-mix(in oklch, var(--color-status-success-fill) 50%, var(--color-status-info-fill));
+  /* The function map has its own palette. Overrides are set on the root by Settings so they never restyle
+     badges, buttons or other parts of the app that share the theme's status colours. */
+  --map-open: var(--todo); --map-tried: var(--tried); --map-close: var(--match-hi);
+  --map-work: var(--hl); --map-match: var(--match); --map-polished: var(--polished);
+  --map-aside: var(--not-c); --map-not-c: var(--not-c); --map-ink: var(--ink);
+  --map-cc-0: var(--cc-0); --map-cc-1: var(--cc-1); --map-cc-2: var(--cc-2); --map-cc-3: var(--cc-3);
+  --map-cc-4: var(--cc-4); --map-cc-5: var(--cc-5); --map-cc-6: var(--cc-6); --map-cc-7: var(--cc-7);
   --move: var(--color-status-info-text); --move-bg: var(--color-status-info-surface);
   --code-bg: var(--color-surface-sunken);
   --btn: var(--button-primary-bg); --btn-hover: var(--button-primary-bg-hover); --btn-ink: var(--button-primary-fg);
@@ -223,6 +230,12 @@ a.ghost, a.primary { text-decoration: none; }
 }
 .field textarea, .pad > textarea { height: auto; padding: 9px 11px; font: 13px/1.5 var(--sans); resize: vertical; }
 .field input[type="password"], .field input.mono, .lz-custom { font-family: var(--mono); font-size: 13px; }
+.map-color-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px 14px; margin: 10px 0; }
+.map-color-group { grid-column: 1 / -1; margin-top: 6px; font: 650 11px/1.4 var(--sans); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.map-color-row { display: flex; gap: 10px; align-items: center; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.map-color-row input[type="color"] { width: 38px; height: 32px; flex: none; padding: 2px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); cursor: pointer; }
+.map-color-row .sw { width: 12px; height: 12px; }
+.map-color-row span { overflow-wrap: anywhere; }
 .spinner { width: 30px; height: 30px; border-radius: 50%; border: 2.5px solid var(--line); border-top-color: var(--match); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .joblog { width: 100%; max-height: 160px; overflow: auto; text-align: left; font-size: 12px; color: var(--muted); background: var(--code-bg); border: 1px solid var(--line-soft); border-radius: var(--r); padding: 10px 12px; margin: 0; white-space: pre-wrap; }
@@ -312,7 +325,7 @@ a.ghost, a.primary { text-decoration: none; }
 .progress .line { fill: none; stroke: var(--match); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .stack { display: flex; height: 8px; border-radius: var(--r-sm); overflow: hidden; background: var(--open); }
 .stack i { display: block; height: 100%; }
-.s-match { background: var(--match); } .s-work { background: var(--hl); } .s-tried { background: var(--tried); } .s-asm { background: var(--not-c); opacity: .45; } .s-open { background: var(--todo); }
+.s-match { background: var(--map-match); } .s-work { background: var(--map-work); } .s-tried { background: var(--map-tried); } .s-asm { background: var(--map-aside); opacity: .45; } .s-open { background: var(--map-open); }
 .bars { width: 100%; height: 28px; display: block; }
 .bars rect { fill: var(--open); }
 .bars rect.on { fill: var(--match); }
@@ -353,7 +366,7 @@ a.ghost, a.primary { text-decoration: none; }
 .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 10px; height: 10px; border-radius: 2.5px; display: inline-block; }
-.sw.asm { background: var(--not-c); opacity: .45; } .sw.not-c { background: var(--not-c); } .sw.open { background: var(--todo); } .sw.tried { background: var(--tried); } .sw.work { background: var(--hl); } .sw.match { background: var(--match); } .sw.close { background: var(--match-hi); } .sw.polished { background: var(--polished); }
+.sw.asm { background: var(--map-aside); opacity: .45; } .sw.not-c { background: var(--map-not-c); } .sw.open { background: var(--map-open); } .sw.tried { background: var(--map-tried); } .sw.work { background: var(--map-work); } .sw.match { background: var(--map-match); } .sw.close { background: var(--map-close); } .sw.polished { background: var(--map-polished); }
 .map-hint { padding: 12px 16px 0; }
 .map-tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
