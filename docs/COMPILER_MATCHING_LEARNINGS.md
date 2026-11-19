@@ -7776,3 +7776,47 @@ Tried without a match: a sound-table setter whose search returns through a separ
 list built through a global pointer whose four updates the game stores last (1440), a matrix push (1540), an audio
 init whose symbol addresses the game recomputes instead of keeping in a saved register (1745), and a saved-register
 order difference (35).
+
+### KMC gcc 2.7.2 `-O2`: round 12 hand matches in one N64 game (2026-11-20)
+
+Controlled: each result is the judge's linked verdict on a scratch copy, then adopted by the app's Try. Four new
+exact matches (a fifth was already matched in the app), all under the functions' own settings.
+
+- **A row pointer cast from an integer sum** (1519 → 0): the game indexes 12-byte rows as
+  `(Row *)((k & 1) * 0xC + (s32)base)` and reads the row's `Vec3` at +4 with a struct copy, so the scaled index comes
+  first in the `addu`. `&base->v[k]`, a `u8 *` sum in either order and an array subscript each put the base first or
+  fold the +4 early. A `Vec3` out-parameter (not an `s32`) gives the 0x50 frame, and calling the same function in
+  both arms of an `if`/`else` gives the game's `move $a0` in both arms.
+- **An unsigned float-to-`u16` store** (1585 → 0): `s->h = 120.0f - t - 8.0f;` into a `u16` field produces the
+  `0x4F000000` compare and the `or 0x80000000` path; the rest was plain typed C.
+- **A table indexed through a byte offset** (1025 → 0): `u8 *base = off + D; ...
+  *(s32 *)(idx * 4 + (D + 0x70) + off)` keeps `D + 0x70` as its own `addiu` (written as a local
+  `u8 *tbl = D + 0x70` before the sum), and the pair is read as `(base + arg1 * 2)[1]`, recomputed at each use, not
+  through a pointer local.
+- **A sequence reader over 64 voices** (1393 → 0): `D->ents[i]` with `i < 64` gives the game's `+= 0x28` and
+  `< 0xA00`. Writing `if (start + now >= t) { ...advance... } else { done = 1; }` gives `bnel` to the done path, and
+  storing the advanced pointer before the time (`ents[i].ptr += n; ents[i].time = t; p = ents[i].ptr;`) gives the
+  reload. Reading the first two bytes as `D->ents[i].ptr[0]` and `[1]` (not through `p`) keeps them in `$v0`; the
+  7- and 15-bit signed deltas are `(s32)(b0 << 25) >> 25` and `(s32)((b1 | (b0 & 0x7F) << 8) << 17) >> 17`.
+
+Improved, adopted, not exact:
+- **A volatile global pointer** (1020 → 80, and a sibling 820 → 40): the game reloads `D->field` after each float
+  store but keeps `&D` in a saved register for the calls, which `extern T *volatile D;` with a `T *volatile *pp = &D`
+  local reproduces. The rest is one scheduling slot (`addiu $a2, 1` before the `lui`) and two swapped callee-saved
+  registers.
+- **A rotation matrix** (1450 → 85): its six zero stores written as one chained assignment
+  `m[7] = m[3] = m[11] = m[12] = m[13] = m[14] = 0.0f;` keep the float zero register (`swc1 $f2`) instead of
+  `sw $zero`. Two callee-saved FPU registers stay swapped.
+- **An envelope setter** (1300 → 355): the game passes `p - 2` where `p = &D_800FDB88` is a separate symbol from
+  `D_800FDB80`, and calls the same function in both arms of `if (!(flags & 0x200))` (constant 1 or 0), which gcc
+  cross-jumps into one `jal` with the constant set by a branch. A ternary or a flag variable becomes `sltiu`.
+- **A pitch lookup** (1364 → 190): an unused `s32 unused[4]` local gives the 0x38 frame, and the table blend is
+  written `(p[0] << 16) + d` with `d = (p[1] - p[0]) * lo`.
+- **A sound-id remap** (1490 → 1230): a 16-case switch whose three `beql id == K` tails the game cross-jumps into one
+  block; no case order tried reproduced the merged tail.
+- **A float scale** (45 → 40): computing `f = D[idx] * f; scale = f * arg2;` moves one register; `$f0`/`$f2` stay
+  swapped elsewhere.
+
+Tried without a match: a voice-slot loop that the game writes with a `goto` back-edge and a shared saved register
+for two disjoint values (1320, the rewrite scored worse), and a command-stream parser whose `switch` reads the byte
+before advancing the pointer (1355, the rewrite scored worse).
