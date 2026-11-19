@@ -15,6 +15,7 @@ from decompnet.hostenv import NO_WINDOW
 
 from ... import agents as kinds
 from ... import hostenv, linuxvm, toolchains
+from ...agents import api_anthropic
 from ...network import NetworkError
 from .. import agents
 from ..support import session_options, spread_sessions
@@ -111,16 +112,19 @@ def register(app: App) -> None:
         entry = settings.endpoint(request.query_params.get("id", ""))
         if entry is None:
             return fail(ValueError("that API endpoint is no longer saved; choose it again"))
-        headers = {"Authorization": f"Bearer {entry['api_key']}"} if entry.get("api_key") else {}
+        url, headers = entry["base_url"].rstrip("/") + "/models", {}
+        if entry.get("api_key"):
+            headers = {"Authorization": f"Bearer {entry['api_key']}"}
+        if api_anthropic.is_native(entry):  # Anthropic's own API lists models with its own headers
+            url, headers = api_anthropic.models_request(entry)
         try:
-            response = await call(lambda: httpx.get(entry["base_url"].rstrip("/") + "/models", headers=headers,
-                                                    timeout=10))
+            response = await call(lambda: httpx.get(url, headers=headers, timeout=10))
             response.raise_for_status()
             payload = response.json()
             rows = payload.get("data", []) if isinstance(payload, dict) else []
             if not isinstance(rows, list):
                 rows = []
-            models = [{"id": str(row["id"]), "name": str(row.get("name") or row["id"])}
+            models = [{"id": str(row["id"]), "name": str(row.get("name") or row.get("display_name") or row["id"])}
                       for row in rows if isinstance(row, dict) and row.get("id")]
             return JSONResponse({"models": models[:MAX_ENDPOINT_MODELS]})
         except (httpx.HTTPError, httpx.InvalidURL, ValueError, TypeError):

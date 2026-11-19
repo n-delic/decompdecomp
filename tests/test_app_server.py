@@ -601,6 +601,45 @@ def test_an_endpoint_lists_at_most_100_models(tmp_path, monkeypatch):
     assert models[0]["id"] == "model-0" and models[-1]["id"] == f"model-{setup.MAX_ENDPOINT_MODELS - 1}"
 
 
+def test_anthropic_endpoint_lists_its_models_with_its_own_headers(tmp_path, monkeypatch):
+    """The launcher's Model choice offered only the default for Anthropic: the list was asked for with OpenAI's Bearer
+    token, which Anthropic refuses, and a Custom address typed with /messages asked .../messages/models."""
+    from decompnet.app import support
+    from decompnet.app.routes import setup
+
+    from .test_loading import tiny_game
+
+    settings = support.Settings(tmp_path / "settings.json")
+    entry = settings.save_endpoint({"provider": "custom", "name": "claude", "api_key": "sk-test",
+                                    "base_url": "https://api.anthropic.com/v1/messages", "model": "claude-opus-5-5"})
+    settings.save()
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, _, security, _ = build(net, tmp_path, PORT, SECRET)
+    asked = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"type": "model", "id": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5"}],
+                    "has_more": False}
+
+    def get(url, **kwargs):
+        asked.update(url=url, headers=kwargs["headers"])
+        return Response()
+
+    monkeypatch.setattr(setup.httpx, "get", get)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    models = client.get(f"/api/endpoints/models?id={entry['id']}").json()["models"]
+    assert models == [{"id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5"}]
+    assert asked["url"] == "https://api.anthropic.com/v1/models?limit=1000"
+    assert asked["headers"]["x-api-key"] == "sk-test" and asked["headers"]["anthropic-version"]
+    assert "Authorization" not in asked["headers"]
+
+
 def test_a_picked_api_model_survives_restart_and_resume(tmp_path, monkeypatch):
     """A helper started on the endpoint's second model came back on its default after a restart, which recorded its
     costs against the wrong model."""
@@ -745,6 +784,51 @@ def test_builtin_api_agent_matches_a_function(app, monkeypatch):
     assert api.API.run(manager, s, agent) is True
     assert net._function("func_800007F4", slug)["status"] == "matched"
     assert "byte-identical" in seen[-1]["messages"][-1]["content"]
+
+
+@needs_demo
+def test_builtin_api_agent_matches_a_function_through_anthropics_own_api(app, monkeypatch):
+    """The same scripted match through Anthropic's Messages API (agents/api_anthropic.py): the loop's conversation is
+    translated at the edge, the prefix is cached, and the model's thinking goes back with its calls."""
+    client, net, manager = app
+    slug = net.store.one("SELECT slug FROM projects")["slug"]
+    source = "s32 func_800007F4(s32 v) { return v < 0 ? -v : v; }"
+    script = iter([
+        [{"type": "thinking", "thinking": "Claim it first.", "signature": "sig1"},
+         {"type": "tool_use", "id": "toolu_1", "name": "claim_function", "input": {"function": "func_800007F4"}}],
+        [{"type": "tool_use", "id": "toolu_2", "name": "compile_and_diff", "input": {"function": "func_800007F4", "source": source}}],
+        [{"type": "text", "text": "Matched."}],
+    ])
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        assert request.url.path == "/v1/messages" and request.headers["x-api-key"] == "test-key"
+        assert "authorization" not in request.headers and body["tools"] and body["system"][0]["cache_control"]
+        blocks = next(script)
+        stop = "tool_use" if any(b["type"] == "tool_use" for b in blocks) else "end_turn"
+        return httpx.Response(200, json={"id": "msg", "model": body["model"], "content": blocks, "stop_reason": stop,
+                                         "usage": {"input_tokens": 5, "cache_read_input_tokens": 100, "output_tokens": 3}})
+
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    s = agents.Session("api-a", "api", "Test", slug, "api-anthropic", {
+        "provider": "anthropic", "base_url": "https://api.anthropic.com/v1/messages", "model": "claude-opus-5-5",
+        "api_key": "test-key", "effort": "high"})
+    agent, _ = net.local_agent("api-anthropic")
+    # the module's app is shared: the OpenAI-compatible test before this one matched the same function
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open' WHERE name='func_800007F4'")
+    net.claim(agent, slug, "func_800007F4")
+    manager._session_begin(s)
+    assert api.API.run(manager, s, agent) is True
+    assert net._function("func_800007F4", slug)["status"] == "matched"
+    assert all(b["output_config"] == {"effort": "high"} for b in seen)
+    assert seen[1]["messages"][1]["content"][0] == {"type": "thinking", "thinking": "Claim it first.", "signature": "sig1"}
+    last = seen[-1]["messages"][-1]
+    assert last["role"] == "user" and "byte-identical" in last["content"][0]["content"]
+    assert s.usage["cache_read"] >= 300
 
 
 def test_an_agent_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch):

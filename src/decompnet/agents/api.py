@@ -1,5 +1,6 @@
 """The API helper: decompdecomp's own agent loop for any OpenAI-compatible API (DeepSeek, OpenRouter,
-OpenAI, a local llama.cpp, Ollama or LM Studio). No program to install: the app sends the conversation to the model's
+OpenAI, a local llama.cpp, Ollama or LM Studio), and Anthropic's own Messages API (agents/api_anthropic.py translates
+the conversation at the edge, for its prompt caching, effort and thinking). No program to install: the app sends the conversation to the model's
 chat-completions endpoint and calls the tools the model asks for directly (app/tools.py `call`), with the same tools
 the CLI agents get over MCP.
 
@@ -17,7 +18,7 @@ import time
 
 import httpx
 
-from . import Agent, args_brief, number
+from . import Agent, api_anthropic, args_brief, number
 
 API_PRESETS = {
     "deepseek": {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat", "key": True},
@@ -26,6 +27,9 @@ API_PRESETS = {
     "lmstudio": {"name": "LM Studio (local)", "base_url": "http://127.0.0.1:1234/v1", "model": "local-model", "key": False},
     "llamacpp": {"name": "llama.cpp (local)", "base_url": "http://127.0.0.1:8080/v1", "model": "local", "key": False},
     "openai": {"name": "OpenAI", "base_url": "https://api.openai.com/v1", "model": "gpt-5", "key": True},
+    # Anthropic's own Messages API (api_anthropic.py): its OpenAI-compatible endpoint has no prompt caching and
+    # ignores the effort setting. An address typed with /messages works too (it got a 404 as an OpenAI address).
+    "anthropic": {"name": "Anthropic", "base_url": "https://api.anthropic.com/v1", "model": "claude-opus-5-5", "key": True},
     "custom": {"name": "Custom", "base_url": "", "model": "", "key": True},
 }
 
@@ -58,7 +62,7 @@ FOLDED = 2  # messages a fold leaves: one call and its result
 class Api(Agent):
     id = "api"
     name = "API key"
-    vendor = "DeepSeek, OpenRouter, Ollama, any OpenAI-compatible API"
+    vendor = "DeepSeek, OpenRouter, Anthropic, Ollama, any OpenAI-compatible API"
     docs = "https://api-docs.deepseek.com"
     recommended = True  # decompdecomp runs its whole loop, and no other program's update can break it
     uses_endpoints = True
@@ -91,9 +95,14 @@ class Api(Agent):
         model = s.options.get("model") or ""
         if not base or not model:
             raise RuntimeError("set the API address and model first")
-        headers = {"Content-Type": "application/json"}
-        if s.options.get("api_key"):
-            headers["Authorization"] = f"Bearer {s.options['api_key']}"
+        native = api_anthropic.is_native(s.options)
+        if native:
+            base = api_anthropic.base_url(base)
+            headers = api_anthropic.headers(s.options.get("api_key") or "", model)
+        else:
+            headers = {"Content-Type": "application/json"}
+            if s.options.get("api_key"):
+                headers["Authorization"] = f"Bearer {s.options['api_key']}"
         schema = api_tool_schemas(fork=bool(net.fork_slug(s.slug)), names=tools.project_tools(net, s.slug, agent))
         messages = [{"role": "system", "content": manager.app_instructions(s)},
                     {"role": "user", "content": manager.prompt(s)}]
@@ -111,7 +120,7 @@ class Api(Agent):
                     request = {"model": model, "messages": messages, "tools": schema, "tool_choice": "auto"}
                     if s.options.get("effort"):
                         request["reasoning_effort"] = s.options["effort"]
-                    r = _post(client, f"{base}/chat/completions", headers, request, s.stop)
+                    r = _complete(client, base, headers, request, s.stop, native)
                     if r.status_code == 200 or not _too_long(r):
                         break
                     budget = int(budget * API_TRIM_FACTOR)  # the server counts differently, or knows better: trim more
@@ -147,7 +156,9 @@ class Api(Agent):
                 # its reasoning goes back with the calls it made: DeepSeek's thinking mode refuses the next request
                 # without it ("The reasoning_content in the thinking mode must be passed back to the API": 106 times
                 # in a day, each a 5-10 minute wait); servers that don't send one get none back
-                messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls", "reasoning_content")}
+                # (and Anthropic's own blocks, thinking included, go back as they came: api_anthropic.NATIVE)
+                messages.append({k: v for k, v in msg.items()
+                                 if k in ("role", "content", "tool_calls", "reasoning_content", api_anthropic.NATIVE)}
                                 | {"role": "assistant"})
                 if not calls:
                     if not used_tool:  # a model that can't call tools answers in words, and never starts
@@ -279,13 +290,39 @@ def plural(n: int, word: str) -> str:
 
 def api_usage(usage: dict) -> dict:
     """An OpenAI-compatible reply's usage as `usage` items count it: its prompt tokens include those served from the
-    provider's cache (OpenAI: prompt_tokens_details.cached_tokens, DeepSeek: prompt_cache_hit_tokens)."""
+    provider's cache (OpenAI: prompt_tokens_details.cached_tokens, DeepSeek: prompt_cache_hit_tokens). Anthropic's
+    Messages API reports input, cache reads and cache writes apart (input_tokens...)."""
+    if "input_tokens" in usage and "prompt_tokens" not in usage:
+        return api_anthropic.usage(usage)
     details = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
     cached = number(details, "cached_tokens") or number(usage, "prompt_cache_hit_tokens")
     prompt, output = number(usage, "prompt_tokens"), number(usage, "completion_tokens")
     if not (prompt or output):
         return {"tokens": number(usage, "total_tokens"), "turns": 1}
     return {"input": max(0, prompt - cached), "cache_read": cached, "output": output, "turns": 1}
+
+
+def _complete(client, base: str, headers: dict, request: dict, stop, native: bool = False) -> httpx.Response:
+    """Send a chat-completions request: to {base}/chat/completions, or for Anthropic's own API translated to
+    {base}/messages, its answer translated back (a 200 comes back as a chat-completions reply; any other answer as it
+    came). A thinking block the API refuses as bound to another conversation is stripped and the request sent once
+    more (api_anthropic.strip_thinking)."""
+    def send(url, body):
+        return _post(client, url, headers, body, stop)
+
+    if not native:
+        return send(f"{base}/chat/completions", request)
+    body = api_anthropic.request(request)
+    r = send(f"{base}/messages", body)
+    if r.status_code == 400 and api_anthropic.refused_thinking(r.text):
+        r = send(f"{base}/messages", api_anthropic.strip_thinking(body))
+    if r.status_code != 200:
+        return r
+    try:
+        answer = r.json()
+    except ValueError:
+        return r
+    return httpx.Response(200, json=api_anthropic.reply(answer), request=r.request)
 
 
 def _post(client, url: str, headers: dict, request: dict, stop) -> httpx.Response:
@@ -320,7 +357,10 @@ def fold(messages: list[dict], start: int, end: int, n: int, line: str) -> None:
 
 
 def _tokens(obj) -> int:
-    """A cautious token estimate (CHARS_PER_TOKEN)."""
+    """A cautious token estimate (CHARS_PER_TOKEN). Anthropic's own copy of a reply (api_anthropic.NATIVE) isn't
+    counted twice: its text is the message's, and its thinking's signature isn't what the model reads."""
+    if isinstance(obj, dict) and api_anthropic.NATIVE in obj:
+        obj = {k: v for k, v in obj.items() if k != api_anthropic.NATIVE}
     return len(obj if isinstance(obj, str) else json.dumps(obj)) // CHARS_PER_TOKEN + TOKENS_PER_MESSAGE
 
 
