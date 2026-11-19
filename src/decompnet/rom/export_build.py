@@ -61,10 +61,24 @@ def fail(msg: str) -> None:
     sys.exit(f"error: {msg}")
 
 
-def run(argv: list[str]) -> None:
-    res = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
+def run(argv: list[str], *, retry_mips_abi: bool = False) -> None:
+    res = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         env={**os.environ, "LC_ALL": "C"} if retry_mips_abi else None)
+    if res.returncode != 0 and retry_mips_abi and mixed_mips_abi(res.stderr):
+        # Period compilers can tag ELF32 objects with different register widths or ABIs.
+        # The original game fixes their addresses and the final image must still match every byte.
+        return run([argv[0], "--no-warn-mismatch", *argv[1:]])
     if res.returncode != 0:
         fail(f"{' '.join(argv[:3])} ... exited with {res.returncode}\n{(res.stdout + res.stderr)[-3000:]}")
+
+
+def mixed_mips_abi(stderr: str) -> bool:
+    lines = stderr.splitlines()
+    width = r": linking (?:32-bit code with 64-bit code|64-bit code with 32-bit code)$"
+    abi = r": ABI mismatch: linking \w+ module with previous \w+ modules$"
+    merge = r": failed to merge target specific data of file .+$"
+    return (any(re.search(width, line) or re.search(abi, line) for line in lines)
+            and all(re.search(width, line) or re.search(abi, line) or re.search(merge, line) for line in lines))
 
 
 def binutils(tool: str) -> str:
@@ -471,7 +485,8 @@ def build() -> bool:
     objs = sorted({obj for _, _, obj in todo} | {obj for _, obj in gaps})
     # the objects in a response file: a PSP game with its modules has 48,000 functions, past the command line's limit
     (ROOT / "build" / "objects.txt").write_text("\n".join(objs) + "\n", encoding="utf-8")
-    run([binutils("ld"), "--no-keep-memory", *B["ld_flags"], "-T", "build/game.ld", "-o", "build/game.elf", "@build/objects.txt"])
+    run([binutils("ld"), "--no-keep-memory", *B["ld_flags"], "-T", "build/game.ld", "-o", "build/game.elf", "@build/objects.txt"],
+        retry_mips_abi=True)
     run([binutils("objcopy"), "-O", "binary", "build/game.elf", B["output"]])
     out, base = (ROOT / B["output"]).read_bytes(), (ROOT / B["image"]).read_bytes()
     c_count = sum(1 for fn in B["functions"] if c_source(fn))
