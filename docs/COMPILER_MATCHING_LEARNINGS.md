@@ -7457,3 +7457,18 @@ don't already try).
 - combine folds `x + (D + K)` with a large `K` as `(x + K) + D`; eight source forms didn't prevent it.
 So the register-only misses that remain come from sched1, CSE and combine together; no single rewrite reached any of
 the 20 measured (one function: 64 shapes tried, best still 5 points off).
+
+### The late prologue is EGCS without PIC (19 November 2026)
+
+Evidence level: three N64 functions of a game built with KMC GCC 2.7.2, judged with the app's linked verdict on a
+copy of the project; plus probe compiles of each installed N64 profile (`app/compiler_fingerprints.py`).
+
+Functions whose stack frame is made after their float arithmetic (`addiu $sp` and `sw $ra` after `mul.s`/`add.s`)
+had been called unreachable: KMC GCC always writes its prologue first, and EGCS at the project's flags scored
+about 1270 because it built position-independent code (`$gp` set up from `_gp_disp`, calls through `jalr $t9`).
+`gcc-egcs-2.91.66` with the console's default flags for it (`-G0 -mips3 -mgp32 -mfp32 -O2 -mno-abicalls -fno-pic`):
+one function exact with its C unchanged (120 -> 0), two at 10 (155 and 120 before), the same at `-O3` and with
+`-mips2`; `-O1` was worse (285-610). Of the installed profiles, EGCS is the one whose probe shows a frame not made
+first and 8-byte frame rounding, which is what these functions show; `-fno-schedule-insns2` or `-O1` under KMC
+reverse its save order (the return address no longer saved last). The fingerprints now rank profiles by such habits
+so the deep pass measures and climbs under the right one.

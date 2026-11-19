@@ -123,6 +123,7 @@ class Search(Permuter):
         self.improvements = 0
         self.baseline_measured = False
         self.phase = 'local repairs'
+        self.profile_bests = {}  # (score, C) per other compiler profile climbed under (profile_climb)
         self.measuring_baseline = False
         self.record_improvement = lambda score: None
         self.recorded_best = None
@@ -1192,6 +1193,16 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     from .stack_layout import text as stack_text
                     if diagnostic := stack_text(proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
                         log(diagnostic)
+                    if not fork:
+                        # (code built with other settings: before the local repairs spend their half of the time,
+                        # measure the profiles its habits point to and climb under one that scores the C better than
+                        # the function's own; profile_climb. At most a few compiles when none does.)
+                        from . import profile_climb
+                        search.phase = 'other compiler profiles'
+                        found = profile_climb.lead(search, agent, proj, fn, fn['best_source'], baseline)
+                        if found is not None and profile_climb.climb(search, agent, proj, fn, fn['best_source'], *found) == 0:
+                            reason = 'Matched'
+                if baseline != 0 and reason != 'Matched':
                     search.phase = 'local repairs'
                     search.log('Baseline measured; trying targeted local repairs before random rewriting.')
                     remaining = max(0, search.deadline-time.monotonic())
