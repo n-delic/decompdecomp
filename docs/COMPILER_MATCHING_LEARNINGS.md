@@ -7358,3 +7358,18 @@ rejects the path. decomp-repair 0.5.7 adds `delay_slot_duplicate` and `symbol_ac
 (non-exact gains, median +2.9 points) before auto-apply stopped doing so. The Compiler panel's "Recheck unverified
 function settings" (`app/unverified_profiles.py`) removes such a setting unless the function matches only with it,
 and keeps it as a hypothesis the deep permuter still tries for an exact match; "Restore" puts them back.
+
+### KMC GCC 2.7.2: a stack object spans its views, not the whole frame (19 November 2026)
+
+Evidence level: three new matches in an N64 game (sibling 14-instruction functions), checked offline with the
+pinned compiler and the project's own header; plus a controlled regression test on homemade C
+(`tests/test_initial_drafts.py`, compiler output only).
+
+`gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`. m2c can't type an address-taken stack object, so the app's initial
+draft repair writes every stack view as a member of one union. That union was the whole frame (0x38 bytes:
+outgoing argument slots, the object, `$ra`), so gcc placed it above a frame of its own: 0x50, every stack offset
+0x10 off, score 9. The same union from its lowest view (`sp+0x10`) up to the first saved-register store (`$ra` at
+0x30), 0x20 bytes with the views rebased: **exact**. Of 19 open functions in that game with the whole-frame
+union, the narrow one matched 3 and brought 11 closer; 3 compiled further away and 2 were unchanged, so new
+drafts get both (`initial_stack_frame`, `initial_stack_frame_whole`), and saved C gets `initial_frame_narrowed`
+as a repair the judge keeps only when it helps.
