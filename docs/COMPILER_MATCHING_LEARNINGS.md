@@ -7591,3 +7591,26 @@ reloaded after an aliasing store (100); zero stores that reuse the argument regi
   identical calls into one (no cross-jump at -O2 for calls), and won't split one either, so the number of calls in
   the C has to equal the number in the target.
 - Evidence: controlled, one function; adopted as an exact match by the judge.
+
+## KMC gcc 2.7.2: seven hand matches from structural leftovers (N64, a game with about 1,600 functions)
+
+All under `gcc-2.7.2-kmc -G0 -mips3 -mgp32 -mfp32 -O2`, adopted as exact by the judge; controlled, one function each.
+
+- **A local read before m2c assigned it** (240 → 0). m2c read a `register` pointer before its assignment from
+  `arg0->0x6C`; moving the assignment to the top is exact. A local read before its first assignment is always m2c's
+  misplacement, never the game's.
+- **m2c's "irregular" `case 0: break;`** (240 → 0). Dropping the invented case, and keeping the two equal
+  `case 0x38` / `case 0x37` bodies separate (not merged as fall-through labels), reproduces the game's compare tree.
+- **A subtraction written as a negated add, subtrahend first** (`-(x >> 1) + (s32)f`): the last 30 points of a
+  register swap closed. Same allocator rule as the operand-order findings: the result takes the first operand's
+  register.
+- **A loop's start values in the game's order** (`i = 0; p = &table; for (; i < 11; i++)`, 210 → 0): with the
+  initialiser in the `for` header gcc 2.7.2 computes `p` first.
+- **A load through a pointer kept in a local** (`s16 *p = &D; *p = v; f((char *)p - 0x20)`, 220 → 0); the
+  global's own `%lo` addressing doesn't match.
+- **A linked-list walk advancing by a size field** (`p += n; next = p + 0x10; … p = next;`, 225 → 0).
+- **2D array index for a row table** (`D[row][col]` with `u8 D[][16]`, held in a variable, not returned directly:
+  370 → 0).
+- **Wrong per-function compiler settings.** Five unmatched functions are exact with their stored C under the
+  game's default `-O2` but carry a per-function override (`-O1`, or `-fno-schedule-insns` with `-g`/`-g3`) that
+  makes them miss: an override a suggestion applied is worth re-checking against the default before more C work.
