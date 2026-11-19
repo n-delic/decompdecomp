@@ -25,6 +25,14 @@ def test_the_one_saved_api_becomes_the_first_endpoint(tmp_path):
     assert Settings(tmp_path / "none.json").endpoints() == []
 
 
+def test_anthropic_endpoint_uses_its_openai_compatible_address(tmp_path):
+    """Its native /v1/messages isn't the chat-completions format: a base ending in /messages answered 404."""
+    s = Settings(tmp_path / "settings.json")
+    e = s.save_endpoint({"provider": "anthropic", "api_key": "sk-ant-test"})
+    assert e["name"] == "Anthropic" and e["base_url"] == "https://api.anthropic.com/v1" and e["model"].startswith("claude-")
+    assert not api.is_local(e["base_url"])
+
+
 def test_endpoints_are_added_changed_and_removed(tmp_path):
     s = Settings(tmp_path / "settings.json")
     a = s.save_endpoint({"provider": "llamacpp", "base_url": "http://192.168.1.20:8080/v1", "model": "qwen",

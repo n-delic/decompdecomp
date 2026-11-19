@@ -329,7 +329,7 @@ function renderLauncher(box, compact = true) {
       <p class="muted small">${esc(a.signin)}</p><pre class="joblog" data-log hidden></pre>`;
   } else if (a.uses_endpoints) {
     const eps = S.st.settings.endpoints || [];
-    const why = `<p class="muted small">The app talks to the model itself: nothing else to install, and no other program's update can break it. Any OpenAI-compatible provider works (OpenAI, DeepSeek, OpenRouter) or a model on this computer; you pay your provider for what it uses.</p>`;
+    const why = `<p class="muted small">The app talks to the model itself: nothing else to install, and no other program's update can break it. Any OpenAI-compatible provider works (OpenAI, Anthropic, DeepSeek, OpenRouter) or a model on this computer; you pay your provider for what it uses.</p>`;
     LZ.eps = (LZ.eps || []).filter((id) => eps.some((e) => e.id === id));
     const live = new Set(eps.map((e) => e.id));
     LZ.models = LZ.models.filter((m) => typeof m === "object" && live.has(m.endpoint));
