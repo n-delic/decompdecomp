@@ -301,3 +301,23 @@ def test_inherited_context_keeps_new_private_includes_owned_by_the_batch(automat
     manifest = json.loads(git(root, 'show', 'HEAD:decompdecomp.json'))
     assert manifest['headers']['local_extra'] == 'common_local_extra.h'
     assert 'private_value' in git(root, 'show', 'HEAD:include/common_local_extra.h')
+
+
+def test_a_manual_checkpoint_clears_the_error_asking_for_one(automatic):
+    # A game's improvement commits stopped after a layout change and asked for a manual checkpoint. Committing one
+    # left the request showing until ten more improvements were waiting.
+    from decompnet.app import repository_setup
+    net, root, _, _ = automatic
+    enable(automatic, 10)
+    token = net.cfg(net.project_row('game'))['score_commits']['token']
+    asked = 'Commit a manual checkpoint after game or function-layout changes, then retry improvement commits.'
+    score_commits._change(net, 'game', token, error=asked, retry_at=9e12)
+    improve(automatic)
+    repository_setup.checkpoint(net, 'game', root, root, lambda _:None)
+    settings = net.cfg(net.project_row('game'))['score_commits']
+    assert settings['error'] == '' and settings['retry_at'] == 0
+    # an error that a checkpoint doesn't answer stays
+    score_commits._change(net, 'game', token, error='The progress checkout or branch changed.')
+    improve(automatic, score=8)
+    repository_setup.checkpoint(net, 'game', root, root, lambda _:None)
+    assert 'branch changed' in net.cfg(net.project_row('game'))['score_commits']['error']

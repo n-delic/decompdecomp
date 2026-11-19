@@ -85,6 +85,15 @@ def _change(net, slug, token, **values):
     auto_push._change(net, slug, apply)
 
 
+def checkpointed(net, slug):
+    """A manual checkpoint was just committed: drop the error asking for one. It used to stay until the next batch of
+    improvements (`threshold` of them) got through, asking for a checkpoint that had been made."""
+    proj = net.project_store(slug).one('SELECT * FROM projects WHERE slug=?', slug)
+    settings = net.cfg(proj).get('score_commits', {}) if proj else {}
+    if 'manual checkpoint' in (settings.get('error') or ''):
+        _change(net, slug, settings.get('token'), error='', retry_at=0)
+
+
 def _acknowledge(net, rows, *, project_id):
     with net.project_store(project_id).tx() as db:
         for row in rows:

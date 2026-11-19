@@ -170,6 +170,8 @@ def checkpoint(net, slug, root, path, log, *, message='Save decompilation progre
         paths.add('.gitignore')
     commit = repository_progress.commit_snapshot(root, files, paths, log, expected_head=head, expected_branch=branch,
         message=message)
+    from . import score_commits
+    score_commits.checkpointed(net, slug)
     return commit
 
 
