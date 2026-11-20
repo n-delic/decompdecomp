@@ -292,7 +292,7 @@ def register(app: App) -> None:
                 else:
                     selected = definitions
                 return JSONResponse({'tools':[{**t.model_dump(mode='json', by_alias=True),
-                    'calls':usage.get(t.name, {}).get('calls', 0), 'task_calls':tasks.get(t.name, {}), 'schema_chars':len(json.dumps(t.model_dump(mode='json', by_alias=True))), 'required':t.name in tool_policy.REQUIRED,
+                    'calls':usage.get(t.name, {}).get('calls', 0), 'task_calls':tasks.get(t.name, {}), 'schema_chars':len(json.dumps(t.model_dump(mode='json', by_alias=True))), 'required':t.name in tool_policy.REQUIRED or t.name == 'release_and_continue',
                     'global_disabled':t.name in blocked, 'enabled':t.name not in blocked | own}
                     for t in selected], 'helper':helper.id if helper else None,
                     'presets':[{'id':key, 'label':label, 'tools':sum(t.name not in tool_policy.preset_disabled(key) and (not helper or t.name not in blocked) for t in selected)} for key,(label,_) in tool_policy.PRESETS.items()],

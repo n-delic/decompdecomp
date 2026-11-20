@@ -23,6 +23,7 @@ from ..repair_feedback import AGENT_CATEGORIES, submission, track_matches
 from . import (
     agent_tokens,
     asset_agents,
+    automatic_assignment,
     boundary_investigations,
     claim_state,
     compiler_experiments,
@@ -449,10 +450,17 @@ def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
 
 # name -> handler(net, agent, slug, **args); every handler returns text for the model
 @release_operation("tool", protect_new=True)
-def _release_with_experiment(net, agent, slug, function, notes, needs, not_c, move_on, next_experiment, claim_token=""):
-    result = net.release_function(agent, function, notes, slug, needs or '', bool(not_c), bool(move_on),
-                                  claim_token=claim_token, next_experiment=next_experiment)
-    return agent_tokens.brief(net, result, slug, agent)
+def _release_with_experiment(net, agent, slug, function, notes, needs="", not_c=False, move_on=False,
+                             next_experiment=None, claim_token="", *, automatic=False):
+    from . import session_budget
+
+    pivot = {}
+    if automatic:
+        budget = session_budget.current(net, agent, slug)
+        pivot['automatic_pivot'] = bool(budget and automatic_assignment.available(net, agent, slug, budget, completed=1))
+    released = net.release_function(agent, function, notes, slug, needs or '', bool(not_c), bool(move_on),
+                                    claim_token=claim_token, next_experiment=next_experiment, **pivot)
+    return agent_tokens.brief(net, released, slug, agent)
 
 
 @claim_state.quick
@@ -632,8 +640,9 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "last_diff": agent_tokens.diff_page,
     "report_candidate_issue": lambda net, agent, slug, function, revision, issue, reason, alternative_revision="":
         candidate_quality.report(net,agent,slug,function,revision,issue,reason,alternative_revision),
-    "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False, move_on=False, next_experiment=None, claim_token="":
-        _release_with_experiment(net,agent,slug,function,notes,needs,not_c,move_on,next_experiment,claim_token),
+    "release_function": _release_with_experiment,
+    automatic_assignment.RELEASE: lambda net, agent, slug, **args:
+        _release_with_experiment(net, agent, slug, **args, automatic=True),
     "get_context": _get_context,
     "edit_context": lambda net, agent, slug, old, new, message, function="":
         net.edit_context(agent, slug, old, new, message, function or None),
@@ -715,7 +724,7 @@ JUDGE_TOOLS = frozenset({"compile_and_diff", "compile_patch", "compile_variants"
                          "try_compiler", "compiler_experiments",
                          # (they read and write the database, not the saved files: release_function waited 3.2 s
                          # a call for the project's lock, behind other helpers' full checks)
-                         "claim_function", "release_function", "add_note"})
+                         "claim_function", "release_function", automatic_assignment.RELEASE, "add_note"})
 REPAIR_CAPTURE_TOOLS = frozenset({'compile_and_diff', 'compile_patch', 'compile_variants', 'compile_family',
                                  'try_local_repairs', 'try_compiler', 'compiler_experiments', 'search_flags',
                                  'edit_file', 'edit_context', 'redraft'})
@@ -824,16 +833,17 @@ def _tool_foreground(net, agent, slug, name, args):
         'warnings', 'quality', 'history', 'notes', 'declarations', 'compiler', 'layouts'}
     # Polishing also judges current DB inputs and rechecks source/header/target
     # receipts before publication; claims may reuse such a verified plan.
+    releasing = name in {'release_function', automatic_assignment.RELEASE}
     allowed = function_read or name in {'compile_and_diff','compile_patch','compile_variants','compile_family','try_local_repairs',
                                        'add_note','report_repair','get_assembly','get_context','claim_readable','polish_function','make_readable'} or (
         name == 'get_candidate' and args.get('base','current') == 'current') or (
-        name == 'release_function' and not args.get('needs','').strip() and not args.get('not_c',False))
-    notes = allowed and name in {'add_note','release_function'}
+        releasing and not args.get('needs','').strip() and not args.get('not_c',False))
+    notes = allowed and (releasing or name == 'add_note')
     progress = getattr(net, 'progress', None)
     from ..request_timing import timed_lock
     with progress.foreground() if allowed and progress is not None else nullcontext():
         attempt = nullcontext()
-        if notes and name == 'release_function':
+        if notes and releasing:
             # Compiles own the candidate lock before publishing under the project
             # lock. A release must use that same order, including its receipt guard.
             fn = net._function(args['function'],slug)
@@ -844,7 +854,7 @@ def _tool_foreground(net, agent, slug, name, args):
         # Keep note writes and their publication marker together so a finishing
         # saved worker cannot acknowledge them before they are published.
         with attempt, timed_lock(progress._project_lock(slug), 'progress_project_lock_wait') if notes and progress is not None else nullcontext():
-            if notes and name == 'release_function' and net._function(args['function'],slug)['id'] != fn['id']:
+            if notes and releasing and net._function(args['function'],slug)['id'] != fn['id']:
                 raise NetworkError('The function changed while this release waited. Read its current claim before releasing.')
             yield
             if notes and progress is not None:progress.foreground_changed(slug)
@@ -878,7 +888,8 @@ def _undisturbed(net: RomNetwork, agent: Agent, slug: str, run: Callable[[], str
 
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
-    return _undisturbed(net, agent, slug, lambda: _invoke_once(net, agent, slug, name, args))
+    with automatic_assignment.serialize(net, agent, slug, name):
+        return _undisturbed(net, agent, slug, lambda: _invoke_once(net, agent, slug, name, args))
 
 
 def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
@@ -921,9 +932,10 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
         return result
 
 
-def _repair_request(cases):
+def _repair_request(cases, *, automatic=False):
     examples = ', '.join(f'{function} (case_id={case_id})' for case_id, function in cases.items())
-    return f"Before claiming more work, call report_repair with function, case_id and category for {examples}. Use other if unsure."
+    when = 'Before working on the next assignment' if automatic else 'Before claiming more work'
+    return f"{when}, call report_repair with function, case_id and category for {examples}. Use other if unsure."
 
 
 @claim_stalls.snapshot_rules
@@ -965,6 +977,8 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
             if handshake:pending.discard((agent.id,slug))
             return 'Asset discovery connection ready. Call claim_asset_region; do not claim or compile functions.'
         named=_named(net,agent,slug,args,name)
+        automatic = budget is not None and automatic_assignment.enabled(net, agent, slug)
+        before = automatic_assignment.held(net, agent, slug) if automatic and name in automatic_assignment.HANDOFF_TOOLS else None
         # A real CLI handshake confirms authenticated access, not a saved-code
         # import. Keep its compact facts on the current database snapshot so a
         # long recheck cannot prevent the CLI from establishing its connection.
@@ -992,7 +1006,9 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
         if matches and visible(net, slug, ['report_repair'], agent):
             cases = dict(matches)
             net.__dict__.setdefault('_pending_repair_classifications', {}).setdefault(repair_key, {}).update(cases)
-            result += '\n' + _repair_request(cases)
+            result += '\n' + _repair_request(cases, automatic=automatic)
+        if automatic:
+            result = automatic_assignment.after_tool(net, agent, slug, budget, before, name, handshake, result)
         return result
     finally:
         if budget:
@@ -1036,7 +1052,7 @@ QUICK_TOOLS = frozenset({
     'guide', 'project_info', 'get_claims', 'list_functions', 'get_function', 'get_assembly', 'get_context',
     'last_diff', 'search_notes', 'read_file', 'search_code', 'file_status', 'get_class', 'compiler_map',
     'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
-    'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function',
+    'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function', automatic_assignment.RELEASE,
     'add_note', 'report_repair', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
     'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness', 'get_data_unit', 'claim_data', 'release_data',
     'claim_port_fix', 'release_port_fix',
@@ -1094,7 +1110,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                         def once():
                             with _tool_foreground(net, agent, slug, name, args):
                                 return _dispatch(net,agent,slug,name,args,count_usage=True)
-                        result=_undisturbed(net, agent, slug, once)
+                        with automatic_assignment.serialize(net, agent, slug, name):
+                            result=_undisturbed(net, agent, slug, once)
                 except Exception as exc:
                     error=exc
                 elapsed=time.monotonic()-dispatch
@@ -1312,6 +1329,16 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                 once agents of two models agree, it's set aside and no one is handed it again.
         """
         return await run(ctx, "release_function", function=function, notes=notes, needs=needs, not_c=not_c, move_on=move_on, next_experiment=next_experiment, claim_token=claim_token)
+
+    @tool
+    async def release_and_continue(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False,
+                                   move_on: bool = False, next_experiment: dict | None = None, claim_token: str = "") -> str:
+        """Release your current function with notes and receive your next assignment when eligible. Remember to
+        pass the current claim_token. All other arguments and release rules are the same as release_function."""
+        # The gateway can acknowledge release_function before it finishes. This
+        # tool needs the real response, which also contains the next brief.
+        return await run(ctx, automatic_assignment.RELEASE, function=function, notes=notes, needs=needs,
+                         not_c=not_c, move_on=move_on, next_experiment=next_experiment, claim_token=claim_token)
 
     @tool
     async def get_context(ctx: Context, function: str = "") -> str:

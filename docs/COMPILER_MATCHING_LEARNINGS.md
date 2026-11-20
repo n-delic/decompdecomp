@@ -8339,3 +8339,22 @@ linked. The 22,410 result has one observed run.
   GCC 4.4.0 non-PIC o32 trial for the saved C in deep search. The evidence
   is the previously linked 24-byte exact replay described above. The ordinary
   deep profile verifier still decides whether to offer or save a match.
+
+### Separate loop sentinels and adjacent groups of floating loads
+
+Controlled replays of two archived N64 drafts used GCC 2.7.2 KMC
+`-G0 -mips3 -mgp32 -mfp32 -O2`, with each original header and the
+ordinary ROM linker. Only the generated C changes differed.
+
+- The target materialized `0xFFFF` in two registers, first for the guard
+  that skips the scan and again for the backedge comparison. Introducing
+  one initialized `unsigned` local in the guarded block and using it
+  only in the inner do-loop comparison took 270 to linked exact. The
+  archived winner also moved a declaration and added an assignment.
+  Neither additional edit was needed in this replay.
+- Two adjacent groups of four independent floating field initializers had
+  the correct operations but different FPR allocation. Moving the second
+  group's last initializer into the first group before its last two
+  entries and moving the displaced final initializer to the second group
+  took 75 to linked exact. This was the first bounded proposal and retained
+  both declaration boundaries and all output expressions.
