@@ -18,7 +18,7 @@ from ..arch.mips_code_recovery import called_extent, leaf_extent
 def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     """Keep all original instructions while joining/splitting strictly validated bodies."""
     if console.arch!='mips':return functions
-    from .split import _LOCAL_REF, _SYMBOL_LINE, AsmLine
+    from .split import _LOCAL_REF, _SYMBOL_LINE, AsmLine, DataSymbol
     explicit={int(m[2],16) for text in symbols for m in _SYMBOL_LINE.finditer(text)}
     starts={f.vram for f in functions}
     order='big' if console.big_endian else 'little'
@@ -165,9 +165,13 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     def referenced(fn):
         return (fn.vram in explicit or fn.vram in pointers or any(offset!=fn.rom for offset,_ in references.get(fn.vram,()))
                 or any(d.rom is not None and d.rom<fn.rom+fn.size and fn.rom<d.rom+d.size for d in data))
-    kept=[];dropped=0;ordered=sorted(result,key=lambda f:(f.segment,f.rom))
+    kept=[];dropped=markers=0;ordered=sorted(result,key=lambda f:(f.segment,f.rom))
     for i,fn in enumerate(ordered):
         previous=kept[-1] if kept else None;following=ordered[i+1] if i+1<len(ordered) else None
+        if overlay_end_marker(fn, previous, following, image, order, segments) and not referenced(fn):
+            data.append(DataSymbol(fn.name, fn.vram, fn.rom, 4, 'data'))
+            markers += 1
+            continue
         if (filler_extent(fn.size,fn.lines[0].word) and previous is not None and following is not None
                 and previous.segment==fn.segment==following.segment
                 and previous.rom+previous.size==fn.rom and following.rom==fn.rom+4 and following.vram==fn.vram+4
@@ -177,8 +181,28 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         kept.append(fn)
     if dropped:
         log(f'Left {dropped} alignment words out of the functions: filler between a return and the next entry, kept in the image.')
-        return kept
-    return result
+    if markers:
+        log(f'Recovered {markers} overlay end markers as data.')
+    return kept if dropped or markers else result
+
+
+def overlay_end_marker(fn, previous, following, image, order, segments):
+    # Some overlays use an inert 0xBEEF sentinel among alignment zeros after a tail jump.
+    if (fn.size != 4 or fn.lines[0].word != 0x2400beef or fn.vram % 16
+            or previous is None or previous.segment != fn.segment or previous.rom+previous.size != fn.rom-8
+            or previous.size < 8 or previous.lines[-2].word >> 26 != 2
+            or following is not None and following.segment == fn.segment and following.rom < fn.rom+32):
+        return False
+    jump = previous.lines[-2]
+    target = ((jump.vram+4) & 0xf0000000) | ((jump.word & 0x3ffffff) << 2)
+    owners = [segment for segment in segments if segment.contains(fn.vram-16, 48)]
+    if len(owners) != 1:
+        return False
+    segment = owners[0]
+    marker = (0x2400beef).to_bytes(4, order)
+    jump_bytes = jump.word.to_bytes(4, order) + previous.lines[-1].word.to_bytes(4, order)
+    return (segment.vram - segment.rom_start == fn.vram - fn.rom and not segment.contains(target)
+            and image[fn.rom-16:fn.rom+32] == jump_bytes + bytes(8) + marker + bytes(28))
 
 
 def recover_inline_tables(functions, data, image, order, protected, references, segments, log):
