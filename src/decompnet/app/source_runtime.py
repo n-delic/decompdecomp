@@ -105,6 +105,8 @@ def changed_workers(paths) -> set[str]:
             workers.add("permuter")
         elif path == "src/decompnet/app/tool_reader_worker.py":
             workers.add("reader")
+        elif path == "src/decompnet/app/render_worker_child.py":
+            workers.add("renderers")
         elif path not in ("README.md", "ROADMAP.md") and not path.startswith(("docs/", "tests/")):
             return set()
     return workers
@@ -187,9 +189,11 @@ class Runtime:
                 if self.cancel.is_set():
                     break
                 command(argv, cwd)
-            reader_source = staged / 'src/decompnet/app/tool_reader_worker.py'
-            if not self.cancel.is_set() and reader_source.is_file():
-                command([uv, 'run', '--no-sync', 'python', '-c', 'import decompnet.app.tool_reader_worker'], staged)
+            for module in ('tool_reader_worker', 'render_worker_child'):
+                if self.cancel.is_set():
+                    break
+                if (staged / f'src/decompnet/app/{module}.py').is_file():
+                    command([uv, 'run', '--no-sync', 'python', '-c', f'import decompnet.app.{module}'], staged)
         except BaseException:
             discard(staged)
             raise
@@ -219,12 +223,17 @@ class Runtime:
             validate(str(folder), repo)  # work written while preparing cannot be overwritten
             command([git, "merge", "--ff-only", desired], folder)
         self.app.build_id = desired[:12]
+        if "renderers" in workers and (renderers := self.app.net.progress.renderers) is not None:
+            renderers.reload_code()
         if reader is not None and not reader.reload_code():
             raise ValueError("The source update was applied, but the tool reader hasn't started. "
                              "The app is answering its requests. See logs/tool-reader.log for details.")
-        names = " and ".join(name for key, name in (("permuter", "permuter"), ("reader", "tool reader"))
-                             if key in workers)
-        self.job.update(state="done", message=f"Updated the {names}. The app, agents and other jobs kept running.")
+        labels = {"permuter": "permuter", "reader": "tool reader", "renderers": "saved-progress render workers"}
+        names = ", ".join(label for key, label in labels.items() if key in workers)
+        message = f"Updated the {names}. The app, agents and other jobs kept running."
+        if "renderers" in workers:
+            message += " Each render worker picks up the change on its next save."
+        self.job.update(state="done", message=message)
         return True
 
     def drain(self):

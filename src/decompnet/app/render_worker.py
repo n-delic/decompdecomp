@@ -17,6 +17,7 @@ projects go side by side; one project renders one at a time anyway).
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import logging
@@ -28,13 +29,13 @@ import time
 from pathlib import Path
 
 from ..hostenv import NO_WINDOW
+from . import frontend_reload
 
 log = logging.getLogger("decompdecomp")
 WORKERS = 2
 LIMIT_SECONDS = 120.0  # a render that takes longer is done here instead (and the worker replaced)
 START_SECONDS = 60.0
-# The errors a render raises that the app expects (progress.py): they come back as the same kind.
-EXPECTED = ("NetworkError", "OSError", "UnicodeError", "JSONDecodeError")
+WORKER_SOURCE = Path(__file__).with_name("render_worker_child.py")
 
 
 class Unavailable(Exception):
@@ -57,6 +58,7 @@ class _Worker:
     def __init__(self, net, internal: Path, number: int):
         self.net, self.internal, self.number = net, Path(internal), number
         self.process: subprocess.Popen | None = None
+        self.revision = None
         self.lock = threading.Lock()  # held for a whole request: one at a time
 
     def _start(self) -> subprocess.Popen:
@@ -64,8 +66,7 @@ class _Worker:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("ab") as errors:
             process = subprocess.Popen(
-                [sys.executable, "-m", "decompnet.app.render_worker", "--child", str(self.net.store.path),
-                 str(self.net.workspace)],
+                [sys.executable, str(WORKER_SOURCE), str(self.net.store.path), str(self.net.workspace)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors, bufsize=1 << 20,
                 creationflags=NO_WINDOW)
         ready: list[bytes] = []
@@ -75,13 +76,21 @@ class _Worker:
         reader.join(START_SECONDS)
         if not ready or ready[0].strip() != b"READY":
             process.kill()
+            process.wait()
             raise Unavailable(f"the render worker didn't start ({ready[0][:200] if ready else 'no answer'!r})")
         return process
 
-    def ask(self, request: dict) -> dict:
+    def ask(self, request: dict, source_revision) -> dict:
         with self.lock:
-            if self.process is None or self.process.poll() is not None:
-                self.process = self._start()
+            # Read the revision after waiting: a queued save can outlive a source update.
+            revision = source_revision()
+            if self.process is None or self.process.poll() is not None or self.revision != revision:
+                self._stop()
+                try:
+                    self.process = self._start()
+                except OSError as error:
+                    raise Unavailable(f"the render worker couldn't start: {error}") from None
+                self.revision = revision
             process = self.process
             answer: list[bytes] = []
             try:
@@ -100,15 +109,19 @@ class _Worker:
                 raise Unavailable("the render worker didn't answer in time" if not answer else "the render worker ended")
             return json.loads(answer[0])
 
+    def _stop(self) -> None:
+        process, self.process = self.process, None
+        if process is not None and process.poll() is None:
+            try:
+                process.stdin.close()
+                process.wait(timeout=3)
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
+                process.wait()
+
     def stop(self) -> None:
         with self.lock:
-            if self.process is not None and self.process.poll() is None:
-                try:
-                    self.process.stdin.close()
-                    self.process.wait(timeout=3)
-                except (OSError, subprocess.TimeoutExpired):
-                    self.process.kill()
-            self.process = None
+            self._stop()
 
 
 class Renderers:
@@ -119,6 +132,21 @@ class Renderers:
         self.ids = itertools.count(1)
         self.served = self.fallbacks = 0
         self.busy_seconds = 0.0
+        self.watch_source = frontend_reload.enabled()
+        self.update_generation = 0
+
+    def reload_code(self) -> None:
+        """New renders replace their worker once its current request has finished."""
+        self.update_generation += 1
+
+    def _source_revision(self) -> tuple[int, bytes | None]:
+        digest = None
+        if self.watch_source:
+            try:
+                digest = hashlib.sha256(WORKER_SOURCE.read_bytes()).digest()
+            except OSError:  # an editor may briefly remove the file while replacing it
+                raise Unavailable("the render worker source isn't available") from None
+        return self.update_generation, digest
 
     def _pick(self) -> _Worker:
         # The first idle one, else the first (its lock queues the request).
@@ -134,7 +162,7 @@ class Renderers:
                    "headers": headers, "readme_key": list(readme_key) if readme_key is not None else None}
         began = time.monotonic()
         try:
-            reply = self._pick().ask(request)
+            reply = self._pick().ask(request, self._source_revision)
         except Unavailable:
             self.fallbacks += 1
             raise
@@ -162,57 +190,3 @@ class Renderers:
 def start(net, internal: Path) -> Renderers | None:
     workers = count()
     return Renderers(net, internal, workers) if workers else None
-
-
-# ---------------------------------------------------------------------------------------------------- the child
-def child(db_path: str, workspace: str) -> None:
-    from .. import store as storage
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr,
-                        format="%(asctime)s %(levelname)s [render-worker pid=%(process)d] %(message)s")
-    storage.ATTACH_ONLY = True
-    from . import saves
-    from .engine import RomNetwork
-    from .tool_reader import drop_stale_caches, reader_progress
-    from .workers import lower_priority
-    lower_priority()  # background work: the app and the agents' compiles come first
-    net = RomNetwork(db_path, Path(workspace))
-    reader_progress(net)
-    seen: dict = {}
-    seen_lock = threading.Lock()
-    out = sys.stdout.buffer
-    sys.stdout = sys.stderr  # (anything printed goes to the log, not into a reply)
-    out.write(b"READY\n")
-    out.flush()
-    for line in sys.stdin.buffer:
-        try:
-            request = json.loads(line)
-            slug = request["slug"]
-            drop_stale_caches(net, slug, seen, seen_lock)
-            readme_key = tuple(request["readme_key"]) if request.get("readme_key") is not None else None
-            if request["full"]:
-                files, counts = saves._render(net, slug, readme_key=readme_key, write_readme=False)
-            else:
-                files, counts = saves._render_partial(net, net._project(slug), Path(request["folder"]),
-                                                      request["names"], headers=request["headers"],
-                                                      readme_key=readme_key, write_readme=False)
-            reply = {"id": request.get("id"), "ok": True, "files": files, "counts": counts}
-        except Exception as error:
-            kind = type(error).__name__
-            if isinstance(error, OSError):
-                kind = "OSError"
-            elif isinstance(error, UnicodeError):
-                kind = "UnicodeError"
-            elif type(error).__name__ != "JSONDecodeError" and _is_network_error(error):
-                kind = "NetworkError"
-            reply = {"id": None, "ok": False, "type": kind, "message": str(error)}
-        out.write(json.dumps(reply).encode() + b"\n")
-        out.flush()
-
-
-def _is_network_error(error) -> bool:
-    from ..network import NetworkError
-    return isinstance(error, NetworkError)
-
-
-if __name__ == "__main__" and len(sys.argv) == 4 and sys.argv[1] == "--child":
-    child(sys.argv[2], sys.argv[3])
