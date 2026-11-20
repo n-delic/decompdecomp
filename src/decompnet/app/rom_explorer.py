@@ -13,6 +13,7 @@ import json
 import mmap
 import re
 import time
+from importlib.metadata import version
 from pathlib import Path
 
 from ..network import IN_BUILD, NetworkError
@@ -135,9 +136,11 @@ def _run(net, slug, log):
     revision = _revision(net,proj)
     worker_source = rom_scan.WORKER_SOURCE.read_bytes()
     worker_revision = hashlib.sha256(worker_source).hexdigest()
+    asset_revision = version('decompassets')
     previous=_read(net,proj)['report']
     if (previous and previous.get('revision')==revision and 'loader_flow' in previous
-            and previous.get('worker_revision') == worker_revision):
+            and previous.get('worker_revision') == worker_revision
+            and previous.get('asset_revision') == asset_revision):
         log.check_cancel();log('ROM image and analysis inputs are unchanged; using the current saved map.')
         log.progress(dict(phase='ROM map is current',done=1,total=1))
         return dict(regions=len(previous['regions']),size=previous['size'],cached=True)
@@ -158,7 +161,8 @@ def _run(net, slug, log):
     current = net.project_row(slug)
     if current['id'] != proj['id'] or revision != _revision(net,current):
         raise NetworkError('The project layout changed during the scan. Scan again to use the current mappings.')
-    report.update(revision=revision,worker_revision=worker_revision,scanned_at=time.time(),image_name=path.name,
+    report.update(revision=revision,worker_revision=worker_revision,asset_revision=asset_revision,
+                  scanned_at=time.time(),image_name=path.name,
                   derived=bool(not source['fork'] and cfg['rom'].get('program') and cfg['rom']['program']!=cfg['rom']['file']))
     if report['derived']:report['note']='This is a derived analysis image (for example a flattened executable or expanded code), not physical-media offsets. Its hash freezes this scan; it does not certify a reconstruction of the original file. '+report['note']
     # Merge notes only at publication, so edits made during a rescan survive.

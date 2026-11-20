@@ -110,6 +110,16 @@ def project(tmp_path):
     if hasattr(net,'autosave'):net.autosave.close()
 
 
+def test_rescan_refreshes_assets_after_library_update(project, monkeypatch):
+    net, _, _ = project
+    monkeypatch.setattr(rom_explorer, 'version', lambda _: '1')
+    assert not rom_explorer.run(net, 'game', Log()).get('cached')
+    assert rom_explorer.run(net, 'game', Log())['cached']
+    monkeypatch.setattr(rom_explorer, 'version', lambda _: '2')
+    assert not rom_explorer.run(net, 'game', Log()).get('cached')
+    assert rom_explorer.run(net, 'game', Log())['cached']
+
+
 def test_saved_map_preview_annotations_staleness_and_no_progress_side_effects(project,monkeypatch):
     net,pid,root=project
     monkeypatch.setattr(net.progress,'sync',lambda *a,**k:pytest.fail('Explorer must not synchronize or judge saved work'))
