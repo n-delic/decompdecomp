@@ -107,3 +107,31 @@ def test_packed_copy_respects_strict_aliasing():
 def test_neighbor_must_resolve_to_an_equal_address_with_the_offset():
     family,source,diff,asm,*_ = CASES[-1]
     assert family not in {kind for kind,_ in route(source,diff,asm,resolve={'base':0x80001004}.get)}
+
+
+def test_cast_repairs_reach_measured_kmc_proposals():
+    source = '''
+extern f32 as_float;
+extern s32 as_word;
+void f(u8 *base, int select) {
+    u8 *p;
+    p = base;
+    if (select) {
+        as_float = (f32)*p;
+    } else {
+        as_word = (s32)*p;
+    }
+}
+'''
+    rows = [('|', 'lwc1 $f0, ($v1)', 'lbu $v0, ($v1)'), ('>', '', 'mtc1 $v0, $f0'),
+            ('>', '', 'cvt.s.w $f0, $f0'), ('|', 'lw $v0, ($v1)', 'lbu $v0, ($v1)')]
+    candidates = [candidate for family,candidate in route(source,rows,'') if family=='kmc_typed_load']
+    assert len(candidates)==3
+    assert '*(f32 *)p' in candidates[0] and '*(s32 *)p' in candidates[0]
+    assert 'kmc_typed_load' not in {family for family,_ in route(source,rows,'',compiler='ido-5.3')}
+    assert 'kmc_typed_load' not in {family for family,_ in route(source,rows,'',flags=('-fstrict-aliasing',))}
+
+    source = 'void f(s32 *p) { *p = (*p | (u16)0x20000000); }'
+    rows = [(' ', 'lui $s2, 0x2000', 'lui $s2, 0x2000'), (' ', 'lw $v0, ($a0)', 'lw $v0, ($a0)'),
+            ('<', 'or $v0, $v0, $s2', ''), (' ', 'sw $v0, ($a0)', 'sw $v0, ($a0)')]
+    assert ('kmc_truncated_literal',source.replace('(u16)','')) in route(source,rows,'')

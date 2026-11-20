@@ -8375,3 +8375,21 @@ ROM linker against the original target using the saved failed source and header.
   time removed the unwanted `cvt.d.s` instructions. The rule requires a
   float move versus promotion mismatch adjacent to a direct call to that
   callee and leaves existing header declarations alone.
+
+### Cast placement in loads and truncated flag operands
+
+Two archived N64 failed sources were rebuilt and tested with KMC GCC 2.7.2,
+`-G0 -mips3 -mgp32 -mfp32 -O2`, and their original headers and ROM targets.
+
+- A value cast after a byte dereference produced `lbu` and `cvt.s.w` where
+  the target used `lwc1`. In a second branch the target used `lw`. Switching
+  the dereferences to `*(f32 *)p` and `*(s32 *)p` reduced a 1,060-point
+  mismatch to 200 and 860 respectively on their own. Together they gave
+  exact linked bytes and data. Preserve the address and require matching
+  load operands and an explicit conversion mismatch for the float case.
+- Casting a high-word flag literal to an unsigned halfword folded it to
+  zero and removed the OR from a word load/store. Removing the cast took
+  the mismatch from 360 to an exact linked match. Require the target OR
+  between a load and store to the same address and an upper immediate
+  feeding its flag register. The constant can also exist in the failed
+  assembly for another use, so a missing literal alone is not the signal.
