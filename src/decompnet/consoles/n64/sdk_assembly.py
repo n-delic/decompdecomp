@@ -24,6 +24,8 @@ KNOWN = {
         ('guMtxL2F', 108, 'scheduled MGU fixed-point unpacker', 'mgu/mtxl2f.s'),
     # The t9 scratch register and the store in the return slot agree with
     # exceptasm's queue pop, directly called by the adjacent dispatcher.
+    '482c149f613482f79eda678641c3b4a0a160a6346976865d6055c4494c476ad9':
+        ('__osEnqueueThread', 72, 'scheduler priority enqueue', 'os/exceptasm.s'),
     '9cfacc440af965d2989166dd711ef58ae5a92e68c6ef3cf399a0403e1fd36afe':
         ('__osPopThread', 16, 'scheduler queue pop', 'os/exceptasm.s'),
     '8ae1ab78f7b451eff125bd297f76cbcc5f2e3c7a54c6c1497d3f3c0b281f886f':

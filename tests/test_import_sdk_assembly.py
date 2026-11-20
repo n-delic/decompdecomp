@@ -158,12 +158,12 @@ def test_deep_permuter_sets_aside_sdk_in_existing_project(tmp_path, monkeypatch,
 
 def test_exact_runtime_backfill_requires_the_linked_image_and_library_setting(monkeypatch, tmp_path):
     from decompnet.app.sdk_assembly import choose_c, known_proof
-    from decompnet.consoles.n64 import sdk_runtime
+    from decompnet.consoles.n64 import sdk_linked
 
     image = hashlib.sha1(BODY * 2).hexdigest()
-    monkeypatch.setattr(sdk_runtime, '_KNOWN', {image: {hashlib.sha256(BODY).hexdigest(): ('runtimeToy', 8)}})
-    monkeypatch.setattr(sdk_runtime, 'SIZES', (8,))
-    monkeypatch.setattr(N64, 'sdk_runtime_sizes', (8,))
+    monkeypatch.setattr(sdk_linked, '_KNOWN', {image: {hashlib.sha256(BODY).hexdigest(): ('runtimeToy', 8)}})
+    monkeypatch.setattr(sdk_linked, 'SIZES', (8,))
+    monkeypatch.setattr(N64, 'sdk_linked_sizes', (8,))
     net, slug = import_toy(tmp_path, monkeypatch)
     proj = net.project_row(slug)
     fn = net._function('runtimeToy', slug)
@@ -191,3 +191,52 @@ def test_sdk_matrix_rebuild_variant_checks_full_reference_free_body(monkeypatch)
     assert known_proof(N64, proj, fn)['name'] == 'guMtxCatF'
     assert known_proof(N64, proj, dict(fn, target=b'\0' + body[1:])) is None
     assert known_proof(N64, proj, dict(fn, relocs='[[0,4,2147487744]]')) is None
+
+
+def test_linked_sdk_assembly_survives_the_library_c_opt_out(monkeypatch):
+    from decompnet.app.sdk_assembly import known_proof
+    from decompnet.consoles.n64 import sdk_linked
+
+    image = '1' * 40
+    digest = hashlib.sha256(BODY).hexdigest()
+    monkeypatch.setattr(sdk_linked, '_LIBULTRA', {image: {digest: ('__osSchedulerToy', 8, False, 'os/exceptasm.s')}})
+    monkeypatch.setattr(sdk_linked, 'SIZES', (8,))
+    monkeypatch.setattr(N64, 'sdk_linked_sizes', (8,))
+    cfg = {'kind': 'rom', 'rom': {'analysis_sha1': image}, 'sdk_set_aside_c': False,
+           'compiler': {'toolchain': 'gcc-2.7.2-kmc'}}
+    fn = {'vram': 0x80001000, 'size': 8, 'target': BODY, 'relocs': '[[0,4,2147487744]]'}
+    proof = known_proof(N64, {'config': json.dumps(cfg)}, fn)
+    assert proof['name'] == '__osSchedulerToy' and not proof['from_c']
+    cfg['rom']['analysis_sha1'] = '2' * 40
+    assert known_proof(N64, {'config': json.dumps(cfg)}, fn) is None
+
+
+def test_scheduler_split_requires_exact_image_and_combined_body(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from decompnet.consoles.n64 import sdk_linked
+
+    start = 0x80001000
+    words = [0x24020001] * 139  # synthetic words, no game data
+    words[94] = 0x42000018
+    words[96:99] = [0x0c000040, 0, 0]
+    code = b''.join(word.to_bytes(4, 'big') for word in words)
+    image = '1' * 40
+    monkeypatch.setattr(sdk_linked, '_LINKED_IMAGE', image)
+    monkeypatch.setattr(sdk_linked, '_MERGED_SCHEDULER', hashlib.sha256(code).hexdigest())
+    lines = [split.AsmLine(i * 4, start + i * 4, word, '', '') for i, word in enumerate(words)]
+    fn = split.RomFunction('func_80001000', start, 0, 'code', lines, tmp_path / 'toy.s')
+    result = SimpleNamespace(functions=[fn])
+    sdk_linked.split_scheduler(result, '2' * 40)
+    assert result.functions == [fn]
+    original = lines[-1].word
+    lines[-1].word ^= 1
+    sdk_linked.split_scheduler(result, image)
+    assert result.functions == [fn]
+    lines[-1].word = original
+    sdk_linked.split_scheduler(result, image)
+    assert [(f.vram, f.size) for f in result.functions] == [
+        (start, 380), (start + 380, 12), (start + 396, 160),
+    ]
+    assert result.functions[0].lines[-1].word == 0x42000018
+    assert result.functions[1].lines[-1].word == 0  # keep the cleanup call's delay slot

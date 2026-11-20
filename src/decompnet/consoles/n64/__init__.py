@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
-from . import emulator, recomp, sdk_assembly, sdk_runtime
+from . import emulator, recomp, sdk_assembly, sdk_linked
 from .port import KIT as PORT_KIT
 
 # Store only a digest of the entire body, including the return delay slot.
@@ -212,10 +212,15 @@ class Nintendo64(Console):
     def sdk_assembly_identity(self, code, big_endian=True):
         return sdk_assembly.identify(code, big_endian)
 
-    sdk_runtime_sizes = sdk_runtime.SIZES
+    sdk_linked_sizes = sdk_linked.SIZES
 
-    def sdk_runtime_identity(self, code: bytes, image_sha1: str) -> dict | None:
-        return sdk_runtime.identify(code, image_sha1)
+    def sdk_linked_identity(self, code: bytes, image_sha1: str) -> dict | None:
+        return sdk_linked.identify(code, image_sha1)
+
+    def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
+        result = super().split_game(workdir, picked, symbols=symbols, log=log)
+        sdk_linked.split_scheduler(result, picked.info.get('sha1', ''))
+        return result
 
     def read_game(self, file, name: str = "") -> Picked:
         from .rom import read_info

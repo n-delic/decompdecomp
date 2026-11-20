@@ -443,10 +443,10 @@ class Console:
         """Exact self-contained handwritten SDK bodies only; no heuristic C exclusion."""
         return None
 
-    sdk_runtime_sizes: tuple[int, ...] = ()
+    sdk_linked_sizes: tuple[int, ...] = ()
 
-    def sdk_runtime_identity(self, code: bytes, image_sha1: str) -> dict | None:
-        """Exact C runtime identities bound to their linked analysis image."""
+    def sdk_linked_identity(self, code: bytes, image_sha1: str) -> dict | None:
+        """Exact SDK library identities bound to their linked analysis image."""
         return None
 
     def scan_sdk(self, net, proj, job=None) -> None:

@@ -399,12 +399,12 @@ def discover(net,proj,limit=32):
 
 
 def known_identity(console, cfg, code, *, has_relocs=False):
-    """Identify reference-free SDK assembly or runtime C from its original image."""
+    """Identify reference-free SDK assembly or SDK code bound to its original image."""
     if cfg.get('kind') == 'fork' or not cfg.get('big_endian', True):
         return None
-    if cfg.get(SETTING, True) and len(code) in console.sdk_runtime_sizes:
-        found = console.sdk_runtime_identity(code, cfg.get('rom', {}).get('analysis_sha1', ''))
-        if found:
+    if len(code) in console.sdk_linked_sizes:
+        found = console.sdk_linked_identity(code, cfg.get('rom', {}).get('analysis_sha1', ''))
+        if found and (not found.get('from_c') or cfg.get(SETTING, True)):
             return found
     if not has_relocs:
         return console.sdk_assembly_identity(code)
@@ -417,9 +417,12 @@ def known_proof(console, proj, fn):
     found = known_identity(console, cfg, code, has_relocs=bool(json.loads(fn['relocs'] or '[]')))
     if not found or fn['size'] != len(code):
         return None
-    evidence = ('Exact C runtime bytes in a known linked image; excluded from C matching by the library setting.'
-                if found.get('from_c') else
-                'Exact complete bytes of a verified self-contained handwritten SDK routine; no C coverage.')
+    if found.get('from_c'):
+        evidence = 'Exact SDK library C bytes in a known linked image; excluded from C matching by the library setting.'
+    elif found.get('image_sha1'):
+        evidence = 'Exact SDK assembly bytes in a known linked image; no C coverage.'
+    else:
+        evidence = 'Exact complete bytes of a verified self-contained handwritten SDK routine; no C coverage.'
     return {**found, 'verified': True, 'kind': 'sdk', 'verification_method': 'builtin-sdk-digest',
             'alias_schema': 1, 'fingerprint': fingerprint(proj, fn), 'evidence': evidence, 'at': time.time()}
 
@@ -429,7 +432,7 @@ def discover_known(net, proj, *, function_id=None, check_cancel=None):
     if proj['slug'] in net.links or not net.is_rom(proj) or net.fork_slug(proj['slug']):
         return 0
     console = net.console(proj)
-    sizes = sorted(set(console.sdk_assembly_sizes) | set(console.sdk_runtime_sizes))
+    sizes = sorted(set(console.sdk_assembly_sizes) | set(console.sdk_linked_sizes))
     if not sizes:
         return 0
     store = net.project_store(proj['id'])

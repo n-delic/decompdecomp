@@ -206,7 +206,7 @@ class ImportMixin:
         # preserves existing names because saved caller C can reference them.
         assembly_original_names = {}
         from ..sdk_assembly import known_identity, known_proof
-        sdk_sizes = set(console.sdk_assembly_sizes) | set(console.sdk_runtime_sizes)
+        sdk_sizes = set(console.sdk_assembly_sizes) | set(console.sdk_linked_sizes)
         assembly_sizes = set(console.known_assembly_sizes) | sdk_sizes
         if reimport is None and assembly_sizes:
             from ..function_names import generated
