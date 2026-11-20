@@ -35,6 +35,7 @@ from .. import compiler, consoles, toolchains
 from ..hostenv import NO_WINDOW, stop_process_tree
 from ..metadata_rows import rows as metadata_rows
 from ..network import CLAIM_ORDERS, NetworkError
+from ..readme_links import DECOMPDECOMP, START_YOUR_OWN
 from ..request_timing import phase
 from ..scoring import percent_text
 from . import save_readme
@@ -835,9 +836,11 @@ def _write_readme(net, proj, folder: Path, manifest: dict, functions: dict) -> N
                f"- **Compiler:** {compiler_name}")
     readme = f"""# {proj['name']}: decompdecomp progress
 
-This is a saved decompilation project created with [decompdecomp](https://github.com/RetroReversing/decompdecomp).
+This is a saved decompilation project created with {DECOMPDECOMP}.
 AI agents were used during the decompilation; their C attempts were kept only when decompdecomp's byte-for-byte
 judge accepted them as matches.
+
+{START_YOUR_OWN}
 
 ## Project details
 
@@ -960,9 +963,11 @@ def _save_best(net, proj, folder: Path) -> dict:
             f"{names.get(r['best_agent_id'], '?')}; it belongs in {source} */\n\n" + r["best_source"].strip() + "\n")
     readme = f"""# {proj['name']}: the closest attempts so far
 
-Saved by [decompdecomp](https://github.com/RetroReversing/decompdecomp). Each file in `best/` is the closest C an agent wrote
+Saved by {DECOMPDECOMP}. Each file in `best/` is the closest C an agent wrote
 for a function of the game that doesn't match byte for byte yet: its comment says how close,
 who wrote it and which source file it belongs in. They compile, but they're not the original's code.
+
+{START_YOUR_OWN}
 
 The matched functions aren't here: they're in the project's own source files (and its git history), where every
 match was judged byte for byte. No game data is in this folder.

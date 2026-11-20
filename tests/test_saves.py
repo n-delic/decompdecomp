@@ -160,6 +160,7 @@ def test_a_saved_project_comes_back_on_another_computer(worked, tmp_path):
     assert not any(p.suffix in (".z64", ".bin", ".iso") for p in (tmp_path / "save").rglob("*"))  # no game data
     readme = (tmp_path / "save" / "README.md").read_text()
     assert "https://github.com/RetroReversing/decompdecomp" in readme
+    assert "https://www.retroreversing.com/ai-assisted-n64-decompilation" in readme
     assert "AI agents were used during the decompilation" in readme
     assert f"**Platform:** {manifest['platform']}" in readme
     assert f"**Compiler:** {manifest['compiler']['toolchain']}" in readme

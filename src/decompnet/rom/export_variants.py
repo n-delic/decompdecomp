@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from ..network import NetworkError
+from ..readme_links import DECOMPDECOMP, START_YOUR_OWN
 from .export import export_rom
 
 
@@ -71,7 +72,8 @@ def _export_game(net, slug, out, log=print):
     copyfile(Path(__file__).with_name('export_variant_build.py'), out / 'build.py')
     (out / '.gitignore').write_text('**/build/\n**/baserom*\n**/asm/\n**/assets/\n**/*.ld\n**/*_auto.txt\n**/.splat/\n**/*.d\nvariants/*/include/shared/\n', encoding='utf-8')
     (out / 'README.md').write_text(
-        '# Multi-variant decompilation\n\nUse `python3 build.py --variant <id>` or '
+        f'# Multi-variant decompilation\n\nCreated with {DECOMPDECOMP}.\n\n{START_YOUR_OWN}\n\n'
+        'Use `python3 build.py --variant <id>` or '
         '`python3 build.py --all-variants`. Each target has its own input, symbols, layout, assets, '
         'compiler settings, build directory and expected hash. Put your own ROMs at the paths in '
         'each variant README; never commit game data.\n\n'

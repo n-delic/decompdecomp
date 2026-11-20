@@ -115,6 +115,9 @@ def test_export_rebuilds_the_game(tmp_path, platform):
     assert counts and counts[-1]["total"] > counts[-1]["done"] > 0
     assert out["matched"] == len(matched(platform)) and not out["fallback"]
     tree = Path(out["path"])
+    readme = (tree / "README.md").read_text()
+    assert "https://github.com/RetroReversing/decompdecomp" in readme
+    assert "https://www.retroreversing.com/ai-assisted-n64-decompilation" in readme
     if platform == "n64":
         assert json.loads((tree / "build.json").read_text())["symbols"]["startup_alias"] == 0x80000400
     assert len(list((tree / "src").glob("*/*.c"))) == len(matched(platform))
