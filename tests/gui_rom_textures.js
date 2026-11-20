@@ -80,5 +80,13 @@ const row=(n=0)=>({id:'r'+n,kind:'image',start:128+n*200,detected_asset:{...asse
   body._romAssetBusy=true;get('frame').onchange();assert.equal(requests,2,'Do not start duplicate requests while preparing a frame');body._romAssetBusy=false;
   get('play').onclick();await tick();assert.equal(get('palette').value,'1','Animation selects the matching palette');get('play').onclick();
  }
+ {
+  const t=setup();
+  t.context.region={detected_asset:{texture_groups:[[1,[0,3]],[8,[5,7,9]]]},annotation:{preview_settings:{texture:3}}};
+  const html=t.run('romTextureControlsHTML(region)');
+  assert.match(html,/value="8" selected>Bank 8/);
+  assert.match(html,/value="3" selected>Slot 7/);
+  assert.doesNotMatch(html,/Slot 3/);
+ }
  console.log('Texture browser paging, usage, cancellation and playback passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

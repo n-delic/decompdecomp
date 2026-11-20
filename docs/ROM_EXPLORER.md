@@ -356,8 +356,13 @@ scene materials still display in local space.
 RNX advances from one independently checked block to the next with 8-byte padding
 relative to the block start. It recognizes a terminal RNC block or a fill record and the
 stream terminator. Complete streams can contain descriptor texture banks, EMsh meshes,
-ELv9 level metadata and shared-palette graphics. The graphics browser previews the
-directly stored CI4 tiles whose dimensions, palette and record size agree.
+ELv9 levels and shared-palette graphics. Choose a bank and slot in the Texture browser
+to view checked CI4, RGBA, solid and referenced tiles.
+
+Search ROM Explorer for **ELv9**, **PATH** or **NCS** to inspect sector extents,
+path positions or cutscene commands. PATH shows connected positions in keyframe
+order. NCS shows opcode numbers and operand words. Sector geometry, runtime
+material binding and cutscene execution remain planned.
 
 Dialogue scripts are listed by language in the region table. Search for **dialogue**, open a
 script region, and choose **Browse dialogue**. The scene and speaker filters apply to all

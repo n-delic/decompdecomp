@@ -1,12 +1,46 @@
 /* Detected banks share the guarded preview API. No game data leaves this page. */
+function romGroupedTextureOptions(groups, selected) {
+  let first=0;
+  return groups.map(([bank,slots])=>{
+    const group={bank,slots,first,selected:selected>=first && selected<first+slots.length};
+    first+=slots.length;
+    return group;
+  });
+}
+function romGroupedSlotsHTML(group, selected) {
+  return group.slots.map((slot,i)=>`<option value="${group.first+i}"${selected===group.first+i?' selected':''}>Slot ${slot}</option>`).join('');
+}
 function romTextureControlsHTML(region) {
   const detected=region.detected_asset;if(!detected || ['audio','model','metadata'].includes(detected.media))return '';
-  const saved=region.annotation?.preview_settings || {},texture=Math.max(0,Math.min((detected.textures?.length||1)-1,Number(saved.texture)||0)),asset=detected.textures?.[texture]||detected,levels=asset.levels || [{width:asset.preview_settings.width,height:asset.preview_settings.height}];
+  const saved=region.annotation?.preview_settings || {};
+  if(detected.texture_groups?.length){
+    const selected=Number(saved.texture)||0,groups=romGroupedTextureOptions(detected.texture_groups,selected);
+    return `<div class="rom-asset-fields"><label class="field"><span>Texture bank</span><select data-texture-bank>${groups.map(({bank,selected})=>`<option value="${bank}"${selected?' selected':''}>Bank ${bank}</option>`).join('')}</select></label><label class="field"><span>Texture</span><select data-texture-texture>${romGroupedSlotsHTML(groups.find(group=>group.selected)||groups[0],selected)}</select></label></div>`;
+  }
+  const texture=Math.max(0,Math.min((detected.textures?.length||1)-1,Number(saved.texture)||0)),asset=detected.textures?.[texture]||detected,levels=asset.levels || [{width:asset.preview_settings.width,height:asset.preview_settings.height}];
   const select=(key,label,count,caption)=>`<label class="field"><span>${label}</span><select data-texture-${key}>${Array.from({length:count},(_,i)=>`<option value="${i}"${Number(saved[key] || 0)===i ? ' selected' : ''}>${caption(i)}</option>`).join('')}</select></label>`;
   return `<div class="rom-asset-fields">${detected.textures?.length>1?select('texture','Texture',detected.textures.length,i=>{const s=detected.textures[i].preview_settings;return `${i+1} · ${s.width} × ${s.height} · ${s.format}`;}):''}${select('frame','Frame',asset.frames,i=>`${i+1} of ${asset.frames}`)}${select('palette','Palette',Math.max(1,asset.palettes),i=>asset.palettes ? `${i+1} of ${asset.palettes}${asset.palette_entries ? ' · '+asset.palette_entries[i]+' colours' : ''}` : 'Direct color (no palette)')}${select('mip','Mip level',levels.length,i=>`${i} · ${levels[i].width} × ${levels[i].height}`)}<label class="field"><span>Animation preview rate (1–24 frames/s)</span><input data-texture-rate type="number" min="1" max="24" value="8"></label></div><button type="button" class="ghost small-btn" data-texture-play${asset.frames<2 ? ' disabled' : ''}>Animate frames</button><p class="small muted" data-texture-status aria-live="polite">Select a frame, palette or mip level to preview it. Animation starts only when you press Animate frames; its rate is a preview setting.</p>`;
 }
 function setupRomTextureControls(body,region,active) {
   if(!region.detected_asset || ['audio','model','metadata'].includes(region.detected_asset.media))return;
+  if(region.detected_asset.texture_groups?.length){
+    const bank=body.querySelector('[data-texture-bank]'),texture=body.querySelector('[data-texture-texture]');
+    const groups=romGroupedTextureOptions(region.detected_asset.texture_groups,0);
+    const show=()=>{
+      if(body._romAssetBusy || !active())return;
+      for(const [key,value] of [['source','rom'],['format','auto'],['offset','0x'+region.start.toString(16)]]) body.querySelector(`[data-asset-${key}]`).value=value;
+      body.querySelector('[data-asset-format]').onchange();
+      body._romPreviewFrame?.();
+    };
+    bank.onchange=()=>{
+      const group=groups.find(item=>item.bank===Number(bank.value));
+      if(!group || body._romAssetBusy || !active())return;
+      texture.innerHTML=romGroupedSlotsHTML(group,group.first);
+      show();
+    };
+    texture.onchange=show;
+    return;
+  }
   const get=key=>body.querySelector(`[data-texture-${key}]`),button=get('play'),status=get('status');
   const current=()=>region.detected_asset.textures?.[Number(get('texture')?.value||0)]||region.detected_asset;
   let playing=false,timer=null,generation=0;
@@ -83,7 +117,7 @@ function renderRomTextureGallery(view=romView()) {
   panel.hidden=false;
   view.textures ||= {query:'',format:'',dimensions:'',page:0};const state=view.textures;
   const banks=romTextureBanks(report);
-  const textureCount=banks.reduce((count,bank)=>count+(bank.asset.textures?.length || 1),0);
+  const textureCount=banks.reduce((count,bank)=>count+(bank.asset.texture_count || bank.asset.textures?.length || 1),0);
   $('romTextureContext').textContent=`— ${banks.length.toLocaleString()} banks`+
     (textureCount>banks.length ? ` · ${textureCount.toLocaleString()} textures` : '');
   const choice=(id,values,selected)=>{const node=$(id);node.innerHTML='<option value="">All</option>'+values.map(value=>`<option value="${esc(value)}">${esc(value)}</option>`).join('');node.value=selected;};
@@ -109,7 +143,7 @@ function renderRomTextureGallery(view=romView()) {
     const tasks=[];
     for(const bank of page) {
       const card=document.createElement('article');card.className='rom-texture-card';
-      card.innerHTML=`<button type="button" class="ghost rom-texture-open" data-texture-region${report.stale ? ' disabled' : ''}><span data-texture-thumb class="rom-texture-thumb">Waiting for preview</span><b>${esc(bank.name)}</b><span class="small">${esc(bank.format)} · ${bank.width && bank.height ? `${bank.width} × ${bank.height}` : 'dimensions unavailable'} · ${hex8(bank.offset)}</span><span class="small">${bank.asset.textures?.length?bank.asset.textures.length+' texture(s) · ':''}${bank.asset.frames || 1} frame(s) · ${bank.asset.palettes ?? '—'} palette(s)</span></button><div data-texture-usage></div>`;
+      card.innerHTML=`<button type="button" class="ghost rom-texture-open" data-texture-region${report.stale ? ' disabled' : ''}><span data-texture-thumb class="rom-texture-thumb">Waiting for preview</span><b>${esc(bank.name)}</b><span class="small">${esc(bank.format)} · ${bank.width && bank.height ? `${bank.width} × ${bank.height}` : 'dimensions unavailable'} · ${hex8(bank.offset)}</span><span class="small">${bank.asset.texture_count || bank.asset.textures?.length ? (bank.asset.texture_count || bank.asset.textures.length)+' texture(s) · ':''}${bank.asset.frames || 1} frame(s) · ${bank.asset.palettes ?? '—'} palette(s)</span></button><div data-texture-usage></div>`;
       card.querySelector('[data-texture-region]').onclick=()=>openRomRegion(bank.region);
       const usage=card.querySelector('[data-texture-usage]');
       const links=(names,label)=>{
