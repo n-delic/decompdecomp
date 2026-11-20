@@ -3057,6 +3057,12 @@ duplicate conversion bias, unaligned record copies, saved float zero across a
 loop and call, shared-store branch polarity, packed-key load order, interleaved
 float field updates, and a proven same-address spelling for a second call.
 
+The measured guard and width gates cover non-null body pointer aliases,
+fallthrough float reloads, resolved upper-word masks, normalized masked
+booleans, cursor bias, byte-flag lifetimes, guard delay-slot immediates,
+separate loop entry seeds, ordinary stack halfword reads, and signed-byte
+adjustment lifetimes.
+
 ## Register-only local lifetime search
 
 Shared draft, agent-local and deep searches offer bounded branch-tail locals, scalar call staging
