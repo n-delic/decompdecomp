@@ -370,8 +370,9 @@ cue records before paging. Cues include dialogue and production notes, and the o
 language links to its own script. Detection checks the archive length and byte sum,
 scene headings and speaker key, then reads the script as Windows-1252.
 
-Audio browser lists directory-verified Acclaim DEAN streams and their encoded sizes and
-sample rates. DEAN waveform playback is unavailable.
+Audio browser prepares mono WAV previews for Acclaim DEAN streams with verified ROM
+codebooks. A verified voice link in the dialogue browser opens the same player. Press
+Play to listen. Long previews are capped at 30 seconds.
 
 Open a model region, choose **Model mesh**, then **Preview asset**. Changing the mesh prepares
 its wireframe. The selector shows node, part and section identity; **Save notes** retains the
