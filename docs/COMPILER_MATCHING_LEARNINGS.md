@@ -7976,3 +7976,34 @@ Tried without a match: a bit-writer (15; every split of the shared temporary swa
 velocity integrator (105; struct, inline helper, operand order and `1.0f / 30.0f` all keep the product in `$f0`), a
 0x28-stride struct reader (265; the offset lands in `$a0` not `$a1` whatever the index type), and a sound trigger
 (210; the stack-slot load is scheduled before the `move $a0, $v0`).
+
+### Round 17: a game's second passes (KMC GCC 2.7.2 `-O2`, controlled matches)
+
+Three new matches and one large improvement, all under the game's default `-O2`.
+
+- **A float argument the callee takes in an integer register.** A wrapper loaded a global flag, doubled two stack
+  float arguments when it was set, and passed `60.0f` as a call's second argument (`lui $a1, 0x4270`). Two
+  changes closed it (360 → 0): the callee declared `void f(void *, f32)` (an undeclared callee passes the constant
+  as a double in `$a2/$a3`), and the doubling written on the parameters themselves, before they are copied into
+  locals (`if (flag) { a *= 2.0f; b *= 2.0f; } x = b; y = a;`). Doubling the copies scheduled the stack loads
+  before the flag's load. The flag is `s32`, not the `s16` m2c guessed (`lw`, not `lh`).
+- **A load scheduled before an unrelated address.** In a table search the game loads `*t` right after `t` is set
+  and before the second table's address (`lui/addiu`). Only an explicit first read did it (60 → 0):
+  `t = A; p = *t; r = B; if (p != NULL) do { ... } while (*t != NULL);`. Swapping the two assignments, `for` loops,
+  `const` and `volatile` tables all kept the address first or moved the test into another block.
+- **A switch whose second arm calls with fewer arguments.** m2c read the arm's call as `f((s8)obj->ptr)`; the game
+  passes `obj` and lets `$a1` keep the pointer the loop just used. Declaring the callee `void f();` and calling
+  `f(obj)` there, with `f(obj, arg1, mode)` in the first arm, an explicit `case 0: case 33...38: break;` group (the
+  jump table covers 0-38) and the loop reloading `obj->sub` each pass, matched (551 → 0).
+- **A hoisted `-1` needs a variable.** A sequencer loop compares each event's time with `-1` held in `$s0` across a
+  call. Writing the constant inline never hoisted it (a `goto` loop has no loop notes; `while`/`do` forms rotate the
+  loop differently); `u32 end = -1;` before the `goto` loop label did (410 → 55). The last 55 are the product's
+  register (`mflo $v0` in the game): operand order, `*=` and casts didn't move it.
+
+Tried without a match: a 5-point add whose operand order no pointer or cast form changes, a bit-writer (15), a
+velocity integrator (105), an allocator (300; typed struct reached 525: the size round-up and loop rotation
+differ),
+a slot cleanup (366; a typed struct fixes the frame but not three copies), a matrix copy (390; same 390 under `-O1`
+and scheduling off, so not a settings difference), and a prologue that loads a global before the stack adjustment
+(410 → 360 with `const` reads). The empty-`while` fold blocker from round 16 was not released as a repair family:
+it fits one function, and inserting it after every copy would add many variants for no evidence.
