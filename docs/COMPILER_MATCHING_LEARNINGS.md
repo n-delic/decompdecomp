@@ -8470,3 +8470,18 @@ Six archived N64 cases reproduced at the exact linked ROM judge with
   stored both words through one destination base at offsets zero and
   four. The copy requires known data addresses and is withheld with
   strict aliasing enabled.
+
+### Local lifetimes at loads and returns (KMC GCC 2.7.2)
+
+Two archived N64 cases verified with their saved failed source and header
+at `-G0 -mips3 -mgp32 -mfp32 -O2`.
+
+- Returning a guarded word load directly removed the trailing copy to
+  `$v0` while preserving the zero fallback. The measured 230-point
+  mismatch became an exact linked match. Require the same field
+  displacement, output type, and a zero-initialized local otherwise read
+  only by the final return.
+- A block-local alias after a pointer null check recovered the target's
+  load, guard, and move to `$a0` in the branch delay slot. The 210-point
+  mismatch became exact. The loaded field and guarded field-access
+  offsets must agree with the diff. The alias belongs to the guarded block.
