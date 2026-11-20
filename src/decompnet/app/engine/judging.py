@@ -341,23 +341,28 @@ class JudgeMixin:
 
     def _record(self, fn, *args, **kwargs):
         from ...attempt_status import update
+        from .. import match_commits
         update('saving', fn['name'])
-        slug = self.project_store(fn['project_id']).one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+        store = self.project_store(fn['project_id'])
+        slug = store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
         matching = kwargs.get('matched', args[4] if len(args) > 4 else False)
-        proj = self.project_store(fn['project_id']).one('SELECT * FROM projects WHERE id=?', fn['project_id']) if matching and not self.progress.applying else None
+        proj = store.one('SELECT * FROM projects WHERE id=?', fn['project_id']) if matching and not self.progress.applying else None
         automatic = proj is not None and self.cfg(proj).get('auto_commit_matches', False)
+        verdict = None
         with self.progress._project_lock(slug):
             # attempt()'s judging block already read progress just before this record; a second full read here made
             # every compile check the folder twice before and once after.
             if not self.progress.applying and not getattr(self.progress.local, "judging", None):
                 self.progress.sync(slug, force=True)
             self.progress.check_result()
-            before = self.project_store(fn['project_id']).one('SELECT status FROM functions WHERE id=?', fn['id']) if automatic else None
+            before = store.one('SELECT status FROM functions WHERE id=?', fn['id']) if automatic else None
             result = super()._record(fn, *args, **kwargs)
             if before is not None and before['status'] != 'matched':
-                from .. import match_commits
-                match_commits.enqueue(self, proj, fn['id'])
-            return result
+                verdict = match_commits.capture_verdict(store, fn['id'])
+        if verdict is not None:
+            # Queueing waits for the database writer. Other judges can use the project lock meanwhile.
+            match_commits.enqueue(self, proj, fn['id'], verdict=verdict)
+        return result
 
     def _remember_search_output(self, agent, function, source, project, result):
         """Give manual/agent trials the same compact output history as local search."""
