@@ -8230,6 +8230,12 @@ computed a word in `$v0`, stored it and returned with that word still in
 `$v0`. A direct caller used it as an operand of `multu`. The signature review
 shows that call and read alongside the existing byte match.
 
+A third archived candidate differed only in floating-point registers. With KMC
+GCC 2.7.2 and `-G0 -mips3 -mgp32 -mfp32 -O2`, reordering the independent field
+loads within a comma-separated local declaration closed the linked score from
+75 to 0. Arithmetic and stores stayed in their original order. The eight
+bounded candidates scored 285, 75, 85, 75, 85, 95, 75, and 0 in trial order.
+
 ### Same-source replay of KMC scheduling and induction settings
 
 Replayed three saved source/header pairs from one N64 project with the pinned
