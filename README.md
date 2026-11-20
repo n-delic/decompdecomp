@@ -59,6 +59,8 @@ are listed separately; music sequencing, pitch, mixing and loops are not rendere
 region to choose a sample and prepare a local WAV preview; playback starts only with Play.
 Verified Acclaim DEAN streams can be browsed and inspected. DEAN playback is unavailable.
 Find supported dialogue scripts in ROM Explorer and browse their cues by scene and speaker.
+Verified voice links open the audio inspector from individual cues. Related cutscene scripts open
+their command tables from the dialogue browser.
 Supported indexed N64 geometry is detected automatically, including EMsh meshes in byte-sum RNC and chained RNX streams. RNX can also contain descriptor banks
 and indexed tiles in a shared-palette archive. ROM Explorer can also inspect level sectors,
 path keyframes and cutscene commands.
