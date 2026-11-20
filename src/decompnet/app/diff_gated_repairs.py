@@ -6,6 +6,7 @@ from decomprepair import (
     kmc_cast_repairs,
     loop_sentinel_repairs,
     measured_address_repairs,
+    measured_callback_repairs,
     measured_immediate_repairs,
     targeted_switch_labels,
 )
@@ -160,6 +161,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
     if toolchain.startswith('gcc-2.7.2-kmc'):
         result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                              read_data=read_data,big_endian=big_endian)
+        result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)
         result += measured_immediate_repairs.variants(source,name,rows)
         result += kmc_cast_repairs.variants(source,name,header,rows,flags)

@@ -169,3 +169,26 @@ def test_measured_address_add_reaches_the_deep_proposal_path():
     source = 'extern s32 D_800BFF04; u16 *f(int a) { s32 i; i = a; return (u16 *)(D_800BFF04+i*8); }'
     rows = [('r','addu $a1, $v0, $v1','addu $a1, $v1, $v0')]
     assert ('measured_address_add',source.replace('D_800BFF04+i*8','i * 8 + D_800BFF04')) in route(source,rows,'')
+
+
+def test_measured_callback_prototype_reaches_kmc_proposals():
+    source = '''
+void f(void *owner) {
+    void *record;
+    void (*callback)(void *);
+    cleanup(owner);
+    record = M2C_FIELD(owner, void **, 0x10);
+    if (record != NULL) {
+        callback = M2C_FIELD(record, void (**)(void *), 0xC);
+        if (callback != NULL) callback(record);
+    }
+}
+'''
+    rows = pair('jal cleanup|nop|lw $v0, ($s0)|lw $v1, 0x10($v0)|beqz $v1, out|nop|lw $v0, 0xc($v1)|'
+                'beqz $v0, out|nop|jalr $v0|nop',
+                'jal cleanup|nop|lw $v0, ($s0)|lw $a0, 0x10($v0)|beqz $a0, out|nop|lw $v0, 0xc($a0)|'
+                'beqz $v0, out|nop|jalr $v0|nop')
+    family = 'measured_callback_without_record'
+    expected = source.replace('(void *)','(void)').replace('callback(record)','callback()')
+    assert (family,expected) in route(source,rows,'')
+    assert family not in {kind for kind,_ in route(source,rows,'',compiler='ido-5.3')}
