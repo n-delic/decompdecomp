@@ -29,6 +29,7 @@ from . import (
     compiler_experiments,
     local_experiments,
     polish_automation,
+    repair_search,
     reviewed_search_seeds,
     search_brief,
 )
@@ -239,7 +240,8 @@ REPAIR_GUIDANCE = (
     "Classify each verified repair before moving on. Put repair_category on a likely winning single-function "
     "compile_and_diff or compile_patch; it is saved only on a match. If the result asks for report_repair, "
     "send just the category. Categories: " + ", ".join(AGENT_CATEGORIES) +
-    ". For other, optionally give a short suggested_category. No explanation or extra compile required.\n"
+    ". For other, optionally give a short suggested_category. No explanation or extra compile required. "
+    "If a mismatch persists, use search_repair_examples for past fixes.\n"
 )
 HANDOFF_GUIDANCE = """
 When releasing a stalled function, give the next agent a structured handoff in next_experiment.
@@ -635,6 +637,9 @@ HANDLERS: dict[str, Callable[..., str]] = {
         _claim(net, agent, slug, function, strategy, count),
     "get_function": agent_tokens.function_view,
     "compile_and_diff": lambda net, agent, slug, **args: _compile(net, agent, slug, **args),
+    "search_repair_examples": repair_search.search,
+    "get_repair_examples": repair_search.details,
+    "upvote_repair_example": repair_search.upvote,
     "report_repair": lambda net, agent, slug, function, change='', category='other', automation='', case_id=0, suggested_category='':
         net.repair_feedback.report(agent, slug, function, change, category, automation, case_id, suggested_category),
     "last_diff": agent_tokens.diff_page,
@@ -705,7 +710,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-READ_ONLY = frozenset({"get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
+READ_ONLY = frozenset({"search_repair_examples", "get_repair_examples", "get_search_brief","get_boundary_evidence", "get_claims", "resolve_addresses", "project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for",
                        "port_readiness", "get_data_unit", "check_for_pc", "watch_in_emulator"})
@@ -835,6 +840,7 @@ def _tool_foreground(net, agent, slug, name, args):
     # receipts before publication; claims may reuse such a verified plan.
     releasing = name in {'release_function', automatic_assignment.RELEASE}
     allowed = function_read or name in {'compile_and_diff','compile_patch','compile_variants','compile_family','try_local_repairs',
+                                       'search_repair_examples','get_repair_examples','upvote_repair_example',
                                        'add_note','report_repair','get_assembly','get_context','claim_readable','polish_function','make_readable'} or (
         name == 'get_candidate' and args.get('base','current') == 'current') or (
         releasing and not args.get('needs','').strip() and not args.get('not_c',False))
@@ -908,7 +914,7 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
     # a write (Store.versions_held).
     from ..store import Store
     progress = getattr(net, 'progress', None)
-    if progress is not None and (name == 'report_repair' or name in READ_ONLY and name not in READS_SAVED_FILES):
+    if progress is not None and (name in {'report_repair', 'upvote_repair_example'} or name in READ_ONLY and name not in READS_SAVED_FILES):
         # A read answers from the database as it is: it waited for the folder's checks and rechecks like a write
         # (read_data 601 s, resolve_addresses 188 s behind a full recheck), for nothing it reads.
         with _tool_foreground(net, agent, slug, name, args), Store.versions_held(), progress.view():
@@ -1053,6 +1059,7 @@ QUICK_TOOLS = frozenset({
     'last_diff', 'search_notes', 'read_file', 'search_code', 'file_status', 'get_class', 'compiler_map',
     'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
     'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function', automatic_assignment.RELEASE,
+    'search_repair_examples', 'get_repair_examples', 'upvote_repair_example',
     'add_note', 'report_repair', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
     'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness', 'get_data_unit', 'claim_data', 'release_data',
     'claim_port_fix', 'release_port_fix',
@@ -1283,6 +1290,22 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     async def get_assembly(ctx: Context, function: str, start: int = 0, limit: int = 60, focus: str = "") -> str:
         """Read target assembly: focus="mismatch" for the first differing target instruction, or a callee symbol/short anchor. Default focuses the first mismatch, or a bounded body region. Focus returns at most 40 lines. Use focus="page" for explicit start/limit paging (up to 200 lines)."""
         return await run(ctx, 'get_assembly', function=function, start=start, limit=limit, focus=focus)
+
+    @tool
+    async def search_repair_examples(ctx: Context, category: str, function: str = '') -> str:
+        """Find up to 12 short summaries of verified repairs by category in this project. A single live claim gives
+        compiler and mismatch context automatically. Optionally choose a function. Open useful IDs with get_repair_examples."""
+        return await run(ctx, 'search_repair_examples', category=category, function=function)
+
+    @tool
+    async def get_repair_examples(ctx: Context, ids: list[int]) -> str:
+        """Read compiler settings and short before/after diff excerpts for 1–6 selected repair example IDs."""
+        return await run(ctx, 'get_repair_examples', ids=ids)
+
+    @tool
+    async def upvote_repair_example(ctx: Context, id: int) -> str:
+        """Mark a repair example that helped your work. Repeated votes by the same agent count once."""
+        return await run(ctx, 'upvote_repair_example', id=id)
 
     @tool
     async def report_repair(ctx: Context, function: str, change: str = '', category: str = 'other',

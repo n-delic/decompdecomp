@@ -25,6 +25,8 @@ STATES = ('new', 'reviewed', 'implemented', 'dismissed')
 SCHEMA = (
     '''CREATE TABLE IF NOT EXISTS repair_attempt_settings(
         attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE, settings TEXT NOT NULL)''',
+    '''CREATE TABLE IF NOT EXISTS repair_attempt_mismatches(
+        attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE, signature TEXT NOT NULL)''',
     '''CREATE TABLE IF NOT EXISTS repair_attempt_provenance(
         attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id) ON DELETE CASCADE, provenance TEXT NOT NULL)''',
     '''CREATE TABLE IF NOT EXISTS repair_examples(
@@ -35,6 +37,11 @@ SCHEMA = (
         category TEXT NOT NULL DEFAULT 'unclassified', explanation TEXT NOT NULL DEFAULT '',
         automation TEXT NOT NULL DEFAULT '', review_note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'new')''',
     'CREATE INDEX IF NOT EXISTS idx_repair_examples_project ON repair_examples(project_id,id)',
+    '''CREATE TABLE IF NOT EXISTS repair_example_votes(
+        example_id INTEGER NOT NULL REFERENCES repair_examples(id) ON DELETE CASCADE,
+        agent_id INTEGER NOT NULL, PRIMARY KEY(example_id,agent_id))''',
+    "CREATE INDEX IF NOT EXISTS idx_repair_examples_category ON repair_examples(project_id,category,id DESC) "
+    "WHERE status!='dismissed'",
     'CREATE INDEX IF NOT EXISTS idx_repair_examples_attempt ON repair_examples(attempt_id)',
     'CREATE INDEX IF NOT EXISTS idx_repair_examples_function ON repair_examples(function_id,id)',
 )
@@ -190,9 +197,9 @@ class RepairFeedback:
                 'WHERE e.evidence_archive IS NOT NULL'))
         self.net.store.conn.repair_archive.export(path,reviews)
 
-    def attempt(self, db, fn, attempt_id, context_version, effective_settings=None):
+    def attempt(self, db, fn, attempt_id, context_version, effective_settings=None, mismatch_rows=()):
         owner = self.for_project(fn['project_id'])
-        if owner is not self:return owner.attempt(db,fn,attempt_id,context_version,effective_settings)
+        if owner is not self:return owner.attempt(db,fn,attempt_id,context_version,effective_settings,mismatch_rows)
         proj = db.execute('SELECT * FROM projects WHERE id=?', (fn['project_id'],)).fetchone()
         settings = _settings(proj, fn)
         if effective_settings and settings['mode']=='rom':
@@ -209,6 +216,11 @@ class RepairFeedback:
         settings['scoring_revision'] = scoring_revision()
         settings['context_sha256'] = hashlib.sha256(header['header'].encode()).hexdigest() if header and settings['mode'] == 'rom' else None
         db.execute('INSERT INTO repair_attempt_settings VALUES(?,?)', (attempt_id, json.dumps(settings)))
+        if mismatch_rows:
+            from .repair_comparison import mismatch_signature
+            signature = mismatch_signature(mismatch_rows)
+            if signature:
+                db.execute('INSERT INTO repair_attempt_mismatches VALUES(?,?)', (attempt_id, json.dumps(signature)))
 
     def capture(self, db, fn, source, agent_id, via, context_version, attempt_id=None):
         owner = self.for_project(fn['project_id'])
@@ -270,6 +282,11 @@ class RepairFeedback:
             'comparable_settings':bool(comparable),
             'comparison': 'closest comparable-settings failed attempt when available, otherwise closest historical failure; previous retains last own failed trial',
         }
+        if before:
+            mismatch = db.execute('SELECT signature FROM repair_attempt_mismatches WHERE attempt_id=?',
+                                  (before['id'],)).fetchone()
+            if mismatch:
+                evidence['before']['mismatch_signature'] = json.loads(mismatch['signature'])
         # Progress rechecks can reopen and rematch the same frozen input many times. Keep
         # the original review and avoid scheduling identical analysis again. Imported builds
         # do not yet capture complete per-file inputs, so never suppress their evidence here.
