@@ -1,0 +1,94 @@
+"""App repair reviews an immutable patch built outside the running source tree."""
+
+import shutil
+import threading
+import time
+
+import pytest
+
+from decompnet.app import app_repair, edition
+from decompnet.app.support import Jobs
+from decompnet.network import NetworkError
+
+pytestmark = pytest.mark.skipif(not shutil.which("git"), reason="Git is required")
+
+
+@pytest.fixture
+def repair(tmp_path, monkeypatch):
+    git = app_repair.git
+    root = tmp_path / "source"
+    root.mkdir()
+    git(root, "init", "-q")
+    (root / "app.py").write_text("bug\n")
+    git(root, "add", "app.py")
+    git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "Base")
+    monkeypatch.setattr(edition, "DEV", True)
+    monkeypatch.setattr(edition, "CHECKOUT_ROOT", root)
+    monkeypatch.delenv("DECOMP_PACKAGE", raising=False)
+    monkeypatch.setattr(app_repair, "find_uv", lambda: None)
+    jobs = Jobs()
+    jobs.jobs["failed"] = {"kind": "build", "state": "error", "error": "Failed to build.",
+                           "log": ["failure details", "Recent application log:", "unrelated project log"]}
+    return app_repair.AppRepair(jobs), root
+
+
+def test_repair_keeps_source_untouched_until_review(repair, monkeypatch):
+    service, root = repair
+    monkeypatch.setattr(app_repair, "_which", lambda _: "stub")
+    patched = threading.Event()
+    finish = threading.Event()
+
+    def fake_agent(self, exe, worktree, home, diagnostics, cancel):
+        assert worktree != root and home.parent == worktree
+        assert diagnostics == "Reviewed diagnostic."
+        assert (worktree / "app.py").read_text() == "bug\n"
+        assert app_repair.git(worktree, "rev-parse", "--git-common-dir").decode().strip() != str(root / ".git")
+        (worktree / "app.py").write_text("fix\n")
+        (worktree / "test_app.py").write_text("assert True\n")
+        (home / "scratch-data").write_text("private\n")
+        patched.set()
+        assert finish.wait(10)
+        return "Regression test passed."
+
+    monkeypatch.setattr("decompnet.agents.codex.Codex.repair_source", fake_agent)
+    preview = service.preview("failed")
+    assert preview["log"] == "Failed to build.\nfailure details"
+    jid = service.start("failed", "Reviewed diagnostic.")
+    try:
+        assert patched.wait(10)
+        assert service.start("failed", "Reviewed diagnostic.") == jid
+        assert service.preview("failed")["repair"] == jid
+        assert (root / "app.py").read_text() == "bug\n"
+        with pytest.raises(NetworkError, match="Review a completed"):
+            service.apply(jid)
+    finally:
+        finish.set()
+    job = service.jobs.jobs[jid]
+    deadline = time.monotonic() + 10
+    while job["state"] == "running" and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert job["state"] == "done", job.get("error")
+    assert "+fix" in job["result"]["patch"] and "test_app.py" in job["result"]["patch"]
+    assert "scratch-data" not in job["result"]["patch"]
+    assert job["result"]["summary"] == "Regression test passed."
+    (root / "app.py").write_text("local edit\n")
+    with pytest.raises(NetworkError, match="checkout has changed"):
+        service.apply(jid)
+    assert (root / "app.py").read_text() == "local edit\n"
+    (root / "app.py").write_text("bug\n")
+    service.apply(jid)
+    service.apply(jid)
+    assert (root / "app.py").read_text() == "fix\n"
+    assert app_repair.git(root, "diff", "--cached", "--name-only").splitlines() == [b"app.py", b"test_app.py"]
+
+
+def test_standalone_success_and_repair_failures_are_ineligible(repair, monkeypatch):
+    service, _ = repair
+    service.jobs.jobs["success"] = {"kind": "build", "state": "done"}
+    service.jobs.jobs["repair"] = {"kind": app_repair.KIND, "state": "error"}
+    for jid in ("missing", "success", "repair"):
+        with pytest.raises(NetworkError, match="Choose a failed"):
+            service.preview(jid)
+    monkeypatch.setenv("DECOMP_PACKAGE", "macos")
+    with pytest.raises(NetworkError, match="Git checkout"):
+        service.preview("failed")
