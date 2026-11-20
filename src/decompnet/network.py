@@ -1873,6 +1873,10 @@ class Network:
         notes = self.notes_for_brief(fn)
         if notes:
             lines += ["", "### Notes from previous agents on this function", *notes]
+        from .app.knowledge import service
+        from .app.repair_ranking import evidence
+        if tips := service(self).relevant(fn, evidence(self, fn['id'], agent.id if agent else None)):
+            lines += ['', *tips]
         lines += self.dependency_brief(fn)
         if fn["unit"] and fn["unit"] in self._unit_contexts(proj["id"]):
             lines.insert(2, f"source unit {fn['unit']}: call get_context with function=\"{fn['name']}\" for its header")

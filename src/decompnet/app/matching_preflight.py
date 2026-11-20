@@ -38,14 +38,24 @@ def _run(net, proj, fn, log, check, max_profiles):
     own = compiler_for(cfg, fn['vram'], fn)
     if own.get('cmd') or not own.get('toolchain') or toolchains.installed(own['toolchain']) is None:
         return {'tested': 0}
-    from .profile_hypotheses import captured, neighbours, prioritized
+    from .profile_hypotheses import captured, kmc_priorities, neighbours, prioritized
+    from .repair_ranking import evidence
     choices = [list(own['flags'])]
     # Debug labels can change old GCC assembler scheduling. A near match deserves
     # these cheap same-toolchain checks before broad optimization exploration.
     count = dict(fn).get('n_insns') or 0
     promising = count > 0 and fn['best_score'] is not None and fn['best_score'] <= count * 10
     debug = net.debug_flag_variants(own['toolchain'], list(own['flags'])) if promising and hasattr(net, 'debug_flag_variants') else []
-    for flags in captured(net,proj,own)+debug+prioritized(proj, fn, own)+neighbours(net, proj, fn, own):
+    focused = []
+    if own['toolchain'] == 'gcc-2.7.2-kmc':
+        focused = [list(flags) for flags in kmc_priorities(own, dict(fn).get('asm', ''), evidence(net, fn['id'], None))]
+        if promising and '-O1' in own['flags']:
+            from .profile_hypotheses import kmc_variants
+            paired_schedule = next((flags for flags in kmc_variants(own['toolchain'], own['flags'])
+                                    if {'-fschedule-insns', '-fschedule-insns2'} <= set(flags)), None)
+            if paired_schedule and paired_schedule not in focused:
+                focused.append(paired_schedule)
+    for flags in focused+captured(net,proj,own)+debug+prioritized(proj, fn, own)+neighbours(net, proj, fn, own):
         if flags not in choices:choices.append(flags)
     # Other candidates retain the existing optimization-first exploration order.
     for flags in net.flag_variants(own['toolchain'], list(own['flags'])):
@@ -62,11 +72,19 @@ def _run(net, proj, fn, log, check, max_profiles):
     paired = guarded_loop_repairs.probes(proj,fn,own,context['header'] if context else '')
     # Preserve this tiny joint frontier independently of isolated source scores.
     probes[1:1] = [(list(flags),source) for flags,source in paired]
+    if (own['toolchain'] == 'gcc-2.7.2-kmc' and '-fno-strength-reduce' in own['flags']):
+        restored = [flags for flags in focused if '-fno-strength-reduce' not in flags]
+        if restored:
+            from decomprepair import pointer_walk_index_repairs
+            indexed = pointer_walk_index_repairs.variants(fn['best_source'], fn['name'])
+            if indexed:
+                probes.insert(2, (restored[0], indexed[0][1]))
     probes = list(dict.fromkeys((tuple(flags),source) for flags,source in probes))
     probes = [(list(flags),source) for flags,source in probes]
     candidates = [(own['toolchain'], tuple(flags)) for flags, _ in probes]
     input_digest = net._comparison_digest(proj, fn, fn['best_source'], candidates)
-    key = 'matching-preflight-v3:'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
+    from .baseline_status import revision
+    key = 'matching-preflight-v4:'+revision()+':'+input_digest+':'+hashlib.sha256(repr(probes).encode()).hexdigest()
     result = {'tested': 0, 'best': None, 'pending': 0}
     best_key = None
     allowance = min(MAX_PROFILES, max_profiles)
@@ -119,6 +137,11 @@ def _run(net, proj, fn, log, check, max_profiles):
     if result.get('link'):
         log(result['link']['message'])
     best = result.get('best')
+    if (best and best['exact'] and best['flags'] == own['flags'] and best['source'] == fn['best_source']
+            and proj['slug'] not in getattr(net, 'links', {})):
+        result['applied'] = recover_exact(net, proj, fn, input_digest, candidates)
+        if result['applied']:
+            log('Rejudged saved C matched with its current settings: '+fn['name'])
     if best and (best['flags'] != own['flags'] or best.get('source', fn['best_source']) != fn['best_source']) and best['score'] < (fn['best_score'] if fn['best_score'] is not None else float('inf')):
         fresh = net.project_row(proj['slug'])
         current = net._function(fn['name'], proj['slug'])
@@ -160,6 +183,23 @@ def _run(net, proj, fn, log, check, max_profiles):
                 log('Compiler preflight found a better source/profile hypothesis: '+' '.join(best['flags'])+
                     '. Partial results need review; exact results also respect automatic compiler settings.')
     return result
+
+
+def recover_exact(net, proj, fn, digest, candidates):
+    """Confirm a saved winner through the normal judge using the current project inputs."""
+    slug = proj['slug']
+    fresh = net.project_row(slug)
+    current = net._function(fn['name'], slug)
+    source = fn['best_source']
+    if (current['status'] != 'open' or current['best_source'] != source or
+            net._comparison_digest(fresh, current, source, candidates) != digest):
+        return False
+    agent, _ = net.local_agent('autopilot')
+    try:
+        net.try_quietly(agent, fresh, current, source, synchronize=False, exact_only=True)
+    except NetworkError:
+        return False  # Claim, boundary or input state changed during revalidation.
+    return net._function(fn['name'], slug)['status'] == 'matched'
 
 
 CLOSER = 2  # a profile that scores the saved C at most 1/CLOSER of its own settings' score is worth telling the user

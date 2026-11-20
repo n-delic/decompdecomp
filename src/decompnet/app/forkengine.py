@@ -2700,6 +2700,7 @@ class ForkEngine:
             src_text = p.read_text(errors="replace", encoding="utf-8") if p.exists() else None
         else:
             lines.append("this unit has no source file yet, so it can't be decompiled from here")
+        knowledge_rows = []
         try:
             d = fp.diff(unit, meta.get("symbol") or fn["name"])
             pct = ("not in your build yet" if d.match_percent is None else
@@ -2719,6 +2720,7 @@ class ForkEngine:
             elif d.match_percent is not None and not d.matched:
                 d.rows = with_constant_values(d.rows, consoles.get(cfg.get("platform")), fp)
                 lines += ["", "### Diff against the current build", d.render()]
+                knowledge_rows = d.rows
         except (ObjdiffError, ForkError) as e:
             lines.append(f"(objdiff couldn't diff this function: {e})")
         _, span = self._find(src_text, self._names(meta, fn)) if src_text else (None, None)
@@ -2744,6 +2746,9 @@ class ForkEngine:
                           self._method_draft(fp, cfg, fn, seed).strip(), "```"]
         lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
         lines += self._debug_brief(fp, cfg, fn)
+        from .knowledge import service
+        if tips := service(self.net).relevant(fn, knowledge_rows):
+            lines += ['', *tips]
         lines += self._ltcg_brief(fp, meta, fn, unit)
         lines += self._method_brief(fp, cfg, meta, fn)
         if found := self._unresolved_lines(fp, meta, fn, unit, src_text[span[0]:span[1]] if span else None):
@@ -3247,7 +3252,8 @@ class ForkEngine:
         return code, after, path, before
 
     def _attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
-                 quiet: int | None = None, comment: bool = False, diagnostic: bool = False, *, background: bool = False) -> dict:
+                 quiet: int | None = None, comment: bool = False, diagnostic: bool = False, *,
+                 background: bool = False, exact_only: bool = False) -> dict:
         proj, fp, cfg = self.get(slug)
         fn = self._fn(slug, function)
         meta = self._meta(fn)
@@ -3277,6 +3283,10 @@ class ForkEngine:
         symbol = meta.get("symbol") or fn["name"]
         linked = fp.source_is_linked(unit)  # the game is built from this file: changes must keep it identical
         with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
+            if exact_only:
+                current = self._fn(slug, function)
+                if current['status'] != 'open' or source != current['best_source']:
+                    return {"matched": False, "score": None}
             code, after, path, before = self._place(proj, fp, unit, fn, source, names, comment, prelude)
             from .local_claims import expiry_ids
             store = self.net.project_store(slug)
@@ -3438,7 +3448,7 @@ class ForkEngine:
             pct = d.match_percent if d.match_percent is not None else 0.0
             score = max(1, len(d.literals)) if d.literals else scaled(pct, fn["n_insns"])
             matched = d.matched
-            if diagnostic:
+            if diagnostic or (exact_only and not matched):
                 undo()
                 return {**evidence,'text': ('MATCH! diagnostic only' if matched else f'score {score} ({pct:.1f}%)')+'; source restored.',
                         'score':score,'matched':matched,'percent':pct,'rows':d.rows,'line_note':line_note}

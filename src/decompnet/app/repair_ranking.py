@@ -4,6 +4,41 @@ STRUCTURAL = ('scratch_role_reuse','scalar_storage_reuse','row_number_staging','
 GUARDED = ('matched_zero_argument_call', 'zero_argument_parameter_alias', 'matched_integer_prototype', 'mips_debug_break','live_return_address','live_return_address_initializers')
 
 
+def matching_topics(rows):
+    """Recognize narrow MIPS patterns that select an existing repair or a brief tip."""
+    def opcode(cell):
+        parts = cell.split(None, 1)
+        return parts[0] if parts else ''
+
+    target = [(opcode(left), marker) for marker, left, _ in rows if left]
+    changed = [(opcode(left), opcode(right)) for marker, left, right in rows if marker != ' ']
+    topics = []
+    for load, store in (('lw', 'sw'), ('lwc1', 'swc1')):
+        for i in range(len(target)-5):
+            ops, markers = zip(*target[i:i+6])
+            if ops == (load,)*3 + (store,)*3 and any(marker != ' ' for marker in markers):
+                topics.append('Grouped copies')
+                break
+        if topics:
+            break
+    widths = {'lb', 'lbu', 'lh', 'lhu', 'lw', 'lwc1', 'ldc1'}
+    if any(a in widths and b in widths and a != b for a, b in changed):
+        topics.append('Load width and indexing')
+    if any(a in {'jal', 'jalr'} or b in {'jal', 'jalr', 'cvt.d.s', 'cvt.s.d'} for a, b in changed):
+        topics.append('Call signatures')
+    if any(op in {'trunc.w.s', 'trunc.w.d'} and marker != ' ' for op, marker in target):
+        topics.append('Unsigned conversions')
+    return topics
+
+
+TOPIC_REPAIRS = {
+    'Grouped copies': ('global_record_copy', 'word_block_copy', 'float_record_copy'),
+    'Load width and indexing': ('field_width', 'symbol_access_width', 'pointer_byte_step', 'pointer_walk_index'),
+    'Call signatures': ('float_prototype', 'matched_integer_prototype', 'passthrough_argument'),
+    'Unsigned conversions': ('float_unsigned_conversion',),
+}
+
+
 def guarded_first(candidates, labels=None):
     """Finite target-backed proposals precede generic learned or localisation hypotheses."""
     family=lambda c:labels.get(c,'') if labels is not None else c
@@ -103,6 +138,8 @@ def order(families, rows):
     from .snapshot_branch_repairs import missing_masks
     if missing_masks(rows):
         preferred=GUARDED+('narrow_snapshot_branches','local_width','inline_scalar_shape')+preferred
+    focused = tuple(family for topic in matching_topics(rows) for family in TOPIC_REPAIRS[topic])
+    preferred = focused + preferred
     ranked=sorted(families, key=lambda f: preferred.index(f) if f in preferred else len(preferred))
     from .trial_evidence import order as evidence_order
     return evidence_order(ranked,rows,evidence=diagnosis)

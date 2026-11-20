@@ -784,6 +784,8 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
               "score_after": r["score_after"]} for r in note_rows]
     knowledge = [r["text"] for r in store.all("SELECT text FROM knowledge WHERE project_id=? AND status='accepted' "
                                                   "ORDER BY id", pid)]
+    from .knowledge import saved_evidence
+    knowledge_evidence = saved_evidence(net, store, pid)
     manifest = {
         "format": FORMAT, "saved_at": time.time(), "revision": _next_revision(net, proj, folder),
         "title": proj["name"], "platform": cfg.get("platform"),
@@ -791,6 +793,7 @@ def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict,
         "compiler": cfg.get("compiler"), "compiler_ranges": cfg.get("compiler_ranges") or [],
         "function_compilers": cfg.get('function_compilers') or {},
         "instructions": cfg.get("instructions") or "", "knowledge": knowledge,
+        **({"knowledge_evidence": knowledge_evidence} if knowledge_evidence else {}),
         "claim_order": cfg.get("claim_order") or "",
         "priority": cfg.get("priority") or [],
         "auto_compiler": cfg.get("auto_compiler"),
@@ -1258,6 +1261,8 @@ def _context_agents(net, store, manifest: dict, check_cancel=lambda: None, *, re
     names = {'restored'}
     if restore_notes:
         names.update(note.get('by') or 'restored' for note in manifest.get('notes') or [])
+    from .knowledge import saved_rows
+    names.update(row['by'] or 'restored' for _, _, row in saved_rows(manifest))
     agents = {}
     for name in sorted(names):
         check_cancel()
@@ -1342,9 +1347,15 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
                 db.execute("UPDATE functions SET unit=? WHERE project_id=? AND name=?", (unit, pid, name))
         for text in manifest.get("knowledge") or []:
             check_cancel()
-            if not db.execute("SELECT 1 FROM knowledge WHERE project_id=? AND text=?", (pid, text)).fetchone():
+            exists = db.execute("SELECT id,status FROM knowledge WHERE project_id=? AND text=? "
+                                "ORDER BY status='accepted' DESC,id LIMIT 1", (pid, text)).fetchone()
+            if not exists:
                 db.execute("INSERT INTO knowledge(project_id, text, status, created_at, decided_at) VALUES(?,?,?,?,?)",
                            (pid, text, "accepted", time.time(), time.time()))
+            elif exists['status'] != 'accepted':
+                db.execute("UPDATE knowledge SET status='accepted',decided_at=? WHERE id=?", (time.time(), exists['id']))
+        from .knowledge import restore_evidence
+        restore_evidence(db, pid, manifest, agents, check_cancel)
     # Restored notes are historical records, not new agent handoffs. Going through add_note
     # recalculates attempt/session history once per note and can hold the writer for minutes.
     # Resolve the small identity/function sets once; old saves without measurements stay unknown.

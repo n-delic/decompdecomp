@@ -90,6 +90,30 @@ def get_candidate(net, agent, slug, function, base='current'):
     fn = net._function(function, slug)
     remaining = local_experiments.summary(net, agent, slug, fn, source, revision, discover=False)
     measured = agent_evidence.baseline(net, agent, slug, fn, source) if base == 'current' else None
+    if (measured and measured.get('exact') and source == fn['best_source'] and fn['status'] == 'open'
+            and hasattr(net, 'try_quietly') and slug not in getattr(net, 'links', {})):
+        store = net.project_store(fn['project_id'])
+        if store.one('SELECT 1 FROM claims WHERE function_id=? AND agent_id=? AND expires_at>?',
+                     fn['id'], agent.id, time.time()):
+            # The claim stays cheap. Its first substantive read already rejudges
+            # the saved candidate, so publish only a freshly confirmed exact result.
+            from ..candidate_scope import key
+            from ..forks.project import ForkError
+            proj = net.project_row(slug)
+            if measured.get('input_scope') == key(net, proj, fn):
+                try:
+                    if net.fork_slug(slug):
+                        with net.attempt_turn(agent, fn):
+                            net.forks._attempt(agent, slug, fn['name'], source, keep=False, quiet=0, exact_only=True)
+                    else:
+                        auto, _ = net.local_agent('autopilot')
+                        net.try_quietly(auto, proj, fn, source, synchronize=False, exact_only=True)
+                except (NetworkError, ForkError):
+                    pass  # A concurrent winner or changed inputs can supersede this recheck.
+                fn = net._function(function, slug)
+                if fn['status'] == 'matched':
+                    note += 'Saved C matched when rejudged. This function is matched and its claim is released.\n'
+                    source, revision = candidate(net, agent, slug, function)
     line_note = measured.get('line_note', '') if measured and measured.get('source') == source else ''
     mapping = (line_note or '\nC-line mapping unavailable for this candidate/build; no line locations inferred.') if base == 'current' else '\nC-line mapping will refresh after this candidate is compiled; no historical line locations inferred.'
     baseline = agent_evidence.baseline_note(fn, measured, net) or 'Baseline: historical/unverified for these inputs; no current score inferred.'

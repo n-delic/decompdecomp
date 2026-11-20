@@ -1,7 +1,46 @@
 """Rank profile hypotheses from target evidence, never from a familiar function name alone."""
 import json
+import re
 
 from ..arch.mips_runtime import helper
+
+
+def kmc_variants(toolchain, flags):
+    """Bounded KMC trials that change scheduling or induction-variable reduction."""
+    if toolchain != 'gcc-2.7.2-kmc':
+        return []
+    scheduling = {'-fschedule-insns', '-fschedule-insns2',
+                  '-fno-schedule-insns', '-fno-schedule-insns2'}
+    base = [flag for flag in flags if flag not in scheduling]
+    variants = []
+    if '-O1' in base:
+        variants.append([*base, '-fschedule-insns', '-fschedule-insns2'])
+    if base != flags:
+        variants.append(base)
+    if '-fno-strength-reduce' in flags:
+        variants.append([flag for flag in flags if flag != '-fno-strength-reduce'])
+    return [variant for variant in variants if variant != flags]
+
+
+def kmc_priorities(own, assembly, rows):
+    from .allocation_evidence import diagnose
+
+    flags = list(own['flags'])
+    diagnosis = diagnose(rows)
+    changed = [right for marker, _, right in rows if marker != ' ']
+    prologue = any(marker not in {' ', 'r'} and '$sp' in (left + right)
+                   for marker, left, right in rows[:12])
+    variants = []
+    if diagnosis['delay_slot'] and any(right.strip() == 'nop' for right in changed):
+        variants.append([flag for flag in flags if not re.fullmatch(r'-g[0-3]?', flag)])
+    for variant in kmc_variants(own['toolchain'], flags):
+        restores_induction = '-fno-strength-reduce' in flags and '-fno-strength-reduce' not in variant
+        if restores_induction:
+            if re.search(r'\bmultu?\b', ' '.join(changed)) and re.search(r'\baddiu?\b', assembly):
+                variants.insert(0, variant)
+        elif prologue or diagnosis['scheduling'] or diagnosis['delay_slot']:
+            variants.append(variant)
+    return list(dict.fromkeys(tuple(variant) for variant in variants if variant != flags))
 
 
 def prioritized(proj, fn, own):
