@@ -24,6 +24,7 @@ from . import (
     permuter_focus,
     stack_layout,
     target_conversion_diff_repairs,
+    target_edge_diff_repairs,
     target_memory_diff_repairs,
     target_schedule_diff_repairs,
 )
@@ -149,6 +150,8 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         return result
 
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += target_edge_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
+                                                   resolve=resolve,big_endian=big_endian,flags=flags)
         result += target_schedule_diff_repairs.proposals(source,name,header,rows,target,candidate,flags)
     result += target_conversion_diff_repairs.proposals(source,name,header,toolchain,rows,target,candidate,asm,
                                                read_data=read_data,big_endian=big_endian)

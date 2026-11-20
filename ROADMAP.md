@@ -3046,6 +3046,12 @@ selector-load and float-store scheduling changes. Other gates cover masked
 bounds, previous-record addressing, guarded float numerators, float word
 stores, and address arithmetic after a single volatile base read.
 
+Additional KMC gates cover the increment on a continue edge, float call-result
+reuse, and reversed multiply operands from a halfword load. They also isolate
+duplicate conversion bias, unaligned record copies, saved float zero across a
+loop and call, shared-store branch polarity, packed-key load order, interleaved
+float field updates, and a proven same-address spelling for a second call.
+
 ## Register-only local lifetime search
 
 Shared draft, agent-local and deep searches offer bounded branch-tail locals, scalar call staging
