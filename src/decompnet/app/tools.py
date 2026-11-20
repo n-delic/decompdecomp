@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .. import __version__, agents, arch, candidate_quality, claim_stalls, consoles
 from ..network import CLAIM_ORDERS, Agent, Network, NetworkError
 from ..release_receipts import operation as release_operation
+from ..repair_feedback import AGENT_CATEGORIES, submission, track_matches
 from . import (
     agent_tokens,
     asset_agents,
@@ -233,12 +234,12 @@ Part of another function the analysis cut (no prologue, registers the code befor
 next symbol)? join_functions(it, the other part, why), so it becomes one whole function."""
 
 
-REPAIR_GUIDANCE = """\
-When a candidate makes a specific repair, optionally include a one-sentence repair_note, repair_category and
-repair_automation in compile_and_diff (single function only). These are saved only on a verified new match.
-Explain what changed and how a deterministic repair could do it; omit uncertain explanations. No extra compile
-is needed. report_repair can annotate your captured match afterwards. These are review ideas, never live rules.
-"""
+REPAIR_GUIDANCE = (
+    "Classify each verified repair before moving on. Put repair_category on a likely winning single-function "
+    "compile_and_diff or compile_patch; it is saved only on a match. If the result asks for report_repair, "
+    "send just the category. Categories: " + ", ".join(AGENT_CATEGORIES) +
+    ". For other, optionally give a short suggested_category. No explanation or extra compile required.\n"
+)
 WORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves a validated exact-anchor proposal. Retrieve it with get_function(section="experiment"); it remains untested until the normal judge runs. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
 FORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves an exact-anchor proposal. Retrieve it with get_function(section="experiment") and test through the normal judge. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves a validated exact-anchor proposal. Retrieve it with get_function(section="experiment"); it remains untested until the normal judge runs. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
 
@@ -471,13 +472,10 @@ def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: st
 
 
 def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: str,
-             repair_note: str = '', repair_category: str = 'other', repair_automation: str = '') -> str:
-    """Optional repair notes ride along with a candidate, saving a separate explanation round trip."""
-    from ..repair_feedback import CATEGORIES
+             repair_note: str = '', repair_category: str = '', repair_automation: str = '',
+             suggested_category: str = '') -> str:
+    """A category can ride along with a candidate, saving a separate model turn."""
     names = [n.strip() for n in function.split(",") if n.strip()]
-    if repair_note and repair_category not in CATEGORIES:
-        repair_note=f'[Original category: {repair_category}] '+repair_note
-        repair_category='other'
     if repair_note and len(names) != 1:
         # A small model put the function's callees and data in `function` ("func_A, func_B, D_8010...") with a
         # note, and the old "Repair notes require one function" read as being about the note: it gave up on the
@@ -487,7 +485,6 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
                            'compiling, and declare its callees and data inside `source`. Nothing was compiled; '
                            'send it again. (A batch of several claimed functions takes no repair_note; use '
                            'report_repair after it.)')
-    previous = net.project_store(slug).one('SELECT MAX(id) AS id FROM repair_examples')['id'] or 0
     previous_diff = None
     previous_attempt = None
     if len(names) == 1:
@@ -495,7 +492,11 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
         previous_attempt = net.project_store(slug).one('SELECT id,source FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1', fn['id'], agent.id)
         kept = net._last_diffs.get((agent.id, fn['id']))
         previous_diff = list(kept[0]) if kept else None
-    if len(names) <= 1:
+    saved = []
+    if len(names) == 1 and (repair_category or repair_note or suggested_category):
+        with submission(fn, agent.id, repair_category, repair_note, repair_automation, suggested_category) as saved:
+            result = net.compile_and_diff(agent, names[0], source, slug)
+    elif len(names) <= 1:
         result = net.compile_and_diff(agent, names[0] if names else function, source, slug)
     else:
         result = net.attempt_many(agent, [net.resolve_function(agent, slug, n) for n in names], source, slug)
@@ -543,14 +544,9 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
                     coached.clear()
                 coached.add(stamp);net._patch_coached=coached
                 result += '\nSmall edit: use compile_patch with revision, old and new next time; avoid resending the full C.'
-    if repair_note:
-        fn = net._function(names[0], slug)
-        case = net.project_store(slug).one('SELECT e.id FROM repair_examples e JOIN attempts a ON a.id=e.attempt_id '
-                             'WHERE e.function_id=? AND e.agent_id=? AND e.id>? AND a.source=? '
-                             'ORDER BY e.id DESC LIMIT 1', fn['id'], agent.id, previous, source)
-        if case:
-            net.repair_feedback.report(agent, slug, names[0], repair_note, repair_category, repair_automation, case_id=case['id'])
-            result += f"\nRepair example #{case['id']} and your explanation saved for review."
+    for case_id in saved:
+        detail = ' and your explanation' if repair_note.strip() else ' classification'
+        result += f"\nRepair example #{case_id}{detail} saved for review."
     return result
 
 
@@ -621,10 +617,9 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "claim_function": lambda net, agent, slug, function="", strategy="", count=1:
         _claim(net, agent, slug, function, strategy, count),
     "get_function": agent_tokens.function_view,
-    "compile_and_diff": lambda net, agent, slug, function, source, repair_note='', repair_category='other', repair_automation='':
-        _compile(net, agent, slug, function, source, repair_note, repair_category, repair_automation),
-    "report_repair": lambda net, agent, slug, function, change, category='other', automation='':
-        net.repair_feedback.report(agent, slug, function, change, category, automation),
+    "compile_and_diff": lambda net, agent, slug, **args: _compile(net, agent, slug, **args),
+    "report_repair": lambda net, agent, slug, function, change='', category='other', automation='', case_id=0, suggested_category='':
+        net.repair_feedback.report(agent, slug, function, change, category, automation, case_id, suggested_category),
     "last_diff": agent_tokens.diff_page,
     "report_candidate_issue": lambda net, agent, slug, function, revision, issue, reason, alternative_revision="":
         candidate_quality.report(net,agent,slug,function,revision,issue,reason,alternative_revision),
@@ -712,6 +707,10 @@ JUDGE_TOOLS = frozenset({"compile_and_diff", "compile_patch", "compile_variants"
                          # (they read and write the database, not the saved files: release_function waited 3.2 s
                          # a call for the project's lock, behind other helpers' full checks)
                          "claim_function", "release_function", "add_note"})
+REPAIR_CAPTURE_TOOLS = frozenset({'compile_and_diff', 'compile_patch', 'compile_variants', 'compile_family',
+                                 'try_local_repairs', 'try_compiler', 'compiler_experiments', 'search_flags',
+                                 'edit_file', 'edit_context', 'redraft'})
+
 
 ROM_ONLY = {"watch_in_emulator","compare_behaviour","get_data_unit","compile_data","claim_data","release_data","claim_port_fix","release_port_fix","check_for_pc","fix_for_pc","claim_asset_region","inspect_asset_region","preview_asset_region","propose_asset_region","defer_asset_region","review_search_seed","get_boundary_evidence", "suggest_boundary", "get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done", "tidy_file",
@@ -817,7 +816,7 @@ def _tool_foreground(net, agent, slug, name, args):
     # Polishing also judges current DB inputs and rechecks source/header/target
     # receipts before publication; claims may reuse such a verified plan.
     allowed = function_read or name in {'compile_and_diff','compile_patch','compile_variants','compile_family','try_local_repairs',
-                                       'add_note','get_assembly','get_context','claim_readable','polish_function','make_readable'} or (
+                                       'add_note','report_repair','get_assembly','get_context','claim_readable','polish_function','make_readable'} or (
         name == 'get_candidate' and args.get('base','current') == 'current') or (
         name == 'release_function' and not args.get('needs','').strip() and not args.get('not_c',False))
     notes = allowed and name in {'add_note','release_function'}
@@ -889,7 +888,7 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
     # a write (Store.versions_held).
     from ..store import Store
     progress = getattr(net, 'progress', None)
-    if progress is not None and name in READ_ONLY and name not in READS_SAVED_FILES:
+    if progress is not None and (name == 'report_repair' or name in READ_ONLY and name not in READS_SAVED_FILES):
         # A read answers from the database as it is: it waited for the folder's checks and rechecks like a write
         # (read_data 601 s, resolve_addresses 188 s behind a full recheck), for nothing it reads.
         with _tool_foreground(net, agent, slug, name, args), Store.versions_held(), progress.view():
@@ -913,6 +912,11 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
         return result
 
 
+def _repair_request(cases):
+    examples = ', '.join(f'{function} (case_id={case_id})' for case_id, function in cases.items())
+    return f"Before claiming more work, call report_repair with function, case_id and category for {examples}. Use other if unsure."
+
+
 @claim_stalls.snapshot_rules
 def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     asset_agents.guard(net,agent,slug,name,args)
@@ -925,10 +929,22 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     handshake = (agent.id, slug) in pending
     if handshake and name != 'project_info':
         raise NetworkError('First call project_info(detail=false) to verify tools in this CLI session. No work was changed.')
-    from .tool_policy import record
+    from .tool_policy import record, visible
     record(net, agent, slug, name, count=count_usage)
     if not count_usage:
         return HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args, name))
+    repair_key = (slug, agent.id)
+    pending_repairs = getattr(net, '_pending_repair_classifications', {})
+    if name == 'claim_function' and (cases := pending_repairs.get(repair_key)):
+        store = net.project_store(slug)
+        snapshot = cases.copy()
+        remaining = {case_id: function for case_id, function in snapshot.items()
+                     if store.one("SELECT 1 FROM main.repair_examples WHERE id=? AND agent_id=? "
+                                  "AND status='new' AND category='unclassified'", case_id, agent.id)}
+        if remaining and visible(net, slug, ['report_repair'], agent):
+            raise NetworkError(_repair_request(remaining))
+        for case_id in snapshot:
+            cases.pop(case_id, None)
     from . import session_budget
     from .agent_local_pass import after_tool
     budget=session_budget.current(net,agent,slug)
@@ -945,7 +961,8 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
         # long recheck cannot prevent the CLI from establishing its connection.
         # The next work tool still synchronizes and validates its own inputs.
         compact_handshake = handshake and name == 'project_info' and not args.get('detail', False)
-        with net.progress.view() if compact_handshake else nullcontext():
+        tracking = track_matches(slug, agent.id) if name in REPAIR_CAPTURE_TOOLS else nullcontext([])
+        with (net.progress.view() if compact_handshake else nullcontext(), tracking as matches):
             result=HANDLERS[name](net,agent,slug,**named)
         if name in {'get_function','get_assembly'} and args.get('function') != named.get('function'):
             result = f"Resolved read {str(args.get('function'))[:200]!r} to {named['function']}. This does not rename or create a function.\n"+result
@@ -963,6 +980,10 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
             if function and ',' not in function:
                 from .efficiency_feedback import frontload
                 result=frontload(net,agent,slug,function,result)
+        if matches and visible(net, slug, ['report_repair'], agent):
+            cases = dict(matches)
+            net.__dict__.setdefault('_pending_repair_classifications', {}).setdefault(repair_key, {}).update(cases)
+            result += '\n' + _repair_request(cases)
         return result
     finally:
         if budget:
@@ -1007,7 +1028,7 @@ QUICK_TOOLS = frozenset({
     'last_diff', 'search_notes', 'read_file', 'search_code', 'file_status', 'get_class', 'compiler_map',
     'get_candidate', 'get_compiler_trial', 'get_search_brief', 'family_targets', 'get_boundary_evidence',
     'resolve_addresses', 'read_data', 'standins_for', 'claim_function', 'claim_readable', 'release_function',
-    'add_note', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
+    'add_note', 'report_repair', 'share_knowledge', 'suggest', 'tidy_done', 'claim_asset_region', 'defer_asset_region',
     'inspect_asset_region', 'report_data_region', 'report_boundary', 'suggest_boundary', 'port_readiness', 'get_data_unit', 'claim_data', 'release_data',
     'claim_port_fix', 'release_port_fix',
 })
@@ -1155,7 +1176,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def compile_and_diff(ctx: Context, function: str, source: str, repair_note: str = '',
-                               repair_category: str = 'other', repair_automation: str = '') -> str:
+                               repair_category: str = '', repair_automation: str = '', suggested_category: str = '') -> str:
         """Submit a whole-function rewrite and judge it against the original. For small edits use compile_patch to avoid resending C; score 0 = byte-identical.
 
         ROM projects: compiled with the game's compiler (context.h included), linked at the function's
@@ -1164,7 +1185,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         built with the project's build system and diffed with objdiff. Several functions ("a, b, c"): send all
         their definitions in one source; each is judged on its own."""
         return await run(ctx, "compile_and_diff", function=function, source=source, repair_note=repair_note,
-                         repair_category=repair_category, repair_automation=repair_automation)
+                         repair_category=repair_category, repair_automation=repair_automation, suggested_category=suggested_category)
 
     @tool
     async def get_claims(ctx: Context) -> str:
@@ -1178,11 +1199,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
 
     @tool
     async def compile_patch(ctx: Context, function: str, revision: str, old: str, new: str, repair_note: str = '',
-                            repair_category: str = 'other', repair_automation: str = '', occurrence: int = 0) -> str:
+                            repair_category: str = '', repair_automation: str = '', occurrence: int = 0,
+                            suggested_category: str = '') -> str:
         """Compile one exact-text replacement in your versioned candidate. Use occurrence=1-based index for repeated old text; default 0 requires a unique anchor. Stale revisions are refused.
         Uses the ordinary compiler, claim limits and exact judge; no files bypass the build checks."""
         return await run(ctx, 'compile_patch', function=function, revision=revision, old=old, new=new, occurrence=occurrence,
-                         repair_note=repair_note, repair_category=repair_category, repair_automation=repair_automation)
+                         repair_note=repair_note, repair_category=repair_category, repair_automation=repair_automation,
+                         suggested_category=suggested_category)
 
     @tool
     async def compile_variants(ctx: Context, function: str, revision: str, patches: list[dict]) -> str:
@@ -1236,13 +1259,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, 'get_assembly', function=function, start=start, limit=limit, focus=focus)
 
     @tool
-    async def report_repair(ctx: Context, function: str, change: str, category: str = 'other', automation: str = '') -> str:
-        """Annotate your captured verified match: the decisive change and how a deterministic rule could make it.
-        Optional after-the-fact alternative to compile_and_diff's repair_note. One sentence is enough; do not
-        guess. This collects review evidence and never enables a rule. Categories: types, casts, constants,
-        addresses, signatures, layout, temporaries, expression_order, control_flow, compiler_settings, other.
-        """
-        return await run(ctx, 'report_repair', function=function, change=change, category=category, automation=automation)
+    async def report_repair(ctx: Context, function: str, change: str = '', category: str = 'other',
+                            automation: str = '', case_id: int = 0, suggested_category: str = '') -> str:
+        """Classify your verified repair. Pass case_id from the match result and a category. For other, optionally
+        suggest a short new category. Change and automation notes are optional."""
+        return await run(ctx, 'report_repair', function=function, change=change, category=category,
+                         automation=automation, case_id=case_id, suggested_category=suggested_category)
 
     @tool
     async def last_diff(ctx: Context, function: str, context: int = 1, start: int = 0, limit: int = 40) -> str:

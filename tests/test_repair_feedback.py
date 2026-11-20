@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from decompnet.app import tools
+from decompnet.app.engine import RomNetwork
 from decompnet.app.forkengine import ForkEngine
 from decompnet.network import Network, NetworkError
 
@@ -25,8 +26,8 @@ def test_cascade_cannot_claim_another_candidates_random_rewrite(setup):
 
 
 @pytest.fixture
-def setup(tmp_path):
-    net = Network(tmp_path / 'app.db')
+def setup(tmp_path, request):
+    net = request.param(tmp_path) if hasattr(request, 'param') else Network(tmp_path / 'app.db')
     winner = net.authenticate(net.register_agent('solver'))
     other = net.authenticate(net.register_agent('other'))
     cfg = {'platform': 'n64', 'compiler': {'toolchain': 'gcc-2.7.2-kmc', 'flags': ['-O2']}}
@@ -179,6 +180,7 @@ def test_deleted_old_attempt_cannot_be_replaced_with_unrelated_reused_id(setup):
     assert net.repair_feedback.detail('demo', case)['evidence']['before']['source'] == 'int target(void) { return 2; }\n'
 
 
+@pytest.mark.parametrize('setup', [lambda path: RomNetwork(path / 'app.db', path)], indirect=True)
 @pytest.mark.parametrize('transport', ['mcp', 'api'])
 def test_mcp_and_api_accept_inline_feedback_without_an_extra_model_call(setup, monkeypatch, transport):
     import anyio
@@ -205,6 +207,48 @@ def test_mcp_and_api_accept_inline_feedback_without_an_extra_model_call(setup, m
     assert 'repair_note' in schema['compile_and_diff']['parameters']['properties']
     assert 'repair_note' not in schema['compile_and_diff']['parameters']['required']
     assert 'report_repair' in schema
+
+
+
+@pytest.mark.parametrize('setup', [lambda path: RomNetwork(path / 'app.db', path)], indirect=True)
+@pytest.mark.parametrize('mode', ['rom', 'fork'])
+@pytest.mark.parametrize('inline', [True, False])
+def test_agents_classify_captured_repairs_before_claiming_more_work(setup, monkeypatch, mode, inline):
+    net, winner, _, pid, fid = setup
+    if mode == 'fork':
+        with net.store.tx() as db:
+            db.execute("UPDATE projects SET config=? WHERE id=?",
+                       (json.dumps({'kind': 'fork', 'platform': 'gc_wii'}), pid))
+    with net.progress.view():
+        net._record(fn(net, fid), winner, 10, 'near match', 1)
+    def attempt(agent, name, source, slug):
+        with net.progress.view():
+            net._record(fn(net, fid), agent, 0, source, 1, matched=True)
+        return 'matched'
+    monkeypatch.setattr(net, 'compile_and_diff', attempt)
+    monkeypatch.setitem(tools.HANDLERS, 'claim_function', lambda *args: 'next claim')
+    def call(tool, **args):
+        with net.progress.view():
+            return tools._dispatch(net, winner, 'demo', tool, args)
+    args = {'repair_category': 'other', 'suggested_category': 'Load scheduling'} if inline else {}
+    result = call('compile_and_diff', function='target', source='winning C', **args)
+    row = net.repair_feedback.listing('demo')['examples'][0]
+    if inline:
+        assert 'report_repair' not in result
+    else:
+        assert f"target (case_id={row['id']})" in result
+        assert row['category'] == 'unclassified'
+        with pytest.raises(NetworkError, match='report_repair'):
+            call('claim_function')
+        assert 'classified as other' in call('report_repair', function='target', case_id=row['id'],
+                                            category='other', suggested_category='Load scheduling')
+    assert call('claim_function') == 'next claim'
+    case = net.repair_feedback.detail('demo', row['id'])
+    assert case['category'] == 'other' and case['suggested_category'] == 'Load scheduling'
+    assert case['explanation'] == ''
+    assert case['evidence']['judge'] == ('objdiff 100%' if mode == 'fork' else 'linked byte-identical')
+    exported = json.loads(''.join(net.repair_feedback.export('demo')))
+    assert exported['examples'][0]['suggested_category'] == 'Load scheduling'
 
 
 def test_header_snapshot_records_global_and_unit_context_scopes(setup):
@@ -353,6 +397,7 @@ def test_unknown_inline_category_preserves_patch_and_original_annotation(setup,m
     tools._compile(net,winner,'demo','target','winning C',repair_note='Preserved load order.',repair_category='load_store_order')
     row=net.repair_feedback.listing('demo')['examples'][0]
     assert row['category']=='other'
+    assert row['suggested_category']=='load_store_order'
     assert row['explanation']=='[Original category: load_store_order] Preserved load order.'
 
 
