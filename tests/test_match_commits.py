@@ -163,6 +163,28 @@ def test_autosave_drains_enabled_matches(automatic):
     assert git(root, 'log', '-1', '--format=%s') == 'Saved from the ordinary autosave worker'
 
 
+def test_automatic_commit_poll_only_syncs_when_capturing_a_pending_match(automatic, monkeypatch):
+    net, root, _, _ = automatic
+    enable(automatic)
+    autosave = saves.Autosave(net)
+    seen = []
+    sync = net.progress.sync
+
+    def record_sync(slug, **kwargs):
+        seen.append(kwargs.get('force', False))
+        return sync(slug, **kwargs)
+
+    monkeypatch.setattr(net.progress, 'sync', record_sync)
+    autosave._commit_once('game', lambda _: None)
+    assert not seen
+
+    match(automatic)
+    seen.clear()
+    autosave._commit_once('game', lambda _: None)
+    assert seen[0] and sum(seen) == 1
+    assert git(root, 'log', '-1', '--format=%s') == 'Match f'
+
+
 def test_gui_auto_commit_checkbox():
     from pathlib import Path
     subprocess.run(['node', str(Path(__file__).with_name('gui_match_commits.js'))], check=True, capture_output=True, timeout=30)
