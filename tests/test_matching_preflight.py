@@ -234,3 +234,44 @@ def test_four_word_copy_ranking_requires_contiguous_transfers():
     assert order(['local_width', 'word_block_copy'], rows)[0] == 'word_block_copy'
     rows[-1] = ('o', 'sw $t3, 20($a1)', '')
     assert 'Grouped copies' not in matching_topics(rows)
+
+
+@pytest.mark.parametrize("case", ["sqrt", "prologue", "delay-slot"])
+def test_kmc_fresh_baseline_prioritizes_targeted_profiles_on_resume(case):
+    net, proj, fn, state = setup()
+    base, trial, assembly, rows, problem = {
+        "sqrt": (
+            ["-O2"], ["-O2", "-ffast-math"], "sqrt.s $f0, $f12",
+            [('>', '', 'c.eq.s $f0, $f0'), ('>', '', 'jal sqrtf')],
+            "`sqrtf` is not a known symbol.",
+        ),
+        "prologue": (
+            ["-O1"], ["-O1", "-fschedule-insns2"], "",
+            [('o', 'sw $ra, 20($sp)', 'sw $ra, 20($sp)')], "",
+        ),
+        "delay-slot": (
+            ["-O2", "-g3"], ["-O2"], "",
+            [(' ', 'jr $ra', 'jr $ra'), ('|', 'addiu $sp, $sp, 16', 'nop')], "",
+        ),
+    }[case]
+    net.cfg(proj)['compiler'] = {'toolchain': 'gcc-2.7.2-kmc', 'flags': base}
+    fn['asm'] = assembly
+    state['auto'] = True
+
+    def judge(project, function, toolchain, flags, source):
+        assert source == fn['best_source']
+        state['calls'].append(flags)
+        if flags == base:
+            return False, SimpleNamespace(score=1120, rows=rows), problem
+        assert flags == trial
+        return True, SimpleNamespace(score=0), ''
+
+    net._judge_with = judge
+    assert preflight.run(net, proj, fn, max_profiles=1)['pending']
+    result = preflight.run(net, proj, fn, max_profiles=1)
+    assert result['best']['exact'] and 'link' not in result
+    assert state['calls'] == [base, trial]
+    if case == 'sqrt':
+        assert state['suggested'][0]['review_only'] and not state['applied']
+    else:
+        assert result['applied']

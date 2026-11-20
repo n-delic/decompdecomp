@@ -8233,6 +8233,18 @@ candidate and header fixed within each case.
 - With a typed 12-byte record loop as the source, `-O2 -fno-strength-reduce`
   scored 1375. Removing `-fno-strength-reduce` produced exact linked bytes.
 
+Saved same-source diagnostics from an N64 project also showed:
+
+- KMC GCC 2.7.2 emitted `sqrt.s`, a self-comparison and a conditional
+  `sqrtf` call. Adding only `-ffast-math` changed 1120 to exact. A second
+  hardware square-root routine also matched with `-O2 -ffast-math`.
+  Preflight offers an exact result for review because the flag changes
+  floating-point semantics.
+- At `-O1`, adding only `-fschedule-insns2` moved an early return-address
+  save into its target position (60 to exact). It improved a second function
+  with a displaced stack adjustment from 105 to 45. Preflight prioritizes
+  these trials from its own baseline diff, including when resuming saved work.
+
 ## Round 21: m2c's cursor walk over a global array, and a separate rate local (KMC gcc 2.7.2, `-O2`)
 
 - **Cursor walk to indexed loop** (controlled, now the `pointer_walk_index` repair in decomp-repair 0.5.35): m2c writes
