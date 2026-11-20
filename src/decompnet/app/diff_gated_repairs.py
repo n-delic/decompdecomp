@@ -7,6 +7,7 @@ from decomprepair import (
     loop_sentinel_repairs,
     measured_address_repairs,
     measured_callback_repairs,
+    measured_expression_repairs,
     measured_immediate_repairs,
     measured_temporary_repairs,
     targeted_switch_labels,
@@ -164,6 +165,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         result += target_inline_storage_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                              read_data=read_data,big_endian=big_endian)
         result += stack_padding_repairs.layout_candidates(source,name,header,arch,rows,symbols,flags)
+        result += measured_expression_repairs.variants(source,name,header,rows)
         result += measured_temporary_repairs.variants(source,name,rows)
         result += measured_callback_repairs.variants(source,name,rows)
         result += measured_address_repairs.variants(source,name,header,rows,symbols)

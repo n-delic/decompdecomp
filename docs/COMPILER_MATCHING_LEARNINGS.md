@@ -8485,3 +8485,22 @@ at `-G0 -mips3 -mgp32 -mfp32 -O2`.
   load, guard, and move to `$a0` in the branch delay slot. The 210-point
   mismatch became exact. The loaded field and guarded field-access
   offsets must agree with the diff. The alias belongs to the guarded block.
+
+### Measured expression order (KMC GCC 2.7.2)
+
+Four archived N64 cases returned exact linked matches with their saved
+compiler settings (`-G0 -mips3 -mgp32 -mfp32 -O2`) and headers.
+
+- The signed shift form of a high-bit test emitted the target's
+  `slti` in the return delay slot. The failed mask emitted `srl`.
+  The read, including its volatile qualifier, stayed in place.
+- The halfword test after a pointer advance needed the earlier
+  declared record field. The two observed displacements include the
+  same 12-byte advance. Subtract it before selecting the field.
+- Moving the last shift into an explicitly grouped scale expression
+  reproduced a six-row register difference around an intervening
+  word load. The input was bounded by a halfword mask, so the
+  intermediate arithmetic fits its signed word type.
+- Staging a signed integer-to-float conversion before a floating
+  negation preserved its guarded lifetime and produced the measured
+  order through the comparison.

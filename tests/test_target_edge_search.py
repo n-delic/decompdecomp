@@ -216,3 +216,11 @@ def test_measured_direct_return_reaches_kmc_proposals():
     expected = source.replace('result = *(s32','return *(s32').replace('return result;','return 0;')
     assert (family,expected) in route(source,rows,'')
     assert family not in dict(route(source,rows,'',compiler='ido-5.3'))
+
+
+def test_measured_sign_test_reaches_kmc_proposals():
+    source = 'int f(void) { s32 status = *(volatile s32 *)0x8000; return (status & 0x80000000U) != 0; }'
+    rows = [(' ','jr $ra','jr $ra'),('|','slti $v0, $v0, 0','srl $v0, $v0, 0x1f')]
+    family = 'measured_sign_test'
+    assert (family,source.replace('& 0x80000000U','>> 31')) in route(source,rows,'')
+    assert family not in dict(route(source,rows,'',compiler='ido-5.3'))
