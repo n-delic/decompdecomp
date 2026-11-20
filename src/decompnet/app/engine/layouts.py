@@ -105,14 +105,31 @@ class LayoutMixin:
             return None
         x = self.xrefs(proj)
         if "structs" not in x:
-            rows = self.store.all("SELECT vram, target, relocs FROM functions WHERE project_id=? AND target IS NOT NULL",
-                                  proj["id"])
-            syms = self.symbols(proj["id"])
+            gen = self._layout_gen.get(proj["id"], 0)  # before syms: a rename after this bumps it, so facts built
+            syms = self.symbols(proj["id"])            # with these syms are not written back over the new cache
             read = functools.partial(arch.get(self.console(proj).arch).field_accesses,
                                      big_endian=bool(self.cfg(proj).get("big_endian", True)))
-            x["structs"] = structs.recover(((r["vram"], r["target"], json.loads(r["relocs"])) for r in rows), read,
-                                           lambda a: a - syms.name_at(a)[1])
+            facts = self._facts(proj["id"], self._corpus(proj["id"]), read, lambda a: a - syms.name_at(a)[1], gen)
+            x["structs"] = structs.recover_from(facts)
         return x["structs"]
+
+    def _facts(self, pid: int, corpus: list, read_facts, datum, gen: int = 0) -> dict:
+        """Each function's structs.Facts, keyed by vram; cached facts are reused for every function whose content
+        token is unchanged. extract() still sees the whole corpus (data_start needs every function's extent); `only`
+        just limits which functions are re-read. Splits/cuts/merges preserve byte coverage, so an unchanged
+        function's facts stay valid; a function added over bytes that were not code before clears this cache."""
+        cache = self._facts_cache.setdefault(pid, {})
+        changed = {vram for vram, _, _, token in corpus if (cache.get(vram) or (None,))[0] != token}
+        fresh = structs.extract([(v, c, r) for v, c, r, _ in corpus], read_facts, datum, only=changed) if changed else {}
+        out, kept = {}, {}
+        for vram, _code, _relocs, token in corpus:
+            facts = fresh[vram] if vram in fresh else cache[vram][1]
+            out[vram] = facts
+            kept[vram] = (token, facts)
+        with self._layout_lock:  # store only if no edit dropped/replaced the cache or bumped the generation while
+            if self._facts_cache.get(pid) is cache and self._layout_gen.get(pid, 0) == gen:  # we computed (unlocked)
+                self._facts_cache[pid] = kept
+        return out
 
     def _struct_key(self, fn, argument: str, syms) -> tuple[tuple, list[int], str]:
         """(structs key, pointer fields to follow, what to call it) for what an agent asks about: arg0..arg3, return,
