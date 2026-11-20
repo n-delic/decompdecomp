@@ -45,6 +45,7 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
     for dest,offset,segment in shared:
         references[dest].discard((offset,segment))
         if not references[dest]:del references[dest]
+    functions = recover_inline_halfwords(functions, data, image, order, explicit | pointers, references, segments, log)
     destinations=sorted(references)
     tables=[dict(rom_start=s.rom_start,rom_end=s.rom_end,vram=s.vram) for s in segments
             if 0<=s.rom_start<s.rom_end<=len(image) and not s.rom_start%4 and not s.rom_end%4]
@@ -178,6 +179,61 @@ def repair(functions, data, image, console, segments, *, symbols=(), log=print):
         log(f'Left {dropped} alignment words out of the functions: filler between a return and the next entry, kept in the image.')
         return kept
     return result
+
+
+def recover_inline_halfwords(functions, data, image, order, protected, references, segments, log):
+    """Recognize a short table reached through a never-taken link branch.
+
+    Handwritten MIPS can use bltzal $zero to set $ra without transferring
+    control, then load a table after the return using that PC-relative base.
+    The branch operand can make the disassembler invent a function there.
+    """
+    from .split import DataSymbol
+
+    ordered = sorted(functions, key=lambda fn: (fn.segment, fn.rom))
+    removed = set()
+    for previous, table, following in zip(ordered, ordered[1:], ordered[2:]):
+        size = following.rom - table.rom
+        end = table.vram + size
+        if (previous.segment != table.segment or following.segment != table.segment
+                or previous.rom + previous.size != table.rom or size != 8
+                or table.size not in (8, 12) or following.vram != end
+                or previous.vram + previous.size != table.vram
+                or previous.size < 8 or previous.lines[-2].word != JR_RA
+                or following.vram not in references
+                or any(table.vram <= address < end for address in protected)
+                or any(d.rom is not None and d.rom < following.rom and table.rom < d.rom + d.size for d in data)):
+            continue
+        owners = [segment for segment in segments if segment.contains(table.vram, size)]
+        if (len(owners) != 1 or owners[0].vram - owners[0].rom_start != table.vram - table.rom
+                or any(line.rom < 0 or line.rom+4 > len(image)
+                       or int.from_bytes(image[line.rom:line.rom+4], order) != line.word
+                       for line in (*previous.lines, *table.lines))):
+            continue
+        refs = references.get(table.vram, set())
+        if len(refs) != 1 or references.get(table.vram + 4):
+            continue
+        offset, segment = next(iter(refs))
+        if segment != previous.segment or not previous.rom <= offset < table.rom - 32:
+            continue
+        index = (offset - previous.rom) // 4
+        branch, delay, address, restore, add_first, add_second, load = previous.lines[index:index+7]
+        register = (address.word >> 16) & 31
+        delta = table.vram - (branch.vram + 8)
+        if (branch.word != 0x04100000 | ((delta + 4) // 4 & 0xffff) or delay.word
+                or not 0 < delta <= 0x7fff or register in (0, 31)
+                or address.word != 0x27e00000 | register << 16 | delta
+                or restore.word & 0xfc1fffff != 0x0000f821
+                or add_first.word != add_second.word
+                or add_first.word & 0xffe0ffff != register << 21 | register << 11 | 0x21
+                or load.word & 0xffe0ffff != 0x94000000 | register << 21):
+            continue
+        data.append(DataSymbol(table.name, table.vram, table.rom, size, 'data'))
+        removed.add(id(table))
+    if removed:
+        log(f'Recovered {len(removed)} PC-relative halfword tables from false function entries.')
+        return [fn for fn in functions if id(fn) not in removed]
+    return functions
 
 
 HOLE = 12  # the most alignment a group of one segment's pieces may skip between two of them

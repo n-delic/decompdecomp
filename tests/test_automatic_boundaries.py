@@ -242,3 +242,22 @@ def test_a_piece_whose_frame_comes_after_scheduled_loads_joins_its_tail():
     image,functions,segments=fixture(words,cuts=(0,8,24,48))
     result=repair(functions,[],image,consoles.get('n64'),segments)
     assert [(f.vram,f.size) for f in result]==[(BASE,8),(BASE+8,40)]
+
+
+@pytest.mark.parametrize('independent_call', [False, True])
+def test_pc_relative_halfword_table_is_data_unless_called(independent_call):
+    words = [
+        0x03e00821, 0x04100008, 0, 0x27e8001c, 0x0020f821,
+        0x01064021, 0x01064021, 0x95080000, 0x03e00008, 0,
+        0x12345678, 0x8abcdef0,
+        0x03e00008, 0,
+        0x0c000000 | ((BASE + (40 if independent_call else 48)) >> 2 & 0x3ffffff),
+        0x0c000000 | ((BASE + 48) >> 2 & 0x3ffffff), 0x03e00008, 0,
+    ]
+    image, functions, segments = fixture(words, (0, 40, 48, 56, 72))
+    data = []
+    result = repair(functions, data, image, consoles.get('n64'), segments)
+    assert (BASE + 40 in {fn.vram for fn in result}) == independent_call
+    assert [(symbol.vram, symbol.rom, symbol.size) for symbol in data] == (
+        [] if independent_call else [(BASE + 40, 40, 8)]
+    )
