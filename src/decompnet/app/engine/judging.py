@@ -141,6 +141,9 @@ class JudgeMixin:
             if context:checks['export']=context
         checks['instructions'] = {'exact': res.instructions_exact}
         checks['data'] = [p for p in res.problems if p.startswith('your data for ')]
+        if res.instructions_exact and getattr(res, 'data_mismatches', ()):
+            from .. import switch_tables
+            checks['jump_tables'] = switch_tables.differences(self, proj, fn, res)
         address_rows = []
         if res.linked_code is not None and res.candidate is not None and not res.problems and proj['arch'] == 'mips':
             from decomprepair.mips_addresses import aligned

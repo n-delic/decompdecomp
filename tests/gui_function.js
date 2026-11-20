@@ -116,20 +116,35 @@ const which = () => vm.runInContext("S.which", ctx);
   assert.ok(asked.some((url) => url.includes("/api/diff") && url.includes("which=latest")), asked.join(" "));
 
   // A matched function has nothing to switch between.
-  detail = { ...detail, name: "f2", status: "matched", best: 0, best_differs: false, source_kind: "matched" };
+  detail = { ...detail, name: "f2", status: "matched", best: 0, best_differs: false, source_kind: "matched",
+    signature_review: { caller: "caller", instructions: ["jal f2", "nop", "multu $v0, $v1"], message: "Review result type." } };
   await ctx.openFn("f2");
   await settle();
   assert.equal(get("diffWhich").hidden, true);
   assert.equal(get("fnPin").hidden, true); // ...and not on a matched one.
+  assert.equal(get("fnSignatureReview").hidden, false);
+  assert.equal(get("fnSignatureCaller").textContent, "caller");
+  assert.match(get("fnSignatureInstructions").textContent, /multu \$v0/);
+
   assert.equal(which(), "latest");
 
   // Nor does one with no best attempt yet.
   detail = { ...detail, name: "f3", status: "open", best: null, best_differs: false, source_kind: "latest",
-    scores: [{ score: null, t: 1, agent: "a" }] };
+    signature_review: null, scores: [{ score: null, t: 1, agent: "a" }] };
   await ctx.openFn("f3");
   await settle();
   assert.equal(get("diffWhich").hidden, true);
   assert.equal(which(), "latest");
+
+  assert.equal(get("fnSignatureReview").hidden, true);
+  const cases = [{table:0x80002000,case:12,target:0x80001024,candidate:0x80001028},
+    {table:0x80002000,case:2,target:0x80001028,candidate:0x80001024}];
+  const report = ctx.jumpTableDiagnostic(cases);
+  assert.match(report,/0x80001028/);
+  assert(report.indexOf("<td>2</td>") < report.indexOf("<td>12</td>"));
+  vm.runInContext('S.jumpTableSort = {scope:JSON.stringify([S.slug,S.fn]),key:"case",direction:-1}',ctx);
+  const reversed = ctx.jumpTableDiagnostic(cases);
+  assert(reversed.indexOf("<td>12</td>") < reversed.indexOf("<td>2</td>"));
 
   console.log("ok");
 })().catch((e) => { console.error(e); process.exit(1); });

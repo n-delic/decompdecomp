@@ -124,7 +124,8 @@ Calls and prototypes
 
 switch
 - Dense cases become a jump table (`jtbl_` in .rodata, `jr $reg`); sparse ones become compare chains.
-  Your jump table must equal the ROM's, so case values and order matter.
+  Your jump table must equal the ROM's, so case values and order matter. The linked diff can show the target
+  and candidate destination for each differing case even when the instructions match.
 
 Measured large-function findings (`-O2 -g3`, 32-bit MIPS)
 - Try a bounded small `__builtin_memcpy` when explicit loads/stores copy a short string. Preserve the
@@ -200,6 +201,11 @@ combine these changes and can stage field loads in target-observed offset order.
 uses the ordinary judge; do not change shared prototypes or accept a lower score as a match.
 
 ### A few remaining register operands
+
+When only floating-point register operands differ, try reordering independent field loads
+into float locals, including comma-separated initializers. Keep arithmetic and stores in
+place. In a linked `-O2` replay, one of eight load orderings closed a score of 75 to an exact
+match.
 
 With `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, a verified large routine needed separate
 lexical blocks for two draw-pair paths, block-local coordinates, and staged second-call arguments.

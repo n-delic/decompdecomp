@@ -27,7 +27,7 @@ from elftools.elf.relocation import RelocationSection
 from .. import scoring
 from ..candidate_work import elf as candidate_elf
 from ..elfobj import MASKS_BY_ARCH, FunctionObj, Reloc, canonical_symbol, section_target, symbol_at, unmangle
-from .link import LinkResult, significant  # (re-exported: callers still ask match.LinkResult)
+from .link import DataMismatch, LinkResult, significant  # (re-exported: callers still ask match.LinkResult)
 from .split import RomFunction
 from .symbols import AUTO_NAME, SymbolTable
 
@@ -203,6 +203,7 @@ class _Linker:
         self.name, self.target, self.symbols, self.read = name, target, symbols, read
         self.symtab = self.elf.get_section_by_name(".symtab")
         self.problems: list[str] = []
+        self.data_mismatches: list[DataMismatch] = []
         self.local_map: dict[tuple[int, int], int] = {}  # (section index, offset) -> ROM address
         self.target_at = {off: (rtype, addr) for off, rtype, addr in target.relocs}
         self.data: dict[tuple[int, int], int] = {}  # every datum of its own the candidate uses -> ROM address
@@ -363,7 +364,24 @@ class _Linker:
         return significant(mine, addr, width, lambda lo: min(
             [a for a in (self.symbols.next_after(lo - 1), *starts) if a is not None and a >= lo], default=None))
 
-    def verify_data(self, shndx: int, off: int, addr: int) -> None:
+    def switch_extent(self, address, offsets):
+        if not 2 <= len(offsets) <= 256 or offsets != set(range(0,len(offsets)*4,4)):
+            return None
+        from ..arch.mips_indirect import jump_table
+
+        code = self.target.code
+        order = self.target.order
+        for at in range(24,len(code)-7,4):
+            instruction = int.from_bytes(code[at:at+4],order)
+            if instruction & 0xfc1fffff != 8 or instruction >> 21 & 31 == 31:
+                continue
+            witness = jump_table(code,0,len(code),self.target.vram,at,order,reader=self.read)
+            if (witness and witness['state']=='validated' and witness['table_address']==address
+                    and witness['entry_count']==len(offsets)):
+                return witness['entry_count']*4
+        return None
+
+    def verify_data(self, shndx: int, off: int, addr: int, *, instructions_exact: bool = False) -> None:
         """Data the candidate defines must be identical to the ROM data it stands for."""
         sec = self.elf.get_section(shndx)
         if sec["sh_type"] == "SHT_NOBITS":
@@ -372,6 +390,7 @@ class _Linker:
         if length <= 0:
             return
         mine = bytearray(sec.data()[off:off + length])
+        code_pointers = set()
         for at, rtype, s in self._relocs_in(shndx):  # relocated words inside the data, e.g. jump tables
             at -= off
             if rtype != R_MIPS_32 or not 0 <= at <= length - 4:
@@ -383,11 +402,28 @@ class _Linker:
                 self.problem(f"can't place a pointer inside your data at {sec.name}+0x{off + at:X}")
                 return
             mine[at:at + 4] = (dest & 0xFFFFFFFF).to_bytes(4, self.target.order)
+            if self.target.vram <= dest < self.target.vram + len(self.target.code):
+                code_pointers.add(at)
         n = self.significant(bytes(mine), addr, self.widths.get((shndx, off)))
+        if instructions_exact and n < 4*len(code_pointers):
+            # Indexed LW resembles a scalar word load in the relocation
+            # stream. Prove the dispatch extent before checking the rest.
+            if extent := self.switch_extent(addr, code_pointers):
+                n = extent
         rom = self.read(addr, n)
         if rom is None:
             return  # the ROM has no bytes there (e.g. .bss in the ROM): nothing to compare
         if bytes(mine[:n]) != rom:
+            # The switch diagnostic needs the actual relocated words, not an
+            # interpretation of the abbreviated comparison message.
+            if code_pointers and len(self.data_mismatches) < 8:
+                # An indexed LW can look like a single scalar read to the
+                # linker. Read the relocated pointer extent for the report;
+                # the switch diagnosis independently verifies its bounds.
+                extent = max(code_pointers)+4
+                table = self.read(addr, extent) if extent <= 1024 and extent <= length else None
+                if table is not None and len(table) == extent:
+                    self.data_mismatches.append(DataMismatch(addr, table, bytes(mine[:extent]), frozenset(code_pointers)))
             where = self.symbols.label(addr)
             first=next(i for i,(a,b) in enumerate(zip(mine[:n],rom)) if a!=b)
             last=max(i for i,(a,b) in enumerate(zip(mine[:n],rom)) if a!=b)
@@ -423,15 +459,16 @@ class _Linker:
             relocs.append(Reloc(r["off"], r["type"], name, encode(r["type"], residual)))
         # every place is known before any datum is measured: a datum runs to the next one, whatever the code's order
         self.place_pointees()
-        for (dshndx, off), addr in sorted(self.data.items()):
-            self.verify_data(dshndx, off, addr)
         linked = struct.pack(fmt[0] + f"{len(words)}I", *words)
-        exact = not self.problems and linked == self.target.code
+        instructions_exact = linked == self.target.code
+        for (dshndx, off), addr in sorted(self.data.items()):
+            self.verify_data(dshndx, off, addr, instructions_exact=instructions_exact)
+        exact = not self.problems and instructions_exact
         placements: dict[str, dict[int, int]] = {}
         for (dshndx, off), addr in self.local_map.items():
             placements.setdefault(self.elf.get_section(dshndx).name, {})[off] = addr
         return LinkResult(FunctionObj(self.name, "mips", self.target.big_endian, code, relocs), exact, self.problems,
-                          placements, linked == self.target.code, linked)
+                          placements, instructions_exact, linked, self.data_mismatches)
 
 
 def link(obj: bytes, name: str, target: RomTarget, symbols: SymbolTable, read: ReadFn) -> LinkResult:

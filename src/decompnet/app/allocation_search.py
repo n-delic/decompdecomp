@@ -1,6 +1,7 @@
 """Bounded register-cycle and local-chain lanes sharing the normal judge, full-input cache and search budget."""
 import hashlib
 import json
+import re
 
 from .. import candidate_scope, toolchains
 from ..project import compiler_for
@@ -9,6 +10,28 @@ from . import allocation_evidence, compiler_diagnostics, gcc_allocation, rtl_val
 VERSION = 'allocation-cycle-v1'
 LIMIT = 24
 CHAIN_LIMIT = 8
+
+
+def floating_only(rows, arch):
+    # GCC's MIPS choices use numbered FPRs, or the ABI spellings from the
+    # disassembler. Preserve opcode, addressing, and every other operand.
+    if arch != 'mips' or any(not isinstance(row,(list,tuple)) or len(row) != 3
+                             or not all(isinstance(item,str) for item in row) for row in rows):
+        return False
+    register = re.compile(r'\$(?:f\d+|f[astv]\d+)\b')
+    changed = [(marker, left, right) for marker,left,right in rows if marker != ' ']
+    return bool(changed and all(marker in {'r','i'} and left != right
+                and register.sub('$f',left) == register.sub('$f',right)
+                for marker,left,right in changed))
+
+
+def floating_proposals(source, name, header, rows, arch):
+    from decomprepair import floating_initializers
+
+    # A private include can hide a volatile field or alias from the source reader.
+    if re.search(r'^\s*#\s*include\b', header+'\n'+source, re.M) or not floating_only(rows,arch):
+        return []
+    return floating_initializers.variants(source,name,header)
 
 
 def allowance(diagnosis):
@@ -67,10 +90,13 @@ def capture(net, proj, fn, source, *, on_compile, rows=()):
 
 def proposals(source, name, arch, rows, choices, labels, evidence=None, header=''):
     """Use conservative existing generators; no new padding identities or assembly renaming."""
+    floating = floating_proposals(source,name,header,rows,arch)
+    for family,candidate in floating:
+        labels[candidate] = family
     diagnosis = allocation_evidence.diagnose(rows,arch)
     budget=allowance(diagnosis)
     if not budget:
-        return []
+        return floating
     if diagnosis['return_copy_rotation']:
         from decomprepair import prepared_call_repairs
         selected=prepared_call_repairs.variants(source,name,header,arch)
@@ -117,7 +143,7 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     # Reserve its finite prefix inside this lane's existing compile allowance.
     scratch=[(labels[c],c) for c in choices if labels.get(c)=='scratch_role_reuse'] if diagnosis['register_only'] else []
     predicates=[(labels[c],c) for c in choices if labels.get(c)=='inline_bit_predicate'][:7]
-    return list(dict.fromkeys(pointer_captures[:1]+predicates+scratch+selected))[:budget]
+    return list(dict.fromkeys(floating+pointer_captures[:1]+predicates+scratch+selected))[:budget]
 
 
 def brief(net, proj, fn, source, rows):

@@ -558,6 +558,7 @@ class GuiMixin:
                     d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
                 from ...diff_summary import text as summary_text
                 from ...source_lines import mismatches as source_mismatches
+                from ..callee_frame_evidence import messages as callee_writes
                 from ..source_diagnostics import hints as source_hints
                 from ..stack_layout import text as stack_text
                 out = {"rows": [list(r) for r in d.rows], "score": d.score,
@@ -565,7 +566,7 @@ class GuiMixin:
                                                        filename="func.cpp" if result.language == "c++" else "func.c"),
                        "stack_diagnostic": stack_text(proj['arch'],d.rows),
                        "mismatch_summary": summary_text(d.rows),
-                       "source_diagnostics": source_hints(source, fn["name"], fn["asm"], proj["arch"], d.rows),
+                       "source_diagnostics": callee_writes(self, proj, fn, d.rows) + source_hints(source, fn["name"], fn["asm"], proj["arch"], d.rows),
                        "percent": 100.0 if d.bytes_match else min(99.9, int(d.percent * 10) / 10),
                        "problems": problems, "source": source,
                        "checks": self._candidate_checks(fn, proj, result.obj),
@@ -622,6 +623,7 @@ class GuiMixin:
             fn = self._function(fn["name"], slug)
         from ..source_assembly import detail as assembly_detail
         initial_report = draft_report(self,fn['id'],project_id=fn['project_id'])
+        from ..return_contract_evidence import matched_review
         # #254: the latest/best switch is offered only when the best attempt isn't also the newest one
         best_differs = False
         if fn["status"] != "matched" and fn["best_source"] is not None:
@@ -640,6 +642,7 @@ class GuiMixin:
             "boundary_override": bool(json.loads(fn["meta"] or "{}").get("boundary_override")),
             "deep_pass": deep_pass, "verification": bundle_status(self,fn), "baseline_status": baseline_status(self,proj,fn),
             "compiler_test": self.compiler_test_result(proj, fn),
+            "signature_review": matched_review(self, proj, fn),
             "compiler_profile": compiler_for(self.cfg(proj), fn["vram"], fn),
             "default_compiler": self.cfg(proj)["compiler"],
             "compiler_profile_usage": self.compiler_profile_usage(proj),
