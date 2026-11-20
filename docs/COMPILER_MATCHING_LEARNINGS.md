@@ -1,6 +1,71 @@
 # Compiler matching learning log
 
 
+### KMC GCC 2.7.2: switch case lifetimes, widened loop indices and a staged byte update
+
+The N64 function `func_8001E640` started from a saved 97.5% candidate with the verified
+three-argument `str_ncat` call. All stages used `gcc-2.7.2-kmc` with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
+| Source change | Running app score | What changed in the compiler output |
+| --- | ---: | --- |
+| Saved, call-correct starting point | 2,245 | The function had the right total size, with a shared switch tail and differences in three loops and the record setup. |
+| Reuse one signed-byte local for two successive character reads in one switch case. Finish each subtraction before loading the next byte. | 1,625 | The two switch cases got distinct shift-register assignments, so GCC stopped sharing their tails. The switch and all 24 linked jump-table entries matched. |
+| In both affected loops, store the unsigned conversion result with the current halfword index. Save that index in a word local before reading the flag, use it for the remaining stores, and increment the halfword counter at the loop latch. | 1,145 | Both loops recovered the target's halfword masks on the float-conversion paths and the original store schedule. |
+| Keep a scalar slot index across the calls and use it to address the distance field at its later read. In the other loop, assign the flag field directly before assigning the zero field. | 150 | The linked code had 907 instructions, and all referenced data passed. The remaining differences were register allocation and scheduling around the byte-counter update and the `str_len` delay slot. |
+| Store the increment in an unsigned-halfword local before assigning it to the byte counter. Use the ordinary distance-field store. | 0 | GCC kept the distance address live through the counter update and copied it in the call delay slot. The app accepted and saved all 3,628 linked bytes. |
+
+An isolated replay of the saved C and compiler profile confirmed the final result.
+Reverting only the signed-byte carrier restored the shared tail and shortened the
+function by 12 bytes. Removing the word snapshots or making them halfword locals
+lost the masks again. A named unsigned-byte counter temporary also matched. A word
+temporary and the direct addition-to-byte-store form both missed. These are
+retrospective observations on one private function. The table records hand-selected
+checkpoints. Automatic search success remains unmeasured. A size match alone can
+hide a shortened block and a lengthened block elsewhere in the function. Here the
+constant-pool lookup errors cleared when the instruction offsets lined up.
+
+An automatic `passthrough_argument` trial lowered the display score to 2,060 by
+adding a leading argument to `str_ncat` and widening its candidate-local prototype.
+The target sets up its three arguments, including the length in the call delay slot.
+The extra argument shifted those values to the wrong registers. A quality report linked
+the call-correct revision as the alternative. Check reaching definitions at
+the call and its delay slot before treating a lower score from an ABI edit as progress.
+
+#### Deep permuter follow-up
+
+1. Add small, guarded generators in `decomp-repair`. Start with the signed-byte
+   carrier and the byte-store staging pair using byte and halfword temporaries.
+   Add the halfword loop-index rewrite next. Prove that each rewritten read uses
+   the same iteration and that moving the increment to the latch covers every
+   path. For address captures, save the scalar index and leave the field read at
+   its original use. For field-order changes, require independent fields and
+   evidence for any qualifier change.
+2. Use measured target regions to select those candidates before broad rewrites.
+   Build on `region_repairs` and `search_frontier` in the app. Prefer recovered
+   case and loop blocks even when moved branch destinations or constant-pool
+   references dominate the display diff. Reuse the existing frontier and compile
+   budget. Combine independently measured gains from disjoint edits on the same
+   source revision and recompile the whole function. The existing inert-pair
+   search handles unchanged compiler outputs and short source windows. Repairs
+   in distant loops here need bounded, explicit source spans and a shared
+   declaration when both edits introduce the same local. A block comparison
+   guides the search.
+3. Require evidence for a forwarded argument before an automatic repair can
+   select a candidate that changes arity. Check the caller's entry value at that
+   call site and respect confirmed callee declarations. Include the delay slot.
+   Apply the same gate to the deep permuter and automatic agent local passes,
+   which share the proposal generator. Keep ambiguous sites available for
+   explicit diagnosis.
+4. Replay the call-correct saved checkpoint and the switch, loop and final
+   scheduling checkpoints privately with the original profile. Compare stock and
+   enhanced search at equal compile and time budgets. Track exact verdicts,
+   corrected target regions and compiles to the first exact result. Add handmade
+   cases for signed input bytes, byte-counter wrap, loop exits and a three-argument
+   call with its last argument in the delay slot. Keep game code and ROM data out
+   of the repository. The ordinary linker and data checks decide every match.
+
+
 ### KMC GCC 2.7.2: narrow subtraction followed by a parameter-carrier cycle
 
 The exact V-Rally interpolation case used the original `-G0 -mips3 -mgp32 -mfp32
