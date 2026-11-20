@@ -53,8 +53,11 @@ def register(app: App) -> None:
             started = time.monotonic()
             try:
                 def perform():
-                    if request.url.path in ('/api/priority', '/api/variants', '/api/knowledge/merge') or (
-                            request.method == "POST" and request.url.path == "/api/knowledge/profile"):
+                    if request.url.path in ('/api/knowledge/merge', '/api/knowledge/profile'):
+                        # Finding metadata is independent of saved code and its compiler.
+                        with net.progress.view():
+                            return fn(slug, request, data)
+                    if request.url.path in ('/api/priority', '/api/variants'):
                         return fn(slug, request, data)  # Metadata is published by autosave, without another recheck here.
                     if request.url.path in ('/api/try', '/api/cross-game/run', '/api/reconcile-matches') or (request.method=='POST' and request.url.path=='/api/reimport'):
                         return fn(slug, request, data)  # The worker synchronizes; return its job without waiting.

@@ -3807,3 +3807,27 @@ def test_restart_all_restarts_only_stopped_agents_on_the_project(app, monkeypatc
         name: "starting" if name in {"stopped", "second"} else state
         for name, _, state, _ in agents_to_restart
     }
+
+
+def test_knowledge_edits_work_without_synchronizing_saved_code(app, tmp_path, monkeypatch):
+    client, net, _ = app
+    slug = 'findings'
+    with net.store.tx() as db:
+        pid = db.execute(
+            'INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)',
+            (slug, 'Findings', str(tmp_path), json.dumps({'kind': 'rom', 'platform': 'n64'})),
+        ).lastrowid
+        ids = [
+            db.execute("INSERT INTO knowledge(project_id,text,status,created_at) VALUES (?,?,'proposed',1)",
+                       (pid, text)).lastrowid
+            for text in ('Technique', 'Equivalent technique', 'Compiler trial')
+        ]
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: pytest.fail('Finding edits need no compiler check'))
+    headers = {'X-Decomp': '1'}
+    merged = client.post('/api/knowledge/merge', headers=headers, json={
+        'slug': slug, 'target': ids[0], 'sources': [ids[1]], 'text': 'Combined technique',
+    })
+    assert merged.status_code == 200, merged.text
+    moved = client.post('/api/knowledge/profile', headers=headers, json={'slug': slug, 'ids': [ids[2]]})
+    assert moved.status_code == 200, moved.text
+    assert [item['id'] for item in client.get('/api/knowledge/profile', params={'slug': slug}).json()['items']] == ids[2:]
