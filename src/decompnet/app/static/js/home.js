@@ -382,7 +382,7 @@ function notSupported(head, file) {
   return null;
 }
 // 1.0.3 rewrote most of the app: every platform is being tested again, and reports are how a platform moves up
-const TRY_AND_TELL = `This version is new, so <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">tell us how it goes</a> on your game.`;
+const TRY_AND_TELL = `This version is new, so <a href="https://github.com/RetroReversing/decompdecomp/issues" target="_blank" rel="noopener">tell us how it goes</a> on your game.`;
 const NOT_A_GAME = "That isn't a game file decompdecomp can start from scratch (yet). For other platforms, continue a public decomp.";
 
 async function pickFile(file, extras = []) {

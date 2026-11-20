@@ -10,7 +10,7 @@ GitHub issue with the bug form's sections and labels. It's a Cloudflare Worker t
    the **Application ID** and **Public Key**; under Bot, Reset Token and copy the **bot token** (only `register.mjs`
    uses it). Under Installation, add it to the server with the `applications.commands` scope.
 2. **GitHub token.** At https://github.com/settings/personal-access-tokens, a fine-grained token for
-   `n-delic/decompdecomp` only, with Issues: Read and write.
+   `RetroReversing/decompdecomp` only, with Issues: Read and write.
 3. **Deploy the Worker**, from this folder:
    ```bash
    npx wrangler deploy

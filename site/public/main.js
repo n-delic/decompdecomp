@@ -23,7 +23,7 @@
     document.querySelectorAll("[data-version]").forEach((el) => {
       const a = el.querySelector("a");
       a.textContent = `version ${version}`;
-      a.href = `https://github.com/n-delic/decompdecomp/releases/tag/v${version}`;
+      a.href = `https://github.com/RetroReversing/decompdecomp/releases/tag/v${version}`;
       el.hidden = false;
     });
   }).catch(() => {});

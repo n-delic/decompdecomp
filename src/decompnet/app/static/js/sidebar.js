@@ -135,7 +135,7 @@ document.addEventListener("click", (e) => { if (!newMenu.hidden && !e.target.clo
    Always one click away, on every page: a new GitHub issue in the user's own browser (the window sends links there),
    already holding the version and this computer, and a report on the clipboard to paste in. The end of the log
    stays out of the address: too long, and it can hold the user's paths. */
-const ISSUES_URL = "https://github.com/n-delic/decompdecomp/issues/new";
+const ISSUES_URL = "https://github.com/RetroReversing/decompdecomp/issues/new";
 function reportLink() {
   const st = S.st || {};
   const body = ["**What happened?**", "", "", "**What did you expect?**", "", "", "**What were you doing?** (which game's platform, which screen)", "", "",

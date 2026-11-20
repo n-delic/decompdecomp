@@ -13,7 +13,7 @@ Before you attach a log (`~/Decomp-RetroReversing/.decomp/logs/decomp.log`), rea
 
 ## Reporting a bug
 
-[Open an issue](https://github.com/n-delic/decompdecomp/issues/new/choose) with the bug report form. It asks for
+[Open an issue](https://github.com/RetroReversing/decompdecomp/issues/new/choose) with the bug report form. It asks for
 your version, your system, the console and compiler, what you did, what you expected and what happened, and the part
 of the log around it, if it helps (see above). Your answers label the issue (its console and system).
 
@@ -24,7 +24,7 @@ The name of the game is fine to mention. Many bugs only show up on one game, and
 decompdecomp is Python 3.12+, managed with [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/n-delic/decompdecomp && cd decompdecomp
+git clone https://github.com/RetroReversing/decompdecomp && cd decompdecomp
 uv sync
 uv run decomp                 # the development copy, in its own window (projects in ~/Decomp-RetroReversing-dev, or $DECOMP_HOME)
 uv run pytest -q              # the tests (parallel by default)
