@@ -43,8 +43,9 @@ def build_scope(net, proj, fn):
     return hashlib.sha256((target_scope(net,fn,'')+repr(compiler_identity(compiler))).encode()).hexdigest()
 
 
-def scope(net, proj, fn):
-    return hashlib.sha256((build_scope(net,proj,fn)+hashlib.sha256((fn['best_source'] or '').encode()).hexdigest()).encode()).hexdigest()
+def scope(net, proj, fn, source=None):
+    source = (fn['best_source'] or '') if source is None else source
+    return hashlib.sha256((build_scope(net, proj, fn)+hashlib.sha256(source.encode()).hexdigest()).encode()).hexdigest()
 
 
 def edits(before, after):

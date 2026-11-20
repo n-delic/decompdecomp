@@ -562,6 +562,73 @@ async function setClaimOrder(order) {
   }
 }
 $("claimOrder").onchange = () => setClaimOrder($("claimOrder").value);
+const routingExperimentRequests = new Map();
+
+function renderRoutingExperiment(ov) {
+  const start = $("routingExperimentStart"), stop = $("routingExperimentStop");
+  if (!start || !stop) return;
+  const data = ov?.routing_experiment;
+  const active = data?.enabled && data.used < data.budget;
+  const pending = routingExperimentRequests.get(S.slug);
+  const input = $("routingExperimentBudget");
+  const section = $("routingExperimentContext");
+  const status = $("routingExperimentStatus");
+  if (input.dataset.project !== S.slug || (data && active)) input.value = data?.budget ?? 60;
+  input.dataset.project = S.slug || "";
+  input.disabled = Boolean(pending || active || data?.pending);
+  start.disabled = input.disabled;
+  stop.disabled = Boolean(pending);
+  stop.hidden = !active;
+  section.textContent = data ? `${data.used}/${data.budget} sampled` : "";
+  if (pending) {
+    status.textContent = pending.message;
+    return;
+  }
+  if (!data) {
+    status.textContent = "";
+    return;
+  }
+  const format = (label, result) => {
+    const perHour = result.matches_per_helper_hour;
+    const perClaim = result.matches_per_claim;
+    return `${label} ${result.matches}/${result.claims} exact, ${perClaim === null ? "" : (perClaim * 100).toFixed(1) + "% per claim, "}${perHour === null ? "rate pending" : perHour.toFixed(2) + " per helper-hour"}`;
+  };
+  const sampling = active && ov.claim_order ? "Sampling waits for the default project claim order."
+    : active ? "Sampling eligible automatic claims." : "Sampling ended.";
+  status.textContent = data.cohorts
+    ? `${sampling} ${format("Normal routing", data.results.policy)} · ${format("Overlap", data.results.overlap)}`
+    : `${sampling} Results appear when both groups complete work on comparable cases.`;
+  if (data.pending) status.textContent += ` ${data.pending} sampled claims still active.`;
+}
+
+async function setRoutingExperiment(budget) {
+  const slug = S.slug;
+  if (!slug || routingExperimentRequests.has(slug)) return;
+  routingExperimentRequests.set(slug, { message: budget ? "Starting comparison…" : "Stopping comparison…" });
+  renderRoutingExperiment(S.ov);
+  let error;
+  try {
+    const updated = await api("/api/routing-experiment", { method: "POST", body: { slug, budget } });
+    if (S.slug === slug) S.ov = updated;
+  } catch (e) {
+    error = e.message;
+  } finally {
+    routingExperimentRequests.delete(slug);
+    if (S.slug === slug) {
+      renderRoutingExperiment(S.ov);
+      if (error) $("routingExperimentStatus").textContent = error;
+    }
+  }
+}
+
+if ($("routingExperimentStart")) {
+  $("routingExperimentStart").onclick = () => {
+    const input = $("routingExperimentBudget");
+    if (input.reportValidity() && input.value) setRoutingExperiment(Number(input.value));
+  };
+  $("routingExperimentStop").onclick = () => setRoutingExperiment(0);
+}
+
 /* ★: agents take a starred function before the others. */
 async function togglePrio(name, on) {
   try {

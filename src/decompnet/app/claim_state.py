@@ -53,7 +53,7 @@ def brief(net, fn, agent, header):
     store = net.project_store(fn['project_id'])
     from .agent_tokens import candidate
     from .draft_reports import read, summary
-    proj=store.one('SELECT slug,name FROM projects WHERE id=?',fn['project_id'])
+    proj=store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
     available=fn['best_source'] or fn['matched_source'] or fn['seed'] or store.one('SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? LIMIT 1',fn['id'],agent.id)
     source,revision=candidate(net,agent,proj['slug'],fn['name']) if available else ('','unavailable until source is loaded')
     lines=[f"## {header}: {proj['slug']}/{fn['name']}",
@@ -66,6 +66,11 @@ def brief(net, fn, agent, header):
     if handoff := handoff_brief(net, proj['slug'], fn, source):
         lines.append(handoff)
     lines.extend(history(net, fn))
+    if source:
+        from .search_evidence import repeated_hint
+
+        if repeat := repeated_hint(net, proj, fn, source):
+            lines.append(repeat)
     from ..candidate_quality import source_hint as quality_hint
     if note := quality_hint(net, fn, source):lines.append(note)
     diagnostic = summary(read(net,fn['id'],project_id=fn['project_id']))

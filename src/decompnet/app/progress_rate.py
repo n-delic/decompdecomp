@@ -44,7 +44,10 @@ def track(net,agent,slug,fn):
         rows=getattr(net,'_last_diffs',{}).get((agent.id,fn['id']))
         detail=mismatch(rows[0]) if rows else 'Inspect types, calls and structure before repeating local edits.'
         note=f'Low progress after {state["count"]} scored trials: at most 1% score reduction over the recent window. Best source retained. Next evidence: '+detail
-        released=net.release(agent,fn['name'],note,slug)
+        from .agent_review import automatic_handoff
+        measured = getattr(net, '_agent_outcomes', {}).get((agent.id, fn['id'])) or {}
+        evidence = automatic_handoff(net, agent, slug, fn, measured, note.partition(' Next evidence:')[0])
+        released = net.release(agent, fn['name'], note, slug, **({'handoff': evidence} if evidence else {}))
         getattr(net,'_last_diffs',{}).pop((agent.id,fn['id']),None)
         return 'Low-progress handoff: '+released
     return ''

@@ -11,11 +11,20 @@ from . import (
 )
 
 
-def read(net, agent, slug, function):
+def read(net, agent, slug, function, base='current'):
     proj, fn = net.project_row(slug), net._function(function, slug)
-    source = fn['best_source'] or ''
+    from ..network import NetworkError
+    from .agent_tokens import candidate
+
+    if base not in {'current', 'saved_best'}:
+        raise NetworkError('Choose base=current or base=saved_best.')
+    saved = fn['best_source'] or ''
+    source, revision = candidate(net, agent, slug, fn['name']) if base == 'current' and agent is not None else (
+        saved, hashlib.sha256(saved.encode()).hexdigest()[:20])
     header = (net._context(proj['id'],fn['unit']) or {'header':''})['header']
-    lines = [f"{fn['name']}: saved score {fn['best_score']}; source SHA256 {hashlib.sha256(source.encode()).hexdigest()}."]
+    lines = [f"{fn['name']}: {base} candidate revision {revision}; saved historical score {fn['best_score']}."]
+    if source != saved:
+        lines.append('Read the saved-best evidence with get_search_brief(base="saved_best").')
     if reviewed_search_seeds.supported(net, proj):
         evidence = allocation_search.saved(net,proj,fn,source) or {}
         rows=evidence.get('rows',[])
@@ -42,9 +51,10 @@ def read(net, agent, slug, function):
     else:
         lines.append('Reviewed diagnostic roots need local ROM snapshots; imported builds keep their ordinary search path.')
     from . import return_path_hypotheses, return_path_search
-    if next_step := return_path_hypotheses.brief(net,proj,fn):lines.append(next_step)
-    if history := return_path_search.history(net,proj,fn):lines.append(history)
-    notes = search_evidence.brief(net,proj,fn)
+    if source == saved:
+        if next_step := return_path_hypotheses.brief(net,proj,fn):lines.append(next_step)
+        if history := return_path_search.history(net,proj,fn):lines.append(history)
+    notes = search_evidence.brief(net, proj, fn, source)
     lines.append(notes[:6500] if notes else 'No current negative-experiment evidence. Do not treat missing evidence as an exhausted family.')
     lines.append('Use get_candidate only when source is needed. Preserve real operations and line breaks; never add dummy uses to influence allocation.')
     return '\n'.join(lines)

@@ -99,6 +99,18 @@ CREATE INDEX IF NOT EXISTS idx_claim_routing_recent ON claim_routing_samples(pro
 CREATE TRIGGER IF NOT EXISTS claim_routing_function_delete AFTER DELETE ON functions BEGIN
   DELETE FROM claim_routing_samples WHERE function_id=OLD.id;
 END;
+CREATE TABLE IF NOT EXISTS claim_routing_experiments(
+  project_id INTEGER NOT NULL, run TEXT NOT NULL, function_id INTEGER NOT NULL, agent_id INTEGER NOT NULL,
+  claimed_at REAL NOT NULL, arm TEXT NOT NULL, budget_key TEXT NOT NULL,
+  profile TEXT NOT NULL, band TEXT NOT NULL, won INTEGER NOT NULL DEFAULT 0, ended_at REAL,
+  PRIMARY KEY(project_id,run,function_id));
+CREATE INDEX IF NOT EXISTS idx_routing_experiment_lease ON claim_routing_experiments(function_id,agent_id,claimed_at);
+CREATE TRIGGER IF NOT EXISTS claim_routing_experiment_end AFTER DELETE ON claims BEGIN
+  UPDATE claim_routing_experiments SET ended_at=(julianday('now')-2440587.5)*86400.0,
+    won=COALESCE((SELECT won FROM claim_routing_samples WHERE function_id=OLD.function_id
+                  AND agent_id=OLD.agent_id AND claimed_at=OLD.claimed_at),0)
+  WHERE function_id=OLD.function_id AND agent_id=OLD.agent_id AND claimed_at=OLD.claimed_at AND ended_at IS NULL;
+END;
 CREATE TABLE IF NOT EXISTS attempts(
   id INTEGER PRIMARY KEY, function_id INTEGER, agent_id INTEGER, score INTEGER, compiled INTEGER,
   context_version INTEGER, source TEXT, created_at REAL);

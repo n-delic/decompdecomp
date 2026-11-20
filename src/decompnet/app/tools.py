@@ -491,6 +491,14 @@ def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: st
         return packet(str(e) + '\n\n' + agent_tokens.brief(net, net.claim(agent, slug, None, strategy), slug, agent))
 
 
+def _suggest(net, agent, slug, text='', compiler='', flags='', function='', ranges='', source='', trial_id=''):
+    if trial_id:
+        if not function or any((compiler, flags, ranges, source)):
+            raise NetworkError('Give the function and trial_id for a saved trial. Its compiler, flags and C come from the receipt.')
+        return compiler_experiments.suggest_trial(net, agent, slug, function, trial_id, text)
+    return net.suggest(agent, slug, text, compiler, flags, function or None, ranges, source)
+
+
 def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: str,
              repair_note: str = '', repair_category: str = '', repair_automation: str = '',
              suggested_category: str = '') -> str:
@@ -523,11 +531,19 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
     else:
         result = net.attempt_many(agent, [net.resolve_function(agent, slug, n) for n in names], source, slug)
     if len(names) == 1:
-        agent_tokens.outcome(net, agent, fn, source, result)
+        measured = agent_tokens.outcome(net, agent, fn, source, result)
         from . import agent_evidence
-        unchanged_note = None if result.startswith("🔁 REPEAT:") else agent_evidence.track(net,agent,slug,fn)
         agent_tokens.remember(net, agent, fn, previous_attempt)
+        unchanged_note = None if result.startswith("🔁 REPEAT:") else agent_evidence.track(net,agent,slug,fn)
+        first = not net.project_store(slug).one(
+            'SELECT 1 FROM attempts a JOIN claims c ON c.function_id=a.function_id AND c.agent_id=a.agent_id '
+            'WHERE c.function_id=? AND c.agent_id=? AND a.created_at>=c.claimed_at AND a.compiled=1 '
+            'LIMIT 1 OFFSET 1', fn['id'], agent.id) if (fn['n_insns'] or 0) >= 128 and measured.get('rows') else False
         result = agent_tokens.feedback(net, agent, slug, names[0], result, previous_diff)
+        if first and not unchanged_note and not result.startswith("🔁 REPEAT:"):
+            from .efficiency_feedback import draft_triage
+            if hint := draft_triage(measured, fn, net.project_row(slug)['arch']):
+                result = result + '\n' + hint
         if unchanged_note:
             result += '\n'+unchanged_note
         _, revision = agent_tokens.candidate(net, agent, slug, names[0])
@@ -695,8 +711,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "tidy_file": lambda net, agent, slug, path: polish_automation.tidy(net.readability, agent, slug, path),
     "make_readable": lambda net, agent, slug, function, source: net.readability.submit(agent, slug, function, source),
     "tidy_done": lambda net, agent, slug, unit, summary: net.readability.tidy_done(agent, slug, unit, summary),
-    "suggest": lambda net, agent, slug, text, compiler="", flags="", function="", ranges="", source="":
-        net.suggest(agent, slug, text, compiler, flags, function or None, ranges, source),
+    "suggest": _suggest,
     "try_compiler": lambda net, agent, slug, function, compiler, flags="", source="":
         net.try_compiler(agent, slug, function, compiler, flags, source),
     "search_notes": lambda net, agent, slug, query: net.search_notes(slug, query),
@@ -845,7 +860,7 @@ def _tool_foreground(net, agent, slug, name, args):
     # receipts before publication; claims may reuse such a verified plan.
     releasing = name in {'release_function', automatic_assignment.RELEASE}
     allowed = function_read or name in {'compile_and_diff','compile_patch','compile_variants','compile_family','try_local_repairs',
-                                       'search_repair_examples','get_repair_examples','upvote_repair_example',
+                                       'search_repair_examples','get_repair_examples','upvote_repair_example','get_search_brief',
                                        'add_note','report_repair','get_assembly','get_context','claim_readable','polish_function','make_readable'} or (
         name == 'get_candidate' and args.get('base','current') == 'current') or (
         releasing and not args.get('needs','').strip() and not args.get('not_c',False))
@@ -903,6 +918,10 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
         return _undisturbed(net, agent, slug, lambda: _invoke_once(net, agent, slug, name, args))
 
 
+def _judge_preflight(name, args):
+    return name in JUDGE_TOOLS or name == 'get_candidate' and args.get('base', 'current') == 'current'
+
+
 def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Work tools see pulled changes; the pending compact connection handshake reads saved metadata."""
     if (asset_agents.scope(net,agent) or _data_agents().scope(net,agent)
@@ -927,7 +946,18 @@ def _invoke_once(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict
     with _tool_foreground(net, agent, slug, name, args), Store.versions_held():
         if progress is not None:
             # (a compile reads only the manifest and the headers: Progress.check_for_judging)
-            progress.check_for_judging(slug) if name in JUDGE_TOOLS else progress.sync(slug, force=True)
+            if _judge_preflight(name, args):
+                function = args.get('function', '')
+                if function and ',' not in function:
+                    # Resolve on the DB snapshot, then check the held function's
+                    # saved files along with the shared judge inputs.
+                    with progress.view():
+                        function = _named(net, agent, slug, args, name)['function']
+                    progress.check_for_judging(slug, function=function)
+                else:
+                    progress.check_for_judging(slug)
+            else:
+                progress.sync(slug, force=True)
         publish = name in PUBLISH_AFTER
         before = progress.publish_token(slug) if progress is not None and publish else None
         # `after`: this call's publishing is taken care of (here, or by the project's autosave worker), so a judge
@@ -1123,14 +1153,15 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                         # ordinary project_info/work tools retain engine sync.
                         Network._project(net,slug)
                         result=f'Authenticated tools ready for {slug}. App-only connection check; project facts are supplied separately.'
+                    elif _judge_preflight(name, args) or name == 'get_search_brief':
+                        # Candidate tools use the same single scoped check in both transports.
+                        result = _invoke(net, agent, slug, name, args)
                     else:
-                        # Name resolution also reads the project before the engine
-                        # judge enters its own foreground scope.
                         def once():
                             with _tool_foreground(net, agent, slug, name, args):
-                                return _dispatch(net,agent,slug,name,args,count_usage=True)
+                                return _dispatch(net, agent, slug, name, args)
                         with automatic_assignment.serialize(net, agent, slug, name):
-                            result=_undisturbed(net, agent, slug, once)
+                            result = _undisturbed(net, agent, slug, once)
                 except Exception as exc:
                     error=exc
                 elapsed=time.monotonic()-dispatch
@@ -1238,7 +1269,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "get_claims")
 
     @tool
-    async def get_candidate(ctx: Context, function: str, base: Literal["current", "saved_best", "last_compiling", "reported_corrected"] = "current") -> str:
+    async def get_candidate(ctx: Context, function: str, base: Literal["current", "saved_best", "last_compiling", "reported_corrected", "regional_alternative"] = "current") -> str:
         """Read your current candidate C/revision and bounded advisory C-line mismatch locations, when compiler debug information is available. Use base="saved_best" to explicitly restore saved best C, base="reported_corrected" to select a compiled alternative explicitly linked to a quality report (an agent hypothesis, not verified correctness), or base="last_compiling" to recover your last scored C after compiler errors. Selection changes only your continuation; historical scores require rejudging. No full assembly listing or historical notes."""
         return await run(ctx, 'get_candidate', function=function, base=base)
 
@@ -1275,9 +1306,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx,'review_search_seed',function=function,trial_id=trial_id,review_note=review_note,enabled=enabled)
 
     @tool
-    async def get_search_brief(ctx: Context, function: str) -> str:
+    async def get_search_brief(ctx: Context, function: str, base: Literal["current", "saved_best"] = "current") -> str:
         """Read a compact current-input packet: allocation source lines/priorities, negative experiments, reviewed roots and source references. No compiler runs or source adoption."""
-        return await run(ctx,'get_search_brief',function=function)
+        return await run(ctx,'get_search_brief',function=function,base=base)
 
     @tool
     async def try_local_repairs(ctx: Context, function: str, revision: str, families: list[str] | None = None, max_trials: int = 6) -> str:
@@ -1628,8 +1659,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "share_knowledge", text=text, supports=supports, evidence=evidence)
 
     @tool
-    async def suggest(ctx: Context, text: str, compiler: str = "", flags: str = "", function: str = "",
-                      ranges: str = "", source: str = "") -> str:
+    async def suggest(ctx: Context, text: str = "", compiler: str = "", flags: str = "", function: str = "",
+                      ranges: str = "", source: str = "", trial_id: str = "") -> str:
         """Suggest a change to the project's setup you can't make yourself, for the user to apply: above all a
         different compiler or flags, when C that is right can't match (the code's style says another compiler built
         it). Test it with try_compiler first: a suggestion whose function doesn't match with it is refused. Say what
@@ -1643,9 +1674,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
             function: a function whose best attempt should match with that compiler: it's checked right away
             ranges: when only parts of the game were built with it: "0x10BFD0-0x10CD40, 0x1106C0-0x1107C0"
             source: the C to check it with (default: the function's best attempt)
+            trial_id: exact local ROM compiler_experiments receipt. Give function and omit compiler, flags, ranges and source.
         """
         return await run(ctx, "suggest", text=text, compiler=compiler, flags=flags, function=function, ranges=ranges,
-                         source=source)
+                         source=source, trial_id=trial_id)
 
     @tool
     async def try_compiler(ctx: Context, function: str, compiler: str, flags: str = "", source: str = "") -> str:

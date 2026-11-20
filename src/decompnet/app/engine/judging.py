@@ -267,6 +267,9 @@ class JudgeMixin:
             if held[0]["n_insns"] > BATCH_INSNS:
                 return f"Requested {count} functions; returned 1 because it exceeds the {BATCH_INSNS}-instruction batch limit. Work on the held function before claiming again.\n\n" + text
         first = held[0]
+        from ...routing_experiment import exclusive
+        if exclusive(self, proj, first['id'], agent.id):
+            return 'Routing comparison is measuring one function for this claim.\n\n' + self.claim(agent, project, first['name'], strategy)
         rows = list(held)
         if first["n_insns"] <= BATCH_INSNS and len(rows) < count:
             rows += self._batch_more(agent, proj, first, count - len(rows), strategy)

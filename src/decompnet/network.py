@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import agent_notes, agents, claim_routing, scoring
+from . import agent_notes, agents, claim_routing, routing_experiment, scoring
 from .candidate_work import trial
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
@@ -1543,9 +1543,19 @@ class Network:
                     fn = self._claim_pick(lambda sql, args: db.execute(sql, args).fetchone(), *plan)
                 if fn is None:
                     return None
+                trial_plan = plan[1].get('routing_trial') or {}
+                if fn['id'] in trial_plan.get('arms', {}) and not routing_experiment.available(db, proj['id'], fn['id'], trial_plan):
+                    normal = plan[1] | {'route_preferred': trial_plan['normal_preferred'],
+                                        'route_deferred': trial_plan['normal_deferred']}
+                    fn = self._claim_pick(lambda sql, args: db.execute(sql, args).fetchone(), plan[0], normal)
+                    if fn is None:
+                        return None
+                    trial_plan = {}
                 if fn['id'] in retry_grants and fn['id'] not in claim_stalls.grants(self,proj,agent):
                     return None  # a same-model worker consumed this grant before our claim transaction
                 self._open_claim(db, fn, agent, now, proj)
+                if trial_plan:
+                    routing_experiment.start(db, fn, agent, now, trial_plan)
             if proj is not None and fn['id'] in retry_grants:claim_stalls.consume(self,proj,fn,agent,db)
             # a wait that's over has had its turn at the front once it's claimed
             db.execute("DELETE FROM waits WHERE function_id=? AND needs_id IN (SELECT id FROM functions "
@@ -1577,6 +1587,11 @@ class Network:
         preferred, deferred = [], []
         if not custom and json.loads(proj['config']).get('claim_order') not in CLAIM_ORDERS:
             preferred, deferred = claim_routing.routes(store, proj, agent, now, names)
+        routing_trial = routing_experiment.plan(store, proj, preferred, deferred, policy) if batch_from is None else {}
+        if routing_trial:
+            overlap = {fid for fid, side in routing_trial['arms'].items() if side == 'overlap'}
+            preferred = preferred + [fid for fid in deferred if fid in overlap]
+            deferred = [fid for fid in deferred if fid not in overlap]
         family = model_family(agent.name)
         kin = [agent_id for agent_id, name in names.items() if model_family(name) == family]
         tried = store.one("SELECT SUM(status = 'matched') AS won, SUM(status = 'matched' OR attempts > 0) "
@@ -1590,6 +1605,7 @@ class Network:
                 "pid": proj["id"], "agent": agent.id, "name": agent.name, "kin": json.dumps(kin),
                 "cooled": now - RELEASE_COOLDOWN,
                 "overall": overall, "route_preferred": json.dumps(preferred), "route_deferred": json.dumps(deferred),
+                "routing_trial": routing_trial,
                 "mine": self._own_release_cutoff(store, agent.id, now, proj), "custom": custom,
                 "below": policy.get("match_below"), "tries": policy.get("max_tries"),
                 "machine_pending": json.dumps(self._machine_pending(proj, agent))}

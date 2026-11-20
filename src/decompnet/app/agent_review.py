@@ -186,6 +186,36 @@ def prepare_experiment(net, agent, slug, fn, proposal, progress):
     return state
 
 
+def automatic_handoff(net, agent, slug, fn, measured, reason):
+    """Keep measured release evidence with the source the next worker will inherit."""
+    fn = net._function(fn['name'], slug)
+    source = fn['best_source'] or fn['seed'] or ''
+    progress = net.claim_progress(agent, fn)
+    if not source or not progress or fn['status'] != 'open':
+        return None
+    from .agent_evidence import build_key
+    from .efficiency_feedback import mismatch
+
+    store = net.project_store(fn['project_id'])
+    proj = net.project_row(slug)
+    existing = load(net, EXPERIMENT + str(fn['id']), project_id=fn['project_id'])
+    inherited = existing if existing and applicable(net, fn, slug, source, existing) and 'old' in existing else {}
+    recent = store.all(
+        'SELECT h.summary FROM attempt_hints h JOIN main.attempts a ON a.id=h.attempt_id '
+        'WHERE a.function_id=? AND a.agent_id=? AND a.created_at>=? ORDER BY a.id DESC LIMIT 2',
+        fn['id'], agent.id, progress['claimed_at'])
+    tried = ' / '.join(row['summary'] for row in recent if row['summary'])
+    tried = tried or f'{progress["compiles"]} recorded attempts on the released claim.'
+    focus = ''
+    if measured.get('source') == source and measured.get('input_scope') == build_key(net, fn)[0]:
+        focus = mismatch(measured.get('rows') or (), window=False).strip()
+    return dict(inherited, source_sha256=digest(source), facts=facts(net, proj, fn),
+                extent=digest((fn['unit'], fn['size'], fn['n_insns'], fn['asm'])), agent=agent.name,
+                claimed_at=inherited.get('claimed_at', progress['claimed_at']), tried=tried[:320],
+                changed=(reason + (' ' + focus if focus else ''))[:320], automatic=True,
+                title=inherited.get('title', 'Read the current search brief and choose a different evidence-backed experiment.'))
+
+
 def patch_tried(net, fn, state, source):
     from .agent_tokens import compiled_before
 
@@ -220,7 +250,8 @@ def summary(state):
         lines.append('Tried: ' + state['tried'].strip())
     if state.get('changed'):
         lines.append('Observed: ' + state['changed'].strip())
-    lines.append('Untested next step: ' + state['title'])
+    label = 'Next check: ' if state.get('automatic') and 'old' not in state else 'Untested next step: '
+    lines.append(label + state['title'])
     return '\n'.join(lines)
 
 

@@ -194,6 +194,7 @@ class GuiMixin:
         return done
 
     def overview(self, slug: str, *, room_members=True, quick=False) -> dict:
+        from ... import routing_experiment
         from .. import auto_push, match_commits, score_commits
         proj = self._project(slug)
         missing = self.project_missing(proj)
@@ -236,6 +237,8 @@ class GuiMixin:
                        "progress_sync": self.progress.status(slug),
                        "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
                        "claim_order": cfg.get("claim_order") if cfg.get("claim_order") in CLAIM_ORDERS else "",
+                       "routing_experiment": routing_experiment.report(self.project_store(proj['id']), proj,
+                                                                       cfg.get('routing_experiment')),
                        "priority": cfg.get("priority", []), "save_folder": str(saves.save_folder(self, slug)),
                        "missing": missing,
                        # (a suggestion its own check disproved isn't one: older ones were filed)

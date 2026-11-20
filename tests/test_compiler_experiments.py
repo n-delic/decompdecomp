@@ -74,7 +74,7 @@ def test_exact_diagnostic_points_to_explicit_function_only_promotion(tmp_path,mo
     monkeypatch.setattr(net,'try_compiler',lambda *a,**k:'MATCHES the game byte for byte')
     result=compiler_experiments.run(net,agent,'game','f',revision,[{'compiler':'fake','flags':'-O2'}])
     assert 'EXACT (diagnostic only)' in result
-    assert 'suggest(function="f"' in result and 'No ranges argument is needed' in result
+    assert "suggest(function='f', trial_id=" in result and 'ordinary approval' in result
     assert net._function('f','game')['status']=='open'
     assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==0
 
