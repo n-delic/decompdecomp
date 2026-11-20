@@ -82,7 +82,7 @@ def full_pass(twins, slug: str, job):
         raise
     report(job, "Preparing reusable-code search")
     try:
-        result = worker.run_task("full_pass", {"slug": slug, "foreground": job.foreground.is_set()},
+        result = worker.run_task("full_pass", {"slug": slug, "foreground": job.foreground.is_set(), "autopilot": job.autopilot},
                                  stop=job.stop, promote=job.foreground,
                                  on_status=lambda fields: apply_fields(job, fields))
         apply_fields(job, result)
@@ -143,9 +143,10 @@ def _ticker(stop: threading.Event, done: threading.Event, send):
 
 
 def _run_full_pass(net, payload, stop, promote, status):
+    from ..repair_feedback import without_capture
     from . import maintenance
     from .twins import Job
-    job = Job()
+    job = Job(autopilot=payload.get("autopilot") is True)
     job.stop = stop
     job.foreground = promote
     job.ordered.set()  # (the app ordered the claims before asking)
@@ -156,7 +157,8 @@ def _run_full_pass(net, payload, stop, promote, status):
     try:
         with maintenance.foreground(job.foreground), maintenance.slot(stop) as ready:
             if ready:
-                net.twins._execute_full_pass(payload["slug"], job)
+                with without_capture(job.autopilot):
+                    net.twins._execute_full_pass(payload["slug"], job)
             else:
                 job.state = "stopped"
     finally:

@@ -734,7 +734,8 @@ def _run(twins, slug, job):
     # runs on one of the shared workers, which would wait for the very threads it is waiting on.
     threads = 1 if getattr(job,'finish_near',False) else workers.clamp(getattr(getattr(net, 'cascades', None), 'iterative_threads', 0))
     with Executor(max_workers=threads, purpose='Iterative source repairs', project=slug, stop=job.stop.set, thread_name_prefix='iterative-repair', initializer=workers.lower_priority) as pool:
-        list(pool.map(visit, rows))
+        from ..repair_feedback import inherit_capture_policy
+        list(pool.map(inherit_capture_policy(visit), rows))
     if reasons:
         net.add_note(agent, slug, 'Iterative search function outcomes: '+', '.join(f'{k}: {v}' for k,v in sorted(reasons.items()))+
                      f". {diagnostics['compile_failed']} failed/unscored reports; {diagnostics['equivalent_output']} equivalent-output branches pruned. "

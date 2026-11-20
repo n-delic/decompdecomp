@@ -142,6 +142,10 @@ def test_autopilot_matches_from_machine_drafts(gc):
         outcomes[fid] = net.forks.autopilot_one(agent, proj, fid)
     print(sorted(outcomes.values()))
     assert "match" in outcomes.values()
+    for fid, outcome in outcomes.items():
+        if outcome == 'match':
+            assert net.store.one("SELECT status FROM functions WHERE id=?", fid)['status'] == 'matched'
+            assert net.store.one("SELECT id FROM main.repair_examples WHERE function_id=?", fid) is None
     assert subprocess.run(["git", "status", "--porcelain", "src"], cwd=root, capture_output=True, text=True).stdout == ""
     log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
     assert "Match " in log

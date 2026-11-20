@@ -1,6 +1,10 @@
 # Repair evidence sampling
 
-New successful captures are sampled by source transformation and recorded compiler context.
+Deep permuter and Autopilot wins are credited as matches and keep their attempt history.
+They do not enter Repair examples or queue automatic repair replays. Retained historical
+examples remain available for review.
+
+Other successful captures are sampled by source transformation and recorded compiler context.
 An installed automatic rule retains one regression example per bucket. Manual/AI repairs
 retain up to three representative examples. Further successes increment durable counters
 in `repair_capture_groups` without storing another full example or scheduling another

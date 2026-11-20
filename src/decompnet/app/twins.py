@@ -31,6 +31,7 @@ from .. import arch, similarity
 from ..elfobj import MASKS_BY_ARCH, Reloc, mask_relocs
 from ..network import NetworkError
 from ..project import compiler_for
+from ..repair_feedback import inherit_capture_policy, without_capture
 from .purpose_work import Executor
 
 log = logging.getLogger("decompdecomp")
@@ -275,6 +276,7 @@ class Job:
     tried: int = 0
     matched: int = 0
     asm: int = 0  # hand-written assembly (twins of asm functions, code no compiler makes), out of agents' way
+    autopilot: bool = False
     cross_job: str | None = None  # UI reconnects to an existing manual search without starting another.
     cross_candidates: int = 0
     cross_tried: int = 0
@@ -625,7 +627,8 @@ class Twins:
                 # In the permuter worker's process: these passes were half of the app's own CPU time
                 return maintenance_tasks.full_pass(self, slug, job)
             except maintenance_tasks.Unavailable:
-                return self._execute_full_pass(slug, job)
+                with without_capture(job.autopilot):
+                    return self._execute_full_pass(slug, job)
 
     def _order_before_pass(self, slug: str, job: Job) -> None:
         """Prepare this project's claim queue before joining the shared background lane."""
@@ -1445,7 +1448,7 @@ class Twins:
                 tally['total'] = len(by_target)
                 publish()
                 with Executor(purpose='Identical-function reuse', project=slug, stop=job.stop.set, max_workers=workers) as pool:
-                    list(pool.map(one, by_target.values()))
+                    list(pool.map(inherit_capture_policy(one), by_target.values()))
                 if job.matched == before:
                     break
                 if only is not None:

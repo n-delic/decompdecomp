@@ -56,6 +56,7 @@ from ..network import (
     set_aside,
 )
 from ..release_receipts import operation as release_operation
+from ..repair_feedback import without_capture
 from ..request_timing import build as timed_build
 from ..rom import RomError
 from ..scoring import percent_text
@@ -3819,6 +3820,7 @@ class ForkEngine:
                 if repaired:
                     yield '', '/* private initial draft recovery, judged normally */\n'+drafts.self_contained(source, repaired, current)
 
+    @without_capture()
     def autopilot_one(self, agent: Agent, proj, fid: int) -> str:
         """match | near | far | fail | skip, for one function's drafts, each built and diffed like an agent's, until
         one matches. A draft autopilot already judged as it is now is skipped: autopilot tries a function again when

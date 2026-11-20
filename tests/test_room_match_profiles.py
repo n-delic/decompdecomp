@@ -402,7 +402,9 @@ def test_offline_deep_search_verifies_locally_then_delivers_exact_match(pair):
     from decompnet.app import deep_permuter, deep_room
     from tests.test_deep_permuter import Log
     host,slug,guest,gslug=pair
-    agent,_=guest.local_agent('offline-deep');remote,_=host.local_agent('reconnected-deep')
+    worker = 'permuter-25769806587-lane-0'
+    agent,_=guest.local_agent(worker)
+    remote=host.authenticate(host.register_agent('member.'+worker[:24], owner='member', origin='collab:'+slug))
     requests=[]
     def request(method,path,data):
         requests.append(path)
@@ -421,7 +423,11 @@ def test_offline_deep_search_verifies_locally_then_delivers_exact_match(pair):
     search._let_go(agent,fn)
     link.error=''
     assert room_matches.resend(link,queued[0]['key'])['matched']
-    assert host._function(fn['name'],slug)['status']=='matched'
+    matched = host._function(fn['name'],slug)
+    assert matched['status']=='matched'
+    for net, row in ((guest, fn), (host, matched)):
+        store = net.project_store(row['project_id'])
+        assert store.one('SELECT id FROM main.repair_examples WHERE function_id=?', row['id']) is None
     assert not room_matches.pending(guest,gslug,'client')
     assert not deep_room.offline(link)
 

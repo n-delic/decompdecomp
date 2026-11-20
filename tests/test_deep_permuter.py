@@ -3,6 +3,7 @@ import pytest
 from decompnet.app import deep_permuter, draft_repairs, permuter_local
 from decompnet.app.permute import Permuter
 from decompnet.network import NetworkError
+from decompnet.repair_feedback import capture_suppressed
 from tests.test_permute import AGENT, FakeNet, ProjectStub, batches
 
 
@@ -49,6 +50,7 @@ def test_one_function_deep_search_uses_normal_judge_and_keeps_improvements(monke
     net = setup(monkeypatch, imported)
     seen = []
     def judge(self, agent, proj, fn, source, best, fork):
+        assert capture_suppressed()
         seen.append((source, fork))
         score = {'local':20, 'random':0}.get(source, 100)
         if score < best:
@@ -60,6 +62,7 @@ def test_one_function_deep_search_uses_normal_judge_and_keeps_improvements(monke
     batches(monkeypatch, ['local', 'random', 'never tested'])
     log = Log()
     result = deep_permuter.run(net, 'game', 'f', 30, 10, log)
+    assert not capture_suppressed()
     assert result['matched'] and result['tested'] == 2 and result['skipped'] == 1
     assert seen == [('local','fork' if imported else None), ('random','fork' if imported else None)]
     assert net.function()['status'] == 'matched'

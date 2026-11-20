@@ -155,7 +155,8 @@ class PermuterWorker:
             self._next_id += 1
             ident = self._next_id
             reply = self._replies[ident] = queue.Queue(maxsize=1)
-            self._send("repair_pass", slug=slug, ident=ident)
+            from ..repair_feedback import capture_suppressed
+            self._send("repair_pass", slug=slug, ident=ident, skip_capture=capture_suppressed())
         cancelled = False
         try:
             while not self._closed.is_set():
@@ -442,9 +443,11 @@ def child(db_path: str, workspace: str) -> None:
             repair_threads.pop(ident, None)
             task_promotes.pop(ident, None)
 
-    def repair(ident, slug, stop):
+    def repair(ident, slug, stop, skip_capture):
         try:
-            result = permuter.repair_pass(slug, stop)
+            from ..repair_feedback import without_capture
+            with without_capture(skip_capture):
+                result = permuter.repair_pass(slug, stop)
             emit({"kind": "reply", "ident": ident, "matched": result.matched})
         except Exception:
             log.exception("permuter worker repair pass failed")
@@ -479,7 +482,7 @@ def child(db_path: str, workspace: str) -> None:
             elif action == "repair_pass":
                 ident = message["ident"]
                 stop = repair_stops[ident] = threading.Event()
-                thread = threading.Thread(target=repair, args=(ident, message["slug"], stop), daemon=True)
+                thread = threading.Thread(target=repair, args=(ident, message["slug"], stop, message.get("skip_capture") is True), daemon=True)
                 repair_threads[ident] = thread
                 thread.start()
             elif action == "cancel":

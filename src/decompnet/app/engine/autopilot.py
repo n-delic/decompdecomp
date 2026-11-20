@@ -19,6 +19,7 @@ from ...candidate_work import trial
 from ...network import Agent, NetworkError
 from ...project import compiler_for, unknown_compiler_message
 from ...repair_feedback import trial as repair_trial
+from ...repair_feedback import without_capture
 from ..draft_context import candidate_context
 from ..purpose_work import Executor
 
@@ -32,6 +33,7 @@ QUEUE_POLL_SECONDS = 0.5  # how often a queued one looks for a slot (and whether
 
 
 class AutopilotMixin:
+    @without_capture()
     def start_autopilot(self, slug: str, workers: int | None = None, *, foreground=False) -> dict:
         """Try every open function's machine draft (m2c, compilable form) through the judge, smallest first, in the
         background unless explicitly requested with foreground=True. Matches are saved before agents spend tokens; drafts that compile
@@ -133,7 +135,8 @@ class AutopilotMixin:
         state["phase"] = "twins"
         try:  # identical code first: free, and it takes those functions off the drafts' list
             if slug not in self.links and not state["stop"].is_set():  # (a room member's matches come from the host)
-                job = self.twins.full_pass(slug,foreground_event=state['_foreground'])
+                from ..twins import Job
+                job = self.twins.full_pass(slug, Job(autopilot=True), foreground_event=state['_foreground'])
                 state["twins"] = job.matched
                 state["matched"] += job.matched
         except Exception as e:
@@ -164,7 +167,7 @@ class AutopilotMixin:
                 from ...compile_sessions import session
                 def check_stop():
                     if state['stop'].is_set():raise NetworkError('Autopilot stopped.')
-                with database_reads(), maintenance.foreground(state['_foreground']), session(), compiler.cancellable(check_stop), \
+                with without_capture(), database_reads(), maintenance.foreground(state['_foreground']), session(), compiler.cancellable(check_stop), \
                         compiler._SLOTS.capacity(width) if manual else nullcontext(), \
                         compiler.throughput_slots(manual):
                     outcome = try_one(agent, proj, fid)
@@ -333,6 +336,7 @@ class AutopilotMixin:
         with self.progress.judging(proj['slug'],synchronize=False) if hasattr(self,'progress') else nullcontext():
             return self._autopilot_one_work(agent,proj,fid,repair_only=True)
 
+    @without_capture()
     def _autopilot_one_work(self, agent, proj, fid: int, *, repair_only=False) -> str:
         now = time.time()
         store = self.project_store(proj['id'])
