@@ -145,9 +145,14 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   const apiTile = box.querySelectorAll(".lz-kind").find((tile) => tile.dataset.k === "api");
   apiTile.onclick();
   requireOk(box.html === apiBefore || box.html.includes("checked"), "switching providers should retain API model selection");
+  const assignment = box.querySelector("[data-automatic-assignment]");
+  requireOk(assignment && !assignment.checked, "automatic assignment starts unchecked");
+  assignment.checked = true;
+  assignment.onchange();
   const apiStart = box.querySelector('[data-act="start"]');
   await apiStart.onclick();
   const apiCall = calls.find((call) => call.url === "/api/agents/start" && call.body.kind === "api");
+  requireOk(apiCall.body.options.automatic_assignment === true, "the launch sends the selected assignment mode");
   requireOk(apiCall.body.background === true, "launcher must use nonblocking agent creation");
   requireOk(apiCall && apiCall.body.options.multiple_models && apiCall.body.options.models[0].endpoint === "e1" &&
     apiCall.body.options.models[0].model === "m-one", "API launch must send only selected endpoint/model pairs");
@@ -162,6 +167,7 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   apiCustom.oninput();
   await box.querySelector('[data-act="start"]').onclick();
   const apiSingleCall = calls.filter((call) => call.url === "/api/agents/start" && call.body.kind === "api").at(-1);
+  requireOk(!apiSingleCall.body.options.automatic_assignment, "a subsequent launch can use manual claims");
   requireOk(apiSingleCall.body.options.model === "manual-api-model" && apiSingleCall.body.options.endpoints[0] === "e1",
     "API single-model fallback must send the typed model on its saved endpoint");
 

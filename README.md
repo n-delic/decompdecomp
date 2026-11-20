@@ -374,6 +374,12 @@ model with **Largest first**, then start a cheaper model with **Untried first** 
 choose **Closest to matching**, **Finish source files**, or **Random**. **Automatic** keeps the existing adaptive
 scheduler and model routing.
 
+When starting matching agents, enable **Automatically assign the next function after a match or release**
+to have the app hand each new worker one function at a time. The next brief comes back with the match or
+accepted release. The worker follows its work selection and functions-per-session limit and waits without
+model requests when there is no eligible work. The option starts unchecked, so you can run workers in
+both modes on the same project.
+
 **Only functions below match %** restricts automatic claims to functions whose best recorded match percentage is
 strictly below the threshold, plus functions with no scored attempt. For example, 80 includes unscored functions
 and those below 80%, but excludes one at exactly 80%. This is the app's comparison score, not an estimate of work

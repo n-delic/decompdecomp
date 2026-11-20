@@ -117,6 +117,8 @@ class Api(Agent):
         if saved:
             saved[0] = messages[0]  # Current rules and tools apply after restart.
             messages = saved + [{'role':'user','content':'Resume after interruption. Check current project state and reclaim eligible work. ' + handoff(s)}]
+            if s.options.get('automatic_assignment') and s.startup_context:
+                messages[-1]['content'] = s.startup_context + handoff(s)
             s.push('info','Restored saved API conversation and function handoff.')
         if s.record:
             s.record('prompt', messages)
@@ -765,6 +767,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                        s(path=st("file", True), at=st("function name or .text offset", True),
                          new_name=st("new file path (optional)"), data=st("e.g. .rodata:0x88 .data:0x28 (optional)"))),
     }
+    defs["release_and_continue"] = (
+        "Release your current function with notes and receive the next assignment when eligible. "
+        + defs["release_function"][0], defs["release_function"][1])
     if fork:
         defs["compile_and_diff"] = ("Write one complete function definition into its source file, build it and diff "
                                     "with objdiff. 100% / score 0 = matched.",

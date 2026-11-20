@@ -88,6 +88,7 @@ def prepare(net, agent_id: int, slug: str, taken=()) -> dict | None:
     the app (see the module docstring)."""
     from .. import claim_stalls
     from ..network import Agent
+    from . import automatic_assignment
     from .claim_state import brief
     from .data_regions import blocked as data_blocked
     if agent_id in getattr(net, "_agent_focus", {}) or net.fork_slug(slug) or net._link(slug) is not None:
@@ -96,6 +97,8 @@ def prepare(net, agent_id: int, slug: str, taken=()) -> dict | None:
     if row is None:
         return None
     agent = Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
+    if automatic_assignment.enabled(net, agent, slug):
+        return None
     proj = net._project(slug)
     order = json.loads(proj["config"] or "{}").get("claim_order") or ""
     from ..network import CLAIM_ORDERS

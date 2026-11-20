@@ -801,7 +801,7 @@ def test_a_picked_api_model_survives_restart_and_resume(tmp_path, monkeypatch):
     client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
                         base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
     started = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
-        "kind": "api", "slug": "game", "options": {"endpoints": [entry["id"]], "model": "picked-single"},
+        "kind": "api", "slug": "game", "options": {"endpoints": [entry["id"]], "model": "picked-single", "automatic_assignment": True},
     })
     assert started.status_code == 200, started.text
     selected = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
@@ -813,6 +813,7 @@ def test_a_picked_api_model_survives_restart_and_resume(tmp_path, monkeypatch):
     picked = dict(zip(started.json()["started"] + selected.json()["started"], ["picked-single", "picked-multiple"]))
     for sid, model in picked.items():
         assert manager.sessions[sid].options["model"] == model
+        assert manager.sessions[sid].snapshot()["automatic_assignment"] == (model == "picked-single")
 
     client.post("/api/settings", headers={"X-Decomp": "1"}, json={
         "endpoint": {"id": entry["id"], "model": "endpoint-default-changed"},
@@ -823,6 +824,7 @@ def test_a_picked_api_model_survives_restart_and_resume(tmp_path, monkeypatch):
         assert restarted.status_code == 200, restarted.text
         assert manager.sessions[sid].options["model"] == model
         assert manager.sessions[sid].state == "starting"
+        assert manager.sessions[sid].snapshot()["automatic_assignment"] == (model == "picked-single")
 
         manager.stop(sid)
         session = manager.sessions[sid]

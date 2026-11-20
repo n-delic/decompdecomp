@@ -3,6 +3,7 @@ import json
 import time
 
 from ..network import NetworkError
+from . import automatic_assignment
 
 REQUIRED = {'project_info', 'claim_function', 'get_function', 'compile_and_diff', 'release_function'}
 KEY = 'agent-disabled-tools'
@@ -47,6 +48,8 @@ def connection_required(net, agent):
         return asset_agents.TOOLS - {'get_assembly','guide'}
     if agent is not None and boundary_investigations.scope(net,agent):
         return boundary_investigations.TOOLS
+    if automatic_assignment.enabled(net, agent):
+        return {'project_info', 'compile_and_diff', automatic_assignment.RELEASE}
     return {'project_info','claim_function','compile_and_diff','release_function'}
 
 
@@ -55,7 +58,7 @@ def preset_disabled(preset):
     if not isinstance(preset, str) or preset not in PRESETS:
         raise NetworkError('Choose a known tool preset.')
     keep = PRESETS[preset][1]
-    return validate([name for name in HANDLERS if keep is not None and name not in keep])
+    return validate([name for name in HANDLERS if keep is not None and name not in keep and name != automatic_assignment.RELEASE])
 
 
 def set_preset(net, preset):
@@ -98,7 +101,7 @@ def validate(names):
     from .tools import HANDLERS
     if not isinstance(names, list) or any(not isinstance(n, str) or n not in HANDLERS for n in names):
         raise NetworkError('Choose known tool names to disable.')
-    if REQUIRED.intersection(names):
+    if REQUIRED.intersection(names) or automatic_assignment.RELEASE in names:
         raise NetworkError('Core project, claim, compile and release tools must remain enabled.')
     return sorted(set(names))
 
@@ -127,6 +130,11 @@ def visible(net, slug, names, agent=None):
         blocked.update(net.selection(slug, agent.name).get('disabled_tools', []))
     if matching_helper(net, agent):
         blocked |= OTHER_TASKS
+    if automatic_assignment.enabled(net, agent, slug):
+        names = [name for name in names if name not in {'claim_function', 'release_function'}]
+        blocked.difference_update({automatic_assignment.RELEASE, "get_claims"})
+    else:
+        names = [name for name in names if name != automatic_assignment.RELEASE]
     return [name for name in names if name in REQUIRED or name not in blocked]
 
 
@@ -144,6 +152,9 @@ def set_global(net, name, enabled):
 def record(net, agent, slug, name, *, count=True):
     from .tools import HANDLERS
     if name not in visible(net, slug, list(HANDLERS), agent):
+        if name in {'claim_function', 'release_function'} and automatic_assignment.enabled(net, agent, slug):
+            raise NetworkError('The app assigns your functions. Use get_claims to recover your assignment or '
+                               'release_and_continue to release it with notes.')
         if name in OTHER_TASKS and matching_helper(net, agent):
             raise NetworkError(f'{name} is for another kind of helper (assets, boundaries, data, PC port or polishing). '
                                'Work on your claimed function, or claim_function for the next one.')
