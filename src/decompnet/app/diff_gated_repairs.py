@@ -3,6 +3,7 @@
 import re
 
 from decomprepair import (
+    kmc_cast_repairs,
     loop_sentinel_repairs,
     targeted_switch_labels,
 )
@@ -151,6 +152,7 @@ def proposals(source, name, header, arch, toolchain, rows, asm, jump_tables=(), 
         return result
 
     if toolchain.startswith('gcc-2.7.2-kmc'):
+        result += kmc_cast_repairs.variants(source,name,header,rows,flags)
         result += target_guard_width_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,
                                                           resolve=resolve)
         result += target_edge_diff_repairs.proposals(source,name,header,rows,target,candidate,asm,

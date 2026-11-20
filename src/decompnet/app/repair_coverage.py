@@ -97,8 +97,9 @@ def verify(feedback, example):
     rows = repair_ranking.instruction_rows(scoring.diff(net._target_obj(fn, proj), baseline).rows)
     compiler = profile['toolchain']
     if proj['arch'] == 'mips' and compiler == 'gcc-2.7.2-kmc':
-        from decomprepair import kmc_operand_repairs, kmc_type_repairs
-        focused = kmc_type_repairs.variants(source, fn['name'], header, rows)
+        from decomprepair import kmc_cast_repairs, kmc_operand_repairs, kmc_type_repairs
+        focused = kmc_cast_repairs.variants(source, fn['name'], header, rows, profile['flags'])
+        focused += kmc_type_repairs.variants(source, fn['name'], header, rows)
         focused += kmc_operand_repairs.variants(source, fn['name'], header, rows)
     else:
         focused = []
