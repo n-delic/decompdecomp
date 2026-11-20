@@ -3311,11 +3311,15 @@ remain planned: the initial browser toolchain has no matching build-context adap
 ### Post-match repair analysis and cost evidence
 
 - Done: bounded automatic frozen-output ablation for new supported captures, a Repair examples toggle,
-  persisted reports, and source-free summary exports; no progress adoption or review changes.
+  persisted reports, and source-free summary exports.
+- Done: bounded installed-rule verification for agent ROM matches with a comparable failed attempt.
+  The original linker must approve a generated candidate before a fresh capture is filtered.
+  The winning attempt retains the rule and failed-attempt identity.
 - Done: paired native-GCC phase comparisons gated on unchanged compiler output, mismatch-shape-specific
   exact repair sequence hints, and per-profile/focus compile and elapsed-trial-time efficiency rates.
 - Planned: copied-build replay adapters for imported projects and phase diagnostics for other compiler
-  backends. They explicitly skip instead of using guessed standalone build settings. Timing currently
+  backends. Imported-project repair examples remain available for review until an exact replay has
+  captured the original per-file build inputs. Timing currently
   measures summed trial elapsed time; per-child CPU accounting across compiler runtimes remains planned.
 
 ### Repair capture follow-ups

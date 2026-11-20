@@ -375,7 +375,7 @@ class RepairFeedback:
             tracking[2].append((captured.lastrowid, fn['name']))
 
         from .app.repair_outcomes import schedule
-        try:schedule(self,captured.lastrowid,evidence['after']['source_sha256'])
+        try:schedule(self,captured.lastrowid,evidence['after']['source_sha256'], via == 'agent' and not automated)
         except Exception as error:
             logging.getLogger('decompdecomp').warning('Repair analysis scheduling failed: %s',error)
 

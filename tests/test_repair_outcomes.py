@@ -155,10 +155,34 @@ def test_restart_resumes_durable_interrupted_work(setup,monkeypatch):  # noqa: F
     repair_outcomes.prepare(net.repair_feedback)
     with net.store.tx() as db:
         db.execute('INSERT INTO repair_outcome_analysis VALUES(?,?,?,?)',(case_id,'running','{}',0))
-        db.execute('INSERT INTO repair_analysis_queue VALUES(?,?,?)',(case_id,None,0))
+        db.execute('INSERT INTO repair_analysis_queue(example_id,expected_hash,created_at) VALUES(?,?,?)',(case_id,None,0))
     monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
     monkeypatch.setattr(repair_outcomes.purpose_work,'start',lambda purpose,project,fn:queue.append(fn))
     monkeypatch.setattr(repair_outcomes,'analyze',lambda _: {'summary':{}})
     assert repair_outcomes.result(net.repair_feedback,case_id)['state']=='pending'
     repair_outcomes.resume(net.repair_feedback);queue.pop()()
     assert repair_outcomes.result(net.repair_feedback,case_id)['state']=='done'
+
+
+def test_verified_installed_rule_filters_only_untouched_new_capture(setup, monkeypatch):  # noqa: F811
+    from decompnet.app import repair_coverage
+
+    net, _, _, _, fid = setup
+    case_id = match(setup)
+    feedback = net.repair_feedback
+    original = dict(fn(net, fid))
+    example = feedback.detail('demo', case_id)
+    monkeypatch.setattr(repair_coverage, 'verify', lambda *_: None)
+    assert not repair_outcomes._covered(feedback, example)
+    assert feedback.detail('demo', case_id)['status'] == 'new'
+    monkeypatch.setattr(repair_coverage, 'verify', lambda *_: 'known_rule')
+    feedback.review('demo', case_id, 'reviewed')
+    assert not repair_outcomes._covered(feedback, example)
+    feedback.review('demo', case_id, 'new')
+    assert repair_outcomes._covered(feedback, example)
+    assert feedback.listing('demo')['examples'] == []
+    assert dict(fn(net, fid)) == original
+    record = dict(net.store.one('SELECT * FROM repair_coverage_verdicts'))
+    assert record['attempt_id'] == example['evidence']['after']['attempt_id']
+    assert record['failed_attempt_id'] == example['evidence']['before']['attempt_id']
+    assert record['family'] == 'known_rule'

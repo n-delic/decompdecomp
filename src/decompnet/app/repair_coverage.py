@@ -1,0 +1,128 @@
+"""Verify that a small installed repair can solve the captured failed attempt."""
+
+import hashlib
+import time
+from collections import defaultdict, deque
+from itertools import chain, islice
+from pathlib import Path
+
+from .. import scoring, toolchains
+from ..compiler import compile_source
+from ..project import compiler_config
+from ..repair_changes import TOKEN, without_comments
+from ..repair_comparison import complete_snapshot, differences
+from ..repair_feedback import _settings
+from . import draft_repairs, repair_generation, repair_ranking
+from .engine.judging import search_evaluation
+from .function_names import canonical_source
+
+TRIALS = 6
+SECONDS = 6
+TYPE_FAMILIES = ('symbol_access_width', 'field_width', 'narrow_widening', 'local_widening',
+                 'parameter_width', 'float_prototype')
+
+
+def proposals(source, name, arch, asm, flags, header, profile, rows, category, winner):
+    labels = {}
+    candidates = draft_repairs.variants(source, name, arch, asm, flags, labels, header=header, limit=None,
+                                        entry_scope=draft_repairs.promoted_entry_repairs.profile_scope(arch, profile))
+    pools = defaultdict(deque)
+    exact_source = TOKEN.findall(without_comments(winner))
+    for candidate in candidates:
+        if candidate != source and labels.get(candidate):
+            # The winning source only orders installed-rule proposals. It cannot
+            # supply a candidate or bypass the linker.
+            if TOKEN.findall(without_comments(candidate)) == exact_source:
+                yield labels[candidate], candidate
+                continue
+            pools[labels[candidate]].append(candidate)
+    order = repair_ranking.order(list(pools), rows)
+    if category == 'types':
+        order = sorted(order, key=lambda family: family not in TYPE_FAMILIES)
+    # Give each likely family one trial before spending another trial on the same rule.
+    while order:
+        for family in order:
+            yield family, pools[family].popleft()
+        order = [family for family in order if pools[family]]
+
+
+def verify(feedback, example):
+    """Return a family only when the existing read-only ROM judge passes its candidate."""
+    evidence = example['evidence']
+    before, after = evidence.get('before') or {}, evidence['after']
+    settings = after.get('settings') or {}
+    if (not complete_snapshot(settings) or differences(before.get('settings'), settings)
+            or before.get('attempt_id') is None or not 0 < (before.get('score') or 0)
+            or before.get('source_sha256') == after.get('source_sha256')):
+        return None
+    source, header = before.get('source'), before.get('header')
+    if (not source or header is None or header != after.get('header') or len(source) > 64 * 1024
+            or not 0 < (evidence.get('instructions') or 0) <= 256
+            or hashlib.sha256(source.encode()).hexdigest() != before.get('source_sha256')
+            or hashlib.sha256(header.encode()).hexdigest() != settings['context_sha256']):
+        return None
+    if not after.get('source') or hashlib.sha256(after['source'].encode()).hexdigest() != after['source_sha256']:
+        return None
+    net = feedback.net
+    fn = feedback.store.one('SELECT * FROM functions WHERE id=?', example['function_id'])
+    proj = feedback.store.one('SELECT * FROM projects WHERE id=?', example['project_id'])
+    if (not fn or not proj or fn['project_id'] != proj['id'] or fn['name'] != evidence['function']
+            or fn['vram'] != evidence['vram'] or not fn['target']
+            or hashlib.sha256(fn['target']).hexdigest() != evidence['target_sha256']):
+        return None
+    live = _settings(proj, fn)
+    if any(live.get(key) != settings.get(key) for key in ('mode', 'platform', 'rom', 'big_endian', 'gp')):
+        return None
+    profile = settings['compiler']
+    if (set(profile) - {'toolchain', 'flags', 'timeout'} or not toolchains.installed(profile['toolchain'])):
+        return None
+    invocation = compiler_config(Path(proj['root']), {'compiler': profile})
+    if list(invocation.cmd) != settings['effective_command']:
+        return None
+    deadline = time.monotonic() + SECONDS
+    timeout = invocation.timeout
+
+    def evaluate(candidate):
+        invocation.timeout = min(timeout, max(0.01, deadline - time.monotonic()))
+        built = compile_source(invocation, header, canonical_source(fn, candidate))
+        if not built.ok or getattr(built, 'language', None) != settings['language']:
+            return None, None
+        with search_evaluation():
+            obj, matched, _ = net._evaluate(fn, proj, built.obj)
+        return obj, matched
+
+    baseline, matched = evaluate(source)
+    if baseline is None or matched is not False or time.monotonic() >= deadline:
+        return None
+    rows = repair_ranking.instruction_rows(scoring.diff(net._target_obj(fn, proj), baseline).rows)
+    compiler = profile['toolchain']
+    if proj['arch'] == 'mips' and compiler == 'gcc-2.7.2-kmc':
+        from decomprepair import kmc_operand_repairs, kmc_type_repairs
+        focused = kmc_type_repairs.variants(source, fn['name'], header, rows)
+        focused += kmc_operand_repairs.variants(source, fn['name'], header, rows)
+    else:
+        focused = []
+
+    def generated():
+        scope = ('coverage', evidence['target_sha256'], settings['context_sha256'], tuple(profile['flags']))
+        families = draft_repairs.AGENT_FAMILIES + TYPE_FAMILIES
+        with repair_generation.session(net, scope, min(deadline, time.monotonic() + 2), families):
+            batch = list(islice(proposals(source, fn['name'], proj['arch'], evidence.get('target_asm') or '',
+                                          profile['flags'], header, profile, rows, example['category'], after['source']),
+                                TRIALS))
+        yield from batch
+
+    candidates = chain(focused, generated())
+    for family, candidate in islice(candidates, TRIALS):
+        if time.monotonic() >= deadline:
+            break
+        _, matched = evaluate(candidate)
+        if matched is True:
+            # Function splits or renames during this background check invalidate its target.
+            current = feedback.store.one('SELECT target,relocs,meta,vram,name FROM functions WHERE id=?', fn['id'])
+            project = feedback.store.one('SELECT config,root FROM projects WHERE id=?', proj['id'])
+            if (current and all(current[key] == fn[key] for key in current.keys())
+                    and project and project['config'] == proj['config'] and project['root'] == proj['root']):
+                return family
+            break
+    return None
