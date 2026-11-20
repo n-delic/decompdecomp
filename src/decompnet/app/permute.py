@@ -473,7 +473,6 @@ class Permuter:
             normalization_repairs.extend_frame(candidates, labels, fn['best_source'], fn['name'], proj['arch'], repair_ranking.evidence(self.net,fn['id'],agent.id))
             ranked = repair_ranking.order(dict.fromkeys(labels.get(text, 'draft_repair') for text in candidates),repair_ranking.evidence(self.net,fn['id'],agent.id))
             effect_scope=repair_ranking.effect_scope(self.net,fn,fn['best_source']) if hasattr(self.net,'_context') else None
-            ranked=repair_ranking.demote(self.net,effect_scope,ranked)
             ranked=repair_ranking.private_abi_order(ranked,proj['arch'],fn['asm'] or '',repair_ranking.evidence(self.net,fn['id'],agent.id))
             if not self._hold(agent, fn, count_turn=False):
                 continue
@@ -498,11 +497,11 @@ class Permuter:
                         continue
                     normalization_repairs.extend_frame(candidates, labels, fn['best_source'], fn['name'], proj['arch'], repair_ranking.evidence(self.net,fn['id'],agent.id))
                     ranked = repair_ranking.order(dict.fromkeys(labels.get(text, 'draft_repair') for text in candidates), repair_ranking.evidence(self.net, fn['id'], agent.id))
-                    ranked = repair_ranking.demote(self.net, effect_scope, ranked)
                 from . import adaptive_repairs, permuter_focus
                 policy_rows = repair_ranking.evidence(self.net, fn['id'], agent.id)
                 ranked = adaptive_repairs.order(self.net, proj, fn, policy_rows, ranked)
                 ranked = repair_ranking.private_abi_order(ranked,proj['arch'],fn['asm'] or '',policy_rows)
+                ranked = repair_ranking.demote(self.net, fn, effect_scope, ranked)
                 policy_key = adaptive_repairs.profile(self.net, proj, fn)
                 candidates.sort(key=lambda text: ranked.index(labels.get(text, 'draft_repair')) if labels.get(text, 'draft_repair') in ranked else len(ranked))
                 from . import proposal_progress
@@ -532,7 +531,9 @@ class Permuter:
                     if cursor:cursor.measured(labels.get(candidate),candidate,score)
                     measured=getattr(self.net,'_agent_outcomes',{}).get((agent.id,fn['id']))
                     if measured and measured.get('source')==candidate:
-                        repair_ranking.remember(self.net,effect_scope,labels.get(candidate,'draft_repair'),baseline,measured)
+                        repair_ranking.remember(self.net, fn, effect_scope, baseline,
+                                                [(labels.get(candidate, 'draft_repair'), candidate,
+                                                  measured | {'output_fingerprint': getattr(self, '_trial_output', None)})])
                     with self.net.project_store(proj['id']).tx() as db:
                         db.execute("INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)",
                                    (fn['id'], trial, str(score), "targeted draft repair"))
@@ -938,11 +939,12 @@ class Permuter:
         cache = getattr(self, '_baselines', {})
         self._baselines = cache
         if key in cache:
-            score, rows = cache[key]
+            score, rows, fingerprint = cache[key]
             self.net.keep_diff(agent.id, fn['id'], rows)
             if not hasattr(self.net, '_agent_outcomes'):
                 self.net._agent_outcomes = {}
-            self.net._agent_outcomes[agent.id, fn['id']] = {'source': fn['best_source'], 'score': score, 'rows': rows}
+            self.net._agent_outcomes[agent.id, fn['id']] = {'source': fn['best_source'], 'score': score, 'rows': rows,
+                                                             'output_fingerprint': fingerprint}
             return score, 0
         st.add(variants=1, repairs=1)
         # Clear old evidence so a compile/link error cannot leave a misleading diff as today's baseline.
@@ -952,8 +954,10 @@ class Permuter:
         self.net.keep_diff(agent.id, fn['id'], rows)
         if not hasattr(self.net, '_agent_outcomes'):
             self.net._agent_outcomes = {}
-        self.net._agent_outcomes[agent.id, fn['id']] = {'source': fn['best_source'], 'score': score, 'rows': rows}
-        cache[key] = (score, rows)
+        fingerprint = getattr(self, '_trial_output', None)
+        self.net._agent_outcomes[agent.id, fn['id']] = {'source': fn['best_source'], 'score': score, 'rows': rows,
+                                                        'output_fingerprint': fingerprint}
+        cache[key] = (score, rows, fingerprint)
         while len(cache) > 256:
             del cache[next(iter(cache))]
         return score, 1

@@ -90,10 +90,14 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
             if not hasattr(net, '_agent_outcomes'):
                 net._agent_outcomes={}
             net._agent_outcomes[agent.id,fn['id']]=checked
+        effect_scope = repair_ranking.effect_scope(net, fn, source)
+        ineffective = repair_ranking.no_effect(net, fn, effect_scope)
         preferred = []
         if families is None and checked:
             preferred = near_match_priority(checked.get('rows'), checked.get('score'), fn['n_insns'],
                                             net._project(slug)['arch'])
+            if not focused_only:
+                preferred = [family for family in preferred if family not in ineffective]
         now = time.monotonic()
         discovery_deadline = now + max(0, (deadline - now) * 0.35)
         pools = Pools()
@@ -110,11 +114,11 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         evidence = checked or getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id'])) or {}
         for family,pool in pools.items():
             pools[family] = [candidate for _,candidate in local_order(source,[(family,c) for c in pool],evidence.get('repair_locations'))]
-        effect_scope=repair_ranking.effect_scope(net,fn,source)
         selected=[];seen=set()
         while len(selected)<max_trials and any(pools.values()):
-            for family,pool in pools.items():
-                if pool and len(selected)<max_trials:
+            effective_left = any(pool for family, pool in pools.items() if family not in ineffective)
+            for family, pool in pools.items():
+                if pool and len(selected)<max_trials and (family not in ineffective or not effective_left):
                     candidate=pool.pop(0)
                     if candidate not in seen:
                         selected.append((family,candidate));seen.add(candidate)
@@ -145,8 +149,9 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         result=agent_tokens.variants(net,agent,slug,function,revision,[{'old':source,'new':s} for _,s in selected], 'local repairs',
                                      seconds=seconds,deadline=deadline,provenance_kind=provenance_kind,variant_families=[family for family,_ in selected])
         observations=getattr(net,'_local_trial_observations',{}).get((agent.id,fn['id']),[])
+        repair_ranking.remember(net, fn, effect_scope, baseline,
+                                ((family, candidate, measured) for (family, candidate), measured in zip(selected, observations)))
         for (family,_), measured in zip(selected,observations):
-            repair_ranking.remember(net,effect_scope,family,baseline,measured)
             if measured and not measured.get('cached'):
                 adaptive_repairs.record(net,policy_profile,focus,family,(baseline or {}).get('score'),
                                         measured.get('score'),measured.get('elapsed_ms',0))
@@ -379,8 +384,8 @@ def _available(net, agent, slug, fn, source, revision, requested):
     if pools.get('floating_initializer_order'):
         ranked = ['floating_initializer_order', *(family for family in ranked if family != 'floating_initializer_order')]
     effect_scope=repair_ranking.effect_scope(net,fn,source)
-    ranked=repair_ranking.demote(net,effect_scope,ranked)
     ranked=adaptive_repairs.order(net,proj,fn,repair_ranking.evidence(net,fn['id'],agent.id),ranked)
+    ranked=repair_ranking.demote(net,fn,effect_scope,ranked)
     pools = {f:pools[f] for f in ranked}
     return pools
 
@@ -402,7 +407,7 @@ def summary(net, agent, slug, fn, source, revision, *, discover=True):
         # Reading C and its revision must stay cheap even if a single repair stage overruns its budget.
         if not discover and not any(key[:len(prefix)] == prefix for key in tuple(cache)):
             return unchecked
-        count = net.project_store(fn['project_id']).one('SELECT COUNT(*) AS n FROM agent_family_targets WHERE function_id=?',fn['id'])['n']
+        count = net.project_store(fn['project_id']).one("SELECT COUNT(*) AS n FROM agent_family_targets WHERE function_id=? AND scope NOT LIKE 'repair-effect:%'",fn['id'])['n']
         measured = getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         evidence = hashlib.sha256(repr((measured.get('score'),measured.get('rows')) if measured and measured.get('source')==source else None).encode()).hexdigest()
         from . import rtl_value_trace, verified_unit_context

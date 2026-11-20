@@ -942,7 +942,7 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
             measured = measured if measured and measured['source'] == src else None
             observations.append({'score':measured['score'],'rows':measured['rows'],
                                  'cached':'REPEAT:' in result, 'elapsed_ms':round((time.monotonic()-started)*1000),
-                                 **{key:measured[key] for key in ('output_fingerprint','output_granularity','candidate_target','candidate_relocs','matched','exact') if key in measured}} if measured else None)
+                                 **{key:measured[key] for key in ('input_scope','output_fingerprint','output_granularity','candidate_target','candidate_relocs','matched','exact') if key in measured}} if measured else None)
             score = measured['score'] if measured else None
             compile_error = score is None and '❌ COMPILE ERROR' in result
             if family != 'explicit patches' and ((score is not None and score > 0) or compile_error):

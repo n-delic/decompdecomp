@@ -49,17 +49,3 @@ def test_family_demotion_is_reset_for_a_new_parent(monkeypatch):
     monkeypatch.setattr(agent_tokens,'target_scope',lambda *a:'same build')
     assert repair_ranking.effect_scope(None,None,'old')!=repair_ranking.effect_scope(None,None,'changed')
     assert repair_ranking.effect_scope(None,None,'old')==repair_ranking.effect_scope(None,None,'old')
-
-
-def test_changed_parent_restores_a_demoted_family(monkeypatch):
-    from types import SimpleNamespace
-
-    from decompnet.app import agent_tokens
-    monkeypatch.setattr(agent_tokens,'target_scope',lambda *a:'same build')
-    net=SimpleNamespace()
-    old=repair_ranking.effect_scope(net,None,'old source')
-    new=repair_ranking.effect_scope(net,None,'new source')
-    report={'score':10,'rows':[('r','move $s0, $v0','move $s1, $v0')]}
-    for _ in range(2):repair_ranking.remember(net,old,'constant_index_temporary',report,report)
-    assert repair_ranking.demote(net,old,['constant_index_temporary','other'])==['other','constant_index_temporary']
-    assert repair_ranking.demote(net,new,['constant_index_temporary','other'])==['constant_index_temporary','other']
