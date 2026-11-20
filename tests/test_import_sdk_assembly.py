@@ -95,7 +95,7 @@ def test_builtin_pack_metadata_has_complete_body_sizes():
     assert N64.sdk_assembly_sizes == pack.SIZES
     assert {entry[0] for entry in pack.KNOWN.values()} >= {
         'guMtxF2L', 'guMtxL2F', '__osPopThread',
-        'osInvalDCache', 'osInvalICache', 'osWritebackDCache',
+        'osInvalDCache', 'osInvalICache', 'osWritebackDCache', 'bcopy', 'guScaleF',
     }
     assert {entry[1] for entry in pack.KNOWN.values()} | {size for size, _ in pack._MTX_CAT_ASM} == set(pack.SIZES)
     assert all(len(digest)==64 and int(digest,16)>=0 and row[1]%4==0 for digest,row in pack.KNOWN.items())
@@ -240,3 +240,16 @@ def test_scheduler_split_requires_exact_image_and_combined_body(monkeypatch, tmp
     ]
     assert result.functions[0].lines[-1].word == 0x42000018
     assert result.functions[1].lines[-1].word == 0  # keep the cleanup call's delay slot
+
+
+def test_builtin_register_helpers_are_scoped_to_their_linked_image():
+    from decompnet.consoles.n64 import sdk_linked
+
+    names = {'__osDisableInt', '__osRestoreInt', '__osGetCause', 'osGetCount',
+             '__osGetSR', '__osSetCompare', '__osSetSR', '__osSetWatchLo'}
+    entries = sdk_linked._LIBULTRA[sdk_linked._LINKED_IMAGE]
+    assert names <= {name for name, _, _, _ in entries.values()}
+    assert names.isdisjoint(name for name, _, _, _ in pack.KNOWN.values())
+    for name, size, from_c, _ in entries.values():
+        if name in names:
+            assert size in N64.sdk_linked_sizes and not from_c

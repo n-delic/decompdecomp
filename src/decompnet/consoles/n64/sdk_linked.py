@@ -28,6 +28,24 @@ _LIBULTRA = {
             ('__osEPiRawStartDma', 492, True, 'io/epirawdma.c'),
         'ee9739c6cc43722de7448204888a8dc83abb0b4baf964a89484edb55932d2453':
             ('__osEnqueueAndYield', 264, False, 'os/exceptasm.s'),
+        # Timer, initialization, and scheduler callers corroborate the
+        # names of the register accessors, which have very short bodies.
+        'da3f6c89552e0ed52b5872b8398bbc13755c0deaa60d29d429fa7f4707694df2':
+            ('__osDisableInt', 112, False, 'os/interrupt.s'),
+        'b6f58a0412d63a52440645623c5a49320459a39befc7ea4359a374051eceb105':
+            ('__osRestoreInt', 28, False, 'os/interrupt.s'),
+        '974544a72c7c790c5bf1d0ac8efb349bc7c0a15650913c5f22f6c5ebefff225f':
+            ('__osGetCause', 12, False, 'os/getcause.s'),
+        '923a8ad5844532bc55f28624d13567c9795c3f893ebf07353f29b4ea1df8bc84':
+            ('osGetCount', 12, False, 'os/getcount.s'),
+        '2ea7fc1f266eee7e59be3d8ffee2aebda5c74a4e6765e268c725a9a6a9f50ddf':
+            ('__osGetSR', 12, False, 'os/getsr.s'),
+        '36d5b735ab25f9bb478700d6bf34d5e54555d915b3f13a889e07eade088947cd':
+            ('__osSetCompare', 12, False, 'os/setcompare.s'),
+        '8c9798aafb630c54a679991a2a686c3379687a94f8b3c8c14e5eafe1cd8cb961':
+            ('__osSetSR', 16, False, 'os/setsr.s'),
+        '57a60924b5ab6bcac4231c2f07f0716ee5d63495724303dbfa626ca0f4112708':
+            ('__osSetWatchLo', 16, False, 'os/setwatchlo.s'),
         # Require the dispatcher to end at ERET. Some splitters include the
         # thread cleanup and interrupt-mask code that follows it.
         '3c994631aaa63f51168e1a49f7cb26ec59bcd7392c6fc2a77b4e3eaafafa6b4f':

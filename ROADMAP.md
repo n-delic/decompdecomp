@@ -485,7 +485,8 @@ ranges and imported file/build settings retain their existing verification workf
 Implemented: N64 ROM imports and Deep Permuter identify known linked C runtime routines by the
 complete function and analysis-image digests. The library setting controls whether they are set aside.
 Known relocation-free `guMtxCatF` assembly variants use the libultra SDK assembly path.
-The same detection covers EPI raw DMA and priority enqueue/yield helpers. ROM analysis splits a verified
+The same detection covers EPI raw DMA, priority enqueue/yield, CPU register and interrupt helpers,
+and additional `guScaleF` and `bcopy` variants. ROM analysis splits a verified
 merged scheduler target into dispatch, cleanup, and interrupt-mask entries before assigning SDK names.
 
 Implemented: N64 ROM imports name and set aside exact libultra matrix conversion, cache maintenance,

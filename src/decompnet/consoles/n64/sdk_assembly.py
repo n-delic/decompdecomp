@@ -16,6 +16,10 @@ KNOWN = {
         ('bcmp', 272, 'modern GNU assembler: move -> or', 'libc/bcmp.s'),
     '1c6198ec810303f71baaf1c5fa044a8e0eea9446ac383854d910c4fee4fffcf3':
         ('bzero', 160, 'period and modern GNU assemblers', 'libc/bzero.s'),
+    '7a8576245f42a86f8db2583eda5f1e2ae908120fa2abda59d18eb9e53c614ad5':
+        ('bcopy', 796, 'overlap-aware scheduled copy', 'libc/bcopy.s'),
+    '80864487ec220bb1752f4b37d9ea39cb086920386412e76c70e46b00d0bf8c6a':
+        ('guScaleF', 72, 'scheduled MGU float scale matrix', 'mgu/scale.s'),
     '67997834f0ff8e984db1d02069d6be1d0ef693a45f5f1a88dde6d1b6360237a6':
         ('guMtxCatF', 240, 'scheduled MGU float matrix product', 'mgu/mtxcatf.s'),
     '0ec1c8e451e2aa4e77599d0aea02d5b338957ffa874d03a3ff434d6f4ea226c3':
