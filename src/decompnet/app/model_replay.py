@@ -201,9 +201,9 @@ def _run_arm(case, arm, baseline, ask, trials, seconds, historical_hint, score_s
             if arm == 'luna-guided':
                 arch = case['arch']
                 if calls == 0:
-                    source, current, checked = matching_skills.guided_options(
+                    source, current, checked, choice_calls = matching_skills.guided_options(
                         case, budget, ask, model, source, current, packet(case, source, current, compact=True))
-                    assistance['measured_options'] = checked
+                    assistance.update(measured_options=checked, option_choice_calls=choice_calls)
                     if current.get('matched'):
                         best = current
                         break

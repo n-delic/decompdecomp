@@ -343,7 +343,7 @@ def _defines_left_out(path: Path, leave_out) -> bool:
 EMPTY_UNIT = "port_no_game_c.c"
 
 
-def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[str, Path]:
+def gather(repo: Path, out: Path, leave_out=(), function_headers=None, *, ensure_host_import=False) -> dict[str, Path]:
     """The C the build compiles, in out/src (one file per function, the shared header included) and out/include.
     `leave_out`: more matched files to leave out than exclude.txt names (play.library). `function_headers`: the
     project's own {function: part} (play.function_headers), over the save's, which an older save lacks. Returns
@@ -376,7 +376,7 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[s
         _write(out / "src" / name, big_endian_bitfields(ido_c(text)))
     # By name in any case: on a case-insensitive disk (macOS, Windows) a file an old save wrote as SelectStateReset.c
     # is the one just written as selectStateReset.c, and deleting it as stale deleted that function's C
-    if not chosen:  # a game with no C yet: N64Recomp's C runs every function, and the module still needs an object
+    if not chosen or ensure_host_import:  # standalone leaves may have no host imports of their own
         empty = out / "src" / EMPTY_UNIT
         # its one function (never called) uses the stack and imports one of the host's functions, so the module
         # keeps the stack pointer the host sets and is instantiated with the host's environment (host.c)
@@ -384,7 +384,7 @@ def gather(repo: Path, out: Path, leave_out=(), function_headers=None) -> dict[s
                       "void osCreateThread(int, int, int, int, int, int);\n"
                       "void port_no_game_c(void (*use)(char *)) {\n"
                       "    char buffer[16];\n    use(buffer);\n    if (!use) osCreateThread(0, 0, 0, 0, 0, 0);\n}\n")
-        chosen = {EMPTY_UNIT: empty}
+        chosen[EMPTY_UNIT] = empty
     kept = {name.casefold() for name in chosen}
     for stale in (out / "src").glob("*.c"):
         if stale.name.casefold() not in kept:
@@ -787,7 +787,7 @@ def place_all(out: Path, lls: list[Path], functions: set, zig, env: dict, log, s
 
 
 def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out=(), universal: bool = False,
-          library_c=None, library_names=None, recomp=None, function_headers=None) -> Path:
+          library_c=None, library_names=None, recomp=None, function_headers=None, ensure_host_import=False) -> Path:
     """Build the game in the save repository `repo` for the PC; returns the program (port/wasm/build/game). Only
     what changed since the last build is made again (the keys, above). `steps` are the progress bar's, when a
     caller adds its own after these (play.py); `leave_out`, library files the host provides (gather). A second
@@ -796,18 +796,19 @@ def build(repo: Path, *, console: str = "n64", log=print, steps=STEPS, leave_out
     objects kept apart from Play's so neither build undoes the other's. `library_c`: {file name: (C, flags)} of
     library functions built from ultralib's C (port/ultralib.units). `library_names`: library code's own names for
     functions with no C (renames). `recomp`: {"folder", "header"} of the console's recompiler's output, whose C the
-    host runs for functions with no C yet (port/wasm/recomp.py)."""
+    host runs for functions with no C yet (port/wasm/recomp.py). A standalone candidate comparison sets
+    `ensure_host_import` because its C can define a single leaf with no imports of its own."""
     repo = Path(repo).expanduser().resolve()
     from ...app.recompile import build_turn
     recomp_turn = build_turn(recomp["folder"], log) if recomp else nullcontext()
     with build_turn(repo / "port" / "wasm" / "build", log, resource="native port build"), recomp_turn:
         return _build(repo, console=console, log=log, steps=steps, leave_out=leave_out, universal=universal,
                       library_c=library_c or {}, library_names=library_names or {}, recomp=recomp,
-                      function_headers=function_headers)
+                      function_headers=function_headers, ensure_host_import=ensure_host_import)
 
 
 def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool = False, library_c=None,
-           library_names=None, recomp=None, function_headers=None) -> Path:
+           library_names=None, recomp=None, function_headers=None, ensure_host_import=False) -> Path:
     kit = consoles.get(console).port_kit
     if kit is None or kit.wasm is None:
         raise NetworkError(f"{consoles.get(console).name} has no WebAssembly build yet (its port kit has no host)")
@@ -826,7 +827,7 @@ def _build(repo: Path, *, console: str, log, steps, leave_out, universal: bool =
     files = _Files()
 
     log("gathering the game's C from its save")
-    sources = gather(repo, out, leave_out, function_headers)
+    sources = gather(repo, out, leave_out, function_headers, ensure_host_import=ensure_host_import)
     library = _library(out, library_c or {}, sources, log)
     manifest = json.loads((repo / "progress" / "decompdecomp.json").read_text(encoding="utf-8"))
     fixed, functions = addresses(manifest)

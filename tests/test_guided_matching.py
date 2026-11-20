@@ -171,6 +171,11 @@ def _guided_real(net, slug, name, exact):
     assert 'MATCH!' not in tools._compile(net, agent, slug, name, near)
     packet = tools.call(net, agent, slug, 'get_function', {'function': name, 'section': 'work'})
     assert 'Current C' in packet and '0x1235' in packet and 'Mismatch focus:' in packet
+    fn = net._function(name, slug)
+    proj = net.project_row(slug, sync=False)
+    store = net.project_store(slug)
+    focus = store.one('SELECT focus,inputs,context_version FROM matching_focus WHERE function_id=?', fn['id'])
+    assert claim_routing.current_focus(store.one, proj, fn, focus) == 'constant'
     assert 'MATCH!' in tools._compile(net, agent, slug, name, exact)
 
 
@@ -188,7 +193,7 @@ def test_guided_packet_continues_through_the_imported_judge(fork):
 
 
 @pytest.mark.parametrize('demo', [consoles.get('n64')], indirect=True)
-def test_real_recorded_candidate_behaviour(demo, tmp_path):
+def test_real_recorded_candidate_behaviour(demo, tmp_path, monkeypatch):
     from decompnet.app.engine import RomNetwork
 
     console, _, _, image, symbols = demo
@@ -206,10 +211,14 @@ def test_real_recorded_candidate_behaviour(demo, tmp_path):
         0x1000ffff, 0,
     )
     rom[0x40:0x40+4*len(words)] = b''.join(word.to_bytes(4, 'big') for word in words)
-    image = tmp_path / 'bootable-demo.z64'
-    image.write_bytes(rom)
+    bootable = tmp_path / 'bootable-demo.z64'
+    bootable.write_bytes(rom)
     net = RomNetwork(tmp_path / 'app.db', tmp_path)
     slug = net.import_rom(image, confirmed=True, log=lambda *_: None)
+    # Only the recorded fixture needs the boot stub. Its function bytes and
+    # addresses are identical to the original split fixture used by the judge.
+    record = console.emulator.run
+    monkeypatch.setattr(console.emulator, 'run', lambda _image, *args, **kw: record(bootable, *args, **kw))
     name, exact = _function(net, slug, symbols, 'checksum_save')
     agent, _ = net.local_agent('guided-behaviour')
     assert 'CLAIMED' in tools._claim(net, agent, slug, name, '')
@@ -222,5 +231,5 @@ def test_real_recorded_candidate_behaviour(demo, tmp_path):
                             {'function': name, 'revision': revision, 'calls': 1})
         if 'still running' not in report:
             break
-    assert 'First observable difference' in report
+    assert 'First observable difference: $v0: recompiled 00001234, decompiled 00001235' in report
     assert net._function(name, slug)['status'] == 'open'

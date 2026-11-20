@@ -75,12 +75,12 @@ def guided_options(case, budget, ask, model, source, result, packet):
         if measured is None:
             continue
         if measured.get('matched'):
-            return candidate, measured, len(options)+1
+            return candidate, measured, len(options)+1, 0
         options.append((family, candidate, measured))
         if len(options) == 3:
             break
     if not options or not budget.seconds():
-        return source, result, len(options)
+        return source, result, len(options), 0
     table = []
     for index, (family, _, measured) in enumerate(options, 1):
         change = region_repairs.resolution_text(result.get('rows'), measured.get('rows'))
@@ -91,5 +91,5 @@ def guided_options(case, budget, ask, model, source, result, packet):
     choice = response.get('option') if isinstance(response, dict) else None
     if type(choice) is int and 1 <= choice <= len(options) and options[choice-1][2].get('score') is not None:
         _, candidate, measured = options[choice-1]
-        return candidate, measured, len(options)
-    return source, result, len(options)
+        return candidate, measured, len(options), 1
+    return source, result, len(options), 1

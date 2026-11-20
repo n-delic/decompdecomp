@@ -45,7 +45,7 @@ def _build_and_compare(net, slug, proj, fn, console, rom, source, header, calls,
         with recompile.ready(net, slug, proj, console.recompiler, quiet) as recomp:
             harness = console.recompiler.harness(recomp, entry, quiet)
         program = build.build(folder, console=net.cfg(proj)['platform'], log=quiet,
-                              library_names=play.library_names(net, slug))
+                              library_names=play.library_names(net, slug), ensure_host_import=True)
         # PORT_CALL can otherwise run a fallback. Demand a real WebAssembly export for this function.
         functions = (program.parent / 'funcs.c').read_text()
         if not re.search(rf'\{{0x{fn["vram"]:08X}u, \(void \*\).*\}}, /\* {re.escape(fn["name"])} \*/',
