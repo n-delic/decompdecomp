@@ -916,3 +916,35 @@ nop
     winner = next(text for text in candidates if labels[text] == 'loop_sentinel_placement')
     assert 'while (*p != repair_sentinel)' in winner
     assert repair_ranking.guarded_first([source, winner], labels)[0] == winner
+
+
+def test_linked_case_labels_are_the_first_local_candidate(monkeypatch):
+    from decompnet.app import agent_tokens
+
+    net = setup(monkeypatch)
+    source = 'int f(int k) { switch (k) { case 1: return 3; case 2: return 7; } return 0; }'
+    winner = 'int f(int k) { switch (k) { case 2: return 3; case 1: return 7; } return 0; }'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?,best_score=1', (source,))
+
+    def measured(search, agent, proj, fn, state, fork):
+        search.winner_source = source
+        search.winner_scope = agent_tokens.target_scope(net,dict(fn),'')
+        search.winner_diff = ([(' ', 'jr $v0', 'jr $v0')], '')
+        search.winner_jump_tables = [{'table':100,'case':1,'target':20,'candidate':10},
+                                     {'table':100,'case':2,'target':10,'candidate':20}]
+        return 1, 0
+
+    seen = []
+    def judge(search, agent, proj, fn, candidate, best, fork):
+        seen.append(candidate)
+        assert best == 1 and candidate == winner
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET best_source=?,best_score=0,status='matched'", (candidate,))
+        return 0
+
+    monkeypatch.setattr(deep_permuter.Search, '_baseline', measured)
+    monkeypatch.setattr(Permuter, '_score', judge)
+    result = deep_permuter.run(net, 'game', 'f', 30, 1, Log())
+    assert result['matched'] and result['tested'] == 1
+    assert seen == [winner]

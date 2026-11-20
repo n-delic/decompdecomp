@@ -135,6 +135,7 @@ class Search(Permuter):
         self.refinement_rounds = 0
         self.winner_diff = None
         self.winner_source = None
+        self.winner_jump_tables = ()
         self.winner_output = None
         self.winner_scope = None
         self.trace_variants = True
@@ -354,9 +355,24 @@ class Search(Permuter):
             self.log(f'Call-result lifetime search reached {best:,}.')
         return best
 
+    def measured_winner(self, fn, source):
+        return (self.winner_diff is not None and self.winner_source == source
+                and self.winner_scope == agent_tokens.target_scope(self.net, {**dict(fn), 'best_source':source}, ''))
+
+    def linked_case_diff(self, fn, source):
+        return self.winner_jump_tables if self.winner_jump_tables and self.measured_winner(fn, source) else ()
+
+    def can_relabel_switch(self, fn):
+        from decomprepair import targeted_switch_labels
+        source = fn['best_source']
+        cases = self.linked_case_diff(fn, source)
+        return bool(cases and targeted_switch_labels.variants(source,fn['name'],cases))
+
     def _repair_preflight(self, agent, proj, fn, best, fork):
         """A new saved source merits new flag probes before more source mutations."""
         if proj['slug'] in self.net.links or fork or not hasattr(self.net, '_comparison_digest'):
+            return best
+        if self.can_relabel_switch(fn):
             return best
         if (self.winner_diff and self.winner_source == fn['best_source']
                 and allocation_evidence.diagnose(self.winner_diff[0],proj['arch'])['register_cycles']):
@@ -547,7 +563,15 @@ class Search(Permuter):
                 buffer_choices = [(family, child) for family, child in draft_repairs.capture_followup_repairs.variants(
                     source, fn['name'], header, options['callees'])
                     if family == 'callee_buffer_extent' and child not in self.local_seen]
-            focused_choices = buffer_choices + store_choices + frame_choices
+            from . import diff_gated_repairs
+            observed_choices = []
+            if not fork and proj['arch'] == 'mips' and self.measured_winner(fn, source):
+                settings = compiler_for(self.net.cfg(proj), fn['vram'], fn)
+                observed_choices = [(family, child) for family, child in diff_gated_repairs.proposals(
+                    source, fn['name'], header, proj['arch'], settings.get('toolchain',''),
+                    self.winner_diff[0], fn['asm'], self.winner_jump_tables) if child not in self.local_seen]
+            observed_order = {child:index for index,(_,child) in enumerate(observed_choices)}
+            focused_choices = observed_choices + buffer_choices + store_choices + frame_choices
             focused_pass = bool(focused_choices)
             from decomprepair import bit_predicate_repairs
             shape=allocation_evidence.diagnose(rows,proj['arch'])
@@ -679,7 +703,10 @@ class Search(Permuter):
                         if not queue:continue
                     feedback.order(queue,labels,source,parents)
                     queue=repair_ranking.guarded_first(queue,labels)
+                    if observed_order:
+                        queue.sort(key=lambda child: observed_order.get(child, len(observed_choices)))
                     candidate=queue.pop(0)
+                    observed_order.pop(candidate, None)
                     lane = getattr(self, "parallel_lane", None)
                     if lane is not None and int(hashlib.sha256(candidate.encode()).hexdigest(), 16) % lane.count != lane.index:
                         continue
@@ -895,6 +922,7 @@ class Search(Permuter):
                     self.winner_source = source
                     # The old diff/output belongs to another profile, even though the pair is exact.
                     self.winner_diff = self.winner_output = self.winner_scope = None
+                    self.winner_jump_tables = ()
                     self.last_outcome, self.last_score = 'matched', 0
                     self.report()
                 return 0
@@ -1117,6 +1145,7 @@ class Search(Permuter):
                 self.winner_output = getattr(self,'_trial_output',None)
                 self.winner_output_granularity = getattr(self,'_trial_output_granularity','function')
                 self.winner_locations = getattr(self,'_trial_locations',None)
+                self.winner_jump_tables = getattr(self, '_trial_jump_tables', ())
                 self.winner_scope = scope
         if (recent_key is not None and isinstance(score, int) and score > 0 and score >= best
                 and self.net.project_store(proj['id']).read_version('inputs', proj['id']) == recent_key[0]):
@@ -1272,12 +1301,14 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                 if baseline is None:
                     raise NetworkError('The saved C does not compile in the current context; fix its declarations before deep search.')
                 measured_baseline = baseline
-                if baseline and not fork and (lane is None or lane.index == 0):
+                relabel = baseline and not fork and search.can_relabel_switch(fn)
+                if baseline and not fork and not relabel and (lane is None or lane.index == 0):
                     if profile := deep_profiles.tail_dispatch(net, proj, fn):
                         log('Checking the saved tail dispatcher with the installed GCC sibling-call profile.')
                         if deep_profiles.probe(search, agent, proj, fn, _candidate_source(fn, baseline), profile) == 0:
                             baseline = search.best = 0
-                if baseline and compiler_profiles == 1 and (lane is None or lane.index == 0):
+                if (baseline and compiler_profiles == 1 and not relabel
+                        and (lane is None or lane.index == 0)):
                     baseline = search.call_result_pass(agent, proj, fn, baseline, fork)
                     fn = net._function(name, slug)
                 if baseline == 0:
@@ -1286,7 +1317,7 @@ def _run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, *, la
                     from .stack_layout import text as stack_text
                     if diagnostic := stack_text(proj['arch'], repair_ranking.evidence(net, fn['id'], agent.id)):
                         log(diagnostic)
-                    if not fork and baseline == measured_baseline:
+                    if not fork and baseline == measured_baseline and not relabel:
                         # A productive source pass continues under its measured compiler.
                         # (code built with other settings: before the local repairs spend their half of the time,
                         # measure the profiles its habits point to and climb under one that scores the C better than

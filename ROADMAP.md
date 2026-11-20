@@ -751,6 +751,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Stack slot layout diagnostics | ✓ | ✓ | ✓ | — | — | ✓ | — | — reader planned | — reader planned | — | — reader planned | — GUI adapter planned |
 | Linked switch case diff and caller-backed matched return review | ✓ bounded MIPS ROM | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | — owned-build adapter planned |
 | Callee stack-write diagnostics and floating-point initializer search | ✓ MIPS | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | ✓ MIPS floating-register diff only; caller stack-write adapter planned |
+| Diff-gated deep source repairs | ✓ KMC and EGCS MIPS | ✓ shared MIPS conditions | ✓ shared MIPS conditions | — | — | ✓ shared MIPS conditions | — | — | — | — | — | — build evidence adapter planned |
 | Learned repair sequences, scoped brief evidence and sweep rotation | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ build-scoped |
 | Last-exact failed-recheck alerts | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ local judgments only |
 | Public dtk SDK binary identification | — own corpus planned; local archives supported | — own corpus planned; local archives supported | — own corpus planned; local archives supported | — | — | — own corpus planned; local archives supported | — | ✓ built targets; direct evidence, advisory references | — own corpus planned; local archives supported | — | — own corpus planned; local archives supported | ✓ GameCube/Wii targets; other corpora planned |
@@ -3005,6 +3006,14 @@ Callee stack-write diagnostics need a trustworthy caller frame and a bounded poi
 write footprint. Imported builds need an adapter that provides the same cross-function
 evidence before those checks can run. The floating initializer lane requires a
 register-only MIPS comparison and independent ordinary C field loads.
+
+Deep search can use a single linked table's closed case permutation to propose
+explicit source labels. It also routes observed KMC frame, reload, loop,
+conversion, division and allocation differences to bounded C candidates.
+EGCS square staging requires floating-register-only differences. These lanes
+use the current input scope and ordinary compile budget. Imported builds still
+need reliable per-unit compiler and linked table evidence. Other processors
+need their own diff signatures before the corresponding source rules can run.
 
 ## Register-only local lifetime search
 
