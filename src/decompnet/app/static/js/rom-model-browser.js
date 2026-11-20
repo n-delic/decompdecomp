@@ -9,69 +9,42 @@ function romModelRows(report) {
   }
   return [...rows.values()].map(r=>({...r,refs:new Set([...r.direct,...r.traced]).size}));
 }
-function stopRomModelBrowser(message='Choose Preview model to inspect its meshes.') {
-  const host=$('romModelResult');host._modelRun=(host._modelRun||0)+1;host._modelAbort?.abort();host._modelAbort=null;
-  host._modelFinish?.();host._modelFinish=null;host._modelBusy=false;host.replaceChildren();$('romModelStop').hidden=true;
-  if(message){const log=$('romModelWork');showJobError(log,'');if(log._workStatus)log._workStatus.textContent=message;}
-}
 function renderRomModelBrowser(view=romView()) {
-  const panel=$('romModelPanel'),report=view.report;stopRomModelBrowser();if(!report?.available)return;
-  const all=romModelRows(report),state=view.models||={query:'',sort:'name',direction:1,page:0};
-  $('romModelContext').textContent=`— ${all.length.toLocaleString()} models · ${all.reduce((n,r)=>n+r.asset.meshes.length,0).toLocaleString()} meshes`;$('romModelFilter').value=state.query;
-  const draw=()=>{
-    stopRomModelBrowser();const host=$('romModelItems');host.replaceChildren();if(!$('romAssetBrowser').open || panel.hidden)return;
-    const query=state.query.trim().toLowerCase(),rows=all.filter(r=>!query||[r.name,...r.direct,...r.traced].join(' ').toLowerCase().includes(query));
+  const report=view.report,host=$('romModelItems');
+  if(!report?.available)return;
+  const all=romModelRows(report),state=view.models||={query:'',sort:'name',direction:1};
+  $('romModelContext').textContent=`— ${all.length.toLocaleString()} models · ${all.reduce((n,r)=>n+r.asset.meshes.length,0).toLocaleString()} meshes`;
+  const filter=$('romModelFilter');
+  filter.value=state.query;
+  function draw() {
+    host.replaceChildren();
+    const query=state.query.trim().toLowerCase();
+    const rows=all.filter(r=>!query||[r.name,...r.direct,...r.traced].join(' ').toLowerCase().includes(query));
     sortRomAssetRows(rows,state);
-    const pages=Math.max(1,Math.ceil(rows.length/24));state.page=Math.min(state.page,pages-1);const page=rows.slice(state.page*24,state.page*24+24);
-    $('romModelPage').textContent=`${rows.length} models · page ${state.page+1} of ${pages}`;$('romModelPrevious').disabled=!state.page;$('romModelNext').disabled=state.page>=pages-1;
+    const icons=view.assetBrowser.layout==='icons';
     const columns=[['name','Model'],['vertices','Vertices'],['triangles','Triangles'],['refs','References']];
-    if(!page.length){host.textContent=all.length?'No models match this filter.':'No supported model geometry was detected. Raw geometry previews remain available in region details.';return;}
-    const cells=page.map((r,i)=>[
-      `<button type="button" class="link-btn" data-model-region="${i}">${esc(r.name)}</button><div class="small muted">${r.asset.meshes.length} local meshes</div>`,
-      `${r.vertices.toLocaleString()}`,
-      `${r.triangles.toLocaleString()}`,
-      `${[...new Set([...r.direct,...r.traced])].map(n=>`<button type="button" class="link-btn" data-model-function="${esc(n)}">${esc(n)}</button>`).join(' · ')||'None recorded'}`,
-      `<button type="button" class="primary small-btn" data-model-preview="${i}" ${report.stale?'disabled':''}>Preview model</button>`,
-    ]);
-    if(view.assetBrowser.layout==='icons')renderRomAssetCards(host,'&#x25C7;',columns,cells);
-    else renderRomAssetTable(host,[...columns,[null,'Preview']],state,cells,draw);
-    host.querySelectorAll('[data-model-region]').forEach(b=>b.onclick=()=>{stopRomModelBrowser();openRomRegion(page[Number(b.dataset.modelRegion)].region);});
-    host.querySelectorAll('[data-model-function]').forEach(b=>b.onclick=()=>{stopRomModelBrowser();openFn(b.dataset.modelFunction);});
-    host.querySelectorAll('[data-model-preview]').forEach(b=>b.onclick=()=>prepareRomModel(page[Number(b.dataset.modelPreview)],view));
-  };
-  $('romModelFilter').oninput=()=>{state.query=$('romModelFilter').value;state.page=0;draw();};
-  for(const [id,delta] of [['romModelPrevious',-1],['romModelNext',1]])$(id).onclick=()=>{state.page+=delta;draw();};
-  draw();
-}
-async function prepareRomModel(row,view=romView(),mesh=row.asset.assembled?'assembled':0,animationIndex=0) {
-  const host=$('romModelResult');if(host._modelBusy)return;stopRomModelBrowser();host._modelBusy=true;
-  const slug=S.slug,run=host._modelRun,active=()=>S.slug===slug&&S.tab==='rom'&&$('romAssetBrowser').open&&!$('romModelPanel').hidden&&host._modelRun===run;
-  const log=$('romModelWork'),controller=new AbortController();host._modelAbort=controller;
-  const controls=[...$('romModelPanel').querySelectorAll('button,input,select')].filter(b=>b.id!=='romModelStop');
-  const finish=beginWork(log,'Preparing '+row.name,controls,'Model ready. Drag to rotate.');host._modelFinish=finish;showJobError(log,'');$('romModelStop').hidden=false;$('romModelStop').onclick=()=>stopRomModelBrowser('Model preparation stopped.');
-  try{
-    const result=await api('/api/rom-explorer/preview',{method:'POST',signal:controller.signal,body:{slug,region:row.region,image_hash:view.report.image_hash,options:{format:'auto',mesh:['assembled','animated'].includes(mesh)?0:mesh,assembly:mesh==='animated'?'animated':mesh==='assembled'?'assembled':'mesh',animation:animationIndex,offset:row.asset.offset}}});
-    if(!active())return;if(result.media!=='model')throw Error('This entry did not produce model geometry. Open its region to inspect the evidence.');
-    const label=document.createElement('label');label.className='field';const title=document.createElement('span');title.textContent=row.name+' · Mesh';const select=document.createElement('select');
-    if(row.asset.assembled){const option=document.createElement('option');option.value='assembled';option.textContent=row.asset.scenery?'Whole scenery (supported surfaces)':'Assembled model';option.selected=mesh==='assembled';select.append(option);}
-    if(row.asset.native_animations?.length){const option=document.createElement('option');option.value='animated';option.textContent='Animated native assembly';option.selected=mesh==='animated';select.append(option);}
-    row.asset.meshes.forEach((m,i)=>{const option=document.createElement('option');option.value=i;option.textContent=`${m.name||'Node '+m.node+' / part '+m.part+' / section '+m.section} · ${m.vertices} vertices`;option.selected=i===mesh;select.append(option);});
-    select.onchange=()=>prepareRomModel(row,view,['assembled','animated'].includes(select.value)?select.value:Number(select.value),animationIndex);label.append(title,select);host.append(label);
-    if(row.asset.native_animations?.length){const label=document.createElement('label');label.className='field';const title=document.createElement('span');title.textContent='Animation';const select=document.createElement('select');row.asset.native_animations.forEach((a,i)=>{const option=document.createElement('option');option.value=i;option.textContent=a.label+' · '+a.frames+' frames';option.selected=i===animationIndex;select.append(option);});select.onchange=()=>prepareRomModel(row,view,'animated',Number(select.value));label.append(title,select);host.append(label);}
-    renderRomModel(host,result,active);
-    if(result.surfaces?.length){const exportButton=document.createElement('button');exportButton.type='button';exportButton.className='primary small-btn';exportButton.textContent=result.animation?'Export frame 0 glTF':'Export glTF';exportButton.onclick=()=>exportRomModel(result.animation?{...result,vertices:nativeModelPose(result,0),animation:undefined}:result,row.name,exportButton,log,active);host.append(exportButton);}
-    renderRomModelRelationships(host,row,result,view,active);
-  }catch(error){if(active())showJobError(log,error.message);}finally{if(host._modelRun===run){host._modelBusy=false;host._modelAbort=null;host._modelFinish=null;$('romModelStop').hidden=true;finish();}}
-}
-
-function renderRomModelRelationships(host,row,result,view,active) {
-  const details=document.createElement('details'),summary=document.createElement('summary');
-  const materials=result.materials||[],linked=materials.filter(m=>m.image).length;
-  summary.textContent=`Asset relationships · ${linked}/${materials.length} textures ready${result.omitted_commands?' · '+result.omitted_commands+' special commands omitted':''}`;details.append(summary);
-  const targets=[...(row.asset.relationships||[]).map(r=>({offset:r.archive.offset,name:r.archive.name,reason:r.basis+(r.line?' · line '+r.line:'')})),...materials.map(m=>({offset:m.offset,name:m.name,reason:'Texture · '+m.state+(m.error?' · '+m.error:'')}))];
-  for(const target of targets){const line=document.createElement('p');line.className='small';const region=view.report.regions.find(r=>target.offset!=null&&r.start<=target.offset&&target.offset<r.end);
-    if(region){const button=document.createElement('button');button.type='button';button.className='link-btn';button.textContent=target.name;button.onclick=()=>{if(active()){stopRomModelBrowser();openRomRegion(region.id);}};line.append(button);}else{const text=document.createElement('span');text.textContent=target.name;line.append(text);}
-    const text=document.createElement('span');text.textContent=' · '+target.reason;line.append(text);details.append(line);
+    host.className=icons?'rom-asset-grid':'';
+    if(!rows.length)host.textContent=all.length?'No models match this filter.':'No supported model geometry was detected. Raw geometry previews remain available in region details.';
+    const target=icons||!rows.length?host:renderRomAssetTable(host,columns,state,draw);
+    host.onclick=event=>{
+      const model=event.target.closest('[data-model-region]');
+      const reference=event.target.closest('[data-model-function]');
+      if(model)openRomRegion(rows[Number(model.dataset.modelRegion)].region,true);
+      if(reference)openFn(reference.dataset.modelFunction);
+    };
+    streamRomAssets('Model',rows,(batch,start)=>{
+      const cells=batch.map((r,i)=>{
+        const name=esc(r.name),meshes=`${r.asset.meshes.length} meshes`;
+        const link=`<button type="button" class="${icons?'ghost rom-model-card-open':'link-btn'}" data-model-region="${start+i}" ${report.stale?'disabled':''}>${icons?'<span aria-hidden="true">◇</span> ':''}${name}${icons?`<small>${meshes} · ${r.vertices.toLocaleString()} vertices · ${r.triangles.toLocaleString()} triangles</small>`:''}</button>`;
+        const refs=[...new Set([...r.direct,...r.traced])].map(n=>`<button type="button" class="link-btn" data-model-function="${esc(n)}">${esc(n)}</button>`).join(' · ');
+        return icons?[link,refs]:[
+          link+`<div class="small muted">${meshes}</div>`,r.vertices.toLocaleString(),r.triangles.toLocaleString(),refs||'None recorded',
+        ];
+      });
+      if(icons)host.insertAdjacentHTML('beforeend',cells.map(([link,refs])=>`<article class="rom-texture-card">${link}${refs?`<div class="small">${refs}</div>`:''}</article>`).join(''));
+      else appendRomAssetTable(target,cells);
+    });
   }
-  if(!targets.length){const line=document.createElement('p');line.textContent='No explicit file relationships were recorded.';details.append(line);}host.append(details);
+  filter.oninput=()=>{state.query=filter.value;draw();};
+  if($('romAssetBrowser').open && !$('romModelPanel').hidden)draw();
 }

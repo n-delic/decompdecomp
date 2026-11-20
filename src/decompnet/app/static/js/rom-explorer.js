@@ -204,7 +204,7 @@ async function openRomRegion(id,inspect=false) {
       const done=beginWork(work,'Saving region notes',[...new Set([button,label,notes,kind,...body.querySelectorAll('input,select,button')])],'Region notes saved.');showJobError(work,'');
       try {const result=await api('/api/rom-explorer/annotation',{method:'POST',body:{slug,region:id,image_hash:report.image_hash,name:label.value,notes:notes.value,kind:kind.value,preview_settings:romAssetOptions(body),model_settings:romModelOptions(body)}});
         const row=report.regions.find(row=>row.id===id);if(row)row.annotation=result.annotation;
-        if(S.slug===slug && S.tab==='rom'){romView(slug)._textureReport=null;renderRomExplorer(romView(slug));}
+        if(S.slug===slug && S.tab==='rom'){romView(slug)._assetReport=null;renderRomExplorer(romView(slug));}
       }catch(error){showJobError(work,error.message);}finally{saving=false;if(active())body._romAssetBusy=false;done();}
     };
   } catch(error){if(active())showJobError(log,error.message);}finally{finish();}

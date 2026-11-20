@@ -2199,7 +2199,7 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 #romTypeStatus { min-height:2.5em; overflow-wrap:anywhere; }
 
 .rom-texture-discovery, .rom-model-inspection { margin-top:18px; padding-top:12px; border-top:1px solid var(--line); }
-.rom-texture-gallery, .rom-asset-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr)); gap:12px; margin-top:12px; }
+.rom-texture-gallery, .rom-asset-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(128px,100%),1fr)); gap:12px; margin-top:12px; }
 .rom-texture-gallery > p { grid-column:1/-1; }
 .rom-texture-candidate { height:auto; min-height:190px; display:flex; flex-direction:column; gap:8px; align-items:center; padding:10px; white-space:normal; overflow-wrap:anywhere; }
 .rom-texture-candidate img { width:128px; height:128px; max-width:100%; object-fit:contain; image-rendering:pixelated; background:var(--line); }
@@ -2213,18 +2213,21 @@ img.rom-preview-media { image-rendering:pixelated; background:var(--bg-alt); bor
 
 /* Texture banks reuse the shared panel, field and button styles in both themes. */
 .rom-texture-card { min-width:0; padding-bottom:12px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
-.rom-texture-open { height:auto; min-height:220px; padding:10px; display:flex; flex-direction:column; gap:6px; width:100%; text-align:left; white-space:normal; }
-.rom-texture-thumb { flex:none; display:flex; align-items:center; justify-content:center; width:100%; min-height:128px; background:var(--bg); overflow-wrap:anywhere; }
-.rom-texture-thumb img { width:128px; height:128px; max-width:100%; image-rendering:pixelated; object-fit:contain; }
+.rom-texture-open { height:auto; min-height:0; padding:6px; display:flex; flex-direction:column; gap:6px; width:100%; text-align:left; white-space:normal; }
+.rom-texture-thumb { flex:none; display:flex; align-items:center; justify-content:center; width:100%; min-height:72px; background:var(--bg); overflow-wrap:anywhere; }
+.rom-texture-thumb img { width:80px; height:72px; max-width:100%; image-rendering:pixelated; object-fit:contain; }
 .rom-asset-toolbar { justify-content:space-between; gap:12px; flex-wrap:wrap; }
-.rom-asset-grid { grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr)); }
-.rom-asset-grid dl { margin:8px 0 12px; font-size:.875rem; }
+.rom-asset-grid { grid-template-columns:repeat(auto-fill,minmax(min(170px,100%),1fr)); }
+.rom-asset-grid dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 8px; margin:6px 0; font-size:.8rem; }
 .rom-asset-grid dt { color:var(--muted); }
-.rom-asset-grid dd { margin:0 0 6px; }
-.rom-asset-icon { display:block; text-align:center; font-size:2rem; background:var(--bg); margin-bottom:8px; }
+.rom-asset-grid dd { margin:0; }
+.rom-asset-icon { display:block; text-align:center; font-size:1.25rem; background:var(--bg); margin-bottom:4px; }
+.rom-model-card-open { width:100%; height:auto; padding:6px; text-align:left; white-space:normal; overflow-wrap:anywhere; }
+.rom-model-card-open small { display:block; color:var(--muted); margin-top:3px; }
+.rom-asset-scroll { min-height:1px; }
 #romAssetBrowser [role="tabpanel"] { min-width:0; }
-#romModelItems, #romModelResult, #romAudioItems, #romAudioResult, #romAudioSequences { min-width:0; overflow-wrap:anywhere; }
-#romModelItems td:last-child, #romModelItems th:last-child, #romAudioItems td:last-child, #romAudioItems th:last-child { position:sticky; right:0; background:var(--panel); }
+#romModelItems, #romAudioItems, #romAudioResult, #romAudioSequences { min-width:0; overflow-wrap:anywhere; }
+#romAudioItems td:last-child, #romAudioItems th:last-child { position:sticky; right:0; background:var(--panel); }
 
 /* Settings › Compiler services (compiler-service.js) */
 .cs-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 16px; }

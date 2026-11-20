@@ -76,7 +76,20 @@ function setupRomAsset(body,region,slug,imageHash,active,inspect=false) {
       if(!current())return false;
       const inspect=()=>renderRomResource(result,preview,page=>{body._romRecordPage=page;return renderPreview(false);},current,body);
       if(preview.media==='metadata'){inspect();return true;}
-      if(preview.media==='model'){renderRomModel(result,preview,current);inspect();return true;}
+      if(preview.media==='model'){
+        renderRomModel(result,preview,current);inspect();
+        const asset=region.detected_asset;
+        if(preview.surfaces?.length){
+          const exportButton=document.createElement('button');
+          exportButton.type='button';exportButton.className='primary small-btn';
+          exportButton.textContent=preview.animation?'Export frame 0 glTF':'Export glTF';
+          const name=region.annotation?.name || asset?.label || 'Model';
+          exportButton.onclick=()=>exportRomModel(preview.animation?{...preview,vertices:nativeModelPose(preview,0),animation:undefined}:preview,name,exportButton,work,current);
+          result.append(exportButton);
+        }
+        if(asset?.media==='model')renderRomModelRelationships(result,asset,preview,romView(slug).report,current);
+        return true;
+      }
       if(!/^data:(image\/(png|jpeg)|audio\/wav);base64,/.test(preview.data_url))throw new Error('The preview returned an unsupported media type. Refresh the map and try again.');
       const media=document.createElement(preview.media==='audio' ? 'audio' : 'img');
       media.className='rom-preview-media';
@@ -87,7 +100,17 @@ function setupRomAsset(body,region,slug,imageHash,active,inspect=false) {
       result.append(media,details);return true;
     }catch(error){if(current())showJobError(work,error.message);return false;}finally{busy=false;if(active())body._romAssetBusy=false;finish();}
   };
-  const mesh=body.querySelector('[data-native-model-mesh]');if(mesh)mesh.onchange=()=>{if(busy || body._romAssetBusy || !active())return;get('source').value='rom';get('format').value='auto';get('offset').value='0x'+region.start.toString(16);layout();renderPreview(false);};
+  const modelControls=body.querySelectorAll('[data-native-model-mesh],[data-native-assembly],[data-native-animation]');
+  for(const control of modelControls)control.onchange=()=>{
+    if(busy || body._romAssetBusy || !active())return;
+    if(control.hasAttribute('data-native-model-mesh')){
+      const assembly=body.querySelector('[data-native-assembly]');if(assembly)assembly.value='mesh';
+    }
+    if(control.hasAttribute('data-native-animation'))body.querySelector('[data-native-assembly]').value='animated';
+    get('source').value='rom';get('format').value='auto';
+    get('offset').value='0x'+region.detected_asset.offset.toString(16);
+    layout();renderPreview(false);
+  };
   const component=body.querySelector('[data-resource-component]');if(component)component.onchange=()=>{body._romRecordPage=0;};
   for(const control of body.querySelectorAll('[data-dialogue-scene],[data-dialogue-speaker]')){
     control.onchange=()=>{
@@ -104,6 +127,7 @@ function setupRomAsset(body,region,slug,imageHash,active,inspect=false) {
     get('source').value='rom';get('format').value='auto';
     get('offset').value='0x'+region.detected_asset.offset.toString(16);
     layout();renderPreview(false);
+    if(region.detected_asset.media==='model')get('preview').scrollIntoView?.({block:'center'});
   }
 }
 let romRoleEpoch=0;
@@ -130,8 +154,24 @@ async function loadRomLoaderRoles() {
 
 function romNativeModelHTML(region) {
   const asset=region.detected_asset;if(asset?.media!=='model')return '';
-  const selected=Number(region.annotation?.preview_settings?.mesh || 0);
-  return `<p class="small muted">Detected model geometry · ${asset.nodes} nodes · ${asset.meshes.length} meshes · ${asset.vertices} vertices · ${asset.triangles} polygon commands. Preview one local mesh here, or use Asset Browser → Models for assemblies, textured surfaces, related files and glTF export. Native assemblies can play linked animations at an adjustable preview rate.</p>${asset.native_animations?.length ? `<label class="field"><span>Native view</span><select data-native-assembly><option value="mesh">Local mesh</option><option value="animated"${region.annotation?.preview_settings?.assembly==='animated' ? ' selected' : ''}>Animated assembly · first part variant</option></select></label><label class="field"><span>Animation</span><select data-native-animation>${asset.native_animations.map((a,i)=>`<option value="${i}"${Number(region.annotation?.preview_settings?.animation || 0)===i ? ' selected' : ''}>${esc(a.label)} · ${a.frames} frames</option>`).join('')}</select></label>` : ''}<label class="field"><span>Model mesh</span><select data-native-model-mesh>${asset.meshes.map((mesh,i)=>`<option value="${i}"${i===selected ? ' selected' : ''}>${esc(mesh.name || `Node ${mesh.node} / part ${mesh.part} / section ${mesh.section}`)} · ${mesh.vertices} vertices · ${mesh.triangles} polygons</option>`).join('')}</select></label>`;
+  const saved=region.annotation?.preview_settings,selected=Number(saved?.mesh || 0);
+  const assembly=saved?.assembly || (asset.assembled?'assembled':'mesh');
+  const modes=[['mesh','Local mesh']];
+  if(asset.assembled)modes.push(['assembled',asset.scenery?'Whole scenery (supported surfaces)':'Assembled model']);
+  if(asset.native_animations?.length)modes.push(['animated','Animated native assembly']);
+  return `<p class="small muted">Detected model geometry · ${asset.nodes} nodes · ${asset.meshes.length} meshes · ${asset.vertices} vertices · ${asset.triangles} polygon commands.</p>${modes.length>1?`<label class="field"><span>Native view</span><select data-native-assembly>${modes.map(([value,label])=>`<option value="${value}"${assembly===value?' selected':''}>${label}</option>`).join('')}</select></label>`:''}${asset.native_animations?.length?`<label class="field"><span>Animation</span><select data-native-animation>${asset.native_animations.map((a,i)=>`<option value="${i}"${Number(saved?.animation||0)===i?' selected':''}>${esc(a.label)} · ${a.frames} frames</option>`).join('')}</select></label>`:''}<label class="field"><span>Model mesh</span><select data-native-model-mesh>${asset.meshes.map((mesh,i)=>`<option value="${i}"${i===selected?' selected':''}>${esc(mesh.name || `Node ${mesh.node} / part ${mesh.part} / section ${mesh.section}`)} · ${mesh.vertices} vertices</option>`).join('')}</select></label>`;
+}
+
+function renderRomModelRelationships(host,asset,result,report,active) {
+  const details=document.createElement('details'),summary=document.createElement('summary');
+  const materials=result.materials||[],linked=materials.filter(m=>m.image).length;
+  summary.textContent=`Asset relationships · ${linked}/${materials.length} textures ready${result.omitted_commands?' · '+result.omitted_commands+' special commands omitted':''}`;details.append(summary);
+  const targets=[...(asset.relationships||[]).map(r=>({offset:r.archive.offset,name:r.archive.name,reason:r.basis+(r.line?' · line '+r.line:'')})),...materials.map(m=>({offset:m.offset,name:m.name,reason:'Texture · '+m.state+(m.error?' · '+m.error:'')}))];
+  for(const target of targets){const line=document.createElement('p');line.className='small';const region=report?.regions.find(r=>target.offset!=null&&r.start<=target.offset&&target.offset<r.end);
+    if(region){const button=document.createElement('button');button.type='button';button.className='link-btn';button.textContent=target.name;button.onclick=()=>{if(active())openRomRegion(region.id);};line.append(button);}else{const text=document.createElement('span');text.textContent=target.name;line.append(text);}
+    const text=document.createElement('span');text.textContent=' · '+target.reason;line.append(text);details.append(line);
+  }
+  if(!targets.length){const line=document.createElement('p');line.textContent='No explicit file relationships were recorded.';details.append(line);}host.append(details);
 }
 
 function romResourceHTML(region) {

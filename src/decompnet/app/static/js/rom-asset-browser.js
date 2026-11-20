@@ -1,7 +1,7 @@
 /* The selected type and layout belong to the project, just like its filters. */
 function stopRomAssetBrowser() {
   stopRomTextureGallery();
-  stopRomModelBrowser();
+  stopRomAssetScroll();
   stopRomAudioBrowser();
 }
 
@@ -63,25 +63,60 @@ function sortRomAssetRows(rows,state) {
   });
 }
 
-function renderRomAssetTable(host,columns,state,rows,draw) {
+function renderRomAssetTable(host,columns,state,draw) {
   const headings=columns.map(([key,label])=>{
     if(!key)return `<th scope="col">${label}</th>`;
     const sort=state.sort!==key?'none':state.direction===1?'ascending':'descending';
     const arrow=sort==='none'?'↕':sort==='ascending'?'↑':'↓';
     return `<th scope="col" aria-sort="${sort}"><button type="button" class="table-sort" data-asset-sort="${key}">${label} ${arrow}</button></th>`;
   }).join('');
-  host.innerHTML=`<div class="compiler-table"><table><thead><tr>${headings}</tr></thead><tbody>${rows.map(cells=>`<tr><td>${cells.join('</td><td>')}</td></tr>`).join('')}</tbody></table></div>`;
+  host.innerHTML=`<div class="compiler-table"><table><thead><tr>${headings}</tr></thead><tbody></tbody></table></div>`;
   host.querySelectorAll('[data-asset-sort]').forEach(button=>button.onclick=()=>{
     const key=button.dataset.assetSort;
     state.direction=state.sort===key?-state.direction:1;
     state.sort=key;
     draw();
   });
+  return host.querySelector('tbody');
 }
 
-function renderRomAssetCards(host,icon,columns,rows) {
-  host.innerHTML=`<div class="rom-asset-grid">${rows.map(([title,...cells])=>`<article class="rom-texture-card">
+function appendRomAssetTable(body,cells) {
+  body.insertAdjacentHTML('beforeend',cells.map(row=>`<tr><td>${row.join('</td><td>')}</td></tr>`).join(''));
+}
+
+let romAssetObserver;
+function stopRomAssetScroll() {
+  romAssetObserver?.disconnect();
+  romAssetObserver=null;
+}
+
+function streamRomAssets(type,rows,append) {
+  stopRomAssetScroll();
+  const marker=$('rom'+type+'Scroll');
+  let shown=0,waiting=false;
+  const observer=new IntersectionObserver(entries=>{
+    if(waiting && romAssetObserver===observer && entries.some(entry=>entry.isIntersecting))load();
+  },{rootMargin:'160px 0px'});
+  romAssetObserver=observer;
+
+  function load() {
+    waiting=false;
+    observer.unobserve(marker);
+    const start=shown;
+    shown=Math.min(shown+24,rows.length);
+    const pending=append(rows.slice(start,shown),start);
+    marker.textContent=`${shown.toLocaleString()} of ${rows.length.toLocaleString()}`;
+    Promise.resolve(pending).then(()=>{
+      if(romAssetObserver===observer && shown<rows.length){waiting=true;observer.observe(marker);}
+    });
+  }
+  if(rows.length)load();
+  else marker.textContent='';
+}
+
+function appendRomAssetCards(host,icon,columns,rows) {
+  host.insertAdjacentHTML('beforeend',rows.map(([title,...cells])=>`<article class="rom-texture-card">
     <span class="rom-asset-icon" aria-hidden="true">${icon}</span>${title}
     <dl>${cells.slice(0,-1).map((cell,i)=>`<dt>${columns[i+1][1]}</dt><dd>${cell}</dd>`).join('')}</dl>
-    ${cells.at(-1)}</article>`).join('')}</div>`;
+    ${cells.at(-1)}</article>`).join(''));
 }

@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const tick=async()=>{for(let i=0;i<25;i++)await Promise.resolve();};
-function element(){return {children:[],style:{},dataset:{},hidden:false,disabled:false,value:'',open:false,innerHTML:'',textContent:'',replaceChildren(...c){this.children=c;},append(...c){this.children.push(...c);},querySelectorAll(){return this.controls||[];}};}
+function element(){return {children:[],style:{},dataset:{},hidden:false,disabled:false,value:'',open:false,innerHTML:'',textContent:'',replaceChildren(...c){this.children=c;},append(...c){this.children.push(...c);},querySelectorAll(){return this.controls||[];},querySelector(){return this;},insertAdjacentHTML(_,html){this.innerHTML+=html;}};}
 function setup(){const nodes=new Map(),calls=[],finishes=[];const context=vm.createContext({console,Map,Set,Math,Number,Array,Object,String,Promise,Error,AbortController,
  S:{slug:'one',tab:'rom'},$:id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);},romView:()=>context.view,
  esc:String,hex8:n=>'0x'+n.toString(16),stopRomAssetAudio(host){host.children=[];},document:{createElement:tag=>({...element(),tag})},openRomRegion(){},openFn(){},
@@ -10,7 +10,7 @@ function setup(){const nodes=new Map(),calls=[],finishes=[];const context=vm.cre
  api(url,options){const pending=deferred();calls.push({url,options,pending});return pending.promise;}});
  context.view={report:{available:true,image_hash:'hash',regions:[]},audio:{rate:22050}};
  vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-audio-browser.js'),'utf8'),context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-asset-browser.js'),'utf8'),context);context.view.assetBrowser={layout:'table'}; context.$('romAssetBrowser').open=true;context.$('romAudioPanel').controls=[element()];return {c:context,calls,finishes,run:s=>vm.runInContext(s,context)};}
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/rom-asset-browser.js'),'utf8'),context);context.view.assetBrowser={layout:'table'}; context.IntersectionObserver=class {disconnect(){} unobserve(){}};context.$('romAssetBrowser').open=true;context.$('romAudioPanel').controls=[element()];return {c:context,calls,finishes,run:s=>vm.runInContext(s,context)};}
 const sample={offset:1000,size:18,rate:22050,samples:32,codec:'N64 VADPCM',instrument:0,book_offset:96};
 const asset={offset:64,media:'audio',label:'Synthetic',samples:[sample],rate_basis:'Preview default',reason:'Static inference'};
 const row={region:'40-80',index:0,sample,asset,name:'Synthetic · 1'};

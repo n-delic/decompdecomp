@@ -120,7 +120,7 @@ function stopRomTextureGallery() {
 function renderRomTextureGallery(view=romView()) {
   const panel=$('romTexturePanel'),report=view.report;
   if(!report?.available)return;
-  view.textures ||= {query:'',format:'',dimensions:'',page:0,sort:'offset',direction:1};const state=view.textures;
+  view.textures ||= {query:'',format:'',dimensions:'',sort:'offset',direction:1};const state=view.textures;
   const banks=romTextureBanks(report);
   const textureCount=banks.reduce((count,bank)=>count+(bank.asset.texture_count || bank.asset.textures?.length || 1),0);
   $('romTextureContext').textContent=`— ${banks.length.toLocaleString()} banks`+
@@ -129,7 +129,7 @@ function renderRomTextureGallery(view=romView()) {
   choice('romTextureFormat',[...new Set(banks.map(b=>b.format))].sort(),state.format);
   choice('romTextureDimensions',[...new Set(banks.filter(b=>b.width && b.height).map(b=>`${b.width} × ${b.height}`))].sort((a,b)=>Number(a.split(' ')[0])-Number(b.split(' ')[0]) || a.localeCompare(b)),state.dimensions);
   $('romTextureFilter').value=state.query;
-  for(const [id,key] of [['romTextureFormat','format'],['romTextureDimensions','dimensions'],['romTextureFilter','query']])$(id).oninput=()=>{state[key]=$(id).value;state.page=0;draw();};
+  for(const [id,key] of [['romTextureFormat','format'],['romTextureDimensions','dimensions'],['romTextureFilter','query']])$(id).oninput=()=>{state[key]=$(id).value;draw();};
   const draw=()=>{
     stopRomTextureGallery();const host=$('romTextureItems'),run=host._textureRun,slug=S.slug;
     const query=state.query.toLowerCase().trim();
@@ -137,59 +137,64 @@ function renderRomTextureGallery(view=romView()) {
       (!query || [b.name,hex8(b.offset),b.format,...b.direct,...b.traced].join(' ').toLowerCase().includes(query)));
     const icons=view.assetBrowser.layout==='icons';
     sortRomAssetRows(rows,state);
-    const pages=Math.max(1,Math.ceil(rows.length/24));state.page=Math.min(state.page,pages-1);
-    const page=rows.slice(state.page*24,state.page*24+24);
-    $('romTexturePage').textContent=`${rows.length.toLocaleString()} banks · page ${state.page+1} of ${pages}`;
-    $('romTexturePrevious').disabled=state.page===0;$('romTextureNext').disabled=state.page>=pages-1;
-    $('romTexturePrevious').onclick=()=>{state.page--;draw();};$('romTextureNext').onclick=()=>{state.page++;draw();};
     host.replaceChildren();
     if(!$('romAssetBrowser').open || panel.hidden)return;
     host.className=icons?'rom-texture-gallery':'';
-    if(!page.length){host.textContent=banks.length ? 'No textures match these filters.' : 'No supported image or texture bank was detected. Raw texture comparisons remain available in region details.';return;}
-    if(!icons){
+    if(!rows.length)host.textContent=banks.length ? 'No textures match these filters.' : 'No supported image or texture bank was detected. Raw texture comparisons remain available in region details.';
+    if(!icons && rows.length){
       const columns=[['name','Texture bank'],['format','Format'],['width','Width'],
         ['height','Height'],['offset','ROM offset'],[null,'Recorded references'],[null,'Static loader leads']];
       const links=names=>names.map(name=>`<button type="button" class="link-btn" data-texture-function="${esc(name)}">${esc(name)}</button>`).join(' · ')||'None recorded';
-      const cells=page.map((bank,i)=>[
-        `<button type="button" class="link-btn" data-texture-bank="${i}"${report.stale?' disabled':''}>${esc(bank.name)}</button>`,
+      const target=renderRomAssetTable(host,columns,state,draw);
+      host.onclick=event=>{
+        const bank=event.target.closest('[data-texture-bank]');
+        const reference=event.target.closest('[data-texture-function]');
+        if(bank)openRomRegion(rows[Number(bank.dataset.textureBank)].region);
+        if(reference)openFn(reference.dataset.textureFunction);
+      };
+      streamRomAssets('Texture',rows,(batch,start)=>appendRomAssetTable(target,batch.map((bank,i)=>[
+        `<button type="button" class="link-btn" data-texture-bank="${start+i}"${report.stale?' disabled':''}>${esc(bank.name)}</button>`,
         esc(bank.format),bank.width||'—',bank.height||'—',hex8(bank.offset),
         links(bank.direct),links(bank.traced),
-      ]);
-      renderRomAssetTable(host,columns,state,cells,draw);
-      host.querySelectorAll('[data-texture-bank]').forEach(button=>button.onclick=()=>openRomRegion(page[Number(button.dataset.textureBank)].region));
-      host.querySelectorAll('[data-texture-function]').forEach(button=>button.onclick=()=>openFn(button.dataset.textureFunction));
+      ])));
       return;
     }
+    host.onclick=null;
     const active=()=>S.slug===slug && S.tab==='rom' && $('romAssetBrowser').open && !panel.hidden && host._textureRun===run;
-    const tasks=[];
-    for(const bank of page) {
-      const card=document.createElement('article');card.className='rom-texture-card';
-      card.innerHTML=`<button type="button" class="ghost rom-texture-open" data-texture-region${report.stale ? ' disabled' : ''}><span data-texture-thumb class="rom-texture-thumb">Waiting for preview</span><b>${esc(bank.name)}</b><span class="small">${esc(bank.format)} · ${bank.width && bank.height ? `${bank.width} × ${bank.height}` : 'dimensions unavailable'} · ${hex8(bank.offset)}</span><span class="small">${bank.asset.texture_count || bank.asset.textures?.length ? (bank.asset.texture_count || bank.asset.textures.length)+' texture(s) · ':''}${bank.asset.frames || 1} frame(s) · ${bank.asset.palettes ?? '—'} palette(s)</span></button><div data-texture-usage></div>`;
-      card.querySelector('[data-texture-region]').onclick=()=>openRomRegion(bank.region);
-      const usage=card.querySelector('[data-texture-usage]');
-      const links=(names,label)=>{
-        const line=document.createElement('p');line.className='small muted';line.append(document.createTextNode(label+': '));
-        if(!names.length)line.append(document.createTextNode('none found'));
-        names.forEach((name,i)=>{if(i)line.append(document.createTextNode(' · '));const button=document.createElement('button');button.type='button';button.className='link-btn';button.textContent=name;button.onclick=()=>openFn(name);line.append(button);});usage.append(line);
-      };
-      links(bank.direct,'Recorded address references');links(bank.traced,'Static loader / buffer leads');host.append(card);
-      tasks.push(async signal=>{
-        const slot=card.querySelector('[data-texture-thumb]');
-        try {
-          const result=await api('/api/rom-explorer/preview',{method:'POST',signal,body:{slug,region:bank.region,image_hash:report.image_hash,options:{format:'auto'}}});
-          if(!active())return;
-          if(!/^data:image\/(png|jpeg);base64,/.test(result.data_url))throw Error('This entry did not produce an image. Open its region to inspect the format.');
-          const image=document.createElement('img');image.alt=`${bank.name}, ${bank.format}`;image.src=result.data_url;
-          image.onerror=()=>{if(active())slot.textContent='Image decoding failed. Open the region to inspect its format.';};slot.replaceChildren(image);
-        }catch(error){if(active() && !signal.aborted)slot.textContent=error.message;}
-      });
-    }
-    if(report.stale){for(const slot of host.querySelectorAll('[data-texture-thumb]'))slot.textContent='Refresh the map to preview this changed image.';return;}
-    const controller=host._textureAbort=new AbortController();const stop=$('romTextureStop'),work=$('romTextureWork');stop.hidden=false;
-    const finish=host._textureFinish=beginWork(work,'Loading texture thumbnails',[],'Texture thumbnails ready.');showJobError(work,'');let done=0;
-    stop.onclick=()=>{controller.abort();stop.hidden=true;for(const slot of host.querySelectorAll('[data-texture-thumb]'))if(!slot.querySelector('img'))slot.textContent='Thumbnail loading stopped. Open the region to preview it.';finish();if(work._workStatus)work._workStatus.textContent='Thumbnail loading stopped.';};
-    const worker=async()=>{while(tasks.length && active() && !controller.signal.aborted){await tasks.shift()(controller.signal);done++;if(active() && !controller.signal.aborted)updateWorkProgress(work,{phase:'Loading texture thumbnails',done,total:page.length});}};
-    Promise.all([worker(),worker(),worker()]).catch(error=>{if(active())showJobError(work,error.message);}).finally(()=>{if(active() && !controller.signal.aborted){host._textureFinish=null;host._textureAbort=null;stop.hidden=true;finish();}});
+    let thumbnailsStopped=false;
+    streamRomAssets('Texture',rows,page=>{
+      const tasks=[],slots=[];
+      for(const bank of page) {
+        const card=document.createElement('article');card.className='rom-texture-card';
+        card.innerHTML=`<button type="button" class="ghost rom-texture-open" data-texture-region${report.stale ? ' disabled' : ''}><span data-texture-thumb class="rom-texture-thumb">Waiting for preview</span><b>${esc(bank.name)}</b><span class="small">${esc(bank.format)} · ${bank.width && bank.height ? `${bank.width} × ${bank.height}` : 'dimensions unavailable'} · ${hex8(bank.offset)}</span><span class="small">${bank.asset.texture_count || bank.asset.textures?.length ? (bank.asset.texture_count || bank.asset.textures.length)+' texture(s) · ':''}${bank.asset.frames || 1} frame(s) · ${bank.asset.palettes ?? '—'} palette(s)</span></button><div data-texture-usage></div>`;
+        card.querySelector('[data-texture-region]').onclick=()=>openRomRegion(bank.region);
+        const usage=card.querySelector('[data-texture-usage]');
+        const links=(names,label)=>{
+          const line=document.createElement('p');line.className='small muted';line.append(document.createTextNode(label+': '));
+          names.forEach((name,i)=>{if(i)line.append(document.createTextNode(' · '));const button=document.createElement('button');button.type='button';button.className='link-btn';button.textContent=name;button.onclick=()=>openFn(name);line.append(button);});usage.append(line);
+        };
+        if(bank.direct.length)links(bank.direct,'References');if(bank.traced.length)links(bank.traced,'Loader leads');host.append(card);
+        const slot=card.querySelector('[data-texture-thumb]');slots.push(slot);
+        tasks.push(async signal=>{
+          try {
+            const result=await api('/api/rom-explorer/preview',{method:'POST',signal,body:{slug,region:bank.region,image_hash:report.image_hash,options:{format:'auto'}}});
+            if(!active() || signal.aborted)return;
+            if(!/^data:image\/(png|jpeg);base64,/.test(result.data_url))throw Error('This entry did not produce an image. Open its region to inspect the format.');
+            const image=document.createElement('img');image.alt=`${bank.name}, ${bank.format}`;image.src=result.data_url;
+            image.onerror=()=>{if(active())slot.textContent='Image decoding failed. Open the region to inspect its format.';};slot.replaceChildren(image);
+          }catch(error){if(active() && !signal.aborted)slot.textContent=error.message;}
+        });
+      }
+      if(report.stale || thumbnailsStopped){
+        for(const slot of slots)slot.textContent=report.stale?'Refresh the map to preview this changed image.':'Open the region to preview it.';
+        return;
+      }
+      const controller=host._textureAbort=new AbortController();const stop=$('romTextureStop'),work=$('romTextureWork');stop.hidden=false;
+      const finish=host._textureFinish=beginWork(work,'Loading texture thumbnails',[],'Texture thumbnails ready.');showJobError(work,'');let done=0;
+      stop.onclick=()=>{thumbnailsStopped=true;controller.abort();host._textureFinish=null;host._textureAbort=null;stop.hidden=true;for(const slot of slots)if(!slot.querySelector('img'))slot.textContent='Thumbnail loading stopped. Open the region to preview it.';finish();if(work._workStatus)work._workStatus.textContent='Thumbnail loading stopped.';};
+      const worker=async()=>{while(tasks.length && active() && !controller.signal.aborted){await tasks.shift()(controller.signal);done++;if(active() && !controller.signal.aborted)updateWorkProgress(work,{phase:'Loading texture thumbnails',done,total:page.length});}};
+      return Promise.all([worker(),worker(),worker()]).catch(error=>{if(active())showJobError(work,error.message);}).finally(()=>{if(active() && !controller.signal.aborted){host._textureFinish=null;host._textureAbort=null;stop.hidden=true;finish();}});
+    });
   };
   draw();
 }
