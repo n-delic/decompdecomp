@@ -660,3 +660,51 @@ def test_most_upvoted_includes_voted_equivalent_capture(setup):
     assert [(row['id'], row['upvotes'], row['repetitions']) for row in ranked['examples']] == [(1, 2, 2), (3, 1, 1)]
     assert ranked['total'] == 2
     assert ranked['groups'] == [{'category': 'types', 'status': 'new', 'count': 3}]
+
+
+def test_repair_baseline_category_is_set_on_new_exact_capture(setup):
+    from decompnet.repair_feedback import NO_FAILED_BASELINE, track_matches
+
+    net, winner, _, _, fid = setup
+    net._record(fn(net, fid), winner, None, 'earlier compiler error', 1)
+    with track_matches('demo', winner.id) as pending:
+        net._record(fn(net, fid), winner, 0, 'first scored build matches', 1, matched=True)
+    assert not pending
+    page = net.repair_feedback.listing('demo', category=NO_FAILED_BASELINE)
+    row = page['examples'][0]
+    assert row['review_group'] == 'first'
+    detail = net.repair_feedback.detail('demo', row['id'])
+    assert detail['evidence']['before'] is None
+    assert detail['evidence']['previous']['score'] is None
+    assert detail['evidence']['review_suggestion']['category'] == NO_FAILED_BASELINE
+    assert net.repair_feedback.listing('demo', category='other')['total'] == 0
+
+
+def test_repair_baseline_migration_preserves_frozen_baselines_and_reviews(setup):
+    from decompnet.repair_feedback import BASELINE_MIGRATION, NO_FAILED_BASELINE, RepairFeedback
+
+    net, _, _, pid, fid = setup
+    with net.store.tx() as db:
+        db.execute('DELETE FROM settings WHERE key=?', (BASELINE_MIGRATION,))
+        rows = [
+            (1, 'other', 'reviewed', {'before': None, 'after': {}}),
+            (2, 'unclassified', 'implemented', {'after': {}}),
+            (3, 'other', 'new', {'before': {'score': 8}, 'after': {}}),
+            (4, 'types', 'new', {'before': None, 'after': {}}),
+        ]
+        for case, category, status, evidence in rows:
+            db.execute('INSERT INTO repair_examples(id,project_id,function_id,created_at,evidence,category,status,review_note) '
+                       'VALUES(?,?,?,0,?,?,?,?)', (case, pid, fid, json.dumps(evidence), category, status, 'Keep this note.'))
+        db.execute('INSERT INTO repair_example_votes(example_id,agent_id) VALUES(1,7)')
+    RepairFeedback(net)
+    rows = net.store.all('SELECT category,status,review_note FROM main.repair_examples ORDER BY id')
+    assert [tuple(row) for row in rows] == [
+        (NO_FAILED_BASELINE, 'reviewed', 'Keep this note.'),
+        (NO_FAILED_BASELINE, 'implemented', 'Keep this note.'),
+        ('other', 'new', 'Keep this note.'),
+        ('types', 'new', 'Keep this note.'),
+    ]
+    assert net.store.one('SELECT COUNT(*) n FROM repair_example_votes')['n'] == 1
+    net.repair_feedback.review('demo', 1, 'reviewed', 'other')
+    RepairFeedback(net)
+    assert net.store.one('SELECT category FROM main.repair_examples WHERE id=1')['category'] == 'other'

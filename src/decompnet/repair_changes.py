@@ -3,6 +3,8 @@ import re
 
 from .forks.csource import _COMMENT_OR_STRING
 
+NO_FAILED_BASELINE = 'no_failed_baseline'
+
 TOKEN=re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[A-Za-z_]\w*|\d+(?:\.\d+)?|>>=|<<=|\.\.\.|\+\+|--|->|&&|\|\||==|!=|<=|>=|<<|>>|[+*/%&|^!-]=|\S')
 LABELS={'missing_before':'No saved failed source', 'unchanged':'Source unchanged',
         'comments_or_spacing':'Comments/spacing changed; source line boundaries preserved',

@@ -45,6 +45,10 @@ const context = { S: {slug: 'demo'}, document: {body, createElement: (tag) => ne
       ...(automatic ? {automatic_analysis:{state:'done',report:{baseline_output_equivalent:true,
         minimization:{edits:4,reverted:1,individual_checks:{output_preserved:[0],output_not_preserved:[1],untested:[2,3]}}}}} : {}),
       evidence: {source_change_label: 'C tokens changed', diff: '- old\n+ <script>neverExecute()</script>', after: {source: '<script>neverExecute()</script>'}}, review_note: ''};
+    if (query.get('category') === 'no_failed_baseline') {
+      return {examples: [{...row(), category: 'no_failed_baseline', review_group: 'first', evidence_kind: 'no failed baseline'}],
+        categories: ['unclassified', 'types', 'no_failed_baseline'], states: ['new', 'reviewed'], total: 1, more: false, groups: []};
+    }
     if (votePaging && query.get('sort') === 'upvotes') {
       const more = query.get('before') === '0';
       const examples = more ? [{...row(), id: 46, upvotes: 5, review_group: 'build'}, row()] : [{...row(), id: 81, upvotes: 0}];
@@ -165,5 +169,15 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/decompnet/app/stati
   category.value = 'types'; await category.onchange();
   assert(requests.some(r => r.url.includes('category=types') && r.url.includes('sort=upvotes&before=0')));
   assert.equal(list.children.length, 2);
+  const comparable = dialog.querySelector('[data-comparable]');
+  comparable.checked = true;
+  sort.value = 'recent';
+  category.value = 'no_failed_baseline';
+  await category.onchange();
+  assert.equal(comparable.checked, false);
+  assert(requests.some(r => r.url.includes('category=no_failed_baseline') && r.url.includes('comparable=0')));
+  assert.equal(dialog.querySelector('[data-list-heading]').textContent, 'No saved failed baseline');
+  assert.equal(dialog.querySelector('[data-first-reports]').hidden, true);
+  assert(textOf(list.children[0]).includes('No saved failed baseline'));
   console.log('Repair evidence rendering, review, filtering and explicit source export passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });
