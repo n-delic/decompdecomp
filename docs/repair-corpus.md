@@ -49,3 +49,11 @@ and break relevance ties. The tools use saved evidence and run no compiles.
 In **Agents → Repair examples**, each card shows its upvote count. Choose
 **Most upvoted** to rank the filtered captures by vote count, with newer captures first
 when counts tie. Groups of equivalent captures show their most upvoted example in this view.
+
+**No saved failed baseline** holds exact-match captures without a saved, compiled
+candidate that scored less than an exact match. A first judged build can match, and
+drafts, automatic reuse and reconciliation of saved matches can reach an exact result
+without a recorded near miss. Earlier compiler errors can be in the history without
+providing a scored baseline. Use the category to browse those captures separately from
+**Other** source repairs. Existing review states, notes and votes are retained when
+older captures are moved to this category.

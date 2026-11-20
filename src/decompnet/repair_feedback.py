@@ -16,11 +16,13 @@ from contextlib import contextmanager
 
 from .network import NetworkError
 from .project import compiler_for
+from .repair_changes import NO_FAILED_BASELINE
 from .repair_comparison import differences as settings_differences
 
-CATEGORIES = ('unclassified', 'types', 'casts', 'constants', 'addresses', 'signatures', 'layout',
-              'temporaries', 'expression_order', 'control_flow', 'compiler_settings', 'other')
-AGENT_CATEGORIES = CATEGORIES[1:]
+AGENT_CATEGORIES = ('types', 'casts', 'constants', 'addresses', 'signatures', 'layout',
+                    'temporaries', 'expression_order', 'control_flow', 'compiler_settings', 'other')
+CATEGORIES = ('unclassified', *AGENT_CATEGORIES, NO_FAILED_BASELINE)
+BASELINE_MIGRATION = 'repair-baseline-category-v1'
 STATES = ('new', 'reviewed', 'implemented', 'dismissed')
 SCHEMA = (
     '''CREATE TABLE IF NOT EXISTS repair_attempt_settings(
@@ -56,7 +58,7 @@ _MATCHES = contextvars.ContextVar('repair_matches', default=None)
 def submission(fn, agent_id, category, change, automation, suggested_category):
     """Attach advisory metadata to the explicitly submitted function, including in project builds."""
     label = (category or ('other' if change or suggested_category else '')).strip()
-    if label and label not in CATEGORIES:
+    if label and label not in ('unclassified', *AGENT_CATEGORIES):
         suggested_category = suggested_category or label
         change = f'[Original category: {label[:80]}] {change}' if change else ''
         label = 'other'
@@ -157,6 +159,14 @@ class RepairFeedback:
             self.store._track_reads('repair_examples', 'repair_profiles', 'evidence,project_id')
             from .repair_profile_index import install
             install(db)
+            if not db.execute('SELECT 1 FROM settings WHERE key=?', (BASELINE_MIGRATION,)).fetchone():
+                # An archived baseline can outlive the attempt row it came from.
+                db.execute("UPDATE repair_examples SET category=? WHERE category IN ('other','unclassified') "
+                           "AND before_attempt_id IS NULL AND CASE WHEN json_valid(evidence) "
+                           "THEN json_type(evidence,'$.after')='object' AND "
+                           "COALESCE(json_type(evidence,'$.before'),'null')='null' ELSE 0 END",
+                           (NO_FAILED_BASELINE,))
+                db.execute("INSERT INTO settings VALUES(?,'1')", (BASELINE_MIGRATION,))
             # Older automatic captures predate their implemented default. Preserve deliberate
             # reviews and agent annotations; only move untouched, provenance-backed captures.
             db.execute("UPDATE repair_examples SET status='implemented',review_note=? WHERE status='new' "
@@ -305,8 +315,12 @@ class RepairFeedback:
         automated = attribution.get('kind') in AUTOMATIC and bool(attribution.get('family'))
         category, explanation, automation, suggestion = 'unclassified', '', '', ''
         annotation = _ANNOTATION.get()
+        annotated = False
         if not automated and via == 'agent' and attempt_id and annotation and annotation[0] == (fn['project_id'], fn['id'], agent_id):
             category, explanation, automation, suggestion = annotation[1]
+            annotated = category != 'unclassified'
+        if not before and category == 'unclassified':
+            category = NO_FAILED_BASELINE
         captured = db.execute(
             'INSERT INTO repair_examples(project_id,function_id,attempt_id,before_attempt_id,agent_id,created_at,'
             'evidence,status,review_note,category,explanation,automation,suggested_category) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -314,11 +328,11 @@ class RepairFeedback:
              agent_id, time.time(), json.dumps(evidence), 'implemented' if automated else 'new',
              'Installed deterministic repair, verified by the normal judge.' if automated else '',
              category, explanation, automation, suggestion))
-        if category != 'unclassified':
+        if annotated:
             annotation[2].append(captured.lastrowid)
         tracking = _MATCHES.get()
         if (tracking and tracking[:2] == (proj['slug'], agent_id) and not automated and via != 'saved_recheck'
-                and category == 'unclassified' and (before or previous)):
+                and category == 'unclassified' and before):
             tracking[2].append((captured.lastrowid, fn['name']))
 
         from .app.repair_outcomes import schedule
@@ -426,7 +440,7 @@ class RepairFeedback:
         display_votes = 'e.upvotes' if by_votes else vote_count
         rows = self.store.all(prefix + 'SELECT e.id,e.created_at,e.category,e.explanation,e.automation,e.suggested_category,e.status,e.repetitions,'
                               + f'{display_votes} AS upvotes,'
-                              "CASE WHEN json_extract(e.evidence,'$.via')='unit diff' THEN 'build report' WHEN e.before_attempt_id IS NULL THEN 'no failed baseline' WHEN json_extract(e.evidence,'$.before.source_sha256')=json_extract(e.evidence,'$.after.source_sha256') THEN 'same source / settings' WHEN json_extract(e.evidence,'$.comparable_settings')=1 THEN 'source repair' ELSE 'settings also changed' END AS evidence_kind,"
+                              "CASE WHEN json_extract(e.evidence,'$.via')='unit diff' THEN 'build report' WHEN e.before_attempt_id IS NULL AND COALESCE(json_type(e.evidence,'$.before'),'null')='null' THEN 'no failed baseline' WHEN json_extract(e.evidence,'$.before.source_sha256')=json_extract(e.evidence,'$.after.source_sha256') THEN 'same source / settings' WHEN json_extract(e.evidence,'$.comparable_settings')=1 THEN 'source repair' ELSE 'settings also changed' END AS evidence_kind,"
                               "(json_extract(e.evidence,'$.provenance.kind') IN ('deterministic draft repair','automatic agent local pass') AND "
                               "(json_extract(e.evidence,'$.provenance.source_sha256') IS NULL OR "
                               "json_extract(e.evidence,'$.provenance.source_sha256')=json_extract(e.evidence,'$.after.source_sha256'))) AS automation_known,"

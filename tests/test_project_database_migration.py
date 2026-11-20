@@ -576,3 +576,29 @@ def test_repair_mismatch_evidence_and_votes_follow_the_project(tmp_path):
         assert 'unavailable' in repair_search.details(net, agent, 'second', [case])
     finally:
         close(net)
+
+
+def test_repair_baseline_category_upgrades_existing_shards_on_open(tmp_path):
+    from decompnet.repair_feedback import BASELINE_MIGRATION, NO_FAILED_BASELINE
+
+    path = tmp_path / 'catalog.db'
+    legacy(path)
+    net = Network(path, project_databases=True)
+    try:
+        for (pid, slug) in ((1, 'first'), (2, 'second')):
+            store = net.repair_feedback.for_project(slug).store
+            with store.tx() as db:
+                db.execute('DELETE FROM settings WHERE key=?', (BASELINE_MIGRATION,))
+                db.execute('INSERT INTO repair_examples(project_id,function_id,created_at,evidence,category,status) '
+                           "VALUES(?,?,0,?,'other','reviewed')", (pid, 10 * pid, '{"before":null,"after":{}}'))
+    finally:
+        close(net)
+
+    net = Network(path)
+    try:
+        page = net.repair_feedback.listing(category=NO_FAILED_BASELINE, _metrics=False)
+        assert {row['slug'] for row in page['examples']} == {'first', 'second'}
+        assert {row['status'] for row in page['examples']} == {'reviewed'}
+        assert net.repair_feedback.listing(category='other', _metrics=False)['total'] == 0
+    finally:
+        close(net)

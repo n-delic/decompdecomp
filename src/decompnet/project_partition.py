@@ -94,7 +94,7 @@ class Settings:
                 try:owner = self.projects.get(json.loads(value).get('slug'),0)
                 except (ValueError,AttributeError):pass
             return owner
-        if key=='abandons_recounted':return 'each'
+        if key in {'abandons_recounted','repair-baseline-category-v1'}:return 'each'
         if prefix in {'payload-links','payload-sizes-cursor','project-id-namespace','stable-row-identifiers'}:return 0
         # A source-only cursor had one shared offset before the split. Seed each
         # destination independently; these contain no source text or identities.
