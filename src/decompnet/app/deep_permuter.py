@@ -567,10 +567,10 @@ class Search(Permuter):
             observed_choices = []
             if not fork and proj['arch'] == 'mips' and self.measured_winner(fn, source):
                 settings = compiler_for(self.net.cfg(proj), fn['vram'], fn)
-                def resolve_symbol(symbol, project_id=proj["id"]):
-                    return self.net.symbols(project_id).resolve(symbol)
-                def read_data(symbol, width, project=proj, function=fn):
-                    address = resolve_symbol(symbol)
+                symbol_table = self.net.symbols(proj['id']) if hasattr(self.net,'symbols') else None
+                resolve_symbol = symbol_table.resolve if symbol_table is not None else None
+                def read_data(symbol, width, project=proj, function=fn, resolve=resolve_symbol):
+                    address = resolve(symbol) if resolve else None
                     if address is None:
                         return None
                     try:
@@ -583,8 +583,8 @@ class Search(Permuter):
                     source, fn['name'], header, proj['arch'], settings.get('toolchain',''),
                     self.winner_diff[0], fn['asm'], self.winner_jump_tables,
                     flags=settings.get('flags',()), big_endian=bool(proj['big_endian']),
-                    resolve=resolve_symbol if hasattr(self.net,'symbols') else None,
-                    read_data=read_data if hasattr(self.net,'reader') and hasattr(self.net,'symbols') else None) if child not in self.local_seen]
+                    resolve=resolve_symbol, symbols=symbol_table,
+                    read_data=read_data if hasattr(self.net,'reader') and resolve_symbol else None) if child not in self.local_seen]
             observed_order = {child:index for index,(_,child) in enumerate(observed_choices)}
             focused_choices = observed_choices + buffer_choices + store_choices + frame_choices
             focused_pass = bool(focused_choices)
