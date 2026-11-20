@@ -120,3 +120,37 @@ def test_exact_runtime_helper_is_set_aside_before_claims(tmp_path, monkeypatch, 
         assert net.symbols(proj['id']).resolve('mul64_low_first') == 0x80001000
         assert json.loads(rows[0]['meta'])['naming']['original_name'] == 'func_80001000'
     assert net.claim_row(net.local_agent('worker')[0], slug) is None
+
+
+@pytest.mark.parametrize('single', [False, True])
+def test_deep_permuter_sets_aside_sdk_in_existing_project(tmp_path, monkeypatch, toy_pack, single):
+    from decompnet.app import deep_permuter
+    from decompnet.app.deep_sweep import Sweeps
+    from decompnet.app.support import Jobs
+    from tests.test_deep_permuter import Log
+
+    net, slug = import_toy(tmp_path, monkeypatch)
+    proj = net.project_row(slug)
+    store = net.project_store(proj['id'])
+    with store.tx() as db:
+        db.execute("UPDATE functions SET name='func_80001000',status='open',meta='{}',best_score=50,"
+                   "best_source='void func_80001000(void) {}'")
+    log = Log()
+
+    def unexpected_search(*args, **kwargs):
+        pytest.fail('An exact SDK body reached C candidate search.')
+
+    monkeypatch.setattr(deep_permuter, '_run', unexpected_search)
+    if single:
+        result = deep_permuter.run(net, slug, 'func_80001000', 1, 10, log)
+        assert result['reason'] == 'Identified and set aside as SDK assembly'
+    else:
+        sweeps = Sweeps(net, Jobs())
+        monkeypatch.setattr(sweeps, 'search_one', unexpected_search)
+        result = sweeps.run(slug, 1, 10, log)
+        assert result['functions_tested'] == 0
+    assert result['tested'] == 0
+    row = net._function('func_80001000', slug)
+    assert row['status'] == 'asm' and detail(proj, row)['verified']
+    assert net.function_detail(slug, row['name'], include_hints=False)['display_name'] == 'sdkToy'
+    assert net.claim_row(net.local_agent('worker')[0], slug) is None

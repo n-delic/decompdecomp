@@ -1199,6 +1199,16 @@ def run(net, slug, name, minutes, max_variants, log, compiler_profiles=1, thread
     validate_threads(threads_per_function)
     # One explicit deep search per function, including credential issuance. Agents may keep working.
     fn = net._function(name, slug)
+    if fn['status'] == 'open' and fn['target']:
+        from .deep_sweep import looking
+        from .sdk_assembly import discover_known
+        log.check_cancel()
+        with looking(net):
+            found = discover_known(net, net.project_row(slug), function_id=fn['id'], check_cancel=log.check_cancel)
+        if found:
+            reason = 'Identified and set aside as SDK assembly'
+            log(reason)
+            return {'matched': False, 'tested': 0, 'reason': reason}
     lock = net.__dict__.setdefault('_deep_run_locks', {}).setdefault(fn['id'], threading.Lock())
     if not lock.acquire(blocking=False):
         raise NetworkError('A deep search is already running for this function.')

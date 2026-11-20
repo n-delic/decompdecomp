@@ -9,6 +9,7 @@ from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
 from ..elfobj import _function_symbols, section_target
+from ..network import IN_BUILD
 from ..rom import match
 from ..rom.symbols import Symbol
 from .source_assembly import fingerprint, verified
@@ -411,17 +412,31 @@ def known_proof(console,proj,fn):
             'at':time.time()}
 
 
-def discover_known(net,proj):
-    """Backfill active ROM projects without SDK files, compiling code or starting agents."""
-    if not net.is_rom(proj) or net.fork_slug(proj['slug']):return 0
-    console=net.console(proj);sizes=console.sdk_assembly_sizes
-    if not sizes:return 0
-    store=net.project_store(proj['id']);count=0
-    rows=store.all("SELECT id,name,project_id,vram,rom_offset,size,target,relocs,status,meta FROM functions WHERE project_id=? AND status IN ('open','asm') AND size IN ("+','.join('?' for _ in sizes)+')',proj['id'],*sizes)
+def discover_known(net, proj, *, function_id=None, check_cancel=None):
+    """Backfill local ROM targets without SDK files, compiling code or starting agents."""
+    if proj['slug'] in net.links or not net.is_rom(proj) or net.fork_slug(proj['slug']):
+        return 0
+    console = net.console(proj)
+    sizes = console.sdk_assembly_sizes
+    if not sizes:
+        return 0
+    store = net.project_store(proj['id'])
+    placeholders = ','.join('?' for _ in sizes)
+    target_filter = ' AND id=?' if function_id is not None else ''
+    args = (proj['id'], *sizes) if function_id is None else (proj['id'], *sizes, function_id)
+    rows = store.all(f"""SELECT id,name,project_id,vram,rom_offset,size,target,relocs,status,meta
+                         FROM functions WHERE project_id=? AND status IN ('open','asm') AND {IN_BUILD}
+                         AND size IN ({placeholders}){target_filter}""", *args)
+    from .maintenance import checkpoint
+
+    count = 0
     for fn in rows:
-        from .maintenance import checkpoint
         checkpoint()
-        if json.loads(fn['meta'] or '{}').get('reopened') or verified(proj,fn):continue
-        proof=known_proof(console,proj,fn)
-        if proof:count+=int(save(net,proj,fn,proof))
+        if check_cancel is not None:
+            check_cancel()
+        if json.loads(fn['meta'] or '{}').get('reopened') or verified(proj, fn):
+            continue
+        proof = known_proof(console, proj, fn)
+        if proof:
+            count += int(save(net, proj, fn, proof))
     return count
