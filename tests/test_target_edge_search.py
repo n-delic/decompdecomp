@@ -1,0 +1,109 @@
+import pytest
+
+from decompnet.app.diff_gated_repairs import proposals
+
+
+def pair(a,b):
+    a,b = a.split('|'),b.split('|')
+    assert len(a)==len(b)
+    return [(' ' if x==y else 'r',x,y) for x,y in zip(a,b)]
+
+
+def assembly(text):
+    return '\n'.join(line if line.endswith(':') else f'/* {4*i:06X} {0x80001000+4*i:08X} 00000000 */ {line}'
+                     for i,line in enumerate(text.split('|')))
+
+
+EDGE = 'bnel $a0, $zero, .Ltest|addiu $s0, $s0, 1|sw $s0, 0($a1)|bne $s0, $a2, .Lbody|nop'
+FLOAT = ('sdc1 $f20, 16($sp)|sdc1 $f22, 24($sp)|jal first|nop|mov.s $f20, $f0|mov.s $f22, $f0|'
+         'jal second|nop|bnez $v0, .Lelse|nop|mov.s $f0, $f20|mov.s $f0, $f22')
+MULT = 'lhu $v0, 4($a0)|mult $v1, $v0|mflo $v0'
+PACKED = '|'.join(f'{op} $t{i}, {off}({base})' for i in range(3)
+                  for op,off,base in (('lwl',4*i,'$a0'),('lwr',4*i+3,'$a0'),
+                                      ('swl',4*i,'$sp'),('swr',4*i+3,'$sp')))
+ZERO = ('mtc1 $zero, $f20|swc1 $f20, 0($a0)|swc1 $f20, 4($a0)|bnez $a1, .Lloop|nop|'
+        'swc1 $f20, 16($sp)|jal take|nop')
+STORE = 'beql $a0, $zero, .Lstore|andi $v0, $a1, 0xffff|sh $v0, 4($a0)|jr $ra|nop'
+KEY = ('srl $v0, $a0, 24|lbu $v1, 0($a1)|sll $v1, $v1, 8|lbu $a2, 1($a1)|'
+       'sll $a2, $a2, 16|or $v0, $v0, $v1|or $v0, $v0, $a2')
+INTERLEAVE = ('lwc1 $f2, 0($a0)|sh $zero, 4($a0)|sh $zero, 6($a0)|sub.s $f2, $f2, $f0|swc1 $f2, 0($a0)')
+ADDRESS = ('addiu $a0, $at, %lo(base)|jal first|nop|nop|addiu $a0, $at, %lo(base)|jal second|nop')
+
+CASES = [
+    ('continue_edge_increment',
+     'void f(int n,int cond,int *p) { int i; for (i=0;i<n;i++) { if (cond) { continue; } p[i]=1; } }',
+     pair(EDGE,EDGE.replace('bnel $a0, $zero,','bnez $a0,').replace('addiu $s0, $s0, 1','andi $v0, $s0, 255')),
+     assembly('.Lbody:|'+EDGE.replace('|bne $s0','|.Ltest:|bne $s0')), 'i++; goto repair_check_next;',
+     'continue;', 'break;'),
+    ('float_call_result_parameter_reuse',
+     'float first(float); float second(float); float f(float a,float b) { float r,t; r=first(a); t=second(b); '
+     'a=r; if (t>0) return a; return r; }',
+     pair(FLOAT,FLOAT.replace('sdc1 $f22, 24($sp)','nop').replace('$f22','$f20')),
+     '', 'a = first(a); r = a;', 'second(b)','second(a)'),
+    ('narrow_multiply_operand',
+     'struct S { unsigned short scale; }; int f(struct S *p,int low) { int v; v=p->scale; v=low*v; return v; }',
+     pair(MULT,MULT.replace('mult $v1, $v0','mult $v0, $v1')),
+     '', 'unsigned short repair_scale = p->scale;', 'unsigned short scale','unsigned int scale'),
+    ('remove_duplicate_unsigned_double_bias',
+     'double f(unsigned int u) { double v; v=(double)u; if ((int)u < 0) { v+=4294967296.0; } return v; }',
+     pair('cvt.d.w $f0, $f0|bgez $a0, .Ltest|nop|nop|nop|ldc1 $f2, 0($a1)|add.d $f0, $f0, $f2',
+          'cvt.d.w $f0, $f0|bgez $a0, .Ltest|ldc1 $f2, 0($a1)|add.d $f0, $f0, $f2|nop|'
+          'ldc1 $f2, 0($a1)|add.d $f0, $f0, $f2'),
+     '', '(double)(int)u', '4294967296.0','4294967295.0'),
+    ('packed_unaligned_record_copy',
+     'extern const unsigned char src[20]; void f(void) { unsigned char dst[20]; '
+     '*(u32 *)(dst+1)=*(const u32 *)(src+1); *(u32 *)(dst+5)=*(const u32 *)(src+5); '
+     '*(u32 *)(dst+9)=*(const u32 *)(src+9); use(dst); }',
+     pair(PACKED,PACKED.replace('swl','sw').replace('swr','sh')),
+     '', '__attribute__((packed))', 'src[20]','src[10]'),
+    ('float_zero_loop_and_call',
+     'struct S { float x,y; }; void take(int,int,int,int,float); void f(struct S *p,int n) { int i; '
+     'for (i=0;i<n;i++) { p[i].x=0.0f; p[i].y=0.0f; } take(1,2,3,4,0.0f); }',
+     pair(ZERO,ZERO.replace('swc1 $f20, 16($sp)','sw $zero, 16($sp)')),
+     '', 'take(1,2,3,4,repair_zero)', 'int,int,int,int,float','int,int,int,int,int'),
+    ('shared_store_branch_polarity',
+     'void f(int x,int n,short *p) { int v; if (x == 0) { v=n&7; goto join; } v=n&3; join: *p=v; }',
+     pair(STORE,STORE.replace('beql','bnel').replace('andi $v0, $a1','andi $v0, $a2')),
+     assembly(STORE.replace('|sh','|.Lstore:|sh')), 'if (x != 0) { v=n&3;', 'x == 0','x < 0'),
+    ('interleaved_packed_key',
+     'unsigned int f(unsigned int w,const unsigned char *p) { unsigned int k; '
+     'k=(w>>24)|((p[0])<<8)|((p[1])<<16); return k; }',
+     pair(KEY,'srl $v0, $a0, 24|lbu $v1, 0($a1)|lbu $a2, 1($a1)|sll $v1, $v1, 8|'
+          'sll $a2, $a2, 16|or $v0, $v0, $v1|or $v0, $v0, $a2'),
+     '', 'repair_key_1 <<= 8;', '<<16','<<15'),
+    ('interleaved_float_field_update',
+     'struct S { float x; unsigned short y,z; }; void f(struct S *p,float d) { p->x-=d; p->y=1; p->z=2; }',
+     pair(INTERLEAVE,'lwc1 $f2, 0($a0)|sub.s $f2, $f2, $f0|swc1 $f2, 0($a0)|sh $zero, 4($a0)|sh $zero, 6($a0)'),
+     '', 'repair_field -= d;', 'p->z=2','p->x=2'),
+    ('adjacent_symbol_second_call',
+     'extern char neighbor; extern char base; void f(void) { first(&base); second(&base); }',
+     pair(ADDRESS,ADDRESS.replace('|nop|addiu $a0, $at, %lo(base)|jal second',
+                                   '|sw $s0, 16($sp)|move $a0, $s0|jal second')),
+     '', '(unsigned int)&neighbor + 4U', 'extern char neighbor;', 'extern char far;'),
+]
+
+
+def route(source,diff,asm,*,compiler='gcc-2.7.2-kmc',resolve=None,flags=()):
+    if resolve is None:
+        resolve = {'base':0x80001004,'neighbor':0x80001000,'far':0x80002000}.get
+    return proposals(source,'f','','mips',compiler,diff,asm,big_endian=True,resolve=resolve,flags=flags)
+
+
+@pytest.mark.parametrize('case',CASES,ids=[case[0] for case in CASES])
+def test_measured_gate_and_source(case):
+    family,source,diff,asm,expected,old,new = case
+    found = [result for kind,result in route(source,diff,asm) if kind==family]
+    assert len(found)==1 and expected in found[0]
+    assert family not in {kind for kind,_ in route(source.replace(old,new),diff,asm)}
+    assert family not in {kind for kind,_ in route(source,[(' ',a,a) for _,a,_ in diff],asm)}
+    assert family not in {kind for kind,_ in route(source,diff,asm,compiler='ido-5.3')}
+
+
+def test_packed_copy_respects_strict_aliasing():
+    family,source,diff,asm,*_ = CASES[4]
+    assert family not in {kind for kind,_ in route(source,diff,asm,flags=('-fstrict-aliasing',))}
+
+
+def test_neighbor_must_resolve_to_an_equal_address_with_the_offset():
+    family,source,diff,asm,*_ = CASES[-1]
+    assert family not in {kind for kind,_ in route(source,diff,asm,resolve={'base':0x80001004}.get)}
