@@ -20,6 +20,23 @@ const row={region:'40-80',index:0,sample,asset,name:'Synthetic · 1'};
  {const t=setup();const samples=[{...sample,label:'Sample 1'},{...sample,offset:2000,label:'Sample 2'}];
  t.c.report={regions:[{id:'bank',kind:'audio',detected_asset:{...asset,samples}}]};
  assert.equal(t.run('romAudioRows(report).map(row=>row.name).join(",")'),'Synthetic · Sample 1,Synthetic · Sample 2');}
+ {const t=setup();t.c.view.report.regions=[{id:'music',kind:'music sequence',detected_asset:{
+   offset:64,media:'audio',label:'USO music sequences',samples:[
+     {offset:64,size:32,codec:'Nintendo EAD sequence',label:'Sequence 0',preview_available:true},
+     {offset:96,size:32,codec:'Nintendo EAD sequence',label:'Sequence 4',preview_available:true},
+   ]}}];
+ delete t.c.view.audio;
+
+ t.run('renderRomAudioBrowser()');
+ assert.match(t.c.$('romAudioItems').innerHTML,/Sequence 4.*Nintendo EAD sequence.*Prepare audio/);
+ const playing=t.run('prepareRomAudio(romAudioRows(view.report)[1])');
+ assert.equal(t.calls[0].options.body.region,'music');
+ assert.equal(t.calls[0].options.body.options.sample,1);
+ assert.equal(t.calls[0].options.body.options.rate,undefined);
+ t.calls[0].pending.resolve({data_url:'data:audio/wav;base64,WAV',details:{rate:22050,seconds:30,truncated:true,skipped_notes:2}});
+ await playing;
+ assert.equal(t.c.$('romAudioResult').children[0].controls,true);
+ assert.match(t.c.$('romAudioResult').children[1].textContent,/Sequence 4.*truncated preview.*2 note events/);}
  {const t=setup();const dean={...sample,rate:11025,codec:'Acclaim DEAN',samples:null,preview_available:false};
  delete t.c.view.audio;
  t.c.view.report.regions=[{id:'dean',kind:'audio',detected_asset:{...asset,rate_basis:null,samples:[dean]}}];
