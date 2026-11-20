@@ -105,7 +105,7 @@ function romTextureBanks(report) {
     for(const name of row.traced_function_refs || [])bank.traced.add(name);
   }
   return [...banks.values()].map(bank=>({...bank,direct:[...bank.direct].sort(),traced:[...bank.traced].filter(name=>!bank.direct.has(name)).sort(),
-    format:bank.asset.layout==='mipmap-rgba16' ? 'RGBA16 mipmap' : bank.asset.preview_settings?.format || bank.asset.format || bank.asset.label,
+    format:bank.asset.layout==='mipmap-rgba16' ? 'RGBA16 mipmap' : bank.asset.preview_settings?.display_format || bank.asset.preview_settings?.format || bank.asset.format || bank.asset.label,
     width:bank.asset.preview_settings?.width || bank.asset.width,height:bank.asset.preview_settings?.height || bank.asset.height}));
 }
 function stopRomTextureGallery() {

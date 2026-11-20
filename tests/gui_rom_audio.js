@@ -22,4 +22,7 @@ context.body._romAssetBusy=true;controls.get('[data-audio-sample]').onchange();a
 context.body._romAssetBusy=false;active=false;controls.get('[data-audio-sample]').onchange();assert.equal(prepared,1);
 context.region.detected_asset.samples=[];
 assert.ok(!vm.runInContext('romAudioHTML(region)',context).includes('data-audio-sample'));
+context.region.detected_asset={media:'audio',audio_kind:'indexed speech',label:'Speech bank',
+ samples:[{offset:64,size:20,codec:'Speech',preview_available:false}]};
+assert.match(vm.runInContext('romAudioHTML(region)',context),/Speech bank.*Playback is unavailable/);
 console.log('Native audio selection, evidence labels and no-autoplay guards passed');

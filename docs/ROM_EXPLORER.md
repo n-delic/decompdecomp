@@ -564,3 +564,12 @@ a checked expanded-program byte match with consistent imported segment mappings.
 overlays, incomplete glyphs and unnamed consumers do not classify a font. The atlas preserves
 four-bit intensity and exposes digit/alphabet order; runtime color ramps and text effects
 remain outside this preview. PSF2 detection and portable text/pointer inspection remain shared.
+
+### Eurocom EDL archives
+
+ROM Explorer recognizes the relative model and level index and exposes its texture,
+model and companion resource tables. The Texture browser previews indexed images
+with their stored palettes. The Model browser previews local meshes from supported
+commands. Animation and scene indices expose record locations and metadata. The
+dialogue tables expose localized strings. MusyX samples and MORT speech clips are
+listed in Audio browser. These audio records can be inspected while playback is unavailable.
