@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ...rom import Picked, RomError
 from .. import EXPORT, RECOMMENDED, ROM, Compiler, Console
-from . import emulator, recomp
+from . import emulator, recomp, sdk_assembly
 from .port import KIT as PORT_KIT
 
 # Store only a digest of the entire body, including the return delay slot.
@@ -203,15 +203,14 @@ class Nintendo64(Console):
             return "Exact signature of the low-word-first 64-bit multiply assembly helper."
         return super().asm_reason(code)
 
-    sdk_assembly_sizes = (160,272)
+    sdk_assembly_sizes = sdk_assembly.SIZES
     # libultra 2.0I-2.0L as decompals/ultralib rebuilds it, so a user without the SDK still has its library found
     sdk_table = str(Path(__file__).with_name("ultralib_signatures.tsv"))
     # n_audio (libgn_audio.a 2.0J-2.0L), which ultralib doesn't rebuild: the SDK archives' fingerprints and names
     sdk_tables = (str(Path(__file__).with_name("naudio_signatures.tsv")),)
 
     def sdk_assembly_identity(self, code, big_endian=True):
-        from .sdk_assembly import identify
-        return identify(code,big_endian)
+        return sdk_assembly.identify(code, big_endian)
 
     def read_game(self, file, name: str = "") -> Picked:
         from .rom import read_info
