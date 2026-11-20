@@ -168,10 +168,10 @@ def register(app: App) -> None:
             if request.method=='GET':
                 state=await app.read(room_reconcile.snapshot,room) if room else None
                 if (state and state['active'] and any(r['status'] in ('queued','verifying') for r in state['results'].values())
-                        and not reconciliation_job()):
+                        and not await app.read(reconciliation_job)):
                     await app.read(start_reconciliation)
                 return JSONResponse({'rows':await app.read(room_matches.public,net,slug),'guest':slug in net.links,
-                                     'reconciliation':state,'reconcile_job':reconciliation_job()})
+                                     'reconciliation':state,'reconcile_job':await app.read(reconciliation_job)})
             if data.get('reconcile'):
                 if not room or slug in net.links:
                     raise NetworkError('Start sharing this project from the host before reconciling room matches.')

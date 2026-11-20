@@ -50,7 +50,8 @@ def register(app: App) -> None:
                 slug = request.query_params.get('slug')
                 state = await call(lambda: sdk_library.state(net, slug))
                 # a returning panel follows the check it started (a fresh window too)
-                return JSONResponse({**state, 'job': (jobs.active(('sdk-set-aside',), project=slug) or {}).get('id')} if slug else state)
+                running = await app.control(lambda: jobs.active(('sdk-set-aside',), project=slug)) if slug else None
+                return JSONResponse({**state, 'job': (running or {}).get('id')} if slug else state)
             data = await body(request)
             if data.get('slug'):
                 await call(lambda: sdk_library.choose(net, str(data['slug']), data.get('selection')))
@@ -64,7 +65,7 @@ def register(app: App) -> None:
                             n = sdk_assembly.discover_c(net, net.project_row(slug), log.cancel_event, log.progress)
                             log(f'{n} library functions found by library detection were set aside from C matching.')
                             return {'set_aside': n}
-                        running = jobs.active(('sdk-set-aside',), project=slug)  # a second click follows the first
+                        running = await app.control(lambda: jobs.active(('sdk-set-aside',), project=slug))  # a second click follows the first
                         job = running['id'] if running else await app.control(lambda: jobs.start('sdk-set-aside', check, project=slug))
                 purpose_work, sdk_names = await app.imports('decompnet.app', ('purpose_work', 'sdk_names'))
                 await app.control(lambda: purpose_work.start('SDK function naming', slug, sdk_names.name_functions, net, slug))
