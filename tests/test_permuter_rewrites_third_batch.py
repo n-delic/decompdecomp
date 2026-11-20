@@ -40,7 +40,9 @@ FAMILIES = ('assignment_at_use', 'comparison_sides', 'narrow_shift_pair', 'point
             # 0.5.31
             'read_before_assign', 'irregular_case',
             # 0.5.32
-            'unsigned_switch', 'volatile_reload')
+            'unsigned_switch', 'volatile_reload',
+            # 0.5.35
+            'pointer_walk_index')
 FLAGS = ['-G0', '-mips3', '-mgp32', '-mfp32', '-O2']
 HEADER = 'typedef int s32;\ntypedef unsigned int u32;\ntypedef short s16;\ntypedef float f32;\n'
 
@@ -116,3 +118,23 @@ void f(S *arg0, s32 arg1) {
     labels = {}
     out = draft_repairs.variants(source, 'f', 'mips', '', FLAGS, labels, limit=None)
     assert any('switch ((u32)arg1)' in text and labels.get(text) == 'unsigned_switch' for text in out)
+
+
+def test_a_cursor_walk_over_a_global_array_is_offered_as_an_indexed_loop():
+    source = HEADER + '''extern void *D_A;
+void g(void *);
+void f(void) {
+    unsigned long var_s2;
+    void **var_s0;
+    var_s2 = 0;
+    var_s0 = &D_A;
+    do {
+        g(*var_s0);
+        var_s2 += 1;
+        var_s0 += 1;
+    } while (var_s2 < 4U);
+}
+'''
+    labels = {}
+    out = draft_repairs.variants(source, 'f', 'mips', '', FLAGS, labels, limit=None)
+    assert any('g(D_A[var_s2]);' in text and labels.get(text) == 'pointer_walk_index' for text in out)
