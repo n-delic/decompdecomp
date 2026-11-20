@@ -161,7 +161,7 @@ function drawRomLegend(view,rows) {
   $('romTypeLegend').querySelectorAll('[data-rom-color]').forEach(node=>{node.style.background=`var(${node.dataset.romColor})`;});
   $('romMapKey').hidden=false;
 }
-async function openRomRegion(id) {
+async function openRomRegion(id,inspect=false) {
   const slug=S.slug,report=romView(slug).report,epoch=++romDetailEpoch;if(!report || report.stale)return;
   const body=dialog('ROM region','<pre data-rom-detail-work></pre>','rom-region');
   const log=body.querySelector('[data-rom-detail-work]'),finish=beginWork(log,'Reading region',[]);
@@ -173,6 +173,7 @@ async function openRomRegion(id) {
     setupRomAsset(body,r,slug,report.image_hash,active);
     setupRomDiscovery(body,r,slug,report.image_hash,active);
     setupRomGroup(body,r);
+    if(inspect)body.querySelector('[data-asset-preview]').click();
     body.querySelectorAll('[data-rom-function]').forEach(b=>b.onclick=()=>{closeDialog();openFn(b.dataset.romFunction);});
     body.querySelectorAll('[data-rom-destination]').forEach(b=>b.onclick=()=>openRomRegion(b.dataset.romDestination));
     body.querySelector('[data-rom-zoom]').onclick=()=>{romView(slug).zoom=[r.start,r.end];closeDialog();drawRomMap(romView(slug));};

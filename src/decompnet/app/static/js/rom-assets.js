@@ -144,8 +144,14 @@ function renderRomResource(host,preview,onPage=()=>{},active=()=>true,state=host
   if(preview.inspection_warning){const warning=document.createElement('p');warning.className='small muted';warning.textContent=preview.inspection_warning;host.append(warning);}
   if(preview.object_bounds){const bounds=document.createElement('p');bounds.className='small';bounds.textContent='Object bounds: '+preview.object_bounds.minimum.join(', ')+' → '+preview.object_bounds.maximum.join(', ');host.append(bounds);}
   if(preview.material){const material=document.createElement('p');material.className='small';material.textContent='Material: '+Object.entries(preview.material).map(([key,value])=>key.replaceAll('_',' ')+': '+(Array.isArray(value) ? value.join(', ') : String(value))).join(' · ');host.append(material);}
-  const links=(parent,items)=>{for(const item of items || []){const button=document.createElement('button');button.type='button';button.className='link-btn';button.textContent=item.label;button.onclick=()=>{if(active())openRomRegion(item.region);};parent.append(button);}};
+  const links=(parent,items)=>{for(const item of items || []){const button=document.createElement('button');button.type='button';button.className='link-btn';button.textContent=item.label;button.onclick=()=>{if(active())openRomRegion(item.region,item.inspect);};parent.append(button);}};
   links(host,preview.links);
+  if(preview.cutscene_links?.length){
+    const group=document.createElement('details'),heading=document.createElement('summary'),items=document.createElement('div');
+    group.className='rom-flow-chain';items.className='row';
+    heading.textContent='Related cutscene scripts ('+preview.cutscene_links.length+')';
+    links(items,preview.cutscene_links);group.append(heading,items);host.append(group);
+  }
   if(preview.geometry)renderRomModel(host,preview.geometry,active);
   if(preview.font_atlas){
     const atlas=preview.font_atlas,canvas=document.createElement('canvas'),scale=3,cols=8;
