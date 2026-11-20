@@ -8,7 +8,7 @@ from .permuter_focus import normalized
 REGION_INSNS = 16
 
 
-def snapshot(rows, arch=None):
+def snapshot(rows, arch=None, *, symbol=None):
     targets, losses = [], {}
     positions=[];changed=[]
     for row in normalized(rows):
@@ -27,7 +27,7 @@ def snapshot(rows, arch=None):
     if arch:
         from ..arch import get
         reader=get(arch).instruction_regions
-        graph=reader(targets) if reader else None
+        graph=reader(targets, symbol=symbol) if reader and symbol else reader(targets) if reader else None
         if graph and len(targets)>=2:
             loss={};bad=set()
             for position,mismatch in zip(positions,changed):

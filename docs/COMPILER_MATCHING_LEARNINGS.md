@@ -20,8 +20,7 @@ Reverting only the signed-byte carrier restored the shared tail and shortened th
 function by 12 bytes. Removing the word snapshots or making them halfword locals
 lost the masks again. A named unsigned-byte counter temporary also matched. A word
 temporary and the direct addition-to-byte-store form both missed. These are
-retrospective observations on one private function. The table records hand-selected
-checkpoints. Automatic search success remains unmeasured. A size match alone can
+retrospective observations on one private function. The table above records hand-selected checkpoints. A size match alone can
 hide a shortened block and a lengthened block elsewhere in the function. Here the
 constant-pool lookup errors cleared when the instruction offsets lined up.
 
@@ -64,6 +63,41 @@ the call and its delay slot before treating a lower score from an ABI edit as pr
    cases for signed input bytes, byte-counter wrap, loop exits and a three-argument
    call with its last argument in the delay slot. Keep game code and ROM data out
    of the repository. The ordinary linker and data checks decide every match.
+
+#### Controlled deep permuter replay
+
+Stock was app revision `8c1ebacc` with `decomp-repair 0.5.36`. Both versions ran the
+same Deep Permuter entry point with 192 candidate trials, 120 seconds, one
+selected compiler profile, one lane and one compile slot. Each run started in a fresh
+scratch project at its checkpoint with the original flags, shared header,
+target bytes, jump table and referenced ROM constants. The matched source was
+absent from the search inputs.
+
+| Frozen checkpoint | Stock best score and trials | Enhanced best score and trials |
+| --- | --- | --- |
+| 97.5%, score 2,245 | 1,890 after 192, open | **0 after 74**, matched |
+| Final scheduling, score 150 | 150 after 192, open | **0 after 61**, matched |
+
+The enhanced runs used 97 and 84 compiler invocations through the first exact result,
+including compiler and source preflight work. The early run saved scores 1,625,
+1,145, 1,085 and 70 on its way to zero.
+The scalar index rewrite earned a continuation by recovering target blocks
+despite raising the whole-function score. Recompiling a staged counter on that
+branch recovered the delay-slot schedule. The late run paired the staged
+counter with removal of an explicit volatile cast on the ordinary distance
+field. That latter hypothesis can only be saved after an exact result. Both
+matches passed a fresh check of all 3,628 linked instruction bytes and referenced
+data, including the original three-argument call. Stock's early search first
+saved the unsupported fourth argument. The new automatic gate checks the
+incoming register value through the delay slot on a proven entry path and
+declines calls with conflicting known declarations.
+
+Target branches written as local labels and jumps written as offsets from the
+current symbol now stay in the control-flow comparison. The search can also
+merge disjoint source changes when separately judged siblings restore distinct
+target blocks. A merged candidate must pass the source guards again and be
+judged as a whole. Handmade tests cover that path. This replay shows recovery
+from two checkpoints of one function.
 
 
 ### KMC GCC 2.7.2: narrow subtraction followed by a parameter-carrier cycle

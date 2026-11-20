@@ -57,7 +57,10 @@ s32 f(s32 arg0, s32 arg1, s32 arg2) {
     return 1;
 }
 '''
-    assert any('g(arg0, 5, arg2, arg1);' in t for t in offered(source, 'passthrough_argument'))
+    asm = 'addiu $a1, $zero, 5\njal g\naddu $a3, $s0, $zero'
+    assert any('g(arg0, 5, arg2, arg1);' in t for t in offered(source, 'passthrough_argument', asm))
+    assert not offered(source, 'passthrough_argument', asm.replace('$a3', '$a2'))
+    assert not offered(source, 'passthrough_argument')
 
 
 def test_the_goto_loop_as_a_do_while():
