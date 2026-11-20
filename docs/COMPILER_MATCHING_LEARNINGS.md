@@ -1,6 +1,71 @@
 # Compiler matching learning log
 
 
+### KMC GCC 2.7.2: switch case lifetimes, widened loop indices and a staged byte update
+
+The N64 function `func_8001E640` started from a saved 97.5% candidate with the verified
+three-argument `str_ncat` call. All stages used `gcc-2.7.2-kmc` with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
+| Source change | Running app score | What changed in the compiler output |
+| --- | ---: | --- |
+| Saved, call-correct starting point | 2,245 | The function had the right total size, with a shared switch tail and differences in three loops and the record setup. |
+| Reuse one signed-byte local for two successive character reads in one switch case. Finish each subtraction before loading the next byte. | 1,625 | The two switch cases got distinct shift-register assignments, so GCC stopped sharing their tails. The switch and all 24 linked jump-table entries matched. |
+| In both affected loops, store the unsigned conversion result with the current halfword index. Save that index in a word local before reading the flag, use it for the remaining stores, and increment the halfword counter at the loop latch. | 1,145 | Both loops recovered the target's halfword masks on the float-conversion paths and the original store schedule. |
+| Keep a scalar slot index across the calls and use it to address the distance field at its later read. In the other loop, assign the flag field directly before assigning the zero field. | 150 | The linked code had 907 instructions, and all referenced data passed. The remaining differences were register allocation and scheduling around the byte-counter update and the `str_len` delay slot. |
+| Store the increment in an unsigned-halfword local before assigning it to the byte counter. Use the ordinary distance-field store. | 0 | GCC kept the distance address live through the counter update and copied it in the call delay slot. The app accepted and saved all 3,628 linked bytes. |
+
+An isolated replay of the saved C and compiler profile confirmed the final result.
+Reverting only the signed-byte carrier restored the shared tail and shortened the
+function by 12 bytes. Removing the word snapshots or making them halfword locals
+lost the masks again. A named unsigned-byte counter temporary also matched. A word
+temporary and the direct addition-to-byte-store form both missed. These are
+retrospective observations on one private function. The table records hand-selected
+checkpoints. Automatic search success remains unmeasured. A size match alone can
+hide a shortened block and a lengthened block elsewhere in the function. Here the
+constant-pool lookup errors cleared when the instruction offsets lined up.
+
+An automatic `passthrough_argument` trial lowered the display score to 2,060 by
+adding a leading argument to `str_ncat` and widening its candidate-local prototype.
+The target sets up its three arguments, including the length in the call delay slot.
+The extra argument shifted those values to the wrong registers. A quality report linked
+the call-correct revision as the alternative. Check reaching definitions at
+the call and its delay slot before treating a lower score from an ABI edit as progress.
+
+#### Deep permuter follow-up
+
+1. Add small, guarded generators in `decomp-repair`. Start with the signed-byte
+   carrier and the byte-store staging pair using byte and halfword temporaries.
+   Add the halfword loop-index rewrite next. Prove that each rewritten read uses
+   the same iteration and that moving the increment to the latch covers every
+   path. For address captures, save the scalar index and leave the field read at
+   its original use. For field-order changes, require independent fields and
+   evidence for any qualifier change.
+2. Use measured target regions to select those candidates before broad rewrites.
+   Build on `region_repairs` and `search_frontier` in the app. Prefer recovered
+   case and loop blocks even when moved branch destinations or constant-pool
+   references dominate the display diff. Reuse the existing frontier and compile
+   budget. Combine independently measured gains from disjoint edits on the same
+   source revision and recompile the whole function. The existing inert-pair
+   search handles unchanged compiler outputs and short source windows. Repairs
+   in distant loops here need bounded, explicit source spans and a shared
+   declaration when both edits introduce the same local. A block comparison
+   guides the search.
+3. Require evidence for a forwarded argument before an automatic repair can
+   select a candidate that changes arity. Check the caller's entry value at that
+   call site and respect confirmed callee declarations. Include the delay slot.
+   Apply the same gate to the deep permuter and automatic agent local passes,
+   which share the proposal generator. Keep ambiguous sites available for
+   explicit diagnosis.
+4. Replay the call-correct saved checkpoint and the switch, loop and final
+   scheduling checkpoints privately with the original profile. Compare stock and
+   enhanced search at equal compile and time budgets. Track exact verdicts,
+   corrected target regions and compiles to the first exact result. Add handmade
+   cases for signed input bytes, byte-counter wrap, loop exits and a three-argument
+   call with its last argument in the delay slot. Keep game code and ROM data out
+   of the repository. The ordinary linker and data checks decide every match.
+
+
 ### KMC GCC 2.7.2: narrow subtraction followed by a parameter-carrier cycle
 
 The exact V-Rally interpolation case used the original `-G0 -mips3 -mgp32 -mfp32
@@ -8079,3 +8144,41 @@ scored 23,075. A store through a void pointer immediately followed the closing
 brace of a conditional. Recognizing the star as a dereference there allowed
 the existing refinement to cast the store address while preserving byte-based
 pointer arithmetic. Expanding the field macros gave the same linked score.
+
+### Round 20: loop preheader order, a getter twin and unsigned conversion (TWINE, gcc-2.7.2-kmc `-O2`)
+
+Twelve open functions of a 4,000-function N64 game were worked by hand with the game's own KMC
+`-G0 -mips3 -mgp32 -mfp32 -O2`. Three became exact and two improved; all were adopted through Try.
+
+- **A pointer walk whose start comes after the hoisted constants is an indexed loop** (470 → 0, 250 → 0): when the
+  target loads a loop's walking pointer or byte offset *after* the loop invariants gcc hoisted (constants such as `2`,
+  `2.5f` or `0xFFFF`), the pointer is a reduced induction variable of the counter, not a variable the C set before the
+  loop: loop.c emits a reduced giv's start value after the moved invariants. m2c's `p = &table; do { ... p++; }` put the
+  start first. Indexing the array by the counter (`D[i]`) or writing the byte offset from it (`*(T **)((i << 2) + D)`)
+  matched. In the second case `D + i * 4` (and `D[i]` on a typed array) still scored 415: only the shift-left form kept
+  the `lui; addu; lw %lo(D)` address shape.
+- **A sentinel constant reloaded for an inner loop comes from a `while` loop** (250 → 60 on the way to the match
+  above): when the target compares against `0xFFFF` with one register before an inner loop and loads `0xFFFF` again for
+  the inner loop's own test, the inner loop was `while ((v = *p) != 0xFFFF)`, not m2c's `if (v != 0xFFFF) do { }
+  while (...)`, whose two tests share one register.
+- **A getter twin of a matched setter** (635 → 0): a draft adapted from a setter in the same family was a different
+  function. The target ended in `lhu` of a field at 0xFC6 and returned it; the matched family's inline find helper plus
+  `return table[i].field;` matched at once. Read the target's last loads before trusting an adapted draft.
+- **`u32` from `f64` explains the "frame with no stores"** (1480 → 200): a leaf that allocates 8 bytes of stack it never
+  uses, with a `c.le.d` against a rodata constant and `| 0x80000000` on one arm, is gcc's expansion of a double-to-
+  unsigned conversion (`field = (u32)time;`). Writing the conversion out with the game's constant symbol scored worse
+  (1130–1220: no frame, the `0x80000000` in another register). The remaining 200 is where the table pointer is
+  loaded relative to the hoisted constants; the global pointer (not an array) can't be a reduced giv, since stores
+  through it may alias it.
+- **Two divisions kept apart** (1470 → 100): `rate * D / 1000 / 192` folds into one `/192000`; the game divides by
+  1000 into a `u32` local and then by 192 (`size = size / 192 * 192 + 192`). A signed local gives `sra` rounding fixes
+  (955). The last 100 is the size and the allocated record swapping `$s1`/`$s2`; declaration order, `register` and
+  moving the stores didn't change it.
+
+Tried without gain: an offset register copied at a loop's join (`move $a1, $v1`, 215; arrays, `s32`, scalings and
+goto forms); a leaf with an unused 0x18-byte frame computing a spherical vector (875; struct/array locals, operand
+orders: 1255–2805); a loop whose stored-through pointer splits into two induction variables (670); an RSP task setup
+where the game rematerialises a symbol after a subtraction (515); an inline check whose return value lives in `$a1`
+(640; nested ifs and gotos 850); a DMA call whose last stack argument is reloaded through the counter pointer after
+the previous stack store (615; `*p` gets CSE'd, 1370); and a switch whose `j` delay slots the game fills with the
+loads before them (600).

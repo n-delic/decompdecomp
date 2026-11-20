@@ -2040,18 +2040,36 @@ def test_progress_read_restarts_whole_snapshot_when_a_listed_file_disappears(tmp
     metadata.write_text('old manifest')
     disappearing = folder / 'best' / 'gone.c'
     disappearing.write_text('old candidate')
-    original = Path.lstat if phase == 'stat' else Path.read_text
     calls = []
 
-    def interrupted(path, *args, **kwargs):
-        if path == disappearing and not calls:
-            calls.append(1)
-            disappearing.unlink()
-            metadata.write_text('new manifest')
-            raise FileNotFoundError(errno.ENOENT, 'removed during snapshot', str(path))
-        return original(path, *args, **kwargs)
+    def remove():
+        calls.append(1)
+        disappearing.unlink()
+        metadata.write_text('new manifest')
 
-    monkeypatch.setattr(Path, 'lstat' if phase == 'stat' else 'read_text', interrupted)
+    if phase == 'stat':
+        original_scan = os.scandir
+
+        @contextlib.contextmanager
+        def after_listing(scan):
+            def entries():
+                for entry in scan:
+                    if Path(entry.path) == disappearing and not calls:
+                        remove()
+                    yield entry
+            with scan:
+                yield entries()
+
+        monkeypatch.setattr(os, 'scandir', lambda parent: after_listing(original_scan(parent)))
+    else:
+        original_read = Path.read_text
+
+        def interrupted_read(path, *args, **kwargs):
+            if path == disappearing and not calls:
+                remove()
+            return original_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, 'read_text', interrupted_read)
     assert _read(folder) == {saves.MANIFEST:'new manifest'}
     assert calls == [1]  # No partially read old manifest survives the retry.
 
@@ -2145,6 +2163,33 @@ def test_set_aside_verdict_updates_preserve_unrelated_matches(project):
     net.progress=Progress(net)
     assert not net.progress.sync('game',force=True)
     assert judged==[]
+
+
+def test_restore_batches_set_aside_rows_and_keeps_same_address_overlays_separate(project):
+    net, _, _ = project
+    store = net.project_store('game')
+    pid = net.project_row('game', sync=False)['id']
+    with store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram) VALUES(?,'overlay',4096)", (pid,))
+        db.execute('CREATE TABLE restored_updates(name TEXT)')
+        db.execute("CREATE TRIGGER record_restore AFTER UPDATE OF status,meta ON functions "
+                   "BEGIN INSERT INTO restored_updates VALUES(NEW.name); END")
+    items = [
+        {'name': 'f', 'vram': 4096, 'asm_code': 'first overlay'},
+        {'name': 'unknown overlay', 'vram': 4096, 'asm_code': 'ambiguous'},
+        {'name': 'former g', 'vram': 4100, 'asm_code': 'unique address'},
+        {'name': 'g', 'vram': 4100, 'not_c': {'model': {'why': 'second record'}}},
+    ]
+    saves._restore_set_aside(store, pid, items)
+    rows = {row['name']: row for row in store.all('SELECT name,status,meta FROM functions')}
+    assert json.loads(rows['f']['meta'])['asm_code'] == 'first overlay'
+    assert rows['overlay']['status'] == 'open'
+    assert rows['g']['status'] == 'asm'
+    assert json.loads(rows['g']['meta']) == {
+        'asm_code': 'unique address', 'not_c': {'model': {'why': 'second record'}},
+    }
+    saves._restore_set_aside(store, pid, items)
+    assert [row['name'] for row in store.all('SELECT name FROM restored_updates ORDER BY rowid')] == ['f', 'g']
 
 
 def test_saved_verdict_notes_and_list_order_are_not_shared_linking_inputs():

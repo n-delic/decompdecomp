@@ -24,7 +24,22 @@ def test_applicable_families_one_snapshot_and_budget(tmp_path,monkeypatch,mode):
     monkeypatch.setattr('decompnet.app.agent_evidence.preflight',lambda *args:None)
     _,rev=agent_tokens.candidate(net,a,'game','f')
     args={'function':'f','revision':rev,'families':['signedness','declaration_order'],'max_trials':2}
-    result=tools.call(net,a,'game','try_local_repairs',args)
+    write_batches = []
+    transaction = 0
+
+    def trace(sql):
+        nonlocal transaction
+        if sql == 'BEGIN IMMEDIATE':
+            transaction += 1
+        if sql.startswith('INSERT OR IGNORE INTO agent_family_targets') and "'local:" in sql:
+            write_batches.append(transaction)
+
+    net.store.conn.set_trace_callback(trace)
+    try:
+        result=tools.call(net,a,'game','try_local_repairs',args)
+    finally:
+        net.store.conn.set_trace_callback(None)
+    assert len(write_batches) == 2 and len(set(write_batches)) == 1
     assert len(seen)==2 and '1: signedness, 2: declaration_order' in result, result
     assert 'starting candidate retained' in result
     assert agent_tokens.candidate(net,a,'game','f')[0]==source
@@ -35,6 +50,46 @@ def test_applicable_families_one_snapshot_and_budget(tmp_path,monkeypatch,mode):
         local_experiments.run(net,a,'game','f','stale',max_trials=2)
     assert len(seen)==3
     assert 'try_local_repairs' in tools.project_tools(net,'game')
+
+
+@pytest.mark.parametrize('exact_after_wait', [False, True])
+def test_repair_budget_includes_variant_preflight(tmp_path, monkeypatch, exact_after_wait):
+    from types import SimpleNamespace
+
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('solver')
+    source = 'int f(){return 1;}'
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?', (json.dumps({'kind': 'rom', 'compiler': {'toolchain': 'example', 'flags': []}}),))
+        db.execute('UPDATE functions SET best_source=?', (source,))
+    fn = net.claim_row(agent, 'game', 'f')
+    _, revision = agent_tokens.candidate(net, agent, 'game', 'f')
+    key = (agent.id, fn['id'])
+    net._local_trial_observations = {key: [{'score': 3}]}
+    now = 0
+    checks = 0
+
+    def preflight(*args):
+        nonlocal now, checks
+        checks += 1
+        if checks == 2:
+            now = 6
+            return {'exact': True} if exact_after_wait else None
+        return None
+
+    clock = SimpleNamespace(monotonic=lambda: now)
+    monkeypatch.setattr(local_experiments, 'time', clock)
+    monkeypatch.setattr(agent_tokens, 'time', clock)
+    monkeypatch.setattr(local_experiments.agent_evidence, 'preflight', preflight)
+    monkeypatch.setattr(local_experiments, 'available',
+                        lambda *a, **kw: {'signedness': [source.replace('return 1', 'return 2')]})
+    monkeypatch.setattr(tools, '_compile', lambda *a: pytest.fail('The batch deadline already passed'))
+
+    result = local_experiments.run(net, agent, 'game', 'f', revision, ['signedness'], seconds=5)
+    assert checks == 2
+    assert 'No variants submitted' in result and '5-second batch budget reached' in result
+    assert net._local_trial_observations[key] == []
+    assert not net.store.all('SELECT 1 FROM agent_family_targets')
 
 
 @pytest.mark.parametrize('bad',[0,7,True,1.5])

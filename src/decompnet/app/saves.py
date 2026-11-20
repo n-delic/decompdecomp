@@ -1283,15 +1283,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                        (pid, symbol["name"], symbol["address"], symbol.get("size", 0), symbol.get("kind", "data")))
     net._syms.pop(pid, None)
-    with store.tx() as db:
-        for item in manifest.get("set_aside") or []:
-            # A synced layout can already have set it aside before this runs; its reason still has to come back.
-            row = _set_aside_row(db, pid, item)
-            if row is None:
-                continue
-            why = restored_aside(item)
-            meta = json.loads(row["meta"] or "{}") | why
-            db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?", (json.dumps(meta), row["id"]))
+    _restore_set_aside(store, pid, manifest.get("set_aside") or [])
 
     def setup(cfg):
         if manifest.get("compiler") and toolchains.installed(manifest["compiler"].get("toolchain") or "") is not None:
@@ -1361,13 +1353,6 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) "
                        "VALUES(?,?,?,?,?,?,?)", (pid, functions.get(name), agents[author], note["text"],
                                                at, before, after))
-    with store.tx() as db:
-        for item in manifest.get("set_aside") or []:
-            row = _set_aside_row(db, pid, item)
-            if row is not None:
-                why = restored_aside(item)
-                db.execute("UPDATE functions SET status='asm', meta=? WHERE id=?",
-                           (json.dumps({**json.loads(row["meta"] or "{}"), **why}), row["id"]))
     by_name = {r["name"]: r for r in store.all("SELECT name,vram FROM functions WHERE project_id=?", pid)}
     return by_name, manifest.get("functions") or {}
 
@@ -1627,15 +1612,39 @@ def _layout_matches_db(net, project_id: int, layout: list[dict]) -> bool:
                and by_name[entry["name"]]["size"] == entry["size"] for entry in layout)
 
 
-def _set_aside_row(db, project_id: int, item: dict):
-    """The function a saved set-aside entry names, never another overlay's function at the same address."""
-    row = db.execute("SELECT id,meta FROM functions WHERE project_id=? AND name=? AND vram=? "
-                     "AND status IN ('open','asm')", (project_id, item["name"], item["vram"])).fetchone()
-    if row is not None:
-        return row
-    rows = db.execute("SELECT id,meta FROM functions WHERE project_id=? AND vram=? "
-                      "AND status IN ('open','asm') ORDER BY id", (project_id, item["vram"])).fetchall()
-    return rows[0] if len(rows) == 1 else None
+def _restore_set_aside(store, project_id: int, items: list[dict]) -> None:
+    """Restore reasons in one pass. Name wins at a shared address; only a unique candidate can stand in."""
+    if not items:
+        return
+    addresses = sorted({item["vram"] for item in items})
+    with store.tx() as db:
+        rows = db.execute(
+            "SELECT id,name,vram,status,meta FROM functions WHERE project_id=? "
+            "AND status IN ('open','asm') AND vram IN (SELECT value FROM json_each(?))",
+            (project_id, json.dumps(addresses))).fetchall()
+        by_address = {}
+        for row in rows:
+            by_address.setdefault(row["vram"], {})[row["name"]] = row
+        pending = {}
+        for item in items:
+            candidates = by_address.get(item["vram"], {})
+            row = candidates.get(item["name"])
+            if row is None and len(candidates) == 1:
+                row = next(iter(candidates.values()))
+            if row is None:
+                continue
+            identity = row["id"]
+            # A layout can already mark the function as assembly. Keep the
+            # reason, but avoid dirtying an unchanged row on every import.
+            meta = pending.get(identity)
+            if meta is None:
+                meta = json.loads(row["meta"] or "{}")
+            merged = meta | restored_aside(item)
+            if row["status"] != "asm" or merged != meta:
+                pending[identity] = merged
+        if pending:
+            db.executemany("UPDATE functions SET status='asm',meta=? WHERE id=?",
+                           [(json.dumps(meta), identity) for identity, meta in pending.items()])
 
 
 def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:

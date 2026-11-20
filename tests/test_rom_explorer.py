@@ -433,3 +433,23 @@ def test_a_fork_with_one_config_per_release_reads_the_one_that_splits_its_game(t
     config=ForkProject(root,create_state=False).splat_config_for(root/'config'/'eur'/'baserom.eur.z64',None)
     assert config and config['options']['target_path']=='config/eur/baserom.eur.z64'
     assert [(i['name'],i['offset']) for i in config_images.images(config)]==[('first',0x200),('second',0x210)]
+
+
+def test_dialogue_preview_links_open_verified_targets_only():
+    from decompnet.app.rom_explorer import _resource_links
+
+    script = dict(offset=0, label='Dialogue', resource_type='dialogue', directory_offset=0,
+                  cutscene_resources=[dict(offset=40, label='intro.ncs'), dict(offset=60, label='missing.ncs')])
+    translation = dict(offset=10, label='Translation', resource_type='dialogue', directory_offset=0)
+    stream = dict(offset=20, audio_kind='dean stream')
+    other = dict(offset=30, audio_kind='other stream')
+    cutscene = dict(offset=40, layout='scene-records', label='NCS cutscene commands')
+    regions = [dict(id=str(a['offset']), start=a['offset'], end=a['offset'] + 10, detected_asset=a)
+               for a in (script, translation, stream, other, cutscene)]
+    result = dict(table=dict(rows=[dict(audio_offset=20), dict(audio_offset=30), {}]))
+    _resource_links(result, script, dict(regions=regions))
+    assert result['table']['rows'][0]['links'] == [
+        dict(label='Open voice audio', region='20', offset=20, inspect=True)]
+    assert all(not row['links'] for row in result['table']['rows'][1:])
+    assert result['links'] == [dict(label='Translation', region='10', offset=10)]
+    assert result['cutscene_links'] == [dict(label='intro.ncs', region='40', offset=40, inspect=True)]

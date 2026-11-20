@@ -809,8 +809,11 @@ def local_family(net, agent, slug, function, revision, family, old='', declarati
         return (f'Selected declaration {declaration}.\n' if declaration else '') + result
 
 
-def variants(net, agent, slug, function, revision, patches, family="explicit patches", *, seconds=60, provenance_kind='agent batch', variant_families=None):
-    """Independent alternatives against one snapshot, never a cumulative patch chain."""
+def variants(net, agent, slug, function, revision, patches, family="explicit patches", *, seconds=60, deadline=None, provenance_kind='agent batch', variant_families=None):
+    """Independent alternatives against one snapshot, with one deadline across preparation and trials."""
+    if deadline is None:
+        deadline = time.monotonic() + seconds
+    budget_reached = f'{seconds:g}-second batch budget reached. Resume with the current revision.'
     from . import agent_evidence
     from .tools import _compile
     if not isinstance(patches, list) or not 1 <= len(patches) <= 6:
@@ -820,11 +823,21 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
         source, actual = candidate(net, agent, slug, function)
         if revision != actual:
             raise stale(net,agent,fn,revision,source,actual,patches[0].get('old','') if isinstance(patches[0],dict) else '')
+        observations = []
+        if not hasattr(net,'_local_trial_observations'):
+            net._local_trial_observations = {}
+        net._local_trial_observations[agent.id,fn['id']] = observations
+        while len(net._local_trial_observations)>64:
+            del net._local_trial_observations[next(iter(net._local_trial_observations))]
+        if time.monotonic() >= deadline:
+            return 'No variants submitted. ' + budget_reached
         checked = None
         if family != 'explicit patches':
             checked = agent_evidence.preflight(net,agent,slug,fn,source)
             if checked and checked.get('error'):
                 return agent_evidence.blocked_message(checked, actual)
+            if time.monotonic() >= deadline:
+                return 'No variants submitted. ' + budget_reached
             if checked and checked.get('exact'):
                 return _compile(net,agent,slug,function,source)
         candidates = []
@@ -842,12 +855,6 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
                                'Correct these variants against the same starting candidate; patches are independent, not cumulative.')
         results = ['Independent variants against revision '+revision+' (not cumulative):']
         last = None
-        observations = []
-        if not hasattr(net,'_local_trial_observations'):
-            net._local_trial_observations = {}
-        net._local_trial_observations[agent.id,fn['id']] = observations
-        while len(net._local_trial_observations)>64:
-            del net._local_trial_observations[next(iter(net._local_trial_observations))]
         groups = {}
         scores = []
         choices = []
@@ -863,6 +870,8 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
             if verified:
                 baseline=verified
                 if verified.get('exact'):
+                    if time.monotonic() >= deadline:
+                        return 'No variants submitted. ' + budget_reached
                     return _compile(net,agent,slug,function,source)
         if baseline and baseline['score'] is not None:
             choices.append((baseline['score'],source,baseline,0))
@@ -873,10 +882,11 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
                 f"{i}: "+'\n'.join(list(difflib.unified_diff(source.splitlines(),text.splitlines(),n=0,lineterm=''))[2:14])[:600]
                 for i,text in enumerate(candidates,1)))
         durable_scope=target_scope(net,fn,'')
-        began = time.monotonic()
         for i, src in enumerate(candidates, 1):
-            if last is not None and time.monotonic() - began >= seconds:
-                results.append(f'Stopped before the next trial: {seconds:g}-second batch budget reached. Resume with the current revision.')
+            if time.monotonic() >= deadline:
+                if last is None:
+                    return 'No variants submitted. ' + budget_reached
+                results.append('Stopped before the next trial: ' + budget_reached)
                 break
             started=time.monotonic()
             try:
