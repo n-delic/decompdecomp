@@ -1,7 +1,9 @@
 """Slow preparation must not serialize other projects or apply stale imports."""
 import json
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +38,33 @@ def test_slow_merge_comparison_leaves_shared_compiler_lane_available(project, mo
         assert future.result(timeout=5)
     assert judged == [('f', 'good imported')]
     assert worker.verification_owner is None
+
+
+def test_import_reuses_validated_source_text_before_judging(project, monkeypatch):  # noqa: F811
+    net, folder, judged = project
+    source = folder/'src/f.c'
+    source.parent.mkdir(exist_ok=True)
+    source.write_text('good imported')
+    reads = []
+    original = Path.read_text
+    judge = net.progress._judge_saved
+
+    def read(path, *args, **kwargs):
+        if path == source:
+            reads.append(path)
+        return original(path, *args, **kwargs)
+
+    def check_before_judging(*args, **kwargs):
+        # The synchronization still checks the original source bytes while
+        # guarding its on-disk write. Admission and the post-write scan can both
+        # reuse the validated text because this file's metadata is unchanged.
+        assert len(reads) == 2
+        return judge(*args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', read)
+    monkeypatch.setattr(net.progress, '_judge_saved', check_before_judging)
+    assert net.progress.sync('game', force=True)
+    assert judged == [('f', 'good imported')]
 
 
 @pytest.mark.parametrize('change', ['source', 'header', 'database', 'published-baseline', 'config'])
@@ -73,7 +102,10 @@ def test_waiting_import_discards_prepared_state_when_inputs_change(project, monk
             assert worker._project_lock('game').acquire(timeout=2)
             try:
                 if change == 'source':
-                    (folder/'src/f.c').write_text('good replacement')
+                    source = folder/'src/f.c'
+                    previous = source.stat()
+                    source.write_text('good replaced')
+                    os.utime(source, ns=(previous.st_atime_ns, previous.st_mtime_ns))
                 elif change == 'header':
                     data = json.loads((folder/saves.MANIFEST).read_text())
                     (folder/'include'/data['headers']['']).write_text('broken header')
@@ -99,7 +131,7 @@ def test_waiting_import_discards_prepared_state_when_inputs_change(project, monk
     assert len(plans) >= 2  # The entire old merge was discarded, not just its source row.
     fn = net._function('f', 'game')
     if change == 'source':
-        assert fn['matched_source'] == 'good replacement'
+        assert fn['matched_source'] == 'good replaced'
         assert ('f', 'good original') not in judged
     elif change == 'header':
         assert fn['status'] != 'matched'

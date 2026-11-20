@@ -2500,7 +2500,8 @@ class Progress:
                     return (dict(net._project(slug)) == prepared_project
                             and self._dirty(pid) == dirty
                             and self._baseline(pid) == baseline
-                            and _read(folder) == disk)
+                            # Stat each path again, using cached text only for the same file version.
+                            and _read(folder, cache=self.file_cache) == disk)
                 # _repair only repairs this project's own folder under its lock;
                 # shared identities, import writes and compiler calls start after
                 # admission. Waiting can release every recursive project lock.
@@ -2585,7 +2586,8 @@ class Progress:
             if judging_change:
                 self.revisions[slug] = self.revisions.get(slug, 0) + 1
             self.published[slug] = set(pending) | set(removed)
-            disk = _read(folder)
+            # Publication changes file versions, so the read reloads those files and reuses the rest.
+            disk = _read(folder, cache=self.file_cache)
             known_names = {row["name"] for row in metadata_rows(store, ("name",),
                 "SELECT name FROM functions WHERE project_id=?", pid)}
             manifest = _manifest(disk, cfg, known_names)
