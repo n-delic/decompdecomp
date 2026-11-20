@@ -16,9 +16,9 @@ class Element {
   remove() { this.isConnected = false; }
 }
 const body = new Element('body'), button = new Element('button');
-let triage = false, automatic = false;
+let triage = false, automatic = false, votePaging = false;
 let state = 'new', qualityPending = true, confirmed = false, configFails = false;
-const row = () => ({id: 42, project: '<b>demo</b>', function: 'target', category: 'types', status: state});
+const row = () => ({id: 42, upvotes: 1, project: '<b>demo</b>', function: 'target', category: 'types', status: state});
 const context = { S: {slug: 'demo'}, document: {body, createElement: (tag) => new Element(tag)}, $: () => button,
   showJobError: (host,message) => errors.push(message),
   beginWork: () => () => {}, toast: (message, kind) => { if (kind === 'err') throw Error(message); notices.push(message); }, esc: (s) => s,
@@ -45,6 +45,11 @@ const context = { S: {slug: 'demo'}, document: {body, createElement: (tag) => ne
       ...(automatic ? {automatic_analysis:{state:'done',report:{baseline_output_equivalent:true,
         minimization:{edits:4,reverted:1,individual_checks:{output_preserved:[0],output_not_preserved:[1],untested:[2,3]}}}}} : {}),
       evidence: {source_change_label: 'C tokens changed', diff: '- old\n+ <script>neverExecute()</script>', after: {source: '<script>neverExecute()</script>'}}, review_note: ''};
+    if (votePaging && query.get('sort') === 'upvotes') {
+      const more = query.get('before') === '0';
+      const examples = more ? [{...row(), id: 46, upvotes: 5, review_group: 'build'}, row()] : [{...row(), id: 81, upvotes: 0}];
+      return {examples, categories: ['unclassified', 'types'], states: ['new', 'reviewed'], total: 3, more, groups: []};
+    }
     return {examples: triage ? ['source','first','context','build'].map((review_group,index) => ({...row(),id:42+index,review_group})) : [row()], categories: ['unclassified', 'types'], states: ['new', 'reviewed'],
       total: 100, groups: [{category: 'types', status: state, count: 1}], more: false};
   }};
@@ -143,5 +148,22 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/decompnet/app/stati
   assert(textOf(analyzed).includes('1 edits could be undone; 1 changed output or failed to compile; 2 remain untested'));
   assert(textOf(analyzed).includes('does not mean they can be undone together'));
   assert(textOf(analyzed).includes('already produce the same frozen output'));
+  votePaging = true;
+  dialog.querySelector('[data-comparable]').checked = false;
+  const sort = dialog.querySelector('[data-sort]');
+  sort.value = 'upvotes'; await sort.onchange();
+  assert(requests.some(r => r.url.includes('sort=upvotes&before=0')));
+  assert(textOf(list.children[0]).includes('#46'));
+  assert(textOf(list.children[0]).includes('5 upvotes'));
+  assert(textOf(list.children[1]).includes('1 upvote'));
+  assert.equal(dialog.querySelector('[data-list-heading]').textContent, 'All captures');
+  assert.equal(dialog.querySelector('[data-build-reports]').hidden, true);
+  await dialog.querySelector('[data-more]').onclick();
+  assert(requests.at(-1).url.includes('sort=upvotes&before=42&before_votes=1'));
+  assert(textOf(list.children[2]).includes('0 upvotes'));
+  const category = dialog.querySelector('[data-category]');
+  category.value = 'types'; await category.onchange();
+  assert(requests.some(r => r.url.includes('category=types') && r.url.includes('sort=upvotes&before=0')));
+  assert.equal(list.children.length, 2);
   console.log('Repair evidence rendering, review, filtering and explicit source export passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

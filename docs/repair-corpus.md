@@ -45,3 +45,7 @@ mismatches. Older captures can use target instruction overlap when their failed 
 wasn't recorded. Agents can open up to six selected IDs in one call for bounded diff
 excerpts and compiler settings. Votes are advisory, persisted once per agent and example,
 and break relevance ties. The tools use saved evidence and run no compiles.
+
+In **Agents → Repair examples**, each card shows its upvote count. Choose
+**Most upvoted** to rank the filtered captures by vote count, with newer captures first
+when counts tie. Groups of equivalent captures show their most upvoted example in this view.

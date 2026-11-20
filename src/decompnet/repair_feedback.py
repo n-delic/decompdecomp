@@ -366,42 +366,66 @@ class RepairFeedback:
             clauses.append("e.before_attempt_id IS NOT NULL AND json_extract(e.evidence,'$.comparable_settings')=1 AND json_extract(e.evidence,'$.before.source_sha256') != json_extract(e.evidence,'$.after.source_sha256')")
         return ' AND '.join(clauses), args
 
-    def listing(self, slug='', category='', status='', before=0, comparable=False, *, _metrics=True, _chronological=False, _boundary=None):
-        if self.project is None:
+    def listing(self, slug='', category='', status='', before=0, comparable=False, *, sort='recent',
+                before_votes=None, _metrics=True, _chronological=False, _boundary=None):
+        if sort not in ('recent', 'upvotes'):
+            raise NetworkError('Choose Newest or Most upvoted for repair examples.')
+        by_votes = sort == 'upvotes'
+        if self.project is None and not _chronological:
             if slug:
                 owner = self.for_project(slug)
-                if owner is not self:return owner.listing(slug,category,status,before,comparable,_metrics=_metrics)
+                if owner is not self:
+                    return owner.listing(slug,category,status,before,comparable,sort=sort,
+                                         before_votes=before_votes,_metrics=_metrics)
             else:
                 services = self.services()
                 if services != [self]:
                     boundary = None
                     if before:
-                        owner = self.owner(before)
-                        anchor = owner.store.one('SELECT created_at FROM main.repair_examples WHERE id=?',before)
-                        boundary = (anchor['created_at'],before)
-                    parts = [service.listing('',category,status,0,comparable,_metrics=False,_chronological=True,_boundary=boundary) for service in services]
-                    examples = sorted((row for part in parts for row in part['examples']),key=lambda r:(r['created_at'],r['id']),reverse=True)
+                        boundary = self.owner(before)._listing_boundary(before, by_votes, before_votes)
+                    parts = [service.listing('',category,status,0,comparable,sort=sort,_metrics=False,
+                                             _chronological=True,_boundary=boundary) for service in services]
+                    def key(row):
+                        return (row['upvotes'] if by_votes else 0, row['created_at'], row['id'])
+                    examples = sorted((row for part in parts for row in part['examples']),key=key,reverse=True)
                     groups = {}
                     for part in parts:
                         for row in part['groups']:
-                            key = (row['category'],row['status'])
-                            groups[key] = groups.get(key,0)+row['count']
+                            key_group = (row['category'],row['status'])
+                            groups[key_group] = groups.get(key_group,0)+row['count']
                     from .app.adaptive_repairs import coverage
                     return {'examples':examples[:25],'more':len(examples)>25 or any(p['more'] for p in parts),
                             'total':sum(p['total'] for p in parts),'groups':[{'category':k[0],'status':k[1],'count':v} for k,v in groups.items()],
                             'categories':CATEGORIES,'states':STATES,'metrics':coverage(self.net) if _metrics else None}
         where, args = self._where(slug, category, status, comparable)
+        filter_where = where
         partition = "project_id,category,status,CASE WHEN json_extract(evidence,'$.via')='unit diff' THEN 'build:' || COALESCE(json_extract(evidence,'$.unit'),'') || ':' || CAST(created_at/60 AS INTEGER) ELSE 'function:' || function_id END,CASE WHEN json_extract(evidence,'$.via')!='unit diff' OR json_extract(evidence,'$.via') IS NULL THEN json_extract(evidence,'$.target_sha256') END,CASE WHEN json_extract(evidence,'$.via')!='unit diff' OR json_extract(evidence,'$.via') IS NULL THEN json_extract(evidence,'$.after.source_sha256') END,json_extract(evidence,'$.after.settings'),json_extract(evidence,'$.after.context_version')"
-        prefix = ('WITH grouped AS (SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ' + partition +
-                  ' ORDER BY id DESC) AS position,COUNT(*) OVER (PARTITION BY ' + partition +
-                  ') AS repetitions FROM main.repair_examples e WHERE ' + where + ') ')
-        if _chronological:
-            pagination = '' if _boundary is None else ' AND (e.created_at<? OR (e.created_at=? AND e.id<?))'
-            page_args = () if _boundary is None else (_boundary[0],_boundary[0],_boundary[1])
-            ordering = 'e.created_at DESC,e.id DESC'
+        vote_count = '(SELECT COUNT(*) FROM repair_example_votes v WHERE v.example_id=e.id)'
+        candidates = ''
+        representative = 'id DESC'
+        table = 'main.repair_examples'
+        if by_votes:
+            # Keep the voted capture as the visible representative of its equivalent group.
+            candidates = f'voted AS (SELECT e.*, {vote_count} AS upvotes FROM main.repair_examples e WHERE {where}), '
+            representative = 'upvotes DESC,id DESC'
+            table, where = 'voted', '1=1'
+        prefix = (f'WITH {candidates}grouped AS (SELECT e.*,ROW_NUMBER() OVER (PARTITION BY {partition}'
+                  f' ORDER BY {representative}) AS position,COUNT(*) OVER (PARTITION BY {partition}'
+                  f') AS repetitions FROM {table} e WHERE {where}) ')
+        if by_votes or _chronological:
+            boundary = _boundary
+            if by_votes and before:
+                boundary = self._listing_boundary(before, True, before_votes)
+            columns = 'e.upvotes,e.created_at,e.id' if by_votes else 'e.created_at,e.id'
+            placeholders = '?,?,?' if by_votes else '?,?'
+            pagination = '' if boundary is None else f' AND ({columns}) < ({placeholders})'
+            page_args = boundary or ()
+            ordering = 'e.upvotes DESC,e.created_at DESC,e.id DESC' if by_votes else 'e.created_at DESC,e.id DESC'
         else:
             pagination,page_args,ordering = ' AND (?=0 OR e.id<?)',(before,before),'e.id DESC'
+        display_votes = 'e.upvotes' if by_votes else vote_count
         rows = self.store.all(prefix + 'SELECT e.id,e.created_at,e.category,e.explanation,e.automation,e.suggested_category,e.status,e.repetitions,'
+                              + f'{display_votes} AS upvotes,'
                               "CASE WHEN json_extract(e.evidence,'$.via')='unit diff' THEN 'build report' WHEN e.before_attempt_id IS NULL THEN 'no failed baseline' WHEN json_extract(e.evidence,'$.before.source_sha256')=json_extract(e.evidence,'$.after.source_sha256') THEN 'same source / settings' WHEN json_extract(e.evidence,'$.comparable_settings')=1 THEN 'source repair' ELSE 'settings also changed' END AS evidence_kind,"
                               "(json_extract(e.evidence,'$.provenance.kind') IN ('deterministic draft repair','automatic agent local pass') AND "
                               "(json_extract(e.evidence,'$.provenance.source_sha256') IS NULL OR "
@@ -413,12 +437,20 @@ class RepairFeedback:
         from .app.project_labels import label
         rows = label(self.net,rows,{'agent':'agent_id'})
         total = self.store.one(prefix + 'SELECT COUNT(*) AS n FROM grouped e JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id WHERE e.position=1', *args)['n']
-        groups = self.store.all('SELECT e.category,e.status,COUNT(*) AS count FROM main.repair_examples e WHERE ' + where +
+        groups = self.store.all('SELECT e.category,e.status,COUNT(*) AS count FROM main.repair_examples e WHERE ' + filter_where +
                                 ' GROUP BY e.category,e.status', *args)
         from .app.adaptive_repairs import coverage
         return {'examples': [dict(r) | {'review_group': ('build' if r['evidence_kind']=='build report' else 'first' if r['evidence_kind']=='no failed baseline' else 'context' if r['evidence_kind'] in ('same source / settings','settings also changed') else 'source')} for r in rows[:25]], 'more': len(rows) > 25,
                 'total': total, 'groups': [dict(r) for r in groups], 'categories': CATEGORIES, 'states': STATES,
                 'metrics': coverage(self.net) if _metrics else None}
+
+    def _listing_boundary(self, case_id, by_votes, before_votes):
+        row = self.store.one('SELECT created_at,(SELECT COUNT(*) FROM repair_example_votes v WHERE v.example_id=e.id) upvotes '
+                             'FROM main.repair_examples e WHERE e.id=?',case_id)
+        if not row:
+            raise NetworkError('This page of repair examples has changed. Refresh the list.')
+        recent = (row['created_at'],case_id)
+        return (row['upvotes'] if before_votes is None else before_votes, *recent) if by_votes else recent
 
     def detail(self, slug, case_id, include_source=True):
         owner = self.for_project(slug) if slug else self.owner(case_id)

@@ -1,4 +1,6 @@
 """Review and locally export matching repairs, independently of agent activity/transcript routes."""
+from functools import partial
+
 from starlette.background import BackgroundTask
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 
@@ -168,7 +170,9 @@ def register(app):
                                                    str(data.get('category', '')), data.get('note')))
             if q.get('id'):
                 return JSONResponse(await app.read(feedback.detail, slug, int(q['id'])))
-            return JSONResponse(await app.read(feedback.listing, slug, q.get('category', ''), q.get('status', ''),
+            listing = partial(feedback.listing, sort=q.get('sort', 'recent'),
+                              before_votes=int(q['before_votes']) if 'before_votes' in q else None)
+            return JSONResponse(await app.read(listing, slug, q.get('category', ''), q.get('status', ''),
                                                int(q.get('before', 0)), q.get('comparable') == '1'))
         except (NetworkError, ValueError, KeyError) as error:
             return app.fail(error)

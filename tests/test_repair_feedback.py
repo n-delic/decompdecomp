@@ -644,3 +644,19 @@ def test_archived_case_preserves_historical_header_and_explicit_winning_score(se
     restored=net.repair_feedback.detail('demo',case)['evidence']
     assert restored['before']['header']=='typedef int word;'
     assert restored['after']['header']=='typedef int word;'
+
+
+def test_most_upvoted_includes_voted_equivalent_capture(setup):
+    net, _, _, pid, fid = setup
+    with net.store.tx() as db:
+        for case in (1, 2, 3):
+            evidence = json.dumps({'after': {'source_sha256': 'same' if case < 3 else 'other'}})
+            db.execute('INSERT INTO repair_examples(id,project_id,function_id,created_at,evidence,category) '
+                       "VALUES(?,?,?,?,?,'types')", (case, pid, fid, case, evidence))
+        db.executemany('INSERT INTO repair_example_votes(example_id,agent_id) VALUES(?,?)', [(1, 1), (1, 2), (3, 1)])
+    recent = net.repair_feedback.listing('demo', category='types', _metrics=False)
+    assert [(row['id'], row['upvotes']) for row in recent['examples']] == [(3, 1), (2, 0)]
+    ranked = net.repair_feedback.listing('demo', category='types', sort='upvotes', _metrics=False)
+    assert [(row['id'], row['upvotes'], row['repetitions']) for row in ranked['examples']] == [(1, 2, 2), (3, 1, 1)]
+    assert ranked['total'] == 2
+    assert ranked['groups'] == [{'category': 'types', 'status': 'new', 'count': 3}]
